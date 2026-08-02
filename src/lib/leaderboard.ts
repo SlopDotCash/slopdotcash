@@ -534,7 +534,7 @@ const REVIEW_CLAIM_PATTERN = /^CLAIMING\s+REVIEW:\s*\S/i;
 const ATTRIBUTION_DECLARATION_PATTERN =
   /^(?:AI provider\/model\s*:|AI assistance\s*:\s*yes\b|Models?(?:\s+used)?\s*:|Model\(s\)\s+used\s*:|Client\s*\/\s*agent tooling\s*:|Contribution skill revision\s*:)/i;
 const ATTRIBUTION_MARKER_LINE_PATTERN =
-  /^<!--\s*eliza-computer-attribution:v1\b[^\r\n]*-->\s*$/i;
+  /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:v1\b[^\r\n]*-->\s*$/i;
 
 interface MutableLeaderboardEntry {
   actor: GitHubActor;
@@ -635,7 +635,7 @@ function attributionMarkerRecords(body: string): AttributionMarkerRecord[] {
     .map((record) => {
       const raw = record.raw.trim();
       const marker = raw.match(
-        /^<!--\s*eliza-computer-attribution:v1\b([\s\S]*?)-->\s*$/i,
+        /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:v1\b([\s\S]*?)-->\s*$/i,
       );
       if (!marker) return null;
       const leadingWhitespace =
@@ -1376,7 +1376,7 @@ function methodology(): LeaderboardMethodology {
       "model disclosure",
     ],
     provenancePolicy:
-      "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and eliza-computer-attribution:v1 markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
+      "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
     collectionPolicy:
       "Every merged pull-request outcome is collected over 30 days with paginated, recursively split UTC time slices below GitHub Search's 1,000-result ceiling, then ordered newest-first before per-contributor caps. Verification-intensive bonuses use a complete seven-day detail window. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete repository connections. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.",
   };

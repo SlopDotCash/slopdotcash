@@ -25,14 +25,8 @@ import { createInstallCommand } from "../src/lib/install-command";
 import { createInstallAuthorityFixture } from "../tests/install-authority-fixture";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repositoryRoot = resolve(packageRoot, "..", "..");
-const skillRoot = join(
-  repositoryRoot,
-  "packages",
-  "skills",
-  "skills",
-  "contribute-to-eliza",
-);
+const repositoryRoot = packageRoot;
+const skillRoot = join(repositoryRoot, "skills", "contribute-to-eliza");
 const publicRoot = join(packageRoot, "public");
 const archivePath = join(publicRoot, "downloads", "contribute-to-eliza.skill");
 const checksumPath = `${archivePath}.sha256`;
@@ -65,7 +59,7 @@ function sha256(contents: Buffer | string) {
 function readCommittedSkillFile(path: string): Buffer {
   return execFileSync(
     "git",
-    ["show", `HEAD:packages/skills/skills/contribute-to-eliza/${path}`],
+    ["show", `HEAD:skills/contribute-to-eliza/${path}`],
     { cwd: repositoryRoot, encoding: null },
   );
 }
@@ -265,7 +259,7 @@ beforeAll(() => {
         "--name-only",
         "HEAD",
         "--",
-        "packages/skills/skills/contribute-to-eliza",
+        "skills/contribute-to-eliza",
       ],
       { cwd: repositoryRoot, encoding: "utf8" },
     )
@@ -273,7 +267,7 @@ beforeAll(() => {
       .filter(Boolean)
       .map((repositoryPath) => {
         const path = relative(
-          "packages/skills/skills/contribute-to-eliza",
+          "skills/contribute-to-eliza",
           repositoryPath,
         ).replaceAll("\\", "/");
         return [
@@ -301,11 +295,11 @@ beforeAll(() => {
       {
         schemaVersion: "1",
         name: "contribute-to-eliza",
-        repository: "elizaOS/eliza",
+        repository: "elizaOS/army",
         revision,
         revisionStatus: "committed",
         source: {
-          path: "packages/skills/skills/contribute-to-eliza/SKILL.md",
+          path: "skills/contribute-to-eliza/SKILL.md",
           sha256: sha256(committedSkill),
         },
         files: Object.entries(committedFiles)
@@ -319,10 +313,7 @@ beforeAll(() => {
   execFileSync(
     "python3",
     [
-      join(
-        repositoryRoot,
-        "packages/skills/skills/skill-creator/scripts/package_skill.py",
-      ),
+      join(repositoryRoot, "scripts/skill-validation/package_skill.py"),
       stagedSkill,
       join(installerArtifactRoot, "downloads"),
     ],
@@ -399,7 +390,7 @@ describe("contribution skill package", () => {
         "--porcelain",
         "--untracked-files=all",
         "--",
-        "packages/skills/skills/contribute-to-eliza",
+        "skills/contribute-to-eliza",
       ],
       { cwd: repositoryRoot, encoding: "utf8" },
     ).trim();
@@ -407,11 +398,11 @@ describe("contribution skill package", () => {
     expect(archive.provenance).toMatchObject({
       schemaVersion: "1",
       name: "contribute-to-eliza",
-      repository: "elizaOS/eliza",
+      repository: "elizaOS/army",
       revision: sourceStatus.length === 0 ? head : null,
       revisionStatus: sourceStatus.length === 0 ? "committed" : "working-tree",
       source: {
-        path: "packages/skills/skills/contribute-to-eliza/SKILL.md",
+        path: "skills/contribute-to-eliza/SKILL.md",
         sha256: sha256(readFileSync(join(skillRoot, "SKILL.md"))),
       },
     });
@@ -476,14 +467,7 @@ describe("contribution skill package", () => {
       readFileSync(join(publicRoot, "brand", "ogembeds", "eliza_ogembed.png")),
     ).toEqual(
       readFileSync(
-        join(
-          repositoryRoot,
-          "packages",
-          "shared",
-          "assets",
-          "ogembeds",
-          "eliza_ogembed.png",
-        ),
+        join(repositoryRoot, "assets", "ogembeds", "eliza_ogembed.png"),
       ),
     );
     expect(readFileSync(join(publicRoot, "skill.md"))).toEqual(skill);
@@ -491,12 +475,12 @@ describe("contribution skill package", () => {
     expect(manifest).toMatchObject({
       schemaVersion: "1",
       name: "contribute-to-eliza",
-      repository: "elizaOS/eliza",
+      repository: "elizaOS/army",
       archive: { sha256: sha256(archive) },
       source: {
         sha256: sha256(skill),
-        path: "packages/skills/skills/contribute-to-eliza/SKILL.md",
-        url: `https://github.com/elizaOS/eliza/blob/${head}/packages/skills/skills/contribute-to-eliza/SKILL.md`,
+        path: "skills/contribute-to-eliza/SKILL.md",
+        url: `https://github.com/elizaOS/army/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
         publicUrl: "https://eliza.army/skill.md",
       },
     });
@@ -509,7 +493,7 @@ describe("contribution skill package", () => {
       asRecord(manifest.authority, "skill manifest.authority"),
     ).toMatchObject({
       apiOrigin: "https://api.github.com",
-      canonicalPath: "packages/skills/skills/contribute-to-eliza",
+      canonicalPath: "skills/contribute-to-eliza",
       rawOrigin: "https://raw.githubusercontent.com",
       releaseCandidateLabel: "eliza-army-release-candidate",
     });
@@ -811,11 +795,11 @@ provenance = (
         {
             "schemaVersion": "1",
             "name": "contribute-to-eliza",
-            "repository": "elizaOS/eliza",
+            "repository": "elizaOS/army",
             "revision": None,
             "revisionStatus": "working-tree",
             "source": {
-                "path": "packages/skills/skills/contribute-to-eliza/SKILL.md",
+                "path": "skills/contribute-to-eliza/SKILL.md",
                 "sha256": hashlib.sha256(skill).hexdigest(),
             },
             "files": [

@@ -7,7 +7,7 @@
     "allowImportingTsExtensions": true,
     "strict": true,
     "noEmit": true,
-    "types": ["node", "bun"]
+    "types": ["node", "bun-types"]
   },
   "include": [
     "vite.config.ts",

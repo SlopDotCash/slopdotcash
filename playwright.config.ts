@@ -12,12 +12,12 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
   use: {
-    baseURL: process.env.ELIZA_COMPUTER_BASE_URL ?? "http://127.0.0.1:4466",
+    baseURL: process.env.ELIZA_ARMY_BASE_URL ?? "http://127.0.0.1:4466",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  webServer: process.env.ELIZA_COMPUTER_BASE_URL
+  webServer: process.env.ELIZA_ARMY_BASE_URL
     ? undefined
     : {
         command: "bun run build && bun run preview --host 127.0.0.1",

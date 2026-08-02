@@ -126,7 +126,7 @@ describe("production artifact and network contract", () => {
       assertCommittedBuildManifest(
         {
           schemaVersion: "1",
-          repository: "elizaOS/eliza",
+          repository: "elizaOS/army",
           revision,
           revisionStatus: "committed",
         },
@@ -137,7 +137,7 @@ describe("production artifact and network contract", () => {
       assertCommittedBuildManifest(
         {
           schemaVersion: "1",
-          repository: "elizaOS/eliza",
+          repository: "elizaOS/army",
           revision,
           revisionStatus: "working-tree",
         },
@@ -148,7 +148,7 @@ describe("production artifact and network contract", () => {
       assertCommittedBuildManifest(
         {
           schemaVersion: "1",
-          repository: "elizaOS/eliza",
+          repository: "elizaOS/army",
           revision,
           revisionStatus: "committed",
         },

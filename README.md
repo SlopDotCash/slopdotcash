@@ -23,8 +23,8 @@ The package contains:
 
 ```bash
 bun install
-bun run --cwd packages/eliza-computer leaderboard:generate
-bun run --cwd packages/eliza-computer dev
+bun run leaderboard:generate
+bun run dev
 ```
 
 Open `http://127.0.0.1:4466`.
@@ -32,19 +32,19 @@ Open `http://127.0.0.1:4466`.
 ## Validation
 
 ```bash
-bun run --cwd packages/eliza-computer lint:check
-bun run --cwd packages/eliza-computer format:check
-bun run --cwd packages/eliza-computer typecheck
-bun run --cwd packages/eliza-computer test
-bun run --cwd packages/eliza-computer build
-bun run --cwd packages/eliza-computer test:e2e
-bun run --cwd packages/eliza-computer test:e2e:record
+bun run lint:check
+bun run format:check
+bun run typecheck
+bun run test
+bun run build
+bun run test:e2e
+bun run test:e2e:record
 ```
 
 The local recording command builds a preview and fails closed unless its
 ledger is a recent, non-empty GitHub snapshot. After the exact verified
 `dist` directory has been deployed, run
-`bun run --cwd packages/eliza-computer test:e2e:record:production`. Production
+`bun run test:e2e:record:production`. Production
 recording does not rebuild. It byte-compares the remote skill, manifest,
 archive, checksum, and ledger with local `dist`, then records the apex DNS, TLS
 certificate, HTTP-to-HTTPS redirect, security headers, browser traffic,

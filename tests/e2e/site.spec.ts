@@ -433,7 +433,7 @@ provenance = (
             "revision": None,
             "revisionStatus": "working-tree",
             "source": {
-                "path": "packages/skills/skills/contribute-to-eliza/SKILL.md",
+                "path": "skills/contribute-to-eliza/SKILL.md",
                 "sha256": hashlib.sha256(skill).hexdigest(),
             },
             "files": [
