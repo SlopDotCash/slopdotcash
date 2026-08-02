@@ -27,7 +27,7 @@ import {
 import { createInstallCommand } from "./install-command";
 
 const packageRoot = resolve(import.meta.dirname, "..", "..");
-const repositoryRoot = resolve(packageRoot, "..", "..");
+const repositoryRoot = packageRoot;
 const normalizeArchive = join(
   packageRoot,
   "scripts",
@@ -58,7 +58,7 @@ function freshRoot(label: string): string {
 function baseFiles(marker: string): Record<string, Buffer> {
   const skill = execFileSync(
     "git",
-    ["show", "HEAD:packages/skills/skills/contribute-to-eliza/SKILL.md"],
+    ["show", "HEAD:skills/contribute-to-eliza/SKILL.md"],
     { cwd: repositoryRoot, encoding: null },
   );
   return {
@@ -98,14 +98,14 @@ function writeArtifact(
       {
         schemaVersion: "1",
         name: "contribute-to-eliza",
-        repository: "elizaOS/eliza",
+        repository: "elizaOS/army",
         revision:
           options.provenanceRevision === undefined
             ? revision
             : options.provenanceRevision,
         revisionStatus: options.revisionStatus ?? "committed",
         source: {
-          path: "packages/skills/skills/contribute-to-eliza/SKILL.md",
+          path: "skills/contribute-to-eliza/SKILL.md",
           sha256: sha256(skill),
         },
         files: manifest,
@@ -203,9 +203,9 @@ function candidatePull(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    base: { ref: "develop", repo: { full_name: "elizaOS/eliza" } },
+    base: { ref: "develop", repo: { full_name: "elizaOS/army" } },
     draft: false,
-    head: { repo: { full_name: "elizaOS/eliza" }, sha: revision },
+    head: { repo: { full_name: "elizaOS/army" }, sha: revision },
     labels: [{ name: "eliza-army-release-candidate" }],
     number: 17424,
     state: "open",
@@ -396,7 +396,7 @@ describe("authenticated skill installer lifecycle", () => {
       ["unlabeled", { labels: [{ name: "safe-to-test" }] }],
       [
         "wrong head",
-        { head: { repo: { full_name: "elizaOS/eliza" }, sha: revisionB } },
+        { head: { repo: { full_name: "elizaOS/army" }, sha: revisionB } },
       ],
     ] as const;
 
@@ -689,7 +689,7 @@ describe("authenticated skill installer lifecycle", () => {
       },
       developHead: revisionA,
       responseOverrides: {
-        "/repos/elizaOS/eliza/git/ref/heads/develop": {
+        "/repos/elizaOS/army/git/ref/heads/develop": {
           object: { sha: revisionA, type: "commit" },
           ref: "refs/heads/not-develop",
         },
@@ -966,7 +966,7 @@ describe("authenticated skill installer lifecycle", () => {
     const symlinkRoot = freshRoot("source-symlink");
     const symlinkArtifact = writeArtifact(symlinkRoot, revisionA, archiveFiles);
     const contentsKey =
-      "/repos/elizaOS/eliza/contents/packages/skills/skills/contribute-to-eliza" +
+      "/repos/elizaOS/army/contents/skills/contribute-to-eliza" +
       `?ref=${revisionA}`;
     const symlinkAuthority = configureAuthority(symlinkRoot, {
       developHead: revisionA,
@@ -974,7 +974,7 @@ describe("authenticated skill installer lifecycle", () => {
         [contentsKey]: [
           {
             name: "SKILL.md",
-            path: "packages/skills/skills/contribute-to-eliza/SKILL.md",
+            path: "skills/contribute-to-eliza/SKILL.md",
             sha: "0".repeat(40),
             size: archiveFiles["SKILL.md"].length,
             type: "symlink",

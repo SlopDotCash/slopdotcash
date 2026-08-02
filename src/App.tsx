@@ -46,9 +46,7 @@ interface InstallOption {
 function currentSiteOrigin(): string {
   const origin = new URL(window.location.origin).origin.replace(/\/+$/u, "");
   if (!origin.startsWith("https://") && !origin.startsWith("http://")) {
-    throw new Error(
-      `[ElizaComputer] unsupported site origin protocol: ${origin}`,
-    );
+    throw new Error(`[Army] unsupported site origin protocol: ${origin}`);
   }
   return origin;
 }
@@ -231,7 +229,7 @@ function InstallConsole() {
   );
   const selected = installOptions.find((option) => option.id === selectedId);
   if (!selected) {
-    throw new Error(`[ElizaComputer] unknown install option: ${selectedId}`);
+    throw new Error(`[Army] unknown install option: ${selectedId}`);
   }
 
   useEffect(() => {
@@ -252,7 +250,7 @@ function InstallConsole() {
       const target = document.getElementById(`install-tab-${option.id}`);
       if (!(target instanceof HTMLButtonElement)) {
         throw new Error(
-          `[ElizaComputer] install tab ${option.id} is missing from the document`,
+          `[Army] install tab ${option.id} is missing from the document`,
         );
       }
       target.focus();
@@ -267,7 +265,7 @@ function InstallConsole() {
       );
       if (currentIndex === -1) {
         throw new Error(
-          `[ElizaComputer] unknown install tab: ${event.currentTarget.id}`,
+          `[Army] unknown install tab: ${event.currentTarget.id}`,
         );
       }
 
@@ -294,7 +292,7 @@ function InstallConsole() {
       const targetOption = installOptions[targetIndex];
       if (!targetOption) {
         throw new Error(
-          `[ElizaComputer] install tab index ${targetIndex} is unavailable`,
+          `[Army] install tab index ${targetIndex} is unavailable`,
         );
       }
       selectOption(targetOption, true);
@@ -392,7 +390,7 @@ function InstallConsole() {
         <a href="/downloads/contribute-to-eliza.skill" download>
           Download .skill <ArrowDownToLine aria-hidden="true" />
         </a>
-        <ExternalAnchor href="https://github.com/elizaOS/eliza/tree/develop/packages/skills/skills/contribute-to-eliza">
+        <ExternalAnchor href="https://github.com/elizaOS/army/tree/develop/skills/contribute-to-eliza">
           Inspect source <ArrowUpRight aria-hidden="true" />
         </ExternalAnchor>
       </div>

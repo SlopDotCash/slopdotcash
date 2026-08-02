@@ -145,7 +145,7 @@ function machineAttribution(
     `Contribution skill revision: ${skillRevision}`,
     "Attribution status: self-reported",
     "— [test-agent]",
-    `<!-- eliza-computer-attribution:v1 ${JSON.stringify({
+    `<!-- elizaos-contribution-attribution:v1 ${JSON.stringify({
       provider: provider.toLowerCase(),
       model,
       client,
@@ -296,7 +296,7 @@ describe("model attribution", () => {
         "OpenAI",
         "gpt-5.6-sol",
         "codex-desktop",
-        "elizaOS/eliza@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:packages/skills/skills/contribute-to-eliza",
+        "elizaOS/army@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:skills/contribute-to-eliza",
       ),
     );
 
@@ -310,9 +310,28 @@ describe("model attribution", () => {
       identifier: "openai/gpt-5.6-sol",
       client: "codex-desktop",
       skillRevision:
-        "elizaOS/eliza@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:packages/skills/skills/contribute-to-eliza",
+        "elizaOS/army@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:skills/contribute-to-eliza",
       format: "machine-marker",
       status: "self-reported",
+    });
+  });
+
+  it("keeps historical eliza-computer markers readable", () => {
+    const source = textSource(
+      "COMMENT_LEGACY",
+      machineAttribution("OpenAI", "gpt-5.6-sol").replace(
+        "elizaos-contribution-attribution:v1",
+        "eliza-computer-attribution:v1",
+      ),
+    );
+
+    const result = assessModelAttribution([source]);
+
+    expect(result.invalidMarkers).toEqual([]);
+    expect(result.declarations).toHaveLength(1);
+    expect(result.declarations[0]).toMatchObject({
+      identifier: "openai/gpt-5.6-sol",
+      format: "machine-marker",
     });
   });
 

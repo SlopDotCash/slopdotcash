@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[ElizaComputer] render boundary caught an error", {
+    console.error("[Army] render boundary caught an error", {
       error,
       componentStack: info.componentStack,
     });

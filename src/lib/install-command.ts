@@ -25,13 +25,11 @@ function shellQuote(value: string): string {
 function validateArtifactOrigin(origin: string): string {
   const parsed = new URL(origin);
   if (!["https:", "http:", "file:"].includes(parsed.protocol)) {
-    throw new TypeError(
-      `[ElizaComputer] unsupported artifact origin: ${origin}`,
-    );
+    throw new TypeError(`[Army] unsupported artifact origin: ${origin}`);
   }
   if (parsed.search || parsed.hash) {
     throw new TypeError(
-      "[ElizaComputer] artifact origin cannot contain query or fragment data",
+      "[Army] artifact origin cannot contain query or fragment data",
     );
   }
   return origin.replace(/\/$/u, "");
@@ -50,7 +48,7 @@ function resolveAuthorityOrigins(
     const parsed = new URL(origin);
     if (parsed.protocol !== "file:" || parsed.search || parsed.hash) {
       throw new TypeError(
-        `[ElizaComputer] test ${name} must be an unparameterized file:// origin`,
+        `[Army] test ${name} must be an unparameterized file:// origin`,
       );
     }
   }
@@ -100,9 +98,9 @@ import zlib
 from pathlib import PurePosixPath
 
 artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision = sys.argv[1:]
-repository = "elizaOS/eliza"
+repository = "elizaOS/army"
 skill_name = "contribute-to-eliza"
-skill_repository_path = "packages/skills/skills/contribute-to-eliza"
+skill_repository_path = "skills/contribute-to-eliza"
 source_path = f"{skill_repository_path}/SKILL.md"
 release_label = "eliza-army-release-candidate"
 target_path = os.path.join(skills_root, skill_name)

@@ -1,4 +1,8 @@
 dist/
+node_modules/
+*.tsbuildinfo
+*.tmp
+__pycache__/
 playwright-report/
 test-results/
 evidence/

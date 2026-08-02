@@ -9,9 +9,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repositoryRoot = resolve(packageRoot, "..", "..");
+const repositoryRoot = packageRoot;
 const workflow = readFileSync(
-  join(repositoryRoot, ".github", "workflows", "eliza-computer.yml"),
+  join(repositoryRoot, ".github", "workflows", "deploy.yml"),
   "utf8",
 );
 const packageManifest = JSON.parse(
@@ -45,7 +45,7 @@ describe("eliza.army deployment contract", () => {
     );
     expect(deployJob).toContain(`node-version: ${"$"}{{ env.NODE_VERSION }}`);
     expect(deployJob).toContain("./node_modules/.bin/wrangler pages deploy \\");
-    expect(deployJob).toContain("working-directory: packages/eliza-computer");
+    expect(deployJob).not.toContain("working-directory:");
     expect(deployJob).not.toContain("bunx wrangler");
     expect(deployJob).not.toContain("pages deploy dist");
     expect(deployJob).toContain('--commit-hash="$GITHUB_SHA"');
@@ -65,18 +65,10 @@ describe("eliza.army deployment contract", () => {
     expect(deployJob).toContain(
       "changed an eliza.army release input immediately before deployment",
     );
-    for (const releaseInput of [
-      "packages/eliza-computer",
-      "packages/skills/skills/contribute-to-eliza",
-      "packages/skills/skills/skill-creator/scripts/package_skill.py",
-      "packages/skills/skills/skill-creator/scripts/quick_validate.py",
-      "packages/shared/assets/logos",
-      "packages/shared/scripts/sync-to-public.mjs",
-      "packages/scripts/rm-path-recursive.mjs",
-      "bun.lock package.json",
-    ]) {
-      expect(deployJob).toContain(releaseInput);
-    }
+    expect(
+      deployJob.match(/diff --quiet "\$GITHUB_SHA" "\$live_develop" -- \./g),
+    ).toHaveLength(2);
+    expect(deployJob).toContain("https://github.com/elizaOS/army.git");
     expect(wranglerConfiguration).toContain(
       'pages_build_output_dir = "./dist"',
     );
@@ -91,7 +83,7 @@ describe("eliza.army deployment contract", () => {
       `cancel-in-progress: ${"$"}{{ github.event_name == 'pull_request' }}`,
     );
     expect(workflow).not.toContain(
-      `group: eliza-computer-${"$"}{{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true`,
+      `group: army-${"$"}{{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true`,
     );
     expect(deployJob).toContain(
       "github.event_name == 'push' && github.ref == 'refs/heads/develop'",
@@ -106,7 +98,7 @@ describe("eliza.army deployment contract", () => {
     expect(deployJob).toContain(
       'if [ "$GITHUB_REF" != "refs/heads/develop" ]; then',
     );
-    expect(deployJob).toContain("group: eliza-computer-production");
+    expect(deployJob).toContain("group: army-production");
     expect(deployJob).toContain("cancel-in-progress: false");
     expect(deployJob).toContain("name: eliza-army-production");
   });
@@ -139,17 +131,15 @@ describe("eliza.army deployment contract", () => {
     expect(verificationStep).toContain("--connect-timeout 10");
     expect(verificationStep).toContain("--max-time 30");
     expect(verificationStep).toContain(
-      "verify_download / packages/eliza-computer/dist/index.html index.html",
+      "verify_download / dist/index.html index.html",
     );
     expect(verificationStep).not.toContain(
-      "verify_download /index.html packages/eliza-computer/dist/index.html",
+      "verify_download /index.html dist/index.html",
     );
     expect(verificationStep).toContain(
       `"https://eliza.army${"$"}{remote_path}?verify=`,
     );
-    expect(verificationStep).toContain(
-      "node packages/eliza-computer/scripts/dist-manifest.mjs verify",
-    );
+    expect(verificationStep).toContain("node scripts/dist-manifest.mjs verify");
     expect(verificationStep.match(/verify_download \//g)).toHaveLength(1);
     expect(verificationStep).toContain('while [ "$attempt" -le 3 ]');
     expect(verificationStep).toContain("https://eliza.army \\");

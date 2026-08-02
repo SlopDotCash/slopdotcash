@@ -9,10 +9,6 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  planReferencedArtifacts,
-  verifyReferencedArtifacts,
-} from "../../../scripts/check-pr-evidence.mjs";
-import {
   assertPublishableLeaderboardSnapshot,
   createLeaderboardSnapshot,
   dedupeByNodeId,
@@ -36,6 +32,10 @@ import {
   VERIFICATION_WINDOW_DAYS,
   type VerifiedEvidenceArtifact,
 } from "../src/lib/leaderboard";
+import {
+  planReferencedArtifacts,
+  verifyReferencedArtifacts,
+} from "./check-pr-evidence.mjs";
 
 export const SEARCH_SAFE_RESULT_LIMIT = 950;
 export const MINIMUM_SEARCH_SLICE_MS = 60_000;

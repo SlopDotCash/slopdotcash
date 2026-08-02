@@ -1,4 +1,4 @@
-# @elizaos/eliza-computer
+# @elizaos/army
 
 Standalone Vite site and data pipeline for `eliza.army`, the public
 contribution-compute entrypoint for elizaOS.
@@ -11,9 +11,8 @@ It is a private application, not a library. Cloudflare Pages serves the static
 build; GitHub Actions refreshes the public data and deploys only after package
 checks pass.
 
-The canonical skill source is
-`../skills/skills/contribute-to-eliza/`. Never maintain a second skill copy
-inside this package. `scripts/prepare-site.mjs` validates that source, copies
+The canonical skill source is `skills/contribute-to-eliza/`. Never maintain a
+second skill copy. `scripts/prepare-site.mjs` validates that source, copies
 the raw Markdown endpoints, and builds the downloadable `.skill` archive.
 
 The public checksum is only a corruption check. The generated installer uses
@@ -42,7 +41,8 @@ the generator's test option, never environment variables.
 ## Layout
 
 ```text
-packages/eliza-computer/
+assets/               repository-owned elizaOS brand assets
+skills/               canonical contributor skill and supporting references
   src/                  React UI, data contracts, scoring helpers
   public/               Pages headers/redirects plus generated site assets
   scripts/              skill packaging, live GitHub ingestion, evidence capture
@@ -60,16 +60,16 @@ skill endpoints are produced by `prepare:site`. Do not edit them by hand.
 Run from the repository root:
 
 ```bash
-bun run --cwd packages/eliza-computer dev
-bun run --cwd packages/eliza-computer leaderboard:generate
-bun run --cwd packages/eliza-computer test
-bun run --cwd packages/eliza-computer typecheck
-bun run --cwd packages/eliza-computer lint:check
-bun run --cwd packages/eliza-computer format:check
-bun run --cwd packages/eliza-computer build
-bun run --cwd packages/eliza-computer test:e2e
-bun run --cwd packages/eliza-computer test:e2e:record
-bun run --cwd packages/eliza-computer test:e2e:record:production
+bun run dev
+bun run leaderboard:generate
+bun run test
+bun run typecheck
+bun run lint:check
+bun run format:check
+bun run build
+bun run test:e2e
+bun run test:e2e:record
+bun run test:e2e:record:production
 ```
 
 `leaderboard:generate` reads GitHub through the authenticated `gh` CLI or
@@ -119,7 +119,9 @@ authority; users must re-read live GitHub and Project state before acting.
 Contributions made through the skill must use an exact provider/model
 identifier in the PR body and every issue/PR comment, along with client, skill
 revision, a signed lane tag, and a machine-readable
-`eliza-computer-attribution:v1` marker. Never include chain-of-thought, secrets,
+`elizaos-contribution-attribution:v1` marker. Historical
+`eliza-computer-attribution:v1` markers remain readable by the leaderboard.
+Never include chain-of-thought, secrets,
 tokens, private prompt content, or session IDs. A human-only contribution must
 say so explicitly.
 

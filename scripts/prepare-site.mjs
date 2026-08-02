@@ -23,16 +23,10 @@ import { fileURLToPath } from "node:url";
 import { createInstallCommand } from "../src/lib/install-command.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repositoryRoot = resolve(packageRoot, "..", "..");
+const repositoryRoot = packageRoot;
 const publicRoot = join(packageRoot, "public");
 const downloadsRoot = join(publicRoot, "downloads");
-const skillRoot = join(
-  repositoryRoot,
-  "packages",
-  "skills",
-  "skills",
-  "contribute-to-eliza",
-);
+const skillRoot = join(repositoryRoot, "skills", "contribute-to-eliza");
 const skillSource = join(skillRoot, "SKILL.md");
 const repositoryContractPath = join(
   skillRoot,
@@ -46,11 +40,8 @@ const evidenceRubricPath = join(
 );
 const packager = join(
   repositoryRoot,
-  "packages",
-  "skills",
-  "skills",
-  "skill-creator",
   "scripts",
+  "skill-validation",
   "package_skill.py",
 );
 const archiveNormalizer = join(
@@ -60,7 +51,7 @@ const archiveNormalizer = join(
 );
 const archiveName = "contribute-to-eliza.skill";
 const archivePath = join(downloadsRoot, archiveName);
-const skillRepositoryPath = "packages/skills/skills/contribute-to-eliza";
+const skillRepositoryPath = "skills/contribute-to-eliza";
 const sourcePath = `${skillRepositoryPath}/SKILL.md`;
 const publicSiteOrigin = "https://eliza.army";
 
@@ -82,7 +73,7 @@ function listRegularSkillFiles(root, prefix = "") {
     const stats = lstatSync(absolutePath);
     if (stats.isSymbolicLink()) {
       throw new TypeError(
-        `[ElizaComputer] skill source contains a symlink: ${relativePath}`,
+        `[Army] skill source contains a symlink: ${relativePath}`,
       );
     }
     if (stats.isDirectory()) {
@@ -90,7 +81,7 @@ function listRegularSkillFiles(root, prefix = "") {
     }
     if (!stats.isFile()) {
       throw new TypeError(
-        `[ElizaComputer] skill source contains a non-regular file: ${relativePath}`,
+        `[Army] skill source contains a non-regular file: ${relativePath}`,
       );
     }
     return [relativePath];
@@ -125,12 +116,12 @@ if (
   )
 ) {
   throw new TypeError(
-    "[ElizaComputer] tracked skill file manifest is empty, escaped its root, or reserves PROVENANCE.json",
+    "[Army] tracked skill file manifest is empty, escaped its root, or reserves PROVENANCE.json",
   );
 }
 if (trackedSkillFiles.length > 32) {
   throw new TypeError(
-    "[ElizaComputer] canonical skill exceeds the installer's 32-file authority bound",
+    "[Army] canonical skill exceeds the installer's 32-file authority bound",
   );
 }
 if (
@@ -142,7 +133,7 @@ if (
   const extras = actualSkillFiles.filter((path) => !tracked.has(path));
   const missing = trackedSkillFiles.filter((path) => !actual.has(path));
   throw new TypeError(
-    `[ElizaComputer] skill source must exactly match tracked files (extra: ${extras.join(", ") || "none"}; missing: ${missing.join(", ") || "none"})`,
+    `[Army] skill source must exactly match tracked files (extra: ${extras.join(", ") || "none"}; missing: ${missing.join(", ") || "none"})`,
   );
 }
 const skillFileManifest = trackedSkillFiles.map((path) => ({
@@ -154,7 +145,7 @@ const commit = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
 if (!/^[0-9a-f]{40}$/.test(commit)) {
-  throw new TypeError("[ElizaComputer] git did not return a full commit SHA");
+  throw new TypeError("[Army] git did not return a full commit SHA");
 }
 const committedSkillFiles = execFileSync(
   "git",
@@ -184,7 +175,7 @@ const sourceMatchesCommit =
 const sourceRevisionStatus = sourceMatchesCommit ? "committed" : "working-tree";
 
 run(process.execPath, [
-  join(repositoryRoot, "packages", "shared", "scripts", "sync-to-public.mjs"),
+  join(repositoryRoot, "scripts", "sync-brand-assets.mjs"),
   publicRoot,
   "--logos",
   "--favicons",
@@ -213,7 +204,7 @@ try {
       {
         schemaVersion: "1",
         name: "contribute-to-eliza",
-        repository: "elizaOS/eliza",
+        repository: "elizaOS/army",
         revision: sourceRevisionStatus === "committed" ? commit : null,
         revisionStatus: sourceRevisionStatus,
         source: {
@@ -231,7 +222,7 @@ try {
   run("python3", [archiveNormalizer, packagedArchive]);
   archive = readFileSync(packagedArchive);
   if (archive.length === 0) {
-    throw new Error("[ElizaComputer] packaged skill archive is empty");
+    throw new Error("[Army] packaged skill archive is empty");
   }
   copyFileSync(packagedArchive, stagedPublicArchive);
   renameSync(stagedPublicArchive, archivePath);
@@ -321,13 +312,13 @@ writeFileSync(
 const manifest = {
   schemaVersion: "1",
   name: "contribute-to-eliza",
-  repository: "elizaOS/eliza",
+  repository: "elizaOS/army",
   revision: commit,
   revisionStatus: sourceRevisionStatus,
   generatedAt: new Date().toISOString(),
   source: {
     path: sourcePath,
-    url: `https://github.com/elizaOS/eliza/blob/${commit}/${sourcePath}`,
+    url: `https://github.com/elizaOS/army/blob/${commit}/${sourcePath}`,
     publicUrl: `${publicSiteOrigin}/skill.md`,
     sha256: skillDigest,
   },
@@ -360,5 +351,5 @@ writeFileSync(
 );
 
 console.log(
-  `[ElizaComputer] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
+  `[Army] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
 );
