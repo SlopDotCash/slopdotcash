@@ -296,17 +296,24 @@ function compareComment(left, right) {
   return left.id - right.id || left.url.localeCompare(right.url);
 }
 
-export function parsePaginatedJson(output) {
-  const parsed = JSON.parse(output);
-  if (!Array.isArray(parsed)) {
-    throw new TypeError("gh --slurp output must be an array of pages");
+export function parsePaginatedJson(output, endpoint = "GitHub endpoint") {
+  if (typeof output !== "string") {
+    throw new TypeError(`gh api did not return text output for ${endpoint}`);
   }
-  return parsed.flatMap((page, index) => {
-    if (!Array.isArray(page)) {
-      throw new TypeError(`gh page ${index + 1} must be an array`);
+  const records = [];
+  const lines = output.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
+    if (line.trim().length === 0) continue;
+    try {
+      records.push(JSON.parse(line));
+    } catch (error) {
+      const detail = error instanceof Error ? `: ${error.message}` : "";
+      throw new SyntaxError(
+        `gh api returned malformed JSON for ${endpoint} at output line ${index + 1}${detail}`,
+      );
     }
-    return page;
-  });
+  }
+  return records;
 }
 
 /**
@@ -317,7 +324,19 @@ export function readGhPages(endpoint, spawn = spawnSync) {
   if (typeof endpoint !== "string" || endpoint.length === 0) {
     throw new TypeError("GitHub endpoint must be a non-empty string");
   }
-  const args = ["api", "--method", "GET", "--paginate", "--slurp", endpoint];
+  // `--jq .[]` emits one compact JSON record per line across every page and is
+  // available in gh 2.45, which Ubuntu 24.04 packages. The newer `--slurp`
+  // flag first shipped in gh 2.48, so it fails before the first inventory read
+  // on that CLI. This preserves complete, ordered pagination and stays GET-only.
+  const args = [
+    "api",
+    "--method",
+    "GET",
+    "--paginate",
+    "--jq",
+    ".[]",
+    endpoint,
+  ];
   const result = spawn("gh", args, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -334,7 +353,7 @@ export function readGhPages(endpoint, spawn = spawnSync) {
   if (typeof result.stdout !== "string") {
     throw new TypeError("gh api did not return text output");
   }
-  return parsePaginatedJson(result.stdout);
+  return parsePaginatedJson(result.stdout, endpoint);
 }
 
 export function parseModelDisclosure(text) {
