@@ -4,6 +4,8 @@
  */
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertLeaderboardSnapshot,
@@ -145,7 +147,7 @@ function machineAttribution(
     `Contribution skill revision: ${skillRevision}`,
     "Attribution status: self-reported",
     "— [test-agent]",
-    `<!-- elizaos-contribution-attribution:v1 ${JSON.stringify({
+    `<!-- eliza-computer-attribution:v1 ${JSON.stringify({
       provider: provider.toLowerCase(),
       model,
       client,
@@ -296,7 +298,7 @@ describe("model attribution", () => {
         "OpenAI",
         "gpt-5.6-sol",
         "codex-desktop",
-        "elizaOS/army@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:skills/contribute-to-eliza",
+        "elizaOS/eliza@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:packages/skills/skills/contribute-to-eliza",
       ),
     );
 
@@ -310,19 +312,36 @@ describe("model attribution", () => {
       identifier: "openai/gpt-5.6-sol",
       client: "codex-desktop",
       skillRevision:
-        "elizaOS/army@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:skills/contribute-to-eliza",
+        "elizaOS/eliza@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:packages/skills/skills/contribute-to-eliza",
       format: "machine-marker",
       status: "self-reported",
     });
   });
 
-  it("keeps historical eliza-computer markers readable", () => {
+  it("accepts the PR template's attribution checklist above the appended footer (#17610)", () => {
+    // The shipped template carries `Client / agent tooling`, `Skill revision`,
+    // and `Attribution status` rows, and SKILL.md instructs appending the
+    // footer after the template. Counting labels across the whole body made
+    // those two documents mutually exclusive and invalidated 64 of 67
+    // eligible sources; only the terminal block is a footer.
     const source = textSource(
-      "COMMENT_LEGACY",
-      machineAttribution("OpenAI", "gpt-5.6-sol").replace(
-        "elizaos-contribution-attribution:v1",
-        "eliza-computer-attribution:v1",
-      ),
+      "PR_TEMPLATE:body",
+      [
+        "<!-- attribution-row:client -->",
+        "- Client / agent tooling: `client-name` / `None - human-only contribution`",
+        "<!-- attribution-row:skill-revision -->",
+        "- Skill revision: `owner/repo@full-commit-sha:path` / `N/A - no contribution skill used`",
+        "<!-- attribution-row:status -->",
+        "- Attribution status: `self-reported`",
+        "",
+        "## Summary",
+        "",
+        "Body content between the checklist and the footer.",
+        "",
+        "---",
+        "",
+        machineAttribution("OpenAI", "gpt-5.6-sol"),
+      ].join("\n"),
     );
 
     const result = assessModelAttribution([source]);
@@ -330,9 +349,104 @@ describe("model attribution", () => {
     expect(result.invalidMarkers).toEqual([]);
     expect(result.declarations).toHaveLength(1);
     expect(result.declarations[0]).toMatchObject({
-      identifier: "openai/gpt-5.6-sol",
+      provider: "openai",
+      model: "gpt-5.6-sol",
       format: "machine-marker",
     });
+  });
+
+  it("accepts the SHIPPED pull_request_template.md with the footer appended (#17610)", () => {
+    // Not a representative excerpt: the actual file every contributor starts
+    // from, unmodified, with the footer SKILL.md instructs appended last.
+    // This is the exact composition that invalidated 64 of 67 eligible
+    // sources before the terminal-block scoping.
+    const template = readFileSync(
+      resolve(process.cwd(), ".github/pull_request_template.md"),
+      "utf8",
+    );
+    const source = textSource(
+      "REAL_TEMPLATE:body",
+      [
+        template.trimEnd(),
+        "",
+        "---",
+        "",
+        machineAttribution("OpenAI", "gpt-5.6-sol"),
+      ].join("\n"),
+    );
+
+    const result = assessModelAttribution([source]);
+
+    expect(result.invalidMarkers).toEqual([]);
+    expect(result.declarations).toHaveLength(1);
+    expect(result.declarations[0]).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      format: "machine-marker",
+    });
+  });
+
+  it("still rejects duplicated footer rows adjacent to the marker", () => {
+    // Scoping the count to the terminal block must not let a second, genuinely
+    // ambiguous footer through: rows abutting the lane signature are all part
+    // of that block, so the duplicate is still caught.
+    const source = textSource(
+      "PR_ADJACENT:body",
+      [
+        "AI provider/model: OpenAI / gpt-5.6-sol",
+        "Client / agent tooling: codex-desktop",
+        "Contribution skill revision: N/A - unit test does not invoke the contribution skill",
+        "Attribution status: self-reported",
+        machineAttribution("Anthropic", "claude-opus-5"),
+      ].join("\n"),
+    );
+
+    const result = assessModelAttribution([source]);
+
+    expect(result.invalidMarkers).toEqual([
+      expect.objectContaining({
+        sourceId: "PR_ADJACENT:body",
+        reason:
+          "marker requires exactly one complete visible attribution footer",
+      }),
+    ]);
+  });
+
+  it("still rejects two complete footers separated by different lane signatures", () => {
+    // Each group here is a COMPLETE footer (all four labels plus its own
+    // lane signature), unlike the adjacent-rows case above. The
+    // one-terminal-lane-signature rule must reject this before the walk
+    // ever reaches the row-count checks.
+    const source = textSource(
+      "PR_LANE_SEPARATED:body",
+      [
+        "AI provider/model: OpenAI / gpt-5.6-sol",
+        "Client / agent tooling: codex-desktop",
+        "Contribution skill revision: N/A - unit test does not invoke the contribution skill",
+        "Attribution status: self-reported",
+        "— [lane-one]",
+        "AI provider/model: Anthropic / claude-opus-5",
+        "Client / agent tooling: codex-desktop",
+        "Contribution skill revision: N/A - unit test does not invoke the contribution skill",
+        "Attribution status: self-reported",
+        "— [lane-two]",
+        '<!-- eliza-computer-attribution:v1 {"provider":"anthropic","model":"claude-opus-5","client":"codex-desktop","skill_revision":"N/A - unit test does not invoke the contribution skill"} -->',
+      ].join("\n"),
+    );
+
+    const result = assessModelAttribution([source]);
+
+    expect(
+      result.declarations.some(
+        (declaration) => declaration.format === "machine-marker",
+      ),
+    ).toBe(false);
+    expect(result.invalidMarkers).toEqual([
+      expect.objectContaining({
+        sourceId: "PR_LANE_SEPARATED:body",
+        reason: "marker requires exactly one terminal lane signature",
+      }),
+    ]);
   });
 
   it("rejects vague names and reports malformed markers without guessing", () => {
