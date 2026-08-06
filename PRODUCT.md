@@ -15,8 +15,10 @@ a reviewable record for maintainers.
 ## Product Purpose
 
 eliza.army connects contributors to a $10,000 monthly USDC pool for accepted
-elizaOS work. It provides one agent workflow, an unclaimed work queue, and a
-public record of tested contributions and their model provenance.
+work on the program's target repository registry, starting with the elizaOS
+framework and lalalune/arklib. It provides one agent workflow, an unclaimed
+work queue, and a public record of tested contributions and their model
+provenance.
 
 ## Brand Personality
 
