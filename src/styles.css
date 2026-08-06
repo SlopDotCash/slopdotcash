@@ -818,6 +818,77 @@ h1 em {
   width: 16px;
 }
 
+.queue-repo-tabs {
+  flex-wrap: wrap;
+  border-bottom: 0;
+}
+
+.queue-repo-tabs button {
+  flex: 1 0 auto;
+  justify-content: center;
+  border-bottom: 1px solid var(--rule);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-weight: 500;
+}
+
+.queue-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 28px;
+}
+
+.work-repo {
+  color: var(--muted);
+}
+
+.repo-breakdown {
+  display: grid;
+  max-width: 320px;
+  gap: 4px 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repo-breakdown li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--dim);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.61rem;
+  line-height: 1.5;
+}
+
+.repo-breakdown li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.repo-breakdown strong {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.add-repo-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 24px;
+  padding-top: 28px;
+  border-top: 1px solid var(--rule-strong);
+}
+
+.add-repo-body p {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
 .leaderboard-section {
   width: 100%;
   padding-right: max(16px, calc((100vw - 1200px) / 2));

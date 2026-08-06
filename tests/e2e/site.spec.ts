@@ -92,6 +92,36 @@ test("loads latest snapshot, switches queues, and exposes provenance", async ({
   await pullRequestsButton.click();
   await expect(pullRequestsButton).toHaveAttribute("aria-pressed", "true");
 
+  const allRepositories = page.getByRole("button", {
+    name: /^All repositories/,
+  });
+  const elizaFilter = page.getByRole("button", { name: /^elizaOS\/eliza/ });
+  const arklibFilter = page.getByRole("button", { name: /^lalalune\/arklib/ });
+  await expect(allRepositories).toHaveAttribute("aria-pressed", "true");
+  await expect(elizaFilter).toBeVisible();
+  await arklibFilter.click();
+  await expect(arklibFilter).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("link", {
+      name: /Inspect the lalalune\/arklib queue on GitHub/,
+    }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/lalalune/arklib/pulls?q=is%3Aopen+sort%3Aupdated-desc",
+  );
+  await allRepositories.click();
+  await expect(allRepositories).toHaveAttribute("aria-pressed", "true");
+
+  await expect(
+    page.getByRole("heading", { name: /Add your repository/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Request repository onboarding/ }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/elizaOS/army/issues/new?template=add-repository.yml",
+  );
+
   await page.locator("#leaders").scrollIntoViewIfNeeded();
   const ledger = page.locator("#leaders");
   await expect(ledger).toContainText(/self-reported|Not reported/);

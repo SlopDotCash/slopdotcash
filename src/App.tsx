@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import {
+  Fragment,
   type KeyboardEvent,
   type ReactNode,
   useCallback,
@@ -30,9 +31,21 @@ import {
   assertLeaderboardSnapshot,
   type LeaderboardEntry,
   type LeaderboardSnapshot,
+  type RepositoryId,
   type ScoreEvent,
+  TARGET_REPOSITORIES,
   type WorkItem,
 } from "./lib/leaderboard";
+
+const REPOSITORY_LIST = new Intl.ListFormat("en", {
+  style: "long",
+  type: "conjunction",
+}).format(TARGET_REPOSITORIES.map((repository) => repository.displayName));
+
+const ADD_REPOSITORY_ISSUE_URL =
+  "https://github.com/elizaOS/army/issues/new?template=add-repository.yml";
+
+const ELIZA_HUB_URL = "https://github.com/elizaOS/hub";
 
 type InstallOptionId = "prompt" | "codex" | "claude";
 
@@ -417,6 +430,12 @@ function OutcomeBreakdown({
     ["Evidence categories", entry.acceptedOutcomes.evidenceCategories],
     ["Substantive reviews", entry.acceptedOutcomes.substantiveReviews],
   ] as const;
+  const pointsByRepository = TARGET_REPOSITORIES.map((repository) => ({
+    id: repository.id,
+    points: events
+      .filter((event) => event.repository === repository.id)
+      .reduce((total, event) => total + event.points, 0),
+  })).filter((repository) => repository.points > 0);
   return (
     <div>
       <ul className="outcome-breakdown">
@@ -427,6 +446,16 @@ function OutcomeBreakdown({
           </li>
         ))}
       </ul>
+      {pointsByRepository.length > 0 ? (
+        <ul className="repo-breakdown">
+          {pointsByRepository.map((repository) => (
+            <li key={repository.id}>
+              <span>{repository.id}</span>
+              <strong>{`${repository.points} pts`}</strong>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <details
         className="score-evidence"
         onToggle={(event) => {
@@ -514,8 +543,8 @@ function Leaderboard({ snapshot }: { snapshot: LeaderboardSnapshot }) {
     <div className="table-wrap">
       <table className="leaderboard-table">
         <caption className="sr-only">
-          elizaOS contribution leaders from 30-day merged outcomes and seven-day
-          verified contribution bonuses
+          Contribution leaders across the target repository registry from 30-day
+          merged outcomes and seven-day verified contribution bonuses
         </caption>
         <thead>
           <tr>
@@ -605,17 +634,21 @@ function Leaderboard({ snapshot }: { snapshot: LeaderboardSnapshot }) {
 
 function WorkQueue({ snapshot }: { snapshot: LeaderboardSnapshot }) {
   const [kind, setKind] = useState<"issues" | "pullRequests">("issues");
-  const candidateCounts = {
+  const [repository, setRepository] = useState<"all" | RepositoryId>("all");
+  const matchesRepository = (item: WorkItem): boolean =>
+    repository === "all" || item.repository === repository;
+  const candidates = {
     issues: snapshot.workQueue.issues.filter(
       (item) => item.selection.status === "candidate",
-    ).length,
+    ),
     pullRequests: snapshot.workQueue.pullRequests.filter(
       (item) => item.selection.status === "candidate",
-    ).length,
+    ),
   };
-  const items = snapshot.workQueue[kind]
-    .filter((item) => item.selection.status === "candidate")
-    .slice(0, 8);
+  const items = candidates[kind].filter(matchesRepository).slice(0, 8);
+  const linkedRepositories = snapshot.repositories.filter(
+    (entry) => repository === "all" || entry.id === repository,
+  );
 
   return (
     <div className="queue-shell">
@@ -626,15 +659,45 @@ function WorkQueue({ snapshot }: { snapshot: LeaderboardSnapshot }) {
           onClick={() => setKind("issues")}
           type="button"
         >
-          Issues <span>{candidateCounts.issues}</span>
+          Issues{" "}
+          <span>{candidates.issues.filter(matchesRepository).length}</span>
         </button>
         <button
           aria-pressed={kind === "pullRequests"}
           onClick={() => setKind("pullRequests")}
           type="button"
         >
-          Pull requests <span>{candidateCounts.pullRequests}</span>
+          Pull requests{" "}
+          <span>
+            {candidates.pullRequests.filter(matchesRepository).length}
+          </span>
         </button>
+      </fieldset>
+      <fieldset className="queue-tabs queue-repo-tabs">
+        <legend className="sr-only">Repository filter</legend>
+        <button
+          aria-pressed={repository === "all"}
+          onClick={() => setRepository("all")}
+          type="button"
+        >
+          All repositories <span>{candidates[kind].length}</span>
+        </button>
+        {snapshot.repositories.map((entry) => (
+          <button
+            aria-pressed={repository === entry.id}
+            key={entry.id}
+            onClick={() => setRepository(entry.id)}
+            type="button"
+          >
+            {entry.displayName}{" "}
+            <span>
+              {
+                candidates[kind].filter((item) => item.repository === entry.id)
+                  .length
+              }
+            </span>
+          </button>
+        ))}
       </fieldset>
       {items.length === 0 ? (
         <div className="empty-state compact">
@@ -649,12 +712,18 @@ function WorkQueue({ snapshot }: { snapshot: LeaderboardSnapshot }) {
           ))}
         </ol>
       )}
-      <ExternalAnchor
-        className="text-link"
-        href={`https://github.com/elizaOS/eliza/${kind === "issues" ? "issues" : "pulls"}?q=is%3Aopen+sort%3Aupdated-desc`}
-      >
-        Inspect the full queue on GitHub <ArrowUpRight aria-hidden="true" />
-      </ExternalAnchor>
+      <div className="queue-links">
+        {linkedRepositories.map((entry) => (
+          <ExternalAnchor
+            className="text-link"
+            href={`${entry.githubUrl}/${kind === "issues" ? "issues" : "pulls"}?q=is%3Aopen+sort%3Aupdated-desc`}
+            key={entry.id}
+          >
+            Inspect the {entry.displayName} queue on GitHub{" "}
+            <ArrowUpRight aria-hidden="true" />
+          </ExternalAnchor>
+        ))}
+      </div>
     </div>
   );
 }
@@ -720,6 +789,7 @@ function WorkQueueItem({ item }: { item: WorkItem }) {
             </span>
           </div>
           <div className="work-context">
+            <span className="work-repo">{item.repository}</span>
             <time dateTime={item.updatedAt}>
               Updated {formatDate(item.updatedAt)}
             </time>
@@ -902,8 +972,16 @@ export function App() {
               Earn money contributing to <em>open source.</em>
             </h1>
             <p className="hero-lede">
-              Accepted elizaOS work can earn from the pool. Use your coding
-              agent to finish issues and review pull requests.
+              Accepted work on the program&apos;s target repositories — now a
+              registry starting with {REPOSITORY_LIST} — can earn from the pool.
+              Use your coding agent to finish issues and review pull requests.
+              The pool funds finishing the elizaOS framework and
+              lalalune/arklib&apos;s machine-checked progress toward the
+              Ethereum Foundation&apos;s{" "}
+              <ExternalAnchor href="https://proximityprize.org/">
+                $1M Proximity Prize
+              </ExternalAnchor>
+              .
             </p>
             <div className="hero-actions">
               <a className="button primary" href="#install">
@@ -1007,6 +1085,37 @@ export function App() {
           )}
         </section>
 
+        <section className="section add-repo-section" id="add-repo">
+          <div className="section-heading split">
+            <div>
+              <h2>Add your repository.</h2>
+            </div>
+            <p>
+              The registry currently targets {REPOSITORY_LIST}. Adding a
+              repository never adds scoring capacity — contributor caps stay
+              global.
+            </p>
+          </div>
+          <div className="add-repo-body">
+            <p>
+              Want the army finishing issues and reviewing pull requests in your
+              repository? Ask the program to add it to the registry by opening
+              an issue with your repository&apos;s owner/name and a short
+              description of the work you need. Accepted repositories are hosted
+              and mirrored on{" "}
+              <ExternalAnchor href={ELIZA_HUB_URL}>Eliza Hub</ExternalAnchor>,
+              the program&apos;s Forgejo-based forge; this site is the public
+              contribution front door for the repositories it hosts.
+            </p>
+            <ExternalAnchor
+              className="button secondary"
+              href={ADD_REPOSITORY_ISSUE_URL}
+            >
+              Request repository onboarding <ArrowUpRight aria-hidden="true" />
+            </ExternalAnchor>
+          </div>
+        </section>
+
         <section className="section leaderboard-section" id="leaders">
           <div className="section-heading split">
             <div>
@@ -1037,7 +1146,8 @@ export function App() {
               <h2>How points work.</h2>
             </div>
             <p>
-              Accepted outcomes score. Raw activity and model choice do not.
+              Accepted outcomes score across every registry repository, with
+              global per-contributor caps. Raw activity and model choice do not.
             </p>
           </div>
           {snapshot ? (
@@ -1112,12 +1222,21 @@ export function App() {
         <div className="footer-links">
           <a href="/skill.md">Raw skill</a>
           <a href="/skill-manifest.json">Checksum + revision</a>
-          <ExternalAnchor href="https://github.com/elizaOS/eliza/blob/develop/CONTRIBUTING.md">
-            Contributing guide
-          </ExternalAnchor>
-          <ExternalAnchor href="https://github.com/elizaOS/eliza/blob/develop/LICENSE">
-            MIT license
-          </ExternalAnchor>
+          {TARGET_REPOSITORIES.map((repository) => (
+            <Fragment key={repository.id}>
+              <ExternalAnchor
+                href={`${repository.githubUrl}/blob/HEAD/CONTRIBUTING.md`}
+              >
+                {repository.displayName} contributing guide
+              </ExternalAnchor>
+              <ExternalAnchor
+                href={`${repository.githubUrl}/blob/HEAD/LICENSE`}
+              >
+                {repository.displayName} license
+              </ExternalAnchor>
+            </Fragment>
+          ))}
+          <ExternalAnchor href={ELIZA_HUB_URL}>Eliza Hub</ExternalAnchor>
         </div>
       </footer>
     </>

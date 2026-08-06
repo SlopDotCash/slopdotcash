@@ -3,7 +3,10 @@
  * tests. Live ingestion has separate network-backed coverage.
  */
 
-import type { LeaderboardSnapshot } from "../src/lib/leaderboard";
+import {
+  type LeaderboardSnapshot,
+  TARGET_REPOSITORIES,
+} from "../src/lib/leaderboard";
 
 export function snapshotFixture(): LeaderboardSnapshot {
   const generatedAt = new Date().toISOString();
@@ -16,8 +19,9 @@ export function snapshotFixture(): LeaderboardSnapshot {
     kind: "User",
   };
   return {
-    schemaVersion: "1",
+    schemaVersion: "2",
     repository: "elizaOS/eliza",
+    repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
     ruleVersion: "eliza-computer-v4",
     generatedAt,
     sourceUpdatedAt: generatedAt,
@@ -87,6 +91,10 @@ export function snapshotFixture(): LeaderboardSnapshot {
       fetchedAt: generatedAt,
       cutoffAt: windowTo,
       repositoryId: "R_fixture",
+      repositories: [
+        { id: "elizaOS/eliza", repositoryId: "R_fixture" },
+        { id: "lalalune/arklib", repositoryId: "R_fixture_arklib" },
+      ],
       requestCount: 7,
       searchSliceCount: 3,
       rateLimit: {
@@ -96,12 +104,12 @@ export function snapshotFixture(): LeaderboardSnapshot {
         resetAt: "2026-07-30T01:00:00.000Z",
       },
       counts: {
-        mergedPullRequests: 1,
+        mergedPullRequests: 2,
         detailedMergedPullRequests: 1,
         closedIssues: 1,
         detailedClosedIssues: 1,
         resolvedIssues: 1,
-        openIssues: 1,
+        openIssues: 2,
         openPullRequests: 1,
       },
       verificationWindow: {
@@ -121,16 +129,16 @@ export function snapshotFixture(): LeaderboardSnapshot {
       {
         rank: 1,
         actor: leaderActor,
-        score: 24,
+        score: 34,
         points: {
-          mergedPullRequests: 10,
+          mergedPullRequests: 20,
           resolvedIssues: 4,
           materialTestChanges: 4,
           evidence: 3,
           substantiveReviews: 3,
         },
         acceptedOutcomes: {
-          mergedPullRequests: 1,
+          mergedPullRequests: 2,
           resolvedIssues: 1,
           materialTestChanges: 1,
           evidenceCategories: 2,
@@ -152,6 +160,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "merged-pull-request",
         points: 10,
+        repository: "elizaOS/eliza",
         source: {
           id: "PR_fixture",
           kind: "pull-request",
@@ -162,10 +171,26 @@ export function snapshotFixture(): LeaderboardSnapshot {
         reason: "Pull request merged during the rolling window.",
       },
       {
+        id: "PR_arklib_fixture:merged",
+        actor: leaderActor,
+        category: "merged-pull-request",
+        points: 10,
+        repository: "lalalune/arklib",
+        source: {
+          id: "PR_arklib_fixture",
+          kind: "pull-request",
+          number: 12,
+          title: "Harden the ark manifest loader",
+          url: "https://github.com/lalalune/arklib/pull/12",
+        },
+        reason: "Pull request merged during the rolling window.",
+      },
+      {
         id: "ISSUE_fixture:resolved",
         actor: leaderActor,
         category: "resolved-issue",
         points: 4,
+        repository: "elizaOS/eliza",
         source: {
           id: "ISSUE_fixture",
           kind: "issue",
@@ -180,6 +205,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "material-test-change",
         points: 4,
+        repository: "elizaOS/eliza",
         source: {
           id: "PR_fixture",
           kind: "pull-request",
@@ -194,6 +220,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "evidence",
         points: 1,
+        repository: "elizaOS/eliza",
         source: {
           id: "PR_fixture",
           kind: "pull-request",
@@ -208,6 +235,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "evidence",
         points: 2,
+        repository: "elizaOS/eliza",
         source: {
           id: "PR_fixture",
           kind: "pull-request",
@@ -222,6 +250,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "substantive-review",
         points: 3,
+        repository: "elizaOS/eliza",
         source: {
           id: "REVIEW_fixture",
           kind: "review",
@@ -265,6 +294,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
           number: 17326,
           title: "Launch the eliza.army contribution protocol",
           url: "https://github.com/elizaOS/eliza/issues/17326",
+          repository: "elizaOS/eliza",
           author: leaderActor,
           createdAt: generatedAt,
           updatedAt: generatedAt,
@@ -305,6 +335,53 @@ export function snapshotFixture(): LeaderboardSnapshot {
             provenance: "self-reported",
           },
         },
+        {
+          id: "I_arklib_fixture",
+          kind: "issue",
+          number: 12,
+          title: "Document the ark ingestion contract",
+          url: "https://github.com/lalalune/arklib/issues/12",
+          repository: "lalalune/arklib",
+          author: leaderActor,
+          createdAt: generatedAt,
+          updatedAt: generatedAt,
+          labels: ["help wanted"],
+          priority: "normal",
+          actionability: "actionable",
+          isDraft: null,
+          reviewDecision: null,
+          activeReviewRequestCount: null,
+          commentCount: 0,
+          claim: {
+            status: "unclaimed",
+            source: "none",
+            kind: null,
+            actors: [],
+            claimedAt: null,
+          },
+          selection: {
+            status: "candidate",
+            reasons: [],
+          },
+          evidence: {
+            status: "missing",
+            points: 0,
+            maxPoints: 6,
+            categories: [],
+          },
+          model: {
+            status: "missing",
+            identifiers: [],
+            machineMarkerCount: 0,
+            invalidMarkerCount: 0,
+            eligibleSourceCount: 0,
+            validSourceCount: 0,
+            missingSourceCount: 0,
+            invalidSourceCount: 0,
+            humanOnlySourceCount: 0,
+            provenance: "none",
+          },
+        },
       ],
       pullRequests: [
         {
@@ -313,6 +390,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
           number: 17327,
           title: "Ship the public contribution ledger",
           url: "https://github.com/elizaOS/eliza/pull/17327",
+          repository: "elizaOS/eliza",
           author: leaderActor,
           createdAt: generatedAt,
           updatedAt: generatedAt,

@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 
 export const REQUIRED_EVIDENCE_ROWS = [
   { id: "before-screenshots", label: "Before screenshots" },
@@ -161,12 +162,17 @@ const USER_ATTACHMENT_PATH_RE = new RegExp(
   `^/user-attachments/assets/${UUID_PATH}$`,
   "i",
 );
+const REGISTRY_REPO_PATH_PATTERN = `(?:${TARGET_REPOSITORIES.map((repository) =>
+  repository.id.replaceAll(".", "\\."),
+).join("|")})`;
 const LEGACY_REPO_ASSET_PATH_RE = new RegExp(
-  `^/elizaOS/eliza/assets/[0-9]+/${UUID_PATH}$`,
+  `^/${REGISTRY_REPO_PATH_PATTERN}/assets/[0-9]+/${UUID_PATH}$`,
   "i",
 );
-const PR_EVIDENCE_RELEASE_PATH_RE =
-  /^\/elizaOS\/eliza\/releases\/download\/pr-evidence(?:-[1-9][0-9]*)?\/([^/]+)$/i;
+const PR_EVIDENCE_RELEASE_PATH_RE = new RegExp(
+  `^/${REGISTRY_REPO_PATH_PATTERN}/releases/download/pr-evidence(?:-[1-9][0-9]*)?/([^/]+)$`,
+  "i",
+);
 const LEGACY_USER_IMAGE_PATH_RE = /^\/[0-9]+\/[^/].+$/;
 
 function extensionFromPath(pathname) {

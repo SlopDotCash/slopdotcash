@@ -303,10 +303,14 @@ writeFileSync(
       join(skillDir, "agents", "openai.yaml"),
       "utf8",
     );
-    assert.match(openaiYaml, /display_name: "Contribute to elizaOS"/);
+    assert.match(
+      openaiYaml,
+      /display_name: "Contribute to elizaOS program repositories"/,
+    );
     assert.match(openaiYaml, /default_prompt: "Use \$contribute-to-eliza/);
-    assert.match(openaiYaml, /one scoped elizaOS issue/);
+    assert.match(openaiYaml, /one scoped issue/);
     assert.match(openaiYaml, /independently review one open pull request/);
+    assert.match(openaiYaml, /target-registry repository/);
   });
 });
 

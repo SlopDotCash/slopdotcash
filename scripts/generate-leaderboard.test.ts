@@ -12,6 +12,10 @@ import type {
   PullRequestRecord,
 } from "../src/lib/leaderboard";
 import {
+  PRIMARY_REPOSITORY,
+  TARGET_REPOSITORIES,
+} from "../src/lib/repositories.mjs";
+import {
   assertOpenPullRequestReferencesCurrent,
   assertOpenWorkReferencesCurrent,
   collectSearchReferences,
@@ -566,9 +570,12 @@ describe("post-evidence open-PR revalidation", () => {
 
     liveHead = "b".repeat(40);
     await expect(
-      assertOpenPullRequestReferencesCurrent(client, "REPOSITORY_ELIZA", [
-        pullRequest,
-      ]),
+      assertOpenPullRequestReferencesCurrent(
+        client,
+        PRIMARY_REPOSITORY,
+        "REPOSITORY_ELIZA",
+        [pullRequest],
+      ),
     ).rejects.toThrow(
       "Open pull-request set changed during evidence verification",
     );
@@ -632,7 +639,13 @@ describe("post-evidence open-PR revalidation", () => {
 
     liveUpdatedAt = "2026-07-30T10:01:00.000Z";
     await expect(
-      assertOpenWorkReferencesCurrent(client, "REPOSITORY_ELIZA", [issue], []),
+      assertOpenWorkReferencesCurrent(
+        client,
+        PRIMARY_REPOSITORY,
+        "REPOSITORY_ELIZA",
+        [issue],
+        [],
+      ),
     ).rejects.toThrow("Open issue set changed during evidence verification");
   });
 });
@@ -1273,9 +1286,13 @@ describe("current-head review selection", () => {
     const client: GraphqlExecutor = {
       execute: async (document, variables) => {
         requestCount += 1;
+        const owner =
+          typeof variables?.owner === "string" ? variables.owner : null;
+        const repositoryNodeId =
+          owner === "lalalune" ? "REPOSITORY_ARKLIB" : "REPOSITORY_ELIZA";
         if (document.includes("query LeaderboardPreflight")) {
           return {
-            repository: { id: "REPOSITORY_ELIZA", updatedAt },
+            repository: { id: repositoryNodeId, updatedAt },
           };
         }
         if (document.includes("query LeaderboardSearchReferences")) {
@@ -1290,15 +1307,23 @@ describe("current-head review selection", () => {
         if (document.includes("query LeaderboardOpenIssueReferences")) {
           return {
             repository: {
-              id: "REPOSITORY_ELIZA",
+              id: repositoryNodeId,
               issues: emptyConnection(),
             },
           };
         }
         if (document.includes("query LeaderboardOpenPullRequestReferences")) {
+          if (owner === "lalalune") {
+            return {
+              repository: {
+                id: repositoryNodeId,
+                pullRequests: emptyConnection(),
+              },
+            };
+          }
           return {
             repository: {
-              id: "REPOSITORY_ELIZA",
+              id: repositoryNodeId,
               pullRequests: {
                 totalCount: 2,
                 pageInfo: { hasNextPage: false, endCursor: null },
@@ -1371,6 +1396,13 @@ describe("current-head review selection", () => {
     };
 
     const snapshot = await generateLeaderboardFromGitHub(client, { now });
+    expect(snapshot.source.repositories).toEqual([
+      { id: "elizaOS/eliza", repositoryId: "REPOSITORY_ELIZA" },
+      { id: "lalalune/arklib", repositoryId: "REPOSITORY_ARKLIB" },
+    ]);
+    expect(snapshot.repositories).toEqual(
+      TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
+    );
     const staleItem = snapshot.workQueue.pullRequests.find(
       (item) => item.id === "PR_STALE",
     );
@@ -1429,6 +1461,7 @@ describe("rolling-window slicing", () => {
 
     const references = await collectSearchReferences(
       client,
+      PRIMARY_REPOSITORY,
       new Date("2026-07-30T00:00:00.000Z"),
       new Date("2026-07-30T00:02:00.000Z"),
       "closed",
@@ -1439,6 +1472,7 @@ describe("rolling-window slicing", () => {
 
     expect(references.map(({ id }) => id)).toEqual(["ISSUE_BOUNDARY"]);
     expect(queries).toHaveLength(3);
+    expect(queries[0]).toContain(`repo:${PRIMARY_REPOSITORY.id} `);
     expect(queries[1]).toContain(
       "closed:2026-07-30T00:00:00.000Z..2026-07-30T00:00:59.000Z",
     );
@@ -1470,6 +1504,7 @@ describe("rolling-window slicing", () => {
     await expect(
       collectSearchReferences(
         client,
+        PRIMARY_REPOSITORY,
         new Date("2026-07-30T00:00:00.000Z"),
         new Date("2026-07-30T00:01:00.000Z"),
         "closed",
