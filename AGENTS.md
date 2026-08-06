@@ -6,7 +6,10 @@ contribution-compute entrypoint for elizaOS.
 ## Purpose
 
 This package publishes the installable `contribute-to-eliza` skill, a live work
-queue, and a transparent contribution leaderboard scoped to `elizaOS/eliza`.
+queue, and a transparent contribution leaderboard scoped to the target
+repository registry in `src/lib/repositories.mjs` — currently `elizaOS/eliza`
+(primary) and `lalalune/arklib`. The registry is the single source of truth
+for target repositories; never hardcode a target repository elsewhere.
 It is a private application, not a library. Cloudflare Pages serves the static
 build; GitHub Actions refreshes the public data and deploys only after package
 checks pass.
@@ -43,13 +46,14 @@ the generator's test option, never environment variables.
 ```text
 assets/               repository-owned elizaOS brand assets
 skills/               canonical contributor skill and supporting references
-  src/                  React UI, data contracts, scoring helpers
-  public/               Pages headers/redirects plus generated site assets
-  scripts/              skill packaging, live GitHub ingestion, evidence capture
-  tests/                unit and real-browser coverage
-  PRODUCT.md            users, purpose, principles, accessibility
-  DESIGN.md             visual system and interaction rules
-  wrangler.toml         Cloudflare Pages Direct Upload contract
+skill-tests/          bun tests for the bundled skill scripts
+src/                  React UI, data contracts, scoring helpers
+public/               Pages headers/redirects plus generated site assets
+scripts/              skill packaging, live GitHub ingestion, evidence capture
+tests/                unit and real-browser coverage
+PRODUCT.md            users, purpose, principles, accessibility
+DESIGN.md             visual system and interaction rules
+wrangler.toml         Cloudflare Pages Direct Upload contract
 ```
 
 Generated files under `public/brand/`, `public/downloads/`, and the raw hosted
@@ -95,9 +99,12 @@ one complete transaction.
 - Keep rules versioned, public, and deterministic.
 - Deduplicate by immutable GitHub IDs.
 - Exclude bots, self-review, post-merge review, and repeated low-value comments.
-- Cap review/comment awards by actor and artifact.
+- Cap review/comment awards by actor and artifact. Per-contributor caps are
+  global across every registry repository; a second repository never adds
+  scoring capacity.
 - Model disclosure is reported provenance, not proof, and never adds points.
-- Every public snapshot records its repository, window, rule version,
+- Every public snapshot records its repository registry with per-item
+  repository attribution, the primary repository, window, rule version,
   generation time, source cutoff, and any staleness.
 
 ## Work-candidate selection contract

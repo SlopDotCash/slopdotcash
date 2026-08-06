@@ -4,8 +4,24 @@
  * prove every award, exclusion, cap, and provenance rule without network access.
  */
 
-export const LEADERBOARD_REPOSITORY = "elizaOS/eliza" as const;
-export const LEADERBOARD_SCHEMA_VERSION = "1" as const;
+import {
+  findTargetRepository,
+  PRIMARY_REPOSITORY,
+  type RepositoryId,
+  TARGET_REPOSITORIES,
+  type TargetRepository,
+} from "./repositories.mjs";
+
+export {
+  PRIMARY_REPOSITORY,
+  type RepositoryId,
+  TARGET_REPOSITORIES,
+  type TargetRepository,
+} from "./repositories.mjs";
+
+/** Backward-compatible alias for the primary registry repository. */
+export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY.id;
+export const LEADERBOARD_SCHEMA_VERSION = "2" as const;
 export const SCORE_RULE_VERSION = "eliza-computer-v4" as const;
 export const SCORE_WINDOW_DAYS = 30;
 export const VERIFICATION_WINDOW_DAYS = 7;
@@ -228,6 +244,7 @@ export interface ScoreEvent {
   actor: GitHubActor;
   category: ScoreCategory;
   points: number;
+  repository: RepositoryId;
   source: {
     id: string;
     kind: "issue" | "pull-request" | "review";
@@ -317,6 +334,7 @@ export interface WorkItem {
   number: number;
   title: string;
   url: string;
+  repository: RepositoryId;
   author: GitHubActor | null;
   createdAt: string;
   updatedAt: string;
@@ -358,6 +376,7 @@ export interface LeaderboardSourceMetadata {
   fetchedAt: string;
   cutoffAt: string;
   repositoryId: string;
+  repositories: Array<{ id: RepositoryId; repositoryId: string }>;
   requestCount: number;
   searchSliceCount: number;
   rateLimit: {
@@ -393,6 +412,7 @@ export interface LeaderboardSourceMetadata {
 export interface LeaderboardSnapshot {
   schemaVersion: typeof LEADERBOARD_SCHEMA_VERSION;
   repository: typeof LEADERBOARD_REPOSITORY;
+  repositories: TargetRepository[];
   ruleVersion: typeof SCORE_RULE_VERSION;
   generatedAt: string;
   sourceUpdatedAt: string;
@@ -683,6 +703,30 @@ function isGenericModelIdentifier(value: string): boolean {
 
 function hasMarkdownLine(body: string, pattern: RegExp): boolean {
   return attributionDeclarationLines(body).some((line) => pattern.test(line));
+}
+
+/**
+ * Resolves a GitHub artifact URL to its registry repository id. GitHub treats
+ * owner and name case-insensitively, so the canonical registry id is returned
+ * regardless of URL casing; a URL outside the registry fails closed.
+ */
+export function repositoryIdFromUrl(url: string): RepositoryId {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    // error-policy:J3 a malformed artifact URL cannot receive attribution.
+    throw new Error(`Cannot derive a target repository from URL: ${url}`);
+  }
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  const repository =
+    parsed.hostname.toLowerCase() === "github.com" && segments.length >= 2
+      ? findTargetRepository(segments[0], segments[1])
+      : null;
+  if (!repository) {
+    throw new Error(`URL is outside the target repository registry: ${url}`);
+  }
+  return repository.id;
 }
 
 function parseIsoTime(value: string): number {
@@ -1313,7 +1357,7 @@ export function isSubstantiveReview(
 function methodology(): LeaderboardMethodology {
   return {
     summary:
-      "Version 3 rewards recent accepted outcomes and verified quality while capping each contributor category so bulk automation cannot dominate the public ranking.",
+      "Version 4 rewards recent accepted outcomes and verified quality across every repository in the published target registry, while capping each contributor category globally so bulk automation and second-repository farming cannot dominate the public ranking.",
     scoringRules: [
       {
         id: "merged-pull-request",
@@ -1378,7 +1422,7 @@ function methodology(): LeaderboardMethodology {
     provenancePolicy:
       "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
     collectionPolicy:
-      "Every merged pull-request outcome is collected over 30 days with paginated, recursively split UTC time slices below GitHub Search's 1,000-result ceiling, then ordered newest-first before per-contributor caps. Verification-intensive bonuses use a complete seven-day detail window. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete repository connections. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.",
+      "The same complete collection pipeline runs for every repository in the published target registry; records merge by immutable GitHub node ID, every artifact keeps its repository attribution, and per-contributor caps apply globally across repositories. Every merged pull-request outcome is collected over 30 days with paginated, recursively split UTC time slices below GitHub Search's 1,000-result ceiling, then ordered newest-first before per-contributor caps. Verification-intensive bonuses use a complete seven-day detail window. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete repository connections. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.",
   };
 }
 
@@ -1859,6 +1903,7 @@ function issueWorkItem(
       number: issue.number,
       title: issue.title,
       url: issue.url,
+      repository: repositoryIdFromUrl(issue.url),
       author: issue.author,
       createdAt: issue.createdAt,
       updatedAt: issue.updatedAt,
@@ -1915,6 +1960,7 @@ function pullRequestWorkItem(
       number: pullRequest.number,
       title: pullRequest.title,
       url: pullRequest.url,
+      repository: repositoryIdFromUrl(pullRequest.url),
       author: pullRequest.author,
       createdAt: pullRequest.createdAt,
       updatedAt: pullRequest.updatedAt,
@@ -2071,6 +2117,7 @@ export function createLeaderboardSnapshot(
         actor: pullRequest.author,
         category: "merged-pull-request",
         points: 10,
+        repository: repositoryIdFromUrl(pullRequest.url),
         source: {
           id: pullRequest.id,
           kind: "pull-request",
@@ -2099,6 +2146,7 @@ export function createLeaderboardSnapshot(
           actor: pullRequest.author,
           category: "material-test-change",
           points: 4,
+          repository: repositoryIdFromUrl(pullRequest.url),
           source: {
             id: pullRequest.id,
             kind: "pull-request",
@@ -2136,6 +2184,7 @@ export function createLeaderboardSnapshot(
           actor: pullRequest.author,
           category: "evidence",
           points: finding.points,
+          repository: repositoryIdFromUrl(pullRequest.url),
           source: {
             id: pullRequest.id,
             kind: "pull-request",
@@ -2187,6 +2236,7 @@ export function createLeaderboardSnapshot(
         actor: review.author,
         category: "substantive-review",
         points: 3,
+        repository: repositoryIdFromUrl(review.url),
         source: {
           id: review.id,
           kind: "review",
@@ -2216,6 +2266,7 @@ export function createLeaderboardSnapshot(
         actor: contributor.author,
         category: "resolved-issue",
         points: 4,
+        repository: repositoryIdFromUrl(issue.url),
         source: {
           id: issue.id,
           kind: "issue",
@@ -2286,6 +2337,7 @@ export function createLeaderboardSnapshot(
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
     repository: LEADERBOARD_REPOSITORY,
+    repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
     ruleVersion: SCORE_RULE_VERSION,
     generatedAt: input.generatedAt,
     sourceUpdatedAt: latestSourceUpdate(input),
@@ -2419,21 +2471,29 @@ function assertRepositoryUrl(
   path: string,
   expectedKind?: "issue" | "pull-request" | "review",
   expectedNumber?: number,
-): void {
+  expectedRepository?: RepositoryId,
+): RepositoryId {
   const parsed = secureUrl(value, path);
   if (parsed.hostname.toLowerCase() !== "github.com" || parsed.search) {
     throw new Error(`${path} must use the canonical GitHub repository origin`);
   }
   const match = parsed.pathname.match(
-    /^\/elizaOS\/eliza\/(issues|pull)\/([1-9][0-9]*)\/?$/i,
+    /^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9][0-9]*)\/?$/,
   );
-  if (!match) {
+  const repository = match ? findTargetRepository(match[1], match[2]) : null;
+  if (!match || !repository) {
     throw new Error(
-      `${path} must identify an elizaOS/eliza issue or pull request`,
+      `${path} must identify an issue or pull request in a registry repository`,
     );
   }
+  if (
+    expectedRepository !== undefined &&
+    repository.id !== expectedRepository
+  ) {
+    throw new Error(`${path} does not match its declared repository`);
+  }
   const actualKind =
-    match[1].toLowerCase() === "issues" ? "issue" : "pull-request";
+    match[3].toLowerCase() === "issues" ? "issue" : "pull-request";
   if (
     expectedKind &&
     (expectedKind === "issue"
@@ -2442,7 +2502,7 @@ function assertRepositoryUrl(
   ) {
     throw new Error(`${path} kind does not match its repository URL`);
   }
-  if (expectedNumber !== undefined && Number(match[2]) !== expectedNumber) {
+  if (expectedNumber !== undefined && Number(match[4]) !== expectedNumber) {
     throw new Error(`${path} number does not match its repository URL`);
   }
   if (expectedKind === "review") {
@@ -2459,6 +2519,7 @@ function assertRepositoryUrl(
   ) {
     throw new Error(`${path} has an unsupported GitHub fragment`);
   }
+  return repository.id;
 }
 
 function assertEnum<const Values extends readonly string[]>(
@@ -2651,6 +2712,39 @@ function assertSourceValue(value: unknown, path: string): void {
   assertIsoTimestamp(source.fetchedAt, `${path}.fetchedAt`);
   assertIsoTimestamp(source.cutoffAt, `${path}.cutoffAt`);
   assertString(source.repositoryId, `${path}.repositoryId`);
+  if (
+    !Array.isArray(source.repositories) ||
+    source.repositories.length !== TARGET_REPOSITORIES.length
+  ) {
+    throw new Error(
+      `${path}.repositories must record a GraphQL node ID for every registry repository`,
+    );
+  }
+  const sourceRepositoryNodeIds = new Set<string>();
+  source.repositories.forEach((value, index) => {
+    const entryPath = `${path}.repositories[${index}]`;
+    const entry = assertObject(value, entryPath);
+    if (entry.id !== TARGET_REPOSITORIES[index].id) {
+      throw new Error(
+        `${entryPath}.id must follow the target repository registry order`,
+      );
+    }
+    assertString(entry.repositoryId, `${entryPath}.repositoryId`);
+    if (sourceRepositoryNodeIds.has(entry.repositoryId)) {
+      throw new Error(
+        `${entryPath}.repositoryId must be unique per repository`,
+      );
+    }
+    sourceRepositoryNodeIds.add(entry.repositoryId);
+    if (
+      TARGET_REPOSITORIES[index].role === "primary" &&
+      entry.repositoryId !== source.repositoryId
+    ) {
+      throw new Error(
+        `${path}.repositoryId must match the primary registry repository`,
+      );
+    }
+  });
   assertPositiveInteger(source.requestCount, `${path}.requestCount`);
   assertPositiveInteger(source.searchSliceCount, `${path}.searchSliceCount`);
 
@@ -2941,7 +3035,18 @@ function assertWorkItemValue(
   }
   assertPositiveInteger(item.number, `${path}.number`);
   assertString(item.title, `${path}.title`);
-  assertRepositoryUrl(item.url, `${path}.url`, expectedKind, item.number);
+  assertEnum(
+    item.repository,
+    TARGET_REPOSITORIES.map((repository) => repository.id),
+    `${path}.repository`,
+  );
+  assertRepositoryUrl(
+    item.url,
+    `${path}.url`,
+    expectedKind,
+    item.number,
+    item.repository as RepositoryId,
+  );
   assertNullableActor(item.author, `${path}.author`);
   assertIsoTimestamp(item.createdAt, `${path}.createdAt`);
   assertIsoTimestamp(item.updatedAt, `${path}.updatedAt`);
@@ -3226,6 +3331,11 @@ function assertLedgerValue(
     throw new Error(`${path}.points does not match its scoring category`);
   }
   assertString(event.reason, `${path}.reason`);
+  assertEnum(
+    event.repository,
+    TARGET_REPOSITORIES.map((repository) => repository.id),
+    `${path}.repository`,
+  );
   const source = assertObject(event.source, `${path}.source`);
   assertString(source.id, `${path}.source.id`);
   assertEnum(
@@ -3240,6 +3350,7 @@ function assertLedgerValue(
     `${path}.source.url`,
     source.kind,
     source.number,
+    event.repository as RepositoryId,
   );
 }
 
@@ -3293,6 +3404,37 @@ export function assertLeaderboardSnapshot(
   if (snapshot.repository !== LEADERBOARD_REPOSITORY) {
     throw new Error(`snapshot.repository must be ${LEADERBOARD_REPOSITORY}`);
   }
+  if (
+    !Array.isArray(snapshot.repositories) ||
+    snapshot.repositories.length !== TARGET_REPOSITORIES.length
+  ) {
+    throw new Error(
+      "snapshot.repositories must list the complete target repository registry",
+    );
+  }
+  snapshot.repositories.forEach((value, index) => {
+    const path = `snapshot.repositories[${index}]`;
+    const published = assertObject(value, path);
+    const registered = TARGET_REPOSITORIES[index];
+    for (const key of [
+      "id",
+      "owner",
+      "name",
+      "displayName",
+      "githubUrl",
+      "description",
+      "role",
+    ] as const) {
+      if (published[key] !== registered[key]) {
+        throw new Error(
+          `${path}.${key} does not match the target repository registry`,
+        );
+      }
+    }
+    if (Object.keys(published).length !== 7) {
+      throw new Error(`${path} must publish exactly the registry fields`);
+    }
+  });
   if (snapshot.ruleVersion !== SCORE_RULE_VERSION) {
     throw new Error(`snapshot.ruleVersion must be ${SCORE_RULE_VERSION}`);
   }

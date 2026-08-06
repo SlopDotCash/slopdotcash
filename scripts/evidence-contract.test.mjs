@@ -22,8 +22,9 @@ const now = Date.parse("2026-07-30T20:00:00.000Z");
 
 function liveLedger(overrides = {}) {
   return {
-    schemaVersion: "1",
+    schemaVersion: "2",
     repository: "elizaOS/eliza",
+    repositories: [{ id: "elizaOS/eliza" }, { id: "lalalune/arklib" }],
     generatedAt: "2026-07-30T19:58:00.000Z",
     stale: false,
     source: {
@@ -99,6 +100,17 @@ describe("live ledger readiness", () => {
     expect(() =>
       assertLiveLedgerReady(liveLedger({ ledger: [] }), { now }),
     ).toThrow("leaderboard.ledger must be a non-empty array");
+    expect(() =>
+      assertLiveLedgerReady(liveLedger({ schemaVersion: "1" }), { now }),
+    ).toThrow("leaderboard.schemaVersion must be 2");
+    expect(() =>
+      assertLiveLedgerReady(
+        liveLedger({ repositories: [{ id: "elizaOS/eliza" }] }),
+        { now },
+      ),
+    ).toThrow(
+      "leaderboard.repositories must match the target repository registry",
+    );
     expect(() =>
       assertLiveLedgerReady(
         liveLedger({

@@ -80,8 +80,83 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("@finish-line")).toBeInTheDocument();
     expect(screen.getByText("openai/gpt-5")).toBeInTheDocument();
-    expect(screen.getByText("24")).toBeInTheDocument();
+    expect(screen.getByText("34")).toBeInTheDocument();
     expect(screen.getByText("self-reported")).toBeInTheDocument();
+    expect(screen.getByText("24 pts")).toBeInTheDocument();
+    expect(screen.getByText("10 pts")).toBeInTheDocument();
+  });
+
+  it("filters the work queue by registry repository without dead controls", async () => {
+    mockFetch(
+      new Response(JSON.stringify(snapshotFixture()), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      }),
+    );
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("Launch the eliza.army contribution protocol"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Document the ark ingestion contract"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /all repositories 2/i }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /lalalune\/arklib 1/i }),
+    );
+    expect(
+      screen.getByText("Document the ark ingestion contract"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Launch the eliza.army contribution protocol"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", {
+        name: /inspect the lalalune\/arklib queue on github/i,
+      }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/lalalune/arklib/issues?q=is%3Aopen+sort%3Aupdated-desc",
+    );
+    expect(
+      screen.queryByRole("link", {
+        name: /inspect the elizaOS\/eliza queue on github/i,
+      }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /elizaOS\/eliza 1/i }));
+    expect(
+      screen.getByText("Launch the eliza.army contribution protocol"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Document the ark ingestion contract"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers a repository onboarding path to the program issue tracker", async () => {
+    mockFetch(
+      new Response(JSON.stringify(snapshotFixture()), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      }),
+    );
+
+    render(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: /add your repository/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /request repository onboarding/i }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/elizaOS/army/issues/new?template=add-repository.yml",
+    );
   });
 
   it("explains bounded evidence verification without hiding retained scores", async () => {
@@ -208,8 +283,8 @@ describe("App", () => {
     render(<App />);
 
     expect(
-      await screen.findByText("no attribution-eligible activity"),
-    ).toBeInTheDocument();
+      (await screen.findAllByText("no attribution-eligible activity")).length,
+    ).toBeGreaterThan(0);
     expect(screen.queryByText(/model missing 0\/0/i)).not.toBeInTheDocument();
   });
 
@@ -234,7 +309,7 @@ describe("App", () => {
         reasons: ["bot-authored"],
       },
     });
-    snapshot.source.counts.openIssues = 2;
+    snapshot.source.counts.openIssues = 3;
     mockFetch(
       new Response(JSON.stringify(snapshot), {
         headers: { "Content-Type": "application/json" },
@@ -250,7 +325,7 @@ describe("App", () => {
     expect(
       screen.queryByText("Automated issue that must not be advertised"),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /issues 1/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^issues 2/i })).toBeVisible();
   });
 
   it("renders an observable error and retries instead of fabricating empty data", async () => {
@@ -394,6 +469,7 @@ describe("App", () => {
       actor: leader.actor,
       category: "evidence" as const,
       points: 1,
+      repository: "elizaOS/eliza" as const,
       source: {
         id: "PR_fixture",
         kind: "pull-request" as const,

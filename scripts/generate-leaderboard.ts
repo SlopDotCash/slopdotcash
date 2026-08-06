@@ -19,7 +19,6 @@ import {
   type GitHubTextSource,
   type IssueRecord,
   isBotActor,
-  LEADERBOARD_REPOSITORY,
   type LeaderboardSnapshot,
   type LeaderboardSourceMetadata,
   type MergedPullRequestOutcome,
@@ -32,6 +31,10 @@ import {
   VERIFICATION_WINDOW_DAYS,
   type VerifiedEvidenceArtifact,
 } from "../src/lib/leaderboard";
+import {
+  TARGET_REPOSITORIES,
+  type TargetRepository,
+} from "../src/lib/repositories.mjs";
 import {
   planReferencedArtifacts,
   verifyReferencedArtifacts,
@@ -308,8 +311,8 @@ const ISSUE_FRAGMENT = `
 `;
 
 const PREFLIGHT_QUERY = `
-  query LeaderboardPreflight {
-    repository(owner: "elizaOS", name: "eliza") { id updatedAt }
+  query LeaderboardPreflight($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) { id updatedAt }
     rateLimit { cost limit remaining resetAt }
   }
 `;
@@ -377,8 +380,13 @@ const ISSUE_DETAILS_QUERY = `
 `;
 
 const OPEN_PULL_REQUEST_REFERENCES_QUERY = `
-  query LeaderboardOpenPullRequestReferences($after: String, $pageSize: Int!) {
-    repository(owner: "elizaOS", name: "eliza") {
+  query LeaderboardOpenPullRequestReferences(
+    $owner: String!
+    $name: String!
+    $after: String
+    $pageSize: Int!
+  ) {
+    repository(owner: $owner, name: $name) {
       id
       pullRequests(
         states: OPEN
@@ -396,8 +404,13 @@ const OPEN_PULL_REQUEST_REFERENCES_QUERY = `
 `;
 
 const OPEN_ISSUE_REFERENCES_QUERY = `
-  query LeaderboardOpenIssueReferences($after: String, $pageSize: Int!) {
-    repository(owner: "elizaOS", name: "eliza") {
+  query LeaderboardOpenIssueReferences(
+    $owner: String!
+    $name: String!
+    $after: String
+    $pageSize: Int!
+  ) {
+    repository(owner: $owner, name: $name) {
       id
       issues(
         states: OPEN
@@ -1297,18 +1310,25 @@ function chunks<T>(values: T[], size: number): T[][] {
 
 async function preflightRepository(
   client: GraphqlExecutor,
+  targetRepository: TargetRepository,
+  options: { requireStartingBudget: boolean },
 ): Promise<{ id: string; updatedAt: string }> {
-  const data = await client.execute(PREFLIGHT_QUERY);
+  const data = await client.execute(PREFLIGHT_QUERY, {
+    owner: targetRepository.owner,
+    name: targetRepository.name,
+  });
   const repository = child(data, "repository", "data");
-  const rateLimit = client.getRateLimit();
-  const requiredRemaining = Math.min(
-    MINIMUM_STARTING_RATE_LIMIT,
-    rateLimit.limit - MINIMUM_RATE_LIMIT_RESERVE,
-  );
-  if (rateLimit.remaining < requiredRemaining) {
-    throw new Error(
-      `GitHub GraphQL has only ${rateLimit.remaining} points remaining; at least ${requiredRemaining} are required to start a complete snapshot`,
+  if (options.requireStartingBudget) {
+    const rateLimit = client.getRateLimit();
+    const requiredRemaining = Math.min(
+      MINIMUM_STARTING_RATE_LIMIT,
+      rateLimit.limit - MINIMUM_RATE_LIMIT_RESERVE,
     );
+    if (rateLimit.remaining < requiredRemaining) {
+      throw new Error(
+        `GitHub GraphQL has only ${rateLimit.remaining} points remaining; at least ${requiredRemaining} are required to start a complete snapshot`,
+      );
+    }
   }
   return {
     id: asString(repository.id, "data.repository.id"),
@@ -1318,6 +1338,7 @@ async function preflightRepository(
 
 export async function collectSearchReferences(
   client: GraphqlExecutor,
+  repository: TargetRepository,
   from: Date,
   to: Date,
   qualifier: "closed" | "merged",
@@ -1325,7 +1346,7 @@ export async function collectSearchReferences(
   expectedKind: NodeReference["kind"],
   stats: { searchSliceCount: number },
 ): Promise<NodeReference[]> {
-  const searchQuery = `repo:${LEADERBOARD_REPOSITORY} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
+  const searchQuery = `repo:${repository.id} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
   const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
     searchQuery,
@@ -1344,6 +1365,7 @@ export async function collectSearchReferences(
     const split = midpoint(from, to);
     const left = await collectSearchReferences(
       client,
+      repository,
       from,
       split,
       qualifier,
@@ -1353,6 +1375,7 @@ export async function collectSearchReferences(
     );
     const right = await collectSearchReferences(
       client,
+      repository,
       split,
       to,
       qualifier,
@@ -1398,6 +1421,7 @@ export async function collectSearchReferences(
 
 async function countSearchResults(
   client: GraphqlExecutor,
+  repository: TargetRepository,
   from: Date,
   to: Date,
   qualifier: "closed" | "merged",
@@ -1405,7 +1429,7 @@ async function countSearchResults(
   expectedKind: NodeReference["kind"],
   stats: { searchSliceCount: number },
 ): Promise<number> {
-  const searchQuery = `repo:${LEADERBOARD_REPOSITORY} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
+  const searchQuery = `repo:${repository.id} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
   const data = await client.execute(SEARCH_REFERENCES_QUERY, {
     searchQuery,
@@ -1419,6 +1443,7 @@ async function countSearchResults(
 
 async function collectOpenReferences(
   client: GraphqlExecutor,
+  targetRepository: TargetRepository,
   document: string,
   field: "issues" | "pullRequests",
   kind: NodeReference["kind"],
@@ -1429,6 +1454,8 @@ async function collectOpenReferences(
   let repositoryId: string | null = null;
   do {
     const data = await client.execute(document, {
+      owner: targetRepository.owner,
+      name: targetRepository.name,
       after,
       pageSize: GRAPHQL_PAGE_SIZE,
     });
@@ -1974,12 +2001,14 @@ export function sameReferenceSet(
 
 async function collectStableOpenIssues(
   client: GraphqlExecutor,
+  targetRepository: TargetRepository,
   repositoryId: string,
   onProgress: (progress: GenerationProgress) => void,
 ): Promise<IssueRecord[]> {
   for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
     const before = await collectOpenReferences(
       client,
+      targetRepository,
       OPEN_ISSUE_REFERENCES_QUERY,
       "issues",
       "Issue",
@@ -1998,6 +2027,7 @@ async function collectStableOpenIssues(
       );
       const after = await collectOpenReferences(
         client,
+        targetRepository,
         OPEN_ISSUE_REFERENCES_QUERY,
         "issues",
         "Issue",
@@ -2023,12 +2053,14 @@ async function collectStableOpenIssues(
 
 async function collectStableOpenPullRequests(
   client: GraphqlExecutor,
+  targetRepository: TargetRepository,
   repositoryId: string,
   onProgress: (progress: GenerationProgress) => void,
 ): Promise<PullRequestRecord[]> {
   for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
     const before = await collectOpenReferences(
       client,
+      targetRepository,
       OPEN_PULL_REQUEST_REFERENCES_QUERY,
       "pullRequests",
       "PullRequest",
@@ -2047,6 +2079,7 @@ async function collectStableOpenPullRequests(
       );
       const after = await collectOpenReferences(
         client,
+        targetRepository,
         OPEN_PULL_REQUEST_REFERENCES_QUERY,
         "pullRequests",
         "PullRequest",
@@ -2072,11 +2105,13 @@ async function collectStableOpenPullRequests(
 
 export async function assertOpenPullRequestReferencesCurrent(
   client: GraphqlExecutor,
+  targetRepository: TargetRepository,
   repositoryId: string,
   pullRequests: PullRequestRecord[],
 ): Promise<void> {
   const current = await collectOpenReferences(
     client,
+    targetRepository,
     OPEN_PULL_REQUEST_REFERENCES_QUERY,
     "pullRequests",
     "PullRequest",
@@ -2099,11 +2134,13 @@ export async function assertOpenPullRequestReferencesCurrent(
 
 export async function assertOpenIssueReferencesCurrent(
   client: GraphqlExecutor,
+  targetRepository: TargetRepository,
   repositoryId: string,
   issues: IssueRecord[],
 ): Promise<void> {
   const current = await collectOpenReferences(
     client,
+    targetRepository,
     OPEN_ISSUE_REFERENCES_QUERY,
     "issues",
     "Issue",
@@ -2124,13 +2161,20 @@ export async function assertOpenIssueReferencesCurrent(
 
 export async function assertOpenWorkReferencesCurrent(
   client: GraphqlExecutor,
+  targetRepository: TargetRepository,
   repositoryId: string,
   issues: IssueRecord[],
   pullRequests: PullRequestRecord[],
 ): Promise<void> {
-  await assertOpenIssueReferencesCurrent(client, repositoryId, issues);
+  await assertOpenIssueReferencesCurrent(
+    client,
+    targetRepository,
+    repositoryId,
+    issues,
+  );
   await assertOpenPullRequestReferencesCurrent(
     client,
+    targetRepository,
     repositoryId,
     pullRequests,
   );
@@ -2478,119 +2522,177 @@ export async function generateLeaderboardFromGitHub(
   const onProgress = options.onProgress ?? (() => undefined);
   const stats = { searchSliceCount: 0 };
 
-  const preflight = await preflightRepository(client);
-  const mergedPullRequestReferences = await collectSearchReferences(
-    client,
-    windowFrom,
-    now,
-    "merged",
-    "is:pr is:merged",
-    "PullRequest",
-    stats,
-  );
-  const closedIssueCount = await countSearchResults(
-    client,
-    windowFrom,
-    now,
-    "closed",
-    "is:issue is:closed",
-    "Issue",
-    stats,
-  );
-  const closedIssueReferences = await collectSearchReferences(
-    client,
-    verificationWindowFrom,
-    now,
-    "closed",
-    "is:issue is:closed",
-    "Issue",
-    stats,
-  );
-  const mergedPullRequestOutcomes = mergedPullRequestReferences.map(
-    (reference) => {
+  interface RepositoryCollection {
+    repository: TargetRepository;
+    preflight: { id: string; updatedAt: string };
+    openIssues: IssueRecord[];
+    openPullRequests: PullRequestRecord[];
+  }
+  const collections: RepositoryCollection[] = [];
+  const mergedPullRequestOutcomes: MergedPullRequestOutcome[] = [];
+  const mergedPullRequests: PullRequestRecord[] = [];
+  const closedIssues: IssueRecord[] = [];
+  let closedIssueCount = 0;
+
+  for (const [index, repository] of TARGET_REPOSITORIES.entries()) {
+    const preflight = await preflightRepository(client, repository, {
+      requireStartingBudget: index === 0,
+    });
+    for (const collected of collections) {
+      if (collected.preflight.id === preflight.id) {
+        throw new Error(
+          `Registry repositories ${collected.repository.id} and ${repository.id} resolved to one GitHub node`,
+        );
+      }
+    }
+    const mergedPullRequestReferences = await collectSearchReferences(
+      client,
+      repository,
+      windowFrom,
+      now,
+      "merged",
+      "is:pr is:merged",
+      "PullRequest",
+      stats,
+    );
+    closedIssueCount += await countSearchResults(
+      client,
+      repository,
+      windowFrom,
+      now,
+      "closed",
+      "is:issue is:closed",
+      "Issue",
+      stats,
+    );
+    const closedIssueReferences = await collectSearchReferences(
+      client,
+      repository,
+      verificationWindowFrom,
+      now,
+      "closed",
+      "is:issue is:closed",
+      "Issue",
+      stats,
+    );
+    const repositoryOutcomes = mergedPullRequestReferences.map((reference) => {
       if (!reference.outcome) {
         throw new Error(
           `Merged pull request ${reference.id} is missing scalar outcome metadata`,
         );
       }
       return reference.outcome;
-    },
-  );
-  const detailedMergedPullRequestIds = new Set(
-    mergedPullRequestOutcomes
-      .filter(
-        (pullRequest) =>
-          Date.parse(pullRequest.mergedAt) >= verificationWindowFrom.getTime(),
-      )
-      .map((pullRequest) => pullRequest.id),
-  );
-  const detailedMergedPullRequestReferences =
-    mergedPullRequestReferences.filter((reference) =>
-      detailedMergedPullRequestIds.has(reference.id),
+    });
+    const detailedMergedPullRequestIds = new Set(
+      repositoryOutcomes
+        .filter(
+          (pullRequest) =>
+            Date.parse(pullRequest.mergedAt) >=
+            verificationWindowFrom.getTime(),
+        )
+        .map((pullRequest) => pullRequest.id),
     );
-  assertEstimatedBudget(
-    client,
-    detailedMergedPullRequestReferences.length,
-    closedIssueReferences.length,
-  );
+    const detailedMergedPullRequestReferences =
+      mergedPullRequestReferences.filter((reference) =>
+        detailedMergedPullRequestIds.has(reference.id),
+      );
+    assertEstimatedBudget(
+      client,
+      detailedMergedPullRequestReferences.length,
+      closedIssueReferences.length,
+    );
 
-  const mergedPullRequests = await hydratePullRequests(
-    client,
-    detailedMergedPullRequestReferences,
-    "merged",
-    onProgress,
-    "merged-pull-requests",
+    mergedPullRequestOutcomes.push(...repositoryOutcomes);
+    mergedPullRequests.push(
+      ...(await hydratePullRequests(
+        client,
+        detailedMergedPullRequestReferences,
+        "merged",
+        onProgress,
+        "merged-pull-requests",
+      )),
+    );
+    closedIssues.push(
+      ...(await hydrateIssues(
+        client,
+        closedIssueReferences,
+        "closed",
+        onProgress,
+        "resolved-issues",
+      )),
+    );
+    collections.push({
+      repository,
+      preflight,
+      openIssues: await collectStableOpenIssues(
+        client,
+        repository,
+        preflight.id,
+        onProgress,
+      ),
+      openPullRequests: await collectStableOpenPullRequests(
+        client,
+        repository,
+        preflight.id,
+        onProgress,
+      ),
+    });
+  }
+
+  const dedupedOutcomes = dedupeByNodeId(mergedPullRequestOutcomes);
+  const dedupedMergedPullRequests = dedupeByNodeId(mergedPullRequests);
+  const dedupedClosedIssues = dedupeByNodeId(closedIssues);
+  const openIssues = dedupeByNodeId(
+    collections.flatMap((collection) => collection.openIssues),
   );
-  const closedIssues = await hydrateIssues(
-    client,
-    closedIssueReferences,
-    "closed",
-    onProgress,
-    "resolved-issues",
-  );
-  const openIssues = await collectStableOpenIssues(
-    client,
-    preflight.id,
-    onProgress,
-  );
-  const openPullRequests = await collectStableOpenPullRequests(
-    client,
-    preflight.id,
-    onProgress,
+  const openPullRequests = dedupeByNodeId(
+    collections.flatMap((collection) => collection.openPullRequests),
   );
   const evidenceVerification = await verifyPullRequestEvidence(
-    [...mergedPullRequests, ...openPullRequests],
+    [...dedupedMergedPullRequests, ...openPullRequests],
     options,
   );
-  await assertOpenWorkReferencesCurrent(
-    client,
-    preflight.id,
-    openIssues,
-    openPullRequests,
-  );
+  for (const collection of collections) {
+    await assertOpenWorkReferencesCurrent(
+      client,
+      collection.repository,
+      collection.preflight.id,
+      collection.openIssues,
+      collection.openPullRequests,
+    );
+  }
 
   const allRecords = [
-    ...mergedPullRequestOutcomes,
-    ...mergedPullRequests,
-    ...closedIssues,
+    ...dedupedOutcomes,
+    ...dedupedMergedPullRequests,
+    ...dedupedClosedIssues,
     ...openIssues,
     ...openPullRequests,
   ];
+  const latestPreflightUpdate = collections
+    .map((collection) => collection.preflight.updatedAt)
+    .reduce((latest, current) =>
+      Date.parse(current) > Date.parse(latest) ? current : latest,
+    );
   const fetchedAt = new Date().toISOString();
   const rateLimit = client.getRateLimit();
   const source: LeaderboardSourceMetadata = {
     provider: "github-graphql",
     fetchedAt,
     cutoffAt: now.toISOString(),
-    repositoryId: preflight.id,
+    repositoryId: collections[0].preflight.id,
+    repositories: collections.map((collection) => ({
+      id: collection.repository.id,
+      repositoryId: collection.preflight.id,
+    })),
     requestCount: client.getRequestCount(),
     searchSliceCount: stats.searchSliceCount,
     rateLimit,
     counts: {
-      mergedPullRequests: mergedPullRequestOutcomes.length,
-      detailedMergedPullRequests: mergedPullRequests.length,
+      mergedPullRequests: dedupedOutcomes.length,
+      detailedMergedPullRequests: dedupedMergedPullRequests.length,
       closedIssues: closedIssueCount,
-      detailedClosedIssues: closedIssues.length,
+      detailedClosedIssues: dedupedClosedIssues.length,
       resolvedIssues: 0,
       openIssues: openIssues.length,
       openPullRequests: openPullRequests.length,
@@ -2612,12 +2714,12 @@ export async function generateLeaderboardFromGitHub(
     generatedAt: fetchedAt,
     windowFrom: windowFrom.toISOString(),
     windowTo: now.toISOString(),
-    sourceUpdatedAt: deriveSourceUpdatedAt(allRecords, preflight.updatedAt),
+    sourceUpdatedAt: deriveSourceUpdatedAt(allRecords, latestPreflightUpdate),
     source,
-    mergedPullRequestOutcomes,
-    mergedPullRequests,
+    mergedPullRequestOutcomes: dedupedOutcomes,
+    mergedPullRequests: dedupedMergedPullRequests,
     closedIssueCount,
-    resolvedIssues: closedIssues,
+    resolvedIssues: dedupedClosedIssues,
     openIssues,
     openPullRequests,
     verificationWindowFrom: verificationWindowFrom.toISOString(),

@@ -230,6 +230,10 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       fetchedAt: NOW,
       cutoffAt: NOW,
       repositoryId: "REPO_1",
+      repositories: [
+        { id: "elizaOS/eliza", repositoryId: "REPO_1" },
+        { id: "lalalune/arklib", repositoryId: "REPO_2" },
+      ],
       requestCount: 12,
       searchSliceCount: 30,
       rateLimit: {
@@ -1284,6 +1288,89 @@ describe("scoring and caps", () => {
         .map((event) => event.source.number)
         .sort((left, right) => right - left),
     ).toEqual([107, 106, 105, 104, 103]);
+  });
+
+  it("keeps contributor caps global across the repository registry", () => {
+    const contributor = actor("cross-repo-author");
+    const elizaPullRequests = Array.from({ length: 4 }, (_, index) =>
+      pullRequest({
+        id: `PR_ELIZA_${index + 1}`,
+        number: 600 + index,
+        author: contributor,
+        mergedAt: "2026-07-30T10:00:00.000Z",
+      }),
+    );
+    const arklibPullRequests = Array.from({ length: 3 }, (_, index) =>
+      pullRequest({
+        id: `PR_ARKLIB_${index + 1}`,
+        number: 700 + index,
+        author: contributor,
+        mergedAt: "2026-07-30T11:00:00.000Z",
+        url: `https://github.com/lalalune/ArkLib/pull/${700 + index}`,
+      }),
+    );
+
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        mergedPullRequests: [...elizaPullRequests, ...arklibPullRequests],
+      }),
+    );
+    const entry = snapshot.leaders.find(
+      (leader) => leader.actor.id === contributor.id,
+    );
+    const mergedEvents = snapshot.ledger.filter(
+      (event) => event.category === "merged-pull-request",
+    );
+
+    expect(entry).toMatchObject({
+      score: 50,
+      acceptedOutcomes: { mergedPullRequests: SCORE_CAPS.mergedPullRequests },
+    });
+    expect(mergedEvents).toHaveLength(SCORE_CAPS.mergedPullRequests);
+    expect(mergedEvents.map((event) => event.repository).sort()).toEqual([
+      "elizaOS/eliza",
+      "elizaOS/eliza",
+      "lalalune/arklib",
+      "lalalune/arklib",
+      "lalalune/arklib",
+    ]);
+  });
+
+  it("attributes work items and rejects artifacts outside the registry", () => {
+    const arklibIssue = issue({
+      id: "ISSUE_ARKLIB",
+      number: 12,
+      closedAt: null,
+      stateReason: null,
+      labels: [{ id: "LABEL_READY", name: "help wanted", color: "fff" }],
+      url: "https://github.com/lalalune/arklib/issues/12",
+    });
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        openIssues: [arklibIssue],
+        openPullRequests: [pullRequest({ mergedAt: null })],
+      }),
+    );
+
+    expect(snapshot.workQueue.issues[0].repository).toBe("lalalune/arklib");
+    expect(snapshot.workQueue.pullRequests[0].repository).toBe("elizaOS/eliza");
+    expect(snapshot.repositories.map((repository) => repository.id)).toEqual([
+      "elizaOS/eliza",
+      "lalalune/arklib",
+    ]);
+    expect(() =>
+      createLeaderboardSnapshot(
+        input({
+          mergedPullRequests: [
+            pullRequest({
+              id: "PR_FOREIGN",
+              number: 900,
+              url: "https://github.com/someone/else/pull/900",
+            }),
+          ],
+        }),
+      ),
+    ).toThrow("outside the target repository registry");
   });
 
   it("awards a canonical artifact to only its first merged pull request", () => {

@@ -1,7 +1,16 @@
 # eliza.army
 
-Accepted work on [`elizaOS/eliza`](https://github.com/elizaOS/eliza) can earn
-from a $10,000 monthly contributor pool paid in USDC.
+Accepted work on the program's target repository registry — currently
+[`elizaOS/eliza`](https://github.com/elizaOS/eliza) (primary) and
+[`lalalune/arklib`](https://github.com/lalalune/arklib) — can earn from a
+$10,000 monthly contributor pool paid in USDC. The program's repositories are
+hosted and mirrored on [Eliza Hub](https://github.com/elizaOS/hub), the
+Eliza-branded Forgejo distribution; this site is the public contribution front
+door for the repositories it hosts. Teams that want the army contributing to
+their repository can request onboarding by
+[opening an issue](https://github.com/elizaOS/army/issues/new?template=add-repository.yml)
+on `elizaOS/army`. The issue form states what an onboarding request must
+include and what happens after acceptance.
 
 If selected for a payout, publish a public Solana or Ethereum address through
 the [elizaOS profile editor](https://eliza.app/profile/edit). The editor
@@ -14,7 +23,8 @@ The package contains:
 
 - a minimal React + Vite site for installing and running the canonical
   `contribute-to-eliza` skill;
-- a GitHub ingestion/scoring pipeline scoped to this repository;
+- a GitHub ingestion/scoring pipeline spanning the target repository registry
+  in `src/lib/repositories.mjs`;
 - a transparent contribution ledger and latest GitHub work snapshot;
 - Cloudflare Pages Direct Upload configuration;
 - unit, browser, accessibility, download-integrity, and production smoke tests.
@@ -56,8 +66,12 @@ bundle.
 ## Data and scoring
 
 The production deploy generates `public/data/leaderboard.json` from the GitHub
-API immediately before building. Base merged-PR outcomes are complete across
-the rolling 30-day window. The more expensive verification data—resolved
+API immediately before building. The same complete collection pipeline runs
+for every repository in the target registry (`src/lib/repositories.mjs`);
+records merge by immutable GitHub node ID, and every score event and work item
+records its repository. The snapshot publishes the registry (`repositories`)
+alongside the backward-compatible primary `repository` field. Base merged-PR
+outcomes are complete across the rolling 30-day window. The more expensive verification data—resolved
 issues, substantive non-self reviews, material test changes, and concrete
 evidence—is complete across the trailing seven days. Every snapshot publishes
 both windows and their record counts; the generator rejects missing or
@@ -71,7 +85,9 @@ state reason alone does not qualify.
 Per-contributor caps keep the ledger from becoming a volume contest: the
 newest five merged pull requests, five resolved issues, five material-test
 bonuses, 30 evidence points, and ten substantive reviews can score in their
-respective windows. Input order cannot change which outcomes win a cap.
+respective windows. Caps are global across every registry repository — adding
+or working a second repository never adds scoring capacity — and input order
+cannot change which outcomes win a cap.
 
 Evidence points come only from immutable GitHub attachments in stable rows in
 the canonical PR body that the generator can fetch and structurally verify.
