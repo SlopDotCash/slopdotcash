@@ -16,6 +16,7 @@
     "scripts/**/*.ts",
     "src/lib/leaderboard.ts",
     "src/lib/install-command.ts",
+    "tests/fixtures.ts",
     "tests/install-authority-fixture.ts"
   ]
 }

@@ -45,6 +45,9 @@ const REPOSITORY_LIST = new Intl.ListFormat("en", {
 const ADD_REPOSITORY_ISSUE_URL =
   "https://github.com/elizaOS/army/issues/new?template=add-repository.yml";
 
+const START_PROJECT_ISSUE_URL =
+  "https://github.com/elizaOS/army/issues/new?template=start-a-project.yml";
+
 const ELIZA_HUB_URL = "https://github.com/elizaOS/hub";
 
 type InstallOptionId = "prompt" | "codex" | "claude";
@@ -1112,6 +1115,21 @@ export function App() {
               href={ADD_REPOSITORY_ISSUE_URL}
             >
               Request repository onboarding <ArrowUpRight aria-hidden="true" />
+            </ExternalAnchor>
+          </div>
+          <div className="add-repo-body">
+            <p>
+              No repository yet, or want to fund one? Propose an agent-built
+              project instead. The issue form states what the program evaluates
+              — open source, bounded work, commands that verify a change, and
+              maintainers who review agent pull requests. Opening it starts an
+              evaluation and commits no funding, amount, or date.
+            </p>
+            <ExternalAnchor
+              className="button secondary"
+              href={START_PROJECT_ISSUE_URL}
+            >
+              Propose or sponsor a project <ArrowUpRight aria-hidden="true" />
             </ExternalAnchor>
           </div>
         </section>

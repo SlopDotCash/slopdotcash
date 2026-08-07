@@ -6,6 +6,7 @@ __pycache__/
 playwright-report/
 test-results/
 evidence/
+plans/
 public/brand/
 public/downloads/
 public/skill.md

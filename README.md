@@ -10,7 +10,11 @@ door for the repositories it hosts. Teams that want the army contributing to
 their repository can request onboarding by
 [opening an issue](https://github.com/elizaOS/army/issues/new?template=add-repository.yml)
 on `elizaOS/army`. The issue form states what an onboarding request must
-include and what happens after acceptance.
+include and what happens after acceptance. Teams without a repository yet, or
+teams offering to fund one, can
+[propose or sponsor a project](https://github.com/elizaOS/army/issues/new?template=start-a-project.yml)
+with the project intake form; opening either issue starts an evaluation and
+commits no funding, amount, or date.
 
 If selected for a payout, publish a public Solana or Ethereum address through
 the [elizaOS profile editor](https://eliza.app/profile/edit). The editor
@@ -108,6 +112,58 @@ Pull-request authors never count as their own review claimant.
 
 The public methodology, window, caps, exclusions, rule version, and refresh
 timestamp ship inside every snapshot and are rendered on the site.
+
+## Operator payout planning
+
+`scripts/plan-payouts.ts` is an operator planning tool. It reads the published
+snapshot and prints a deterministic plan of how a pool would divide across the
+contributors the ledger scores. It moves no money, credits no balance, calls no
+payment or account service, and does not determine payouts. Leaderboard points
+still do not determine payouts, and no distribution rule has been approved: the
+model is an input the operator chooses, and every input is recorded in the plan
+so any plan can be recomputed and audited.
+
+`--pool` and `--model` are both required. The planner assumes neither a pool
+size nor a distribution model, because a default model would be an unapproved
+answer to how money splits.
+
+```bash
+bun run payouts:plan --pool 10000 --model proportional-by-points-v1
+bun run payouts:plan --pool 10000 --model equal-share-v1 --currency USDC
+bun run payouts:plan --pool 10000 --model equal-share-v1 --minimum-points 10 \
+  --out ~/eliza-army-plans/draft.json
+```
+
+The readable summary is written to stderr and the plan document to stdout.
+`--out` additionally writes the document atomically. A plan lists every scoring
+contributor's GitHub identity beside an amount, and this repository is public,
+so `--out` refuses any path inside `public/` and any path Git can track: write
+plans outside the working tree, or into the Git-ignored `plans/` directory.
+
+Only non-bot GitHub user accounts can hold a share. The published snapshot
+contract permits `Bot`, `Mannequin`, `Organization`, and `Unknown` actors, so
+the planner re-checks every leader instead of trusting the generator's bot
+exclusion: a bot or non-user leader fails the whole plan and points at the
+ledger that has to be regenerated.
+
+Money exists only as integer minor units of the selected currency (USD cents or
+USDC micro-units); no amount becomes a floating-point number. Each share is
+`floor(pool * weight / totalWeight)`. The leftover minor units — always fewer
+than the number of eligible contributors — are awarded one each by descending
+exact remainder, then by the plan's canonical order: weight, then lowercased
+login, login, and immutable actor ID. Published rank is deliberately not an
+ordering input, because equal scores receive different ranks purely by login.
+Allocations therefore sum to the pool exactly, and no contributor receives more
+than one minor unit above their exact share.
+
+Every allocation carries the contributor's GitHub identity and an explicitly
+unresolved `payee` record. No GitHub-identity-to-Eliza-Cloud-account mapping
+exists in this repository, so each plan reports that linkage as missing and
+lists it among the execution blockers instead of assuming an account.
+
+The planner never guesses. A missing, empty, malformed, contract-violating, or
+older-than-eight-hour snapshot fails loudly, as do an empty eligible set and a
+zero pool; it never emits an empty or zero plan.
 
 ## Deployment
 
