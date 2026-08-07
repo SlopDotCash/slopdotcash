@@ -36,7 +36,9 @@ jobs:
   quality:
     name: Skill, data, build, and browser checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # The public elizaOS ledger can contain several thousand accepted outcomes.
+    # Leave room for complete fail-closed hydration plus four browser projects.
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -72,6 +74,9 @@ jobs:
       - name: Install frozen workspace dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Reject known production dependency vulnerabilities
+        run: bun run audit:dependencies
+
       - name: Install pinned skill validator dependency
         run: |
           printf '%s\n' \
@@ -82,17 +87,27 @@ jobs:
             --require-hashes \
             --requirement "$RUNNER_TEMP/army-python-requirements.txt"
 
-      - name: Validate canonical contribution skill
+      - name: Validate project registry and every skill
         run: |
-          python scripts/skill-validation/quick_validate.py \
-            skills/contribute-to-eliza
-          bun test skill-tests/contribute-to-eliza.test.ts
+          set -euo pipefail
+          bun run projects:check
+          bun run evaluations:check
+          for skill in skills/*; do
+            test -d "$skill"
+            python scripts/skill-validation/quick_validate.py "$skill"
+          done
+          bun test skill-tests/*.test.ts
 
       - name: Generate live contribution data
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bun run leaderboard:generate
+
+      - name: Validate reward lifecycle and finalized Solana evidence
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+        run: bun run cycles:verify
 
       - name: Check types
         run: bun run typecheck

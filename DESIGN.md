@@ -1,89 +1,142 @@
-# eliza.army design system
+# Open Work design system
 
 ## Direction
 
-The page is a maintainer's merge desk after midnight: black equipment labels,
-white working notes, and one orange current running through the workflow. It
-inherits the existing elizaOS dark identity while using a public ledger rather
-than app chrome as its spatial model.
+Open Work should look like a serious public grant ledger stripped down by
+someone who believes agents can actually do the work. It is not a crypto casino,
+enterprise admin dashboard, developer conference page, or military campaign.
 
-## Color
+The visual system is warm ivory, near-black ink, and one high-energy orange.
+Large declarative type sells the opportunity; thin rules, exact amounts, and
+public evidence establish trust. Avoid gradients, glass effects, ornamental
+grids, mascots, token coins, excessive pills, and nested cards.
 
-Use the established elizaOS palette, expressed as OKLCH tokens with hex
-fallbacks.
+## Tokens
 
-| Role | OKLCH | Fallback | Use |
-| --- | --- | --- | --- |
-| Canvas | `oklch(0 0 0)` | `#000000` | Page background |
-| Surface | `oklch(0.16 0 0)` | `#101010` | Code and table surfaces |
-| Ink | `oklch(1 0 0)` | `#ffffff` | Primary text |
-| Muted ink | `oklch(0.78 0 0)` | `#b9b9b9` | Secondary copy |
-| Rule | `oklch(1 0 0 / 0.16)` | `rgba(255,255,255,.16)` | Dividers |
-| Signal | `oklch(0.70 0.20 43)` | `#ff5800` | Primary action and live state |
-| Signal hover | `oklch(0.64 0.19 43)` | `#e34d00` | Resting-orange hover |
-| Verified | `oklch(0.72 0.14 157)` | `#58c98f` | Passed/merged status |
-| Warning | `oklch(0.78 0.16 84)` | `#e9b949` | Attention status |
-| Failure | `oklch(0.67 0.20 24)` | `#ef6262` | Error status |
+| Role | Value | Use |
+| --- | --- | --- |
+| Canvas | `#f4efe4` | Warm page background |
+| Paper | `#fffdf8` | Commands, forms, and data rows |
+| Ink | `#171510` | Primary text and dark sections |
+| Muted | `#6f695f` | Supporting copy |
+| Rule | `rgba(23, 21, 16, .14)` | Structure and row boundaries |
+| Signal | `#ff5a19` | Primary action and live current |
+| Signal hover | `#d9470d` | Orange control hover; never black |
+| Error | `#b42318` | Explicit unavailable or refused state |
+| Warning | `#9a6700` | Stale, pledged, held, or unclaimed state |
 
-Orange carries roughly 10–15% of the surface. It indicates the active current;
-it is never a decorative gradient and never turns black on hover.
+Orange is functional. It marks the command to run, the live indicator, score,
+and key action—not random decoration.
 
-## Typography
+## Type
 
-Use Poppins, the committed elizaOS brand family, in weights 400, 500, 600, 700,
-and 800. Use the platform monospace stack only for commands, model identifiers,
-timestamps, and repository coordinates. Body type is `1rem` or larger with a
-maximum measure of `68ch`. Display text uses a bounded fluid scale and never
-exceeds `5.5rem` or `-0.035em` tracking.
+Use Poppins for product text and the platform monospace stack for commands,
+hashes, addresses, model ids, timestamps, and repository coordinates.
+
+- Hero: fluid 45–96px, 800 weight, tight but readable tracking.
+- Section title: fluid 39–60px, 700–800 weight.
+- Body: 15–18px with a 60–68ch measure.
+- Ledger labels: 9–12px, 700–800 weight, uppercase only for terse status.
+
+Money statements are sentences with terminal punctuation. Do not add multiple
+colored words or faux terminal syntax to the hero.
 
 ## Layout
 
-- Mobile-first, one continuous document with a `min(100% - 32px, 1200px)`
-  content rail.
-- The hero uses an asymmetric two-column split only when the install terminal
-  has room; it becomes a single decisive flow on narrow screens.
-- Major sections are separated by full-width rules and varied vertical rhythm,
-  not repeated containers.
-- The leaderboard is a semantic table on wide screens and a labelled row list
-  on narrow screens. Rank, contributor, result breakdown, model disclosure, and
-  score remain visible in both forms.
-- Commands and methodology use bounded surfaces with 3–8px radii. Cards never
-  exceed 12px and are never nested.
+- Main rail: `min(100% - 32px, 1200px)`.
+- Major sections use generous vertical rhythm and full-width background changes.
+- Project cards may sit in a two-column grid; most other content stays one
+  continuous document.
+- The project hero pairs the mission with one compact reward card.
+- Leaderboards use semantic row structure and an internally scrolling table on
+  narrow screens. The page itself must never overflow horizontally.
+- Forms pair a minimal input column with the exact generated Git file.
+- Cards use a 12px maximum radius and one border. Never nest card chrome.
 
-## Signature motif
+## Core surfaces
 
-A one-pixel orange execution trace connects the install action, workflow, and
-ledger. Small square status lamps mark live, verified, and attention states.
-The motif communicates progress; it never becomes a decorative grid or stripe
-background.
+### Discovery
 
-## Components
+The rotating all-caps hero occupies one stable line and respects reduced motion.
+Immediately below it: a two-sentence promise, “Find work,” “Fund a project,”
+and three proof signals. Project cards show reward first, then current score and
+contributors. The global leaderboard shows score, relevant tokens, live
+projection, and total paid without defaulting to the richest contributor.
 
-- **Reward callout:** exact monthly pool, public payout-address setup, and no
-  implied relationship between leaderboard points and payment.
-- **Install console:** a real selectable command, explicit copy feedback,
-  agent-specific tabs, raw skill link, and `.skill` download.
-- **Work queue:** live open issue and pull-request links with scope, labels,
-  recency, and claim state. Loading, empty, stale, and error are distinct.
-- **Contribution ledger:** transparent score rows with expandable breakdowns
-  and declared model identifiers.
-- **Methodology ledger:** exact weights, caps, time window, bot exclusions, and
-  refresh timestamp.
-- **Status notice:** icon/shape plus text; never color alone.
+### Project
+
+The mission and reward type must fit above the fold at desktop widths. A
+monthly pool reads “MONTHLY POOL”; an external opportunity reads “EXTERNAL
+OPPORTUNITY” and says who controls payment. The one-command panel is the visual
+center. Wallet setup follows only for platform-paid projects.
+
+### Wallet marker
+
+Accept one public Solana address, validate locally, generate the exact hidden
+README marker, and provide visible clipboard feedback. Place “Never paste a
+seed phrase or private key” inside the component, not in a remote policy page.
+
+### Leaderboards and profiles
+
+Rank is secondary to identity and score. Every row links to a durable profile.
+Project rows show relevant compute and bounded bonus; global rows show
+cumulative score and paid total. Historical-only contributors remain visible.
+Empty data, loading, stale data, invalid data, and zero accepted work are five
+different states.
+
+### Cycle
+
+Show lifecycle language, contribution window, amount/share, four-stage flow,
+contributor rows, evidence, and digest-linked files. “Paid” appears only when a
+settlement record has finalized on-chain proof. A closed zero-award month says
+so instead of vanishing.
+
+### Project creation
+
+Use plain fields for name, repository, branch, headline, and cap. Render the
+exact JSON beside the form and hand off to GitHub. The checklist makes the
+contributor skill, reviewer skill, safety review, and funding label explicit.
+
+## Interaction
+
+- All primary hit targets are at least 44×44px.
+- Keyboard focus is high-contrast and never removed.
+- Hover may reinforce but never reveal required information.
+- Copy actions change their label to “Copied”; clipboard denial leaves the text
+  selectable and says “Select text.”
+- Navigation uses real links so routes open in new tabs and degrade normally.
+- External links identify themselves visually and use `rel="noreferrer"`.
+- No control claims success before its boundary validates the result.
 
 ## Motion
 
-Use one brief first-load trace (500–700ms) and 100–220ms feedback transitions
-for copy, tabs, and row disclosure. Do not fade every section on scroll.
-`prefers-reduced-motion: reduce` removes trace travel and nonessential
-transforms while preserving every state change.
+The hero line may switch every 2.8 seconds. With
+`prefers-reduced-motion: reduce`, it remains on the first message. Other motion
+is limited to 100–220ms hover and feedback transitions. Do not animate counts,
+money, leaderboard order, or lifecycle truth.
 
-## Responsive and input behavior
+## Accessibility
 
-- Compose at 320px, 768px, 1024px, and 1440px without horizontal page scroll.
-- Every primary control has a 44×44px hit area and a keyboard-visible focus
-  ring.
-- Hover enhances but never reveals required information.
-- Long GitHub handles, issue titles, labels, model IDs, and translated copy wrap
-  without overlap.
-- Respect safe-area insets and print the methodology/leaderboard cleanly.
+Meet WCAG 2.2 AA at 320, 768, 1024, and 1440px.
+
+- Preserve logical heading order, landmarks, labels, and native controls.
+- Use text and shape in addition to color for every status.
+- Keep 200% zoom usable and prevent horizontal page overflow.
+- Give data tables accessible names and meaningful row links.
+- Keep changing hero text non-disruptive; reduced motion freezes it.
+- Decorative avatars use empty alt text because the adjacent login is the
+  accessible identity.
+- Validate every primary route with automated axe checks and manual keyboard,
+  desktop, and mobile inspection.
+
+## Content rules
+
+- Say “digital dollars” in marketing copy and “USDC on Solana” at transaction
+  boundaries.
+- Say “projected,” “under review,” “approved,” “scheduled,” or “paid”; never
+  flatten them into “earned.”
+- Put “accepted work can earn” next to money-forward claims.
+- Label pledges, committed funds, and external prizes differently.
+- Use “automation proposes; maintainers decide” for evaluation trust.
+- Keep legal and risk caveats concise, nearby, and legible—not hidden in crypto
+  jargon or a footer-only disclaimer.

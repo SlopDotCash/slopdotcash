@@ -12,6 +12,8 @@ interface TestAuthorityOrigins {
 }
 
 interface InstallCommandOptions {
+  skillName?: string;
+  skillRepositoryPath?: string;
   testAuthority?: TestAuthorityOrigins;
 }
 
@@ -65,6 +67,20 @@ export function createInstallCommand(
 ): string {
   const artifactOrigin = validateArtifactOrigin(origin);
   const authority = resolveAuthorityOrigins(options);
+  const skillName = options.skillName ?? "contribute-to-eliza";
+  const skillRepositoryPath =
+    options.skillRepositoryPath ?? "skills/contribute-to-eliza";
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(skillName)) {
+    throw new TypeError("[Army] skill name must be canonical kebab-case");
+  }
+  if (
+    !/^skills\/[a-z0-9][a-z0-9-]{0,63}$/u.test(skillRepositoryPath) ||
+    skillRepositoryPath !== `skills/${skillName}`
+  ) {
+    throw new TypeError(
+      "[Army] skill repository path must match the canonical skill name",
+    );
+  }
 
   return `(
   set -eu
@@ -76,7 +92,7 @@ export function createInstallCommand(
     exit 1
   fi
   trap 'exit 1' HUP INT TERM
-  python3 - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" <<'PY'
+  python3 - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} <<'PY'
 import binascii
 import hashlib
 import io
@@ -97,10 +113,8 @@ import zipfile
 import zlib
 from pathlib import PurePosixPath
 
-artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision = sys.argv[1:]
+artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path = sys.argv[1:]
 repository = "elizaOS/army"
-skill_name = "contribute-to-eliza"
-skill_repository_path = "skills/contribute-to-eliza"
 source_path = f"{skill_repository_path}/SKILL.md"
 release_label = "eliza-army-release-candidate"
 target_path = os.path.join(skills_root, skill_name)

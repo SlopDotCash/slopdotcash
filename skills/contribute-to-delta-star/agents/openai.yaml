@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contribute to Delta Star"
+  short_description: "Prove math and measure accepted ArkLib work"
+  default_prompt: "Use $contribute-to-delta-star to deliver and prove one bounded contribution to the Delta Star proximity-prize effort."

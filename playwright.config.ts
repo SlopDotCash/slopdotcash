@@ -13,6 +13,7 @@ export default defineConfig({
   reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
   use: {
     baseURL: process.env.ELIZA_ARMY_BASE_URL ?? "http://127.0.0.1:4466",
+    contextOptions: { reducedMotion: "reduce" },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

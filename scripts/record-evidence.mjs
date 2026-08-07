@@ -493,9 +493,9 @@ try {
       waitUntil: "networkidle",
     });
     await page
-      .getByText("Latest GitHub snapshot", { exact: true })
+      .getByText(/^GitHub ledger \+ reward records live/u)
       .waitFor({ state: "visible", timeout: 20_000 });
-    await page.locator("#leaders table").waitFor({ state: "visible" });
+    await page.locator("#leaderboard table").waitFor({ state: "visible" });
     if (previewServer && previewState) {
       assertPreviewRunning(previewServer, previewState);
     }
@@ -511,13 +511,33 @@ try {
     let video;
     if (recordVideo) {
       video = page.video();
-      await page.getByRole("tab", { name: "Codex" }).click();
-      await page.locator("#work").scrollIntoViewIfNeeded();
+      await page.locator("#projects").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
-      await page.getByRole("button", { name: /^Pull requests/ }).click();
-      await page.locator("#leaders").scrollIntoViewIfNeeded();
+      await page.locator("#leaderboard").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
-      await page.locator("#methodology").scrollIntoViewIfNeeded();
+
+      await page.goto(`${baseUrl}/projects/eliza?evidence=${cacheKey}`, {
+        waitUntil: "networkidle",
+      });
+      await page.locator("h1").waitFor({ state: "visible" });
+      await page.locator("#start").scrollIntoViewIfNeeded();
+      await page.waitForTimeout(900);
+      await page
+        .getByRole("textbox", { name: "Solana public address" })
+        .fill("11111111111111111111111111111111");
+      await page.locator("#wallet").scrollIntoViewIfNeeded();
+      await page.waitForTimeout(900);
+
+      await page.goto(`${baseUrl}/projects/delta-star?evidence=${cacheKey}`, {
+        waitUntil: "networkidle",
+      });
+      await page.locator("h1").waitFor({ state: "visible" });
+      await page.waitForTimeout(900);
+
+      await page.goto(`${baseUrl}/projects/new?evidence=${cacheKey}`, {
+        waitUntil: "networkidle",
+      });
+      await page.locator("h1").waitFor({ state: "visible" });
       await page.waitForTimeout(900);
       await page.locator("header").scrollIntoViewIfNeeded();
       await page.waitForTimeout(600);

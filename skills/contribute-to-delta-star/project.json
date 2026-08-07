@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1",
+  "projectId": "delta-star",
+  "repositoryId": "lalalune/arklib",
+  "skillName": "contribute-to-delta-star",
+  "skillSourcePath": "skills/contribute-to-delta-star",
+  "publicOrigin": "https://eliza.army/projects/delta-star",
+  "models": {
+    "codex": {
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "ccusageSource": "codex"
+    },
+    "claude-code": {
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "ccusageSource": "claude"
+    }
+  }
+}

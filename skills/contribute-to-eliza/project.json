@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1",
+  "projectId": "eliza",
+  "repositoryId": "elizaOS/eliza",
+  "skillName": "contribute-to-eliza",
+  "skillSourcePath": "skills/contribute-to-eliza",
+  "publicOrigin": "https://eliza.army/projects/eliza",
+  "models": {
+    "codex": {
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "ccusageSource": "codex"
+    },
+    "claude-code": {
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "ccusageSource": "claude"
+    }
+  }
+}

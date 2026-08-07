@@ -26,12 +26,13 @@ import {
   qualifiesResolvedIssue,
   SCORE_CAPS,
   SCORE_RULE_VERSION,
+  type ScoreEvent,
   type VerifiedEvidenceArtifact,
 } from "./leaderboard";
 
 const NOW = "2026-07-30T12:00:00.000Z";
-const WINDOW_FROM = "2026-06-30T12:00:00.000Z";
-const VERIFICATION_FROM = "2026-07-23T12:00:00.000Z";
+const WINDOW_FROM = "2026-06-25T12:00:00.000Z";
+const VERIFICATION_FROM = "2026-06-25T12:00:00.000Z";
 
 function actor(login: string, kind: GitHubActor["kind"] = "User"): GitHubActor {
   return {
@@ -252,7 +253,7 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
         openPullRequests: 0,
       },
       verificationWindow: {
-        days: 7,
+        days: 35,
         from: VERIFICATION_FROM,
         to: NOW,
       },
@@ -920,6 +921,81 @@ describe("outcome qualification", () => {
 });
 
 describe("scoring and caps", () => {
+  function evaluatedContribution(
+    index: number,
+    contributor = actor("partial-author"),
+  ): ScoreEvent {
+    const number = 80 + index;
+    return {
+      id: `award_partial_${index}`,
+      actor: contributor,
+      category: "evaluated-contribution",
+      points: 4 + index,
+      occurredAt: `2026-07-${String(20 + index).padStart(2, "0")}T10:00:00.000Z`,
+      repository: "elizaOS/eliza",
+      source: {
+        id: `PR_PARTIAL_${index}`,
+        kind: "pull-request",
+        number,
+        title: `Useful unmerged diagnosis ${index}`,
+        url: `https://github.com/elizaOS/eliza/pull/${number}`,
+      },
+      reason:
+        "The reviewed contribution supplied a concrete diagnosis and regression artifact reused by the accepted implementation.",
+      evaluation: {
+        reviewer: "maintainer",
+        reviewedAt: "2026-07-29T10:00:00.000Z",
+        decisionUrl: "https://github.com/elizaOS/army/pull/99",
+        manifestPath: `evaluations/eliza/award-partial-${index}.json`,
+        manifestSha256: String(index).padStart(64, "a"),
+      },
+    };
+  }
+
+  it("scores only the newest three reviewed partial-contribution awards", () => {
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        evaluatedContributions: [0, 1, 2, 3].map((index) =>
+          evaluatedContribution(index),
+        ),
+      }),
+    );
+
+    expect(snapshot.leaders[0]).toMatchObject({
+      score: 18,
+      points: { evaluatedContributions: 18 },
+      acceptedOutcomes: { evaluatedContributions: 3 },
+    });
+    expect(
+      snapshot.ledger.filter(
+        (event) => event.category === "evaluated-contribution",
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("rejects an evaluator award for a source already scored by GitHub", () => {
+    const merged = pullRequest();
+    const duplicate = {
+      ...evaluatedContribution(0, merged.author ?? actor("author")),
+      source: {
+        id: merged.id,
+        kind: "pull-request" as const,
+        number: merged.number,
+        title: merged.title,
+        url: merged.url,
+      },
+    };
+
+    expect(() =>
+      createLeaderboardSnapshot(
+        input({
+          mergedPullRequests: [merged],
+          evaluatedContributions: [duplicate],
+        }),
+      ),
+    ).toThrow("duplicates a score-bearing source");
+  });
+
   it("scores accepted outcomes while capping evidence and reviews", () => {
     const reviewer = actor("reviewer");
     const evidenceBody = [
@@ -1030,6 +1106,17 @@ describe("scoring and caps", () => {
       id: "PR_BOT",
       number: 3,
       author: bot,
+      reviews: [
+        {
+          id: "HUMAN_BOT_REVIEW",
+          body: "A human review of automated churn must not become an incentive.",
+          state: "APPROVED",
+          submittedAt: "2026-07-10T11:00:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/3#human-review",
+          author: actor("bot-reviewer"),
+          inlineCommentCount: 1,
+        },
+      ],
     });
     const humanPullRequest = pullRequest({
       author: pullRequestAuthor,
@@ -1290,7 +1377,7 @@ describe("scoring and caps", () => {
     ).toEqual([107, 106, 105, 104, 103]);
   });
 
-  it("keeps contributor caps global across the repository registry", () => {
+  it("keeps contributor caps independent across registered projects", () => {
     const contributor = actor("cross-repo-author");
     const elizaPullRequests = Array.from({ length: 4 }, (_, index) =>
       pullRequest({
@@ -1323,11 +1410,13 @@ describe("scoring and caps", () => {
     );
 
     expect(entry).toMatchObject({
-      score: 50,
-      acceptedOutcomes: { mergedPullRequests: SCORE_CAPS.mergedPullRequests },
+      score: 70,
+      acceptedOutcomes: { mergedPullRequests: 7 },
     });
-    expect(mergedEvents).toHaveLength(SCORE_CAPS.mergedPullRequests);
+    expect(mergedEvents).toHaveLength(7);
     expect(mergedEvents.map((event) => event.repository).sort()).toEqual([
+      "elizaOS/eliza",
+      "elizaOS/eliza",
       "elizaOS/eliza",
       "elizaOS/eliza",
       "lalalune/arklib",
@@ -2279,7 +2368,7 @@ describe("deduplication and public schema", () => {
         counts: { openIssues: 1, openPullRequests: 1 },
       },
     });
-    expect(snapshot.methodology.scoringRules).toHaveLength(5);
+    expect(snapshot.methodology.scoringRules).toHaveLength(6);
     expect(snapshot.methodology.nonScoringActivity).toContain(
       "model disclosure",
     );
@@ -2336,10 +2425,10 @@ describe("deduplication and public schema", () => {
       createLeaderboardSnapshot(
         input({
           mergedPullRequestOutcomes: [
-            { ...outcome, mergedAt: "2026-07-22T12:00:00.000Z" },
+            { ...outcome, mergedAt: "2026-06-24T12:00:00.000Z" },
           ],
           mergedPullRequests: [
-            { ...detail, mergedAt: "2026-07-22T12:00:00.000Z" },
+            { ...detail, mergedAt: "2026-06-24T12:00:00.000Z" },
           ],
         }),
       ),

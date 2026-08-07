@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1",
+  "id": "eliza",
+  "slug": "eliza",
+  "name": "Eliza",
+  "eyebrow": "Open-source agents",
+  "headline": "Make money building agents.",
+  "description": "Build and verify the elizaOS framework. Accepted outcomes share a monthly contributor pool.",
+  "status": "active",
+  "repositories": [
+    {
+      "id": "elizaOS/eliza",
+      "displayName": "elizaOS/eliza",
+      "githubUrl": "https://github.com/elizaOS/eliza",
+      "description": "Core elizaOS agent framework and runtime.",
+      "integrationBranch": "develop"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-eliza",
+    "sourcePath": "skills/contribute-to-eliza",
+    "publicPath": "/projects/eliza/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-eliza-contributions",
+    "sourcePath": "skills/review-eliza-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-07-07T00:00:00.000Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "10000000000",
+    "monthlyCapDisplay": "$10,000",
+    "committedMinor": "0",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "modelPolicy": {
+    "mode": "frontier-only",
+    "approved": [
+      {
+        "client": "codex",
+        "provider": "openai",
+        "model": "gpt-5.6-sol"
+      },
+      {
+        "client": "claude-code",
+        "provider": "anthropic",
+        "model": "claude-fable-5"
+      }
+    ]
+  },
+  "links": {
+    "repository": "https://github.com/elizaOS/eliza",
+    "issues": "https://github.com/elizaOS/eliza/issues",
+    "discussions": "https://github.com/elizaOS/eliza/discussions"
+  }
+}
