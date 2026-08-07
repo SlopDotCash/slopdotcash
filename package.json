@@ -11,6 +11,7 @@
     "predev": "bun run prepare:site",
     "prebuild": "bun run prepare:site",
     "leaderboard:generate": "bun scripts/generate-leaderboard.ts",
+    "payouts:plan": "bun scripts/plan-payouts.ts",
     "typecheck": "tsc -b",
     "test": "vitest run && bun test skill-tests/contribute-to-eliza.test.ts",
     "test:e2e": "playwright test",

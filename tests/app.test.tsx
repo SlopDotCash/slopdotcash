@@ -157,6 +157,12 @@ describe("App", () => {
       "href",
       "https://github.com/elizaOS/army/issues/new?template=add-repository.yml",
     );
+    expect(
+      screen.getByRole("link", { name: /propose or sponsor a project/i }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/elizaOS/army/issues/new?template=start-a-project.yml",
+    );
   });
 
   it("explains bounded evidence verification without hiding retained scores", async () => {

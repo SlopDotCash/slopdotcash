@@ -121,6 +121,12 @@ test("loads latest snapshot, switches queues, and exposes provenance", async ({
     "href",
     "https://github.com/elizaOS/army/issues/new?template=add-repository.yml",
   );
+  await expect(
+    page.getByRole("link", { name: /Propose or sponsor a project/ }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/elizaOS/army/issues/new?template=start-a-project.yml",
+  );
 
   await page.locator("#leaders").scrollIntoViewIfNeeded();
   const ledger = page.locator("#leaders");
