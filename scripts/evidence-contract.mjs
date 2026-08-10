@@ -6,9 +6,13 @@
 
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
+import {
+  PRIMARY_REPOSITORY,
+  TARGET_REPOSITORIES,
+} from "../src/lib/repositories.mjs";
 
-export const PRODUCTION_ORIGIN = "https://eliza.army";
-export const PRODUCTION_HOSTNAME = "eliza.army";
+export const PRODUCTION_ORIGIN = "https://git.army";
+export const PRODUCTION_HOSTNAME = "git.army";
 export const LIVE_LEDGER_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -118,11 +122,28 @@ export function assertLiveLedgerReady(
       : contents,
     "leaderboard",
   );
-  if (snapshot.schemaVersion !== "1") {
-    throw new TypeError("leaderboard.schemaVersion must be 1");
+  if (snapshot.schemaVersion !== "4") {
+    throw new TypeError("leaderboard.schemaVersion must be 4");
   }
-  if (snapshot.repository !== "elizaOS/eliza") {
-    throw new TypeError("leaderboard.repository must be elizaOS/eliza");
+  if (snapshot.repository !== PRIMARY_REPOSITORY.id) {
+    throw new TypeError(
+      `leaderboard.repository must be ${PRIMARY_REPOSITORY.id}`,
+    );
+  }
+  if (
+    !Array.isArray(snapshot.repositories) ||
+    snapshot.repositories.length !== TARGET_REPOSITORIES.length ||
+    TARGET_REPOSITORIES.some(
+      (repository, index) =>
+        asObject(
+          snapshot.repositories[index],
+          `leaderboard.repositories[${index}]`,
+        ).id !== repository.id,
+    )
+  ) {
+    throw new TypeError(
+      "leaderboard.repositories must match the target repository registry",
+    );
   }
   if (snapshot.stale !== false) {
     throw new TypeError("leaderboard.stale must be false");

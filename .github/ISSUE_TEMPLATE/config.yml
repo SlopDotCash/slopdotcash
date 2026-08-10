@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Add an open-source project
+    url: https://git.army/projects/new
+    about: Generate a public project manifest, contributor skill, and reviewer skill, then submit one pull request.
+  - name: Report a platform bug
+    url: https://github.com/elizaOS/army/issues/new?labels=bug&template=bug-report.md
+    about: Report a reproducible problem in the GitArmy site, data pipeline, skills, or reward tooling.
+  - name: Report a security vulnerability privately
+    url: https://github.com/elizaOS/army/security/advisories/new
+    about: Do not publish exploit details, credentials, or private data in a public issue.

@@ -132,56 +132,48 @@ describe("contribute-to-eliza skill structure", () => {
 
     assert.deepStrictEqual(keys.sort(), ["description", "name"]);
     assert.strictEqual(name, "contribute-to-eliza");
-    assert.match(
-      String(description),
-      /issue.*pull request|pull request.*issue/i,
-    );
+    assert.match(String(description), /elizaOS\/eliza/i);
+    assert.match(String(description), /implement.*review|review.*implement/i);
     assert.doesNotMatch(source, /\[TODO[:\]]/);
   });
 
-  it("encodes both modes, disclosure, security, sync, proof, and authority", () => {
+  it("encodes outcome modes, measured runs, security, sync, proof, and authority", () => {
     const source = readFileSync(skillPath, "utf8");
 
-    assert.match(source, /Mode A: finish a scoped issue/);
-    assert.match(source, /Mode B: independently review and repair/);
-    assert.match(source, /AI provider\/model: <provider> \/ <exact-model-id>/);
-    assert.match(
-      source,
-      /every issue body, issue comment, PR body, PR comment, and review body/i,
-    );
-    assert.match(source, /— \[<lane-tag>\]/);
-    assert.match(source, /lane signature must be immediately before/i);
-    assert.match(source, /elizaos-contribution-attribution:v1/);
-    assert.match(source, /Contribution skill revision:/);
-    assert.match(source, /PROVENANCE\.json/);
-    assert.match(source, /source\.sha256/);
-    assert.match(source, /revisionStatus.*committed/);
-    assert.match(source, /never substitute.*guessed SHA/i);
+    assert.match(source, /\*\*Implement\*\*/);
+    assert.match(source, /\*\*Review\*\*/);
+    assert.match(source, /\*\*Validate\*\*/);
+    assert.match(source, /run-receipt\.mjs start/);
+    assert.match(source, /run-receipt\.mjs finish/);
+    assert.match(source, /gpt-5\.6-sol/);
+    assert.match(source, /claude-fable-5/);
+    assert.match(source, /v2 marker/i);
+    assert.match(source, /device signature/i);
+    assert.match(source, /updates only to GitHub-authorized bytes/i);
     assert.match(source, /SECURITY\.md/);
     assert.match(source, /origin\/develop/);
-    assert.match(source, /package-local `AGENTS\.md` or `CLAUDE\.md`/);
-    assert.match(source, /manually inspect every trajectory, log, screenshot/);
-    assert.match(source, /Never self-approve or self-merge/);
+    assert.match(source, /nearest `AGENTS\.md` or\s+`CLAUDE\.md`/);
+    assert.match(source, /Open and inspect every artifact/i);
+    assert.match(source, /Never self-approve,\s+self-merge/i);
     assert.match(source, /--no-ext-diff --no-textconv/);
-    assert.match(source, /worktree alone is not isolation/i);
+    assert.match(source, /worktree is not isolation/i);
     assert.match(source, /network denied by\s+default/i);
     assert.match(source, /bun install --frozen-lockfile --ignore-scripts/);
-    assert.match(source, /explicit operator approval/i);
-    assert.match(source, /ephemeral,\s+least-privilege credential/i);
-    assert.match(source, /normal `gh` token, credential helper/i);
+    assert.match(source, /operator approval/i);
+    assert.match(source, /single-use least-privilege credential/i);
+    assert.match(source, /normal `gh` config/i);
   });
 
-  it("states the reward without implying a payout formula and links safe wallet setup", () => {
+  it("states the reward without letting tokens or projections promise payment", () => {
     const source = readFileSync(skillPath, "utf8");
 
-    assert.match(source, /\$10,000 monthly USDC pool/);
-    assert.match(source, /do not define or guarantee\s+a payout/i);
-    assert.match(source, /https:\/\/eliza\.app\/profile\/edit/);
-    assert.match(source, /public.*Solana or Ethereum address/i);
-    assert.match(source, /hidden\s+GitHub README comment/i);
+    assert.match(source, /\$10,000 monthly digital-dollar pool/);
+    assert.match(source, /projection is not a payment promise/i);
+    assert.match(source, /token volume alone never earns/i);
+    assert.match(source, /private key/i);
     assert.match(
       source,
-      /Never enter or share a\s+private key or seed phrase/i,
+      /signature proves byte\s+integrity.*not truthful logs/is,
     );
   });
 
@@ -303,10 +295,10 @@ writeFileSync(
       join(skillDir, "agents", "openai.yaml"),
       "utf8",
     );
-    assert.match(openaiYaml, /display_name: "Contribute to elizaOS"/);
+    assert.match(openaiYaml, /display_name: "Contribute to Eliza"/);
     assert.match(openaiYaml, /default_prompt: "Use \$contribute-to-eliza/);
-    assert.match(openaiYaml, /one scoped elizaOS issue/);
-    assert.match(openaiYaml, /independently review one open pull request/);
+    assert.match(openaiYaml, /one bounded contribution/);
+    assert.match(openaiYaml, /elizaOS\/eliza/);
   });
 });
 
@@ -516,8 +508,8 @@ describe("live report parsing", () => {
       "<details>",
       "<summary>Browser output</summary>",
       "```text",
-      "[2026-01-18T12:00:00.500Z] console.info [Army] leaderboard loaded entries=25",
-      "GET https://eliza.army/data/leaderboard.json 200 duration=84ms",
+      "[2026-01-18T12:00:00.500Z] console.info [GitArmy] leaderboard loaded entries=25",
+      "GET https://git.army/data/leaderboard.json 200 duration=84ms",
       "```",
       "</details>",
     ].join("\n");

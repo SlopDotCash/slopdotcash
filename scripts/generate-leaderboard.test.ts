@@ -9,11 +9,16 @@ import type {
   GitHubActor,
   IssueRecord,
   LeaderboardSnapshot,
+  MergedPullRequestOutcome,
   PullRequestRecord,
 } from "../src/lib/leaderboard";
 import {
+  PRIMARY_REPOSITORY,
+  TARGET_REPOSITORIES,
+} from "../src/lib/repositories.mjs";
+import {
+  assertGitArmyReferencesCurrent,
   assertOpenPullRequestReferencesCurrent,
-  assertOpenWorkReferencesCurrent,
   collectSearchReferences,
   deriveCurrentHeadReviewDecision,
   deriveSourceUpdatedAt,
@@ -22,10 +27,13 @@ import {
   type GraphqlExecutor,
   generateLeaderboardFromGitHub,
   LEADERBOARD_QUERY_DOCUMENTS,
+  OpenSetChangedError,
   resolveGitHubToken,
+  retryGitArmySnapshot,
   runGenerator,
   SEARCH_SAFE_RESULT_LIMIT,
   sameReferenceSet,
+  selectDetailedMergedPullRequestIds,
   verifyPullRequestEvidence,
 } from "./generate-leaderboard";
 
@@ -566,9 +574,12 @@ describe("post-evidence open-PR revalidation", () => {
 
     liveHead = "b".repeat(40);
     await expect(
-      assertOpenPullRequestReferencesCurrent(client, "REPOSITORY_ELIZA", [
-        pullRequest,
-      ]),
+      assertOpenPullRequestReferencesCurrent(
+        client,
+        PRIMARY_REPOSITORY,
+        "REPOSITORY_ELIZA",
+        [pullRequest],
+      ),
     ).rejects.toThrow(
       "Open pull-request set changed during evidence verification",
     );
@@ -632,7 +643,13 @@ describe("post-evidence open-PR revalidation", () => {
 
     liveUpdatedAt = "2026-07-30T10:01:00.000Z";
     await expect(
-      assertOpenWorkReferencesCurrent(client, "REPOSITORY_ELIZA", [issue], []),
+      assertGitArmyReferencesCurrent(
+        client,
+        PRIMARY_REPOSITORY,
+        "REPOSITORY_ELIZA",
+        [issue],
+        [],
+      ),
     ).rejects.toThrow("Open issue set changed during evidence verification");
   });
 });
@@ -737,10 +754,10 @@ describe("GitHub GraphQL boundary", () => {
     });
 
     await expect(client.execute("query { viewer { login } }")).rejects.toThrow(
-      "GitHub GraphQL HTTP 200 returned malformed JSON (3/3; application/json)",
+      "GitHub GraphQL HTTP 200 returned malformed JSON (5/5; application/json)",
     );
-    expect(attempts).toBe(3);
-    expect(client.getRequestCount()).toBe(3);
+    expect(attempts).toBe(5);
+    expect(client.getRequestCount()).toBe(5);
   });
 
   it("does not retry a malformed body with a non-JSON content type", async () => {
@@ -783,6 +800,27 @@ describe("GitHub GraphQL boundary", () => {
     expect(client.getRequestCount()).toBe(1);
   });
 
+  it("rejects an oversized GraphQL body before reading it", async () => {
+    let attempts = 0;
+    const fetcher = async () => {
+      attempts += 1;
+      return new Response("{}", {
+        headers: {
+          "content-length": String(64 * 1024 * 1024 + 1),
+          "content-type": "application/json",
+        },
+      });
+    };
+    const client = new GitHubGraphqlClient("secret-token", fetcher, {
+      retryBaseDelayMs: 0,
+    });
+
+    await expect(client.execute("query { viewer { login } }")).rejects.toThrow(
+      "GitHub GraphQL response exceeds 67108864 bytes",
+    );
+    expect(attempts).toBe(1);
+  });
+
   it("aborts, retries, and fails closed when every request times out", async () => {
     let attempts = 0;
     const fetcher = async (
@@ -804,10 +842,31 @@ describe("GitHub GraphQL boundary", () => {
     });
 
     await expect(client.execute("query { viewer { login } }")).rejects.toThrow(
-      "timed out after 5ms (3/3)",
+      "timed out after 5ms (5/5)",
     );
-    expect(attempts).toBe(3);
-    expect(client.getRequestCount()).toBe(3);
+    expect(attempts).toBe(5);
+    expect(client.getRequestCount()).toBe(5);
+  });
+
+  it("retries Bun connection-refused transport failures", async () => {
+    let attempts = 0;
+    const fetcher = async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw Object.assign(new Error("connection refused"), {
+          code: "ConnectionRefused",
+        });
+      }
+      return successResponse();
+    };
+    const client = new GitHubGraphqlClient("secret-token", fetcher, {
+      retryBaseDelayMs: 0,
+    });
+
+    await expect(
+      client.execute("query { viewer { login } }"),
+    ).resolves.toMatchObject({ viewer: { login: "eliza" } });
+    expect(attempts).toBe(2);
   });
 
   it("stops before returning data that exceeds the run cost budget", async () => {
@@ -982,6 +1041,106 @@ describe("rate-efficient query plan", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("deep-inspects only newest cap-relevant outcomes per actor, project, and month", () => {
+    const outcome = (
+      id: string,
+      mergedAt: string,
+      author: GitHubActor = actor("alice"),
+    ): MergedPullRequestOutcome => ({
+      id,
+      number: Number(id.replace(/\D/gu, "")) || 1,
+      title: id,
+      url: `https://github.com/elizaOS/eliza/pull/${id}`,
+      body: "",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: mergedAt,
+      mergedAt,
+      author,
+      additions: 1,
+      deletions: 0,
+    });
+    const candidates = Array.from({ length: 7 }, (_, index) => ({
+      outcome: outcome(
+        `PR_${index + 1}`,
+        `2026-07-${String(index + 1).padStart(2, "0")}T12:00:00.000Z`,
+      ),
+      projectId: "eliza",
+    }));
+    candidates.push(
+      {
+        outcome: outcome("PR_JUNE", "2026-06-30T12:00:00.000Z"),
+        projectId: "eliza",
+      },
+      {
+        outcome: outcome("PR_OTHER_PROJECT", "2026-07-01T13:00:00.000Z"),
+        projectId: "delta-star",
+      },
+      {
+        outcome: outcome(
+          "PR_BOT",
+          "2026-07-08T12:00:00.000Z",
+          actor("review-bot", "Bot"),
+        ),
+        projectId: "eliza",
+      },
+    );
+
+    expect(
+      [
+        ...selectDetailedMergedPullRequestIds(
+          candidates,
+          new Date("2026-06-01T00:00:00.000Z"),
+        ),
+      ].sort(),
+    ).toEqual(
+      [
+        "PR_3",
+        "PR_4",
+        "PR_5",
+        "PR_6",
+        "PR_7",
+        "PR_JUNE",
+        "PR_OTHER_PROJECT",
+      ].sort(),
+    );
+    expect(() =>
+      selectDetailedMergedPullRequestIds(candidates, new Date("invalid")),
+    ).toThrow("verificationWindowFrom must be a valid date");
+  });
+
+  it("recollects only typed concurrent changes to the non-scoring queue", async () => {
+    let attempts = 0;
+    await expect(
+      retryGitArmySnapshot(async (attempt) => {
+        attempts = attempt;
+        if (attempt < 3) {
+          throw new OpenSetChangedError("open pull request moved");
+        }
+        return "stable";
+      }),
+    ).resolves.toBe("stable");
+    expect(attempts).toBe(3);
+
+    await expect(
+      retryGitArmySnapshot(async () => {
+        throw new Error("evidence verifier failed");
+      }),
+    ).rejects.toThrow("evidence verifier failed");
+  });
+
+  it("fails when the non-scoring queue never stabilizes", async () => {
+    let attempts = 0;
+    await expect(
+      retryGitArmySnapshot(async (attempt) => {
+        attempts = attempt;
+        throw new OpenSetChangedError("open issue moved");
+      }),
+    ).rejects.toThrow(
+      "Open work set changed during 3 consecutive verification attempts",
+    );
+    expect(attempts).toBe(3);
   });
 });
 
@@ -1273,9 +1432,13 @@ describe("current-head review selection", () => {
     const client: GraphqlExecutor = {
       execute: async (document, variables) => {
         requestCount += 1;
+        const owner =
+          typeof variables?.owner === "string" ? variables.owner : null;
+        const repositoryNodeId =
+          owner === "lalalune" ? "REPOSITORY_ARKLIB" : "REPOSITORY_ELIZA";
         if (document.includes("query LeaderboardPreflight")) {
           return {
-            repository: { id: "REPOSITORY_ELIZA", updatedAt },
+            repository: { id: repositoryNodeId, updatedAt },
           };
         }
         if (document.includes("query LeaderboardSearchReferences")) {
@@ -1290,15 +1453,23 @@ describe("current-head review selection", () => {
         if (document.includes("query LeaderboardOpenIssueReferences")) {
           return {
             repository: {
-              id: "REPOSITORY_ELIZA",
+              id: repositoryNodeId,
               issues: emptyConnection(),
             },
           };
         }
         if (document.includes("query LeaderboardOpenPullRequestReferences")) {
+          if (owner === "lalalune") {
+            return {
+              repository: {
+                id: repositoryNodeId,
+                pullRequests: emptyConnection(),
+              },
+            };
+          }
           return {
             repository: {
-              id: "REPOSITORY_ELIZA",
+              id: repositoryNodeId,
               pullRequests: {
                 totalCount: 2,
                 pageInfo: { hasNextPage: false, endCursor: null },
@@ -1371,6 +1542,13 @@ describe("current-head review selection", () => {
     };
 
     const snapshot = await generateLeaderboardFromGitHub(client, { now });
+    expect(snapshot.source.repositories).toEqual([
+      { id: "elizaOS/eliza", repositoryId: "REPOSITORY_ELIZA" },
+      { id: "lalalune/arklib", repositoryId: "REPOSITORY_ARKLIB" },
+    ]);
+    expect(snapshot.repositories).toEqual(
+      TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
+    );
     const staleItem = snapshot.workQueue.pullRequests.find(
       (item) => item.id === "PR_STALE",
     );
@@ -1429,6 +1607,7 @@ describe("rolling-window slicing", () => {
 
     const references = await collectSearchReferences(
       client,
+      PRIMARY_REPOSITORY,
       new Date("2026-07-30T00:00:00.000Z"),
       new Date("2026-07-30T00:02:00.000Z"),
       "closed",
@@ -1439,6 +1618,7 @@ describe("rolling-window slicing", () => {
 
     expect(references.map(({ id }) => id)).toEqual(["ISSUE_BOUNDARY"]);
     expect(queries).toHaveLength(3);
+    expect(queries[0]).toContain(`repo:${PRIMARY_REPOSITORY.id} `);
     expect(queries[1]).toContain(
       "closed:2026-07-30T00:00:00.000Z..2026-07-30T00:00:59.000Z",
     );
@@ -1470,6 +1650,7 @@ describe("rolling-window slicing", () => {
     await expect(
       collectSearchReferences(
         client,
+        PRIMARY_REPOSITORY,
         new Date("2026-07-30T00:00:00.000Z"),
         new Date("2026-07-30T00:01:00.000Z"),
         "closed",

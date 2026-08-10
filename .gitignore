@@ -6,9 +6,12 @@ __pycache__/
 playwright-report/
 test-results/
 evidence/
+plans/
 public/brand/
 public/downloads/
 public/skill.md
 public/mission.md
 public/codex.md
 public/skill-manifest.json
+public/data/
+public/projects/
