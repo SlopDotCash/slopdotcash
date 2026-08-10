@@ -61,6 +61,9 @@ const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
 const HERO_LINES = [
   "MAKE MONEY SHIPPING CODE.",
+  "MAKE MONEY PROVING MATH.",
+  "MAKE MONEY DISCOVERING DRUGS.",
+  "MAKE MONEY HARDENING THE WEB.",
   "MAKE MONEY FIXING BUGS.",
   "MAKE MONEY SECURING THE INTERNET.",
   "MAKE MONEY SOLVING MATH.",
@@ -442,8 +445,20 @@ function RotatingHeroLine() {
     return () => window.clearInterval(timer);
   }, []);
   return (
-    <span className="hero-switch" aria-live="polite">
-      {HERO_LINES[index]}
+    <span className="hero-switch">
+      {HERO_LINES.map((line, lineIndex) => (
+        <span
+          aria-hidden={lineIndex === index ? undefined : true}
+          className={
+            lineIndex === index
+              ? "hero-switch-text hero-switch-text-active"
+              : "hero-switch-text"
+          }
+          key={line}
+        >
+          {line}
+        </span>
+      ))}
     </span>
   );
 }

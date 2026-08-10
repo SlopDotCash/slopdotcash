@@ -160,15 +160,30 @@ describe("discovery", () => {
     expect(
       screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
     ).toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(2_800));
+    for (const line of [
+      "MAKE MONEY PROVING MATH.",
+      "MAKE MONEY DISCOVERING DRUGS.",
+      "MAKE MONEY HARDENING THE WEB.",
+      "MAKE MONEY FIXING BUGS.",
+      "MAKE MONEY SECURING THE INTERNET.",
+      "MAKE MONEY SOLVING MATH.",
+      "MAKE MONEY ADVANCING SCIENCE.",
+      "MAKE MONEY BUILDING AGENTS.",
+    ]) {
+      act(() => vi.advanceTimersByTime(2_800));
+      expect(screen.getByRole("heading", { name: line })).toBeInTheDocument();
+      expect(screen.getByText(line)).toHaveClass("hero-switch-text-active");
+    }
+  });
+
+  it("keeps the first hero statement fixed when reduced motion is requested", () => {
+    vi.useFakeTimers();
+    mockSnapshot();
+    render(<App />);
+
+    act(() => vi.advanceTimersByTime(28_000));
     expect(
-      screen.getByRole("heading", { name: "MAKE MONEY FIXING BUGS." }),
-    ).toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(2_800));
-    expect(
-      screen.getByRole("heading", {
-        name: "MAKE MONEY SECURING THE INTERNET.",
-      }),
+      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
     ).toBeInTheDocument();
   });
 

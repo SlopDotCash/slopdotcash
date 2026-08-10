@@ -221,8 +221,38 @@ p {
 }
 
 .hero-switch {
-  display: block;
+  display: grid;
   text-wrap: balance;
+}
+
+.hero-switch-text {
+  grid-area: 1 / 1;
+  visibility: hidden;
+  opacity: 0;
+}
+
+.hero-switch-text-active {
+  visibility: visible;
+  animation: hero-line-cycle 2.8s ease-in-out both;
+}
+
+@keyframes hero-line-cycle {
+  0% {
+    opacity: 0;
+    transform: translateY(0.12em);
+  }
+  8% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  92% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-0.08em);
+  }
 }
 
 .hero-copy {
@@ -1779,6 +1809,11 @@ small,
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+  .hero-switch-text-active {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
   *,
   *::before,

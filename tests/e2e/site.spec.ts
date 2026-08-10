@@ -299,7 +299,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
       await expect(
         page.getByRole("heading", {
           exact: true,
-          name: "MAKE MONEY SECURING THE INTERNET.",
+          name: "MAKE MONEY DISCOVERING DRUGS.",
         }),
       ).toBeVisible({ timeout: 8_000 });
     }
