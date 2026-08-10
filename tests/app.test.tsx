@@ -139,9 +139,15 @@ describe("discovery", () => {
     const elizaCard = screen.getByRole("link", { name: /^Eliza /u });
     expect(within(elizaCard).getByText("$10,000")).toBeInTheDocument();
     expect(within(elizaCard).getByText("/ month")).toBeInTheDocument();
+    expect(
+      within(elizaCard).getByText(/Build and verify the elizaOS framework/u),
+    ).toBeInTheDocument();
     const deltaCard = screen.getByRole("link", { name: /^Delta Star /u });
     expect(within(deltaCard).getByText("$1,000,000")).toBeInTheDocument();
     expect(within(deltaCard).getByText("external prize")).toBeInTheDocument();
+    expect(
+      within(deltaCard).getByText(/Advance ArkLib's machine-checked/u),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText(/GitHub ledger \+ reward records live/u),
     ).not.toBeInTheDocument();

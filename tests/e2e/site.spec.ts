@@ -101,6 +101,9 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
   await expect(elizaCard.getByText("$10,000", { exact: true })).toBeVisible();
   await expect(elizaCard.getByText("/ month", { exact: true })).toBeVisible();
+  await expect(
+    elizaCard.getByText(/Build and verify the elizaOS framework/u),
+  ).toBeVisible();
   const deltaCard = page.locator('a.project-card[href="/projects/delta-star"]');
   await expect(
     deltaCard.getByText("$1,000,000", { exact: true }),
@@ -108,6 +111,20 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     deltaCard.getByText("external prize", { exact: true }),
   ).toBeVisible();
+  await expect(
+    deltaCard.getByText(/Advance ArkLib's machine-checked/u),
+  ).toBeVisible();
+  const [gridBox, elizaBox, deltaBox] = await Promise.all([
+    page.locator(".project-grid").boundingBox(),
+    elizaCard.boundingBox(),
+    deltaCard.boundingBox(),
+  ]);
+  expect(gridBox).not.toBeNull();
+  expect(elizaBox).not.toBeNull();
+  expect(deltaBox).not.toBeNull();
+  expect(elizaBox?.width).toBeGreaterThan((gridBox?.width ?? 0) - 2);
+  expect(deltaBox?.width).toBeGreaterThan((gridBox?.width ?? 0) - 2);
+  expect(deltaBox?.y).toBeGreaterThan((elizaBox?.y ?? 0) + 1);
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();

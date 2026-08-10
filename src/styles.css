@@ -119,12 +119,12 @@ input:focus-visible {
 }
 
 .hero {
-  min-height: min(760px, calc(100vh - 72px));
+  min-height: clamp(420px, 48vh, 500px);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: center;
-  padding-block: 96px;
+  justify-content: flex-start;
+  padding-block: clamp(56px, 6vh, 72px) 32px;
 }
 
 .data-notice {
@@ -333,11 +333,19 @@ p {
 }
 
 .home-section-title {
-  margin: 0 0 42px;
+  margin: 0 0 30px;
   font-size: clamp(42px, 6vw, 76px);
   font-weight: 800;
   letter-spacing: -0.06em;
   line-height: 0.95;
+}
+
+.home-projects-section {
+  padding-block: 40px 52px;
+}
+
+.home-leaderboard-section {
+  padding-block: 52px 80px;
 }
 
 .section-heading {
@@ -367,16 +375,16 @@ p {
 
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
 }
 
 .project-card {
-  min-height: 300px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 32px;
+  min-height: 230px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 52px;
+  padding: 34px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(255, 253, 248, 0.72);
@@ -412,11 +420,28 @@ p {
   color: var(--orange-dark);
 }
 
+.project-card-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 56px;
+}
+
+.project-summary {
+  max-width: 660px;
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(16px, 1.55vw, 20px);
+  line-height: 1.45;
+}
+
 .project-bounty {
   display: flex;
+  align-items: flex-end;
   flex-direction: column;
   gap: 4px;
   margin: 0;
+  text-align: right;
 }
 
 .person-cell span,
@@ -1400,6 +1425,16 @@ small {
   .proposal-grid {
     gap: 18px;
   }
+
+  .project-card-content {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+
+  .project-bounty {
+    align-items: flex-start;
+    text-align: left;
+  }
 }
 
 @media (max-width: 680px) {
@@ -1446,8 +1481,8 @@ small {
   }
 
   .hero {
-    min-height: 540px;
-    padding-block: 72px;
+    min-height: 320px;
+    padding-block: 40px 20px;
   }
 
   .hero h1,
@@ -1469,6 +1504,14 @@ small {
     padding-block: 76px;
   }
 
+  .home-projects-section {
+    padding-block: 32px 42px;
+  }
+
+  .home-leaderboard-section {
+    padding-block: 42px 60px;
+  }
+
   .section-heading {
     gap: 20px;
     margin-bottom: 30px;
@@ -1486,8 +1529,13 @@ small {
   }
 
   .project-card {
-    min-height: 260px;
+    min-height: 0;
+    gap: 42px;
     padding: 22px;
+  }
+
+  .project-summary {
+    font-size: 15px;
   }
 
   .leader-table {

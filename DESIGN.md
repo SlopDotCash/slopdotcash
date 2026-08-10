@@ -44,8 +44,9 @@ colored words or faux terminal syntax to the hero.
 ## Layout
 
 - Main rail: `min(100% - 32px, 1200px)`.
-- Major sections use generous vertical rhythm and full-width background changes.
-- Project cards may sit in a two-column grid; most other content stays one
+- Major sections use compact vertical rhythm on discovery and full-width
+  background changes where contrast is necessary.
+- Discovery project rows span the full main rail. Most other content stays one
   continuous document.
 - The project hero pairs the mission with one compact reward card.
 - Leaderboards use semantic row structure and an internally scrolling table on
@@ -58,10 +59,11 @@ colored words or faux terminal syntax to the hero.
 ### Discovery
 
 The all-caps hero uses a fixed `MAKE MONEY` first line and a typed/deleted orange
-second line. It reserves the tallest phrase and respects reduced motion. Nothing
-else competes inside the hero. Project cards show only project name and money;
-monthly bounties and external prizes remain textually distinct. The global
-leaderboard follows the project grid and shows score, relevant tokens, live
+second line. It sits high in a compact first viewport, reserves the tallest
+phrase, and respects reduced motion. Nothing else competes inside the hero.
+Each full-rail project row shows its name, one manifest-backed sentence, and
+money; monthly bounties and external prizes remain textually distinct. The
+global leaderboard follows immediately and shows score, relevant tokens, live
 projection, and total paid without defaulting to the richest contributor.
 
 ### Project

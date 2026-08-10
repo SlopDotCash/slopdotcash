@@ -88,8 +88,10 @@ types and deletes these statements in sequence:
 
 Reduced-motion users see the complete first statement without the typing
 effect. The hero has no status badge, eyebrow, explanatory copy, or proof
-chips. Project cards show only the project name and its monthly bounty or
-clearly labeled external prize. The global leaderboard follows immediately.
+chips. It stays compact so funded work enters the page quickly. Each project
+spans the content rail and shows its name, one canonical mission sentence, and
+its monthly bounty or clearly labeled external prize. The global leaderboard
+follows immediately.
 
 ### Start
 
