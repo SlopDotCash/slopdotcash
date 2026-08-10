@@ -12,6 +12,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
@@ -126,21 +127,26 @@ describe("discovery", () => {
       screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText("GitHub ledger + reward records live", {
-        exact: false,
-      }),
+      await screen.findByRole("heading", { name: "Leaderboard" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Make money building agents." }),
+      screen.getByRole("heading", { name: "Projects" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Eliza" })).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Make money solving math." }),
+      screen.getByRole("heading", { name: "Delta Star" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("$10,000 / month")).toBeInTheDocument();
-    expect(screen.getByText("$1,000,000 opportunity")).toBeInTheDocument();
+    const elizaCard = screen.getByRole("link", { name: /^Eliza /u });
+    expect(within(elizaCard).getByText("$10,000")).toBeInTheDocument();
+    expect(within(elizaCard).getByText("/ month")).toBeInTheDocument();
+    const deltaCard = screen.getByRole("link", { name: /^Delta Star /u });
+    expect(within(deltaCard).getByText("$1,000,000")).toBeInTheDocument();
+    expect(within(deltaCard).getByText("external prize")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "People shipping work." }),
-    ).toBeInTheDocument();
+      screen.queryByText(/GitHub ledger \+ reward records live/u),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("THE GITARMY NETWORK")).not.toBeInTheDocument();
+    expect(screen.queryByText("Work in. Money out.")).not.toBeInTheDocument();
     expect(screen.getByText("finish-line")).toBeInTheDocument();
   });
 
@@ -160,19 +166,37 @@ describe("discovery", () => {
     expect(
       screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
     ).toBeInTheDocument();
-    for (const line of [
-      "MAKE MONEY PROVING MATH.",
-      "MAKE MONEY DISCOVERING DRUGS.",
-      "MAKE MONEY HARDENING THE WEB.",
-      "MAKE MONEY FIXING BUGS.",
-      "MAKE MONEY SECURING THE INTERNET.",
-      "MAKE MONEY SOLVING MATH.",
-      "MAKE MONEY ADVANCING SCIENCE.",
-      "MAKE MONEY BUILDING AGENTS.",
+    const visibleAction = () =>
+      document.querySelector(".hero-typewriter")?.textContent ?? "";
+    expect(visibleAction()).toBe("SHIPPING CODE.");
+    act(() => vi.advanceTimersToNextTimer());
+    act(() => vi.advanceTimersToNextTimer());
+    expect(visibleAction()).toBe("SHIPPING CODE");
+
+    for (const action of [
+      "PROVING MATH.",
+      "DISCOVERING DRUGS.",
+      "HARDENING THE WEB.",
+      "FIXING BUGS.",
+      "SECURING THE INTERNET.",
+      "SOLVING MATH.",
+      "ADVANCING SCIENCE.",
+      "BUILDING AGENTS.",
     ]) {
-      act(() => vi.advanceTimersByTime(2_800));
-      expect(screen.getByRole("heading", { name: line })).toBeInTheDocument();
-      expect(screen.getByText(line)).toHaveClass("hero-switch-text-active");
+      let attempts = 0;
+      while (
+        (screen.queryByRole("heading", { name: `MAKE MONEY ${action}` }) ===
+          null ||
+          visibleAction() !== action) &&
+        attempts < 100
+      ) {
+        act(() => vi.advanceTimersToNextTimer());
+        attempts += 1;
+      }
+      expect(
+        screen.getByRole("heading", { name: `MAKE MONEY ${action}` }),
+      ).toBeInTheDocument();
+      expect(visibleAction()).toBe(action);
     }
   });
 
@@ -261,6 +285,10 @@ describe("project routes", () => {
       `python3 - '${window.location.origin}/projects/eliza'`,
     );
     expect(command?.value).toContain("skills/contribute-to-eliza");
+    expect(screen.queryByText("Live from GitHub")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("How credit survives review"),
+    ).not.toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Copy install command" }),
     );
