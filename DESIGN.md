@@ -59,8 +59,10 @@ colored words or faux terminal syntax to the hero.
 ### Discovery
 
 The all-caps hero uses a fixed `MAKE MONEY` first line and a typed/deleted orange
-second line. It sits high in a compact first viewport, reserves the tallest
-phrase, and respects reduced motion. Nothing else competes inside the hero.
+second line. The typed line scales independently so long desktop phrases remain
+on one line. It sits high in a compact first viewport, reserves the tallest
+phrase, and respects reduced motion. A small responsive gap separates that
+stable type box from Projects. Nothing else competes inside the hero.
 Each full-rail project row shows its name, one manifest-backed sentence, and
 money; monthly bounties and external prizes remain textually distinct. The
 global leaderboard follows immediately and shows score, relevant tokens, live

@@ -74,6 +74,8 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   page,
   request,
 }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload({ waitUntil: "networkidle" });
   const snapshot = await loadSnapshot(request);
   await loadCycles(request);
 
@@ -125,6 +127,23 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   expect(elizaBox?.width).toBeGreaterThan((gridBox?.width ?? 0) - 2);
   expect(deltaBox?.width).toBeGreaterThan((gridBox?.width ?? 0) - 2);
   expect(deltaBox?.y).toBeGreaterThan((elizaBox?.y ?? 0) + 1);
+  const visibleHeroGap = await page.evaluate(() => {
+    const typewriter = document.querySelector(".hero-typewriter");
+    const projectHeading = document.querySelector("#projects h2");
+    const textNode = typewriter?.firstChild;
+    if (!textNode || !projectHeading) return null;
+    const range = document.createRange();
+    range.selectNodeContents(textNode);
+    const textRects = Array.from(range.getClientRects());
+    const lastTextRect = textRects.at(-1);
+    if (!lastTextRect) return null;
+    return Math.round(
+      projectHeading.getBoundingClientRect().top - lastTextRect.bottom,
+    );
+  });
+  expect(visibleHeroGap).not.toBeNull();
+  expect(visibleHeroGap ?? 0).toBeGreaterThanOrEqual(16);
+  expect(visibleHeroGap ?? 0).toBeLessThanOrEqual(72);
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();
