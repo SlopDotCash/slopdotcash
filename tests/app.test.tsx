@@ -123,7 +123,7 @@ describe("discovery", () => {
     render(<App />);
 
     expect(
-      screen.getByRole("heading", { name: "MAKE MONEY BUILDING AGENTS." }),
+      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
     ).toBeInTheDocument();
     expect(
       await screen.findByText("GitHub ledger + reward records live", {
@@ -158,11 +158,17 @@ describe("discovery", () => {
     render(<App />);
 
     expect(
-      screen.getByRole("heading", { name: "MAKE MONEY BUILDING AGENTS." }),
+      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
     ).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(2_800));
     expect(
-      screen.getByRole("heading", { name: "MAKE MONEY SOLVING MATH." }),
+      screen.getByRole("heading", { name: "MAKE MONEY FIXING BUGS." }),
+    ).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(2_800));
+    expect(
+      screen.getByRole("heading", {
+        name: "MAKE MONEY SECURING THE INTERNET.",
+      }),
     ).toBeInTheDocument();
   });
 
