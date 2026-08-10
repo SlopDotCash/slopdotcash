@@ -57,10 +57,11 @@ colored words or faux terminal syntax to the hero.
 
 ### Discovery
 
-The rotating all-caps hero occupies one stable line and respects reduced motion.
-Immediately below it: a two-sentence promise, “Find work,” “Fund a project,”
-and three proof signals. Project cards show reward first, then current score and
-contributors. The global leaderboard shows score, relevant tokens, live
+The all-caps hero uses a fixed `MAKE MONEY` first line and a typed/deleted orange
+second line. It reserves the tallest phrase and respects reduced motion. Nothing
+else competes inside the hero. Project cards show only project name and money;
+monthly bounties and external prizes remain textually distinct. The global
+leaderboard follows the project grid and shows score, relevant tokens, live
 projection, and total paid without defaulting to the richest contributor.
 
 ### Project
@@ -110,13 +111,14 @@ contributor skill, reviewer skill, safety review, and funding label explicit.
 
 ## Motion
 
-The hero line switches every 2.8 seconds with a short vertical fade at each
-edge of the cycle. Its grid reserves the tallest phrase so the page does not
+The hero holds each complete phrase, deletes it character by character, then
+types the next phrase. Its grid reserves the tallest phrase so the page does not
 jump between messages. With `prefers-reduced-motion: reduce`, it remains on the
-first message without animation. The rotating copy is not a live-region
-announcement. Other motion is limited to 100–220ms hover and feedback
-transitions. Do not animate counts, money, leaderboard order, or lifecycle
-truth.
+first complete message without a cursor. Partial typing is visual only; the
+heading exposes the complete current phrase as its accessible name and is not a
+live-region announcement. Other motion is limited to 100–220ms hover and
+feedback transitions. Do not animate counts, money, leaderboard order, or
+lifecycle truth.
 
 ## Accessibility
 

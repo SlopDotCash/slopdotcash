@@ -11,10 +11,8 @@ import {
   CircleAlert,
   Clipboard,
   ExternalLink,
-  GitPullRequest,
   Menu,
   RotateCcw,
-  ShieldCheck,
   X,
 } from "lucide-react";
 import {
@@ -35,7 +33,6 @@ import {
   type GitHubActor,
   type LeaderboardSnapshot,
   type ScoreEvent,
-  type WorkItem,
 } from "./lib/leaderboard";
 import {
   formatMonthlyCapDisplay,
@@ -54,22 +51,27 @@ import {
 import { isSolanaAddress } from "./lib/wallets";
 
 const SOURCE_REPOSITORY = "https://github.com/elizaOS/army";
+const HUB_ORIGIN = "https://git.eliza.army";
 const PROJECT_PROPOSAL_ROOT = `${SOURCE_REPOSITORY}/new/develop`;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
 const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
-const HERO_LINES = [
-  "MAKE MONEY SHIPPING CODE.",
-  "MAKE MONEY PROVING MATH.",
-  "MAKE MONEY DISCOVERING DRUGS.",
-  "MAKE MONEY HARDENING THE WEB.",
-  "MAKE MONEY FIXING BUGS.",
-  "MAKE MONEY SECURING THE INTERNET.",
-  "MAKE MONEY SOLVING MATH.",
-  "MAKE MONEY ADVANCING SCIENCE.",
-  "MAKE MONEY BUILDING AGENTS.",
+const HERO_ACTIONS = [
+  "SHIPPING CODE.",
+  "PROVING MATH.",
+  "DISCOVERING DRUGS.",
+  "HARDENING THE WEB.",
+  "FIXING BUGS.",
+  "SECURING THE INTERNET.",
+  "SOLVING MATH.",
+  "ADVANCING SCIENCE.",
+  "BUILDING AGENTS.",
 ] as const;
+const HERO_HOLD_MS = 1_800;
+const HERO_TYPE_MS = 55;
+const HERO_DELETE_MS = 30;
+const HERO_GAP_MS = 220;
 
 type DataState =
   | { status: "loading" }
@@ -356,7 +358,7 @@ function Header() {
         <nav className={open ? "nav-links nav-links-open" : "nav-links"}>
           <Link href="/#projects">Projects</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
-          <Link href="/projects/new">Add a project</Link>
+          <ExternalLinkAnchor href={HUB_ORIGIN}>Hub</ExternalLinkAnchor>
           <ExternalLinkAnchor className="nav-source" href={SOURCE_REPOSITORY}>
             Source <ExternalLink aria-hidden="true" size={14} />
           </ExternalLinkAnchor>
@@ -380,7 +382,7 @@ function Footer() {
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
           </ExternalLinkAnchor>
-          <Link href="/projects/new">Add a project</Link>
+          <ExternalLinkAnchor href={HUB_ORIGIN}>Hub</ExternalLinkAnchor>
           <ExternalLinkAnchor href={`${SOURCE_REPOSITORY}/issues/9`}>
             Protocol
           </ExternalLinkAnchor>
@@ -434,89 +436,79 @@ function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
   );
 }
 
-function RotatingHeroLine() {
+function TypewriterHeroHeading() {
   const [index, setIndex] = useState(0);
+  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
+  const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
+    "holding",
+  );
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const timer = window.setInterval(
-      () => setIndex((value) => (value + 1) % HERO_LINES.length),
-      2_800,
-    );
-    return () => window.clearInterval(timer);
-  }, []);
+    const target = HERO_ACTIONS[index];
+    let delay = 1;
+    let advance: () => void;
+    if (phase === "holding") {
+      delay = HERO_HOLD_MS;
+      advance = () => setPhase("deleting");
+    } else if (phase === "deleting" && characters > 0) {
+      delay = HERO_DELETE_MS;
+      advance = () => setCharacters((value) => Math.max(0, value - 1));
+    } else if (phase === "deleting") {
+      delay = HERO_GAP_MS;
+      advance = () => {
+        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
+        setPhase("typing");
+      };
+    } else if (characters < target.length) {
+      delay = HERO_TYPE_MS;
+      advance = () => setCharacters((value) => value + 1);
+    } else {
+      advance = () => setPhase("holding");
+    }
+    const timer = window.setTimeout(advance, delay);
+    return () => window.clearTimeout(timer);
+  }, [characters, index, phase]);
+  const action = HERO_ACTIONS[index];
   return (
-    <span className="hero-switch">
-      {HERO_LINES.map((line, lineIndex) => (
-        <span
-          aria-hidden={lineIndex === index ? undefined : true}
-          className={
-            lineIndex === index
-              ? "hero-switch-text hero-switch-text-active"
-              : "hero-switch-text"
-          }
-          key={line}
-        >
-          {line}
+    <h1 aria-label={`MAKE MONEY ${action}`}>
+      <span aria-hidden="true" className="hero-message">
+        <span>MAKE MONEY</span>
+        <span className="hero-switch">
+          {HERO_ACTIONS.map((candidate) => (
+            <span className="hero-switch-sizer" key={candidate}>
+              {candidate}
+            </span>
+          ))}
+          <span className="hero-typewriter">
+            {action.slice(0, characters)}
+            <span className="hero-typewriter-caret" />
+          </span>
         </span>
-      ))}
-    </span>
+      </span>
+    </h1>
   );
 }
 
-function rewardLabel(project: ProjectDefinition): string {
-  return project.reward.kind === "monthly-pool"
-    ? `${project.reward.monthlyCapDisplay} / month`
-    : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External"} opportunity`;
-}
-
-function ProjectCard({
-  project,
-  view,
-}: {
-  project: ProjectDefinition;
-  view?: ProjectView;
-}) {
-  const contributors = view?.leaders.length ?? null;
-  const score = view?.leaders.reduce(
-    (total, leader) => total + leader.score,
-    0,
-  );
+function ProjectCard({ project }: { project: ProjectDefinition }) {
+  const amount =
+    project.reward.kind === "monthly-pool"
+      ? project.reward.monthlyCapDisplay
+      : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
+        "External");
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
-      <div className="card-topline">
-        <span className="project-index">0{PROJECTS.indexOf(project) + 1}</span>
-        <span
-          className={
-            project.reward.kind === "monthly-pool"
-              ? "funding-chip"
-              : "funding-chip external-chip"
-          }
-        >
+      <div className="project-card-heading">
+        <h3>{project.name}</h3>
+        <ArrowRight aria-hidden="true" />
+      </div>
+      <p className="project-bounty">
+        <strong>{amount}</strong>
+        <span>
           {project.reward.kind === "monthly-pool"
-            ? "PLEDGED"
-            : "EXTERNAL PRIZE"}
+            ? "/ month"
+            : "external prize"}
         </span>
-      </div>
-      <p className="eyebrow">{project.eyebrow}</p>
-      <h3>{project.headline}</h3>
-      <p className="project-description">{project.description}</p>
-      <div className="project-card-stats">
-        <span>
-          <strong>{rewardLabel(project)}</strong>
-          <small>reward</small>
-        </span>
-        <span>
-          <strong>{contributors === null ? "—" : contributors}</strong>
-          <small>contributors</small>
-        </span>
-        <span>
-          <strong>{score === undefined ? "—" : score}</strong>
-          <small>cycle score</small>
-        </span>
-      </div>
-      <span className="card-action">
-        View project <ArrowRight aria-hidden="true" size={18} />
-      </span>
+      </p>
     </Link>
   );
 }
@@ -633,16 +625,7 @@ function GlobalLeaderboard({
   const leaders = globalLeaders(views, cycleIndex);
   return (
     <section className="section shell" id="leaderboard">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Across every project</p>
-          <h2>People shipping work.</h2>
-        </div>
-        <p>
-          Ranked by accepted outcome score. Tokens are public supporting
-          evidence.
-        </p>
-      </div>
+      <h2 className="home-section-title">Leaderboard</h2>
       {leaders.length === 0 ? (
         <EmptyState text="No accepted outcomes in the active cycles yet." />
       ) : (
@@ -705,133 +688,28 @@ function GlobalLeaderboard({
   );
 }
 
-function HowItWorks() {
-  const steps = [
-    [
-      "01",
-      "Pick a project",
-      "See the money, goal, repositories, active work, and exact rules before you start.",
-    ],
-    [
-      "02",
-      "Run one command",
-      "Install the project skill. It selects the frontier model and starts bounded usage capture.",
-    ],
-    [
-      "03",
-      "Ship proof",
-      "Open a PR, add real tests and evidence, and publish the signed run receipt GitHub can index.",
-    ],
-    [
-      "04",
-      "Get reviewed",
-      "Automated checks propose credit. Maintainers review, adjust with reasons, then settle publicly.",
-    ],
-  ] as const;
-  return (
-    <section className="how-section">
-      <div className="shell">
-        <div className="section-heading light-heading">
-          <div>
-            <p className="eyebrow">The complete loop</p>
-            <h2>Work in. Money out.</h2>
-          </div>
-          <p>
-            No new work tracker. No opaque claim system. GitHub is the operating
-            surface.
-          </p>
-        </div>
-        <div className="step-grid">
-          {steps.map(([number, title, body]) => (
-            <article key={number}>
-              <span>{number}</span>
-              <h3>{title}</h3>
-              <p>{body}</p>
-            </article>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   const views = state.status === "ready" ? state.views : [];
   return (
     <main>
       <section className="hero shell">
-        <DataNotice state={state} retry={retry} />
-        <p className="eyebrow hero-eyebrow">THE GITARMY NETWORK</p>
-        <h1>
-          <RotatingHeroLine />
-        </h1>
-        <p className="hero-copy">
-          Give the best agents a hard problem. Ship accepted work on GitHub.
-          Build a public reputation and earn from clearly labeled project pools.
-        </p>
-        <div className="hero-actions">
-          <a className="button primary-button" href="#projects">
-            Find work <ArrowRight aria-hidden="true" />
-          </a>
-          <Link className="button text-button" href="/projects/new">
-            Fund a project
-          </Link>
-        </div>
-        <div className="hero-proof">
-          <span>
-            <ShieldCheck aria-hidden="true" /> Device-signed usage
-          </span>
-          <span>
-            <GitPullRequest aria-hidden="true" /> GitHub-native proof
-          </span>
-          <span>
-            <Check aria-hidden="true" /> Public payout records
-          </span>
-        </div>
+        {state.status === "ready" ? null : (
+          <DataNotice state={state} retry={retry} />
+        )}
+        <TypewriterHeroHeading />
       </section>
 
       <section className="section shell" id="projects">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Open projects</p>
-            <h2>Choose something real.</h2>
-          </div>
-          <p>
-            Funded work sorts first. Pledges and external opportunities stay
-            visibly labeled.
-          </p>
-        </div>
+        <h2 className="home-section-title">Projects</h2>
         <div className="project-grid">
           {PROJECTS.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              view={views.find((view) => view.project.id === project.id)}
-            />
+            <ProjectCard key={project.id} project={project} />
           ))}
         </div>
       </section>
-      <HowItWorks />
       {state.status === "ready" ? (
         <GlobalLeaderboard cycleIndex={state.cycleIndex} views={views} />
       ) : null}
-      <section className="creator-cta">
-        <div className="shell creator-cta-inner">
-          <div>
-            <p className="eyebrow">Have an open problem?</p>
-            <h2>Put money behind the work.</h2>
-          </div>
-          <div>
-            <p>
-              Define a public repository, project skill, evaluation policy, and
-              monthly cap. Submit one reviewable proposal through GitHub.
-            </p>
-            <Link className="button inverse-button" href="/projects/new">
-              Add a project <ArrowRight aria-hidden="true" />
-            </Link>
-          </div>
-        </div>
-      </section>
     </main>
   );
 }
@@ -1093,58 +971,6 @@ function ProjectLeaderboard({ view }: { view: ProjectView }) {
   );
 }
 
-function WorkQueue({ view }: { view: ProjectView }) {
-  const items = [...view.workQueue.issues, ...view.workQueue.pullRequests]
-    .filter((item) => item.selection.status === "candidate")
-    .slice(0, 8);
-  return (
-    <section className="section work-section">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Live from GitHub</p>
-          <h2>Work worth doing.</h2>
-        </div>
-        <p>No platform claims. Recheck the issue or PR before beginning.</p>
-      </div>
-      {items.length === 0 ? (
-        <EmptyState text="No unblocked candidates passed the public filter." />
-      ) : (
-        <div className="work-list">
-          {items.map((item) => (
-            <WorkRow item={item} key={item.id} />
-          ))}
-        </div>
-      )}
-      <ExternalLinkAnchor
-        className="inline-link"
-        href={view.project.links.issues}
-      >
-        See every GitHub issue <ArrowRight aria-hidden="true" size={17} />
-      </ExternalLinkAnchor>
-    </section>
-  );
-}
-
-function WorkRow({ item }: { item: WorkItem }) {
-  return (
-    <ExternalLinkAnchor className="work-row" href={item.url}>
-      <span
-        className={`work-kind ${item.kind === "pull-request" ? "pr-kind" : ""}`}
-      >
-        {item.kind === "pull-request" ? "PR" : "ISSUE"}
-      </span>
-      <span>
-        <strong>{item.title}</strong>
-        <small>
-          #{item.number} · {item.priority} priority · {item.commentCount}{" "}
-          comments
-        </small>
-      </span>
-      <ChevronRight aria-hidden="true" />
-    </ExternalLinkAnchor>
-  );
-}
-
 function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
 }
@@ -1260,68 +1086,9 @@ function ProjectPage({
       <div className="shell">
         <InstallPanel project={project} />
         {project.reward.kind === "monthly-pool" ? <WalletPanel /> : null}
-        {view ? (
-          <>
-            <ProjectLeaderboard view={view} />
-            <WorkQueue view={view} />
-            <TrustSection view={view} />
-          </>
-        ) : null}
+        {view ? <ProjectLeaderboard view={view} /> : null}
       </div>
     </main>
-  );
-}
-
-function TrustSection({ view }: { view: ProjectView }) {
-  return (
-    <section className="section trust-section">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">How credit survives review</p>
-          <h2>Useful work wins.</h2>
-        </div>
-        <p>
-          Automation proposes; maintainers retain judgment. Every reduction
-          needs a public reason and review delay.
-        </p>
-      </div>
-      <div className="trust-grid">
-        <article>
-          <ShieldCheck aria-hidden="true" />
-          <h3>Verify the outcome</h3>
-          <p>
-            Merged PRs, linked fixes, material tests, evidence, and substantive
-            reviews score. Unmerged work can earn only through an explicit
-            evaluator finding.
-          </p>
-        </article>
-        <article>
-          <CircleAlert aria-hidden="true" />
-          <h3>Detect abuse</h3>
-          <p>
-            Invalid signatures, replayed runs, copied markers, wrong
-            repositories, wrong models, unrelated usage, duplicate work, and
-            suspicious flooding are held for review.
-          </p>
-        </article>
-        <article>
-          <Check aria-hidden="true" />
-          <h3>Approve and settle</h3>
-          <p>
-            Proposals remain editable for 14 days. Approved wallet rows become
-            immutable payout intents; finalized Solana signatures close the
-            cycle.
-          </p>
-        </article>
-      </div>
-      {view.receiptConflicts.length > 0 ? (
-        <p className="risk-note">
-          {view.receiptConflicts.length} conflicting run receipt
-          {view.receiptConflicts.length === 1 ? " is" : "s are"} excluded from
-          this view.
-        </p>
-      ) : null}
-    </section>
   );
 }
 

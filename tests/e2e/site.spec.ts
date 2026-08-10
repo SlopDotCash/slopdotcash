@@ -84,25 +84,38 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     }),
   ).toBeVisible();
   await expect(
-    page.getByText(/GitHub ledger \+ reward records live|Snapshot stale/u),
-  ).toBeVisible();
-  await expect(
     page.getByRole("heading", {
       exact: true,
-      name: "Make money building agents.",
+      name: "Projects",
     }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", {
       exact: true,
-      name: "Make money solving math.",
+      name: "Eliza",
     }),
   ).toBeVisible();
-  await expect(page.getByText("$10,000 / month")).toBeVisible();
-  await expect(page.getByText("$1,000,000 opportunity")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "People shipping work." }),
+    page.getByRole("heading", { exact: true, name: "Delta Star" }),
   ).toBeVisible();
+  const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
+  await expect(elizaCard.getByText("$10,000", { exact: true })).toBeVisible();
+  await expect(elizaCard.getByText("/ month", { exact: true })).toBeVisible();
+  const deltaCard = page.locator('a.project-card[href="/projects/delta-star"]');
+  await expect(
+    deltaCard.getByText("$1,000,000", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    deltaCard.getByText("external prize", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Leaderboard" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/GitHub ledger \+ reward records live/u),
+  ).toHaveCount(0);
+  await expect(page.getByText("THE GITARMY NETWORK")).toHaveCount(0);
+  await expect(page.getByText("Work in. Money out.")).toHaveCount(0);
 
   const rows = page.locator("#leaderboard tbody .leader-row");
   if (snapshot.leaders.length === 0) await expect(rows).toHaveCount(0);
@@ -134,6 +147,8 @@ test("starts Eliza in one command and generates a public payout marker", async (
     `<!-- gitarmy-wallet:v1 {"chain":"solana","address":"${address}"} -->`,
   );
   await expect(page.getByText(/Never paste a seed phrase/u)).toBeVisible();
+  await expect(page.getByText("Live from GitHub")).toHaveCount(0);
+  await expect(page.getByText("How credit survives review")).toHaveCount(0);
 });
 
 test("never presents Delta Star's external prize as platform money", async ({
@@ -302,6 +317,10 @@ test("keeps primary routes accessible and inside the viewport", async ({
           name: "MAKE MONEY DISCOVERING DRUGS.",
         }),
       ).toBeVisible({ timeout: 8_000 });
+      await expect(page.locator(".hero-typewriter")).toHaveText(
+        "DISCOVERING DRUGS.",
+        { timeout: 8_000 },
+      );
     }
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])

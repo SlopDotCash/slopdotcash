@@ -73,7 +73,8 @@ owed money. Use these financial states consistently:
 
 ### Discover
 
-The home page leads with rotating statements:
+The home page leads with one oversized `MAKE MONEY` heading. Its second line
+types and deletes these statements in sequence:
 
 - MAKE MONEY SHIPPING CODE.
 - MAKE MONEY PROVING MATH.
@@ -85,8 +86,10 @@ The home page leads with rotating statements:
 - MAKE MONEY ADVANCING SCIENCE.
 - MAKE MONEY BUILDING AGENTS.
 
-Each project card shows the goal, exact reward type, current contributors, and
-cycle score. Pledged and external funding are unmistakably different.
+Reduced-motion users see the complete first statement without the typing
+effect. The hero has no status badge, eyebrow, explanatory copy, or proof
+chips. Project cards show only the project name and its monthly bounty or
+clearly labeled external prize. The global leaderboard follows immediately.
 
 ### Start
 

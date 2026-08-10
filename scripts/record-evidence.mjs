@@ -492,9 +492,15 @@ try {
     await page.goto(`${baseUrl}/?evidence=${cacheKey}`, {
       waitUntil: "networkidle",
     });
+    await page.locator('h1[aria-label^="MAKE MONEY "]').waitFor({
+      state: "visible",
+      timeout: 20_000,
+    });
     await page
-      .getByText(/^GitHub ledger \+ reward records live/u)
-      .waitFor({ state: "visible", timeout: 20_000 });
+      .locator(".hero-typewriter")
+      .filter({ hasText: /^PROVING MATH\.$/u })
+      .waitFor({ state: "visible", timeout: 10_000 });
+    await page.locator("#projects").waitFor({ state: "visible" });
     await page.locator("#leaderboard table").waitFor({ state: "visible" });
     if (previewServer && previewState) {
       assertPreviewRunning(previewServer, previewState);
