@@ -501,14 +501,17 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
         <h3>{project.name}</h3>
         <ArrowRight aria-hidden="true" />
       </div>
-      <p className="project-bounty">
-        <strong>{amount}</strong>
-        <span>
-          {project.reward.kind === "monthly-pool"
-            ? "/ month"
-            : "external prize"}
-        </span>
-      </p>
+      <div className="project-card-content">
+        <p className="project-summary">{project.description}</p>
+        <p className="project-bounty">
+          <strong>{amount}</strong>
+          <span>
+            {project.reward.kind === "monthly-pool"
+              ? "/ month"
+              : "external prize"}
+          </span>
+        </p>
+      </div>
     </Link>
   );
 }
@@ -624,7 +627,10 @@ function GlobalLeaderboard({
 }) {
   const leaders = globalLeaders(views, cycleIndex);
   return (
-    <section className="section shell" id="leaderboard">
+    <section
+      className="section shell home-leaderboard-section"
+      id="leaderboard"
+    >
       <h2 className="home-section-title">Leaderboard</h2>
       {leaders.length === 0 ? (
         <EmptyState text="No accepted outcomes in the active cycles yet." />
@@ -699,7 +705,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
         <TypewriterHeroHeading />
       </section>
 
-      <section className="section shell" id="projects">
+      <section className="section shell home-projects-section" id="projects">
         <h2 className="home-section-title">Projects</h2>
         <div className="project-grid">
           {PROJECTS.map((project) => (
