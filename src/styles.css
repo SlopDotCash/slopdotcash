@@ -124,7 +124,7 @@ input:focus-visible {
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  padding-block: clamp(56px, 6vh, 72px) 24px;
+  padding-block: clamp(56px, 6vh, 72px) clamp(28px, 6.25vw, 90px);
 }
 
 .data-notice {
@@ -232,7 +232,16 @@ p {
 .hero-switch {
   display: grid;
   color: var(--orange);
+  font-size: clamp(30px, 7vw, 94px);
+  letter-spacing: -0.065em;
+  line-height: 0.84;
   text-wrap: balance;
+}
+
+@media (min-width: 681px) {
+  .hero-switch {
+    white-space: nowrap;
+  }
 }
 
 .hero-switch-sizer,
