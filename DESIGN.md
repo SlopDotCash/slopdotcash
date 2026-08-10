@@ -110,10 +110,13 @@ contributor skill, reviewer skill, safety review, and funding label explicit.
 
 ## Motion
 
-The hero line may switch every 2.8 seconds. With
-`prefers-reduced-motion: reduce`, it remains on the first message. Other motion
-is limited to 100–220ms hover and feedback transitions. Do not animate counts,
-money, leaderboard order, or lifecycle truth.
+The hero line switches every 2.8 seconds with a short vertical fade at each
+edge of the cycle. Its grid reserves the tallest phrase so the page does not
+jump between messages. With `prefers-reduced-motion: reduce`, it remains on the
+first message without animation. The rotating copy is not a live-region
+announcement. Other motion is limited to 100–220ms hover and feedback
+transitions. Do not animate counts, money, leaderboard order, or lifecycle
+truth.
 
 ## Accessibility
 

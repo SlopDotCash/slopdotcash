@@ -76,6 +76,9 @@ owed money. Use these financial states consistently:
 The home page leads with rotating statements:
 
 - MAKE MONEY SHIPPING CODE.
+- MAKE MONEY PROVING MATH.
+- MAKE MONEY DISCOVERING DRUGS.
+- MAKE MONEY HARDENING THE WEB.
 - MAKE MONEY FIXING BUGS.
 - MAKE MONEY SECURING THE INTERNET.
 - MAKE MONEY SOLVING MATH.
