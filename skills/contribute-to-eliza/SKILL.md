@@ -53,6 +53,13 @@ before choosing work:
 node <skill-directory>/scripts/live-report.mjs --repo elizaOS/eliza
 ```
 
+The local report supports GitHub CLI 2.45 and later. Its adapter uses
+`gh api --paginate --jq '.[]'` to emit ordered newline-delimited records rather
+than the newer `--slurp` flag, which first shipped in gh 2.48 and is absent from
+the gh 2.45 packaged with Ubuntu 24.04. A blank result is a valid empty
+collection; command failures and malformed or truncated records fail closed
+with endpoint context.
+
 Choose exactly one mode:
 
 1. **Implement**: resolve one scoped issue or deliver one coherent improvement
