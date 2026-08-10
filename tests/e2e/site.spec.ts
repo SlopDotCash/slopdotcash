@@ -80,7 +80,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", {
       exact: true,
-      name: "MAKE MONEY BUILDING AGENTS.",
+      name: "MAKE MONEY SHIPPING CODE.",
     }),
   ).toBeVisible();
   await expect(
@@ -291,7 +291,18 @@ test("keeps primary routes accessible and inside the viewport", async ({
     "/projects/delta-star",
     "/projects/new",
   ]) {
+    if (path === "/") {
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+    }
     await page.goto(path, { waitUntil: "networkidle" });
+    if (path === "/") {
+      await expect(
+        page.getByRole("heading", {
+          exact: true,
+          name: "MAKE MONEY SECURING THE INTERNET.",
+        }),
+      ).toBeVisible({ timeout: 8_000 });
+    }
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
       .analyze();

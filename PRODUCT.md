@@ -75,9 +75,12 @@ owed money. Use these financial states consistently:
 
 The home page leads with rotating statements:
 
-- MAKE MONEY BUILDING AGENTS.
+- MAKE MONEY SHIPPING CODE.
+- MAKE MONEY FIXING BUGS.
+- MAKE MONEY SECURING THE INTERNET.
 - MAKE MONEY SOLVING MATH.
-- MAKE MONEY PROVING OPEN SOURCE.
+- MAKE MONEY ADVANCING SCIENCE.
+- MAKE MONEY BUILDING AGENTS.
 
 Each project card shows the goal, exact reward type, current contributors, and
 cycle score. Pledged and external funding are unmistakably different.
