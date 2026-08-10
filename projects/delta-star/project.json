@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "1",
+  "id": "delta-star",
+  "slug": "delta-star",
+  "name": "Delta Star",
+  "eyebrow": "Machine-checked mathematics",
+  "headline": "Make money solving math.",
+  "description": "Advance ArkLib's machine-checked Reed–Solomon proximity work toward the Ethereum Foundation Proximity Prize.",
+  "status": "active",
+  "repositories": [
+    {
+      "id": "lalalune/arklib",
+      "displayName": "lalalune/ArkLib",
+      "githubUrl": "https://github.com/lalalune/ArkLib",
+      "description": "Machine-checked Reed–Solomon proximity work in Lean 4.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-delta-star",
+    "sourcePath": "skills/contribute-to-delta-star",
+    "publicPath": "/projects/delta-star/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-delta-star-contributions",
+    "sourcePath": "skills/review-delta-star-contributions"
+  },
+  "reward": {
+    "kind": "external-prize-share",
+    "currency": null,
+    "chain": null,
+    "rewardStartAt": "2026-07-07T00:00:00.000Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "0",
+    "monthlyCapDisplay": "$0 platform pool",
+    "committedMinor": "0",
+    "feeBasisPoints": 100,
+    "unusedFunds": "not-applicable",
+    "fundingState": "external-opportunity",
+    "externalOpportunity": {
+      "name": "Ethereum Foundation Proximity Prize",
+      "advertisedAmountDisplay": "$1,000,000",
+      "url": "https://proximityprize.org/"
+    }
+  },
+  "modelPolicy": {
+    "mode": "frontier-only",
+    "approved": [
+      {
+        "client": "codex",
+        "provider": "openai",
+        "model": "gpt-5.6-sol"
+      },
+      {
+        "client": "claude-code",
+        "provider": "anthropic",
+        "model": "claude-fable-5"
+      }
+    ]
+  },
+  "links": {
+    "repository": "https://github.com/lalalune/arklib",
+    "issues": "https://github.com/lalalune/arklib/issues",
+    "discussions": "https://github.com/lalalune/arklib/discussions",
+    "mission": "https://deltastar.computer/",
+    "prize": "https://proximityprize.org/"
+  }
+}

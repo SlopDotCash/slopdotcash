@@ -95,6 +95,7 @@ function planningSnapshot(
         actor,
         category: "merged-pull-request",
         points: 10,
+        occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
           id: sourceId,
@@ -113,6 +114,7 @@ function planningSnapshot(
         actor,
         category: "substantive-review",
         points: 3,
+        occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
           id: `REVIEW_plan_${index}_${review}`,
@@ -134,6 +136,7 @@ function planningSnapshot(
         materialTestChanges: 0,
         evidence: 0,
         substantiveReviews: substantiveReviews * 3,
+        evaluatedContributions: 0,
       },
       acceptedOutcomes: {
         mergedPullRequests,
@@ -141,6 +144,7 @@ function planningSnapshot(
         materialTestChanges: 0,
         evidenceCategories: 0,
         substantiveReviews,
+        evaluatedContributions: 0,
       },
       rawActivity: {
         comments: 0,
@@ -378,7 +382,7 @@ describe("payout plan", () => {
     });
     expect(payoutPlan.rule.rounding.mode).toBe("floor-then-largest-remainder");
     expect(payoutPlan.snapshot.digest).toBe(SNAPSHOT_DIGEST);
-    expect(payoutPlan.snapshot.ruleVersion).toBe("eliza-computer-v4");
+    expect(payoutPlan.snapshot.ruleVersion).toBe("gitarmy-v1");
     expect(payoutPlan.snapshot.ledgerPointTotal).toBe(100);
     expect(
       payoutPlan.allocations.map((allocation) => [
@@ -800,7 +804,7 @@ describe("command line", () => {
       { login: "ada", mergedPullRequests: 5 },
       { login: "bo", mergedPullRequests: 3 },
     ]);
-    const directory = await mkdtemp(join(tmpdir(), "eliza-army-payout-"));
+    const directory = await mkdtemp(join(tmpdir(), "gitarmy-payout-"));
     const outputPath = join(directory, "nested", "plan.json");
     try {
       const source: SnapshotSource = {

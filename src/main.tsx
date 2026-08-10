@@ -15,7 +15,7 @@ import "./styles.css";
 
 const root = document.getElementById("root");
 if (!root) {
-  throw new Error("[Army] #root is missing");
+  throw new Error("[GitArmy] #root is missing");
 }
 
 createRoot(root).render(

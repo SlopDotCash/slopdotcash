@@ -11,9 +11,21 @@
     "predev": "bun run prepare:site",
     "prebuild": "bun run prepare:site",
     "leaderboard:generate": "bun scripts/generate-leaderboard.ts",
+    "projects:sync": "node scripts/sync-project-registry.mjs",
+    "projects:check": "node scripts/sync-project-registry.mjs --check",
+    "evaluations:check": "bun scripts/validate-evaluator-awards.ts",
+    "cycles:sync": "bun scripts/sync-cycle-index.ts",
+    "cycles:check": "bun scripts/sync-cycle-index.ts --check",
+    "cycles:verify": "bun scripts/sync-cycle-index.ts --check --online",
     "payouts:plan": "bun scripts/plan-payouts.ts",
+    "rewards:propose": "bun scripts/prepare-reward-cycle.ts",
+    "rewards:close-month": "bun scripts/prepare-monthly-rewards.ts",
+    "rewards:approve": "bun scripts/finalize-reward-cycle.ts",
+    "rewards:plan-settlement": "bun scripts/prepare-settlement-plan.ts",
+    "rewards:verify-settlement": "bun scripts/verify-settlement.ts",
+    "audit:dependencies": "bun audit --production",
     "typecheck": "tsc -b",
-    "test": "vitest run && bun test skill-tests/contribute-to-eliza.test.ts",
+    "test": "vitest run && bun test skill-tests/*.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:record": "node scripts/record-evidence.mjs --local",
     "test:e2e:record:production": "node scripts/record-evidence.mjs --production",
@@ -29,7 +41,7 @@
     "lucide-react": "^1.0.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "vite": "^8.0.0"
+    "vite": "^8.2.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
@@ -48,7 +60,10 @@
     "playwright": "^1.61.0",
     "typescript": "^6.0.3",
     "vitest": "^4.0.18",
-    "wrangler": "4.100.0"
+    "wrangler": "4.120.0"
+  },
+  "overrides": {
+    "nanoid": "3.3.17"
   },
   "packageManager": "bun@1.3.14",
   "engines": {

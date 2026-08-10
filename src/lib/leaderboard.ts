@@ -1,16 +1,22 @@
 /**
  * Defines the public contribution snapshot and the deterministic scoring policy
- * for eliza.army. GitHub ingestion stays outside this module so fixtures can
+ * for git.army. GitHub ingestion stays outside this module so fixtures can
  * prove every award, exclusion, cap, and provenance rule without network access.
  */
 
 import {
   findTargetRepository,
+  findTargetRepositoryById,
   PRIMARY_REPOSITORY,
   type RepositoryId,
   TARGET_REPOSITORIES,
   type TargetRepository,
 } from "./repositories.mjs";
+import {
+  assertProjectRunReceipt,
+  assertRunReceiptMarker,
+  type ProjectRunReceipt,
+} from "./run-receipts";
 
 export {
   PRIMARY_REPOSITORY,
@@ -21,10 +27,12 @@ export {
 
 /** Backward-compatible alias for the primary registry repository. */
 export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY.id;
-export const LEADERBOARD_SCHEMA_VERSION = "2" as const;
-export const SCORE_RULE_VERSION = "eliza-computer-v4" as const;
-export const SCORE_WINDOW_DAYS = 30;
-export const VERIFICATION_WINDOW_DAYS = 7;
+export const LEADERBOARD_SCHEMA_VERSION = "4" as const;
+export const SCORE_RULE_VERSION = "gitarmy-v1" as const;
+// A 35-day collection window guarantees a complete prior UTC calendar month;
+// project reward views still exclude everything before their reward start.
+export const SCORE_WINDOW_DAYS = 35;
+export const VERIFICATION_WINDOW_DAYS = 35;
 export const MATERIAL_TEST_ADDITIONS = 10;
 export const MATERIAL_TEST_CHURN = 20;
 export const CLAIM_MAX_AGE_DAYS = 7;
@@ -34,7 +42,11 @@ export const SCORE_CAPS = {
   materialTestChanges: 5,
   evidencePoints: 30,
   substantiveReviews: 10,
+  evaluatedContributions: 3,
 } as const;
+const MAX_PROJECT_CYCLE_BUCKETS =
+  new Set(TARGET_REPOSITORIES.map((repository) => repository.projectId)).size *
+  (Math.ceil(SCORE_WINDOW_DAYS / 28) + 1);
 
 export type GitHubActorKind =
   | "Bot"
@@ -213,6 +225,7 @@ export interface ModelAttribution {
   identifier: string;
   client: string | null;
   skillRevision: string | null;
+  run: ProjectRunReceipt | null;
   format: "machine-marker" | "visible-declaration";
   status: "self-reported";
 }
@@ -237,13 +250,15 @@ export type ScoreCategory =
   | "resolved-issue"
   | "material-test-change"
   | "evidence"
-  | "substantive-review";
+  | "substantive-review"
+  | "evaluated-contribution";
 
 export interface ScoreEvent {
   id: string;
   actor: GitHubActor;
   category: ScoreCategory;
   points: number;
+  occurredAt: string;
   repository: RepositoryId;
   source: {
     id: string;
@@ -253,6 +268,13 @@ export interface ScoreEvent {
     url: string;
   };
   reason: string;
+  evaluation?: {
+    decisionUrl: string;
+    reviewedAt: string;
+    reviewer: string;
+    manifestPath: string;
+    manifestSha256: string;
+  };
 }
 
 export interface LeaderboardEntry {
@@ -265,6 +287,7 @@ export interface LeaderboardEntry {
     materialTestChanges: number;
     evidence: number;
     substantiveReviews: number;
+    evaluatedContributions: number;
   };
   acceptedOutcomes: {
     mergedPullRequests: number;
@@ -272,6 +295,7 @@ export interface LeaderboardEntry {
     materialTestChanges: number;
     evidenceCategories: number;
     substantiveReviews: number;
+    evaluatedContributions: number;
   };
   rawActivity: {
     comments: number;
@@ -449,6 +473,7 @@ export interface LeaderboardInput {
   openPullRequests: PullRequestRecord[];
   verificationWindowFrom: string;
   verifiedEvidence: VerifiedEvidenceArtifact[];
+  evaluatedContributions?: ScoreEvent[];
 }
 
 const EVIDENCE_WEIGHTS: Record<EvidenceCategory, number> = {
@@ -554,7 +579,7 @@ const REVIEW_CLAIM_PATTERN = /^CLAIMING\s+REVIEW:\s*\S/i;
 const ATTRIBUTION_DECLARATION_PATTERN =
   /^(?:AI provider\/model\s*:|AI assistance\s*:\s*yes\b|Models?(?:\s+used)?\s*:|Model\(s\)\s+used\s*:|Client\s*\/\s*agent tooling\s*:|Contribution skill revision\s*:)/i;
 const ATTRIBUTION_MARKER_LINE_PATTERN =
-  /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:v1\b[^\r\n]*-->\s*$/i;
+  /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:v[12]\b[^\r\n]*-->\s*$/i;
 
 interface MutableLeaderboardEntry {
   actor: GitHubActor;
@@ -563,6 +588,13 @@ interface MutableLeaderboardEntry {
   acceptedOutcomes: LeaderboardEntry["acceptedOutcomes"];
   rawActivity: LeaderboardEntry["rawActivity"];
   models: Set<string>;
+  projectCapUsage: Map<
+    string,
+    {
+      acceptedOutcomes: LeaderboardEntry["acceptedOutcomes"];
+      evidencePoints: number;
+    }
+  >;
 }
 
 interface AttributionDeclarationLine {
@@ -576,6 +608,7 @@ interface AttributionMarkerRecord {
   end: number;
   payload: string;
   start: number;
+  version: "v1" | "v2";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -655,15 +688,16 @@ function attributionMarkerRecords(body: string): AttributionMarkerRecord[] {
     .map((record) => {
       const raw = record.raw.trim();
       const marker = raw.match(
-        /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:v1\b([\s\S]*?)-->\s*$/i,
+        /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:(v[12])\b([\s\S]*?)-->\s*$/i,
       );
       if (!marker) return null;
       const leadingWhitespace =
         record.raw.length - record.raw.trimStart().length;
       return {
         end: record.start + leadingWhitespace + raw.length,
-        payload: marker[1].trim(),
+        payload: marker[2].trim(),
         start: record.start + leadingWhitespace,
+        version: marker[1].toLowerCase() as "v1" | "v2",
       };
     })
     .filter((record): record is AttributionMarkerRecord => record !== null);
@@ -957,12 +991,16 @@ export function selectUniqueVerifiedEvidence(
     });
 }
 
-function parseMarker(value: string):
+function parseMarker(
+  value: string,
+  version: "v1" | "v2",
+):
   | {
       provider: string;
       model: string;
       client: string | null;
       skillRevision: string | null;
+      run: ProjectRunReceipt | null;
     }
   | { error: string } {
   let parsed: unknown;
@@ -974,6 +1012,22 @@ function parseMarker(value: string):
   }
   if (!isRecord(parsed)) {
     return { error: "marker payload must be an object" };
+  }
+  if (version === "v2") {
+    try {
+      const run = assertRunReceiptMarker(parsed);
+      return {
+        provider: run.provider,
+        model: run.model,
+        client: run.client,
+        skillRevision: run.skillRevision,
+        run,
+      };
+    } catch (error: unknown) {
+      return {
+        error: error instanceof Error ? error.message : "run marker is invalid",
+      };
+    }
   }
   const expectedKeys = ["client", "model", "provider", "skill_revision"];
   if (Object.keys(parsed).sort().join(",") !== expectedKeys.sort().join(",")) {
@@ -1030,6 +1084,7 @@ function parseMarker(value: string):
     model,
     client: client.trim(),
     skillRevision: skillRevision.trim(),
+    run: null,
   };
 }
 
@@ -1147,7 +1202,7 @@ export function assessModelAttribution(
     const markerMatchesToParse =
       markerMatches.length === 1 ? markerMatches : [];
     for (const match of markerMatchesToParse) {
-      const marker = parseMarker(match.payload);
+      const marker = parseMarker(match.payload, match.version);
       if ("error" in marker) {
         invalidSourceIds.add(source.id);
         invalidMarkers.push({
@@ -1183,6 +1238,7 @@ export function assessModelAttribution(
         identifier,
         client: marker.client,
         skillRevision: marker.skillRevision,
+        run: marker.run,
         format: "machine-marker",
         status: "self-reported",
       });
@@ -1235,6 +1291,7 @@ export function assessModelAttribution(
           identifier,
           client: null,
           skillRevision: null,
+          run: null,
           format: "visible-declaration",
           status: "self-reported",
         });
@@ -1329,7 +1386,12 @@ export function isSubstantiveReview(
   review: PullRequestReview,
   pullRequest: PullRequestRecord,
 ): boolean {
-  if (!review.author || isBotActor(review.author) || !pullRequest.author) {
+  if (
+    !review.author ||
+    isBotActor(review.author) ||
+    !pullRequest.author ||
+    isBotActor(pullRequest.author)
+  ) {
     return false;
   }
   if (
@@ -1357,41 +1419,48 @@ export function isSubstantiveReview(
 function methodology(): LeaderboardMethodology {
   return {
     summary:
-      "Version 4 rewards recent accepted outcomes and verified quality across every repository in the published target registry, while capping each contributor category globally so bulk automation and second-repository farming cannot dominate the public ranking.",
+      "GitArmy v1 rewards recent accepted outcomes and verified quality across every repository in the published project registry. A small, capped evaluated-contribution award can recognize useful work that did not merge, but only after its public award manifest is reviewed and merged into this repository.",
     scoringRules: [
       {
         id: "merged-pull-request",
         points: "10",
-        cap: `newest ${SCORE_CAPS.mergedPullRequests} merged pull requests per contributor and rolling window`,
+        cap: `newest ${SCORE_CAPS.mergedPullRequests} merged pull requests per contributor, project, and UTC calendar month`,
         qualification:
           "Authored pull request merged during the rolling window.",
       },
       {
         id: "resolved-issue",
         points: "4",
-        cap: `newest ${SCORE_CAPS.resolvedIssues} linked issue resolutions per contributor and verification window`,
+        cap: `newest ${SCORE_CAPS.resolvedIssues} linked issue resolutions per contributor, project, and UTC calendar month`,
         qualification:
-          "Authored merged pull request is recorded by GitHub as the closer of an issue in the seven-day verification window; issue authorship alone never scores.",
+          "One of the author's newest five base-scored merged pull requests for the project and UTC month is recorded by GitHub as the closer of an issue in the 35-day verification window; issue authorship alone never scores.",
       },
       {
         id: "material-test-change",
         points: "4",
-        cap: `newest ${SCORE_CAPS.materialTestChanges} qualifying merged pull requests per contributor and verification window`,
-        qualification: `For pull requests in the seven-day verification window, recognized test files add at least ${MATERIAL_TEST_ADDITIONS} lines and change at least ${MATERIAL_TEST_CHURN} total lines.`,
+        cap: `newest ${SCORE_CAPS.materialTestChanges} qualifying merged pull requests per contributor, project, and UTC calendar month`,
+        qualification: `For the author's newest five base-scored merged pull requests per project and UTC month, recognized test files add at least ${MATERIAL_TEST_ADDITIONS} lines and change at least ${MATERIAL_TEST_CHURN} total lines.`,
       },
       {
         id: "evidence",
         points: "up to 6",
-        cap: `one award per evidence category per merged pull request, six per pull request, ${SCORE_CAPS.evidencePoints} evidence points per contributor and verification window`,
+        cap: `one award per evidence category per merged pull request, six per pull request, ${SCORE_CAPS.evidencePoints} evidence points per contributor, project, and UTC calendar month`,
         qualification:
-          "For pull requests in the seven-day verification window, contributor-authored proof existed unchanged at merge, appears in a stable evidence row in the canonical PR body, uses an immutable GitHub attachment URL, and passes bounded remote byte and structure verification. Mutable release assets, comment copies, inline text, N/A rows, unreachable artifacts, and third-party claims do not qualify.",
+          "For the author's newest five base-scored merged pull requests per project and UTC month, contributor-authored proof existed unchanged at merge, appears in a stable evidence row in the canonical PR body, uses an immutable GitHub attachment URL, and passes bounded remote byte and structure verification. Mutable release assets, comment copies, inline text, N/A rows, unreachable artifacts, and third-party claims do not qualify.",
       },
       {
         id: "substantive-review",
         points: "3",
-        cap: `newest ${SCORE_CAPS.substantiveReviews} qualifying pull-request reviews per contributor and verification window`,
+        cap: `newest ${SCORE_CAPS.substantiveReviews} qualifying pull-request reviews per contributor, project, and UTC calendar month`,
         qualification:
-          "For pull requests in the seven-day verification window, a pre-merge APPROVED or CHANGES_REQUESTED review has substantive text or inline discussion.",
+          "Within the published deep-inspection set of human-authored pull requests, a pre-merge APPROVED or CHANGES_REQUESTED review has substantive text or inline discussion.",
+      },
+      {
+        id: "evaluated-contribution",
+        points: "1 to 8",
+        cap: `newest ${SCORE_CAPS.evaluatedContributions} maintainer-approved awards per contributor, project, and UTC calendar month`,
+        qualification:
+          "A public, strictly validated award manifest was reviewed and merged into elizaOS/army for useful implementation, tests, review, diagnosis, or evidence that is not already rewarded as a merged outcome.",
       },
     ],
     evidenceWeights: { ...EVIDENCE_WEIGHTS },
@@ -1402,6 +1471,7 @@ function methodology(): LeaderboardMethodology {
     },
     exclusions: [
       "GitHub Bot actors and bot-pattern logins",
+      "reviews of bot-authored or unattributed pull requests",
       "self-reviews",
       "reviews submitted after merge",
       "pull-request bodies or comments created or edited after merge",
@@ -1412,17 +1482,18 @@ function methodology(): LeaderboardMethodology {
       "closed issues that only carry GitHub's COMPLETED state reason",
       "issue reports whose author did not also author the linked merged fix",
       "score-bearing evidence supplied only by a third party",
+      "unreviewed evaluator output or evaluator output that duplicates an already-scored source",
     ],
     nonScoringActivity: [
       "raw comments",
-      "commit count within the seven-day verification window",
+      "commit count within the 35-day verification window",
       "lines added or deleted",
       "model disclosure",
     ],
     provenancePolicy:
       "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
     collectionPolicy:
-      "The same complete collection pipeline runs for every repository in the published target registry; records merge by immutable GitHub node ID, every artifact keeps its repository attribution, and per-contributor caps apply globally across repositories. Every merged pull-request outcome is collected over 30 days with paginated, recursively split UTC time slices below GitHub Search's 1,000-result ceiling, then ordered newest-first before per-contributor caps. Verification-intensive bonuses use a complete seven-day detail window. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete repository connections. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.",
+      "The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID, every artifact keeps its repository attribution, and per-contributor caps apply independently to each project and UTC reward month. Every scalar merged outcome is collected over 35 days for complete base scoring. Nested PR, review, file, evidence, and linked-issue inspection is limited to each actor's newest five outcomes per project and UTC month, the deterministic set that can survive the base-score cap. Project reward views exclude work before the published reward start. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain explicitly unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete repository connections and are re-collected up to three times when their non-scoring state changes during evidence verification; merged payout input is never sampled or downgraded. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.",
   };
 }
 
@@ -1436,6 +1507,7 @@ function newMutableEntry(actor: GitHubActor): MutableLeaderboardEntry {
       materialTestChanges: 0,
       evidence: 0,
       substantiveReviews: 0,
+      evaluatedContributions: 0,
     },
     acceptedOutcomes: {
       mergedPullRequests: 0,
@@ -1443,6 +1515,7 @@ function newMutableEntry(actor: GitHubActor): MutableLeaderboardEntry {
       materialTestChanges: 0,
       evidenceCategories: 0,
       substantiveReviews: 0,
+      evaluatedContributions: 0,
     },
     rawActivity: {
       comments: 0,
@@ -1452,6 +1525,7 @@ function newMutableEntry(actor: GitHubActor): MutableLeaderboardEntry {
       deletions: 0,
     },
     models: new Set<string>(),
+    projectCapUsage: new Map(),
   };
 }
 
@@ -1478,20 +1552,43 @@ function addScore(
     return false;
   }
   const entry = actorEntry(entries, event.actor);
+  const projectId = TARGET_REPOSITORIES.find(
+    (repository) => repository.id === event.repository,
+  )?.projectId;
+  if (!projectId) {
+    throw new Error(
+      `Score event repository is not registered: ${event.repository}`,
+    );
+  }
+  const capKey = `${projectId}\0${event.occurredAt.slice(0, 7)}`;
+  const capUsage = entry.projectCapUsage.get(capKey) ?? {
+    acceptedOutcomes: {
+      mergedPullRequests: 0,
+      resolvedIssues: 0,
+      materialTestChanges: 0,
+      evidenceCategories: 0,
+      substantiveReviews: 0,
+      evaluatedContributions: 0,
+    },
+    evidencePoints: 0,
+  };
   const atCap =
     (event.category === "merged-pull-request" &&
-      entry.acceptedOutcomes.mergedPullRequests >=
+      capUsage.acceptedOutcomes.mergedPullRequests >=
         SCORE_CAPS.mergedPullRequests) ||
     (event.category === "resolved-issue" &&
-      entry.acceptedOutcomes.resolvedIssues >= SCORE_CAPS.resolvedIssues) ||
+      capUsage.acceptedOutcomes.resolvedIssues >= SCORE_CAPS.resolvedIssues) ||
     (event.category === "material-test-change" &&
-      entry.acceptedOutcomes.materialTestChanges >=
+      capUsage.acceptedOutcomes.materialTestChanges >=
         SCORE_CAPS.materialTestChanges) ||
     (event.category === "evidence" &&
-      entry.points.evidence + event.points > SCORE_CAPS.evidencePoints) ||
+      capUsage.evidencePoints + event.points > SCORE_CAPS.evidencePoints) ||
     (event.category === "substantive-review" &&
-      entry.acceptedOutcomes.substantiveReviews >=
-        SCORE_CAPS.substantiveReviews);
+      capUsage.acceptedOutcomes.substantiveReviews >=
+        SCORE_CAPS.substantiveReviews) ||
+    (event.category === "evaluated-contribution" &&
+      capUsage.acceptedOutcomes.evaluatedContributions >=
+        SCORE_CAPS.evaluatedContributions);
   if (atCap) {
     return false;
   }
@@ -1499,19 +1596,30 @@ function addScore(
   if (event.category === "merged-pull-request") {
     entry.points.mergedPullRequests += event.points;
     entry.acceptedOutcomes.mergedPullRequests += 1;
+    capUsage.acceptedOutcomes.mergedPullRequests += 1;
   } else if (event.category === "resolved-issue") {
     entry.points.resolvedIssues += event.points;
     entry.acceptedOutcomes.resolvedIssues += 1;
+    capUsage.acceptedOutcomes.resolvedIssues += 1;
   } else if (event.category === "material-test-change") {
     entry.points.materialTestChanges += event.points;
     entry.acceptedOutcomes.materialTestChanges += 1;
+    capUsage.acceptedOutcomes.materialTestChanges += 1;
   } else if (event.category === "evidence") {
     entry.points.evidence += event.points;
     entry.acceptedOutcomes.evidenceCategories += 1;
-  } else {
+    capUsage.evidencePoints += event.points;
+    capUsage.acceptedOutcomes.evidenceCategories += 1;
+  } else if (event.category === "substantive-review") {
     entry.points.substantiveReviews += event.points;
     entry.acceptedOutcomes.substantiveReviews += 1;
+    capUsage.acceptedOutcomes.substantiveReviews += 1;
+  } else {
+    entry.points.evaluatedContributions += event.points;
+    entry.acceptedOutcomes.evaluatedContributions += 1;
+    capUsage.acceptedOutcomes.evaluatedContributions += 1;
   }
+  entry.projectCapUsage.set(capKey, capUsage);
   ledger.push(event);
   return true;
 }
@@ -2088,7 +2196,7 @@ export function createLeaderboardSnapshot(
     if (
       !pullRequest.mergedAt ||
       parseIsoTime(pullRequest.mergedAt) < verificationWindowFrom ||
-      parseIsoTime(pullRequest.mergedAt) > windowTo
+      parseIsoTime(pullRequest.mergedAt) >= windowTo
     ) {
       throw new Error(
         `Detailed pull request ${pullRequest.id} falls outside the verification window`,
@@ -2099,7 +2207,7 @@ export function createLeaderboardSnapshot(
     if (
       !issue.closedAt ||
       parseIsoTime(issue.closedAt) < verificationWindowFrom ||
-      parseIsoTime(issue.closedAt) > windowTo
+      parseIsoTime(issue.closedAt) >= windowTo
     ) {
       throw new Error(
         `Detailed issue ${issue.id} falls outside the verification window`,
@@ -2117,6 +2225,7 @@ export function createLeaderboardSnapshot(
         actor: pullRequest.author,
         category: "merged-pull-request",
         points: 10,
+        occurredAt: pullRequest.mergedAt,
         repository: repositoryIdFromUrl(pullRequest.url),
         source: {
           id: pullRequest.id,
@@ -2134,6 +2243,11 @@ export function createLeaderboardSnapshot(
   }
 
   for (const pullRequest of mergedPullRequests) {
+    if (!pullRequest.mergedAt) {
+      throw new Error(
+        `Detailed merged pull request ${pullRequest.id} is missing its merge timestamp`,
+      );
+    }
     const sources = pullRequestTextSources(pullRequest);
     recordTextActivity(entries, sources);
 
@@ -2146,6 +2260,7 @@ export function createLeaderboardSnapshot(
           actor: pullRequest.author,
           category: "material-test-change",
           points: 4,
+          occurredAt: pullRequest.mergedAt,
           repository: repositoryIdFromUrl(pullRequest.url),
           source: {
             id: pullRequest.id,
@@ -2184,6 +2299,7 @@ export function createLeaderboardSnapshot(
           actor: pullRequest.author,
           category: "evidence",
           points: finding.points,
+          occurredAt: pullRequest.mergedAt,
           repository: repositoryIdFromUrl(pullRequest.url),
           source: {
             id: pullRequest.id,
@@ -2230,12 +2346,18 @@ export function createLeaderboardSnapshot(
       ) {
         continue;
       }
+      if (!review.submittedAt) {
+        throw new Error(
+          `Qualifying review ${review.id} is missing its submitted timestamp`,
+        );
+      }
       awardedReviewers.add(review.author.id);
       const scored = addScore(entries, ledger, {
         id: `${pullRequest.id}:reviewer:${review.author.id}`,
         actor: review.author,
         category: "substantive-review",
         points: 3,
+        occurredAt: review.submittedAt,
         repository: repositoryIdFromUrl(review.url),
         source: {
           id: review.id,
@@ -2261,11 +2383,17 @@ export function createLeaderboardSnapshot(
     recordTextActivity(entries, sources);
     const contributor = resolvedIssueContributor(issue);
     if (contributor?.author) {
+      if (!issue.closedAt) {
+        throw new Error(
+          `Qualifying resolved issue ${issue.id} is missing its closed timestamp`,
+        );
+      }
       const scored = addScore(entries, ledger, {
         id: `${issue.id}:resolved-by:${contributor.id}`,
         actor: contributor.author,
         category: "resolved-issue",
         points: 4,
+        occurredAt: issue.closedAt,
         repository: repositoryIdFromUrl(issue.url),
         source: {
           id: issue.id,
@@ -2292,6 +2420,43 @@ export function createLeaderboardSnapshot(
         ]);
       }
     }
+  }
+
+  const evaluatedSourceKeys = new Set<string>();
+  const evaluatedContributions = [...(input.evaluatedContributions ?? [])].sort(
+    (left, right) =>
+      parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
+      left.id.localeCompare(right.id),
+  );
+  for (const [index, event] of evaluatedContributions.entries()) {
+    assertLedgerValue(event, `evaluatedContributions[${index}]`);
+    if (event.category !== "evaluated-contribution") {
+      throw new TypeError(
+        `evaluatedContributions[${index}] must use the evaluated-contribution category`,
+      );
+    }
+    const occurredAt = parseIsoTime(event.occurredAt);
+    if (occurredAt < parseIsoTime(input.windowFrom) || occurredAt >= windowTo) {
+      throw new RangeError(
+        `Evaluated contribution ${event.id} falls outside the rolling window`,
+      );
+    }
+    const sourceKey = `${event.repository}\0${event.source.id}`;
+    if (
+      evaluatedSourceKeys.has(sourceKey) ||
+      ledger.some(
+        (existing) =>
+          existing.repository === event.repository &&
+          (existing.source.id === event.source.id ||
+            existing.source.url === event.source.url),
+      )
+    ) {
+      throw new TypeError(
+        `Evaluated contribution ${event.id} duplicates a score-bearing source`,
+      );
+    }
+    evaluatedSourceKeys.add(sourceKey);
+    addScore(entries, ledger, event);
   }
 
   const issueQueue = openIssues.map((record) =>
@@ -2621,9 +2786,9 @@ function assertMethodologyValue(value: unknown, path: string): void {
   assertString(methodology.summary, `${path}.summary`);
   if (
     !Array.isArray(methodology.scoringRules) ||
-    methodology.scoringRules.length !== 5
+    methodology.scoringRules.length !== 6
   ) {
-    throw new Error(`${path}.scoringRules must contain all five scoring rules`);
+    throw new Error(`${path}.scoringRules must contain all six scoring rules`);
   }
   const expectedRuleIds: ScoreCategory[] = [
     "merged-pull-request",
@@ -2631,6 +2796,7 @@ function assertMethodologyValue(value: unknown, path: string): void {
     "material-test-change",
     "evidence",
     "substantive-review",
+    "evaluated-contribution",
   ];
   const seenRuleIds = new Set<string>();
   methodology.scoringRules.forEach((ruleValue, index) => {
@@ -2891,6 +3057,7 @@ function assertLeaderValue(
     "materialTestChanges",
     "evidence",
     "substantiveReviews",
+    "evaluatedContributions",
   ] as const;
   let scoreTotal = 0;
   for (const key of pointKeys) {
@@ -2911,6 +3078,7 @@ function assertLeaderValue(
     "materialTestChanges",
     "evidenceCategories",
     "substantiveReviews",
+    "evaluatedContributions",
   ]) {
     assertNonNegativeInteger(
       acceptedOutcomes[key],
@@ -2921,6 +3089,8 @@ function assertLeaderValue(
   const acceptedResolvedIssues = acceptedOutcomes.resolvedIssues;
   const acceptedMaterialTestChanges = acceptedOutcomes.materialTestChanges;
   const acceptedSubstantiveReviews = acceptedOutcomes.substantiveReviews;
+  const acceptedEvaluatedContributions =
+    acceptedOutcomes.evaluatedContributions;
   const evidencePoints = points.evidence;
   assertNonNegativeInteger(
     acceptedMergedPullRequests,
@@ -2938,15 +3108,27 @@ function assertLeaderValue(
     acceptedSubstantiveReviews,
     `${path}.acceptedOutcomes.substantiveReviews`,
   );
+  assertNonNegativeInteger(
+    acceptedEvaluatedContributions,
+    `${path}.acceptedOutcomes.evaluatedContributions`,
+  );
   assertNonNegativeInteger(evidencePoints, `${path}.points.evidence`);
   if (
-    acceptedMergedPullRequests > SCORE_CAPS.mergedPullRequests ||
-    acceptedResolvedIssues > SCORE_CAPS.resolvedIssues ||
-    acceptedMaterialTestChanges > SCORE_CAPS.materialTestChanges ||
-    acceptedSubstantiveReviews > SCORE_CAPS.substantiveReviews ||
-    evidencePoints > SCORE_CAPS.evidencePoints
+    acceptedMergedPullRequests >
+      SCORE_CAPS.mergedPullRequests * MAX_PROJECT_CYCLE_BUCKETS ||
+    acceptedResolvedIssues >
+      SCORE_CAPS.resolvedIssues * MAX_PROJECT_CYCLE_BUCKETS ||
+    acceptedMaterialTestChanges >
+      SCORE_CAPS.materialTestChanges * MAX_PROJECT_CYCLE_BUCKETS ||
+    acceptedSubstantiveReviews >
+      SCORE_CAPS.substantiveReviews * MAX_PROJECT_CYCLE_BUCKETS ||
+    acceptedEvaluatedContributions >
+      SCORE_CAPS.evaluatedContributions * MAX_PROJECT_CYCLE_BUCKETS ||
+    evidencePoints > SCORE_CAPS.evidencePoints * MAX_PROJECT_CYCLE_BUCKETS
   ) {
-    throw new Error(`${path} exceeds the published per-contributor score caps`);
+    throw new Error(
+      `${path} exceeds the published per-contributor, per-project score caps`,
+    );
   }
 
   const rawActivity = assertObject(entry.rawActivity, `${path}.rawActivity`);
@@ -3316,20 +3498,26 @@ function assertLedgerValue(
       "material-test-change",
       "evidence",
       "substantive-review",
+      "evaluated-contribution",
     ],
     `${path}.category`,
   );
   assertNonNegativeNumber(event.points, `${path}.points`);
+  const eventPoints = Number(event.points);
   const validPoints =
-    (event.category === "merged-pull-request" && event.points === 10) ||
-    (event.category === "resolved-issue" && event.points === 4) ||
-    (event.category === "material-test-change" && event.points === 4) ||
-    (event.category === "substantive-review" && event.points === 3) ||
-    (event.category === "evidence" &&
-      (event.points === 1 || event.points === 2));
+    (event.category === "merged-pull-request" && eventPoints === 10) ||
+    (event.category === "resolved-issue" && eventPoints === 4) ||
+    (event.category === "material-test-change" && eventPoints === 4) ||
+    (event.category === "substantive-review" && eventPoints === 3) ||
+    (event.category === "evaluated-contribution" &&
+      Number.isInteger(eventPoints) &&
+      eventPoints >= 1 &&
+      eventPoints <= 8) ||
+    (event.category === "evidence" && (eventPoints === 1 || eventPoints === 2));
   if (!validPoints) {
     throw new Error(`${path}.points does not match its scoring category`);
   }
+  assertIsoTimestamp(event.occurredAt, `${path}.occurredAt`);
   assertString(event.reason, `${path}.reason`);
   assertEnum(
     event.repository,
@@ -3352,6 +3540,79 @@ function assertLedgerValue(
     source.number,
     event.repository as RepositoryId,
   );
+  if (event.category !== "evaluated-contribution") {
+    if ("evaluation" in event) {
+      throw new Error(
+        `${path}.evaluation is reserved for evaluated contributions`,
+      );
+    }
+    return;
+  }
+  if (event.reason.length < 40) {
+    throw new Error(`${path}.reason must explain the evaluated contribution`);
+  }
+  const evaluation = assertObject(event.evaluation, `${path}.evaluation`);
+  const evaluationKeys = [
+    "decisionUrl",
+    "manifestPath",
+    "manifestSha256",
+    "reviewedAt",
+    "reviewer",
+  ];
+  if (
+    Object.keys(evaluation).sort().join("\0") !==
+    evaluationKeys.sort().join("\0")
+  ) {
+    throw new Error(`${path}.evaluation has unexpected or missing fields`);
+  }
+  assertIsoTimestamp(evaluation.reviewedAt, `${path}.evaluation.reviewedAt`);
+  if (parseIsoTime(evaluation.reviewedAt) < parseIsoTime(event.occurredAt)) {
+    throw new Error(
+      `${path}.evaluation review cannot precede the contribution`,
+    );
+  }
+  assertString(evaluation.reviewer, `${path}.evaluation.reviewer`);
+  if (
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u.test(
+      evaluation.reviewer,
+    )
+  ) {
+    throw new Error(`${path}.evaluation.reviewer must be a GitHub login`);
+  }
+  assertString(evaluation.decisionUrl, `${path}.evaluation.decisionUrl`);
+  const decisionUrl = secureUrl(
+    evaluation.decisionUrl,
+    `${path}.evaluation.decisionUrl`,
+  );
+  if (
+    decisionUrl.hostname !== "github.com" ||
+    !/^\/elizaOS\/army\/pull\/[1-9]\d*$/iu.test(decisionUrl.pathname) ||
+    decisionUrl.search ||
+    decisionUrl.hash
+  ) {
+    throw new Error(
+      `${path}.evaluation.decisionUrl must be an elizaOS/army pull request`,
+    );
+  }
+  assertString(evaluation.manifestSha256, `${path}.evaluation.manifestSha256`);
+  if (!/^[0-9a-f]{64}$/u.test(evaluation.manifestSha256)) {
+    throw new Error(
+      `${path}.evaluation.manifestSha256 must be a SHA-256 digest`,
+    );
+  }
+  assertString(evaluation.manifestPath, `${path}.evaluation.manifestPath`);
+  const projectId = findTargetRepositoryById(
+    event.repository as RepositoryId,
+  )?.projectId;
+  if (
+    !projectId ||
+    !new RegExp(
+      `^evaluations/${projectId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/award-[a-z0-9][a-z0-9-]*\\.json$`,
+      "u",
+    ).test(evaluation.manifestPath)
+  ) {
+    throw new Error(`${path}.evaluation.manifestPath is outside its project`);
+  }
 }
 
 function assertAttributionValue(
@@ -3381,6 +3642,9 @@ function assertAttributionValue(
   }
   if (attribution.skillRevision !== null) {
     assertString(attribution.skillRevision, `${path}.skillRevision`);
+  }
+  if (attribution.run !== null) {
+    assertProjectRunReceipt(attribution.run);
   }
   assertEnum(
     attribution.format,
@@ -3423,6 +3687,8 @@ export function assertLeaderboardSnapshot(
       "displayName",
       "githubUrl",
       "description",
+      "integrationBranch",
+      "projectId",
       "role",
     ] as const) {
       if (published[key] !== registered[key]) {
@@ -3431,7 +3697,7 @@ export function assertLeaderboardSnapshot(
         );
       }
     }
-    if (Object.keys(published).length !== 7) {
+    if (Object.keys(published).length !== 9) {
       throw new Error(`${path} must publish exactly the registry fields`);
     }
   });
@@ -3513,6 +3779,76 @@ export function assertLeaderboardSnapshot(
   ) {
     throw new Error("snapshot.ledger must contain unique score event IDs");
   }
+  const evaluatedSources = new Set<string>();
+  const projectCapUsage = new Map<
+    string,
+    {
+      evidencePoints: number;
+      evaluatedContributions: number;
+      materialTestChanges: number;
+      mergedPullRequests: number;
+      resolvedIssues: number;
+      substantiveReviews: number;
+    }
+  >();
+  for (const event of validatedLedger) {
+    const repository = findTargetRepositoryById(event.repository);
+    if (!repository) {
+      throw new Error(`snapshot.ledger event ${event.id} has no project`);
+    }
+    const capKey = `${event.actor.id}\0${repository.projectId}\0${event.occurredAt.slice(0, 7)}`;
+    const usage = projectCapUsage.get(capKey) ?? {
+      evidencePoints: 0,
+      evaluatedContributions: 0,
+      materialTestChanges: 0,
+      mergedPullRequests: 0,
+      resolvedIssues: 0,
+      substantiveReviews: 0,
+    };
+    if (event.category === "merged-pull-request") usage.mergedPullRequests += 1;
+    else if (event.category === "resolved-issue") usage.resolvedIssues += 1;
+    else if (event.category === "material-test-change") {
+      usage.materialTestChanges += 1;
+    } else if (event.category === "evidence")
+      usage.evidencePoints += event.points;
+    else if (event.category === "substantive-review") {
+      usage.substantiveReviews += 1;
+    } else {
+      usage.evaluatedContributions += 1;
+      const sourceKey = `${event.repository}\0${event.source.id}`;
+      if (evaluatedSources.has(sourceKey)) {
+        throw new Error("snapshot.ledger repeats evaluated source credit");
+      }
+      evaluatedSources.add(sourceKey);
+      if (
+        validatedLedger.some(
+          (other) =>
+            other !== event &&
+            other.repository === event.repository &&
+            other.category !== "evaluated-contribution" &&
+            (other.source.id === event.source.id ||
+              other.source.url === event.source.url),
+        )
+      ) {
+        throw new Error(
+          `snapshot.ledger evaluated event ${event.id} duplicates another score source`,
+        );
+      }
+    }
+    if (
+      usage.mergedPullRequests > SCORE_CAPS.mergedPullRequests ||
+      usage.resolvedIssues > SCORE_CAPS.resolvedIssues ||
+      usage.materialTestChanges > SCORE_CAPS.materialTestChanges ||
+      usage.evidencePoints > SCORE_CAPS.evidencePoints ||
+      usage.substantiveReviews > SCORE_CAPS.substantiveReviews ||
+      usage.evaluatedContributions > SCORE_CAPS.evaluatedContributions
+    ) {
+      throw new Error(
+        `snapshot.ledger actor ${event.actor.login} exceeds a per-project score cap`,
+      );
+    }
+    projectCapUsage.set(capKey, usage);
+  }
   const leaderByActorId = new Map(
     validatedLeaders.map((entry) => [entry.actor.id, entry]),
   );
@@ -3533,6 +3869,7 @@ export function assertLeaderboardSnapshot(
       materialTestChanges: 0,
       evidence: 0,
       substantiveReviews: 0,
+      evaluatedContributions: 0,
     };
     const outcomes = {
       mergedPullRequests: 0,
@@ -3540,6 +3877,7 @@ export function assertLeaderboardSnapshot(
       materialTestChanges: 0,
       evidenceCategories: 0,
       substantiveReviews: 0,
+      evaluatedContributions: 0,
     };
     for (const event of events) {
       if (event.category === "merged-pull-request") {
@@ -3554,9 +3892,12 @@ export function assertLeaderboardSnapshot(
       } else if (event.category === "evidence") {
         points.evidence += event.points;
         outcomes.evidenceCategories += 1;
-      } else {
+      } else if (event.category === "substantive-review") {
         points.substantiveReviews += event.points;
         outcomes.substantiveReviews += 1;
+      } else {
+        points.evaluatedContributions += event.points;
+        outcomes.evaluatedContributions += 1;
       }
     }
     const ledgerScore = events.reduce(
@@ -3570,6 +3911,7 @@ export function assertLeaderboardSnapshot(
       points.materialTestChanges !== leader.points.materialTestChanges ||
       points.evidence !== leader.points.evidence ||
       points.substantiveReviews !== leader.points.substantiveReviews ||
+      points.evaluatedContributions !== leader.points.evaluatedContributions ||
       outcomes.mergedPullRequests !==
         leader.acceptedOutcomes.mergedPullRequests ||
       outcomes.resolvedIssues !== leader.acceptedOutcomes.resolvedIssues ||
@@ -3577,7 +3919,10 @@ export function assertLeaderboardSnapshot(
         leader.acceptedOutcomes.materialTestChanges ||
       outcomes.evidenceCategories !==
         leader.acceptedOutcomes.evidenceCategories ||
-      outcomes.substantiveReviews !== leader.acceptedOutcomes.substantiveReviews
+      outcomes.substantiveReviews !==
+        leader.acceptedOutcomes.substantiveReviews ||
+      outcomes.evaluatedContributions !==
+        leader.acceptedOutcomes.evaluatedContributions
     ) {
       throw new Error(
         `snapshot.leaders actor ${leader.actor.login} does not match the public ledger`,
@@ -3763,7 +4108,7 @@ export function assertLeaderboardSnapshot(
     parseIsoTime(verificationWindow.from) < parseIsoTime(window.from)
   ) {
     throw new Error(
-      "snapshot.source.verificationWindow must be the exact trailing seven days of the rolling window",
+      "snapshot.source.verificationWindow must equal the full 35-day rolling window",
     );
   }
   if (counts.openIssues !== workQueue.issues.length) {

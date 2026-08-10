@@ -1,33 +1,26 @@
 /**
- * Ordered registry of the GitHub repositories the eliza.army program targets.
- * The first entry is the primary repository: it remains the backward-compatible
- * `snapshot.repository` value and the default `--repo` for the bundled skill.
- * Scoring caps stay global per contributor across every entry, so adding a
- * repository never grants extra scoring capacity. Plain JavaScript so the Node
- * evidence scripts and the TypeScript site share one source of truth.
+ * Flattens the project registry into the GitHub repositories consumed by the
+ * existing ingestion pipeline. Repository identity stays canonical while each
+ * row now carries the project that owns its scoring and reward policy.
  */
 
-export const TARGET_REPOSITORIES = Object.freeze([
-  Object.freeze({
-    id: "elizaOS/eliza",
-    owner: "elizaOS",
-    name: "eliza",
-    displayName: "elizaOS/eliza",
-    githubUrl: "https://github.com/elizaOS/eliza",
-    description: "Core elizaOS agent framework and runtime.",
-    role: "primary",
-  }),
-  Object.freeze({
-    id: "lalalune/arklib",
-    owner: "lalalune",
-    name: "arklib",
-    displayName: "lalalune/arklib",
-    githubUrl: "https://github.com/lalalune/arklib",
-    description:
-      "Formally verified arguments of knowledge in Lean 4. Hosts the δ* programme on Reed–Solomon proximity, machine-checking progress toward the Ethereum Foundation's Proximity Prize.",
-    role: "member",
-  }),
-]);
+import { PROJECTS } from "./projects.mjs";
+
+export const TARGET_REPOSITORIES = Object.freeze(
+  PROJECTS.flatMap((project, projectIndex) =>
+    project.repositories.map((metadata, repositoryIndex) => {
+      const [owner, name] = metadata.id.split("/");
+      return Object.freeze({
+        ...metadata,
+        owner,
+        name,
+        projectId: project.id,
+        role:
+          projectIndex === 0 && repositoryIndex === 0 ? "primary" : "member",
+      });
+    }),
+  ),
+);
 
 export const PRIMARY_REPOSITORY = TARGET_REPOSITORIES[0];
 

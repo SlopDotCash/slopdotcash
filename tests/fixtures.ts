@@ -3,10 +3,19 @@
  * tests. Live ingestion has separate network-backed coverage.
  */
 
+import type { CycleIndex } from "../src/lib/cycle-index";
 import {
   type LeaderboardSnapshot,
   TARGET_REPOSITORIES,
 } from "../src/lib/leaderboard";
+
+export function cycleIndexFixture(): CycleIndex {
+  return {
+    schemaVersion: "1",
+    generatedAt: new Date().toISOString(),
+    cycles: [],
+  };
+}
 
 export function snapshotFixture(): LeaderboardSnapshot {
   const generatedAt = new Date().toISOString();
@@ -19,16 +28,16 @@ export function snapshotFixture(): LeaderboardSnapshot {
     kind: "User",
   };
   return {
-    schemaVersion: "2",
+    schemaVersion: "4",
     repository: "elizaOS/eliza",
     repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
-    ruleVersion: "eliza-computer-v4",
+    ruleVersion: "gitarmy-v1",
     generatedAt,
     sourceUpdatedAt: generatedAt,
     stale: false,
     window: {
-      days: 30,
-      from: "2026-06-30T00:00:00.000Z",
+      days: 35,
+      from: "2026-06-25T00:00:00.000Z",
       to: windowTo,
     },
     methodology: {
@@ -65,6 +74,13 @@ export function snapshotFixture(): LeaderboardSnapshot {
           cap: "One qualifying reviewer award per pull request.",
           qualification:
             "A substantive non-self review submitted before merge.",
+        },
+        {
+          id: "evaluated-contribution",
+          points: "1 to 8 points",
+          cap: "Three reviewed awards per project.",
+          qualification:
+            "A maintainer-approved public award for useful otherwise-unscored work.",
         },
       ],
       evidenceWeights: {
@@ -113,8 +129,8 @@ export function snapshotFixture(): LeaderboardSnapshot {
         openPullRequests: 1,
       },
       verificationWindow: {
-        days: 7,
-        from: "2026-07-23T00:00:00.000Z",
+        days: 35,
+        from: "2026-06-25T00:00:00.000Z",
         to: windowTo,
       },
       evidenceVerification: {
@@ -136,6 +152,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
           materialTestChanges: 4,
           evidence: 3,
           substantiveReviews: 3,
+          evaluatedContributions: 0,
         },
         acceptedOutcomes: {
           mergedPullRequests: 2,
@@ -143,6 +160,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
           materialTestChanges: 1,
           evidenceCategories: 2,
           substantiveReviews: 1,
+          evaluatedContributions: 0,
         },
         rawActivity: {
           comments: 2,
@@ -160,6 +178,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "merged-pull-request",
         points: 10,
+        occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
           id: "PR_fixture",
@@ -175,6 +194,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "merged-pull-request",
         points: 10,
+        occurredAt: "2026-07-28T12:00:00.000Z",
         repository: "lalalune/arklib",
         source: {
           id: "PR_arklib_fixture",
@@ -190,6 +210,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "resolved-issue",
         points: 4,
+        occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
           id: "ISSUE_fixture",
@@ -205,6 +226,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "material-test-change",
         points: 4,
+        occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
           id: "PR_fixture",
@@ -220,6 +242,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "evidence",
         points: 1,
+        occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
           id: "PR_fixture",
@@ -235,6 +258,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "evidence",
         points: 2,
+        occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
           id: "PR_fixture",
@@ -250,6 +274,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         category: "substantive-review",
         points: 3,
+        occurredAt: "2026-07-27T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
           id: "REVIEW_fixture",
@@ -273,6 +298,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         identifier: "openai/gpt-5",
         client: "codex-desktop",
         skillRevision: null,
+        run: null,
         format: "machine-marker",
         status: "self-reported",
       },
@@ -292,7 +318,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
           id: "I_fixture",
           kind: "issue",
           number: 17326,
-          title: "Launch the eliza.army contribution protocol",
+          title: "Launch the git.army contribution protocol",
           url: "https://github.com/elizaOS/eliza/issues/17326",
           repository: "elizaOS/eliza",
           author: leaderActor,

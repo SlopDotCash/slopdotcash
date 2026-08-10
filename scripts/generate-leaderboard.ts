@@ -8,6 +8,7 @@
 import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertPublishableLeaderboardSnapshot,
   createLeaderboardSnapshot,
@@ -26,7 +27,9 @@ import {
   type PullRequestRecord,
   type PullRequestReview,
   pullRequestTextSources,
+  SCORE_CAPS,
   SCORE_WINDOW_DAYS,
+  type ScoreEvent,
   selectUniqueVerifiedEvidence,
   VERIFICATION_WINDOW_DAYS,
   type VerifiedEvidenceArtifact,
@@ -39,6 +42,7 @@ import {
   planReferencedArtifacts,
   verifyReferencedArtifacts,
 } from "./check-pr-evidence.mjs";
+import { verifyRunReceiptSignature } from "./run-receipt-crypto";
 
 export const SEARCH_SAFE_RESULT_LIMIT = 950;
 export const MINIMUM_SEARCH_SLICE_MS = 60_000;
@@ -46,8 +50,16 @@ export const GRAPHQL_PAGE_SIZE = 100;
 export const DETAIL_BATCH_SIZE = 25;
 export const REVIEW_DETAIL_BATCH_SIZE = 100;
 export const MAX_TRANSIENT_ATTEMPTS = 3;
-export const GRAPHQL_REQUEST_TIMEOUT_MS = 20_000;
-export const MAX_GENERATION_COST = 1_500;
+export const MAX_GRAPHQL_REQUEST_ATTEMPTS = 5;
+// Detail queries routinely take 20–40 seconds on repositories with thousands
+// of recent pull requests. A shorter timeout causes GitHub to finish and bill
+// work that the client has already abandoned, exhausting the Actions token on
+// retries even though the successful query itself is inexpensive.
+export const GRAPHQL_REQUEST_TIMEOUT_MS = 60_000;
+export const MAX_GRAPHQL_RESPONSE_BYTES = 64 * 1024 * 1024;
+// Match the usable budget of GitHub Actions' 1,000-point repository token so a
+// local 5,000-point token cannot validate a query plan that production rejects.
+export const MAX_GENERATION_COST = 900;
 export const MINIMUM_RATE_LIMIT_RESERVE = 100;
 export const MINIMUM_STARTING_RATE_LIMIT = 900;
 export const MAX_EVIDENCE_ARTIFACTS_PER_SNAPSHOT = 64;
@@ -128,7 +140,29 @@ interface NodeReference {
 
 type ExpectedRecordState = "closed" | "merged" | "open";
 
-class OpenSetChangedError extends Error {}
+export class OpenSetChangedError extends Error {}
+
+/** Retries only a concurrent mutation of the non-scoring GitArmy snapshot. */
+export async function retryGitArmySnapshot<T>(
+  collect: (attempt: number) => Promise<T>,
+): Promise<T> {
+  let lastChange: OpenSetChangedError | null = null;
+  for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
+    try {
+      return await collect(attempt);
+    } catch (error) {
+      // error-policy:J1 Open issues and pull requests are a non-scoring queue;
+      // only their typed concurrent mutation is recollected at this boundary.
+      if (!(error instanceof OpenSetChangedError)) throw error;
+      lastChange = error;
+    }
+  }
+  throw new Error(
+    `Open work set changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive verification attempts`,
+    { cause: lastChange },
+  );
+}
+class GraphqlResponseBoundaryError extends Error {}
 
 export interface RateLimitSnapshot {
   cost: number;
@@ -160,6 +194,7 @@ export interface GenerateOptions {
   evidenceFetch?: FetchLike;
   evidenceToken?: string;
   evidenceTimeoutMs?: number;
+  evaluatedContributions?: ScoreEvent[];
 }
 
 export interface GeneratorDependencies {
@@ -999,10 +1034,15 @@ function isTransientNetworkError(value: unknown): boolean {
   return (
     error.name === "AbortError" ||
     [
+      "ConnectionRefused",
+      "ECONNREFUSED",
       "ECONNRESET",
+      "EHOSTUNREACH",
+      "ENETUNREACH",
       "ETIMEDOUT",
       "EAI_AGAIN",
       "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_SOCKET",
     ].includes(typeof error.code === "string" ? error.code : "")
   );
 }
@@ -1021,6 +1061,56 @@ async function retryDelay(milliseconds: number): Promise<void> {
   await new Promise<void>((resolveDelay) => {
     setTimeout(resolveDelay, milliseconds);
   });
+}
+
+async function readGraphqlResponseBody(response: Response): Promise<string> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
+      throw new GraphqlResponseBoundaryError(
+        "GitHub GraphQL returned an invalid Content-Length",
+      );
+    }
+    if (parsedLength > MAX_GRAPHQL_RESPONSE_BYTES) {
+      throw new GraphqlResponseBoundaryError(
+        `GitHub GraphQL response exceeds ${MAX_GRAPHQL_RESPONSE_BYTES} bytes`,
+      );
+    }
+  }
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new GraphqlResponseBoundaryError(
+      "GitHub GraphQL returned no readable response body",
+    );
+  }
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let byteLength = 0;
+  let body = "";
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      byteLength += chunk.value.byteLength;
+      if (byteLength > MAX_GRAPHQL_RESPONSE_BYTES) {
+        throw new GraphqlResponseBoundaryError(
+          `GitHub GraphQL response exceeds ${MAX_GRAPHQL_RESPONSE_BYTES} bytes`,
+        );
+      }
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    body += decoder.decode();
+  } catch (error) {
+    if (error instanceof GraphqlResponseBoundaryError) throw error;
+    if (error instanceof TypeError) {
+      throw new GraphqlResponseBoundaryError(
+        "GitHub GraphQL response is not valid UTF-8",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  return body;
 }
 
 export class GitHubGraphqlClient implements GraphqlExecutor {
@@ -1084,7 +1174,11 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     let response: Response | null = null;
     let payload: unknown;
     let parsedResponse = false;
-    for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
+    for (
+      let attempt = 1;
+      attempt <= MAX_GRAPHQL_REQUEST_ATTEMPTS;
+      attempt += 1
+    ) {
       const effectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
       if (
         this.#consumedCost >= effectiveMaxGenerationCost ||
@@ -1114,17 +1208,18 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
           body: JSON.stringify({ query: document, variables }),
           signal: controller.signal,
         });
-        responseBody = await response.text();
+        responseBody = await readGraphqlResponseBody(response);
       } catch (cause) {
+        if (cause instanceof GraphqlResponseBoundaryError) throw cause;
         // error-policy:J2 Retry only transient transport failures; the final
         // attempt rethrows with the request boundary and original cause.
         const timedOut = controller.signal.aborted;
         const retryable = timedOut || isTransientNetworkError(cause);
-        if (!retryable || attempt === MAX_TRANSIENT_ATTEMPTS) {
+        if (!retryable || attempt === MAX_GRAPHQL_REQUEST_ATTEMPTS) {
           throw new Error(
             timedOut
-              ? `GitHub GraphQL request timed out after ${this.#requestTimeoutMs}ms (${attempt}/${MAX_TRANSIENT_ATTEMPTS})`
-              : `GitHub GraphQL network request failed (${attempt}/${MAX_TRANSIENT_ATTEMPTS})`,
+              ? `GitHub GraphQL request timed out after ${this.#requestTimeoutMs}ms (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS})`
+              : `GitHub GraphQL network request failed (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS})`,
             { cause },
           );
         }
@@ -1134,7 +1229,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         clearTimeout(timeout);
       }
       const retryableStatus = [502, 503, 504].includes(response.status);
-      if (retryableStatus && attempt < MAX_TRANSIENT_ATTEMPTS) {
+      if (retryableStatus && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
         await retryDelay(this.#retryBaseDelayMs * 2 ** (attempt - 1));
         continue;
       }
@@ -1147,7 +1242,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         const contentType = response.headers.get("content-type");
         const retryableMalformedJson =
           response.ok && isJsonContentType(contentType);
-        if (retryableMalformedJson && attempt < MAX_TRANSIENT_ATTEMPTS) {
+        if (retryableMalformedJson && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
           await retryDelay(this.#retryBaseDelayMs * 2 ** (attempt - 1));
           continue;
         }
@@ -1155,7 +1250,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         // non-JSON API failures; exhausted malformed-JSON retries fail closed.
         throw new Error(
           retryableMalformedJson
-            ? `GitHub GraphQL HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_TRANSIENT_ATTEMPTS}; ${contentType ?? "unknown content type"})`
+            ? `GitHub GraphQL HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"})`
             : `GitHub GraphQL HTTP ${response.status} returned a non-JSON response (${contentType ?? "unknown content type"})`,
           { cause },
         );
@@ -1999,6 +2094,47 @@ export function sameReferenceSet(
   );
 }
 
+/**
+ * Selects only outcomes that can still receive detail-dependent bonuses. Base
+ * merged-PR score continues to use every scalar search outcome; deep GitHub
+ * connections are bounded by the same newest-per-cycle cap as that base score.
+ */
+export function selectDetailedMergedPullRequestIds(
+  candidates: ReadonlyArray<{
+    outcome: MergedPullRequestOutcome;
+    projectId: string;
+  }>,
+  verificationWindowFrom: Date,
+): Set<string> {
+  const from = verificationWindowFrom.getTime();
+  if (!Number.isFinite(from)) {
+    throw new TypeError("verificationWindowFrom must be a valid date");
+  }
+  const usage = new Map<string, number>();
+  const selected = new Set<string>();
+  for (const candidate of [...candidates].sort(
+    (left, right) =>
+      right.outcome.mergedAt.localeCompare(left.outcome.mergedAt) ||
+      left.outcome.id.localeCompare(right.outcome.id),
+  )) {
+    const { outcome, projectId } = candidate;
+    if (
+      !outcome.author ||
+      isBotActor(outcome.author) ||
+      Date.parse(outcome.mergedAt) < from
+    ) {
+      continue;
+    }
+    const cycleId = outcome.mergedAt.slice(0, 7);
+    const key = `${projectId}\u0000${outcome.author.id}\u0000${cycleId}`;
+    const count = usage.get(key) ?? 0;
+    if (count >= SCORE_CAPS.mergedPullRequests) continue;
+    usage.set(key, count + 1);
+    selected.add(outcome.id);
+  }
+  return selected;
+}
+
 async function collectStableOpenIssues(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
@@ -2126,7 +2262,7 @@ export async function assertOpenPullRequestReferencesCurrent(
     current.repositoryId !== repositoryId ||
     !sameReferenceSet(expected, current.references)
   ) {
-    throw new Error(
+    throw new OpenSetChangedError(
       "Open pull-request set changed during evidence verification",
     );
   }
@@ -2155,11 +2291,13 @@ export async function assertOpenIssueReferencesCurrent(
     current.repositoryId !== repositoryId ||
     !sameReferenceSet(expected, current.references)
   ) {
-    throw new Error("Open issue set changed during evidence verification");
+    throw new OpenSetChangedError(
+      "Open issue set changed during evidence verification",
+    );
   }
 }
 
-export async function assertOpenWorkReferencesCurrent(
+export async function assertGitArmyReferencesCurrent(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
   repositoryId: string,
@@ -2523,6 +2661,9 @@ export async function generateLeaderboardFromGitHub(
   const stats = { searchSliceCount: 0 };
 
   interface RepositoryCollection {
+    closedIssueReferences: NodeReference[];
+    mergedPullRequestOutcomes: MergedPullRequestOutcome[];
+    mergedPullRequestReferences: NodeReference[];
     repository: TargetRepository;
     preflight: { id: string; updatedAt: string };
     openIssues: IssueRecord[];
@@ -2583,84 +2724,119 @@ export async function generateLeaderboardFromGitHub(
       }
       return reference.outcome;
     });
-    const detailedMergedPullRequestIds = new Set(
-      repositoryOutcomes
-        .filter(
-          (pullRequest) =>
-            Date.parse(pullRequest.mergedAt) >=
-            verificationWindowFrom.getTime(),
-        )
-        .map((pullRequest) => pullRequest.id),
-    );
-    const detailedMergedPullRequestReferences =
-      mergedPullRequestReferences.filter((reference) =>
-        detailedMergedPullRequestIds.has(reference.id),
-      );
-    assertEstimatedBudget(
-      client,
-      detailedMergedPullRequestReferences.length,
-      closedIssueReferences.length,
-    );
-
     mergedPullRequestOutcomes.push(...repositoryOutcomes);
-    mergedPullRequests.push(
-      ...(await hydratePullRequests(
-        client,
-        detailedMergedPullRequestReferences,
-        "merged",
-        onProgress,
-        "merged-pull-requests",
-      )),
+    collections.push({
+      closedIssueReferences,
+      mergedPullRequestOutcomes: repositoryOutcomes,
+      mergedPullRequestReferences,
+      repository,
+      preflight,
+      openIssues: [],
+      openPullRequests: [],
+    });
+  }
+
+  const detailedMergedPullRequestIds = selectDetailedMergedPullRequestIds(
+    collections.flatMap((collection) =>
+      collection.mergedPullRequestOutcomes.map((outcome) => ({
+        outcome,
+        projectId: collection.repository.projectId,
+      })),
+    ),
+    verificationWindowFrom,
+  );
+  for (const collection of collections) {
+    const detailedReferences = collection.mergedPullRequestReferences.filter(
+      (reference) => detailedMergedPullRequestIds.has(reference.id),
     );
+    assertEstimatedBudget(client, detailedReferences.length, 0);
+    const detailedPullRequests = await hydratePullRequests(
+      client,
+      detailedReferences,
+      "merged",
+      onProgress,
+      "merged-pull-requests",
+    );
+    mergedPullRequests.push(...detailedPullRequests);
+
+    const linkedIssueIds = new Set(
+      detailedPullRequests.flatMap(
+        (pullRequest) => pullRequest.closingIssueIds,
+      ),
+    );
+    const linkedClosedIssueReferences = collection.closedIssueReferences.filter(
+      (reference) => linkedIssueIds.has(reference.id),
+    );
+    assertEstimatedBudget(client, 0, linkedClosedIssueReferences.length);
     closedIssues.push(
       ...(await hydrateIssues(
         client,
-        closedIssueReferences,
+        linkedClosedIssueReferences,
         "closed",
         onProgress,
         "resolved-issues",
       )),
     );
-    collections.push({
-      repository,
-      preflight,
-      openIssues: await collectStableOpenIssues(
-        client,
-        repository,
-        preflight.id,
-        onProgress,
-      ),
-      openPullRequests: await collectStableOpenPullRequests(
-        client,
-        repository,
-        preflight.id,
-        onProgress,
-      ),
-    });
+    collection.openIssues = await collectStableOpenIssues(
+      client,
+      collection.repository,
+      collection.preflight.id,
+      onProgress,
+    );
+    collection.openPullRequests = await collectStableOpenPullRequests(
+      client,
+      collection.repository,
+      collection.preflight.id,
+      onProgress,
+    );
   }
 
   const dedupedOutcomes = dedupeByNodeId(mergedPullRequestOutcomes);
   const dedupedMergedPullRequests = dedupeByNodeId(mergedPullRequests);
   const dedupedClosedIssues = dedupeByNodeId(closedIssues);
-  const openIssues = dedupeByNodeId(
-    collections.flatMap((collection) => collection.openIssues),
-  );
-  const openPullRequests = dedupeByNodeId(
-    collections.flatMap((collection) => collection.openPullRequests),
-  );
-  const evidenceVerification = await verifyPullRequestEvidence(
-    [...dedupedMergedPullRequests, ...openPullRequests],
-    options,
-  );
-  for (const collection of collections) {
-    await assertOpenWorkReferencesCurrent(
-      client,
-      collection.repository,
-      collection.preflight.id,
-      collection.openIssues,
-      collection.openPullRequests,
-    );
-  }
+  const { evidenceVerification, openIssues, openPullRequests } =
+    await retryGitArmySnapshot(async (attempt) => {
+      if (attempt > 1) {
+        for (const collection of collections) {
+          collection.openIssues = await collectStableOpenIssues(
+            client,
+            collection.repository,
+            collection.preflight.id,
+            onProgress,
+          );
+          collection.openPullRequests = await collectStableOpenPullRequests(
+            client,
+            collection.repository,
+            collection.preflight.id,
+            onProgress,
+          );
+        }
+      }
+      const currentOpenIssues = dedupeByNodeId(
+        collections.flatMap((collection) => collection.openIssues),
+      );
+      const currentOpenPullRequests = dedupeByNodeId(
+        collections.flatMap((collection) => collection.openPullRequests),
+      );
+      const currentEvidenceVerification = await verifyPullRequestEvidence(
+        [...dedupedMergedPullRequests, ...currentOpenPullRequests],
+        options,
+      );
+      for (const collection of collections) {
+        await assertGitArmyReferencesCurrent(
+          client,
+          collection.repository,
+          collection.preflight.id,
+          collection.openIssues,
+          collection.openPullRequests,
+        );
+      }
+      return {
+        evidenceVerification: currentEvidenceVerification,
+        openIssues: currentOpenIssues,
+        openPullRequests: currentOpenPullRequests,
+      };
+    });
 
   const allRecords = [
     ...dedupedOutcomes,
@@ -2710,7 +2886,7 @@ export async function generateLeaderboardFromGitHub(
       maxArtifacts: MAX_EVIDENCE_ARTIFACTS_PER_SNAPSHOT,
     },
   };
-  return createLeaderboardSnapshot({
+  const snapshot = createLeaderboardSnapshot({
     generatedAt: fetchedAt,
     windowFrom: windowFrom.toISOString(),
     windowTo: now.toISOString(),
@@ -2724,7 +2900,22 @@ export async function generateLeaderboardFromGitHub(
     openPullRequests,
     verificationWindowFrom: verificationWindowFrom.toISOString(),
     verifiedEvidence: evidenceVerification.artifacts,
+    evaluatedContributions: options.evaluatedContributions ?? [],
   });
+  for (const attribution of snapshot.attributions) {
+    if (attribution.run === null) continue;
+    try {
+      verifyRunReceiptSignature(attribution.run);
+    } catch (error: unknown) {
+      snapshot.invalidAttributionMarkers.push({
+        sourceId: attribution.sourceId,
+        sourceUrl: attribution.sourceUrl,
+        reason: `run receipt excluded: ${error instanceof Error ? error.message : "signature verification failed"}`,
+      });
+      attribution.run = null;
+    }
+  }
+  return snapshot;
 }
 
 export async function writeLeaderboardAtomically(
@@ -2765,16 +2956,26 @@ export async function runGenerator(
 
 function progressLine(progress: GenerationProgress): string {
   const label = progress.phase.replaceAll("-", " ");
-  return `[eliza.army] ${label}: ${progress.completed}/${progress.total}\n`;
+  return `[git.army] ${label}: ${progress.completed}/${progress.total}\n`;
 }
 
 if (import.meta.main) {
+  let lastProgressPhase: GenerationProgress["phase"] | null = null;
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
+    evaluatedContributions: loadEvaluatorAwardEvents(),
     onProgress: (progress) => {
-      process.stderr.write(progressLine(progress));
+      const phaseChanged = progress.phase !== lastProgressPhase;
+      lastProgressPhase = progress.phase;
+      if (
+        phaseChanged ||
+        progress.completed === progress.total ||
+        progress.completed % 100 === 0
+      ) {
+        process.stderr.write(progressLine(progress));
+      }
     },
   });
   process.stdout.write(
-    `[eliza.army] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GraphQL requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} points remaining)\n`,
+    `[git.army] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GraphQL requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} points remaining)\n`,
   );
 }

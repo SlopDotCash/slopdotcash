@@ -1,28 +1,30 @@
 # @elizaos/army
 
-Standalone Vite site and data pipeline for `eliza.army`, the public
-contribution-compute entrypoint for elizaOS.
+Standalone Vite site and Git-backed incentive protocol for `git.army`, the
+first deployment of GitArmy.
 
 ## Purpose
 
-This package publishes the installable `contribute-to-eliza` skill, a live work
-queue, and a transparent contribution leaderboard scoped to the target
-repository registry in `src/lib/repositories.mjs` — currently `elizaOS/eliza`
-(primary) and `lalalune/arklib`. The registry is the single source of truth
-for target repositories; never hardcode a target repository elsewhere.
-It is a private application, not a library. Cloudflare Pages serves the static
-build; GitHub Actions refreshes the public data and deploys only after package
-checks pass.
+This package publishes project discovery, installable contributor skills,
+separate CI reviewer skills, signed aggregate usage receipts, a live work queue,
+project and global leaderboards, permanent contributor profiles, monthly reward
+proposals, and verified settlement records. `projects/*/project.json` is the
+source of truth for project policy. The generated project and repository
+registries must be synchronized from those manifests; never hardcode a project
+or target repository elsewhere. This is a private application, not a library.
+Cloudflare Pages serves the static build; GitHub Actions refreshes public data
+and deploys only after package checks pass.
 
-The canonical skill source is `skills/contribute-to-eliza/`. Never maintain a
-second skill copy. `scripts/prepare-site.mjs` validates that source, copies
-the raw Markdown endpoints, and builds the downloadable `.skill` archive.
+Each `project.skill.sourcePath` is the one canonical contributor-skill source.
+Never maintain a second skill copy. `scripts/prepare-site.mjs` validates every
+tracked tree, copies raw Markdown endpoints, builds downloadable `.skill`
+archives, and publishes the validated cycle index.
 
 The public checksum is only a corruption check. The generated installer uses
 GitHub as an independent trust root: the revision must be current `develop`, a
 `develop` ancestor whose complete canonical skill tree is byte-identical to
 current `develop`, or an open, non-draft, same-repository PR head into `develop`
-with the maintainer-controlled `eliza-army-release-candidate` label. It
+with the maintainer-controlled `gitarmy-release-candidate` label. It
 recursively
 requires the label event to follow the exact current-head commit event, rejects
 candidates behind or divergent from current `develop`, and compares the bounded
@@ -45,19 +47,23 @@ the generator's test option, never environment variables.
 
 ```text
 assets/               repository-owned elizaOS brand assets
-skills/               canonical contributor skill and supporting references
+projects/             reviewed project manifests and reward policy
+skills/               canonical contributor and CI reviewer skills
+evaluations/          reviewed awards for useful otherwise-unscored work
+cycles/               append-only reward lifecycle records
 skill-tests/          bun tests for the bundled skill scripts
-src/                  React UI, data contracts, scoring helpers
+src/                  React UI and strict domain/browser contracts
 public/               Pages headers/redirects plus generated site assets
-scripts/              skill packaging, live GitHub ingestion, evidence capture
+scripts/              ingestion, packaging, rewards, settlement, evidence
 tests/                unit and real-browser coverage
 PRODUCT.md            users, purpose, principles, accessibility
 DESIGN.md             visual system and interaction rules
 wrangler.toml         Cloudflare Pages Direct Upload contract
 ```
 
-Generated files under `public/brand/`, `public/downloads/`, and the raw hosted
-skill endpoints are produced by `prepare:site`. Do not edit them by hand.
+Generated files under `public/brand/`, `public/downloads/`, `public/projects/`,
+and `public/data/cycles/` are produced by `prepare:site`. Do not edit them by
+hand.
 
 ## Commands
 
@@ -66,6 +72,10 @@ Run from the repository root:
 ```bash
 bun run dev
 bun run leaderboard:generate
+bun run projects:check
+bun run evaluations:check
+bun run cycles:check
+bun run rewards:close-month -- --cycle YYYY-MM
 bun run test
 bun run typecheck
 bun run lint:check
@@ -84,7 +94,7 @@ zero leaderboard after an ingestion failure.
 The local evidence command builds and records the local preview, but refuses a
 missing, empty, malformed, or older-than-eight-hours live ledger. The
 production command never rebuilds: it records only the existing `dist`, targets
-exactly `https://eliza.army`, byte-compares the deployed skill and ledger
+exactly `https://git.army`, byte-compares the deployed skill and ledger
 artifacts with that directory, and records DNS, TLS, redirect, and security
 header checks. Both modes capture into a fresh sibling staging directory,
 validate every artifact and digest, and publish the evidence directory only as
@@ -93,44 +103,72 @@ one complete transaction.
 ## Contribution scoring contract
 
 - Score accepted outcomes, not raw activity.
-- Collect base merged-PR outcomes for the complete rolling 30-day window and
-  deeply verify proof/test/review/issue bonuses for the complete trailing seven
-  days. Publish both bounds and record counts; never silently sample.
+- Collect and deeply verify the complete rolling 35-day window so a
+  first-of-month job can freeze every event in the prior UTC month. Publish the
+  exact bounds and record counts; never silently sample.
 - Keep rules versioned, public, and deterministic.
 - Deduplicate by immutable GitHub IDs.
 - Exclude bots, self-review, post-merge review, and repeated low-value comments.
-- Cap review/comment awards by actor and artifact. Per-contributor caps are
-  global across every registry repository; a second repository never adds
-  scoring capacity.
-- Model disclosure is reported provenance, not proof, and never adds points.
+- Apply caps by contributor, project, and UTC month. Input order must not select
+  which qualifying outcomes survive a cap.
+- Permit unusual useful work only through a strict `evaluations/` manifest whose
+  public GitArmy PR is the human decision. Never score a source already rewarded
+  by the ordinary GitHub ledger.
+- Model and token disclosure are supporting provenance, not proof. Tokens can
+  add only a diminishing outcome-linked weight bonus capped at 20%; ambiguous
+  usage does not add weight.
 - Every public snapshot records its repository registry with per-item
   repository attribution, the primary repository, window, rule version,
   generation time, source cutoff, and any staleness.
+- Refuse reward proposals when deep evidence verification is incomplete or
+  suppressed by a bound.
 
 ## Work-candidate selection contract
 
 The snapshot retains every open issue and PR for source-count integrity, but
 each item publishes a deterministic `selection` decision. The UI advertises
-only `candidate` items. Issues also require a maintainer-controlled
-contributor-ready label and bounded scope. Exclude epics needing child issues,
-human-gated work, unknown or bot authors, security-sensitive labels, blocked
-work, active claims (including `claimed:<lane>` and
-`review-claimed:<lane>`), drafts, active review requests, current-head
-approvals, and current-head changes requests. Public claim comments reserve
-work only for repository owners, members, or collaborators. The bundled live
-report uses the same rules. These filters are fail-closed hints, not claim
-authority; users must re-read live GitHub and Project state before acting.
+only bounded, unblocked candidates and always links back to live GitHub. There
+is no platform claim or reservation authority. Existing assignees, maintainer
+claim labels/comments, drafts, active review requests, approvals, changes
+requested, security-sensitive labels, human-gated work, and epics are
+fail-closed selection signals. Users and agents must re-read live GitHub before
+acting.
 
 ## Model attribution
 
-Contributions made through the skill must use an exact provider/model
-identifier in the PR body and every issue/PR comment, along with client, skill
-revision, a signed lane tag, and a machine-readable
-`elizaos-contribution-attribution:v1` marker. Historical
-`eliza-computer-attribution:v1` markers remain readable by the leaderboard.
-Never include chain-of-thought, secrets,
-tokens, private prompt content, or session IDs. A human-only contribution must
-say so explicitly.
+Contributions made through a project skill must carry the machine-readable
+`elizaos-contribution-attribution:v2` marker. It binds project, repository,
+run id, timestamps, exact provider/model/client, skill revision and digest,
+aggregate pinned-ccusage figures, optional local trajectory digest, and an
+Ed25519 device signature. Validate signatures and all joins at ingestion. A
+device signature proves byte continuity, not provider billing truth. Never
+publish chain-of-thought, secrets, raw prompts/responses, source files, private
+trajectories, credentials, or session identifiers. A human-only contribution
+must say so explicitly.
+
+## Reward and settlement contract
+
+- Closed cycles live only at `cycles/<project>/<YYYY-MM>/` and bind to exact
+  immutable source-snapshot bytes and a scoring-rule version.
+- The monthly automation runs trusted `develop` only, is idempotent, refuses a
+  partial cycle, and records zero-award months explicitly.
+- Monthly allocations use integer USDC micro-units, largest remainder, and the
+  published cap. The 1% fee applies to approved principal. Never use floats for
+  money or let rollover increase a later monthly cap.
+- Proposal review lasts 14 days. Reductions need a public reason. Wallet changes
+  reset the review deadline. Missing wallets stay unclaimed; suspicious rows
+  stay visible as held or excluded. Related-party money needs separate approval.
+- A GitHub profile README wallet marker is a public observation pinned to one
+  commit, not cryptographic wallet-ownership proof.
+- Settlement tools create unsigned Solana mainnet USDC plans only. They never
+  read keys, sign, broadcast, or claim success optimistically.
+- `paid` requires finalized transaction evidence whose exact source and
+  destination USDC deltas reconcile every immutable intent and fee. Reject
+  replay, wrong mint, wrong owner, partial, duplicate, failed, or overpaid state.
+- Delta Star publishes external-prize shares only and never enters the platform
+  payment lifecycle.
+- An LLM may recommend a hold or award but cannot autonomously ban, approve,
+  exclude, or move money.
 
 ## Deployment
 
@@ -166,7 +204,7 @@ records its deployment ID and immutable Pages URL.
 
 The production domain is registered with Cloudflare Registrar in the same
 account as the Pages project. The internal project slug remains
-`eliza-computer`; the public authority is `https://eliza.army`. Do not claim
+`eliza-computer`; the public authority is `https://git.army`. Do not claim
 that a Pages deploy proves custom-domain DNS or TLS—verify both separately.
 
 ## Definition of done
