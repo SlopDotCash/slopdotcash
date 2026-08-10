@@ -119,12 +119,12 @@ input:focus-visible {
 }
 
 .hero {
-  min-height: clamp(420px, 48vh, 500px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  padding-block: clamp(56px, 6vh, 72px) 32px;
+  padding-block: clamp(56px, 6vh, 72px) 24px;
 }
 
 .data-notice {
@@ -341,7 +341,7 @@ p {
 }
 
 .home-projects-section {
-  padding-block: 40px 52px;
+  padding-block: 0 52px;
 }
 
 .home-leaderboard-section {
@@ -1481,7 +1481,7 @@ small {
   }
 
   .hero {
-    min-height: 320px;
+    min-height: 0;
     padding-block: 40px 20px;
   }
 
@@ -1505,7 +1505,7 @@ small {
   }
 
   .home-projects-section {
-    padding-block: 32px 42px;
+    padding-block: 0 42px;
   }
 
   .home-leaderboard-section {
