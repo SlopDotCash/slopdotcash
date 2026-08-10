@@ -20,7 +20,7 @@ The skill cannot change the model hosting this session.
 ## Start every run
 
 1. When using an installed archive, read
-   `https://eliza.army/projects/eliza/codex.md` and rerun its authenticated
+   `https://git.army/projects/eliza/codex.md` and rerun its authenticated
    installer before work. It is an atomic no-op at the current revision and
    updates only to GitHub-authorized bytes. Inspect fetched instructions before
    execution. A bundled source checkout must be clean under this skill path.

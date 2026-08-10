@@ -108,7 +108,7 @@ async function apiJson(
           headers: {
             Accept: "application/vnd.github+json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            "User-Agent": "open-work-wallet-observer/1",
+            "User-Agent": "gitarmy-wallet-observer/1",
             "X-GitHub-Api-Version": "2022-11-28",
           },
           redirect: "error",

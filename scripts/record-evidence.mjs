@@ -71,11 +71,11 @@ function gitHead() {
     encoding: "utf8",
   });
   if (result.status !== 0) {
-    throw new Error("[Army] could not identify the evidence revision");
+    throw new Error("[GitArmy] could not identify the evidence revision");
   }
   const revision = result.stdout.trim();
   if (!/^[0-9a-f]{40}$/.test(revision)) {
-    throw new TypeError("[Army] evidence revision is not a full commit SHA");
+    throw new TypeError("[GitArmy] evidence revision is not a full commit SHA");
   }
   return revision;
 }
@@ -88,12 +88,12 @@ function readDistArtifacts() {
       contents = readFileSync(localPath);
     } catch (error) {
       // error-policy:J2 evidence capture reports the exact missing build path.
-      throw new Error(`[Army] dist is incomplete: ${path} is not readable`, {
+      throw new Error(`[GitArmy] dist is incomplete: ${path} is not readable`, {
         cause: error,
       });
     }
     if (contents.length === 0) {
-      throw new Error(`[Army] dist artifact is empty: ${path}`);
+      throw new Error(`[GitArmy] dist artifact is empty: ${path}`);
     }
     return { contents, localPath, path };
   });
@@ -102,20 +102,20 @@ function readDistArtifacts() {
 function findArtifact(artifacts, path) {
   const artifact = artifacts.find((candidate) => candidate.path === path);
   if (!artifact) {
-    throw new TypeError(`[Army] dist omitted required ${path}`);
+    throw new TypeError(`[GitArmy] dist omitted required ${path}`);
   }
   return artifact;
 }
 
 function assertPreviewRunning(server, state) {
   if (state.error) {
-    throw new Error("[Army] preview process could not start", {
+    throw new Error("[GitArmy] preview process could not start", {
       cause: state.error,
     });
   }
   if (server.exitCode !== null || server.signalCode !== null) {
     throw new Error(
-      `[Army] owned preview exited before evidence completed (code=${server.exitCode ?? "none"}, signal=${server.signalCode ?? "none"})`,
+      `[GitArmy] owned preview exited before evidence completed (code=${server.exitCode ?? "none"}, signal=${server.signalCode ?? "none"})`,
     );
   }
 }
@@ -129,7 +129,7 @@ async function reserveLoopbackPort() {
   const address = listener.address();
   if (!address || typeof address === "string") {
     listener.close();
-    throw new Error("[Army] could not reserve a loopback port");
+    throw new Error("[GitArmy] could not reserve a loopback port");
   }
   await new Promise((resolvePromise, reject) => {
     listener.close((error) => {
@@ -163,18 +163,18 @@ async function waitForServer(baseUrl, server, state, expectedFingerprint) {
     }
     if (!response.ok) {
       throw new Error(
-        `[Army] owned preview returned ${response.status} for the build fingerprint`,
+        `[GitArmy] owned preview returned ${response.status} for the build fingerprint`,
       );
     }
     const servedFingerprint = hash(Buffer.from(await response.arrayBuffer()));
     if (servedFingerprint !== expectedFingerprint) {
       throw new Error(
-        "[Army] preview served a build other than the selected dist",
+        "[GitArmy] preview served a build other than the selected dist",
       );
     }
     return;
   }
-  throw new Error("[Army] preview server did not become ready");
+  throw new Error("[GitArmy] preview server did not become ready");
 }
 
 function waitForProcessExit(server, timeoutMs) {
@@ -216,7 +216,7 @@ async function inspectTls() {
     });
     socket.setTimeout(10_000);
     socket.once("timeout", () => {
-      socket.destroy(new Error("[Army] production TLS handshake timed out"));
+      socket.destroy(new Error("[GitArmy] production TLS handshake timed out"));
     });
     socket.once("error", reject);
     socket.once("secureConnect", () => {
@@ -242,7 +242,7 @@ function hashedAssetPath(indexHtml) {
   const match = indexHtml.match(/(?:href|src)="(\/assets\/[^"?]+)"/);
   if (!match) {
     throw new TypeError(
-      "[Army] built index omitted a hashed /assets reference",
+      "[GitArmy] built index omitted a hashed /assets reference",
     );
   }
   return match[1];
@@ -275,12 +275,12 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
   });
   if (!httpsResponse.ok) {
     throw new Error(
-      `[Army] production apex returned HTTP ${httpsResponse.status}`,
+      `[GitArmy] production apex returned HTTP ${httpsResponse.status}`,
     );
   }
   if (new URL(httpsResponse.url).origin !== PRODUCTION_ORIGIN) {
     throw new Error(
-      `[Army] production HTTPS request left ${PRODUCTION_ORIGIN}`,
+      `[GitArmy] production HTTPS request left ${PRODUCTION_ORIGIN}`,
     );
   }
   const securityHeaders = assertSecurityHeaders(httpsResponse.headers);
@@ -295,7 +295,7 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
   });
   if (!assetResponse.ok) {
     throw new Error(
-      `[Army] production asset returned HTTP ${assetResponse.status}`,
+      `[GitArmy] production asset returned HTTP ${assetResponse.status}`,
     );
   }
   const assetCacheControl = assertImmutableAssetCache(assetResponse.headers);
@@ -627,12 +627,12 @@ try {
     failedFirstPartyRequests.length > 0
   ) {
     throw new Error(
-      `[Army] evidence captured browser errors: console=${consoleErrors.length}, page=${pageErrors.length}, responses=${failedFirstPartyResponses.length}, requests=${failedFirstPartyRequests.length}`,
+      `[GitArmy] evidence captured browser errors: console=${consoleErrors.length}, page=${pageErrors.length}, responses=${failedFirstPartyResponses.length}, requests=${failedFirstPartyRequests.length}`,
     );
   }
   validateEvidenceBundle(evidenceRoot, { buildFingerprint, mode });
   evidenceTransaction.publish();
-  console.log(`[Army] ${mode} evidence written to ${finalEvidenceRoot}`);
+  console.log(`[GitArmy] ${mode} evidence written to ${finalEvidenceRoot}`);
 } finally {
   await stopPreview(previewServer);
   evidenceTransaction.abort();

@@ -493,8 +493,8 @@ describe("live report parsing", () => {
       "<details>",
       "<summary>Browser output</summary>",
       "```text",
-      "[2026-01-18T12:00:00.500Z] console.info [Army] leaderboard loaded entries=25",
-      "GET https://eliza.army/data/leaderboard.json 200 duration=84ms",
+      "[2026-01-18T12:00:00.500Z] console.info [GitArmy] leaderboard loaded entries=25",
+      "GET https://git.army/data/leaderboard.json 200 duration=84ms",
       "```",
       "</details>",
     ].join("\n");

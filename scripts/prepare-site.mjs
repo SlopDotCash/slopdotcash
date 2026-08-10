@@ -54,7 +54,7 @@ const archiveName = "contribute-to-eliza.skill";
 const archivePath = join(downloadsRoot, archiveName);
 const skillRepositoryPath = "skills/contribute-to-eliza";
 const sourcePath = `${skillRepositoryPath}/SKILL.md`;
-const publicSiteOrigin = "https://eliza.army";
+const publicSiteOrigin = "https://git.army";
 
 function sha256(contents) {
   return createHash("sha256").update(contents).digest("hex");
@@ -74,7 +74,7 @@ function listRegularSkillFiles(root, prefix = "") {
     const stats = lstatSync(absolutePath);
     if (stats.isSymbolicLink()) {
       throw new TypeError(
-        `[Army] skill source contains a symlink: ${relativePath}`,
+        `[GitArmy] skill source contains a symlink: ${relativePath}`,
       );
     }
     if (stats.isDirectory()) {
@@ -82,7 +82,7 @@ function listRegularSkillFiles(root, prefix = "") {
     }
     if (!stats.isFile()) {
       throw new TypeError(
-        `[Army] skill source contains a non-regular file: ${relativePath}`,
+        `[GitArmy] skill source contains a non-regular file: ${relativePath}`,
       );
     }
     return [relativePath];
@@ -117,12 +117,12 @@ if (
   )
 ) {
   throw new TypeError(
-    "[Army] tracked skill file manifest is empty, escaped its root, or reserves PROVENANCE.json",
+    "[GitArmy] tracked skill file manifest is empty, escaped its root, or reserves PROVENANCE.json",
   );
 }
 if (trackedSkillFiles.length > 32) {
   throw new TypeError(
-    "[Army] canonical skill exceeds the installer's 32-file authority bound",
+    "[GitArmy] canonical skill exceeds the installer's 32-file authority bound",
   );
 }
 if (
@@ -134,7 +134,7 @@ if (
   const extras = actualSkillFiles.filter((path) => !tracked.has(path));
   const missing = trackedSkillFiles.filter((path) => !actual.has(path));
   throw new TypeError(
-    `[Army] skill source must exactly match tracked files (extra: ${extras.join(", ") || "none"}; missing: ${missing.join(", ") || "none"})`,
+    `[GitArmy] skill source must exactly match tracked files (extra: ${extras.join(", ") || "none"}; missing: ${missing.join(", ") || "none"})`,
   );
 }
 const skillFileManifest = trackedSkillFiles.map((path) => ({
@@ -146,7 +146,7 @@ const commit = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
 if (!/^[0-9a-f]{40}$/.test(commit)) {
-  throw new TypeError("[Army] git did not return a full commit SHA");
+  throw new TypeError("[GitArmy] git did not return a full commit SHA");
 }
 const committedSkillFiles = execFileSync(
   "git",
@@ -223,7 +223,7 @@ try {
   run("python3", [archiveNormalizer, packagedArchive]);
   archive = readFileSync(packagedArchive);
   if (archive.length === 0) {
-    throw new Error("[Army] packaged skill archive is empty");
+    throw new Error("[GitArmy] packaged skill archive is empty");
   }
   copyFileSync(packagedArchive, stagedPublicArchive);
   renameSync(stagedPublicArchive, archivePath);
@@ -262,7 +262,7 @@ Install or update the complete skill archive. The installer accepts the current
 \`develop\` commit, a develop ancestor only while its complete canonical skill
 tree remains byte-identical to current \`develop\`, or a same-repository,
 non-draft pull request labeled
-\`eliza-army-release-candidate\` after its exact current-head event and fully
+\`gitarmy-release-candidate\` after its exact current-head event and fully
 synchronized with \`develop\`, then independently compares every packaged byte
 with GitHub's immutable source. This does not replace a repository's \`AGENTS.md\`
 or any local instructions.
@@ -286,8 +286,8 @@ command is a no-op at the same revision and updates only when GitHub proves the
 installed revision is an ancestor of the newly authorized revision. The prior
 verified version is retained, but rollback still requires current authorization.
 To roll back, export
-\`ELIZA_ARMY_SKILL_OPERATION=rollback\` and
-\`ELIZA_ARMY_SKILL_REVISION=<retained-40-character-revision>\`, then run the
+\`GITARMY_SKILL_OPERATION=rollback\` and
+\`GITARMY_SKILL_REVISION=<retained-40-character-revision>\`, then run the
 same command. The rollback byte-verifies both the active and retained versions,
 then applies the current GitHub authorization rules to the requested target
 immediately before switching the symlink. The stored receipt records how a
@@ -332,7 +332,7 @@ const manifest = {
     apiOrigin: "https://api.github.com",
     rawOrigin: "https://raw.githubusercontent.com",
     canonicalPath: skillRepositoryPath,
-    releaseCandidateLabel: "eliza-army-release-candidate",
+    releaseCandidateLabel: "gitarmy-release-candidate",
     acceptedRevisions: [
       "current develop head",
       "develop ancestor whose complete canonical skill tree is byte-identical to current develop",
@@ -434,7 +434,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
     trackedFiles.some((path, index) => path !== actualFiles[index])
   ) {
     throw new TypeError(
-      `[Army] ${name} source must be a bounded, tracked, exact file tree`,
+      `[GitArmy] ${name} source must be a bounded, tracked, exact file tree`,
     );
   }
   const fileManifest = trackedFiles.map((path) => ({
@@ -499,7 +499,8 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
     const packagedArchive = join(stagedDownloadsRoot, archiveName);
     run("python3", [archiveNormalizer, packagedArchive]);
     archive = readFileSync(packagedArchive);
-    if (archive.length === 0) throw new Error(`[Army] ${archiveName} is empty`);
+    if (archive.length === 0)
+      throw new Error(`[GitArmy] ${archiveName} is empty`);
     copyFileSync(packagedArchive, stagedArchive);
     renameSync(stagedArchive, join(projectDownloads, archiveName));
   } finally {
@@ -550,7 +551,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
       apiOrigin: "https://api.github.com",
       rawOrigin: "https://raw.githubusercontent.com",
       canonicalPath: skillRepositoryPath,
-      releaseCandidateLabel: "eliza-army-release-candidate",
+      releaseCandidateLabel: "gitarmy-release-candidate",
       acceptedRevisions: manifest.authority.acceptedRevisions,
     },
     telemetry: {
@@ -564,7 +565,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
     `${JSON.stringify(additionalManifest, null, 2)}\n`,
   );
   console.log(
-    `[Army] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
+    `[GitArmy] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
   );
 }
 
@@ -580,5 +581,5 @@ for (const project of PROJECTS) {
 run("bun", [join(repositoryRoot, "scripts", "sync-cycle-index.ts")]);
 
 console.log(
-  `[Army] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
+  `[GitArmy] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
 );

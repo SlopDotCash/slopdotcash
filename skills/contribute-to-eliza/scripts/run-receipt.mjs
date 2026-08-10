@@ -274,8 +274,8 @@ function collectUsage(client, repositoryRoot) {
 function configurationRoot() {
   const configured = process.env.XDG_CONFIG_HOME;
   return configured && resolve(configured) === configured
-    ? join(configured, "eliza-army")
-    : join(homedir(), ".config", "eliza-army");
+    ? join(configured, "gitarmy")
+    : join(homedir(), ".config", "gitarmy");
 }
 
 function ensureDirectory(path) {

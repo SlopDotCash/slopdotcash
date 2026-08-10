@@ -1,7 +1,7 @@
 # @elizaos/army
 
-Standalone Vite site and Git-backed incentive protocol for `eliza.army`, the
-first deployment of Open Work.
+Standalone Vite site and Git-backed incentive protocol for `git.army`, the
+first deployment of GitArmy.
 
 ## Purpose
 
@@ -24,7 +24,7 @@ The public checksum is only a corruption check. The generated installer uses
 GitHub as an independent trust root: the revision must be current `develop`, a
 `develop` ancestor whose complete canonical skill tree is byte-identical to
 current `develop`, or an open, non-draft, same-repository PR head into `develop`
-with the maintainer-controlled `eliza-army-release-candidate` label. It
+with the maintainer-controlled `gitarmy-release-candidate` label. It
 recursively
 requires the label event to follow the exact current-head commit event, rejects
 candidates behind or divergent from current `develop`, and compares the bounded
@@ -94,7 +94,7 @@ zero leaderboard after an ingestion failure.
 The local evidence command builds and records the local preview, but refuses a
 missing, empty, malformed, or older-than-eight-hours live ledger. The
 production command never rebuilds: it records only the existing `dist`, targets
-exactly `https://eliza.army`, byte-compares the deployed skill and ledger
+exactly `https://git.army`, byte-compares the deployed skill and ledger
 artifacts with that directory, and records DNS, TLS, redirect, and security
 header checks. Both modes capture into a fresh sibling staging directory,
 validate every artifact and digest, and publish the evidence directory only as
@@ -112,7 +112,7 @@ one complete transaction.
 - Apply caps by contributor, project, and UTC month. Input order must not select
   which qualifying outcomes survive a cap.
 - Permit unusual useful work only through a strict `evaluations/` manifest whose
-  public Army PR is the human decision. Never score a source already rewarded
+  public GitArmy PR is the human decision. Never score a source already rewarded
   by the ordinary GitHub ledger.
 - Model and token disclosure are supporting provenance, not proof. Tokens can
   add only a diminishing outcome-linked weight bonus capped at 20%; ambiguous
@@ -204,7 +204,7 @@ records its deployment ID and immutable Pages URL.
 
 The production domain is registered with Cloudflare Registrar in the same
 account as the Pages project. The internal project slug remains
-`eliza-computer`; the public authority is `https://eliza.army`. Do not claim
+`eliza-computer`; the public authority is `https://git.army`. Do not claim
 that a Pages deploy proves custom-domain DNS or TLS—verify both separately.
 
 ## Definition of done

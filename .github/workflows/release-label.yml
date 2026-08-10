@@ -1,6 +1,6 @@
 # Base-controlled release approval invalidation. This workflow handles only PR
 # metadata and never checks out or executes pull-request code.
-name: Invalidate eliza.army release approval
+name: Invalidate git.army release approval
 
 on:
   pull_request_target:
@@ -8,7 +8,7 @@ on:
     types: [synchronize]
 
 concurrency:
-  group: eliza-army-release-label-${{ github.event.pull_request.number }}
+  group: gitarmy-release-label-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          target_label="eliza-army-release-candidate"
+          target_label="gitarmy-release-candidate"
 
           if [[ "$EVENT_NAME" != "pull_request_target" ||
                 "$EVENT_ACTION" != "synchronize" ||

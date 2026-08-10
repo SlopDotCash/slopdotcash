@@ -35,7 +35,7 @@ function approvedAllocation() {
     chain: "solana",
     capMinor: "10000000000",
     feeBasisPoints: 100,
-    scoringRuleVersion: "open-work-v1",
+    scoringRuleVersion: "gitarmy-v1",
     sourceSnapshotSha256: "b".repeat(64),
     allocations: [
       {

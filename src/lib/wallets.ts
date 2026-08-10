@@ -5,7 +5,7 @@
  */
 
 export const WALLET_MARKER_VERSION = "1" as const;
-export const WALLET_MARKER_PREFIX = "open-work-wallet:v1" as const;
+export const WALLET_MARKER_PREFIX = "gitarmy-wallet:v1" as const;
 
 export interface PublishedWallet {
   address: string;
@@ -87,7 +87,7 @@ export function parsePublishedWallet(markdown: string): PublishedWallet | null {
   if (typeof markdown !== "string" || markdown.length > 1_000_000) {
     throw new TypeError("GitHub profile README is invalid or too large");
   }
-  const pattern = /^\s*<!--\s*open-work-wallet:v1\s+(\{[^\r\n]*\})\s*-->\s*$/u;
+  const pattern = /^\s*<!--\s*gitarmy-wallet:v1\s+(\{[^\r\n]*\})\s*-->\s*$/u;
   const matches = withoutFencedCode(markdown)
     .map((line) => pattern.exec(line))
     .filter((match): match is RegExpExecArray => match !== null);

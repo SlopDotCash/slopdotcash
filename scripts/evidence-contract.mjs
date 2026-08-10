@@ -11,8 +11,8 @@ import {
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
 
-export const PRODUCTION_ORIGIN = "https://eliza.army";
-export const PRODUCTION_HOSTNAME = "eliza.army";
+export const PRODUCTION_ORIGIN = "https://git.army";
+export const PRODUCTION_HOSTNAME = "git.army";
 export const LIVE_LEDGER_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 

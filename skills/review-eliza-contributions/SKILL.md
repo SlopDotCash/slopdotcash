@@ -79,9 +79,9 @@ lines changed, commit count, comments, style-only churn, or unverifiable effort.
 ## Emit a bounded review record
 
 Return human-readable findings first, ordered by severity, with file and line
-references. End with one JSON object inside a fenced `open-work-review` block:
+references. End with one JSON object inside a fenced `gitarmy-review` block:
 
-```open-work-review
+```gitarmy-review
 {"schemaVersion":"1","projectId":"eliza","artifactUrl":"https://github.com/elizaOS/eliza/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 

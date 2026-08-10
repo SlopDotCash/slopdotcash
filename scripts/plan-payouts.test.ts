@@ -382,7 +382,7 @@ describe("payout plan", () => {
     });
     expect(payoutPlan.rule.rounding.mode).toBe("floor-then-largest-remainder");
     expect(payoutPlan.snapshot.digest).toBe(SNAPSHOT_DIGEST);
-    expect(payoutPlan.snapshot.ruleVersion).toBe("open-work-v1");
+    expect(payoutPlan.snapshot.ruleVersion).toBe("gitarmy-v1");
     expect(payoutPlan.snapshot.ledgerPointTotal).toBe(100);
     expect(
       payoutPlan.allocations.map((allocation) => [
@@ -804,7 +804,7 @@ describe("command line", () => {
       { login: "ada", mergedPullRequests: 5 },
       { login: "bo", mergedPullRequests: 3 },
     ]);
-    const directory = await mkdtemp(join(tmpdir(), "eliza-army-payout-"));
+    const directory = await mkdtemp(join(tmpdir(), "gitarmy-payout-"));
     const outputPath = join(directory, "nested", "plan.json");
     try {
       const source: SnapshotSource = {

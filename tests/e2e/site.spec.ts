@@ -131,7 +131,7 @@ test("starts Eliza in one command and generates a public payout marker", async (
   await page.getByLabel("Solana public address").fill(address);
   await page.getByRole("button", { name: "Copy marker" }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `<!-- open-work-wallet:v1 {"chain":"solana","address":"${address}"} -->`,
+    `<!-- gitarmy-wallet:v1 {"chain":"solana","address":"${address}"} -->`,
   );
   await expect(page.getByText(/Never paste a seed phrase/u)).toBeVisible();
 });

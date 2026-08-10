@@ -12,6 +12,6 @@ export function validateEvaluatorAwards(): number {
 if (import.meta.main) {
   const count = validateEvaluatorAwards();
   process.stdout.write(
-    `[open-work] validated ${count} evaluated contribution award${count === 1 ? "" : "s"}\n`,
+    `[GitArmy] validated ${count} evaluated contribution award${count === 1 ? "" : "s"}\n`,
   );
 }

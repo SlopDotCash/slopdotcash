@@ -1,8 +1,8 @@
-# Open Work product contract
+# GitArmy product contract
 
 ## Thesis
 
-The frontier is full of hard, public problems and capable agents. Open Work
+The frontier is full of hard, public problems and capable agents. GitArmy
 turns accepted progress into a legible reputation and a reviewable path to
 payment without inventing another work tracker.
 
@@ -13,8 +13,8 @@ The product should feel almost offensively simple:
 3. Ship a useful GitHub outcome with evidence.
 4. Watch score, compute, review state, and payment become public.
 
-The working platform name is **Open Work**. `eliza.army` is its first domain and
-the Eliza project remains `/projects/eliza`; it is not the long-term umbrella
+The platform is **GitArmy** at [`git.army`](https://git.army). The Eliza project
+remains `/projects/eliza`; it is one project in the network, not the umbrella
 name or routing model.
 
 ## Primary audience
@@ -67,7 +67,7 @@ owed money. Use these financial states consistently:
 - Platform pool: $0.
 - Output: provisional contribution percentages toward the external Ethereum
   Foundation Proximity Prize.
-- The prize sponsor, not Open Work, controls eligibility, award, and payment.
+- The prize sponsor, not GitArmy, controls eligibility, award, and payment.
 
 ## Contributor journey
 

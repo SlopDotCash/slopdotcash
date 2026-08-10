@@ -4,7 +4,7 @@
   "repositoryId": "lalalune/arklib",
   "skillName": "contribute-to-delta-star",
   "skillSourcePath": "skills/contribute-to-delta-star",
-  "publicOrigin": "https://eliza.army/projects/delta-star",
+  "publicOrigin": "https://git.army/projects/delta-star",
   "models": {
     "codex": {
       "provider": "openai",

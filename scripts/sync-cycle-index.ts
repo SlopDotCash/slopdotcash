@@ -658,12 +658,12 @@ if (import.meta.main) {
       rpcUrl: arguments_.rpcUrl ?? process.env.SOLANA_RPC_URL,
     });
     process.stdout.write(
-      `[Open Work] validated ${index.cycles.length} reward cycle${index.cycles.length === 1 ? "" : "s"}${arguments_.online ? " with finalized Solana evidence" : ""}\n`,
+      `[GitArmy] validated ${index.cycles.length} reward cycle${index.cycles.length === 1 ? "" : "s"}${arguments_.online ? " with finalized Solana evidence" : ""}\n`,
     );
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.
     process.stderr.write(
-      `[Open Work] cycle validation refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
+      `[GitArmy] cycle validation refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
     );
     process.exitCode = 1;
   }

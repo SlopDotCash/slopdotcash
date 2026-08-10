@@ -1,5 +1,5 @@
 /**
- * Renders the GitHub-native open-work network across discovery, project,
+ * Renders the GitHub-native GitArmy network across discovery, project,
  * contributor, cycle, and project-proposal routes. Every fetched snapshot is
  * validated before money, score, work, or usage is presented as healthy data.
  */
@@ -335,8 +335,8 @@ function Header() {
   return (
     <header className="site-header">
       <div className="shell header-inner">
-        <Link ariaLabel="Open Work home" className="wordmark" href="/">
-          OPEN<span>/</span>WORK
+        <Link ariaLabel="GitArmy home" className="wordmark" href="/">
+          GIT<span>/</span>ARMY
         </Link>
         <button
           aria-expanded={open}
@@ -366,7 +366,7 @@ function Footer() {
       <div className="shell footer-grid">
         <div>
           <div className="wordmark footer-wordmark">
-            OPEN<span>/</span>WORK
+            GIT<span>/</span>ARMY
           </div>
           <p>Accepted work. Public evidence. Digital-dollar rewards.</p>
         </div>
@@ -743,7 +743,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
     <main>
       <section className="hero shell">
         <DataNotice state={state} retry={retry} />
-        <p className="eyebrow hero-eyebrow">THE OPEN WORK NETWORK</p>
+        <p className="eyebrow hero-eyebrow">THE GITARMY NETWORK</p>
         <h1>
           <RotatingHeroLine />
         </h1>
@@ -921,7 +921,7 @@ function WalletPanel() {
   const [copy, setCopy] = useState<"copied" | "error" | "idle">("idle");
   const valid = isSolanaAddress(address.trim());
   const marker = valid
-    ? `<!-- open-work-wallet:v1 {"chain":"solana","address":"${address.trim()}"} -->`
+    ? `<!-- gitarmy-wallet:v1 {"chain":"solana","address":"${address.trim()}"} -->`
     : "Enter a valid Solana public address to generate your marker.";
   const copyMarker = async () => {
     if (!valid) return;
@@ -940,7 +940,7 @@ function WalletPanel() {
         <h2>Publish one wallet marker.</h2>
         <p>
           Add the generated comment to the source of your public GitHub profile
-          README. At cycle proposal time, Open Work records the exact README
+          README. At cycle proposal time, GitArmy records the exact README
           commit and address. You can change it later; a change restarts the
           14-day review for that allocation.
         </p>
@@ -1872,7 +1872,7 @@ function ProjectProposalPage() {
     ],
   );
   const manifestText = JSON.stringify(manifest, null, 2);
-  const agentBrief = `In a fork of elizaOS/army, add the Open Work project "${name || "New project"}" for the public repository ${repository || "owner/repository"}. Read AGENTS.md, README.md, projects/eliza/project.json, skills/contribute-to-eliza, and skills/review-eliza-contributions before editing. Add projects/${slug}/project.json using the manifest below, a project-specific contributor skill with authenticated atomic update and signed ccusage receipt, a separate adversarial CI reviewer skill, and focused tests. Adapt the mission and repository instructions; do not copy Eliza-specific work criteria. Run projects:check, evaluations:check, every skill validator, typecheck, tests, build, and browser checks. Never add credentials, private keys, raw prompts, or autonomous payout/ban authority.\n\n${manifestText}`;
+  const agentBrief = `In a fork of elizaOS/army, add the GitArmy project "${name || "New project"}" for the public repository ${repository || "owner/repository"}. Read AGENTS.md, README.md, projects/eliza/project.json, skills/contribute-to-eliza, and skills/review-eliza-contributions before editing. Add projects/${slug}/project.json using the manifest below, a project-specific contributor skill with authenticated atomic update and signed ccusage receipt, a separate adversarial CI reviewer skill, and focused tests. Adapt the mission and repository instructions; do not copy Eliza-specific work criteria. Run projects:check, evaluations:check, every skill validator, typecheck, tests, build, and browser checks. Never add credentials, private keys, raw prompts, or autonomous payout/ban authority.\n\n${manifestText}`;
   const githubUrl = `${PROJECT_PROPOSAL_ROOT}?filename=${encodeURIComponent(`projects/${slug}/project.json`)}&value=${encodeURIComponent(`${manifestText}\n`)}`;
   const valid =
     /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) &&

@@ -206,7 +206,7 @@ function candidatePull(
     base: { ref: "develop", repo: { full_name: "elizaOS/army" } },
     draft: false,
     head: { repo: { full_name: "elizaOS/army" }, sha: revision },
-    labels: [{ name: "eliza-army-release-candidate" }],
+    labels: [{ name: "gitarmy-release-candidate" }],
     number: 17424,
     state: "open",
     ...overrides,
@@ -218,7 +218,7 @@ function freshCandidateTimeline(revision: string): unknown[] {
     { event: "committed", sha: revision },
     {
       event: "labeled",
-      label: { name: "eliza-army-release-candidate" },
+      label: { name: "gitarmy-release-candidate" },
     },
   ];
 }
@@ -256,7 +256,7 @@ describe("authenticated skill installer lifecycle", () => {
         readFileSync(
           join(
             versionPath(installRoot, revisionA),
-            ".eliza-army-authorization.json",
+            ".gitarmy-authorization.json",
           ),
           "utf8",
         ),
@@ -455,7 +455,7 @@ describe("authenticated skill installer lifecycle", () => {
         readFileSync(
           join(
             versionPath(join(acceptedRoot, "install"), revisionC),
-            ".eliza-army-authorization.json",
+            ".gitarmy-authorization.json",
           ),
           "utf8",
         ),
@@ -480,7 +480,7 @@ describe("authenticated skill installer lifecycle", () => {
         17424: [
           {
             event: "labeled",
-            label: { name: "eliza-army-release-candidate" },
+            label: { name: "gitarmy-release-candidate" },
           },
           { event: "committed", sha: revisionC },
         ],
@@ -583,8 +583,8 @@ describe("authenticated skill installer lifecycle", () => {
       command(mergedArtifact, authority),
       installRoot,
       {
-        ELIZA_ARMY_SKILL_OPERATION: "rollback",
-        ELIZA_ARMY_SKILL_REVISION: revisionC,
+        GITARMY_SKILL_OPERATION: "rollback",
+        GITARMY_SKILL_REVISION: revisionC,
       },
     );
     expect(withdrawnRollback.status).not.toBe(0);
@@ -653,8 +653,8 @@ describe("authenticated skill installer lifecycle", () => {
     });
 
     const withdrawnCurrent = run(command(artifactC, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionC,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionC,
     });
     expect(withdrawnCurrent.status).not.toBe(0);
     expect(withdrawnCurrent.stderr).toContain(
@@ -665,8 +665,8 @@ describe("authenticated skill installer lifecycle", () => {
     );
 
     const rollback = run(command(artifactC, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionA,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionA,
     });
     expect(rollback.status, rollback.stderr).toBe(0);
     expect(currentLink(installRoot)).toBe(
@@ -674,8 +674,8 @@ describe("authenticated skill installer lifecycle", () => {
     );
 
     const sameRevision = run(command(artifactC, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionA,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionA,
     });
     expect(sameRevision.status, sameRevision.stderr).toBe(0);
     expect(sameRevision.stdout).toContain("no changes made");
@@ -704,8 +704,8 @@ describe("authenticated skill installer lifecycle", () => {
       timelines: { 17424: freshCandidateTimeline(revisionC) },
     });
     const malformedAuthority = run(command(artifactC, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionC,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionC,
     });
     expect(malformedAuthority.status).not.toBe(0);
     expect(malformedAuthority.stderr).toContain("wrong identity");
@@ -718,8 +718,8 @@ describe("authenticated skill installer lifecycle", () => {
       "locally modified\n",
     );
     const modified = run(command(artifactC, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionC,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionC,
     });
     expect(modified.status).not.toBe(0);
     expect(modified.stderr).toContain("differs from GitHub");
@@ -728,8 +728,8 @@ describe("authenticated skill installer lifecycle", () => {
     );
 
     const missing = run(command(artifactC, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionD,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionD,
     });
     expect(missing.status).not.toBe(0);
     expect(missing.stderr).toContain("not retained locally");
@@ -761,8 +761,8 @@ describe("authenticated skill installer lifecycle", () => {
     expect(run(command(artifactB, authority), installRoot).status).toBe(0);
 
     const stale = run(command(artifactB, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionA,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionA,
     });
     expect(stale.status).not.toBe(0);
     expect(stale.stderr).toContain("canonical skill bytes changed");
@@ -790,8 +790,8 @@ describe("authenticated skill installer lifecycle", () => {
       },
     });
     const reauthorized = run(command(artifactB, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionA,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionA,
     });
     expect(reauthorized.status, reauthorized.stderr).toBe(0);
     expect(currentLink(installRoot)).toBe(
@@ -833,7 +833,7 @@ describe("authenticated skill installer lifecycle", () => {
       readFileSync(
         join(
           versionPath(installRoot, revisionC),
-          ".eliza-army-authorization.json",
+          ".gitarmy-authorization.json",
         ),
         "utf8",
       ),
@@ -892,8 +892,8 @@ describe("authenticated skill installer lifecycle", () => {
       },
     });
     const rollback = run(command(artifactD, authority), installRoot, {
-      ELIZA_ARMY_SKILL_OPERATION: "rollback",
-      ELIZA_ARMY_SKILL_REVISION: revisionC,
+      GITARMY_SKILL_OPERATION: "rollback",
+      GITARMY_SKILL_REVISION: revisionC,
     });
     expect(rollback.status, rollback.stderr).toBe(0);
     expect(currentLink(installRoot)).toBe(
@@ -993,14 +993,14 @@ describe("authenticated skill installer lifecycle", () => {
 
   it("permits test-only file authorities but fixes production authority hosts", () => {
     const production = createInstallCommand(
-      "https://eliza.army",
+      "https://git.army",
       `\${HOME}/.codex/skills`,
     );
     expect(production).toContain("'https://api.github.com'");
     expect(production).toContain("'https://raw.githubusercontent.com'");
     expect(production).not.toContain("GITHUB_API_ORIGIN");
     expect(() =>
-      createInstallCommand("https://eliza.army", `\${HOME}/.codex/skills`, {
+      createInstallCommand("https://git.army", `\${HOME}/.codex/skills`, {
         testAuthority: {
           apiOrigin: "https://attacker.example",
           rawOrigin: "https://attacker.example",

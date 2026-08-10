@@ -32,17 +32,17 @@ describe("public wallet markers", () => {
     );
     expect(() =>
       parsePublishedWallet(
-        `<!-- open-work-wallet:v1 {"chain":"ethereum","address":"${ADDRESS}"} -->`,
+        `<!-- gitarmy-wallet:v1 {"chain":"ethereum","address":"${ADDRESS}"} -->`,
       ),
     ).toThrow(/Solana/u);
     expect(() =>
       parsePublishedWallet(
-        `<!-- open-work-wallet:v1 {"chain":"solana","address":"${ADDRESS}","note":"pay me"} -->`,
+        `<!-- gitarmy-wallet:v1 {"chain":"solana","address":"${ADDRESS}","note":"pay me"} -->`,
       ),
     ).toThrow(/unexpected/u);
     expect(() =>
       parsePublishedWallet(
-        '<!-- open-work-wallet:v1 {"chain":"solana","address":"not-a-key"} -->',
+        '<!-- gitarmy-wallet:v1 {"chain":"solana","address":"not-a-key"} -->',
       ),
     ).toThrow(/invalid Solana/u);
   });

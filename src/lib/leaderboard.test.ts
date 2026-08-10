@@ -1581,7 +1581,7 @@ describe("scoring and caps", () => {
     });
   });
 
-  it("does not attach unrelated open-work attribution to a scored leader", () => {
+  it("does not attach unrelated gitarmy attribution to a scored leader", () => {
     const contributor = actor("scored-author");
     const unrelated = issue({
       id: "ISSUE_UNRELATED_MODEL",

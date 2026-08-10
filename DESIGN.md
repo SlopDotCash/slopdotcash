@@ -1,8 +1,8 @@
-# Open Work design system
+# GitArmy design system
 
 ## Direction
 
-Open Work should look like a serious public grant ledger stripped down by
+GitArmy should look like a serious public grant ledger stripped down by
 someone who believes agents can actually do the work. It is not a crypto casino,
 enterprise admin dashboard, developer conference page, or military campaign.
 

@@ -1,7 +1,7 @@
-# Open Work
+# GitArmy
 
-Open Work is a GitHub-native network for funding difficult public work. The
-first deployment lives at [eliza.army](https://eliza.army): contributors choose
+GitArmy is a GitHub-native network for funding difficult public work. The
+first deployment lives at [git.army](https://git.army): contributors choose
 a project, give its skill to Codex or Claude Code, ship evidence on GitHub, and
 receive a public score and reward projection. Project owners review a frozen
 monthly proposal before signing any payment.
@@ -13,7 +13,7 @@ The launch projects are:
 - **Delta Star:** accepted work in
   [`lalalune/ArkLib`](https://github.com/lalalune/ArkLib) receives a provisional
   contribution percentage toward the external Ethereum Foundation Proximity
-  Prize. Open Work does not promise or distribute that prize.
+  Prize. GitArmy does not promise or distribute that prize.
 
 The v1 operating surface is deliberately small: public GitHub repositories,
 pull requests, CI, versioned skills, Git-backed reward records, and Solana USDC.
@@ -71,7 +71,7 @@ Generated files under `public/brand`, `public/downloads`, `public/projects`, and
 
 ## Contribution score
 
-The public `open-work-v1` score rewards accepted outcomes, not motion:
+The public `gitarmy-v1` score rewards accepted outcomes, not motion:
 
 | Outcome | Points | Per-contributor/project/month cap |
 | --- | ---: | ---: |
@@ -100,8 +100,8 @@ and unrelated token use are excluded or held for review; an LLM finding alone
 cannot ban a contributor or move money.
 
 Useful unmerged work may receive partial credit only through a reviewed file in
-`evaluations/`. The review agent emits an advisory `open-work-review` record;
-a maintainer then opens a public Army PR with the actor, source, rationale,
+`evaluations/`. The review agent emits an advisory `gitarmy-review` record;
+a maintainer then opens a public GitArmy PR with the actor, source, rationale,
 decision link, and 1–8 point award. The ordinary GitHub ledger and a manual
 award cannot score the same source twice.
 
@@ -166,7 +166,7 @@ Contributor wallet discovery reads this exact marker from the source of the
 contributor’s public GitHub profile README and pins the observed commit:
 
 ```html
-<!-- open-work-wallet:v1 {"chain":"solana","address":"PUBLIC_ADDRESS"} -->
+<!-- gitarmy-wallet:v1 {"chain":"solana","address":"PUBLIC_ADDRESS"} -->
 ```
 
 This proves a public GitHub account published an address; it is not proof that
@@ -271,7 +271,7 @@ revision it used.
   the public GitHub actor plus optional wallets.
 - Pools are labeled pledged until a later non-custodial escrow contract can
   prove committed funds and define a withdrawal grace period.
-- Creators sign payments outside the platform. Open Work prepares and verifies
+- Creators sign payments outside the platform. GitArmy prepares and verifies
   public state but does not custody funds or keys.
 - No KYC flow ships in v1. That product decision does not remove legal, tax,
   sanctions, contest, employment, or payment obligations from project owners,

@@ -481,13 +481,13 @@ describe("contribution skill package", () => {
         sha256: sha256(skill),
         path: "skills/contribute-to-eliza/SKILL.md",
         url: `https://github.com/elizaOS/army/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
-        publicUrl: "https://eliza.army/skill.md",
+        publicUrl: "https://git.army/skill.md",
       },
     });
     expect(asRecord(manifest.archive, "skill manifest.archive")).toMatchObject({
-      url: "https://eliza.army/downloads/contribute-to-eliza.skill",
+      url: "https://git.army/downloads/contribute-to-eliza.skill",
       checksumUrl:
-        "https://eliza.army/downloads/contribute-to-eliza.skill.sha256",
+        "https://git.army/downloads/contribute-to-eliza.skill.sha256",
     });
     expect(
       asRecord(manifest.authority, "skill manifest.authority"),
@@ -495,7 +495,7 @@ describe("contribution skill package", () => {
       apiOrigin: "https://api.github.com",
       canonicalPath: "skills/contribute-to-eliza",
       rawOrigin: "https://raw.githubusercontent.com",
-      releaseCandidateLabel: "eliza-army-release-candidate",
+      releaseCandidateLabel: "gitarmy-release-candidate",
     });
     expect(
       Number.isNaN(
@@ -519,8 +519,8 @@ describe("contribution skill package", () => {
     );
     expect(codexGuide).toContain("https://api.github.com");
     expect(codexGuide).toContain("https://raw.githubusercontent.com");
-    expect(codexGuide).toContain("ELIZA_ARMY_SKILL_OPERATION=rollback");
-    expect(codexGuide).toContain("ELIZA_ARMY_SKILL_REVISION=");
+    expect(codexGuide).toContain("GITARMY_SKILL_OPERATION=rollback");
+    expect(codexGuide).toContain("GITARMY_SKILL_REVISION=");
     expect(codexGuide).toContain(
       "rollback still requires current authorization",
     );

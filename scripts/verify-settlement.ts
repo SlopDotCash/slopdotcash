@@ -334,12 +334,12 @@ if (import.meta.main) {
     });
     const result = await verifySettlement(arguments_);
     process.stdout.write(
-      `[Open Work] verified ${result.transactions.length} finalized Solana transaction(s) and wrote ${arguments_.outputPath}\n`,
+      `[GitArmy] verified ${result.transactions.length} finalized Solana transaction(s) and wrote ${arguments_.outputPath}\n`,
     );
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.
     process.stderr.write(
-      `[Open Work] settlement verification refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
+      `[GitArmy] settlement verification refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
     );
     process.exitCode = 1;
   }

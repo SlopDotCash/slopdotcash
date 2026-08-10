@@ -142,8 +142,8 @@ type ExpectedRecordState = "closed" | "merged" | "open";
 
 export class OpenSetChangedError extends Error {}
 
-/** Retries only a concurrent mutation of the non-scoring open-work snapshot. */
-export async function retryOpenWorkSnapshot<T>(
+/** Retries only a concurrent mutation of the non-scoring GitArmy snapshot. */
+export async function retryGitArmySnapshot<T>(
   collect: (attempt: number) => Promise<T>,
 ): Promise<T> {
   let lastChange: OpenSetChangedError | null = null;
@@ -2297,7 +2297,7 @@ export async function assertOpenIssueReferencesCurrent(
   }
 }
 
-export async function assertOpenWorkReferencesCurrent(
+export async function assertGitArmyReferencesCurrent(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
   repositoryId: string,
@@ -2795,7 +2795,7 @@ export async function generateLeaderboardFromGitHub(
   const dedupedMergedPullRequests = dedupeByNodeId(mergedPullRequests);
   const dedupedClosedIssues = dedupeByNodeId(closedIssues);
   const { evidenceVerification, openIssues, openPullRequests } =
-    await retryOpenWorkSnapshot(async (attempt) => {
+    await retryGitArmySnapshot(async (attempt) => {
       if (attempt > 1) {
         for (const collection of collections) {
           collection.openIssues = await collectStableOpenIssues(
@@ -2823,7 +2823,7 @@ export async function generateLeaderboardFromGitHub(
         options,
       );
       for (const collection of collections) {
-        await assertOpenWorkReferencesCurrent(
+        await assertGitArmyReferencesCurrent(
           client,
           collection.repository,
           collection.preflight.id,
@@ -2956,7 +2956,7 @@ export async function runGenerator(
 
 function progressLine(progress: GenerationProgress): string {
   const label = progress.phase.replaceAll("-", " ");
-  return `[eliza.army] ${label}: ${progress.completed}/${progress.total}\n`;
+  return `[git.army] ${label}: ${progress.completed}/${progress.total}\n`;
 }
 
 if (import.meta.main) {
@@ -2976,6 +2976,6 @@ if (import.meta.main) {
     },
   });
   process.stdout.write(
-    `[eliza.army] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GraphQL requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} points remaining)\n`,
+    `[git.army] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GraphQL requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} points remaining)\n`,
   );
 }

@@ -1,7 +1,7 @@
 # Evaluated contribution awards
 
 This directory is the only bridge from a review-agent recommendation to public
-score. Review bots may post an `open-work-review` record in project CI, but that
+score. Review bots may post a `gitarmy-review` record in project CI, but that
 record is advisory and cannot score, exclude, ban, or pay anyone.
 
 A maintainer may recognize useful work that did not otherwise score by opening

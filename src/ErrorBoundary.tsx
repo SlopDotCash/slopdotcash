@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[Open Work] render boundary caught an error", {
+    console.error("[GitArmy] render boundary caught an error", {
       error,
       componentStack: info.componentStack,
     });
@@ -36,7 +36,7 @@ export class ErrorBoundary extends Component<
         <main className="fatal-error" role="alert">
           <span aria-hidden="true">!</span>
           <p className="eyebrow">Page error</p>
-          <h1>Open Work could not load.</h1>
+          <h1>GitArmy could not load.</h1>
           <p>Reload to try again.</p>
           <button onClick={() => window.location.reload()} type="button">
             Reload the page

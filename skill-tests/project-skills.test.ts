@@ -92,7 +92,7 @@ describe("project skill contracts", () => {
       assert.match(source, /Do not penalize.*self-closed/is);
       assert.match(source, /never bans|never\n+bans/is);
       assert.match(source, /accept.*partial.*reject.*hold/is);
-      assert.match(source, /open-work-review/u);
+      assert.match(source, /gitarmy-review/u);
       assert.doesNotMatch(source, /private key|seed phrase/is);
     }
   });

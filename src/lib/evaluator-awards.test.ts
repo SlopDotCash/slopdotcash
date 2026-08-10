@@ -57,7 +57,7 @@ function award(
 }
 
 function fixtureRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "open-work-awards-"));
+  const root = mkdtempSync(join(tmpdir(), "gitarmy-awards-"));
   temporaryRoots.push(root);
   mkdirSync(join(root, "eliza"));
   return root;

@@ -1,6 +1,6 @@
 /**
  * Defines the public contribution snapshot and the deterministic scoring policy
- * for eliza.army. GitHub ingestion stays outside this module so fixtures can
+ * for git.army. GitHub ingestion stays outside this module so fixtures can
  * prove every award, exclusion, cap, and provenance rule without network access.
  */
 
@@ -28,7 +28,7 @@ export {
 /** Backward-compatible alias for the primary registry repository. */
 export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY.id;
 export const LEADERBOARD_SCHEMA_VERSION = "4" as const;
-export const SCORE_RULE_VERSION = "open-work-v1" as const;
+export const SCORE_RULE_VERSION = "gitarmy-v1" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
 export const SCORE_WINDOW_DAYS = 35;
@@ -1419,7 +1419,7 @@ export function isSubstantiveReview(
 function methodology(): LeaderboardMethodology {
   return {
     summary:
-      "Open Work v1 rewards recent accepted outcomes and verified quality across every repository in the published project registry. A small, capped evaluated-contribution award can recognize useful work that did not merge, but only after its public award manifest is reviewed and merged into this repository.",
+      "GitArmy v1 rewards recent accepted outcomes and verified quality across every repository in the published project registry. A small, capped evaluated-contribution award can recognize useful work that did not merge, but only after its public award manifest is reviewed and merged into this repository.",
     scoringRules: [
       {
         id: "merged-pull-request",

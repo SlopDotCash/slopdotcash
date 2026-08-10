@@ -155,12 +155,12 @@ if (import.meta.main) {
     const arguments_ = parseFinalizeArguments(process.argv.slice(2));
     const allocation = await finalizeRewardCycle(arguments_);
     process.stdout.write(
-      `[Open Work] approved ${allocation.allocations.filter((row) => row.state === "approved").length} payout intents for ${allocation.cycleId}\n`,
+      `[GitArmy] approved ${allocation.allocations.filter((row) => row.state === "approved").length} payout intents for ${allocation.cycleId}\n`,
     );
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.
     process.stderr.write(
-      `[Open Work] allocation approval refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
+      `[GitArmy] allocation approval refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
     );
     process.exitCode = 1;
   }

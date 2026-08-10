@@ -1,4 +1,4 @@
-name: eliza.army
+name: git.army
 
 # Builds the contribution site from live elizaOS/eliza data, verifies the
 # canonical skill and browser surface, and publishes only trusted develop
@@ -162,7 +162,7 @@ jobs:
       cancel-in-progress: false
     environment:
       name: eliza-army-production
-      url: https://eliza.army
+      url: https://git.army
     steps:
       - name: Checkout exact deployment tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -187,7 +187,7 @@ jobs:
           case "$GITHUB_EVENT_NAME" in
             push|schedule|workflow_dispatch) ;;
             *)
-              echo "::error::$GITHUB_EVENT_NAME is not authorized to deploy eliza.army."
+              echo "::error::$GITHUB_EVENT_NAME is not authorized to deploy git.army."
               exit 1
               ;;
           esac
@@ -228,9 +228,9 @@ jobs:
             exit 1
           fi
           git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
-            "$live_develop:refs/remotes/origin/eliza-army-live-develop"
+            "$live_develop:refs/remotes/origin/gitarmy-live-develop"
           if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
-            echo "::error::Live develop changed an eliza.army release input after $GITHUB_SHA was tested."
+            echo "::error::Live develop changed a git.army release input after $GITHUB_SHA was tested."
             exit 1
           fi
 
@@ -300,9 +300,9 @@ jobs:
             exit 1
           fi
           git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
-            "$live_develop:refs/remotes/origin/eliza-army-live-develop"
+            "$live_develop:refs/remotes/origin/gitarmy-live-develop"
           if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
-            echo "::error::Live develop changed an eliza.army release input immediately before deployment."
+            echo "::error::Live develop changed a git.army release input immediately before deployment."
             exit 1
           fi
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"
@@ -391,7 +391,7 @@ jobs:
                 --max-time 30 \
                 --header "Cache-Control: no-cache" \
                 --header "Pragma: no-cache" \
-                "https://eliza.army${remote_path}?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$attempt" \
+                "https://git.army${remote_path}?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$attempt" \
                 --output "$received" &&
                 cmp --silent "$expected" "$received"; then
                 return 0
@@ -405,7 +405,7 @@ jobs:
           }
           node scripts/dist-manifest.mjs verify \
             dist \
-            https://eliza.army \
+            https://git.army \
             "$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
           # The inventory checks /index.html; this additional request proves the
           # public root route resolves to those same tested bytes.

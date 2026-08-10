@@ -1,6 +1,6 @@
 /**
  * Exercises the evidence boundary with deterministic response objects before
- * the production recorder is allowed to touch the real eliza.army apex.
+ * the production recorder is allowed to touch the real git.army apex.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -175,9 +175,9 @@ describe("production artifact and network contract", () => {
     });
     const redirect = assertHttpsRedirect(
       301,
-      "https://eliza.army/?verify=revision",
+      "https://git.army/?verify=revision",
     );
-    expect(redirect.location).toBe("https://eliza.army/?verify=revision");
+    expect(redirect.location).toBe("https://git.army/?verify=revision");
     expect(() => assertHttpsRedirect(302, "https://attacker.example/")).toThrow(
       `outside ${PRODUCTION_ORIGIN}`,
     );

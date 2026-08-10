@@ -4,6 +4,9 @@
 
 import { defineConfig, devices } from "@playwright/test";
 
+const externalBaseUrl =
+  process.env.GITARMY_BASE_URL ?? process.env.ELIZA_ARMY_BASE_URL;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 45_000,
@@ -12,13 +15,13 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
   use: {
-    baseURL: process.env.ELIZA_ARMY_BASE_URL ?? "http://127.0.0.1:4466",
+    baseURL: externalBaseUrl ?? "http://127.0.0.1:4466",
     contextOptions: { reducedMotion: "reduce" },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  webServer: process.env.ELIZA_ARMY_BASE_URL
+  webServer: externalBaseUrl
     ? undefined
     : {
         command: "bun run build && bun run preview --host 127.0.0.1",

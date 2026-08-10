@@ -26,7 +26,7 @@
 - Contribution skill revision:
 - Attribution status: self-reported
 
-## Open Work protocol changes
+## GitArmy protocol changes
 
 <!-- Keep only the applicable rows. Project proposals must include both skills. -->
 

@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible Open Work platform problem.
+about: Report a reproducible GitArmy platform problem.
 title: "Bug: "
 labels: bug
 assignees: ""

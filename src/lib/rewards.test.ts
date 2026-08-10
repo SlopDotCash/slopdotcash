@@ -129,7 +129,7 @@ describe("reward manifests", () => {
         from: "2026-08-01T00:00:00.000Z",
         to: "2026-09-01T00:00:00.000Z",
       },
-      scoringRuleVersion: "open-work-v1",
+      scoringRuleVersion: "gitarmy-v1",
       sourceSnapshotSha256: "b".repeat(64),
       entries: [
         {
@@ -169,7 +169,7 @@ describe("reward manifests", () => {
         from: "2026-08-01T00:00:00.000Z",
         to: "2026-09-01T00:00:00.000Z",
       },
-      scoringRuleVersion: "open-work-v1",
+      scoringRuleVersion: "gitarmy-v1",
       sourceSnapshotSha256: "b".repeat(64),
       entries: [],
     });
