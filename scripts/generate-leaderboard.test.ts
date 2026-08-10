@@ -61,6 +61,7 @@ function mergedPullRequestWithEvidence(
     createdAt: "2026-07-29T10:00:00.000Z",
     updatedAt: "2026-07-30T11:00:00.000Z",
     lastEditedAt: null,
+    editor: null,
     mergedAt: "2026-07-30T11:00:00.000Z",
     headRefOid,
     isDraft: false,
@@ -1000,6 +1001,12 @@ describe("rate-efficient query plan", () => {
       "headRefOid",
     );
     expect(LEADERBOARD_QUERY_DOCUMENTS.pullRequestDetails).toContain(
+      "lastEditedAt",
+    );
+    expect(LEADERBOARD_QUERY_DOCUMENTS.pullRequestDetails).toContain(
+      "editor { ...LeaderboardActor }",
+    );
+    expect(LEADERBOARD_QUERY_DOCUMENTS.pullRequestDetails).toContain(
       "commit { oid }",
     );
     expect(LEADERBOARD_QUERY_DOCUMENTS.moreReviews).toContain("headRefOid");
@@ -1396,6 +1403,7 @@ describe("current-head review selection", () => {
       createdAt,
       updatedAt,
       lastEditedAt: null,
+      editor: null,
       mergedAt: null,
       isDraft: false,
       headRefOid: currentHead,

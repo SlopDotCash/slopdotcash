@@ -20,6 +20,7 @@ import {
   type GitHubTextSource,
   type IssueRecord,
   isBotActor,
+  isMergedPullRequestBodyEligibleForEvidence,
   type LeaderboardSnapshot,
   type LeaderboardSourceMetadata,
   type MergedPullRequestOutcome,
@@ -289,6 +290,7 @@ const PULL_REQUEST_FRAGMENT = `
     createdAt
     updatedAt
     lastEditedAt
+    editor { ...LeaderboardActor }
     mergedAt
     isDraft
     headRefOid
@@ -883,6 +885,7 @@ function parsePullRequest(value: unknown, path: string): ParsedPullRequest {
       createdAt: asString(node.createdAt, `${path}.createdAt`),
       updatedAt: asString(node.updatedAt, `${path}.updatedAt`),
       lastEditedAt: asNullableString(node.lastEditedAt, `${path}.lastEditedAt`),
+      editor: parseActor(node.editor, `${path}.editor`),
       mergedAt: asNullableString(node.mergedAt, `${path}.mergedAt`),
       isDraft: asBoolean(node.isDraft, `${path}.isDraft`),
       headRefOid: asFullCommitSha(node.headRefOid, `${path}.headRefOid`),
@@ -2451,9 +2454,19 @@ function evidenceVerificationCandidates(
         source.kind !== "body" ||
         !source.author ||
         isBotActor(source.author) ||
-        Date.parse(source.createdAt) > mergedAt ||
-        Date.parse(source.updatedAt) > mergedAt
+        Date.parse(source.createdAt) > mergedAt
       ) {
+        continue;
+      }
+      // Open PRs still require the live body to be no newer than "now"
+      // (mergedAt is +Infinity when open). Merged PRs may keep a body that was
+      // last edited after merge only when the editor is not the author and the
+      // evidence-head still pins the merged OID (maintainer drive-by edits).
+      if (pullRequest.mergedAt) {
+        if (!isMergedPullRequestBodyEligibleForEvidence(pullRequest, source)) {
+          continue;
+        }
+      } else if (Date.parse(source.updatedAt) > mergedAt) {
         continue;
       }
       if (evidenceHeadOid(source.body) !== pullRequest.headRefOid) continue;

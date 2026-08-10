@@ -18,11 +18,13 @@ import {
   type GitHubActor,
   type GitHubTextSource,
   hasMaterialTestChange,
+  isMergedPullRequestBodyEligibleForEvidence,
   type IssueRecord,
   LEADERBOARD_REPOSITORY,
   type LeaderboardInput,
   MATERIAL_TEST_ADDITIONS,
   MATERIAL_TEST_CHURN,
+  parseEvidenceHeadOid,
   type PullRequestRecord,
   pullRequestTextSources,
   qualifiesResolvedIssue,
@@ -169,6 +171,7 @@ function pullRequest(
     createdAt: "2026-07-28T10:00:00.000Z",
     updatedAt: "2026-07-30T11:00:00.000Z",
     lastEditedAt: null,
+    editor: null,
     mergedAt: "2026-07-30T11:00:00.000Z",
     headRefOid: "a".repeat(40),
     isDraft: false,
@@ -942,6 +945,139 @@ describe("evidence assessment", () => {
     ).toMatchObject({ points: 0, categories: [] });
   });
 
+
+describe("merged PR body evidence eligibility", () => {
+  const head = "a".repeat(40);
+  const packageBody = [
+    `<!-- evidence-head:${head} -->`,
+    "<!-- evidence-row:after-screenshots -->",
+    "After: https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc",
+  ].join("\n");
+
+  function mergedPr(
+    overrides: Partial<PullRequestRecord> = {},
+  ): PullRequestRecord {
+    return {
+      id: "PR_EVIDENCE_ELIG",
+      number: 17606,
+      title: "fix: evidence package",
+      url: "https://github.com/elizaOS/eliza/pull/17606",
+      body: packageBody,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-30T10:00:00.000Z",
+      lastEditedAt: "2026-07-30T10:00:00.000Z",
+      editor: null,
+      mergedAt: "2026-07-30T09:00:00.000Z",
+      headRefOid: head,
+      isDraft: false,
+      reviewDecision: null,
+      activeReviewRequestCount: 0,
+      author: actor("ss251"),
+      assignees: [],
+      labels: [],
+      files: [],
+      comments: [],
+      reviews: [],
+      closingIssueIds: [],
+      additions: 1,
+      deletions: 0,
+      changedFiles: 1,
+      commitCount: 1,
+      ...overrides,
+    };
+  }
+
+  function bodySource(
+    updatedAt: string,
+    body = packageBody,
+  ): GitHubTextSource {
+    return {
+      id: "PR_EVIDENCE_ELIG:body",
+      artifactId: "PR_EVIDENCE_ELIG",
+      kind: "body",
+      body,
+      url: "https://github.com/elizaOS/eliza/pull/17606",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt,
+      author: actor("ss251"),
+    };
+  }
+
+  it("parses a single evidence-head marker and rejects multiples", () => {
+    expect(parseEvidenceHeadOid(packageBody)).toBe(head);
+    expect(parseEvidenceHeadOid("no marker")).toBeNull();
+    expect(
+      parseEvidenceHeadOid(
+        `<!-- evidence-head:${head} -->\n<!-- evidence-head:${"b".repeat(40)} -->`,
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts a body last edited at or before merge", () => {
+    const pr = mergedPr({ lastEditedAt: "2026-07-30T08:59:00.000Z", editor: actor("ss251") });
+    expect(
+      isMergedPullRequestBodyEligibleForEvidence(
+        pr,
+        bodySource("2026-07-30T08:59:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("voids author post-merge body edits even when evidence-head still matches", () => {
+    const pr = mergedPr({
+      lastEditedAt: "2026-07-30T10:00:00.000Z",
+      editor: actor("ss251"),
+    });
+    expect(
+      isMergedPullRequestBodyEligibleForEvidence(
+        pr,
+        bodySource("2026-07-30T10:00:00.000Z"),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps a head-pinned package after a non-author post-merge body edit", () => {
+    const pr = mergedPr({
+      lastEditedAt: "2026-07-30T10:00:00.000Z",
+      editor: actor("lalalune"),
+    });
+    expect(
+      isMergedPullRequestBodyEligibleForEvidence(
+        pr,
+        bodySource("2026-07-30T10:00:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("still voids non-author post-merge edits when the evidence-head no longer matches", () => {
+    const pr = mergedPr({
+      lastEditedAt: "2026-07-30T10:00:00.000Z",
+      editor: actor("lalalune"),
+      headRefOid: "c".repeat(40),
+    });
+    expect(
+      isMergedPullRequestBodyEligibleForEvidence(
+        pr,
+        bodySource("2026-07-30T10:00:00.000Z"),
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed when the post-merge editor is unknown", () => {
+    const pr = mergedPr({
+      lastEditedAt: "2026-07-30T10:00:00.000Z",
+      editor: null,
+    });
+    expect(
+      isMergedPullRequestBodyEligibleForEvidence(
+        pr,
+        bodySource("2026-07-30T10:00:00.000Z"),
+      ),
+    ).toBe(false);
+  });
+});
+
+
   it("scores the verifier identity for an inline-code artifact URL", () => {
     const source = textSource(
       "COMMENT_INLINE_CODE",
@@ -1310,6 +1446,7 @@ describe("scoring and caps", () => {
         "After screenshot: https://github.com/user-attachments/assets/pre-merge",
       ].join("\n"),
       lastEditedAt: "2026-07-30T10:00:00.000Z",
+      editor: null,
       comments: [commentCopy],
     });
     const snapshot = createLeaderboardSnapshot(

@@ -112,6 +112,12 @@ export interface PullRequestRecord {
   createdAt: string;
   updatedAt: string;
   lastEditedAt: string | null;
+  /**
+   * GitHub's last body editor. Used only to distinguish author post-merge
+   * evidence farming from third-party (usually maintainer) body touches that
+   * must not void a head-pinned pre-merge evidence package.
+   */
+  editor: GitHubActor | null;
   mergedAt: string | null;
   headRefOid: string;
   isDraft: boolean;
@@ -1501,7 +1507,7 @@ function methodology(): LeaderboardMethodology {
         points: "up to 6",
         cap: `one award per evidence category per merged pull request, six per pull request, ${SCORE_CAPS.evidencePoints} evidence points per contributor, project, and UTC calendar month`,
         qualification:
-          "For the author's newest five base-scored merged pull requests per project and UTC month, contributor-authored proof existed unchanged at merge, appears in a stable evidence row in the canonical PR body, uses an immutable GitHub attachment URL, and passes bounded remote byte and structure verification. Mutable release assets, comment copies, inline text, N/A rows, unreachable artifacts, and third-party claims do not qualify.",
+          "For the author's newest five base-scored merged pull requests per project and UTC month, contributor-authored proof is bound to the merged head via a single evidence-head marker, appears in a stable evidence row in the canonical PR body, uses an immutable GitHub attachment URL, and passes bounded remote byte and structure verification. Author post-merge body edits still void the package; a non-author post-merge body edit keeps the package only while the evidence-head still matches the merged OID. Mutable release assets, comment copies, inline text, N/A rows, unreachable artifacts, and third-party claims do not qualify.",
       },
       {
         id: "substantive-review",
@@ -1694,22 +1700,6 @@ function recordTextActivity(
   }
 }
 
-function evidenceSourcesAtMerge(
-  pullRequest: PullRequestRecord,
-  sources: GitHubTextSource[],
-): GitHubTextSource[] {
-  if (!pullRequest.mergedAt) {
-    return [];
-  }
-  const mergedAt = parseIsoTime(pullRequest.mergedAt);
-  return sources.filter(
-    (source) =>
-      source.kind !== "review" &&
-      parseIsoTime(source.createdAt) <= mergedAt &&
-      parseIsoTime(source.updatedAt) <= mergedAt,
-  );
-}
-
 function sameActor(
   left: GitHubActor | null,
   right: GitHubActor | null,
@@ -1720,6 +1710,96 @@ function sameActor(
     (left.id === right.id ||
       left.login.toLowerCase() === right.login.toLowerCase())
   );
+}
+
+/**
+ * Parses the single `<!-- evidence-head:<40 hex> -->` marker used to bind a
+ * PR body evidence package to an exact head. Zero or multiple markers → null.
+ */
+export function parseEvidenceHeadOid(body: string): string | null {
+  const matches = [
+    ...String(body ?? "").matchAll(
+      /<!--\s*evidence-head:([a-f0-9]{40})\s*-->/gi,
+    ),
+  ];
+  return matches.length === 1 ? matches[0][1].toLowerCase() : null;
+}
+
+/**
+ * Whether a merged PR's current body may still be used as the evidence source.
+ *
+ * Intent of the merge-time freeze: stop authors from adding score-bearing
+ * proof after merge. A non-author post-merge body edit (common: maintainer
+ * typo/scope note) must not void a package that remains head-pinned to the
+ * merged OID — see elizaOS/eliza#17606 (editor lalalune after merge).
+ *
+ * Fail closed when the editor is missing or is the PR author.
+ */
+export function isMergedPullRequestBodyEligibleForEvidence(
+  pullRequest: Pick<
+    PullRequestRecord,
+    | "mergedAt"
+    | "createdAt"
+    | "lastEditedAt"
+    | "headRefOid"
+    | "body"
+    | "author"
+    | "editor"
+  >,
+  bodySource: Pick<GitHubTextSource, "createdAt" | "updatedAt" | "body">,
+): boolean {
+  if (!pullRequest.mergedAt) {
+    return false;
+  }
+  const mergedAt = parseIsoTime(pullRequest.mergedAt);
+  if (parseIsoTime(bodySource.createdAt) > mergedAt) {
+    return false;
+  }
+  if (parseIsoTime(bodySource.updatedAt) <= mergedAt) {
+    return true;
+  }
+  // Body touched after merge.
+  const evidenceHead = parseEvidenceHeadOid(bodySource.body);
+  if (
+    evidenceHead === null ||
+    evidenceHead !== pullRequest.headRefOid.toLowerCase()
+  ) {
+    return false;
+  }
+  if (!pullRequest.editor || !pullRequest.author) {
+    return false;
+  }
+  if (sameActor(pullRequest.editor, pullRequest.author)) {
+    return false;
+  }
+  return true;
+}
+
+function evidenceSourcesAtMerge(
+  pullRequest: PullRequestRecord,
+  sources: GitHubTextSource[],
+): GitHubTextSource[] {
+  if (!pullRequest.mergedAt) {
+    return [];
+  }
+  const mergedAt = parseIsoTime(pullRequest.mergedAt);
+  return sources.filter((source) => {
+    if (source.kind === "review") {
+      return false;
+    }
+    if (parseIsoTime(source.createdAt) > mergedAt) {
+      return false;
+    }
+    if (parseIsoTime(source.updatedAt) <= mergedAt) {
+      return true;
+    }
+    // Post-merge source mutation: only the PR body can survive, and only when
+    // the last editor is not the author and the package is still head-pinned.
+    if (source.kind === "body" && source.id === `${pullRequest.id}:body`) {
+      return isMergedPullRequestBodyEligibleForEvidence(pullRequest, source);
+    }
+    return false;
+  });
 }
 
 function pullRequestBodySource(
