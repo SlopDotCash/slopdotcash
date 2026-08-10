@@ -324,13 +324,28 @@ describe("live report parsing", () => {
     }
   });
 
-  it("flattens paginated gh output and rejects malformed pages", () => {
-    assert.deepStrictEqual(
-      parsePaginatedJson('[[{"number":1}],[{"number":2}]]'),
-      [{ number: 1 }, { number: 2 }],
+  it("reads newline-delimited gh output and fails closed on malformed records", () => {
+    assert.deepStrictEqual(parsePaginatedJson('{"number":1}\n{"number":2}\n'), [
+      { number: 1 },
+      { number: 2 },
+    ]);
+    // A blank body is a valid empty collection, not a failure.
+    assert.deepStrictEqual(parsePaginatedJson("\n   \n"), []);
+    // Windows gh builds may terminate records with CRLF.
+    assert.deepStrictEqual(parsePaginatedJson('{"number":1}\r\n{"number":2}'), [
+      { number: 1 },
+      { number: 2 },
+    ]);
+    // Truncated or malformed records must fail closed with endpoint context
+    // rather than silently returning a short inventory.
+    assert.throws(
+      () => parsePaginatedJson('{"number":1}\n{"number"', "repos/o/r/issues"),
+      /malformed JSON for repos\/o\/r\/issues at output line 2/,
     );
-    assert.throws(() => parsePaginatedJson('{"number":1}'), /array of pages/);
-    assert.throws(() => parsePaginatedJson('[[{"number":1}],{}]'), /page 2/);
+    assert.throws(
+      () => parsePaginatedJson(undefined),
+      /did not return text output/,
+    );
   });
 
   it("accepts exact provider/model pairs and rejects placeholders", () => {
@@ -691,7 +706,7 @@ describe("live report behavior", () => {
         invocation = { command, args, options };
         return {
           status: 0,
-          stdout: '[[{"number":1}],[{"number":2}]]',
+          stdout: '{"number":1}\n{"number":2}\n',
           stderr: "",
         };
       },
@@ -699,12 +714,15 @@ describe("live report behavior", () => {
 
     assert.deepStrictEqual(pages, [{ number: 1 }, { number: 2 }]);
     assert.strictEqual(invocation?.command, "gh");
-    assert.deepStrictEqual(invocation?.args.slice(0, 5), [
+    // `--slurp` requires gh 2.48+; `--jq .[]` works on gh 2.45 and keeps the
+    // request GET-only and fully paginated.
+    assert.deepStrictEqual(invocation?.args.slice(0, 6), [
       "api",
       "--method",
       "GET",
       "--paginate",
-      "--slurp",
+      "--jq",
+      ".[]",
     ]);
     assert.ok(
       !invocation?.args.some((argument) => /POST|PATCH|DELETE/.test(argument)),
