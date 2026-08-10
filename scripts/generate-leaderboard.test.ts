@@ -534,6 +534,76 @@ describe("remote leaderboard evidence", () => {
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
+
+  it("still verifies head-pinned body after non-author post-merge edit (#17606)", async () => {
+    const head = "a".repeat(40);
+    const pullRequest = mergedPullRequestWithEvidence(
+      `<!-- evidence-row:backend-logs -->\nBackend logs: ${validLogUrl}`,
+      {
+        id: "PR_17606",
+        number: 17606,
+        author: actor("ss251"),
+        editor: actor("lalalune"),
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-30T10:30:00.000Z",
+        lastEditedAt: "2026-07-30T10:30:00.000Z",
+        mergedAt: "2026-07-30T09:00:00.000Z",
+        headRefOid: head,
+      },
+    );
+    const authorEdited = mergedPullRequestWithEvidence(
+      `<!-- evidence-row:backend-logs -->\nBackend logs: ${validLogUrl}`,
+      {
+        id: "PR_AUTHOR_FARM",
+        number: 17607,
+        author: actor("ss251"),
+        editor: actor("ss251"),
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-07-30T10:30:00.000Z",
+        lastEditedAt: "2026-07-30T10:30:00.000Z",
+        mergedAt: "2026-07-30T09:00:00.000Z",
+        headRefOid: head,
+      },
+    );
+    const fetcher = vi.fn(
+      async () =>
+        new Response(logDocument, {
+          status: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        }),
+    );
+
+    const kept = await verifyPullRequestEvidence([pullRequest], {
+      evidenceFetch: fetcher,
+      evidenceTimeoutMs: 100,
+      evidenceToken: "test-token",
+    });
+    const voided = await verifyPullRequestEvidence([authorEdited], {
+      evidenceFetch: fetcher,
+      evidenceTimeoutMs: 100,
+      evidenceToken: "test-token",
+    });
+
+    expect(kept).toMatchObject({
+      status: "complete",
+      sourceCount: 1,
+      artifactCount: 1,
+      artifacts: [
+        expect.objectContaining({
+          pullRequestId: "PR_17606",
+          category: "logs",
+          artifactIdentity: validLogUrl,
+        }),
+      ],
+    });
+    expect(voided).toMatchObject({
+      status: "complete",
+      sourceCount: 0,
+      artifactCount: 0,
+      artifacts: [],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("post-evidence open-PR revalidation", () => {

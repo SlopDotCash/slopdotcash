@@ -1535,7 +1535,7 @@ function methodology(): LeaderboardMethodology {
       "reviews of bot-authored or unattributed pull requests",
       "self-reviews",
       "reviews submitted after merge",
-      "pull-request bodies or comments created or edited after merge",
+      "pull-request comments created or edited after merge; bodies created after merge; author post-merge body edits; and non-author post-merge body edits that no longer pin the merged head via a single evidence-head marker",
       "duplicate immutable GitHub node IDs",
       "repeated reviews by the same reviewer on the same pull request",
       "arbitrary external media links, bare checksums, and unstructured evidence claims",

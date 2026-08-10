@@ -2521,8 +2521,10 @@ export interface PullRequestEvidenceVerificationResult {
 }
 
 /**
- * Resolves score-bearing proof from the exact, unchanged contributor-authored
- * source that existed at merge or at the stable open-PR snapshot. The root
+ * Resolves score-bearing proof from eligible contributor-authored body sources.
+ * Merged PRs use bodies last edited at or before merge, or a non-author
+ * post-merge body edit that still pins the merged head via a single
+ * evidence-head marker. Open PRs use the stable live body snapshot. The root
  * evidence verifier owns URL trust, redirects, byte limits, and structure.
  */
 export async function verifyPullRequestEvidence(
