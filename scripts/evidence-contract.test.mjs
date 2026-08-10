@@ -1,6 +1,6 @@
 /**
  * Exercises the evidence boundary with deterministic response objects before
- * the production recorder is allowed to touch the real eliza.army apex.
+ * the production recorder is allowed to touch the real git.army apex.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -22,8 +22,9 @@ const now = Date.parse("2026-07-30T20:00:00.000Z");
 
 function liveLedger(overrides = {}) {
   return {
-    schemaVersion: "1",
+    schemaVersion: "4",
     repository: "elizaOS/eliza",
+    repositories: [{ id: "elizaOS/eliza" }, { id: "lalalune/arklib" }],
     generatedAt: "2026-07-30T19:58:00.000Z",
     stale: false,
     source: {
@@ -100,6 +101,17 @@ describe("live ledger readiness", () => {
       assertLiveLedgerReady(liveLedger({ ledger: [] }), { now }),
     ).toThrow("leaderboard.ledger must be a non-empty array");
     expect(() =>
+      assertLiveLedgerReady(liveLedger({ schemaVersion: "1" }), { now }),
+    ).toThrow("leaderboard.schemaVersion must be 4");
+    expect(() =>
+      assertLiveLedgerReady(
+        liveLedger({ repositories: [{ id: "elizaOS/eliza" }] }),
+        { now },
+      ),
+    ).toThrow(
+      "leaderboard.repositories must match the target repository registry",
+    );
+    expect(() =>
       assertLiveLedgerReady(
         liveLedger({
           source: {
@@ -163,9 +175,9 @@ describe("production artifact and network contract", () => {
     });
     const redirect = assertHttpsRedirect(
       301,
-      "https://eliza.army/?verify=revision",
+      "https://git.army/?verify=revision",
     );
-    expect(redirect.location).toBe("https://eliza.army/?verify=revision");
+    expect(redirect.location).toBe("https://git.army/?verify=revision");
     expect(() => assertHttpsRedirect(302, "https://attacker.example/")).toThrow(
       `outside ${PRODUCTION_ORIGIN}`,
     );

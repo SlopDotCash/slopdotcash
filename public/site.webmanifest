@@ -1,11 +1,11 @@
 {
-  "name": "eliza.army",
-  "short_name": "eliza.army",
-  "description": "Earn money contributing to open source with elizaOS.",
+  "name": "GitArmy",
+  "short_name": "GitArmy",
+  "description": "Make money shipping accepted open-source work with agents.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#f4efe4",
+  "theme_color": "#f4efe4",
   "icons": [
     {
       "src": "/brand/favicons/android-chrome-192x192.png",

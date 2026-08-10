@@ -1,9 +1,11 @@
 # Contributing
 
-Changes to the eliza.army site, contributor skill, leaderboard pipeline, and
+Changes to the git.army site, contributor skill, leaderboard pipeline, and
 deployment automation are developed in this repository. Product contributions
-that the leaderboard tracks still belong in
-[`elizaOS/eliza`](https://github.com/elizaOS/eliza).
+that the leaderboard tracks belong in the target repository registry
+(`src/lib/repositories.mjs`) — currently
+[`elizaOS/eliza`](https://github.com/elizaOS/eliza) and
+[`lalalune/arklib`](https://github.com/lalalune/arklib).
 
 Open an issue before non-trivial work. Branch from the latest `develop`, keep
 the change scoped, and open a pull request back to `develop`. Before requesting

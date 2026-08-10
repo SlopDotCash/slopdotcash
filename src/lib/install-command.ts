@@ -12,6 +12,8 @@ interface TestAuthorityOrigins {
 }
 
 interface InstallCommandOptions {
+  skillName?: string;
+  skillRepositoryPath?: string;
   testAuthority?: TestAuthorityOrigins;
 }
 
@@ -25,11 +27,11 @@ function shellQuote(value: string): string {
 function validateArtifactOrigin(origin: string): string {
   const parsed = new URL(origin);
   if (!["https:", "http:", "file:"].includes(parsed.protocol)) {
-    throw new TypeError(`[Army] unsupported artifact origin: ${origin}`);
+    throw new TypeError(`[GitArmy] unsupported artifact origin: ${origin}`);
   }
   if (parsed.search || parsed.hash) {
     throw new TypeError(
-      "[Army] artifact origin cannot contain query or fragment data",
+      "[GitArmy] artifact origin cannot contain query or fragment data",
     );
   }
   return origin.replace(/\/$/u, "");
@@ -48,7 +50,7 @@ function resolveAuthorityOrigins(
     const parsed = new URL(origin);
     if (parsed.protocol !== "file:" || parsed.search || parsed.hash) {
       throw new TypeError(
-        `[Army] test ${name} must be an unparameterized file:// origin`,
+        `[GitArmy] test ${name} must be an unparameterized file:// origin`,
       );
     }
   }
@@ -65,18 +67,32 @@ export function createInstallCommand(
 ): string {
   const artifactOrigin = validateArtifactOrigin(origin);
   const authority = resolveAuthorityOrigins(options);
+  const skillName = options.skillName ?? "contribute-to-eliza";
+  const skillRepositoryPath =
+    options.skillRepositoryPath ?? "skills/contribute-to-eliza";
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(skillName)) {
+    throw new TypeError("[GitArmy] skill name must be canonical kebab-case");
+  }
+  if (
+    !/^skills\/[a-z0-9][a-z0-9-]{0,63}$/u.test(skillRepositoryPath) ||
+    skillRepositoryPath !== `skills/${skillName}`
+  ) {
+    throw new TypeError(
+      "[GitArmy] skill repository path must match the canonical skill name",
+    );
+  }
 
   return `(
   set -eu
   SKILLS_ROOT="${skillsRoot}"
-  OPERATION="\${ELIZA_ARMY_SKILL_OPERATION:-install}"
-  ROLLBACK_REVISION="\${ELIZA_ARMY_SKILL_REVISION:-}"
+  OPERATION="\${GITARMY_SKILL_OPERATION:-install}"
+  ROLLBACK_REVISION="\${GITARMY_SKILL_REVISION:-}"
   if ! command -v python3 >/dev/null 2>&1; then
     printf '%s\\n' "python3 is required for authenticated skill installation." >&2
     exit 1
   fi
   trap 'exit 1' HUP INT TERM
-  python3 - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" <<'PY'
+  python3 - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} <<'PY'
 import binascii
 import hashlib
 import io
@@ -97,18 +113,16 @@ import zipfile
 import zlib
 from pathlib import PurePosixPath
 
-artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision = sys.argv[1:]
+artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path = sys.argv[1:]
 repository = "elizaOS/army"
-skill_name = "contribute-to-eliza"
-skill_repository_path = "skills/contribute-to-eliza"
 source_path = f"{skill_repository_path}/SKILL.md"
-release_label = "eliza-army-release-candidate"
+release_label = "gitarmy-release-candidate"
 target_path = os.path.join(skills_root, skill_name)
 versions_name = f".{skill_name}-versions"
 versions_root = os.path.join(skills_root, versions_name)
 lock_path = os.path.join(skills_root, f".{skill_name}.lock")
 provenance_name = "PROVENANCE.json"
-authorization_receipt_name = ".eliza-army-authorization.json"
+authorization_receipt_name = ".gitarmy-authorization.json"
 skill_prefix = f"{skill_name}/"
 max_archive_bytes = 10_485_760
 max_archive_entries = 33
@@ -164,7 +178,7 @@ def fetch_bytes(url, limit, expected_origin):
         url,
         headers={
             "Accept": "application/vnd.github+json",
-            "User-Agent": "eliza-army-skill-installer/1",
+            "User-Agent": "gitarmy-skill-installer/1",
             "X-GitHub-Api-Version": "2022-11-28",
         },
         method="GET",
@@ -997,9 +1011,9 @@ def acquire_lock():
 
 def main():
     if operation not in ("install", "rollback"):
-        raise ValueError("ELIZA_ARMY_SKILL_OPERATION must be install or rollback")
+        raise ValueError("GITARMY_SKILL_OPERATION must be install or rollback")
     if operation == "install" and rollback_revision:
-        raise ValueError("ELIZA_ARMY_SKILL_REVISION is valid only for an explicit rollback")
+        raise ValueError("GITARMY_SKILL_REVISION is valid only for an explicit rollback")
     os.makedirs(skills_root, mode=0o755, exist_ok=True)
     if os.path.lexists(versions_root):
         metadata = os.lstat(versions_root)

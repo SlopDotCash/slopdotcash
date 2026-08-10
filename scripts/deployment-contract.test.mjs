@@ -31,7 +31,7 @@ const qualityJob = workflow.slice(
 );
 const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
 
-describe("eliza.army deployment contract", () => {
+describe("git.army deployment contract", () => {
   it("deploys only the exact tested SHA through wrangler.toml", () => {
     expect(qualityJob).toContain(`ref: ${"$"}{{ github.sha }}`);
     expect(qualityJob).toContain("does not match the event SHA $GITHUB_SHA");
@@ -63,7 +63,7 @@ describe("eliza.army deployment contract", () => {
       ),
     ).toHaveLength(2);
     expect(deployJob).toContain(
-      "changed an eliza.army release input immediately before deployment",
+      "changed a git.army release input immediately before deployment",
     );
     expect(
       deployJob.match(/diff --quiet "\$GITHUB_SHA" "\$live_develop" -- \./g),
@@ -72,7 +72,7 @@ describe("eliza.army deployment contract", () => {
     expect(wranglerConfiguration).toContain(
       'pages_build_output_dir = "./dist"',
     );
-    expect(packageManifest.devDependencies.wrangler).toBe("4.100.0");
+    expect(packageManifest.devDependencies.wrangler).toBe("4.120.0");
     expect(packageManifest.scripts.build).toContain(
       "node scripts/dist-manifest.mjs create dist",
     );
@@ -137,12 +137,12 @@ describe("eliza.army deployment contract", () => {
       "verify_download /index.html dist/index.html",
     );
     expect(verificationStep).toContain(
-      `"https://eliza.army${"$"}{remote_path}?verify=`,
+      `"https://git.army${"$"}{remote_path}?verify=`,
     );
     expect(verificationStep).toContain("node scripts/dist-manifest.mjs verify");
     expect(verificationStep.match(/verify_download \//g)).toHaveLength(1);
     expect(verificationStep).toContain('while [ "$attempt" -le 3 ]');
-    expect(verificationStep).toContain("https://eliza.army \\");
+    expect(verificationStep).toContain("https://git.army \\");
     expect(verificationStep).toContain('"$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"');
   });
 

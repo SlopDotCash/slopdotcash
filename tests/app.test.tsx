@@ -1,10 +1,10 @@
 /**
- * Exercises the user-visible data states and install interaction with a
- * contract-valid snapshot rather than bypassing the production validator.
+ * Exercises the public product routes against a contract-valid snapshot,
+ * including explicit data failure, project isolation, contributor and cycle
+ * views, authenticated install commands, and GitHub-native project proposals.
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
@@ -12,433 +12,425 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
-import { snapshotFixture } from "./fixtures";
+import { cycleIndexFixture, snapshotFixture } from "./fixtures";
+
+function route(path: string): void {
+  window.history.replaceState({}, "", path);
+}
+
+function mockSnapshot(value: unknown = snapshotFixture()): void {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    Response.json(
+      structuredClone(
+        String(input).includes("/data/cycles/") ? cycleIndexFixture() : value,
+      ),
+    ),
+  );
+}
+
+function archivedPaidCycleIndex() {
+  const index = cycleIndexFixture();
+  const prefix = "/data/cycles/eliza/2026-06";
+  const file = (name: string) => ({
+    sha256: "a".repeat(64),
+    url: `${prefix}/${name}.json`,
+  });
+  index.cycles = [
+    {
+      projectId: "eliza",
+      cycleId: "2026-06",
+      kind: "monthly-pool",
+      state: "paid",
+      generatedAt: "2026-07-20T00:00:00.000Z",
+      contributionWindow: {
+        from: "2026-06-01T00:00:00.000Z",
+        to: "2026-07-01T00:00:00.000Z",
+      },
+      reviewEndsAt: "2026-07-15T00:00:00.000Z",
+      approvedAt: "2026-07-16T00:00:00.000Z",
+      settledAt: "2026-07-20T00:00:00.000Z",
+      reward: {
+        currency: "USDC",
+        capMinor: "1000000",
+        suggestedMinor: "1000000",
+        approvedMinor: "1000000",
+        paidMinor: "1000000",
+        feeMinor: "10000",
+        sharePartsPerMillion: null,
+      },
+      contributors: [
+        {
+          actor: { id: "U_archived", login: "archive-only" },
+          score: 7,
+          state: "paid",
+          suggestedMinor: "1000000",
+          approvedMinor: "1000000",
+          paidMinor: "1000000",
+          sharePartsPerMillion: null,
+          wallet: {
+            address: "11111111111111111111111111111111",
+            chain: "solana",
+            observedAt: "2026-07-01T00:00:00.000Z",
+            sourceCommit: "b".repeat(40),
+            sourceUrl: `https://github.com/archive-only/archive-only/blob/${"b".repeat(40)}/README.md`,
+          },
+        },
+      ],
+      files: {
+        sourceSnapshot: file("source-snapshot"),
+        proposal: file("proposal"),
+        allocation: file("allocation"),
+        executionPlan: file("execution-plan"),
+        settlement: file("settlement"),
+      },
+    },
+  ];
+  return index;
+}
+
+beforeEach(() => {
+  route("/");
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }),
+  });
+  Object.defineProperty(window, "scrollTo", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
+});
 
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
-function mockFetch(response: Response) {
-  return vi
-    .spyOn(globalThis, "fetch")
-    .mockImplementation(async () => response.clone());
-}
+describe("discovery", () => {
+  it("leads with the money-forward message and separates both reward models", async () => {
+    mockSnapshot();
+    render(<App />);
 
-describe("App", () => {
-  it("renders validated queue, score breakdown, and model provenance", async () => {
-    mockFetch(
-      new Response(JSON.stringify(snapshotFixture()), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
+    expect(
+      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("GitHub ledger + reward records live", {
+        exact: false,
       }),
-    );
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Make money building agents." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Make money solving math." }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("$10,000 / month")).toBeInTheDocument();
+    expect(screen.getByText("$1,000,000 opportunity")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "People shipping work." }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("finish-line")).toBeInTheDocument();
+  });
 
+  it("rotates the money-forward statement when motion is allowed", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
+    ).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(2_800));
+    expect(
+      screen.getByRole("heading", { name: "MAKE MONEY FIXING BUGS." }),
+    ).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(2_800));
+    expect(
+      screen.getByRole("heading", {
+        name: "MAKE MONEY SECURING THE INTERNET.",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders malformed public data as an error and retries explicitly", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ schemaVersion: "forged" }));
+    render(<App />);
+
+    const retry = await screen.findByRole("button", { name: /retry/i });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Live totals unavailable",
+    );
+    fireEvent.click(retry);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
+  });
+
+  it("rejects a declared snapshot larger than the browser safety limit", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/data/cycles/")) {
+        return Response.json(cycleIndexFixture());
+      }
+      return new Response("{}", {
+        headers: {
+          "content-length": String(32 * 1024 * 1024 + 1),
+          "content-type": "application/json",
+        },
+      });
+    });
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "snapshot exceeded the 33554432-byte limit",
+    );
+  });
+
+  it("keeps historical-only contributors on the global leaderboard", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      Response.json(
+        String(input).includes("/data/cycles/")
+          ? archivedPaidCycleIndex()
+          : snapshotFixture(),
+      ),
+    );
+    render(<App />);
+
+    const contributor = await screen.findByText("archive-only");
+    const row = contributor.closest("tr");
+    expect(row).not.toBeNull();
+    expect(row).toHaveTextContent("7");
+    expect(row).toHaveTextContent("$1");
+  });
+});
+
+describe("project routes", () => {
+  it("renders an Eliza-only leaderboard and authenticated one-command installer", async () => {
+    route("/projects/eliza");
+    mockSnapshot();
+    const { container } = render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Make money building agents.",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("$10,000", { exact: true }).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("24").length).toBeGreaterThan(0);
+    const command = container.querySelector<HTMLTextAreaElement>(
+      ".command-box textarea",
+    );
+    expect(command).not.toBeNull();
+    expect(command?.value).toContain(
+      `python3 - '${window.location.origin}/projects/eliza'`,
+    );
+    expect(command?.value).toContain("skills/contribute-to-eliza");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy install command" }),
+    );
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledOnce(),
+    );
+  });
+
+  it("never turns Delta Star's external share into a platform payout", async () => {
+    route("/projects/delta-star");
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Make money solving math." }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("EXTERNAL OPPORTUNITY")).toBeInTheDocument();
+    expect(
+      screen.getByText("No platform pool · no dollar projection"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("100.00% share")).toBeInTheDocument();
+    expect(
+      screen.getByText(/The prize sponsor controls eligibility and payment/i),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("public records", () => {
+  it("shows a contributor's cross-project score, tokens, projections, and evidence", async () => {
+    route("/contributors/finish-line");
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "finish-line" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("34")).toBeInTheDocument();
+    expect(screen.getAllByText("$10,000").length).toBeGreaterThan(0);
+    expect(screen.getByText("Eliza")).toBeInTheDocument();
+    expect(screen.getByText("Delta Star")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Ship the public contribution ledger", {
+        exact: false,
+      }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("shows an immutable public payout wallet on an archived profile", async () => {
+    route("/contributors/archive-only");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      Response.json(
+        String(input).includes("/data/cycles/")
+          ? archivedPaidCycleIndex()
+          : snapshotFixture(),
+      ),
+    );
+    render(<App />);
+
+    const wallet = await screen.findByRole("link", {
+      name: /Solana wallet 11111111111111111111111111111111/i,
+    });
+    expect(wallet).toHaveAttribute("href", expect.stringContaining("/blob/"));
+  });
+
+  it("shows review stages and exact cycle evidence without implying settlement", async () => {
+    route("/cycles/eliza/2026-07");
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Eliza · 2026-07" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("14-day review")).toBeInTheDocument();
+    expect(screen.getByText("Settlement")).toBeInTheDocument();
+    expect(
+      screen.getByText("6 score events", { exact: false }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a zero-award month as closed instead of payment-ready", async () => {
+    route("/cycles/eliza/2026-06");
+    const index = archivedPaidCycleIndex();
+    const [cycle] = index.cycles;
+    cycle.state = "closed-no-awards";
+    cycle.approvedAt = null;
+    cycle.settledAt = null;
+    cycle.reward = {
+      ...cycle.reward,
+      suggestedMinor: "0",
+      approvedMinor: "0",
+      paidMinor: "0",
+      feeMinor: "0",
+    };
+    cycle.contributors = [];
+    cycle.files = {
+      ...cycle.files,
+      allocation: null,
+      executionPlan: null,
+      settlement: null,
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      Response.json(
+        String(input).includes("/data/cycles/") ? index : snapshotFixture(),
+      ),
+    );
+    render(<App />);
+
+    expect(await screen.findByText("closed no awards")).toBeInTheDocument();
+    expect(
+      screen.getByText("This cycle closed with no accepted awards."),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("project proposals", () => {
+  it("generates a public manifest and a GitHub new-file handoff without login state", async () => {
+    route("/projects/new");
+    mockSnapshot();
     render(<App />);
 
     expect(
       screen.getByRole("heading", {
-        name: /earn money contributing to open source/i,
+        name: "Put money behind an open problem.",
       }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/\$10,000 monthly pool, paid in USDC/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /set payout address/i }),
-    ).toHaveAttribute("href", "https://eliza.app/profile/edit");
-    expect(
-      screen.getByText(/public Solana or Ethereum address to receive USDC/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/README comment that is hidden when rendered/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/address is still public/i)).toBeInTheDocument();
-    expect(screen.getByText(/never share a private key/i)).toBeInTheDocument();
-    expect(screen.getByText(/seed phrase/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(/leaderboard points do not determine payouts/i),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText("Launch the eliza.army contribution protocol"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("7-day proof review")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /complete verification coverage 1 merged PRs \+ 1 closed issues/i,
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /evidence verification complete: 1 sources, 3 artifacts/i,
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText("@finish-line")).toBeInTheDocument();
-    expect(screen.getByText("openai/gpt-5")).toBeInTheDocument();
-    expect(screen.getByText("24")).toBeInTheDocument();
-    expect(screen.getByText("self-reported")).toBeInTheDocument();
-  });
-
-  it("explains bounded evidence verification without hiding retained scores", async () => {
-    const snapshot = snapshotFixture();
-    snapshot.source.evidenceVerification = {
-      status: "suppressed-limit",
-      sourceCount: 65,
-      artifactCount: 70,
-      maxSources: 64,
-      maxArtifacts: 64,
-    };
-    mockFetch(
-      new Response(JSON.stringify(snapshot), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }),
-    );
-
-    render(<App />);
-
-    expect(
-      await screen.findByText(
-        /evidence verification limited \(65 sources, 70 artifacts\) — verified proof within the bound still scores/i,
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("qualifies the reward in detached social metadata", () => {
-    const indexHtml = readFileSync(resolve("index.html"), "utf8");
-
-    expect(indexHtml).toContain(
-      "Accepted elizaOS work can earn from a $10,000 monthly pool paid in USDC.",
-    );
-    expect(indexHtml).not.toContain(
-      "offers $10,000 in USDC to contributors each month",
-    );
-  });
-
-  it("switches install clients and reports successful copy", async () => {
-    mockFetch(
-      new Response(JSON.stringify(snapshotFixture()), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }),
-    );
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Open Protein" },
     });
-
-    render(<App />);
-    fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
-    expect(screen.getByText(/SKILLS_ROOT=/)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Verifies GitHub, installs atomically, and retains the prior version for rollback when authorized.",
-      ),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
-    const command = writeText.mock.calls[0][0];
-    expect(command).toContain("set -eu");
-    expect(command).toContain("trap 'exit 1' HUP INT TERM");
-    expect(command).toContain("http://localhost:3000");
-    expect(command).toContain("https://api.github.com");
-    expect(command).toContain("https://raw.githubusercontent.com");
-    expect(command).not.toContain("GITHUB_API_ORIGIN");
-    expect(command).not.toContain("GITHUB_RAW_ORIGIN");
-    expect(command).toContain("python3 is required");
-    expect(command).toContain("max_archive_bytes = 10_485_760");
-    expect(command).toContain("max_archive_entries = 33");
-    expect(command).toContain("max_source_files = 32");
-    expect(command).toContain("max_entry_bytes = 1_048_576");
-    expect(command).toContain("max_total_bytes = 4_194_304");
-    expect(command).toContain("zlib.decompressobj(-zlib.MAX_WBITS)");
-    expect(command).toContain("local and central archive metadata disagree");
-    expect(command).toContain("actual extracted size exceeds limit");
-    expect(command).toContain(
-      "archive size or CRC metadata does not match payload",
-    );
-    expect(command).toContain("skill provenance file manifest is incomplete");
-    expect(command).toContain("working-tree provenance cannot be installed");
-    expect(command).toContain("git/ref/heads/develop");
-    expect(command).toContain("eliza-army-release-candidate");
-    expect(command).toContain("GitHub's canonical skill file list");
-    expect(command).toContain("compare_is_ancestor");
-    expect(command).toContain("another skill install, update, or rollback");
-    expect(command).toContain("os.replace(temporary_link, target_path)");
-    expect(command).toContain("ELIZA_ARMY_SKILL_OPERATION");
-    expect(command).toContain("ELIZA_ARMY_SKILL_REVISION");
-    expect(command).toContain(
-      `SKILLS_ROOT="\${CODEX_HOME:-\${HOME}/.codex}/skills"`,
-    );
-    expect(command).not.toContain('SKILLS_ROOT="\\${CODEX_HOME');
-    expect(
-      screen.getByRole("link", { name: /install guide/i }),
-    ).toHaveAttribute("href", "/codex.md");
-    expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
-  });
-
-  it("does not label ordinary discussion as missing model attribution", async () => {
-    const snapshot = snapshotFixture();
-    snapshot.workQueue.issues[0].model = {
-      status: "missing",
-      identifiers: [],
-      machineMarkerCount: 0,
-      invalidMarkerCount: 0,
-      eligibleSourceCount: 0,
-      validSourceCount: 0,
-      missingSourceCount: 0,
-      invalidSourceCount: 0,
-      humanOnlySourceCount: 0,
-      provenance: "none",
-    };
-    mockFetch(
-      new Response(JSON.stringify(snapshot), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }),
-    );
-
-    render(<App />);
-
-    expect(
-      await screen.findByText("no attribution-eligible activity"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/model missing 0\/0/i)).not.toBeInTheDocument();
-  });
-
-  it("does not render work excluded by the shared candidate safety contract", async () => {
-    const snapshot = snapshotFixture();
-    const candidate = snapshot.workQueue.issues[0];
-    snapshot.workQueue.issues.push({
-      ...structuredClone(candidate),
-      id: "I_bot",
-      number: 17328,
-      title: "Automated issue that must not be advertised",
-      url: "https://github.com/elizaOS/eliza/issues/17328",
-      author: {
-        id: "BOT_fixture",
-        login: "automation-bot",
-        avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
-        url: "https://github.com/apps/automation-bot",
-        kind: "Bot",
+    fireEvent.change(screen.getByLabelText("Public GitHub repository"), {
+      target: { value: "example/open-protein" },
+    });
+    fireEvent.change(screen.getByLabelText("Money-forward headline"), {
+      target: { value: "Make money proving proteins fold." },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Maximum monthly pool, digital dollars"),
+      {
+        target: { value: "2500" },
       },
-      selection: {
-        status: "excluded",
-        reasons: ["bot-authored"],
-      },
-    });
-    snapshot.source.counts.openIssues = 2;
-    mockFetch(
-      new Response(JSON.stringify(snapshot), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }),
     );
 
-    render(<App />);
-
+    const handoff = screen.getByRole("link", { name: /continue on github/i });
+    expect(handoff).toHaveAttribute(
+      "href",
+      expect.stringContaining("github.com/elizaOS/army/new/develop"),
+    );
+    expect(handoff).toHaveAttribute(
+      "href",
+      expect.stringContaining("projects%2Fopen-protein%2Fproject.json"),
+    );
     expect(
-      await screen.findByText("Launch the eliza.army contribution protocol"),
+      screen.getByText(/"monthlyCapMinor": "2500000000"/),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
+    await act(async () => Promise.resolve());
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining('"id": "open-protein"'),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /copy agent brief/i }));
+    await act(async () => Promise.resolve());
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("skills/review-eliza-contributions"),
+    );
+  });
+
+  it("does not hand off an over-limit or imprecise money pool", () => {
+    route("/projects/new");
+    mockSnapshot();
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Unsafe Pool" },
+    });
+    fireEvent.change(screen.getByLabelText("Public GitHub repository"), {
+      target: { value: "example/unsafe-pool" },
+    });
+    fireEvent.change(screen.getByLabelText("Money-forward headline"), {
+      target: { value: "Make money doing exact work." },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Maximum monthly pool, digital dollars"),
+      { target: { value: "1000000000.01" } },
+    );
+
     expect(
-      screen.queryByText("Automated issue that must not be advertised"),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /issues 1/i })).toBeVisible();
-  });
-
-  it("renders an observable error and retries instead of fabricating empty data", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
-      .mockResolvedValueOnce(new Response("still unavailable", { status: 503 }))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(snapshotFixture()), {
-          headers: { "Content-Type": "application/json" },
-          status: 200,
-        }),
-      );
-
-    render(<App />);
-
-    const alerts = await screen.findAllByRole("alert");
-    expect(alerts[0]).toHaveTextContent("did not load");
-    expect(alerts[0]).toHaveTextContent("Try again");
-    fireEvent.click(screen.getAllByRole("button", { name: /retry/i })[0]);
-
-    expect(
-      await screen.findByText("Launch the eliza.army contribution protocol"),
-    ).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
-  it("rejects a structurally invalid snapshot at the browser boundary", async () => {
-    mockFetch(
-      new Response(
-        JSON.stringify({
-          ...snapshotFixture(),
-          repository: "another/repository",
-        }),
-        { status: 200 },
-      ),
-    );
-
-    render(<App />);
-
-    const alerts = await screen.findAllByRole("alert");
-    expect(alerts[0]).toHaveTextContent(
-      "snapshot.repository must be elizaOS/eliza",
-    );
-    expect(screen.queryByText("@finish-line")).not.toBeInTheDocument();
-  });
-
-  it("times out stalled requests, retries once, and exposes the failure", async () => {
-    vi.useFakeTimers();
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      (_input, init) =>
-        new Promise((_resolve, reject) => {
-          const signal = init?.signal;
-          if (!signal) {
-            reject(new Error("fetch signal is required"));
-            return;
-          }
-          signal.addEventListener(
-            "abort",
-            () => reject(signal.reason ?? new Error("request aborted")),
-            { once: true },
-          );
-        }),
-    );
-
-    render(<App />);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(12_000);
-      await vi.advanceTimersByTimeAsync(500);
-      await vi.advanceTimersByTimeAsync(12_000);
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(screen.getAllByRole("alert")[0]).toHaveTextContent(
-      "data request timed out",
-    );
-  });
-
-  it("ages a current snapshot to delayed while the page remains open", async () => {
-    vi.useFakeTimers();
-    const now = new Date("2026-07-31T12:00:00.000Z");
-    vi.setSystemTime(now);
-    const snapshot = snapshotFixture();
-    const almostStale = new Date(
-      now.getTime() - (8 * 60 - 1) * 60_000,
-    ).toISOString();
-    snapshot.generatedAt = almostStale;
-    snapshot.sourceUpdatedAt = almostStale;
-    snapshot.source.fetchedAt = almostStale;
-    for (const item of [
-      ...snapshot.workQueue.issues,
-      ...snapshot.workQueue.pullRequests,
-    ]) {
-      item.createdAt = almostStale;
-      item.updatedAt = almostStale;
-    }
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => structuredClone(snapshot),
-    } as Response);
-
-    render(<App />);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(screen.getByText("Latest GitHub snapshot")).toBeInTheDocument();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2 * 60_000);
-    });
-    expect(screen.getByText("Snapshot update delayed")).toBeInTheDocument();
-  });
-
-  it("accepts a valid snapshot when the visitor clock is behind", async () => {
-    vi.useFakeTimers();
-    const snapshot = snapshotFixture();
-    vi.setSystemTime(new Date(Date.parse(snapshot.generatedAt) - 10 * 60_000));
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => structuredClone(snapshot),
-    } as Response);
-
-    render(<App />);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(screen.getByText("Latest GitHub snapshot")).toBeInTheDocument();
-    expect(
-      screen.getByText("Launch the eliza.army contribution protocol"),
-    ).toBeInTheDocument();
-  });
-
-  it("progressively reveals a large score ledger in bounded pages", async () => {
-    const snapshot = snapshotFixture();
-    const leader = snapshot.leaders[0];
-    snapshot.ledger = Array.from({ length: 30 }, (_, index) => ({
-      id: `PR_fixture:evidence:fixture-${index}`,
-      actor: leader.actor,
-      category: "evidence" as const,
-      points: 1,
-      source: {
-        id: "PR_fixture",
-        kind: "pull-request" as const,
-        number: 17327,
-        title: `Evidence event ${index + 1}`,
-        url: "https://github.com/elizaOS/eliza/pull/17327",
-      },
-      reason: "Concrete screenshot evidence was attached.",
-    }));
-    leader.score = 30;
-    leader.points = {
-      mergedPullRequests: 0,
-      resolvedIssues: 0,
-      materialTestChanges: 0,
-      evidence: 30,
-      substantiveReviews: 0,
-    };
-    leader.acceptedOutcomes = {
-      mergedPullRequests: 0,
-      resolvedIssues: 0,
-      materialTestChanges: 0,
-      evidenceCategories: 30,
-      substantiveReviews: 0,
-    };
-    mockFetch(
-      new Response(JSON.stringify(snapshot), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }),
-    );
-
-    render(<App />);
-    const summary = await screen.findByText("30 linked score events");
-    fireEvent.click(summary);
-    const evidence = summary.closest("details");
-    if (!evidence) {
-      throw new Error("score evidence details are missing");
-    }
-    fireEvent(evidence, new Event("toggle", { bubbles: true }));
-    await waitFor(() =>
-      expect(within(evidence).getAllByRole("link")).toHaveLength(25),
-    );
-    fireEvent.click(
-      within(evidence).getByRole("button", { name: "Show 5 more" }),
-    );
-    expect(within(evidence).getAllByRole("link")).toHaveLength(30);
+      screen.getByRole("button", { name: /continue on github/i }),
+    ).toBeDisabled();
   });
 });
