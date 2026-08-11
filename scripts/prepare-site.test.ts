@@ -481,13 +481,13 @@ describe("contribution skill package", () => {
         sha256: sha256(skill),
         path: "skills/contribute-to-eliza/SKILL.md",
         url: `https://github.com/elizaOS/army/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
-        publicUrl: "https://git.army/skill.md",
+        publicUrl: "https://slop.cash/skill.md",
       },
     });
     expect(asRecord(manifest.archive, "skill manifest.archive")).toMatchObject({
-      url: "https://git.army/downloads/contribute-to-eliza.skill",
+      url: "https://slop.cash/downloads/contribute-to-eliza.skill",
       checksumUrl:
-        "https://git.army/downloads/contribute-to-eliza.skill.sha256",
+        "https://slop.cash/downloads/contribute-to-eliza.skill.sha256",
     });
     expect(
       asRecord(manifest.authority, "skill manifest.authority"),

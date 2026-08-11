@@ -144,12 +144,12 @@ if (import.meta.main) {
     const arguments_ = parseSettlementPlanArguments(process.argv.slice(2));
     const plan = await prepareSettlementPlan(arguments_);
     process.stdout.write(
-      `[GitArmy] wrote unsigned ${plan.token.symbol} plan with ${plan.transfers.length} transfer(s); sign externally and publish transaction evidence\n`,
+      `[Slop] wrote unsigned ${plan.token.symbol} plan with ${plan.transfers.length} transfer(s); sign externally and publish transaction evidence\n`,
     );
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.
     process.stderr.write(
-      `[GitArmy] settlement plan refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
+      `[Slop] settlement plan refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
     );
     process.exitCode = 1;
   }

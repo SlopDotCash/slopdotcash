@@ -124,7 +124,7 @@ describe("discovery", () => {
     render(<App />);
 
     expect(
-      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
+      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
     ).toBeInTheDocument();
     expect(
       await screen.findByRole("heading", { name: "Leaderboard" }),
@@ -170,14 +170,14 @@ describe("discovery", () => {
     render(<App />);
 
     expect(
-      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
+      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
     ).toBeInTheDocument();
     const visibleAction = () =>
       document.querySelector(".hero-typewriter")?.textContent ?? "";
-    expect(visibleAction()).toBe("SHIPPING CODE.");
+    expect(visibleAction()).toBe("SHIPPING SLOP.");
     act(() => vi.advanceTimersToNextTimer());
     act(() => vi.advanceTimersToNextTimer());
-    expect(visibleAction()).toBe("SHIPPING CODE");
+    expect(visibleAction()).toBe("SHIPPING SLOP");
 
     for (const action of [
       "PROVING MATH.",
@@ -213,7 +213,7 @@ describe("discovery", () => {
 
     act(() => vi.advanceTimersByTime(28_000));
     expect(
-      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING CODE." }),
+      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
     ).toBeInTheDocument();
   });
 

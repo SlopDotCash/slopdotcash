@@ -1,6 +1,6 @@
 /**
  * Defines the public contribution snapshot and the deterministic scoring policy
- * for git.army. GitHub ingestion stays outside this module so fixtures can
+ * for slop.cash. GitHub ingestion stays outside this module so fixtures can
  * prove every award, exclusion, cap, and provenance rule without network access.
  */
 
@@ -1480,7 +1480,7 @@ export function isSubstantiveReview(
 function methodology(): LeaderboardMethodology {
   return {
     summary:
-      "GitArmy v1 rewards recent accepted outcomes and verified quality across every repository in the published project registry. A small, capped evaluated-contribution award can recognize useful work that did not merge, but only after its public award manifest is reviewed and merged into this repository.",
+      "Slop rewards recent accepted outcomes and verified quality across every repository in the published project registry. A small, capped evaluated-contribution award can recognize useful work that did not merge, but only after its public award manifest is reviewed and merged into this repository.",
     scoringRules: [
       {
         id: "merged-pull-request",

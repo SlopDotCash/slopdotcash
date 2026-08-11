@@ -1,7 +1,8 @@
 # @elizaos/army
 
-Standalone Vite site and Git-backed incentive protocol for `git.army`, the
-first deployment of GitArmy.
+Standalone Vite site and Git-backed incentive protocol for Slop. The primary
+public authority is `slop.cash`; `slop.tech` is a secondary domain, and
+`git.army` plus `eliza.army` remain compatibility aliases.
 
 ## Purpose
 
@@ -94,7 +95,7 @@ zero leaderboard after an ingestion failure.
 The local evidence command builds and records the local preview, but refuses a
 missing, empty, malformed, or older-than-eight-hours live ledger. The
 production command never rebuilds: it records only the existing `dist`, targets
-exactly `https://git.army`, byte-compares the deployed skill and ledger
+exactly `https://slop.cash`, byte-compares the deployed skill and ledger
 artifacts with that directory, and records DNS, TLS, redirect, and security
 header checks. Both modes capture into a fresh sibling staging directory,
 validate every artifact and digest, and publish the evidence directory only as
@@ -112,7 +113,7 @@ one complete transaction.
 - Apply caps by contributor, project, and UTC month. Input order must not select
   which qualifying outcomes survive a cap.
 - Permit unusual useful work only through a strict `evaluations/` manifest whose
-  public GitArmy PR is the human decision. Never score a source already rewarded
+  public Slop PR is the human decision. Never score a source already rewarded
   by the ordinary GitHub ledger.
 - Model and token disclosure are supporting provenance, not proof. Tokens can
   add only a diminishing outcome-linked weight bonus capped at 20%; ambiguous
@@ -202,10 +203,11 @@ to the same commit SHA. The release stays failed until Cloudflare's API reports
 a new, clean, successful production deployment for that exact SHA; the workflow
 records its deployment ID and immutable Pages URL.
 
-The production domain is registered with Cloudflare Registrar in the same
+The production domains are registered with Cloudflare Registrar in the same
 account as the Pages project. The internal project slug remains
-`eliza-computer`; the public authority is `https://git.army`. Do not claim
-that a Pages deploy proves custom-domain DNS or TLS—verify both separately.
+`eliza-computer`; the primary public authority is `https://slop.cash`, with
+`https://slop.tech` as a secondary domain. Do not claim that a Pages deploy
+proves custom-domain DNS or TLS—verify each separately.
 
 ## Definition of done
 

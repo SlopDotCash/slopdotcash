@@ -1,6 +1,6 @@
 # Base-controlled release approval invalidation. This workflow handles only PR
 # metadata and never checks out or executes pull-request code.
-name: Invalidate git.army release approval
+name: Invalidate slop.cash release approval
 
 on:
   pull_request_target:

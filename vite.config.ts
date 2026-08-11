@@ -1,5 +1,5 @@
 /**
- * Builds the static git.army contribution surface for Cloudflare Pages.
+ * Builds the static slop.cash contribution surface for Cloudflare Pages.
  */
 
 import react from "@vitejs/plugin-react";

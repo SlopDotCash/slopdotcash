@@ -318,7 +318,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
           id: "I_fixture",
           kind: "issue",
           number: 17326,
-          title: "Launch the git.army contribution protocol",
+          title: "Launch the slop.cash contribution protocol",
           url: "https://github.com/elizaOS/eliza/issues/17326",
           repository: "elizaOS/eliza",
           author: leaderActor,

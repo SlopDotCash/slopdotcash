@@ -82,7 +82,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", {
       exact: true,
-      name: "MAKE MONEY SHIPPING CODE.",
+      name: "MAKE MONEY SHIPPING SLOP.",
     }),
   ).toBeVisible();
   await expect(

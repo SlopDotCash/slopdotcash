@@ -103,13 +103,13 @@ if (import.meta.main) {
     await syncProjectRegistry(checkOnly);
     process.stdout.write(
       checkOnly
-        ? "[GitArmy] project registry is current\n"
-        : "[GitArmy] synchronized project registry\n",
+        ? "[Slop] project registry is current\n"
+        : "[Slop] synchronized project registry\n",
     );
   } catch (error) {
     // error-policy:J1 generator process boundary.
     process.stderr.write(
-      `[GitArmy] project registry refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
+      `[Slop] project registry refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
     );
     process.exitCode = 1;
   }
