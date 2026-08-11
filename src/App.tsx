@@ -1,5 +1,5 @@
 /**
- * Renders the GitHub-native GitArmy network across discovery, project,
+ * Renders the GitHub-native Slop network across discovery, project,
  * contributor, cycle, and project-proposal routes. Every fetched snapshot is
  * validated before money, score, work, or usage is presented as healthy data.
  */
@@ -58,7 +58,7 @@ const SNAPSHOT_RETRIES = 1;
 const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
 const HERO_ACTIONS = [
-  "SHIPPING CODE.",
+  "SHIPPING SLOP.",
   "PROVING MATH.",
   "DISCOVERING DRUGS.",
   "HARDENING THE WEB.",
@@ -343,8 +343,8 @@ function Header() {
   return (
     <header className="site-header">
       <div className="shell header-inner">
-        <Link ariaLabel="GitArmy home" className="wordmark" href="/">
-          GIT<span>/</span>ARMY
+        <Link ariaLabel="Slop home" className="wordmark" href="/">
+          SLOP
         </Link>
         <button
           aria-expanded={open}
@@ -373,9 +373,7 @@ function Footer() {
     <footer className="site-footer">
       <div className="shell footer-grid">
         <div>
-          <div className="wordmark footer-wordmark">
-            GIT<span>/</span>ARMY
-          </div>
+          <div className="wordmark footer-wordmark">SLOP</div>
           <p>Accepted work. Public evidence. Digital-dollar rewards.</p>
         </div>
         <div className="footer-links">
@@ -842,9 +840,9 @@ function WalletPanel() {
         <h2>Publish one wallet marker.</h2>
         <p>
           Add the generated comment to the source of your public GitHub profile
-          README. At cycle proposal time, GitArmy records the exact README
-          commit and address. You can change it later; a change restarts the
-          14-day review for that allocation.
+          README. At cycle proposal time, Slop records the exact README commit
+          and address. You can change it later; a change restarts the 14-day
+          review for that allocation.
         </p>
         <p className="wallet-warning">
           <CircleAlert aria-hidden="true" size={17} /> Public address only.
@@ -1663,7 +1661,7 @@ function ProjectProposalPage() {
     ],
   );
   const manifestText = JSON.stringify(manifest, null, 2);
-  const agentBrief = `In a fork of elizaOS/army, add the GitArmy project "${name || "New project"}" for the public repository ${repository || "owner/repository"}. Read AGENTS.md, README.md, projects/eliza/project.json, skills/contribute-to-eliza, and skills/review-eliza-contributions before editing. Add projects/${slug}/project.json using the manifest below, a project-specific contributor skill with authenticated atomic update and signed ccusage receipt, a separate adversarial CI reviewer skill, and focused tests. Adapt the mission and repository instructions; do not copy Eliza-specific work criteria. Run projects:check, evaluations:check, every skill validator, typecheck, tests, build, and browser checks. Never add credentials, private keys, raw prompts, or autonomous payout/ban authority.\n\n${manifestText}`;
+  const agentBrief = `In a fork of elizaOS/army, add the Slop project "${name || "New project"}" for the public repository ${repository || "owner/repository"}. Read AGENTS.md, README.md, projects/eliza/project.json, skills/contribute-to-eliza, and skills/review-eliza-contributions before editing. Add projects/${slug}/project.json using the manifest below, a project-specific contributor skill with authenticated atomic update and signed ccusage receipt, a separate adversarial CI reviewer skill, and focused tests. Adapt the mission and repository instructions; do not copy Eliza-specific work criteria. Run projects:check, evaluations:check, every skill validator, typecheck, tests, build, and browser checks. Never add credentials, private keys, raw prompts, or autonomous payout/ban authority.\n\n${manifestText}`;
   const githubUrl = `${PROJECT_PROPOSAL_ROOT}?filename=${encodeURIComponent(`projects/${slug}/project.json`)}&value=${encodeURIComponent(`${manifestText}\n`)}`;
   const valid =
     /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) &&

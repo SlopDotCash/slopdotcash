@@ -27,11 +27,11 @@ function shellQuote(value: string): string {
 function validateArtifactOrigin(origin: string): string {
   const parsed = new URL(origin);
   if (!["https:", "http:", "file:"].includes(parsed.protocol)) {
-    throw new TypeError(`[GitArmy] unsupported artifact origin: ${origin}`);
+    throw new TypeError(`[Slop] unsupported artifact origin: ${origin}`);
   }
   if (parsed.search || parsed.hash) {
     throw new TypeError(
-      "[GitArmy] artifact origin cannot contain query or fragment data",
+      "[Slop] artifact origin cannot contain query or fragment data",
     );
   }
   return origin.replace(/\/$/u, "");
@@ -50,7 +50,7 @@ function resolveAuthorityOrigins(
     const parsed = new URL(origin);
     if (parsed.protocol !== "file:" || parsed.search || parsed.hash) {
       throw new TypeError(
-        `[GitArmy] test ${name} must be an unparameterized file:// origin`,
+        `[Slop] test ${name} must be an unparameterized file:// origin`,
       );
     }
   }
@@ -71,14 +71,14 @@ export function createInstallCommand(
   const skillRepositoryPath =
     options.skillRepositoryPath ?? "skills/contribute-to-eliza";
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(skillName)) {
-    throw new TypeError("[GitArmy] skill name must be canonical kebab-case");
+    throw new TypeError("[Slop] skill name must be canonical kebab-case");
   }
   if (
     !/^skills\/[a-z0-9][a-z0-9-]{0,63}$/u.test(skillRepositoryPath) ||
     skillRepositoryPath !== `skills/${skillName}`
   ) {
     throw new TypeError(
-      "[GitArmy] skill repository path must match the canonical skill name",
+      "[Slop] skill repository path must match the canonical skill name",
     );
   }
 

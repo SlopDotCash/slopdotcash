@@ -4,7 +4,7 @@
   "repositoryId": "elizaOS/eliza",
   "skillName": "contribute-to-eliza",
   "skillSourcePath": "skills/contribute-to-eliza",
-  "publicOrigin": "https://git.army/projects/eliza",
+  "publicOrigin": "https://slop.cash/projects/eliza",
   "models": {
     "codex": {
       "provider": "openai",

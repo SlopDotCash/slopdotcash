@@ -270,12 +270,12 @@ if (import.meta.main) {
       githubToken: process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN,
     });
     process.stdout.write(
-      `[GitArmy] wrote ${arguments_.outputPath} (${proposal.kind}, ${proposal.cycleId})\n`,
+      `[Slop] wrote ${arguments_.outputPath} (${proposal.kind}, ${proposal.cycleId})\n`,
     );
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.
     process.stderr.write(
-      `[GitArmy] reward proposal refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
+      `[Slop] reward proposal refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
     );
     process.exitCode = 1;
   }

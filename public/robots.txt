@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://git.army/sitemap.xml
+Sitemap: https://slop.cash/sitemap.xml

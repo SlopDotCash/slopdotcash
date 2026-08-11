@@ -17,8 +17,8 @@ import {
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
 import {
-  assertGitArmyReferencesCurrent,
   assertOpenPullRequestReferencesCurrent,
+  assertSlopReferencesCurrent,
   collectSearchReferences,
   deriveCurrentHeadReviewDecision,
   deriveSourceUpdatedAt,
@@ -29,7 +29,7 @@ import {
   LEADERBOARD_QUERY_DOCUMENTS,
   OpenSetChangedError,
   resolveGitHubToken,
-  retryGitArmySnapshot,
+  retrySlopSnapshot,
   runGenerator,
   SEARCH_SAFE_RESULT_LIMIT,
   sameReferenceSet,
@@ -714,7 +714,7 @@ describe("post-evidence open-PR revalidation", () => {
 
     liveUpdatedAt = "2026-07-30T10:01:00.000Z";
     await expect(
-      assertGitArmyReferencesCurrent(
+      assertSlopReferencesCurrent(
         client,
         PRIMARY_REPOSITORY,
         "REPOSITORY_ELIZA",
@@ -1190,7 +1190,7 @@ describe("rate-efficient query plan", () => {
   it("recollects only typed concurrent changes to the non-scoring queue", async () => {
     let attempts = 0;
     await expect(
-      retryGitArmySnapshot(async (attempt) => {
+      retrySlopSnapshot(async (attempt) => {
         attempts = attempt;
         if (attempt < 3) {
           throw new OpenSetChangedError("open pull request moved");
@@ -1201,7 +1201,7 @@ describe("rate-efficient query plan", () => {
     expect(attempts).toBe(3);
 
     await expect(
-      retryGitArmySnapshot(async () => {
+      retrySlopSnapshot(async () => {
         throw new Error("evidence verifier failed");
       }),
     ).rejects.toThrow("evidence verifier failed");
@@ -1210,7 +1210,7 @@ describe("rate-efficient query plan", () => {
   it("fails when the non-scoring queue never stabilizes", async () => {
     let attempts = 0;
     await expect(
-      retryGitArmySnapshot(async (attempt) => {
+      retrySlopSnapshot(async (attempt) => {
         attempts = attempt;
         throw new OpenSetChangedError("open issue moved");
       }),

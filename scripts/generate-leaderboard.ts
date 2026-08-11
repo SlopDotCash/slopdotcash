@@ -143,8 +143,8 @@ type ExpectedRecordState = "closed" | "merged" | "open";
 
 export class OpenSetChangedError extends Error {}
 
-/** Retries only a concurrent mutation of the non-scoring GitArmy snapshot. */
-export async function retryGitArmySnapshot<T>(
+/** Retries only a concurrent mutation of the non-scoring Slop snapshot. */
+export async function retrySlopSnapshot<T>(
   collect: (attempt: number) => Promise<T>,
 ): Promise<T> {
   let lastChange: OpenSetChangedError | null = null;
@@ -2300,7 +2300,7 @@ export async function assertOpenIssueReferencesCurrent(
   }
 }
 
-export async function assertGitArmyReferencesCurrent(
+export async function assertSlopReferencesCurrent(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
   repositoryId: string,
@@ -2810,7 +2810,7 @@ export async function generateLeaderboardFromGitHub(
   const dedupedMergedPullRequests = dedupeByNodeId(mergedPullRequests);
   const dedupedClosedIssues = dedupeByNodeId(closedIssues);
   const { evidenceVerification, openIssues, openPullRequests } =
-    await retryGitArmySnapshot(async (attempt) => {
+    await retrySlopSnapshot(async (attempt) => {
       if (attempt > 1) {
         for (const collection of collections) {
           collection.openIssues = await collectStableOpenIssues(
@@ -2838,7 +2838,7 @@ export async function generateLeaderboardFromGitHub(
         options,
       );
       for (const collection of collections) {
-        await assertGitArmyReferencesCurrent(
+        await assertSlopReferencesCurrent(
           client,
           collection.repository,
           collection.preflight.id,
@@ -2971,7 +2971,7 @@ export async function runGenerator(
 
 function progressLine(progress: GenerationProgress): string {
   const label = progress.phase.replaceAll("-", " ");
-  return `[git.army] ${label}: ${progress.completed}/${progress.total}\n`;
+  return `[slop.cash] ${label}: ${progress.completed}/${progress.total}\n`;
 }
 
 if (import.meta.main) {
@@ -2991,6 +2991,6 @@ if (import.meta.main) {
     },
   });
   process.stdout.write(
-    `[git.army] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GraphQL requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} points remaining)\n`,
+    `[slop.cash] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GraphQL requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} points remaining)\n`,
   );
 }

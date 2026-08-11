@@ -26,7 +26,7 @@
 - Contribution skill revision:
 - Attribution status: self-reported
 
-## GitArmy protocol changes
+## Slop protocol changes
 
 <!-- Keep only the applicable rows. Project proposals must include both skills. -->
 

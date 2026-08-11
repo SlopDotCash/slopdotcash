@@ -847,7 +847,7 @@ export function formatPayoutPlanSummary(plan: PayoutPlan): string {
   const pointsWidth = Math.max(6, String(eligiblePoints).length);
 
   const lines = [
-    "git.army payout planner — DRY RUN, moves no money",
+    "slop.cash payout planner — DRY RUN, moves no money",
     "",
     plan.notice,
     "",
@@ -1018,7 +1018,7 @@ export async function readSnapshotSource(
 /**
  * A payout plan is an operator artifact that names every scoring contributor
  * beside a dollar amount. Writing one into the published site directory would
- * ship it to git.army, and writing one anywhere Git can track would publish
+ * ship it to slop.cash, and writing one anywhere Git can track would publish
  * it to this public repository on the next `git add`, so both fail closed. The
  * ignored operator directory is the sole in-tree destination.
  */
@@ -1139,7 +1139,7 @@ if (import.meta.main) {
       process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
     } catch (error) {
       process.stderr.write(
-        `[git.army] payout plan failed: ${messageOf(error)}\n`,
+        `[slop.cash] payout plan failed: ${messageOf(error)}\n`,
       );
       process.exitCode = 1;
     }

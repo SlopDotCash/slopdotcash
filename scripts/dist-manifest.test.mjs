@@ -30,7 +30,7 @@ async function fixture() {
   await mkdir(join(root, "assets"));
   await writeFile(
     join(root, "index.html"),
-    "<!doctype html><title>git.army</title>\n",
+    "<!doctype html><title>slop.cash</title>\n",
   );
   await writeFile(
     join(root, "skill-manifest.json"),
@@ -116,7 +116,7 @@ describe("Cloudflare Pages deployment manifest", () => {
     };
 
     await expect(
-      verifyPublishedBundle(root, "https://git.army", "release-1", {
+      verifyPublishedBundle(root, "https://slop.cash", "release-1", {
         concurrency: 2,
         fetchImpl,
         retries: 1,
@@ -161,7 +161,7 @@ describe("Cloudflare Pages deployment manifest", () => {
     };
 
     await expect(
-      verifyPublishedBundle(root, "https://git.army", "release-2", {
+      verifyPublishedBundle(root, "https://slop.cash", "release-2", {
         concurrency: 2,
         fetchImpl,
         retries: 1,
@@ -176,7 +176,7 @@ describe("Cloudflare Pages deployment manifest", () => {
     await writeFile(join(root, "index.html"), "changed after verification\n");
 
     await expect(
-      verifyPublishedBundle(root, "https://git.army", "release-3", {
+      verifyPublishedBundle(root, "https://slop.cash", "release-3", {
         fetchImpl: async () => new Response("unused", { status: 200 }),
         retries: 1,
         retryDelayMs: 0,
@@ -189,7 +189,7 @@ describe("Cloudflare Pages deployment manifest", () => {
     await createDistManifest(root);
 
     await expect(
-      verifyPublishedBundle(root, "https://git.army", "release-4", {
+      verifyPublishedBundle(root, "https://slop.cash", "release-4", {
         totalTimeoutMs: 300_001,
       }),
     ).rejects.toThrow(/options exceed their bounds/u);

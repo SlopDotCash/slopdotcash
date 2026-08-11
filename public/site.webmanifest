@@ -1,19 +1,19 @@
 {
-  "name": "GitArmy",
-  "short_name": "GitArmy",
-  "description": "Make money shipping accepted open-source work with agents.",
+  "name": "Slop",
+  "short_name": "Slop",
+  "description": "Make money shipping accepted open-source work.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f4efe4",
   "theme_color": "#f4efe4",
   "icons": [
     {
-      "src": "/brand/favicons/android-chrome-192x192.png",
+      "src": "/slop-mark-192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/brand/favicons/android-chrome-512x512.png",
+      "src": "/slop-mark-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }

@@ -85,10 +85,6 @@ input:focus-visible {
   letter-spacing: -0.04em;
 }
 
-.wordmark span {
-  color: var(--orange);
-}
-
 .nav-links {
   display: flex;
   align-items: center;

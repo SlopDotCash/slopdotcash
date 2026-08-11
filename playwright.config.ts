@@ -5,7 +5,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const externalBaseUrl =
-  process.env.GITARMY_BASE_URL ?? process.env.ELIZA_ARMY_BASE_URL;
+  process.env.SLOP_BASE_URL ??
+  process.env.GITARMY_BASE_URL ??
+  process.env.ELIZA_ARMY_BASE_URL;
 
 export default defineConfig({
   testDir: "./tests/e2e",

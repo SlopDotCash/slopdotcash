@@ -54,7 +54,7 @@ const archiveName = "contribute-to-eliza.skill";
 const archivePath = join(downloadsRoot, archiveName);
 const skillRepositoryPath = "skills/contribute-to-eliza";
 const sourcePath = `${skillRepositoryPath}/SKILL.md`;
-const publicSiteOrigin = "https://git.army";
+const publicSiteOrigin = "https://slop.cash";
 
 function sha256(contents) {
   return createHash("sha256").update(contents).digest("hex");
@@ -74,7 +74,7 @@ function listRegularSkillFiles(root, prefix = "") {
     const stats = lstatSync(absolutePath);
     if (stats.isSymbolicLink()) {
       throw new TypeError(
-        `[GitArmy] skill source contains a symlink: ${relativePath}`,
+        `[Slop] skill source contains a symlink: ${relativePath}`,
       );
     }
     if (stats.isDirectory()) {
@@ -82,7 +82,7 @@ function listRegularSkillFiles(root, prefix = "") {
     }
     if (!stats.isFile()) {
       throw new TypeError(
-        `[GitArmy] skill source contains a non-regular file: ${relativePath}`,
+        `[Slop] skill source contains a non-regular file: ${relativePath}`,
       );
     }
     return [relativePath];
@@ -117,12 +117,12 @@ if (
   )
 ) {
   throw new TypeError(
-    "[GitArmy] tracked skill file manifest is empty, escaped its root, or reserves PROVENANCE.json",
+    "[Slop] tracked skill file manifest is empty, escaped its root, or reserves PROVENANCE.json",
   );
 }
 if (trackedSkillFiles.length > 32) {
   throw new TypeError(
-    "[GitArmy] canonical skill exceeds the installer's 32-file authority bound",
+    "[Slop] canonical skill exceeds the installer's 32-file authority bound",
   );
 }
 if (
@@ -134,7 +134,7 @@ if (
   const extras = actualSkillFiles.filter((path) => !tracked.has(path));
   const missing = trackedSkillFiles.filter((path) => !actual.has(path));
   throw new TypeError(
-    `[GitArmy] skill source must exactly match tracked files (extra: ${extras.join(", ") || "none"}; missing: ${missing.join(", ") || "none"})`,
+    `[Slop] skill source must exactly match tracked files (extra: ${extras.join(", ") || "none"}; missing: ${missing.join(", ") || "none"})`,
   );
 }
 const skillFileManifest = trackedSkillFiles.map((path) => ({
@@ -146,7 +146,7 @@ const commit = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
 if (!/^[0-9a-f]{40}$/.test(commit)) {
-  throw new TypeError("[GitArmy] git did not return a full commit SHA");
+  throw new TypeError("[Slop] git did not return a full commit SHA");
 }
 const committedSkillFiles = execFileSync(
   "git",
@@ -223,7 +223,7 @@ try {
   run("python3", [archiveNormalizer, packagedArchive]);
   archive = readFileSync(packagedArchive);
   if (archive.length === 0) {
-    throw new Error("[GitArmy] packaged skill archive is empty");
+    throw new Error("[Slop] packaged skill archive is empty");
   }
   copyFileSync(packagedArchive, stagedPublicArchive);
   renameSync(stagedPublicArchive, archivePath);
@@ -434,7 +434,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
     trackedFiles.some((path, index) => path !== actualFiles[index])
   ) {
     throw new TypeError(
-      `[GitArmy] ${name} source must be a bounded, tracked, exact file tree`,
+      `[Slop] ${name} source must be a bounded, tracked, exact file tree`,
     );
   }
   const fileManifest = trackedFiles.map((path) => ({
@@ -499,8 +499,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
     const packagedArchive = join(stagedDownloadsRoot, archiveName);
     run("python3", [archiveNormalizer, packagedArchive]);
     archive = readFileSync(packagedArchive);
-    if (archive.length === 0)
-      throw new Error(`[GitArmy] ${archiveName} is empty`);
+    if (archive.length === 0) throw new Error(`[Slop] ${archiveName} is empty`);
     copyFileSync(packagedArchive, stagedArchive);
     renameSync(stagedArchive, join(projectDownloads, archiveName));
   } finally {
@@ -565,7 +564,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
     `${JSON.stringify(additionalManifest, null, 2)}\n`,
   );
   console.log(
-    `[GitArmy] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
+    `[Slop] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
   );
 }
 
@@ -581,5 +580,5 @@ for (const project of PROJECTS) {
 run("bun", [join(repositoryRoot, "scripts", "sync-cycle-index.ts")]);
 
 console.log(
-  `[GitArmy] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
+  `[Slop] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
 );

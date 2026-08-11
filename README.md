@@ -1,10 +1,12 @@
-# GitArmy
+# Slop
 
-GitArmy is a GitHub-native network for funding difficult public work. The
-first deployment lives at [git.army](https://git.army): contributors choose
-a project, give its skill to Codex or Claude Code, ship evidence on GitHub, and
-receive a public score and reward projection. Project owners review a frozen
-monthly proposal before signing any payment.
+Slop is a GitHub-native network for funding difficult public work. The primary
+deployment lives at [slop.cash](https://slop.cash), with `slop.tech` as a
+secondary domain: contributors choose a project, give its skill to Codex or
+Claude Code, ship evidence on GitHub, and receive a public score and reward
+projection. Project owners review a frozen monthly proposal before signing any
+payment. `git.army` and `eliza.army` remain compatibility aliases during the
+migration.
 
 The launch projects are:
 
@@ -13,7 +15,7 @@ The launch projects are:
 - **Delta Star:** accepted work in
   [`lalalune/ArkLib`](https://github.com/lalalune/ArkLib) receives a provisional
   contribution percentage toward the external Ethereum Foundation Proximity
-  Prize. GitArmy does not promise or distribute that prize.
+  Prize. Slop does not promise or distribute that prize.
 
 The v1 operating surface is deliberately small: public GitHub repositories,
 pull requests, CI, versioned skills, Git-backed reward records, and Solana USDC.
@@ -71,7 +73,9 @@ Generated files under `public/brand`, `public/downloads`, `public/projects`, and
 
 ## Contribution score
 
-The public `gitarmy-v1` score rewards accepted outcomes, not motion:
+The public `gitarmy-v1` score rewards accepted outcomes, not motion. Its legacy
+identifier remains stable so existing score snapshots and reward records keep
+their meaning:
 
 | Outcome | Points | Per-contributor/project/month cap |
 | --- | ---: | ---: |
@@ -101,7 +105,7 @@ cannot ban a contributor or move money.
 
 Useful unmerged work may receive partial credit only through a reviewed file in
 `evaluations/`. The review agent emits an advisory `gitarmy-review` record;
-a maintainer then opens a public GitArmy PR with the actor, source, rationale,
+a maintainer then opens a public Slop PR with the actor, source, rationale,
 decision link, and 1–8 point award. The ordinary GitHub ledger and a manual
 award cannot score the same source twice.
 
@@ -271,7 +275,7 @@ revision it used.
   the public GitHub actor plus optional wallets.
 - Pools are labeled pledged until a later non-custodial escrow contract can
   prove committed funds and define a withdrawal grace period.
-- Creators sign payments outside the platform. GitArmy prepares and verifies
+- Creators sign payments outside the platform. Slop prepares and verifies
   public state but does not custody funds or keys.
 - No KYC flow ships in v1. That product decision does not remove legal, tax,
   sanctions, contest, employment, or payment obligations from project owners,

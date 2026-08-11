@@ -3,7 +3,7 @@ pages_build_output_dir = "./dist"
 compatibility_date = "2026-07-30"
 
 [vars]
-PUBLIC_SITE_URL = "https://git.army"
+PUBLIC_SITE_URL = "https://slop.cash"
 
 [env.preview.vars]
-PUBLIC_SITE_URL = "https://git.army"
+PUBLIC_SITE_URL = "https://slop.cash"

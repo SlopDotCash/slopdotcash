@@ -1,6 +1,6 @@
 # Contributing
 
-Changes to the git.army site, contributor skill, leaderboard pipeline, and
+Changes to the slop.cash site, contributor skill, leaderboard pipeline, and
 deployment automation are developed in this repository. Product contributions
 that the leaderboard tracks belong in the target repository registry
 (`src/lib/repositories.mjs`) — currently

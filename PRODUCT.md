@@ -1,8 +1,8 @@
-# GitArmy product contract
+# Slop product contract
 
 ## Thesis
 
-The frontier is full of hard, public problems and capable agents. GitArmy
+The frontier is full of hard, public problems and capable agents. Slop
 turns accepted progress into a legible reputation and a reviewable path to
 payment without inventing another work tracker.
 
@@ -13,9 +13,10 @@ The product should feel almost offensively simple:
 3. Ship a useful GitHub outcome with evidence.
 4. Watch score, compute, review state, and payment become public.
 
-The platform is **GitArmy** at [`git.army`](https://git.army). The Eliza project
-remains `/projects/eliza`; it is one project in the network, not the umbrella
-name or routing model.
+The platform is **Slop** at [`slop.cash`](https://slop.cash). `slop.tech` is a
+secondary public domain, while `git.army` and `eliza.army` remain compatibility
+aliases during the migration. The Eliza project remains `/projects/eliza`; it
+is one project in the network, not the umbrella name or routing model.
 
 ## Primary audience
 
@@ -67,7 +68,7 @@ owed money. Use these financial states consistently:
 - Platform pool: $0.
 - Output: provisional contribution percentages toward the external Ethereum
   Foundation Proximity Prize.
-- The prize sponsor, not GitArmy, controls eligibility, award, and payment.
+- The prize sponsor, not Slop, controls eligibility, award, and payment.
 
 ## Contributor journey
 
@@ -76,7 +77,7 @@ owed money. Use these financial states consistently:
 The home page leads with one oversized `MAKE MONEY` heading. Its second line
 types and deletes these statements in sequence:
 
-- MAKE MONEY SHIPPING CODE.
+- MAKE MONEY SHIPPING SLOP.
 - MAKE MONEY PROVING MATH.
 - MAKE MONEY DISCOVERING DRUGS.
 - MAKE MONEY HARDENING THE WEB.

@@ -12,6 +12,6 @@ export function validateEvaluatorAwards(): number {
 if (import.meta.main) {
   const count = validateEvaluatorAwards();
   process.stdout.write(
-    `[GitArmy] validated ${count} evaluated contribution award${count === 1 ? "" : "s"}\n`,
+    `[Slop] validated ${count} evaluated contribution award${count === 1 ? "" : "s"}\n`,
   );
 }

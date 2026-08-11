@@ -31,7 +31,7 @@ const qualityJob = workflow.slice(
 );
 const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
 
-describe("git.army deployment contract", () => {
+describe("slop.cash deployment contract", () => {
   it("deploys only the exact tested SHA through wrangler.toml", () => {
     expect(qualityJob).toContain(`ref: ${"$"}{{ github.sha }}`);
     expect(qualityJob).toContain("does not match the event SHA $GITHUB_SHA");
@@ -63,7 +63,7 @@ describe("git.army deployment contract", () => {
       ),
     ).toHaveLength(2);
     expect(deployJob).toContain(
-      "changed a git.army release input immediately before deployment",
+      "changed a slop.cash release input immediately before deployment",
     );
     expect(
       deployJob.match(/diff --quiet "\$GITHUB_SHA" "\$live_develop" -- \./g),
@@ -137,12 +137,12 @@ describe("git.army deployment contract", () => {
       "verify_download /index.html dist/index.html",
     );
     expect(verificationStep).toContain(
-      `"https://git.army${"$"}{remote_path}?verify=`,
+      `"https://slop.cash${"$"}{remote_path}?verify=`,
     );
     expect(verificationStep).toContain("node scripts/dist-manifest.mjs verify");
     expect(verificationStep.match(/verify_download \//g)).toHaveLength(1);
     expect(verificationStep).toContain('while [ "$attempt" -le 3 ]');
-    expect(verificationStep).toContain("https://git.army \\");
+    expect(verificationStep).toContain("https://slop.cash \\");
     expect(verificationStep).toContain('"$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"');
   });
 

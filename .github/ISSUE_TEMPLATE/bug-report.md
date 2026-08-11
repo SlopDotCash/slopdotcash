@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible GitArmy platform problem.
+about: Report a reproducible Slop platform problem.
 title: "Bug: "
 labels: bug
 assignees: ""

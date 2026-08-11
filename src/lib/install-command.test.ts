@@ -993,14 +993,14 @@ describe("authenticated skill installer lifecycle", () => {
 
   it("permits test-only file authorities but fixes production authority hosts", () => {
     const production = createInstallCommand(
-      "https://git.army",
+      "https://slop.cash",
       `\${HOME}/.codex/skills`,
     );
     expect(production).toContain("'https://api.github.com'");
     expect(production).toContain("'https://raw.githubusercontent.com'");
     expect(production).not.toContain("GITHUB_API_ORIGIN");
     expect(() =>
-      createInstallCommand("https://git.army", `\${HOME}/.codex/skills`, {
+      createInstallCommand("https://slop.cash", `\${HOME}/.codex/skills`, {
         testAuthority: {
           apiOrigin: "https://attacker.example",
           rawOrigin: "https://attacker.example",

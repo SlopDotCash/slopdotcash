@@ -175,12 +175,12 @@ if (import.meta.main) {
       githubToken: process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN,
     });
     process.stdout.write(
-      `[GitArmy] closed ${result.cycleId}: prepared ${result.prepared.join(", ") || "none"}; already present ${result.skippedExisting.join(", ") || "none"}\n`,
+      `[Slop] closed ${result.cycleId}: prepared ${result.prepared.join(", ") || "none"}; already present ${result.skippedExisting.join(", ") || "none"}\n`,
     );
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.
     process.stderr.write(
-      `[GitArmy] monthly close refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
+      `[Slop] monthly close refused: ${error instanceof Error ? error.message : "unknown error"}\n`,
     );
     process.exitCode = 1;
   }
