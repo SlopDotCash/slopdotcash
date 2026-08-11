@@ -73,6 +73,15 @@ const HERO_TYPE_MS = 55;
 const HERO_DELETE_MS = 30;
 const HERO_GAP_MS = 220;
 
+export function publicFooterDomain(
+  hostname: string,
+): "slop.cash" | "slop.tech" {
+  const normalized = hostname.toLowerCase().replace(/\.$/u, "");
+  return normalized === "slop.tech" || normalized.endsWith(".slop.tech")
+    ? "slop.tech"
+    : "slop.cash";
+}
+
 type DataState =
   | { status: "loading" }
   | { status: "error"; message: string }
@@ -369,11 +378,12 @@ function Header() {
 }
 
 function Footer() {
+  const domain = publicFooterDomain(window.location.hostname);
   return (
     <footer className="site-footer">
       <div className="shell footer-grid">
         <div>
-          <div className="wordmark footer-wordmark">SLOP</div>
+          <div className="wordmark footer-wordmark">{domain}</div>
           <p>Accepted work. Public evidence. Digital-dollar rewards.</p>
         </div>
         <div className="footer-links">

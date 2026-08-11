@@ -85,6 +85,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
       name: "MAKE MONEY SHIPPING SLOP.",
     }),
   ).toBeVisible();
+  await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
   await expect(
     page.getByRole("heading", {
       exact: true,
