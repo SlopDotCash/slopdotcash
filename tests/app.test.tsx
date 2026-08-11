@@ -15,12 +15,21 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App } from "../src/App";
+import { App, publicFooterDomain } from "../src/App";
 import { cycleIndexFixture, snapshotFixture } from "./fixtures";
 
 function route(path: string): void {
   window.history.replaceState({}, "", path);
 }
+
+describe("public footer domain", () => {
+  it("uses the active Slop authority and fails unknown hosts to the primary", () => {
+    expect(publicFooterDomain("slop.cash")).toBe("slop.cash");
+    expect(publicFooterDomain("slop.tech")).toBe("slop.tech");
+    expect(publicFooterDomain("www.slop.tech")).toBe("slop.tech");
+    expect(publicFooterDomain("127.0.0.1")).toBe("slop.cash");
+  });
+});
 
 function mockSnapshot(value: unknown = snapshotFixture()): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
