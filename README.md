@@ -1,11 +1,11 @@
 # Slop
 
-Slop is a GitHub-native network for funding difficult public work. The primary
-deployment lives at [slop.cash](https://slop.cash), with `slop.tech` as a
-secondary domain: contributors choose a project, give its skill to Codex or
-Claude Code, ship evidence on GitHub, and receive a public score and reward
-projection. Project owners review a frozen monthly proposal before signing any
-payment. `git.army` and `eliza.army` remain compatibility aliases during the
+Slop is a GitHub-native network for funding difficult public work. It is
+available at both [slop.cash](https://slop.cash) and
+[slop.tech](https://slop.tech): contributors choose a project, give its skill
+to Codex or Claude Code, ship evidence on GitHub, and receive a public score
+and reward projection. Project owners review a frozen monthly proposal before
+signing any payment. `eliza.army` remains a compatibility alias during the
 migration.
 
 The launch projects are:

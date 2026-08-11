@@ -23,7 +23,7 @@ function route(path: string): void {
 }
 
 describe("public footer domain", () => {
-  it("uses the active Slop authority and fails unknown hosts to the primary", () => {
+  it("uses the active Slop authority and defaults unknown hosts to slop.cash", () => {
     expect(publicFooterDomain("slop.cash")).toBe("slop.cash");
     expect(publicFooterDomain("slop.tech")).toBe("slop.tech");
     expect(publicFooterDomain("www.slop.tech")).toBe("slop.tech");

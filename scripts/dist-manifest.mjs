@@ -26,7 +26,12 @@ const DEFAULT_RETRY_DELAY_MS = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 5 * 60_000;
 const CANONICAL_ORIGIN = "https://slop.cash";
-const RESERVED_PATHS = new Set(["_headers", "_redirects", MANIFEST_FILENAME]);
+const RESERVED_PATHS = new Set([
+  "_headers",
+  "_redirects",
+  "_routes.json",
+  MANIFEST_FILENAME,
+]);
 const digestPattern = /^[0-9a-f]{64}$/u;
 const verificationTokenPattern = /^[A-Za-z0-9._-]{1,128}$/u;
 

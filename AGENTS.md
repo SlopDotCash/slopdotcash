@@ -1,8 +1,8 @@
 # @elizaos/army
 
-Standalone Vite site and Git-backed incentive protocol for Slop. The primary
-public authority is `slop.cash`; `slop.tech` is a secondary domain, and
-`git.army` plus `eliza.army` remain compatibility aliases.
+Standalone Vite site and Git-backed incentive protocol for Slop. The public
+authorities are `slop.cash` and `slop.tech`; `eliza.army` remains a
+compatibility alias.
 
 ## Purpose
 
@@ -205,9 +205,9 @@ records its deployment ID and immutable Pages URL.
 
 The production domains are registered with Cloudflare Registrar in the same
 account as the Pages project. The internal project slug remains
-`eliza-computer`; the primary public authority is `https://slop.cash`, with
-`https://slop.tech` as a secondary domain. Do not claim that a Pages deploy
-proves custom-domain DNS or TLS—verify each separately.
+`eliza-computer`; the public authorities are `https://slop.cash` and
+`https://slop.tech`. Do not claim that a Pages deploy proves custom-domain DNS
+or TLS—verify each separately.
 
 ## Definition of done
 
