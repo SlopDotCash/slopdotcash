@@ -13,10 +13,10 @@ The product should feel almost offensively simple:
 3. Ship a useful GitHub outcome with evidence.
 4. Watch score, compute, review state, and payment become public.
 
-The platform is **Slop** at [`slop.cash`](https://slop.cash). `slop.tech` is a
-secondary public domain, while `git.army` and `eliza.army` remain compatibility
-aliases during the migration. The Eliza project remains `/projects/eliza`; it
-is one project in the network, not the umbrella name or routing model.
+The platform is **Slop** at both [`slop.cash`](https://slop.cash) and
+[`slop.tech`](https://slop.tech). `eliza.army` remains a compatibility alias
+during the migration. The Eliza project remains `/projects/eliza`; it is one
+project in the network, not the umbrella name or routing model.
 
 ## Primary audience
 

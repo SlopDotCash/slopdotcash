@@ -45,6 +45,10 @@ async function fixture() {
     "/*\n  X-Content-Type-Options: nosniff\n",
   );
   await writeFile(join(root, "_redirects"), "/* /index.html 200\n");
+  await writeFile(
+    join(root, "_routes.json"),
+    '{"version":1,"include":["/"],"exclude":[]}\n',
+  );
   return root;
 }
 
@@ -77,6 +81,9 @@ describe("Cloudflare Pages deployment manifest", () => {
     );
     expect(manifest.files.map((record) => record.path)).not.toContain(
       "_redirects",
+    );
+    expect(manifest.files.map((record) => record.path)).not.toContain(
+      "_routes.json",
     );
     expect(manifest.files.map((record) => record.path)).not.toContain(
       MANIFEST_FILENAME,

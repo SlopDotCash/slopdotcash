@@ -13,6 +13,7 @@
     "vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
+    "functions/**/*.ts",
     "scripts/**/*.ts",
     "src/lib/cycle-index.ts",
     "src/lib/evaluator-awards.ts",
