@@ -86,6 +86,10 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     }),
   ).toBeVisible();
   await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+    "content",
+    "https://slop.cash/og-shipping-slop.png",
+  );
   await expect(
     page.getByRole("heading", {
       exact: true,
