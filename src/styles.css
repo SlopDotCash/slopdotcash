@@ -1172,7 +1172,7 @@ small {
 
 .attempt-row {
   display: grid;
-  grid-template-columns: minmax(9.5rem, 11rem) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(9.5rem, 11rem) minmax(0, 1fr);
   align-items: start;
   gap: 18px;
   min-height: 88px;
@@ -1217,8 +1217,15 @@ small {
 .attempt-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
+  margin-top: 2px;
+}
+
+.attempt-meta a {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .attempt-learning {
@@ -1241,11 +1248,7 @@ small {
 
 @media (max-width: 720px) {
   .attempt-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .attempt-status {
-    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

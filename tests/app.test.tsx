@@ -494,6 +494,13 @@ describe("public records", () => {
     expect(
       screen.getByText("Prototype an abandoned ark ingest path"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "open project work" }),
+    ).toHaveAttribute("href", "/#projects");
+    expect(screen.getByRole("link", { name: "finish-line" })).toHaveAttribute(
+      "href",
+      "/contributors/finish-line",
+    );
   });
 
   it("shows an immutable public payout wallet on an archived profile", async () => {

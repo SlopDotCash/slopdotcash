@@ -1241,6 +1241,11 @@ function AttemptsPage({
                 </section>
               ))
             )}
+            <p className="attempt-learning">
+              Looking for the next useful move? Browse{" "}
+              <Link href="/#projects">open project work</Link> or check a
+              contributor profile for still-open scoring opportunities.
+            </p>
           </>
         )}
       </section>
@@ -1251,19 +1256,29 @@ function AttemptsPage({
 function RejectedAttemptRow({ attempt }: { attempt: RejectedAttempt }) {
   const status = attemptStatusLabel(attempt.kind);
   return (
-    <ExternalLinkAnchor className="attempt-row" href={attempt.source.url}>
+    <article className="attempt-row">
       <span className="attempt-status">{status}</span>
       <span className="attempt-body">
-        <strong>{attempt.source.title}</strong>
+        <ExternalLinkAnchor href={attempt.source.url}>
+          <strong>{attempt.source.title}</strong>
+        </ExternalLinkAnchor>
         <small className="attempt-reason">{attempt.reason}</small>
-        <small>
-          {attempt.actor ? `${attempt.actor.login} · ` : ""}
-          {attempt.source.kind === "pull-request" ? "Pull request" : "Issue"} #
-          {attempt.source.number} · {formatDate(attempt.occurredAt)}
-        </small>
+        <span className="attempt-meta">
+          {attempt.actor ? (
+            <Link href={`/contributors/${attempt.actor.login}`}>
+              {attempt.actor.login}
+            </Link>
+          ) : null}
+          <small>
+            {attempt.source.kind === "pull-request" ? "Pull request" : "Issue"}{" "}
+            #{attempt.source.number} · {formatDate(attempt.occurredAt)}
+          </small>
+          <ExternalLinkAnchor href={attempt.source.url}>
+            GitHub <ExternalLink aria-hidden="true" size={14} />
+          </ExternalLinkAnchor>
+        </span>
       </span>
-      <ExternalLink aria-hidden="true" size={16} />
-    </ExternalLinkAnchor>
+    </article>
   );
 }
 

@@ -226,6 +226,11 @@ test("renders contributor and cycle records from validated public data", async (
   });
   await expect(page.getByRole("heading", { name: actor.login })).toBeVisible();
   await expect(page.getByText("total paid")).toBeVisible();
+  if (snapshot.opportunities?.some((row) => row.actor.id === actor.id)) {
+    await expect(
+      page.getByRole("heading", { name: "Things that could be worked on." }),
+    ).toBeVisible();
+  }
 
   const archived = cycles.cycles.find((cycle) =>
     cycle.contributors.some((entry) => entry.actor.id === actor.id),
@@ -251,6 +256,27 @@ test("renders contributor and cycle records from validated public data", async (
       page.getByRole("heading", { name: `Eliza · ${view.cycle.id}` }),
     ).toBeVisible();
     await expect(page.getByText("14-day review")).toBeVisible();
+  }
+});
+
+test("renders the work-that-didn't-land feed", async ({ page, request }) => {
+  const snapshot = await loadSnapshot(request);
+  await page.goto("/attempts", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { name: "Work that didn't land." }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Didn't land" })).toBeVisible();
+  if ((snapshot.rejectedAttempts?.length ?? 0) > 0) {
+    await expect(
+      page.getByRole("button", { name: /All projects/u }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Looking for the next useful move/u),
+    ).toBeVisible();
+  } else {
+    await expect(
+      page.getByText(/Nothing in the current window closed without landing/u),
+    ).toBeVisible();
   }
 });
 
