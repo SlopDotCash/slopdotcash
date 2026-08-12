@@ -1116,6 +1116,139 @@ small {
   white-space: normal;
 }
 
+.attempt-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 28px;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.attempt-filters-legend {
+  float: left;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.attempt-filter {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 253, 248, 0.7);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.attempt-filter:hover,
+.attempt-filter-active {
+  border-color: var(--orange);
+  background: rgba(255, 90, 25, 0.08);
+}
+
+.attempt-project {
+  margin-bottom: 32px;
+}
+
+.attempt-project h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.attempt-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 253, 248, 0.7);
+}
+
+.attempt-row {
+  display: grid;
+  grid-template-columns: minmax(9.5rem, 11rem) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 18px;
+  min-height: 88px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.attempt-row:last-child {
+  border-bottom: 0;
+}
+
+.attempt-row:hover {
+  background: rgba(255, 90, 25, 0.055);
+}
+
+.attempt-status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+}
+
+.attempt-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.attempt-body strong {
+  font-size: 14px;
+}
+
+.attempt-reason,
+.attempt-body small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.attempt-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.attempt-learning {
+  margin: 28px 0 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 253, 248, 0.7);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.attempt-learning a {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .attempt-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .attempt-status {
+    grid-column: 1 / -1;
+  }
+}
+
 .cycle-hero {
   display: grid;
   grid-template-columns: 1.4fr 0.6fr;

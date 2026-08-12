@@ -382,7 +382,7 @@ function Header() {
         <nav className={open ? "nav-links nav-links-open" : "nav-links"}>
           <Link href="/#projects">Projects</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
-          <Link href="/attempts">Attempts</Link>
+          <Link href="/attempts">Didn't land</Link>
           <ExternalLinkAnchor href={HUB_ORIGIN}>Hub</ExternalLinkAnchor>
           <ExternalLinkAnchor className="nav-source" href={SOURCE_REPOSITORY}>
             Source <ExternalLink aria-hidden="true" size={14} />
@@ -403,7 +403,7 @@ function Footer() {
           <p>Accepted work. Public evidence. Digital-dollar rewards.</p>
         </div>
         <div className="footer-links">
-          <Link href="/attempts">Attempts</Link>
+          <Link href="/attempts">Work that didn't land</Link>
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
           </ExternalLinkAnchor>
@@ -1123,6 +1123,12 @@ function ProjectPage({
   );
 }
 
+function attemptStatusLabel(kind: RejectedAttempt["kind"]): string {
+  return kind === "closed-unmerged-pull-request"
+    ? "Closed without merge"
+    : "Closed as not planned";
+}
+
 function AttemptsPage({
   state,
   retry,
@@ -1130,6 +1136,7 @@ function AttemptsPage({
   state: DataState;
   retry: () => void;
 }) {
+  const [projectFilter, setProjectFilter] = useState<string>("all");
   if (state.status !== "ready") {
     return (
       <main className="shell route-main">
@@ -1138,28 +1145,103 @@ function AttemptsPage({
     );
   }
   const attempts = state.snapshot.rejectedAttempts;
+  const projectCounts = new Map<string, number>();
+  for (const attempt of attempts) {
+    const repository = findTargetRepositoryById(attempt.repository);
+    const projectId = repository?.projectId ?? attempt.repository;
+    projectCounts.set(projectId, (projectCounts.get(projectId) ?? 0) + 1);
+  }
+  const filtered =
+    projectFilter === "all"
+      ? attempts
+      : attempts.filter((attempt) => {
+          const repository = findTargetRepositoryById(attempt.repository);
+          return repository?.projectId === projectFilter;
+        });
+  const grouped = new Map<
+    string,
+    { projectName: string; rows: RejectedAttempt[] }
+  >();
+  for (const attempt of filtered) {
+    const repository = findTargetRepositoryById(attempt.repository);
+    const projectId = repository?.projectId ?? attempt.repository;
+    const projectName =
+      findProject(projectId)?.name ?? repository?.displayName ?? projectId;
+    const bucket = grouped.get(projectId) ?? { projectName, rows: [] };
+    bucket.rows.push(attempt);
+    grouped.set(projectId, bucket);
+  }
   return (
-    <main className="shell route-main">
+    <main className="shell route-main attempts-page">
       <DataNotice state={state} retry={retry} />
       <section className="section">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Cross-project public record</p>
-            <h1>Closed attempts.</h1>
+            <p className="eyebrow">Public close record</p>
+            <h1>Work that didn't land.</h1>
           </div>
           <p>
-            Pull requests closed without merge and issues closed as not planned
-            across every registered project. This is not the accepted ledger.
+            Pull requests closed without merging and issues closed as not
+            planned. Exact GitHub state only—this is not the accepted score
+            ledger, and it is not a private grade.
           </p>
         </div>
         {attempts.length === 0 ? (
-          <EmptyState text="No closed attempts are published in the current window." />
+          <EmptyState text="Nothing in the current window closed without landing." />
         ) : (
-          <div className="event-list">
-            {attempts.map((attempt) => (
-              <RejectedAttemptRow attempt={attempt} key={attempt.id} />
-            ))}
-          </div>
+          <>
+            <fieldset className="attempt-filters">
+              <legend className="attempt-filters-legend">
+                Filter by project
+              </legend>
+              <button
+                aria-pressed={projectFilter === "all"}
+                className={
+                  projectFilter === "all"
+                    ? "attempt-filter attempt-filter-active"
+                    : "attempt-filter"
+                }
+                onClick={() => setProjectFilter("all")}
+                type="button"
+              >
+                All projects ({attempts.length})
+              </button>
+              {[...projectCounts.entries()]
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([projectId, count]) => {
+                  const name = findProject(projectId)?.name ?? projectId;
+                  return (
+                    <button
+                      aria-pressed={projectFilter === projectId}
+                      className={
+                        projectFilter === projectId
+                          ? "attempt-filter attempt-filter-active"
+                          : "attempt-filter"
+                      }
+                      key={projectId}
+                      onClick={() => setProjectFilter(projectId)}
+                      type="button"
+                    >
+                      {name} ({count})
+                    </button>
+                  );
+                })}
+            </fieldset>
+            {filtered.length === 0 ? (
+              <EmptyState text="No closed work matches this project filter." />
+            ) : (
+              [...grouped.entries()].map(([projectId, group]) => (
+                <section className="attempt-project" key={projectId}>
+                  <h2>{group.projectName}</h2>
+                  <div className="attempt-list">
+                    {group.rows.map((attempt) => (
+                      <RejectedAttemptRow attempt={attempt} key={attempt.id} />
+                    ))}
+                  </div>
+                </section>
+              ))
+            )}
+          </>
         )}
       </section>
     </main>
@@ -1167,23 +1249,17 @@ function AttemptsPage({
 }
 
 function RejectedAttemptRow({ attempt }: { attempt: RejectedAttempt }) {
-  const repository = findTargetRepositoryById(attempt.repository);
-  const project = repository ? findProject(repository.projectId) : null;
-  const kindLabel =
-    attempt.kind === "closed-unmerged-pull-request"
-      ? "closed without merge"
-      : "not planned";
+  const status = attemptStatusLabel(attempt.kind);
   return (
-    <ExternalLinkAnchor href={attempt.source.url}>
-      <span className="event-points">
-        {attempt.source.kind === "pull-request" ? "PR" : "#"}
-      </span>
-      <span>
+    <ExternalLinkAnchor className="attempt-row" href={attempt.source.url}>
+      <span className="attempt-status">{status}</span>
+      <span className="attempt-body">
         <strong>{attempt.source.title}</strong>
+        <small className="attempt-reason">{attempt.reason}</small>
         <small>
-          {project?.name ?? attempt.repository}
-          {attempt.actor ? ` · ${attempt.actor.login}` : ""} · {kindLabel} ·{" "}
-          {formatDate(attempt.occurredAt)}
+          {attempt.actor ? `${attempt.actor.login} · ` : ""}
+          {attempt.source.kind === "pull-request" ? "Pull request" : "Issue"} #
+          {attempt.source.number} · {formatDate(attempt.occurredAt)}
         </small>
       </span>
       <ExternalLink aria-hidden="true" size={16} />

@@ -89,8 +89,9 @@ cumulative score and paid total. Historical-only contributors remain visible.
 Empty data, loading, stale data, invalid data, and zero accepted work are five
 different states. Profile opportunity rows lead with the next action, not a
 demerit; monthly caps appear as compact fill status, never a dropped-award list.
-The `/attempts` feed lists closed-unmerged pull requests and not-planned issues
-across projects as a public record, separate from accepted score.
+The `/attempts` feed (“Work that didn't land”) groups closed-unmerged pull
+requests and not-planned issues by project, leads each row with close status
+and the exact reason, and stays visually distinct from the accepted ledger.
 
 ### Cycle
 

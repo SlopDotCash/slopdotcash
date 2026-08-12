@@ -474,7 +474,7 @@ describe("public records", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "Closed attempts." }),
+      await screen.findByRole("heading", { name: "Work that didn't land." }),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Explore an abandoned queue rewrite"),
@@ -482,10 +482,18 @@ describe("public records", () => {
     expect(
       screen.getByText("Prototype an abandoned ark ingest path"),
     ).toBeInTheDocument();
-    expect(screen.getAllByText(/closed without merge/).length).toBeGreaterThan(
-      0,
-    );
-    expect(screen.getAllByText(/not planned/).length).toBeGreaterThan(0);
+    expect(screen.getByText("Closed without merge")).toBeInTheDocument();
+    expect(screen.getByText("Closed as not planned")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /All projects \(2\)/i }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Delta Star/i }));
+    expect(
+      screen.queryByText("Explore an abandoned queue rewrite"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Prototype an abandoned ark ingest path"),
+    ).toBeInTheDocument();
   });
 
   it("shows an immutable public payout wallet on an archived profile", async () => {

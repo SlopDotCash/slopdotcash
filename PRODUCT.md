@@ -223,8 +223,9 @@ Track all of these without collapsing them into one vanity number:
 
 ## Post-v1 surfaces
 
-- cross-project feed of closed-unmerged pull requests and not-planned issues
-  at `/attempts` (distinct from per-profile still-open opportunities);
+- cross-project feed of work that didn't land (closed-unmerged pull requests
+  and not-planned issues) at `/attempts`, grouped by project and filtered in
+  the UI (distinct from per-profile still-open opportunities);
 
 ## Tone
 
