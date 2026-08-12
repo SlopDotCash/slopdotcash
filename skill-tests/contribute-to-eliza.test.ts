@@ -6,6 +6,8 @@
 import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,7 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -32,6 +34,10 @@ import {
   readGhPages,
   renderMarkdown,
 } from "../skills/contribute-to-eliza/scripts/live-report.mjs";
+import {
+  normalizeSessionReport,
+  usageDelta,
+} from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const skillDir = join(testDir, "..", "skills", "contribute-to-eliza");
@@ -1488,6 +1494,242 @@ describe("live report behavior", () => {
           ),
         /cannot prove a current-head (?:APPROVED|CHANGES_REQUESTED) decision/,
       );
+    }
+  });
+});
+
+describe("run receipt CLI", () => {
+  const runReceiptPath = join(skillDir, "scripts", "run-receipt.mjs");
+
+  function runGit(cwd: string, args: string[]) {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+    assert.strictEqual(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  }
+
+  function encodedDirectoryName(path: string) {
+    return path
+      .replaceAll("\\", "/")
+      .replace(/\/$/u, "")
+      .replaceAll(/[^A-Za-z0-9]/gu, "-");
+  }
+
+  function session(
+    sessionId: string,
+    projectPath: string | null,
+    totalTokens: number,
+  ) {
+    return {
+      sessionId,
+      ...(projectPath === null ? {} : { projectPath }),
+      inputTokens: totalTokens,
+      outputTokens: 0,
+      totalTokens,
+    };
+  }
+
+  it("runs the CLI when its entrypoint reaches the module through a symlink", () => {
+    const fixtureRoot = mkdtempSync(
+      join(tmpdir(), "contribute-to-eliza-run-receipt-"),
+    );
+    const linkedEntrypoint = join(fixtureRoot, "run-receipt.mjs");
+    try {
+      symlinkSync(runReceiptPath, linkedEntrypoint);
+      assert.notStrictEqual(linkedEntrypoint, realpathSync(linkedEntrypoint));
+
+      const result = spawnSync(process.execPath, [linkedEntrypoint], {
+        encoding: "utf8",
+      });
+
+      assert.strictEqual(result.status, 1, result.stdout);
+      assert.match(
+        result.stderr,
+        /project run receipt failed: action must be start or finish/,
+      );
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("attributes ccusage's encoded Claude Code project directories to the repository root", () => {
+    const repositoryRoot = resolve(tmpdir(), "contribute-to-eliza-usage");
+    const normalizedRoot = repositoryRoot
+      .replaceAll("\\", "/")
+      .replace(/\/$/u, "");
+    const encoded = encodedDirectoryName(repositoryRoot);
+
+    const report = normalizeSessionReport(
+      {
+        sessions: [
+          session("encoded-dialect", encoded, 12),
+          session("real-path-dialect", normalizedRoot, 2),
+          session("foreign-encoded", "-Users-someone-else-repository", 18),
+          session("unattributed", null, 6),
+        ],
+      },
+      repositoryRoot,
+    );
+
+    const kept = Object.values(report.sessions);
+    assert.deepStrictEqual(
+      kept.map((entry) => entry.totalTokens).sort((a, b) => a - b),
+      [2, 6, 12],
+    );
+    assert.deepStrictEqual(
+      kept
+        .filter((entry) => entry.pathMatched)
+        .map((entry) => entry.totalTokens)
+        .sort((a, b) => a - b),
+      [2, 12],
+    );
+
+    const before = normalizeSessionReport(
+      { sessions: [session("encoded-dialect", encoded, 16)] },
+      repositoryRoot,
+    );
+    const after = normalizeSessionReport(
+      { sessions: [session("encoded-dialect", encoded, 166)] },
+      repositoryRoot,
+    );
+    const delta = usageDelta(before, after, "claude-code");
+    assert.strictEqual(delta.confidence, "exact");
+    assert.strictEqual(delta.totalTokens, 150);
+  });
+
+  it("starts and finishes a measured run without passing --project to ccusage", () => {
+    const fixtureRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "contribute-to-eliza-start-")),
+    );
+    try {
+      const repoRoot = join(fixtureRoot, "repo");
+      mkdirSync(repoRoot, { recursive: true });
+      runGit(repoRoot, ["init", "--quiet"]);
+      runGit(repoRoot, [
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:elizaOS/eliza.git",
+      ]);
+      cpSync(skillDir, join(repoRoot, "skills", "contribute-to-eliza"), {
+        recursive: true,
+      });
+      runGit(repoRoot, ["add", "."]);
+      runGit(repoRoot, [
+        "-c",
+        "user.email=skill-tests@example.com",
+        "-c",
+        "user.name=skill-tests",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+      ]);
+
+      const shimDir = join(fixtureRoot, "bin");
+      mkdirSync(shimDir);
+      const argsLog = join(fixtureRoot, "ccusage-args.log");
+      const fixturePayload = join(fixtureRoot, "ccusage-report.json");
+      const shimSource = [
+        "#!/bin/sh",
+        'if [ "$1" = "--version" ]; then',
+        "  echo 1.3.14",
+        "  exit 0",
+        "fi",
+        'if [ "$CCUSAGE_MODE" = "fail" ]; then',
+        "  exit 7",
+        "fi",
+        `printf '%s\\n' "$*" >> "$CCUSAGE_ARGS_LOG"`,
+        'cat "$CCUSAGE_FIXTURE"',
+        "",
+      ].join("\n");
+      writeFileSync(join(shimDir, "bun"), shimSource);
+      chmodSync(join(shimDir, "bun"), 0o755);
+
+      const encodedRepo = encodedDirectoryName(repoRoot);
+      const environment = {
+        ...process.env,
+        PATH: `${shimDir}:${process.env.PATH}`,
+        XDG_CONFIG_HOME: join(fixtureRoot, "config"),
+        CCUSAGE_ARGS_LOG: argsLog,
+        CCUSAGE_FIXTURE: fixturePayload,
+      };
+      const entrypoint = join(
+        repoRoot,
+        "skills",
+        "contribute-to-eliza",
+        "scripts",
+        "run-receipt.mjs",
+      );
+      const cliArguments = [
+        "--repo-root",
+        repoRoot,
+        "--client",
+        "claude-code",
+        "--model",
+        "claude-fable-5",
+        "--lane",
+        "skill-tests",
+        "--json",
+      ];
+
+      writeFileSync(
+        fixturePayload,
+        JSON.stringify({
+          sessions: [session("fixture-session", encodedRepo, 16)],
+        }),
+      );
+      const started = spawnSync(
+        process.execPath,
+        [entrypoint, "start", ...cliArguments],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(started.status, 0, started.stderr);
+      const startReport = JSON.parse(started.stdout);
+      assert.strictEqual(startReport.usageStatus, "capturing");
+      assert.match(startReport.runId, /^run_[0-9A-HJKMNP-TV-Z]{26}$/);
+
+      const ccusageInvocations = readFileSync(argsLog, "utf8")
+        .trim()
+        .split("\n");
+      assert.deepStrictEqual(ccusageInvocations, [
+        "x ccusage@20.0.19 claude session --json --mode calculate",
+      ]);
+
+      writeFileSync(
+        fixturePayload,
+        JSON.stringify({
+          sessions: [session("fixture-session", encodedRepo, 166)],
+        }),
+      );
+      const finished = spawnSync(
+        process.execPath,
+        [entrypoint, "finish", ...cliArguments, "--run", startReport.runId],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(finished.status, 0, finished.stderr);
+      const finishReport = JSON.parse(finished.stdout);
+      assert.strictEqual(finishReport.receipt.usage.confidence, "exact");
+      assert.strictEqual(finishReport.receipt.usage.totalTokens, 150);
+      assert.match(
+        finishReport.footer,
+        /Compute receipt: 150 project-attributed tokens \(exact/,
+      );
+
+      const failedCapture = spawnSync(
+        process.execPath,
+        [entrypoint, "start", ...cliArguments],
+        {
+          encoding: "utf8",
+          env: { ...environment, CCUSAGE_MODE: "fail" },
+        },
+      );
+      assert.strictEqual(failedCapture.status, 0, failedCapture.stderr);
+      assert.strictEqual(
+        JSON.parse(failedCapture.stdout).usageStatus,
+        "unavailable",
+      );
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
     }
   });
 });
