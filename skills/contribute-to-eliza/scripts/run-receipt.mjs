@@ -21,6 +21,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -83,6 +84,10 @@ function normalizePath(value) {
   return resolve(value).replaceAll("\\", "/").replace(/\/$/u, "");
 }
 
+function claudeProjectDirectoryName(value) {
+  return value.replaceAll(/[^A-Za-z0-9]/gu, "-");
+}
+
 /** Reduces ccusage's source-specific session dialects to non-sensitive totals. */
 export function normalizeSessionReport(payload, repositoryRoot) {
   if (
@@ -94,6 +99,7 @@ export function normalizeSessionReport(payload, repositoryRoot) {
   }
   const expectedRoot = normalizePath(repositoryRoot);
   const expectedName = basename(expectedRoot).toLowerCase();
+  const expectedDirectoryName = claudeProjectDirectoryName(expectedRoot);
   const sessions = {};
   for (const value of payload.sessions) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
@@ -107,7 +113,9 @@ export function normalizeSessionReport(payload, repositoryRoot) {
       "path",
     ]);
     const normalizedProject = projectPath ? normalizePath(projectPath) : null;
-    const pathMatched = normalizedProject === expectedRoot;
+    const pathMatched =
+      normalizedProject === expectedRoot ||
+      projectPath === expectedDirectoryName;
     const nameMatched =
       normalizedProject !== null &&
       basename(normalizedProject).toLowerCase() === expectedName;
@@ -252,9 +260,6 @@ function collectUsage(client, repositoryRoot) {
     "--mode",
     "calculate",
   ];
-  if (client === "claude-code") {
-    args.push("--project", basename(repositoryRoot));
-  }
   const result = spawnSync(runner.command, args, {
     cwd: repositoryRoot,
     encoding: "utf8",
@@ -669,8 +674,10 @@ export function main(args = process.argv.slice(2)) {
 }
 
 const invokedDirectly =
-  process.argv[1] &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  typeof process.argv[1] === "string" &&
+  existsSync(process.argv[1]) &&
+  realpathSync(fileURLToPath(import.meta.url)) ===
+    realpathSync(process.argv[1]);
 if (invokedDirectly) {
   try {
     main();
