@@ -218,11 +218,13 @@ Track all of these without collapsing them into one vanity number:
   work, but shared monthly pools and external shares are the launch path);
 - private repositories or non-code community/design work;
 - hosted model execution inside third-party project CI;
-- a cross-project feed of every rejected or maintainer-closed attempt
-  (per-profile still-open opportunities are in scope; a global rejection feed
-  is not);
 - autonomous banning;
 - raw prompt, response, source-file, or secret upload.
+
+## Post-v1 surfaces
+
+- cross-project feed of closed-unmerged pull requests and not-planned issues
+  at `/attempts` (distinct from per-profile still-open opportunities);
 
 ## Tone
 

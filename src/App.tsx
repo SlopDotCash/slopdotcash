@@ -33,6 +33,7 @@ import {
   type GitHubActor,
   type LeaderboardSnapshot,
   PROFILE_OPPORTUNITY_LIMIT,
+  type RejectedAttempt,
   type ScoreEvent,
   type ScoreOpportunity,
 } from "./lib/leaderboard";
@@ -51,6 +52,7 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
+import { findTargetRepositoryById } from "./lib/repositories.mjs";
 import { isSolanaAddress } from "./lib/wallets";
 
 const SOURCE_REPOSITORY = "https://github.com/elizaOS/army";
@@ -139,7 +141,14 @@ async function readBoundedJson(
 }
 
 interface Route {
-  kind: "cycle" | "home" | "new-project" | "profile" | "project" | "unknown";
+  kind:
+    | "attempts"
+    | "cycle"
+    | "home"
+    | "new-project"
+    | "profile"
+    | "project"
+    | "unknown";
   projectId?: string;
   cycleId?: string;
   login?: string;
@@ -148,6 +157,9 @@ interface Route {
 function internalRoute(pathname: string): Route {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 0) return { kind: "home" };
+  if (segments[0] === "attempts" && segments.length === 1) {
+    return { kind: "attempts" };
+  }
   if (segments[0] === "projects" && segments[1] === "new") {
     return { kind: "new-project" };
   }
@@ -370,6 +382,7 @@ function Header() {
         <nav className={open ? "nav-links nav-links-open" : "nav-links"}>
           <Link href="/#projects">Projects</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
+          <Link href="/attempts">Attempts</Link>
           <ExternalLinkAnchor href={HUB_ORIGIN}>Hub</ExternalLinkAnchor>
           <ExternalLinkAnchor className="nav-source" href={SOURCE_REPOSITORY}>
             Source <ExternalLink aria-hidden="true" size={14} />
@@ -390,6 +403,7 @@ function Footer() {
           <p>Accepted work. Public evidence. Digital-dollar rewards.</p>
         </div>
         <div className="footer-links">
+          <Link href="/attempts">Attempts</Link>
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
           </ExternalLinkAnchor>
@@ -1106,6 +1120,74 @@ function ProjectPage({
         {view ? <ProjectLeaderboard view={view} /> : null}
       </div>
     </main>
+  );
+}
+
+function AttemptsPage({
+  state,
+  retry,
+}: {
+  state: DataState;
+  retry: () => void;
+}) {
+  if (state.status !== "ready") {
+    return (
+      <main className="shell route-main">
+        <DataNotice state={state} retry={retry} />
+      </main>
+    );
+  }
+  const attempts = state.snapshot.rejectedAttempts;
+  return (
+    <main className="shell route-main">
+      <DataNotice state={state} retry={retry} />
+      <section className="section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Cross-project public record</p>
+            <h1>Closed attempts.</h1>
+          </div>
+          <p>
+            Pull requests closed without merge and issues closed as not planned
+            across every registered project. This is not the accepted ledger.
+          </p>
+        </div>
+        {attempts.length === 0 ? (
+          <EmptyState text="No closed attempts are published in the current window." />
+        ) : (
+          <div className="event-list">
+            {attempts.map((attempt) => (
+              <RejectedAttemptRow attempt={attempt} key={attempt.id} />
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function RejectedAttemptRow({ attempt }: { attempt: RejectedAttempt }) {
+  const repository = findTargetRepositoryById(attempt.repository);
+  const project = repository ? findProject(repository.projectId) : null;
+  const kindLabel =
+    attempt.kind === "closed-unmerged-pull-request"
+      ? "closed without merge"
+      : "not planned";
+  return (
+    <ExternalLinkAnchor href={attempt.source.url}>
+      <span className="event-points">
+        {attempt.source.kind === "pull-request" ? "PR" : "#"}
+      </span>
+      <span>
+        <strong>{attempt.source.title}</strong>
+        <small>
+          {project?.name ?? attempt.repository}
+          {attempt.actor ? ` · ${attempt.actor.login}` : ""} · {kindLabel} ·{" "}
+          {formatDate(attempt.occurredAt)}
+        </small>
+      </span>
+      <ExternalLink aria-hidden="true" size={16} />
+    </ExternalLinkAnchor>
   );
 }
 
@@ -1972,6 +2054,8 @@ export function App() {
   const [state, retry] = useSnapshot();
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
+  else if (route.kind === "attempts")
+    content = <AttemptsPage retry={retry} state={state} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
   else if (route.kind === "project") {
     const project = findProject(route.projectId ?? "");

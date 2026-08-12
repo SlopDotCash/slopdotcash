@@ -2799,6 +2799,60 @@ describe("work queue claims and prioritization", () => {
     expect(snapshot.opportunities).toEqual([]);
   });
 
+  it("publishes a cross-project rejected-attempt feed from closed work", () => {
+    const author = actor("author");
+    const bot = actor("dependabot[bot]", "Bot");
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        closedUnmergedPullRequests: [
+          {
+            id: "PR_CLOSED_1",
+            number: 70,
+            title: "Abandoned rewrite",
+            url: "https://github.com/elizaOS/eliza/pull/70",
+            closedAt: "2026-07-29T09:00:00.000Z",
+            author,
+            mergedAt: null,
+          },
+          {
+            id: "PR_CLOSED_BOT",
+            number: 71,
+            title: "Bot churn",
+            url: "https://github.com/elizaOS/eliza/pull/71",
+            closedAt: "2026-07-29T10:00:00.000Z",
+            author: bot,
+            mergedAt: null,
+          },
+        ],
+        notPlannedIssues: [
+          {
+            id: "ISSUE_NP_1",
+            number: 80,
+            title: "Not this path",
+            url: "https://github.com/lalalune/arklib/issues/80",
+            closedAt: "2026-07-28T09:00:00.000Z",
+            author,
+            stateReason: "NOT_PLANNED",
+          },
+        ],
+      }),
+    );
+
+    expect(snapshot.rejectedAttempts.map((row) => row.kind)).toEqual([
+      "closed-unmerged-pull-request",
+      "not-planned-issue",
+    ]);
+    expect(snapshot.rejectedAttempts[0]).toMatchObject({
+      source: { id: "PR_CLOSED_1" },
+      actor: { id: author.id },
+    });
+    expect(
+      snapshot.rejectedAttempts.some(
+        (row) => row.source.id === "PR_CLOSED_BOT",
+      ),
+    ).toBe(false);
+  });
+
   it("rejects malformed opportunity rows from the published schema", () => {
     const snapshot = createLeaderboardSnapshot(input({}));
     expect(() =>

@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertPublishableLeaderboardSnapshot,
+  type ClosedUnmergedPullRequestRecord,
   createLeaderboardSnapshot,
   dedupeByNodeId,
   type EvidenceCategory,
@@ -24,6 +25,7 @@ import {
   type LeaderboardSnapshot,
   type LeaderboardSourceMetadata,
   type MergedPullRequestOutcome,
+  type NotPlannedIssueRecord,
   type PullRequestFile,
   type PullRequestRecord,
   type PullRequestReview,
@@ -370,7 +372,17 @@ const SEARCH_REFERENCES_QUERY = `
       pageInfo { hasNextPage endCursor }
       nodes {
         __typename
-        ... on Issue { id }
+        ... on Issue {
+          id
+          number
+          title
+          url
+          createdAt
+          updatedAt
+          closedAt
+          stateReason
+          author { ...LeaderboardActor }
+        }
         ... on PullRequest {
           id
           state
@@ -380,6 +392,7 @@ const SEARCH_REFERENCES_QUERY = `
           body
           createdAt
           updatedAt
+          closedAt
           mergedAt
           author { ...LeaderboardActor }
           additions
@@ -1370,13 +1383,158 @@ function parseSearchReference(
   if (kind !== expectedKind) {
     throw new Error(`${path} must be a ${expectedKind}`);
   }
+  const mergedAt =
+    kind === "PullRequest"
+      ? asNullableString(node.mergedAt, `${path}.mergedAt`)
+      : null;
   return {
     id: asString(node.id, `${path}.id`),
     kind,
     outcome:
-      kind === "PullRequest" ? parsePullRequestOutcome(node, path) : null,
+      kind === "PullRequest" && mergedAt !== null
+        ? parsePullRequestOutcome(node, path)
+        : null,
     openVersion: null,
   };
+}
+
+function parseClosedUnmergedPullRequestHit(
+  value: unknown,
+  path: string,
+): ClosedUnmergedPullRequestRecord {
+  const node = asRecord(value, path);
+  if (asString(node.__typename, `${path}.__typename`) !== "PullRequest") {
+    throw new Error(`${path} must be a PullRequest`);
+  }
+  if (asString(node.state, `${path}.state`) !== "CLOSED") {
+    throw new Error(`${path} must be CLOSED`);
+  }
+  const mergedAt = asNullableString(node.mergedAt, `${path}.mergedAt`);
+  if (mergedAt !== null) {
+    throw new Error(`${path} must not be merged`);
+  }
+  const closedAt = asNullableString(node.closedAt, `${path}.closedAt`);
+  if (!closedAt) {
+    throw new Error(`${path}.closedAt must be present`);
+  }
+  return {
+    id: asString(node.id, `${path}.id`),
+    number: asNumber(node.number, `${path}.number`),
+    title: asString(node.title, `${path}.title`),
+    url: asString(node.url, `${path}.url`),
+    closedAt,
+    author: parseActor(node.author, `${path}.author`),
+    mergedAt: null,
+  };
+}
+
+function parseNotPlannedIssueHit(
+  value: unknown,
+  path: string,
+): NotPlannedIssueRecord {
+  const node = asRecord(value, path);
+  if (asString(node.__typename, `${path}.__typename`) !== "Issue") {
+    throw new Error(`${path} must be an Issue`);
+  }
+  const stateReason = asNullableString(node.stateReason, `${path}.stateReason`);
+  if (stateReason !== "NOT_PLANNED") {
+    throw new Error(`${path}.stateReason must be NOT_PLANNED`);
+  }
+  const closedAt = asNullableString(node.closedAt, `${path}.closedAt`);
+  if (!closedAt) {
+    throw new Error(`${path}.closedAt must be present`);
+  }
+  return {
+    id: asString(node.id, `${path}.id`),
+    number: asNumber(node.number, `${path}.number`),
+    title: asString(node.title, `${path}.title`),
+    url: asString(node.url, `${path}.url`),
+    closedAt,
+    author: parseActor(node.author, `${path}.author`),
+    stateReason: "NOT_PLANNED",
+  };
+}
+
+async function collectClosedAttemptHits<T extends { id: string }>(
+  client: GraphqlExecutor,
+  repository: TargetRepository,
+  from: Date,
+  to: Date,
+  kindQualifier:
+    | "is:pr is:closed -is:merged"
+    | "is:issue is:closed reason:not-planned",
+  expectedKind: NodeReference["kind"],
+  parser: (value: unknown, path: string) => T,
+  stats: { searchSliceCount: number },
+): Promise<T[]> {
+  const searchQuery = `repo:${repository.id} ${kindQualifier} closed:${searchRange(from, to)}`;
+  stats.searchSliceCount += 1;
+  const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
+    searchQuery,
+    after: null,
+    pageSize: GRAPHQL_PAGE_SIZE,
+  });
+  const firstPage = parseSearchPage(firstData, parser);
+  if (firstPage.totalCount >= SEARCH_SAFE_RESULT_LIMIT) {
+    if (to.getTime() - from.getTime() <= MINIMUM_SEARCH_SLICE_MS) {
+      throw new Error(
+        `GitHub Search returned ${firstPage.totalCount} results in one minute (${searchRange(from, to)}); refusing a snapshot that could hit the 1,000-result cap`,
+      );
+    }
+    const split = midpoint(from, to);
+    const left = await collectClosedAttemptHits(
+      client,
+      repository,
+      from,
+      split,
+      kindQualifier,
+      expectedKind,
+      parser,
+      stats,
+    );
+    const right = await collectClosedAttemptHits(
+      client,
+      repository,
+      split,
+      to,
+      kindQualifier,
+      expectedKind,
+      parser,
+      stats,
+    );
+    return dedupeByNodeId([...left, ...right]);
+  }
+
+  const hits = [...firstPage.nodes];
+  const expectedCount = firstPage.totalCount;
+  let pageInfo = firstPage.pageInfo;
+  while (pageInfo.hasNextPage) {
+    if (!pageInfo.endCursor) {
+      throw new Error("GitHub Search reported another page without a cursor");
+    }
+    const data = await client.execute(SEARCH_REFERENCES_QUERY, {
+      searchQuery,
+      after: pageInfo.endCursor,
+      pageSize: GRAPHQL_PAGE_SIZE,
+    });
+    const page = parseSearchPage(data, parser);
+    if (page.totalCount !== expectedCount) {
+      throw new Error(
+        `GitHub Search changed from ${expectedCount} to ${page.totalCount} results while collecting ${searchRange(from, to)}; rerun for a coherent snapshot`,
+      );
+    }
+    hits.push(...page.nodes);
+    pageInfo = page.pageInfo;
+  }
+
+  const deduped = dedupeByNodeId(hits);
+  if (deduped.length !== expectedCount) {
+    throw new Error(
+      `GitHub Search returned ${deduped.length} unique closed attempts but reported ${expectedCount} for ${searchRange(from, to)}`,
+    );
+  }
+  void expectedKind;
+  return deduped;
 }
 
 function parseOpenReference(
@@ -1440,7 +1598,11 @@ export async function collectSearchReferences(
   from: Date,
   to: Date,
   qualifier: "closed" | "merged",
-  kindQualifier: "is:issue is:closed" | "is:pr is:merged",
+  kindQualifier:
+    | "is:issue is:closed"
+    | "is:pr is:merged"
+    | "is:pr is:closed -is:merged"
+    | "is:issue is:closed reason:not-planned",
   expectedKind: NodeReference["kind"],
   stats: { searchSliceCount: number },
 ): Promise<NodeReference[]> {
@@ -1523,7 +1685,11 @@ async function countSearchResults(
   from: Date,
   to: Date,
   qualifier: "closed" | "merged",
-  kindQualifier: "is:issue is:closed" | "is:pr is:merged",
+  kindQualifier:
+    | "is:issue is:closed"
+    | "is:pr is:merged"
+    | "is:pr is:closed -is:merged"
+    | "is:issue is:closed reason:not-planned",
   expectedKind: NodeReference["kind"],
   stats: { searchSliceCount: number },
 ): Promise<number> {
@@ -2688,6 +2854,8 @@ export async function generateLeaderboardFromGitHub(
   const mergedPullRequestOutcomes: MergedPullRequestOutcome[] = [];
   const mergedPullRequests: PullRequestRecord[] = [];
   const closedIssues: IssueRecord[] = [];
+  const closedUnmergedPullRequests: ClosedUnmergedPullRequestRecord[] = [];
+  const notPlannedIssues: NotPlannedIssueRecord[] = [];
   let closedIssueCount = 0;
 
   for (const [index, repository] of TARGET_REPOSITORIES.entries()) {
@@ -2730,6 +2898,30 @@ export async function generateLeaderboardFromGitHub(
       "is:issue is:closed",
       "Issue",
       stats,
+    );
+    closedUnmergedPullRequests.push(
+      ...(await collectClosedAttemptHits(
+        client,
+        repository,
+        windowFrom,
+        now,
+        "is:pr is:closed -is:merged",
+        "PullRequest",
+        parseClosedUnmergedPullRequestHit,
+        stats,
+      )),
+    );
+    notPlannedIssues.push(
+      ...(await collectClosedAttemptHits(
+        client,
+        repository,
+        windowFrom,
+        now,
+        "is:issue is:closed reason:not-planned",
+        "Issue",
+        parseNotPlannedIssueHit,
+        stats,
+      )),
     );
     const repositoryOutcomes = mergedPullRequestReferences.map((reference) => {
       if (!reference.outcome) {
@@ -2913,6 +3105,8 @@ export async function generateLeaderboardFromGitHub(
     resolvedIssues: dedupedClosedIssues,
     openIssues,
     openPullRequests,
+    closedUnmergedPullRequests: dedupeByNodeId(closedUnmergedPullRequests),
+    notPlannedIssues: dedupeByNodeId(notPlannedIssues),
     verificationWindowFrom: verificationWindowFrom.toISOString(),
     verifiedEvidence: evidenceVerification.artifacts,
     evaluatedContributions: options.evaluatedContributions ?? [],

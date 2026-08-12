@@ -468,6 +468,26 @@ describe("public records", () => {
     expect(screen.queryByText(/Open checklist 18005/)).not.toBeInTheDocument();
   });
 
+  it("shows the cross-project closed attempts feed", async () => {
+    route("/attempts");
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Closed attempts." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Explore an abandoned queue rewrite"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Prototype an abandoned ark ingest path"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/closed without merge/).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getAllByText(/not planned/).length).toBeGreaterThan(0);
+  });
+
   it("shows an immutable public payout wallet on an archived profile", async () => {
     route("/contributors/archive-only");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>

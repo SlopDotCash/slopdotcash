@@ -28,7 +28,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
     kind: "User",
   };
   return {
-    schemaVersion: "5",
+    schemaVersion: "6",
     repository: "elizaOS/eliza",
     repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
     ruleVersion: "gitarmy-v1",
@@ -305,6 +305,39 @@ export function snapshotFixture(): LeaderboardSnapshot {
         reason:
           "Open pull request evidence is missing with 0 of 6 points verified.",
         hint: "Add verified screenshot, video, or log evidence before merge.",
+      },
+    ],
+    rejectedAttempts: [
+      {
+        id: "PR_closed_fixture:rejected:closed-unmerged",
+        kind: "closed-unmerged-pull-request",
+        actor: leaderActor,
+        occurredAt: "2026-07-28T16:00:00.000Z",
+        repository: "elizaOS/eliza",
+        source: {
+          id: "PR_closed_fixture",
+          kind: "pull-request",
+          number: 17310,
+          title: "Explore an abandoned queue rewrite",
+          url: "https://github.com/elizaOS/eliza/pull/17310",
+        },
+        reason:
+          "Pull request was closed without merging during the published window.",
+      },
+      {
+        id: "ISSUE_not_planned_fixture:rejected:not-planned",
+        kind: "not-planned-issue",
+        actor: leaderActor,
+        occurredAt: "2026-07-27T16:00:00.000Z",
+        repository: "lalalune/arklib",
+        source: {
+          id: "ISSUE_not_planned_fixture",
+          kind: "issue",
+          number: 44,
+          title: "Prototype an abandoned ark ingest path",
+          url: "https://github.com/lalalune/arklib/issues/44",
+        },
+        reason: "Issue was closed as not planned during the published window.",
       },
     ],
     attributions: [

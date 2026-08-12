@@ -27,8 +27,9 @@ export {
 
 /** Backward-compatible alias for the primary registry repository. */
 export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY.id;
-export const LEADERBOARD_SCHEMA_VERSION = "5" as const;
+export const LEADERBOARD_SCHEMA_VERSION = "6" as const;
 export const PROFILE_OPPORTUNITY_LIMIT = 5 as const;
+export const REJECTED_ATTEMPT_FEED_LIMIT = 100 as const;
 export const SCORE_RULE_VERSION = "gitarmy-v1" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
@@ -304,6 +305,52 @@ export interface ScoreOpportunity {
   hint: string;
 }
 
+export type RejectedAttemptKind =
+  | "closed-unmerged-pull-request"
+  | "not-planned-issue";
+
+/**
+ * Cross-project feed of maintainer-closed or abandoned attempts that never
+ * became accepted score. Distinct from still-open profile opportunities.
+ */
+export interface RejectedAttempt {
+  id: string;
+  kind: RejectedAttemptKind;
+  actor: GitHubActor | null;
+  occurredAt: string;
+  repository: RepositoryId;
+  source: {
+    id: string;
+    kind: "issue" | "pull-request";
+    number: number;
+    title: string;
+    url: string;
+  };
+  reason: string;
+}
+
+/** Lightweight closed-PR row used only to build the rejected-attempt feed. */
+export interface ClosedUnmergedPullRequestRecord {
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+  closedAt: string;
+  author: GitHubActor | null;
+  mergedAt: null;
+}
+
+/** Lightweight not-planned issue row used only to build the rejected-attempt feed. */
+export interface NotPlannedIssueRecord {
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+  closedAt: string;
+  author: GitHubActor | null;
+  stateReason: "NOT_PLANNED";
+}
+
 export interface CapUsageBucket {
   used: number;
   cap: number;
@@ -494,6 +541,7 @@ export interface LeaderboardSnapshot {
   leaders: LeaderboardEntry[];
   ledger: ScoreEvent[];
   opportunities: ScoreOpportunity[];
+  rejectedAttempts: RejectedAttempt[];
   attributions: ModelAttribution[];
   invalidAttributionMarkers: InvalidAttributionMarker[];
   attributionCoverage: AttributionCoverage;
@@ -515,6 +563,8 @@ export interface LeaderboardInput {
   resolvedIssues: IssueRecord[];
   openIssues: IssueRecord[];
   openPullRequests: PullRequestRecord[];
+  closedUnmergedPullRequests?: ClosedUnmergedPullRequestRecord[];
+  notPlannedIssues?: NotPlannedIssueRecord[];
   verificationWindowFrom: string;
   verifiedEvidence: VerifiedEvidenceArtifact[];
   evaluatedContributions?: ScoreEvent[];
@@ -2348,6 +2398,78 @@ function compareWorkItems(left: WorkItem, right: WorkItem): number {
   );
 }
 
+function compareRejectedAttempts(
+  left: RejectedAttempt,
+  right: RejectedAttempt,
+): number {
+  return (
+    parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
+    left.source.number - right.source.number ||
+    left.id.localeCompare(right.id)
+  );
+}
+
+function collectRejectedAttempts(
+  closedUnmergedPullRequests: ClosedUnmergedPullRequestRecord[],
+  notPlannedIssues: NotPlannedIssueRecord[],
+): RejectedAttempt[] {
+  const attempts: RejectedAttempt[] = [];
+  for (const pullRequest of closedUnmergedPullRequests) {
+    if (pullRequest.mergedAt !== null) {
+      throw new Error(
+        `Closed unmerged pull request ${pullRequest.id} must not have mergedAt`,
+      );
+    }
+    if (pullRequest.author && isBotActor(pullRequest.author)) {
+      continue;
+    }
+    attempts.push({
+      id: `${pullRequest.id}:rejected:closed-unmerged`,
+      kind: "closed-unmerged-pull-request",
+      actor: pullRequest.author,
+      occurredAt: pullRequest.closedAt,
+      repository: repositoryIdFromUrl(pullRequest.url),
+      source: {
+        id: pullRequest.id,
+        kind: "pull-request",
+        number: pullRequest.number,
+        title: pullRequest.title,
+        url: pullRequest.url,
+      },
+      reason:
+        "Pull request was closed without merging during the published window.",
+    });
+  }
+  for (const issue of notPlannedIssues) {
+    if (issue.stateReason !== "NOT_PLANNED") {
+      throw new Error(
+        `Not-planned issue ${issue.id} must carry stateReason NOT_PLANNED`,
+      );
+    }
+    if (issue.author && isBotActor(issue.author)) {
+      continue;
+    }
+    attempts.push({
+      id: `${issue.id}:rejected:not-planned`,
+      kind: "not-planned-issue",
+      actor: issue.author,
+      occurredAt: issue.closedAt,
+      repository: repositoryIdFromUrl(issue.url),
+      source: {
+        id: issue.id,
+        kind: "issue",
+        number: issue.number,
+        title: issue.title,
+        url: issue.url,
+      },
+      reason: "Issue was closed as not planned during the published window.",
+    });
+  }
+  return attempts
+    .sort(compareRejectedAttempts)
+    .slice(0, REJECTED_ATTEMPT_FEED_LIMIT);
+}
+
 function compareOpportunities(
   left: ScoreOpportunity,
   right: ScoreOpportunity,
@@ -2881,6 +3003,10 @@ export function createLeaderboardSnapshot(
     openPullRequests,
     verifiedEvidence,
   );
+  const rejectedAttempts = collectRejectedAttempts(
+    input.closedUnmergedPullRequests ?? [],
+    input.notPlannedIssues ?? [],
+  );
   const overallAttribution = assessModelAttribution(
     [...scoredAttributionSources.values()],
     { requireEverySource: true },
@@ -2944,6 +3070,7 @@ export function createLeaderboardSnapshot(
         left.id.localeCompare(right.id),
     ),
     opportunities,
+    rejectedAttempts,
     attributions,
     invalidAttributionMarkers: overallAttribution.invalidMarkers.sort(
       (left, right) =>
@@ -4106,6 +4233,57 @@ function assertOpportunityValue(
   }
 }
 
+function assertRejectedAttemptValue(
+  value: unknown,
+  path: string,
+): asserts value is RejectedAttempt {
+  const attempt = assertObject(value, path);
+  assertString(attempt.id, `${path}.id`);
+  assertEnum(
+    attempt.kind,
+    ["closed-unmerged-pull-request", "not-planned-issue"],
+    `${path}.kind`,
+  );
+  assertNullableActor(attempt.actor, `${path}.actor`);
+  if (attempt.actor && isBotActor(attempt.actor as GitHubActor)) {
+    throw new Error(`${path}.actor must not be a bot`);
+  }
+  assertIsoTimestamp(attempt.occurredAt, `${path}.occurredAt`);
+  assertString(attempt.reason, `${path}.reason`);
+  if (attempt.reason.length < 20) {
+    throw new Error(`${path}.reason must explain the closed attempt`);
+  }
+  assertEnum(
+    attempt.repository,
+    TARGET_REPOSITORIES.map((repository) => repository.id),
+    `${path}.repository`,
+  );
+  const source = assertObject(attempt.source, `${path}.source`);
+  assertString(source.id, `${path}.source.id`);
+  assertEnum(source.kind, ["issue", "pull-request"], `${path}.source.kind`);
+  assertPositiveInteger(source.number, `${path}.source.number`);
+  assertString(source.title, `${path}.source.title`);
+  assertRepositoryUrl(
+    source.url,
+    `${path}.source.url`,
+    source.kind,
+    source.number,
+    attempt.repository as RepositoryId,
+  );
+  const kind = attempt.kind as RejectedAttemptKind;
+  if (
+    kind === "closed-unmerged-pull-request" &&
+    source.kind !== "pull-request"
+  ) {
+    throw new Error(
+      `${path}.source.kind must be pull-request for closed-unmerged-pull-request`,
+    );
+  }
+  if (kind === "not-planned-issue" && source.kind !== "issue") {
+    throw new Error(`${path}.source.kind must be issue for not-planned-issue`);
+  }
+}
+
 function assertAttributionValue(
   value: unknown,
   path: string,
@@ -4295,6 +4473,42 @@ export function assertLeaderboardSnapshot(
     ) {
       throw new Error(
         "snapshot.opportunities must be ordered newest-first by occurredAt",
+      );
+    }
+  }
+
+  if (!Array.isArray(snapshot.rejectedAttempts)) {
+    throw new Error("snapshot.rejectedAttempts must be an array");
+  }
+  if (snapshot.rejectedAttempts.length > REJECTED_ATTEMPT_FEED_LIMIT) {
+    throw new Error(
+      `snapshot.rejectedAttempts cannot exceed ${REJECTED_ATTEMPT_FEED_LIMIT} rows`,
+    );
+  }
+  const validatedRejectedAttempts = snapshot.rejectedAttempts.map(
+    (attempt, index) => {
+      assertRejectedAttemptValue(
+        attempt,
+        `snapshot.rejectedAttempts[${index}]`,
+      );
+      return attempt;
+    },
+  );
+  if (
+    new Set(validatedRejectedAttempts.map((attempt) => attempt.id)).size !==
+    validatedRejectedAttempts.length
+  ) {
+    throw new Error("snapshot.rejectedAttempts must contain unique IDs");
+  }
+  for (let index = 1; index < validatedRejectedAttempts.length; index += 1) {
+    if (
+      compareRejectedAttempts(
+        validatedRejectedAttempts[index - 1],
+        validatedRejectedAttempts[index],
+      ) > 0
+    ) {
+      throw new Error(
+        "snapshot.rejectedAttempts must be ordered newest-first by occurredAt",
       );
     }
   }
