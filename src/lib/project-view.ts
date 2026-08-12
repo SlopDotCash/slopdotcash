@@ -546,12 +546,7 @@ export function createProjectView(
   });
 
   const opportunities = snapshot.opportunities
-    .filter(
-      (opportunity) =>
-        repositoryIds.has(opportunity.repository) &&
-        Date.parse(opportunity.occurredAt) >= from &&
-        Date.parse(opportunity.occurredAt) < to,
-    )
+    .filter((opportunity) => repositoryIds.has(opportunity.repository))
     .sort(
       (left, right) =>
         Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||

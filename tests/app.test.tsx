@@ -358,7 +358,7 @@ describe("public records", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/2026-07 caps ·/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/up to \+6/)).toBeInTheDocument();
+    expect(screen.getByText(/\+6 possible/)).toBeInTheDocument();
   });
 
   it("hides the opportunity section when the contributor has none", async () => {
@@ -382,6 +382,45 @@ describe("public records", () => {
         name: "Things that could be worked on.",
       }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps at most five still-open opportunities on a profile", async () => {
+    route("/contributors/finish-line");
+    const crowded = snapshotFixture();
+    const actor = crowded.leaders[0].actor;
+    crowded.opportunities = Array.from({ length: 7 }, (_, index) => {
+      const number = 18000 + index;
+      return {
+        id: `PR_crowd_${number}:opportunity:missing-evidence`,
+        actor,
+        kind: "missing-evidence" as const,
+        category: "evidence" as const,
+        potentialPoints: 6,
+        occurredAt: `2026-07-${String(29 - index).padStart(2, "0")}T12:00:00.000Z`,
+        repository: "elizaOS/eliza" as const,
+        source: {
+          id: `PR_crowd_${number}`,
+          kind: "pull-request" as const,
+          number,
+          title: `Open checklist ${number}`,
+          url: `https://github.com/elizaOS/eliza/pull/${number}`,
+        },
+        reason:
+          "Open pull request evidence is missing with 0 of 6 points verified.",
+        hint: "Add verified screenshot, video, or log evidence before merge.",
+      };
+    });
+    mockSnapshot(crowded);
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Things that could be worked on.",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/\+6 possible/)).toHaveLength(5);
+    expect(screen.getByText(/Open checklist 18000/)).toBeInTheDocument();
+    expect(screen.queryByText(/Open checklist 18005/)).not.toBeInTheDocument();
   });
 
   it("shows an immutable public payout wallet on an archived profile", async () => {

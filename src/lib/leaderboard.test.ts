@@ -2733,6 +2733,34 @@ describe("work queue claims and prioritization", () => {
     ).toBe(false);
   });
 
+  it("skips draft pull requests when publishing opportunities", () => {
+    const author = actor("author");
+    const reviewer = actor("reviewer");
+    const draft = pullRequest({
+      id: "PR_OPEN_DRAFT",
+      number: 60,
+      mergedAt: null,
+      isDraft: true,
+      author,
+      files: [{ path: "src/feature.test.ts", additions: 6, deletions: 0 }],
+      reviews: [
+        {
+          id: "REVIEW_DRAFT",
+          url: "https://github.com/elizaOS/eliza/pull/60#pullrequestreview-1",
+          state: "APPROVED",
+          body: "LGTM",
+          submittedAt: "2026-07-29T11:30:00.000Z",
+          author: reviewer,
+          inlineCommentCount: 0,
+        },
+      ],
+    });
+    const snapshot = createLeaderboardSnapshot(
+      input({ openPullRequests: [draft] }),
+    );
+    expect(snapshot.opportunities).toEqual([]);
+  });
+
   it("rejects malformed opportunity rows from the published schema", () => {
     const snapshot = createLeaderboardSnapshot(input({}));
     expect(() =>

@@ -2379,55 +2379,62 @@ function collectOpenPullRequestOpportunities(
     };
 
     if (pullRequest.author && !isBotActor(pullRequest.author)) {
-      if (isNearMaterialTestChange(pullRequest.files)) {
-        const { additions, churn } = materialTestStats(pullRequest.files);
-        opportunities.push({
-          id: `${pullRequest.id}:opportunity:near-material-test`,
-          actor: pullRequest.author,
-          kind: "near-material-test",
-          category: "material-test-change",
-          potentialPoints: 4,
-          occurredAt: pullRequest.updatedAt,
-          repository,
-          source: pullRequestSource,
-          reason: `Recognized test files currently add ${additions} lines and change ${churn} total lines; thresholds are ${MATERIAL_TEST_ADDITIONS} additions and ${MATERIAL_TEST_CHURN} churn.`,
-          hint: `Add recognized test coverage to reach ${MATERIAL_TEST_ADDITIONS} additions and ${MATERIAL_TEST_CHURN} total churn.`,
-        });
-      }
+      // Drafts are still open, but they are not ready for score-facing guidance.
+      if (!pullRequest.isDraft) {
+        if (isNearMaterialTestChange(pullRequest.files)) {
+          const { additions, churn } = materialTestStats(pullRequest.files);
+          opportunities.push({
+            id: `${pullRequest.id}:opportunity:near-material-test`,
+            actor: pullRequest.author,
+            kind: "near-material-test",
+            category: "material-test-change",
+            potentialPoints: 4,
+            occurredAt: pullRequest.updatedAt,
+            repository,
+            source: pullRequestSource,
+            reason: `Recognized test files currently add ${additions} lines and change ${churn} total lines; thresholds are ${MATERIAL_TEST_ADDITIONS} additions and ${MATERIAL_TEST_CHURN} churn.`,
+            hint: `Add recognized test coverage to reach ${MATERIAL_TEST_ADDITIONS} additions and ${MATERIAL_TEST_CHURN} total churn before merge.`,
+          });
+        }
 
-      const sources = pullRequestTextSources(pullRequest);
-      const evidence = assessEvidence(
-        sources,
-        verifiedEvidence.filter(
-          (artifact) =>
-            artifact.pullRequestId === pullRequest.id &&
-            artifact.pullRequestMergedAt === pullRequest.mergedAt &&
-            artifact.pullRequestHeadOid === pullRequest.headRefOid &&
-            artifact.pullRequestUpdatedAt === pullRequest.updatedAt,
-        ),
-      );
-      const status = evidenceStatus(evidence);
-      if (status.status === "missing" || status.status === "partial") {
-        const remaining = status.maxPoints - status.points;
-        opportunities.push({
-          id: `${pullRequest.id}:opportunity:${status.status}-evidence`,
-          actor: pullRequest.author,
-          kind:
-            status.status === "missing"
-              ? "missing-evidence"
-              : "partial-evidence",
-          category: "evidence",
-          potentialPoints: remaining,
-          occurredAt: pullRequest.updatedAt,
-          repository,
-          source: pullRequestSource,
-          reason: `Open pull request evidence is ${status.status} with ${status.points} of ${status.maxPoints} points verified.`,
-          hint:
-            status.status === "missing"
-              ? "Add verified screenshot, video, or log evidence before merge."
-              : "Finish verified evidence categories before merge.",
-        });
+        const sources = pullRequestTextSources(pullRequest);
+        const evidence = assessEvidence(
+          sources,
+          verifiedEvidence.filter(
+            (artifact) =>
+              artifact.pullRequestId === pullRequest.id &&
+              artifact.pullRequestMergedAt === pullRequest.mergedAt &&
+              artifact.pullRequestHeadOid === pullRequest.headRefOid &&
+              artifact.pullRequestUpdatedAt === pullRequest.updatedAt,
+          ),
+        );
+        const status = evidenceStatus(evidence);
+        if (status.status === "missing" || status.status === "partial") {
+          const remaining = status.maxPoints - status.points;
+          opportunities.push({
+            id: `${pullRequest.id}:opportunity:${status.status}-evidence`,
+            actor: pullRequest.author,
+            kind:
+              status.status === "missing"
+                ? "missing-evidence"
+                : "partial-evidence",
+            category: "evidence",
+            potentialPoints: remaining,
+            occurredAt: pullRequest.updatedAt,
+            repository,
+            source: pullRequestSource,
+            reason: `Open pull request evidence is ${status.status} with ${status.points} of ${status.maxPoints} points verified.`,
+            hint:
+              status.status === "missing"
+                ? "Add verified screenshot, video, or log evidence before merge."
+                : "Finish verified evidence categories before merge.",
+          });
+        }
       }
+    }
+
+    if (pullRequest.isDraft) {
+      continue;
     }
 
     const seenReviewers = new Set<string>();
@@ -2473,7 +2480,7 @@ function collectOpenPullRequestOpportunities(
         },
         reason:
           "Review is APPROVED or CHANGES_REQUESTED but still needs at least 20 characters of rationale or an inline comment.",
-        hint: "Add at least 20 characters of review rationale or an inline comment.",
+        hint: "Add at least 20 characters of review rationale or an inline comment before merge.",
       });
     }
   }

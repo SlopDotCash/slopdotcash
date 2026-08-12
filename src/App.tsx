@@ -1281,7 +1281,7 @@ function ProfilePage({
             </div>
             <p>
               Concrete next actions on still-open work that can still change the
-              score.
+              score if they qualify under the published rules.
             </p>
           </div>
           <OpportunityList opportunities={opportunities} />
@@ -1352,7 +1352,7 @@ function OpportunityList({
       {opportunities.map(({ opportunity, project }) => (
         <ExternalLinkAnchor href={opportunity.source.url} key={opportunity.id}>
           <span className="event-points">
-            up to +{opportunity.potentialPoints}
+            +{opportunity.potentialPoints} possible
           </span>
           <span>
             <strong>{opportunity.hint}</strong>
