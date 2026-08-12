@@ -2359,6 +2359,33 @@ function compareOpportunities(
   );
 }
 
+function hasOpenPullRequestOpportunitySignal(
+  pullRequest: PullRequestRecord,
+): boolean {
+  if (isNearMaterialTestChange(pullRequest.files)) {
+    return true;
+  }
+  if (materialTestStats(pullRequest.files).additions > 0) {
+    return true;
+  }
+  if (
+    pullRequest.reviews.some(
+      (review) =>
+        review.author &&
+        !isBotActor(review.author) &&
+        pullRequest.author &&
+        !sameActor(review.author, pullRequest.author),
+    )
+  ) {
+    return true;
+  }
+  return (
+    pullRequest.commitCount >= 1 &&
+    pullRequest.changedFiles >= 1 &&
+    pullRequest.additions + pullRequest.deletions >= 20
+  );
+}
+
 function collectOpenPullRequestOpportunities(
   openPullRequests: PullRequestRecord[],
   verifiedEvidence: VerifiedEvidenceArtifact[],
@@ -2409,7 +2436,11 @@ function collectOpenPullRequestOpportunities(
           ),
         );
         const status = evidenceStatus(evidence);
-        if (status.status === "missing" || status.status === "partial") {
+        const publishEvidenceGap =
+          status.status === "partial" ||
+          (status.status === "missing" &&
+            hasOpenPullRequestOpportunitySignal(pullRequest));
+        if (publishEvidenceGap) {
           const remaining = status.maxPoints - status.points;
           opportunities.push({
             id: `${pullRequest.id}:opportunity:${status.status}-evidence`,

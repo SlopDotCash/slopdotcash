@@ -361,6 +361,51 @@ describe("public records", () => {
     expect(screen.getByText(/\+6 possible/)).toBeInTheDocument();
   });
 
+  it("shows opportunity-only contributors that have still-open guidance", async () => {
+    route("/contributors/open-only");
+    const snapshot = snapshotFixture();
+    const openOnly: (typeof snapshot.leaders)[number]["actor"] = {
+      id: "U_open_only",
+      login: "open-only",
+      avatarUrl: "https://avatars.githubusercontent.com/u/99?v=4",
+      url: "https://github.com/open-only",
+      kind: "User",
+    };
+    snapshot.opportunities = [
+      {
+        id: "PR_open_only:opportunity:partial-evidence",
+        actor: openOnly,
+        kind: "partial-evidence",
+        category: "evidence",
+        potentialPoints: 4,
+        occurredAt: "2026-07-29T18:00:00.000Z",
+        repository: "elizaOS/eliza",
+        source: {
+          id: "PR_open_only",
+          kind: "pull-request",
+          number: 17399,
+          title: "Open-only checklist",
+          url: "https://github.com/elizaOS/eliza/pull/17399",
+        },
+        reason:
+          "Open pull request evidence is partial with 2 of 6 points verified.",
+        hint: "Finish verified evidence categories before merge.",
+      },
+    ];
+    mockSnapshot(snapshot);
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "open-only" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Things that could be worked on." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Finish verified evidence categories before merge."),
+    ).toBeInTheDocument();
+  });
+
   it("hides the opportunity section when the contributor has none", async () => {
     route("/contributors/finish-line");
     const emptyOpportunities = snapshotFixture();

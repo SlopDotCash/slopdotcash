@@ -2733,6 +2733,44 @@ describe("work queue claims and prioritization", () => {
     ).toBe(false);
   });
 
+  it("skips empty missing-evidence noise without another opportunity signal", () => {
+    const author = actor("author");
+    const bare = pullRequest({
+      id: "PR_OPEN_BARE",
+      number: 61,
+      mergedAt: null,
+      author,
+      files: [{ path: "src/feature.ts", additions: 2, deletions: 0 }],
+      additions: 2,
+      deletions: 0,
+      changedFiles: 1,
+      commitCount: 1,
+      reviews: [],
+    });
+    const signaled = pullRequest({
+      id: "PR_OPEN_SIGNAL",
+      number: 62,
+      mergedAt: null,
+      author,
+      files: [{ path: "src/feature.test.ts", additions: 6, deletions: 0 }],
+      additions: 6,
+      deletions: 0,
+      changedFiles: 1,
+      commitCount: 1,
+    });
+    const snapshot = createLeaderboardSnapshot(
+      input({ openPullRequests: [bare, signaled] }),
+    );
+    expect(
+      snapshot.opportunities.some(
+        (row) => row.source.id === bare.id && row.kind === "missing-evidence",
+      ),
+    ).toBe(false);
+    expect(
+      snapshot.opportunities.some((row) => row.source.id === signaled.id),
+    ).toBe(true);
+  });
+
   it("skips draft pull requests when publishing opportunities", () => {
     const author = actor("author");
     const reviewer = actor("reviewer");

@@ -1139,28 +1139,38 @@ function ProfilePage({
       )
       .map((contributor) => ({ contributor, cycle })),
   );
-  if (matches.length === 0 && history.length === 0) {
+  const loginOpportunities = state.views.flatMap((view) =>
+    view.opportunities
+      .filter(
+        (opportunity) =>
+          opportunity.actor.login.toLowerCase() === login.toLowerCase(),
+      )
+      .map((opportunity) => ({ opportunity, project: view.project })),
+  );
+  if (
+    matches.length === 0 &&
+    history.length === 0 &&
+    loginOpportunities.length === 0
+  ) {
     return <NotFound title="Contributor not found" />;
   }
   const historicalActor = history[0]?.contributor.actor;
-  const actor: GitHubActor = matches[0]?.leader.actor ?? {
-    id: historicalActor?.id ?? `historical:${login.toLowerCase()}`,
-    login: historicalActor?.login ?? login,
-    avatarUrl: `https://github.com/${encodeURIComponent(login)}.png?size=160`,
-    url: `https://github.com/${encodeURIComponent(login)}`,
-    kind: "User",
-  };
+  const opportunityActor = loginOpportunities[0]?.opportunity.actor;
+  const actor: GitHubActor = matches[0]?.leader.actor ??
+    opportunityActor ?? {
+      id: historicalActor?.id ?? `historical:${login.toLowerCase()}`,
+      login: historicalActor?.login ?? login,
+      avatarUrl: `https://github.com/${encodeURIComponent(login)}.png?size=160`,
+      url: `https://github.com/${encodeURIComponent(login)}`,
+      kind: "User",
+    };
   const events = state.views.flatMap((view) =>
     view.ledger
       .filter((event) => event.actor.id === actor.id)
       .map((event) => ({ event, project: view.project })),
   );
-  const opportunities = state.views
-    .flatMap((view) =>
-      view.opportunities
-        .filter((opportunity) => opportunity.actor.id === actor.id)
-        .map((opportunity) => ({ opportunity, project: view.project })),
-    )
+  const opportunities = loginOpportunities
+    .filter(({ opportunity }) => opportunity.actor.id === actor.id)
     .sort(
       (left, right) =>
         Date.parse(right.opportunity.occurredAt) -
@@ -1246,30 +1256,36 @@ function ProfilePage({
           </div>
         </div>
         <div className="profile-projects">
-          {matches.map(({ leader, view }) => {
-            const capLine = formatCapUsageLine(leader.capUsage);
-            return (
-              <div className="profile-project-block" key={view.project.id}>
-                <Link href={`/projects/${view.project.slug}`}>
-                  <span>
-                    <strong>{view.project.name}</strong>
-                    <small>{view.cycle.id}</small>
-                  </span>
-                  <span>
-                    <strong>{leader.score} score</strong>
-                    <small>
-                      {formatCompact(leader.usage.relevantTokens)} tokens
-                    </small>
-                  </span>
-                  <span>
-                    <RewardValue leader={leader} />
-                  </span>
-                  <ChevronRight aria-hidden="true" />
-                </Link>
-                {capLine ? <p className="profile-cap-line">{capLine}</p> : null}
-              </div>
-            );
-          })}
+          {matches.length === 0 ? (
+            <EmptyState text="No accepted project score in the current cycles yet." />
+          ) : (
+            matches.map(({ leader, view }) => {
+              const capLine = formatCapUsageLine(leader.capUsage);
+              return (
+                <div className="profile-project-block" key={view.project.id}>
+                  <Link href={`/projects/${view.project.slug}`}>
+                    <span>
+                      <strong>{view.project.name}</strong>
+                      <small>{view.cycle.id}</small>
+                    </span>
+                    <span>
+                      <strong>{leader.score} score</strong>
+                      <small>
+                        {formatCompact(leader.usage.relevantTokens)} tokens
+                      </small>
+                    </span>
+                    <span>
+                      <RewardValue leader={leader} />
+                    </span>
+                    <ChevronRight aria-hidden="true" />
+                  </Link>
+                  {capLine ? (
+                    <p className="profile-cap-line">{capLine}</p>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
       {opportunities.length > 0 ? (
@@ -1339,6 +1355,16 @@ function ProfilePage({
   );
 }
 
+function opportunityPointsLabel(opportunity: ScoreOpportunity): string {
+  if (
+    opportunity.kind === "missing-evidence" ||
+    opportunity.kind === "partial-evidence"
+  ) {
+    return `+${opportunity.potentialPoints} possible`;
+  }
+  return `+${opportunity.potentialPoints} if it qualifies`;
+}
+
 function OpportunityList({
   opportunities,
 }: {
@@ -1352,7 +1378,7 @@ function OpportunityList({
       {opportunities.map(({ opportunity, project }) => (
         <ExternalLinkAnchor href={opportunity.source.url} key={opportunity.id}>
           <span className="event-points">
-            +{opportunity.potentialPoints} possible
+            {opportunityPointsLabel(opportunity)}
           </span>
           <span>
             <strong>{opportunity.hint}</strong>

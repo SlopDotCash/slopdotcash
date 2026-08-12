@@ -997,10 +997,6 @@ small {
   line-height: 1.4;
 }
 
-.opportunity-list > a > span:nth-child(2) strong {
-  white-space: normal;
-}
-
 .event-list > a,
 .profile-projects > a,
 .profile-projects > .profile-project-block > a {
@@ -1102,6 +1098,22 @@ small {
   color: var(--orange-dark);
   font-size: 11px;
   font-weight: 800;
+}
+
+.opportunity-list > a {
+  grid-template-columns: minmax(5.5rem, 7rem) minmax(0, 1fr) auto;
+}
+
+.opportunity-list .event-points {
+  width: auto;
+  min-width: 5.5rem;
+  height: auto;
+  min-height: 42px;
+  padding: 8px 6px;
+  border-radius: 999px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
 }
 
 .cycle-hero {
