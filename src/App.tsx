@@ -32,7 +32,9 @@ import {
   assertLeaderboardSnapshot,
   type GitHubActor,
   type LeaderboardSnapshot,
+  PROFILE_OPPORTUNITY_LIMIT,
   type ScoreEvent,
+  type ScoreOpportunity,
 } from "./lib/leaderboard";
 import {
   formatMonthlyCapDisplay,
@@ -40,6 +42,7 @@ import {
 } from "./lib/project-schema.mjs";
 import {
   createProjectView,
+  formatCapUsageLine,
   type ProjectContributor,
   type ProjectView,
 } from "./lib/project-view";
@@ -1152,6 +1155,20 @@ function ProfilePage({
       .filter((event) => event.actor.id === actor.id)
       .map((event) => ({ event, project: view.project })),
   );
+  const opportunities = state.views
+    .flatMap((view) =>
+      view.opportunities
+        .filter((opportunity) => opportunity.actor.id === actor.id)
+        .map((opportunity) => ({ opportunity, project: view.project })),
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(right.opportunity.occurredAt) -
+          Date.parse(left.opportunity.occurredAt) ||
+        left.opportunity.source.number - right.opportunity.source.number ||
+        left.opportunity.id.localeCompare(right.opportunity.id),
+    )
+    .slice(0, PROFILE_OPPORTUNITY_LIMIT);
   const currentCycleKeys = new Set(
     matches.map(({ view }) => `${view.project.id}\0${view.cycle.id}`),
   );
@@ -1229,26 +1246,47 @@ function ProfilePage({
           </div>
         </div>
         <div className="profile-projects">
-          {matches.map(({ leader, view }) => (
-            <Link href={`/projects/${view.project.slug}`} key={view.project.id}>
-              <span>
-                <strong>{view.project.name}</strong>
-                <small>{view.cycle.id}</small>
-              </span>
-              <span>
-                <strong>{leader.score} score</strong>
-                <small>
-                  {formatCompact(leader.usage.relevantTokens)} tokens
-                </small>
-              </span>
-              <span>
-                <RewardValue leader={leader} />
-              </span>
-              <ChevronRight aria-hidden="true" />
-            </Link>
-          ))}
+          {matches.map(({ leader, view }) => {
+            const capLine = formatCapUsageLine(leader.capUsage);
+            return (
+              <div className="profile-project-block" key={view.project.id}>
+                <Link href={`/projects/${view.project.slug}`}>
+                  <span>
+                    <strong>{view.project.name}</strong>
+                    <small>{view.cycle.id}</small>
+                  </span>
+                  <span>
+                    <strong>{leader.score} score</strong>
+                    <small>
+                      {formatCompact(leader.usage.relevantTokens)} tokens
+                    </small>
+                  </span>
+                  <span>
+                    <RewardValue leader={leader} />
+                  </span>
+                  <ChevronRight aria-hidden="true" />
+                </Link>
+                {capLine ? <p className="profile-cap-line">{capLine}</p> : null}
+              </div>
+            );
+          })}
         </div>
       </section>
+      {opportunities.length > 0 ? (
+        <section className="section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Still open</p>
+              <h2>Things that could be worked on.</h2>
+            </div>
+            <p>
+              Concrete next actions on still-open work that can still change the
+              score.
+            </p>
+          </div>
+          <OpportunityList opportunities={opportunities} />
+        </section>
+      ) : null}
       {history.length > 0 ? (
         <section className="section">
           <div className="section-heading">
@@ -1298,6 +1336,35 @@ function ProfilePage({
         <EventList events={events} />
       </section>
     </main>
+  );
+}
+
+function OpportunityList({
+  opportunities,
+}: {
+  opportunities: Array<{
+    opportunity: ScoreOpportunity;
+    project: ProjectDefinition;
+  }>;
+}) {
+  return (
+    <div className="event-list opportunity-list">
+      {opportunities.map(({ opportunity, project }) => (
+        <ExternalLinkAnchor href={opportunity.source.url} key={opportunity.id}>
+          <span className="event-points">
+            up to +{opportunity.potentialPoints}
+          </span>
+          <span>
+            <strong>{opportunity.hint}</strong>
+            <small>
+              {opportunity.source.title} · {project.name} ·{" "}
+              {formatDate(opportunity.occurredAt)}
+            </small>
+          </span>
+          <ExternalLink aria-hidden="true" size={16} />
+        </ExternalLinkAnchor>
+      ))}
+    </div>
   );
 }
 

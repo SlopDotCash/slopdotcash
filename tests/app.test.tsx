@@ -349,6 +349,39 @@ describe("public records", () => {
         exact: false,
       }).length,
     ).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("heading", { name: "Things that could be worked on." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Add verified screenshot, video, or log evidence before merge.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/2026-07 caps ·/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/up to \+6/)).toBeInTheDocument();
+  });
+
+  it("hides the opportunity section when the contributor has none", async () => {
+    route("/contributors/finish-line");
+    const emptyOpportunities = snapshotFixture();
+    emptyOpportunities.opportunities = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      Response.json(
+        String(input).includes("/data/cycles/")
+          ? cycleIndexFixture()
+          : emptyOpportunities,
+      ),
+    );
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "finish-line" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Things that could be worked on.",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows an immutable public payout wallet on an archived profile", async () => {

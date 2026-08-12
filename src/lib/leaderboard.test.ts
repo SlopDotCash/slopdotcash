@@ -19,7 +19,9 @@ import {
   type GitHubTextSource,
   hasMaterialTestChange,
   type IssueRecord,
+  isExpandableReviewOpportunity,
   isMergedPullRequestBodyEligibleForEvidence,
+  isNearMaterialTestChange,
   LEADERBOARD_REPOSITORY,
   type LeaderboardInput,
   MATERIAL_TEST_ADDITIONS,
@@ -2623,6 +2625,141 @@ describe("work queue claims and prioritization", () => {
       categories: [],
     });
     expect(snapshot.ledger).toEqual([]);
+  });
+
+  it("publishes still-open evidence, near-test, and expand-review opportunities", () => {
+    const author = actor("author");
+    const reviewer = actor("reviewer");
+    const openNearTest = pullRequest({
+      id: "PR_OPEN_NEAR_TEST",
+      number: 50,
+      mergedAt: null,
+      author,
+      updatedAt: "2026-07-29T10:00:00.000Z",
+      files: [
+        { path: "src/feature.test.ts", additions: 6, deletions: 0 },
+        { path: "src/feature.ts", additions: 20, deletions: 2 },
+      ],
+    });
+    const openExpandReview = pullRequest({
+      id: "PR_OPEN_EXPAND_REVIEW",
+      number: 51,
+      title: "Needs a fuller review",
+      mergedAt: null,
+      author,
+      updatedAt: "2026-07-29T11:00:00.000Z",
+      reviews: [
+        {
+          id: "REVIEW_EXPAND",
+          url: "https://github.com/elizaOS/eliza/pull/51#pullrequestreview-1",
+          state: "APPROVED",
+          body: "LGTM",
+          submittedAt: "2026-07-29T11:30:00.000Z",
+          author: reviewer,
+          inlineCommentCount: 0,
+        },
+      ],
+    });
+    const mergedNearTest = pullRequest({
+      id: "PR_MERGED_NEAR_TEST",
+      number: 52,
+      mergedAt: "2026-07-28T12:00:00.000Z",
+      author,
+      files: [{ path: "src/feature.test.ts", additions: 6, deletions: 0 }],
+    });
+
+    expect(isNearMaterialTestChange(openNearTest.files)).toBe(true);
+    expect(isNearMaterialTestChange(mergedNearTest.files)).toBe(true);
+    expect(
+      isExpandableReviewOpportunity(
+        openExpandReview.reviews[0],
+        openExpandReview,
+      ),
+    ).toBe(true);
+    expect(
+      isExpandableReviewOpportunity(
+        {
+          id: "REVIEW_MERGED_EXPAND",
+          url: "https://github.com/elizaOS/eliza/pull/52#pullrequestreview-1",
+          state: "APPROVED",
+          body: "LGTM",
+          submittedAt: "2026-07-28T11:00:00.000Z",
+          author: reviewer,
+          inlineCommentCount: 0,
+        },
+        mergedNearTest,
+      ),
+    ).toBe(false);
+
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        openPullRequests: [openNearTest, openExpandReview],
+      }),
+    );
+
+    expect(
+      snapshot.opportunities.map((opportunity) => opportunity.kind).sort(),
+    ).toEqual([
+      "expand-review",
+      "missing-evidence",
+      "missing-evidence",
+      "near-material-test",
+    ]);
+    expect(
+      snapshot.opportunities.some(
+        (opportunity) => opportunity.source.id === mergedNearTest.id,
+      ),
+    ).toBe(false);
+    expect(
+      snapshot.opportunities.find(
+        (opportunity) => opportunity.kind === "near-material-test",
+      ),
+    ).toMatchObject({
+      potentialPoints: 4,
+      hint: expect.stringMatching(/^Add recognized test coverage/),
+      actor: { id: author.id },
+    });
+    expect(
+      snapshot.opportunities.find(
+        (opportunity) => opportunity.kind === "expand-review",
+      ),
+    ).toMatchObject({
+      potentialPoints: 3,
+      actor: { id: reviewer.id },
+      hint: expect.stringMatching(/^Add at least 20 characters/),
+    });
+    expect(
+      snapshot.opportunities.some((row) => /fail|reject|drop/i.test(row.hint)),
+    ).toBe(false);
+  });
+
+  it("rejects malformed opportunity rows from the published schema", () => {
+    const snapshot = createLeaderboardSnapshot(input({}));
+    expect(() =>
+      assertLeaderboardSnapshot({
+        ...snapshot,
+        opportunities: [
+          {
+            id: "bad",
+            actor: actor("author"),
+            kind: "cap-dropped",
+            category: "merged-pull-request",
+            potentialPoints: 10,
+            occurredAt: NOW,
+            repository: "elizaOS/eliza",
+            source: {
+              id: "PR_1",
+              kind: "pull-request",
+              number: 1,
+              title: "Nope",
+              url: "https://github.com/elizaOS/eliza/pull/1",
+            },
+            reason: "cap",
+            hint: "Should not publish cap drops",
+          },
+        ],
+      }),
+    ).toThrow(/kind/);
   });
 
   it("excludes ordinary discussion from work-item attribution coverage", () => {

@@ -122,8 +122,8 @@ export function assertLiveLedgerReady(
       : contents,
     "leaderboard",
   );
-  if (snapshot.schemaVersion !== "4") {
-    throw new TypeError("leaderboard.schemaVersion must be 4");
+  if (snapshot.schemaVersion !== "5") {
+    throw new TypeError("leaderboard.schemaVersion must be 5");
   }
   if (snapshot.repository !== PRIMARY_REPOSITORY.id) {
     throw new TypeError(

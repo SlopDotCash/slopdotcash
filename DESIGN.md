@@ -87,7 +87,8 @@ Rank is secondary to identity and score. Every row links to a durable profile.
 Project rows show relevant compute and bounded bonus; global rows show
 cumulative score and paid total. Historical-only contributors remain visible.
 Empty data, loading, stale data, invalid data, and zero accepted work are five
-different states.
+different states. Profile opportunity rows lead with the next action, not a
+demerit; monthly caps appear as compact fill status, never a dropped-award list.
 
 ### Cycle
 
