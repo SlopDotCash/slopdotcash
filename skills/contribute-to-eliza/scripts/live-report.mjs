@@ -20,6 +20,8 @@ export const REQUIRED_EVIDENCE_ROWS = [
   "domain-artifacts",
 ];
 export const CLAIM_RECENCY_DAYS = 7;
+export const MAX_OPEN_ITEMS = 1_000;
+export const MAX_API_READS = 3_002;
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PLACEHOLDER_RE =
@@ -938,6 +940,7 @@ export function collectLiveReport(
   repo,
   listPages = readGhPages,
   now = new Date(),
+  onProgress = () => {},
 ) {
   if (!REPOSITORY_RE.test(repo)) {
     throw new TypeError("Repository must use the owner/name form");
@@ -953,6 +956,12 @@ export function collectLiveReport(
   const pullItems = listPages(pullEndpoint)
     .map((value, index) => asRecord(value, `pulls[${index}]`))
     .sort((left, right) => left.number - right.number);
+  if (issueItems.length > MAX_OPEN_ITEMS || pullItems.length > MAX_OPEN_ITEMS) {
+    throw new RangeError(
+      `Live discovery exceeds the ${MAX_OPEN_ITEMS}-item per-kind safety bound`,
+    );
+  }
+  onProgress({ phase: "issues", current: 0, total: issueItems.length });
 
   const candidateIssues = [];
   const botIssues = [];
@@ -962,7 +971,12 @@ export function collectLiveReport(
   const claimedIssues = [];
   const issueCommentAudits = [];
 
-  for (const item of issueItems) {
+  for (const [index, item] of issueItems.entries()) {
+    onProgress({
+      phase: "issues",
+      current: index + 1,
+      total: issueItems.length,
+    });
     const summary = itemSummary(item, `issue #${item.number}`);
     if (item.user === null) {
       unknownAuthorIssues.push(summary);
@@ -1038,7 +1052,13 @@ export function collectLiveReport(
   const changesRequestedPullRequests = [];
   const pullRequestAudits = [];
 
-  for (const item of pullItems) {
+  onProgress({ phase: "pull requests", current: 0, total: pullItems.length });
+  for (const [index, item] of pullItems.entries()) {
+    onProgress({
+      phase: "pull requests",
+      current: index + 1,
+      total: pullItems.length,
+    });
     const context = `pull request #${item.number}`;
     const summary = itemSummary(item, context);
     if (item.user === null) {
@@ -1280,7 +1300,28 @@ export function main(args = process.argv.slice(2)) {
     process.stdout.write(usage());
     return;
   }
-  const report = collectLiveReport(options.repo);
+  let apiReads = 0;
+  const boundedRead = (endpoint) => {
+    apiReads += 1;
+    if (apiReads > MAX_API_READS) {
+      throw new RangeError(
+        `Live discovery exceeds the ${MAX_API_READS}-request safety bound`,
+      );
+    }
+    return readGhPages(endpoint);
+  };
+  const report = collectLiveReport(
+    options.repo,
+    boundedRead,
+    new Date(),
+    ({ phase, current, total }) => {
+      if (current === 0 || current === total || current % 10 === 0) {
+        process.stderr.write(
+          `[Slop] scanning ${phase}: ${current}/${total} (${apiReads} API reads)\n`,
+        );
+      }
+    },
+  );
   process.stdout.write(
     options.json
       ? `${JSON.stringify(report, null, 2)}\n`

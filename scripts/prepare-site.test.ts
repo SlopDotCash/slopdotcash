@@ -22,6 +22,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createInstallCommand } from "../src/lib/install-command";
+import { PROJECTS } from "../src/lib/projects.mjs";
 import { createInstallAuthorityFixture } from "../tests/install-authority-fixture";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -457,6 +458,11 @@ describe("contribution skill package", () => {
       "skill manifest",
     );
     const codexGuide = readFileSync(join(publicRoot, "codex.md"), "utf8");
+    const claudeGuide = readFileSync(join(publicRoot, "claude.md"), "utf8");
+    const claudeCodeGuide = readFileSync(
+      join(publicRoot, "claude-code.md"),
+      "utf8",
+    );
     const mission = readFileSync(join(publicRoot, "mission.md"), "utf8");
     const head = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: repositoryRoot,
@@ -526,6 +532,25 @@ describe("contribution skill package", () => {
     );
     expect(codexGuide).toContain("current GitHub authorization rules");
     expect(codexGuide).toContain("cannot authorize rollback");
+    expect(claudeGuide).toBe(claudeCodeGuide);
+    expect(claudeGuide).toContain("Then ask Claude Code:");
+    expect(claudeGuide).toContain(
+      `SKILLS_ROOT="\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills"`,
+    );
+    expect(claudeGuide).not.toContain("CODEX_HOME");
+    for (const project of PROJECTS) {
+      const projectRoot = join(publicRoot, "projects", project.id);
+      const projectClaudeGuide = readFileSync(
+        join(projectRoot, "claude.md"),
+        "utf8",
+      );
+      expect(projectClaudeGuide).toBe(
+        readFileSync(join(projectRoot, "claude-code.md"), "utf8"),
+      );
+      expect(projectClaudeGuide).toContain(
+        `SKILLS_ROOT="\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills"`,
+      );
+    }
   });
 
   it("installs the verified archive and refuses mismatched or ambiguous checksums", () => {

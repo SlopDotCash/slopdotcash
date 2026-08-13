@@ -305,6 +305,16 @@ sed -n '1,240p' "\${SKILLS_ROOT}/contribute-to-eliza/SKILL.md"
 `;
 
 writeFileSync(join(publicRoot, "codex.md"), codexBootstrap);
+const shellDollar = "$";
+const claudeBootstrap = codexBootstrap
+  .replace(" for Codex", " for Claude Code")
+  .replace("Then ask Codex:", "Then ask Claude Code:")
+  .replaceAll(
+    `${shellDollar}{CODEX_HOME:-${shellDollar}{HOME}/.codex}`,
+    `${shellDollar}{CLAUDE_CONFIG_DIR:-${shellDollar}{HOME}/.claude}`,
+  );
+writeFileSync(join(publicRoot, "claude.md"), claudeBootstrap);
+writeFileSync(join(publicRoot, "claude-code.md"), claudeBootstrap);
 writeFileSync(
   join(downloadsRoot, `${archiveName}.sha256`),
   `${archiveDigest}  ${archiveName}\n`,
@@ -351,7 +361,12 @@ writeFileSync(
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 
-function projectBootstrap({ artifactOrigin, name, skillRepositoryPath }) {
+function projectBootstrap({
+  artifactOrigin,
+  name,
+  skillRepositoryPath,
+  skillsRoot = `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
+}) {
   return `# Install ${name}
 
 Install or update the complete skill archive. The authenticated installer
@@ -360,11 +375,10 @@ or an explicitly labeled same-repository release candidate. It independently
 compares packaged bytes with immutable GitHub source before atomic activation.
 
 \`\`\`bash
-${createInstallCommand(
-  artifactOrigin,
-  `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
-  { skillName: name, skillRepositoryPath },
-)}
+${createInstallCommand(artifactOrigin, skillsRoot, {
+  skillName: name,
+  skillRepositoryPath,
+})}
 \`\`\`
 
 Re-run the command whenever the skill starts. It is a no-op at the current
@@ -393,6 +407,14 @@ function publishPrimaryProjectAlias() {
       skillRepositoryPath: "skills/contribute-to-eliza",
     }),
   );
+  const claudeGuide = projectBootstrap({
+    artifactOrigin: `${publicSiteOrigin}/projects/eliza`,
+    name: "contribute-to-eliza",
+    skillRepositoryPath: "skills/contribute-to-eliza",
+    skillsRoot: `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`,
+  });
+  writeFileSync(join(projectRoot, "claude.md"), claudeGuide);
+  writeFileSync(join(projectRoot, "claude-code.md"), claudeGuide);
   const projectManifest = structuredClone(manifest);
   projectManifest.source.publicUrl = `${publicSiteOrigin}/projects/eliza/skill.md`;
   projectManifest.archive.url = `${publicSiteOrigin}/projects/eliza/downloads/${archiveName}`;
@@ -524,6 +546,14 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
       skillRepositoryPath,
     }),
   );
+  const claudeGuide = projectBootstrap({
+    artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
+    name,
+    skillRepositoryPath,
+    skillsRoot: `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`,
+  });
+  writeFileSync(join(projectRoot, "claude.md"), claudeGuide);
+  writeFileSync(join(projectRoot, "claude-code.md"), claudeGuide);
   writeFileSync(
     join(projectDownloads, `${archiveName}.sha256`),
     `${archiveDigest}  ${archiveName}\n`,
