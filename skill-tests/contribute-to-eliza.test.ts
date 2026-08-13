@@ -6,6 +6,8 @@
 import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,7 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -29,9 +31,14 @@ import {
   parseModelDisclosure,
   parsePaginatedJson,
   REQUIRED_EVIDENCE_ROWS,
+  readGhOpenActivity,
   readGhPages,
   renderMarkdown,
 } from "../skills/contribute-to-eliza/scripts/live-report.mjs";
+import {
+  normalizeSessionReport,
+  usageDelta,
+} from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const skillDir = join(testDir, "..", "skills", "contribute-to-eliza");
@@ -345,6 +352,86 @@ describe("live report parsing", () => {
     assert.throws(
       () => parsePaginatedJson(undefined),
       /did not return text output/,
+    );
+  });
+
+  it("batches open issue and pull activity through two bounded GraphQL reads", () => {
+    const actor = {
+      __typename: "User",
+      databaseId: 42,
+      id: "U_42",
+      login: "reviewer",
+    };
+    const graphqlComment = {
+      databaseId: 10,
+      url: "https://github.com/elizaOS/eliza/issues/1#issuecomment-10",
+      body: "AI assistance: no — human-only claim\nAttribution status: self-reported",
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: actor,
+    };
+    const issueNode = {
+      number: 1,
+      comments: { totalCount: 1, nodes: [graphqlComment] },
+    };
+    const pullNode = {
+      number: 2,
+      comments: { totalCount: 0, nodes: [] },
+      reviews: {
+        totalCount: 1,
+        nodes: [
+          {
+            databaseId: 20,
+            url: "https://github.com/elizaOS/eliza/pull/2#pullrequestreview-20",
+            body: "Substantive review.",
+            submittedAt: "2026-01-18T12:00:00.000Z",
+            state: "APPROVED",
+            commit: { oid: HEAD_SHA },
+            author: actor,
+          },
+        ],
+      },
+      reviewThreads: {
+        totalCount: 1,
+        nodes: [{ comments: { totalCount: 1, nodes: [graphqlComment] } }],
+      },
+    };
+    const calls: string[][] = [];
+    const activity = readGhOpenActivity("elizaOS/eliza", (command, args) => {
+      assert.strictEqual(command, "gh");
+      calls.push(args);
+      const selector = args.at(-1);
+      return {
+        status: 0,
+        stderr: "",
+        stdout: `${JSON.stringify(
+          selector?.includes(".issues.") ? issueNode : pullNode,
+        )}\n`,
+      };
+    });
+
+    assert.strictEqual(calls.length, 2);
+    assert.ok(calls.every((args) => args.includes("graphql")));
+    assert.ok(calls.every((args) => args.includes("--paginate")));
+    assert.strictEqual(activity.issues.get(1)?.[0].user.id, 42);
+    assert.strictEqual(activity.pulls.get(2)?.reviews[0].commit_id, HEAD_SHA);
+    assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 1);
+  });
+
+  it("fails closed when nested GraphQL activity would be truncated", () => {
+    assert.throws(
+      () =>
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".issues.")
+            ? `${JSON.stringify({
+                number: 1,
+                comments: { totalCount: 101, nodes: [] },
+              })}\n`
+            : "",
+        })),
+      /exceeds the complete 100-record activity bound/,
     );
   });
 
@@ -1462,32 +1549,286 @@ describe("live report behavior", () => {
     );
   });
 
-  it("rejects decision reviews without current-head provenance", () => {
-    const incompleteReviews = [
-      { ...review(450, "reviewer", "APPROVED"), commit_id: null },
-      { ...review(451, "reviewer", "CHANGES_REQUESTED"), submitted_at: null },
-    ];
-    for (const incompleteReview of incompleteReviews) {
-      assert.throws(
-        () =>
-          collectLiveReport(
-            "elizaOS/eliza",
-            (endpoint) => {
-              if (endpoint.includes("/issues?state=open")) return [];
-              if (endpoint.includes("/pulls?state=open")) {
-                return [pullRequest(45)];
-              }
-              if (endpoint.includes("/issues/45/comments")) return [];
-              if (endpoint.includes("/pulls/45/comments")) return [];
-              if (endpoint.includes("/pulls/45/reviews")) {
-                return [incompleteReview];
-              }
-              assert.fail(`unexpected endpoint: ${endpoint}`);
-            },
-            NOW,
-          ),
-        /cannot prove a current-head (?:APPROVED|CHANGES_REQUESTED) decision/,
+  it("ignores unreachable reviewed history but rejects missing review timestamps", () => {
+    const report = collectLiveReport(
+      "elizaOS/eliza",
+      (endpoint) => {
+        if (endpoint.includes("/issues?state=open")) return [];
+        if (endpoint.includes("/pulls?state=open")) return [pullRequest(45)];
+        if (endpoint.includes("/issues/45/comments")) return [];
+        if (endpoint.includes("/pulls/45/comments")) return [];
+        if (endpoint.includes("/pulls/45/reviews")) {
+          return [{ ...review(450, "reviewer", "APPROVED"), commit_id: null }];
+        }
+        assert.fail(`unexpected endpoint: ${endpoint}`);
+      },
+      NOW,
+    );
+    assert.deepStrictEqual(
+      report.reviewablePullRequests.map((pull) => pull.number),
+      [45],
+    );
+
+    assert.throws(
+      () =>
+        collectLiveReport(
+          "elizaOS/eliza",
+          (endpoint) => {
+            if (endpoint.includes("/issues?state=open")) return [];
+            if (endpoint.includes("/pulls?state=open")) {
+              return [pullRequest(46)];
+            }
+            if (endpoint.includes("/issues/46/comments")) return [];
+            if (endpoint.includes("/pulls/46/comments")) return [];
+            if (endpoint.includes("/pulls/46/reviews")) {
+              return [
+                {
+                  ...review(451, "reviewer", "CHANGES_REQUESTED"),
+                  submitted_at: null,
+                },
+              ];
+            }
+            assert.fail(`unexpected endpoint: ${endpoint}`);
+          },
+          NOW,
+        ),
+      /missing the timestamp for its CHANGES_REQUESTED decision/,
+    );
+  });
+});
+
+describe("run receipt CLI", () => {
+  const runReceiptPath = join(skillDir, "scripts", "run-receipt.mjs");
+
+  function runGit(cwd: string, args: string[]) {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+    assert.strictEqual(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  }
+
+  function encodedDirectoryName(path: string) {
+    return path
+      .replaceAll("\\", "/")
+      .replace(/\/$/u, "")
+      .replaceAll(/[^A-Za-z0-9]/gu, "-");
+  }
+
+  function session(
+    sessionId: string,
+    projectPath: string | null,
+    totalTokens: number,
+  ) {
+    return {
+      sessionId,
+      ...(projectPath === null ? {} : { projectPath }),
+      inputTokens: totalTokens,
+      outputTokens: 0,
+      totalTokens,
+    };
+  }
+
+  it("runs the CLI when its entrypoint reaches the module through a symlink", () => {
+    const fixtureRoot = mkdtempSync(
+      join(tmpdir(), "contribute-to-eliza-run-receipt-"),
+    );
+    const linkedEntrypoint = join(fixtureRoot, "run-receipt.mjs");
+    try {
+      symlinkSync(runReceiptPath, linkedEntrypoint);
+      assert.notStrictEqual(linkedEntrypoint, realpathSync(linkedEntrypoint));
+
+      const result = spawnSync(process.execPath, [linkedEntrypoint], {
+        encoding: "utf8",
+      });
+
+      assert.strictEqual(result.status, 1, result.stdout);
+      assert.match(
+        result.stderr,
+        /project run receipt failed: action must be start or finish/,
       );
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("attributes ccusage's encoded Claude Code project directories to the repository root", () => {
+    const repositoryRoot = resolve(tmpdir(), "contribute-to-eliza-usage");
+    const normalizedRoot = repositoryRoot
+      .replaceAll("\\", "/")
+      .replace(/\/$/u, "");
+    const encoded = encodedDirectoryName(repositoryRoot);
+
+    const report = normalizeSessionReport(
+      {
+        sessions: [
+          session("encoded-dialect", encoded, 12),
+          session("real-path-dialect", normalizedRoot, 2),
+          session("foreign-encoded", "-Users-someone-else-repository", 18),
+          session("unattributed", null, 6),
+        ],
+      },
+      repositoryRoot,
+    );
+
+    const kept = Object.values(report.sessions);
+    assert.deepStrictEqual(
+      kept.map((entry) => entry.totalTokens).sort((a, b) => a - b),
+      [2, 6, 12],
+    );
+    assert.deepStrictEqual(
+      kept
+        .filter((entry) => entry.pathMatched)
+        .map((entry) => entry.totalTokens)
+        .sort((a, b) => a - b),
+      [2, 12],
+    );
+
+    const before = normalizeSessionReport(
+      { sessions: [session("encoded-dialect", encoded, 16)] },
+      repositoryRoot,
+    );
+    const after = normalizeSessionReport(
+      { sessions: [session("encoded-dialect", encoded, 166)] },
+      repositoryRoot,
+    );
+    const delta = usageDelta(before, after, "claude-code");
+    assert.strictEqual(delta.confidence, "exact");
+    assert.strictEqual(delta.totalTokens, 150);
+  });
+
+  it("starts and finishes a measured run without passing --project to ccusage", () => {
+    const fixtureRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "contribute-to-eliza-start-")),
+    );
+    try {
+      const repoRoot = join(fixtureRoot, "repo");
+      mkdirSync(repoRoot, { recursive: true });
+      runGit(repoRoot, ["init", "--quiet"]);
+      runGit(repoRoot, [
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:elizaOS/eliza.git",
+      ]);
+      cpSync(skillDir, join(repoRoot, "skills", "contribute-to-eliza"), {
+        recursive: true,
+      });
+      runGit(repoRoot, ["add", "."]);
+      runGit(repoRoot, [
+        "-c",
+        "user.email=skill-tests@example.com",
+        "-c",
+        "user.name=skill-tests",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+      ]);
+
+      const shimDir = join(fixtureRoot, "bin");
+      mkdirSync(shimDir);
+      const argsLog = join(fixtureRoot, "ccusage-args.log");
+      const fixturePayload = join(fixtureRoot, "ccusage-report.json");
+      const shimSource = [
+        "#!/bin/sh",
+        'if [ "$1" = "--version" ]; then',
+        "  echo 1.3.14",
+        "  exit 0",
+        "fi",
+        'if [ "$CCUSAGE_MODE" = "fail" ]; then',
+        "  exit 7",
+        "fi",
+        `printf '%s\\n' "$*" >> "$CCUSAGE_ARGS_LOG"`,
+        'cat "$CCUSAGE_FIXTURE"',
+        "",
+      ].join("\n");
+      writeFileSync(join(shimDir, "bun"), shimSource);
+      chmodSync(join(shimDir, "bun"), 0o755);
+
+      const encodedRepo = encodedDirectoryName(repoRoot);
+      const environment = {
+        ...process.env,
+        PATH: `${shimDir}:${process.env.PATH}`,
+        XDG_CONFIG_HOME: join(fixtureRoot, "config"),
+        CCUSAGE_ARGS_LOG: argsLog,
+        CCUSAGE_FIXTURE: fixturePayload,
+      };
+      const entrypoint = join(
+        repoRoot,
+        "skills",
+        "contribute-to-eliza",
+        "scripts",
+        "run-receipt.mjs",
+      );
+      const cliArguments = [
+        "--repo-root",
+        repoRoot,
+        "--client",
+        "claude-code",
+        "--model",
+        "claude-fable-5",
+        "--lane",
+        "skill-tests",
+        "--json",
+      ];
+
+      writeFileSync(
+        fixturePayload,
+        JSON.stringify({
+          sessions: [session("fixture-session", encodedRepo, 16)],
+        }),
+      );
+      const started = spawnSync(
+        process.execPath,
+        [entrypoint, "start", ...cliArguments],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(started.status, 0, started.stderr);
+      const startReport = JSON.parse(started.stdout);
+      assert.strictEqual(startReport.usageStatus, "capturing");
+      assert.match(startReport.runId, /^run_[0-9A-HJKMNP-TV-Z]{26}$/);
+
+      const ccusageInvocations = readFileSync(argsLog, "utf8")
+        .trim()
+        .split("\n");
+      assert.deepStrictEqual(ccusageInvocations, [
+        "x ccusage@20.0.19 claude session --json --mode calculate",
+      ]);
+
+      writeFileSync(
+        fixturePayload,
+        JSON.stringify({
+          sessions: [session("fixture-session", encodedRepo, 166)],
+        }),
+      );
+      const finished = spawnSync(
+        process.execPath,
+        [entrypoint, "finish", ...cliArguments, "--run", startReport.runId],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(finished.status, 0, finished.stderr);
+      const finishReport = JSON.parse(finished.stdout);
+      assert.strictEqual(finishReport.receipt.usage.confidence, "exact");
+      assert.strictEqual(finishReport.receipt.usage.totalTokens, 150);
+      assert.match(
+        finishReport.footer,
+        /Compute receipt: 150 project-attributed tokens \(exact/,
+      );
+
+      const failedCapture = spawnSync(
+        process.execPath,
+        [entrypoint, "start", ...cliArguments],
+        {
+          encoding: "utf8",
+          env: { ...environment, CCUSAGE_MODE: "fail" },
+        },
+      );
+      assert.strictEqual(failedCapture.status, 0, failedCapture.stderr);
+      assert.strictEqual(
+        JSON.parse(failedCapture.stdout).usageStatus,
+        "unavailable",
+      );
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
     }
   });
 });

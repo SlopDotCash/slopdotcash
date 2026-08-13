@@ -109,6 +109,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
       repositoryId: "R_fixture",
       repositories: [
         { id: "elizaOS/eliza", repositoryId: "R_fixture" },
+        { id: "elizaOS/asi", repositoryId: "R_fixture_asi" },
         { id: "lalalune/arklib", repositoryId: "R_fixture_arklib" },
       ],
       requestCount: 7,

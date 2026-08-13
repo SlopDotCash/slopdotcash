@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1",
+  "id": "asi",
+  "slug": "asi",
+  "name": "ASI",
+  "eyebrow": "Continual reinforcement learning",
+  "headline": "Make money advancing continual learning.",
+  "description": "Advance the ASI continual-reinforcement-learning framework: JAX learners, streams, and fail-closed evidence lanes pursuing The Alberta Plan. Accepted outcomes share a monthly contributor pool.",
+  "status": "active",
+  "repositories": [
+    {
+      "id": "elizaOS/asi",
+      "displayName": "elizaOS/asi",
+      "githubUrl": "https://github.com/elizaOS/asi",
+      "description": "Continual-reinforcement-learning research framework in JAX pursuing The Alberta Plan.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-asi",
+    "sourcePath": "skills/contribute-to-asi",
+    "publicPath": "/projects/asi/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-asi-contributions",
+    "sourcePath": "skills/review-asi-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-07-07T00:00:00.000Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "5000000000",
+    "monthlyCapDisplay": "$5,000",
+    "committedMinor": "0",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "modelPolicy": {
+    "mode": "frontier-only",
+    "approved": [
+      {
+        "client": "codex",
+        "provider": "openai",
+        "model": "gpt-5.6-sol"
+      },
+      {
+        "client": "claude-code",
+        "provider": "anthropic",
+        "model": "claude-fable-5"
+      }
+    ]
+  },
+  "links": {
+    "repository": "https://github.com/elizaOS/asi",
+    "issues": "https://github.com/elizaOS/asi/issues",
+    "discussions": "https://github.com/elizaOS/asi/discussions"
+  }
+}

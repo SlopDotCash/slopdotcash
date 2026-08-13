@@ -240,6 +240,7 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       repositoryId: "REPO_1",
       repositories: [
         { id: "elizaOS/eliza", repositoryId: "REPO_1" },
+        { id: "elizaOS/asi", repositoryId: "REPO_3" },
         { id: "lalalune/arklib", repositoryId: "REPO_2" },
       ],
       requestCount: 12,
@@ -623,6 +624,19 @@ describe("model attribution", () => {
     expect(
       result.declarations.map((declaration) => declaration.format),
     ).toEqual(["visible-declaration", "visible-declaration"]);
+  });
+
+  it("does not duplicate a provider already present in the model identifier", () => {
+    const source = textSource(
+      "COMMENT_PROVIDER_QUALIFIED_MODEL",
+      "Models: OpenAI/openai/gpt-5.6-sol",
+    );
+
+    expect(
+      assessModelAttribution([source]).declarations.map(
+        (declaration) => declaration.identifier,
+      ),
+    ).toEqual(["openai/gpt-5.6-sol"]);
   });
 
   it("recognizes the canonical pull-request model row", () => {
@@ -1776,6 +1790,7 @@ describe("scoring and caps", () => {
     expect(snapshot.workQueue.pullRequests[0].repository).toBe("elizaOS/eliza");
     expect(snapshot.repositories.map((repository) => repository.id)).toEqual([
       "elizaOS/eliza",
+      "elizaOS/asi",
       "lalalune/arklib",
     ]);
     expect(() =>
@@ -2731,6 +2746,49 @@ describe("work queue claims and prioritization", () => {
     expect(
       snapshot.opportunities.some((row) => /fail|reject|drop/i.test(row.hint)),
     ).toBe(false);
+  });
+
+  it("does not ask a reviewer to expand a review they already qualified for", () => {
+    const author = actor("author");
+    const reviewer = actor("reviewer");
+    const openPullRequest = pullRequest({
+      id: "PR_OPEN_THIN_THEN_FULL",
+      number: 53,
+      title: "Reviewed twice by the same person",
+      mergedAt: null,
+      author,
+      updatedAt: "2026-07-29T11:00:00.000Z",
+      reviews: [
+        {
+          id: "REVIEW_THIN",
+          url: "https://github.com/elizaOS/eliza/pull/53#pullrequestreview-1",
+          state: "APPROVED",
+          body: "LGTM",
+          submittedAt: "2026-07-29T11:00:00.000Z",
+          author: reviewer,
+          inlineCommentCount: 0,
+        },
+        {
+          id: "REVIEW_FULL",
+          url: "https://github.com/elizaOS/eliza/pull/53#pullrequestreview-2",
+          state: "CHANGES_REQUESTED",
+          body: "",
+          submittedAt: "2026-07-29T12:00:00.000Z",
+          author: reviewer,
+          inlineCommentCount: 3,
+        },
+      ],
+    });
+
+    const snapshot = createLeaderboardSnapshot(
+      input({ openPullRequests: [openPullRequest] }),
+    );
+
+    expect(
+      snapshot.opportunities.filter(
+        (opportunity) => opportunity.kind === "expand-review",
+      ),
+    ).toEqual([]);
   });
 
   it("skips empty missing-evidence noise without another opportunity signal", () => {

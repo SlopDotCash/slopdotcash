@@ -1394,7 +1394,10 @@ export function assessModelAttribution(
         ) {
           continue;
         }
-        const identifier = `${declaration.provider}/${declaration.model}`;
+        const identifier = exactIdentifier(
+          declaration.provider,
+          declaration.model,
+        );
         validSourceIds.add(source.id);
         if (markerIdentifiers.has(identifier.toLowerCase())) {
           continue;
@@ -1650,7 +1653,7 @@ function methodology(): LeaderboardMethodology {
     provenancePolicy:
       "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
     collectionPolicy:
-      "The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID, every artifact keeps its repository attribution, and per-contributor caps apply independently to each project and UTC reward month. Every scalar merged outcome is collected over 35 days for complete base scoring. Nested PR, review, file, evidence, and linked-issue inspection is limited to each actor's newest five outcomes per project and UTC month, the deterministic set that can survive the base-score cap. Project reward views exclude work before the published reward start. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain explicitly unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete repository connections and are re-collected up to three times when their non-scoring state changes during evidence verification; merged payout input is never sampled or downgraded. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.",
+      "The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID, every artifact keeps its repository attribution, and per-contributor caps apply independently to each project and UTC reward month. Every scalar merged outcome is collected over 35 days for complete base scoring. Nested PR, review, file, evidence, and linked-issue inspection is limited to each actor's newest five outcomes per project and UTC month, the deterministic set that can survive the base-score cap. Project reward views exclude work before the published reward start. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain explicitly unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete, internally stable repository connections. Only open pull requests whose remote evidence bytes are consumed are re-collected when that evidence-bound revision changes; unrelated queue activity cannot starve accepted-score publication. Merged payout input is never sampled or downgraded. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.",
   };
 }
 
@@ -2468,6 +2471,18 @@ function collectOpenPullRequestOpportunities(
       continue;
     }
 
+    // A reviewer who already left a qualifying review on this pull request
+    // scores once it merges, so telling them to expand a thinner review would
+    // be false guidance.
+    const qualifiedReviewers = new Set(
+      dedupeByNodeId(pullRequest.reviews).flatMap((review) =>
+        review.author &&
+        ["APPROVED", "CHANGES_REQUESTED"].includes(review.state) &&
+        hasSubstantiveReviewBody(review)
+          ? [review.author.id]
+          : [],
+      ),
+    );
     const seenReviewers = new Set<string>();
     for (const review of dedupeByNodeId(pullRequest.reviews).sort(
       (left, right) => {
@@ -2486,6 +2501,7 @@ function collectOpenPullRequestOpportunities(
       if (
         !review.author ||
         seenReviewers.has(review.author.id) ||
+        qualifiedReviewers.has(review.author.id) ||
         !isExpandableReviewOpportunity(review, pullRequest)
       ) {
         continue;

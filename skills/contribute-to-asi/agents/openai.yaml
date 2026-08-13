@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contribute to ASI"
+  short_description: "Advance and prove accepted continual-RL work in ASI"
+  default_prompt: "Use $contribute-to-asi to deliver and prove one bounded contribution to the ASI continual-reinforcement-learning framework."

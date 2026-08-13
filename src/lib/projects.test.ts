@@ -12,11 +12,17 @@ describe("project registry", () => {
   it("defines the two launch projects with distinct reward semantics", () => {
     expect(PROJECTS.map((project) => project.id)).toEqual([
       "eliza",
+      "asi",
       "delta-star",
     ]);
     expect(findProject("eliza")?.reward).toMatchObject({
       kind: "monthly-pool",
       monthlyCapMinor: "10000000000",
+      rewardStartAt: "2026-07-07T00:00:00.000Z",
+    });
+    expect(findProject("asi")?.reward).toMatchObject({
+      kind: "monthly-pool",
+      monthlyCapMinor: "5000000000",
       rewardStartAt: "2026-07-07T00:00:00.000Z",
     });
     expect(findProject("delta-star")?.reward).toMatchObject({
@@ -33,6 +39,7 @@ describe("project registry", () => {
       ]),
     ).toEqual([
       ["elizaOS/eliza", "eliza"],
+      ["elizaOS/asi", "asi"],
       ["lalalune/arklib", "delta-star"],
     ]);
     expect(findProjectByRepositoryId("ELIZAOS/ELIZA")?.id).toBe("eliza");

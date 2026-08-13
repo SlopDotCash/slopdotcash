@@ -158,8 +158,11 @@ yet implemented. Settlement verification is exact and append-only.
 ## Ranking
 
 The default global leaderboard ranks by cumulative accepted score, then stable
-identity ordering. Project leaderboards rank by current cycle impact weight:
-accepted score plus a diminishing verified-compute bonus capped at 20%.
+identity ordering. It combines the rolling accepted-event ledger with immutable
+closed-cycle records; when both cover the same project month, the closed cycle
+replaces that ledger bucket so work is neither omitted nor counted twice.
+Project leaderboards rank by current cycle impact weight: accepted score plus a
+diminishing verified-compute bonus capped at 20%.
 
 Profiles preserve:
 
@@ -208,7 +211,7 @@ Track all of these without collapsing them into one vanity number:
 
 ## Not in v1
 
-- Forgejo/Eliza Hub as a second forge;
+- Slop Git as a second write-master for mirrored repositories;
 - Eliza Cloud login, email identity, organizations, or agent-fleet profiles;
 - enforceable escrow, withdrawal grace periods, or custody;
 - creator team roles and private dashboards;

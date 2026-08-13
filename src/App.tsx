@@ -27,6 +27,7 @@ import {
   type CycleIndex,
   type CycleIndexEntry,
 } from "./lib/cycle-index";
+import { createGlobalLeaders } from "./lib/global-leaderboard";
 import { createInstallCommand } from "./lib/install-command";
 import {
   assertLeaderboardSnapshot,
@@ -48,13 +49,14 @@ import {
 } from "./lib/project-view";
 import {
   findProject,
+  findProjectByRepositoryId,
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
 import { isSolanaAddress } from "./lib/wallets";
 
-const SOURCE_REPOSITORY = "https://github.com/elizaOS/army";
-const HUB_ORIGIN = "https://git.eliza.army";
+const SOURCE_REPOSITORY = "https://github.com/elizaOS/slopdotcash";
+const HUB_ORIGIN = "https://git.slop.cash";
 const PROJECT_PROPOSAL_ROOT = `${SOURCE_REPOSITORY}/new/develop`;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
@@ -184,6 +186,20 @@ function Link({
   className?: string;
   href: string;
 }) {
+  const scrollAfterNavigation = () => {
+    window.setTimeout(() => {
+      const destination = new URL(href, window.location.href);
+      const targetId = destination.hash
+        ? decodeURIComponent(destination.hash.slice(1))
+        : "";
+      const target = targetId ? document.getElementById(targetId) : null;
+      if (target) {
+        target.scrollIntoView({ behavior: "auto", block: "start" });
+        return;
+      }
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }, 0);
+  };
   return (
     <a
       aria-label={ariaLabel}
@@ -202,7 +218,7 @@ function Link({
         event.preventDefault();
         window.history.pushState({}, "", href);
         window.dispatchEvent(new PopStateEvent("popstate"));
-        window.scrollTo({ top: 0, behavior: "auto" });
+        scrollAfterNavigation();
       }}
     >
       {children}
@@ -370,7 +386,7 @@ function Header() {
         <nav className={open ? "nav-links nav-links-open" : "nav-links"}>
           <Link href="/#projects">Projects</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
-          <ExternalLinkAnchor href={HUB_ORIGIN}>Hub</ExternalLinkAnchor>
+          <ExternalLinkAnchor href={HUB_ORIGIN}>Slop Git</ExternalLinkAnchor>
           <ExternalLinkAnchor className="nav-source" href={SOURCE_REPOSITORY}>
             Source <ExternalLink aria-hidden="true" size={14} />
           </ExternalLinkAnchor>
@@ -393,7 +409,7 @@ function Footer() {
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
           </ExternalLinkAnchor>
-          <ExternalLinkAnchor href={HUB_ORIGIN}>Hub</ExternalLinkAnchor>
+          <ExternalLinkAnchor href={HUB_ORIGIN}>Slop Git</ExternalLinkAnchor>
           <ExternalLinkAnchor href={`${SOURCE_REPOSITORY}/issues/9`}>
             Protocol
           </ExternalLinkAnchor>
@@ -527,89 +543,6 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
   );
 }
 
-interface GlobalLeader {
-  actor: GitHubActor;
-  score: number;
-  tokens: number;
-  projectedMinor: bigint;
-  paidMinor: bigint;
-  projects: number;
-  cycles: number;
-}
-
-function globalLeaders(
-  views: readonly ProjectView[],
-  cycleIndex: CycleIndex,
-): GlobalLeader[] {
-  type MutableGlobalLeader = Omit<GlobalLeader, "cycles" | "projects"> & {
-    cycleKeys: Set<string>;
-    projectIds: Set<string>;
-  };
-  const byActor = new Map<string, MutableGlobalLeader>();
-  for (const view of views) {
-    for (const leader of view.leaders) {
-      const current = byActor.get(leader.actor.id) ?? {
-        actor: leader.actor,
-        score: 0,
-        tokens: 0,
-        projectedMinor: 0n,
-        paidMinor: 0n,
-        cycleKeys: new Set<string>(),
-        projectIds: new Set<string>(),
-      };
-      current.score += leader.score;
-      current.tokens += leader.usage.relevantTokens;
-      current.projectedMinor += BigInt(leader.projectedMinor ?? "0");
-      current.cycleKeys.add(`${view.project.id}\0${view.cycle.id}`);
-      current.projectIds.add(view.project.id);
-      byActor.set(leader.actor.id, current);
-    }
-  }
-  for (const cycle of cycleIndex.cycles) {
-    for (const contributor of cycle.contributors) {
-      const current = byActor.get(contributor.actor.id) ?? {
-        actor: {
-          ...contributor.actor,
-          avatarUrl: `https://github.com/${encodeURIComponent(contributor.actor.login)}.png?size=96`,
-          url: `https://github.com/${encodeURIComponent(contributor.actor.login)}`,
-          kind: "User" as const,
-        },
-        score: 0,
-        tokens: 0,
-        projectedMinor: 0n,
-        paidMinor: 0n,
-        cycleKeys: new Set<string>(),
-        projectIds: new Set<string>(),
-      };
-      const cycleKey = `${cycle.projectId}\0${cycle.cycleId}`;
-      if (!current.cycleKeys.has(cycleKey)) {
-        current.score += contributor.score;
-        current.cycleKeys.add(cycleKey);
-        current.projectIds.add(cycle.projectId);
-      }
-      current.paidMinor += BigInt(contributor.paidMinor);
-      byActor.set(contributor.actor.id, current);
-    }
-  }
-  return [...byActor.values()]
-    .map<GlobalLeader>((leader) => ({
-      actor: leader.actor,
-      score: leader.score,
-      tokens: leader.tokens,
-      projectedMinor: leader.projectedMinor,
-      paidMinor: leader.paidMinor,
-      projects: leader.projectIds.size,
-      cycles: leader.cycleKeys.size,
-    }))
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        left.actor.login
-          .toLowerCase()
-          .localeCompare(right.actor.login.toLowerCase()),
-    );
-}
-
 function Avatar({
   actor,
   size = "medium",
@@ -631,12 +564,14 @@ function Avatar({
 
 function GlobalLeaderboard({
   cycleIndex,
+  snapshot,
   views,
 }: {
   cycleIndex: CycleIndex;
+  snapshot: LeaderboardSnapshot;
   views: readonly ProjectView[];
 }) {
-  const leaders = globalLeaders(views, cycleIndex);
+  const leaders = createGlobalLeaders(snapshot, views, cycleIndex);
   return (
     <section
       className="section shell home-leaderboard-section"
@@ -644,12 +579,12 @@ function GlobalLeaderboard({
     >
       <h2 className="home-section-title">Leaderboard</h2>
       {leaders.length === 0 ? (
-        <EmptyState text="No accepted outcomes in the active cycles yet." />
+        <EmptyState text="No accepted outcomes in the published record yet." />
       ) : (
         <div className="leader-table">
           <table className="leader-grid">
             <caption className="visually-hidden">
-              Global contributor leaderboard
+              Cumulative accepted-score leaderboard
             </caption>
             <thead>
               <tr className="leader-row leader-head">
@@ -725,7 +660,11 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
         </div>
       </section>
       {state.status === "ready" ? (
-        <GlobalLeaderboard cycleIndex={state.cycleIndex} views={views} />
+        <GlobalLeaderboard
+          cycleIndex={state.cycleIndex}
+          snapshot={state.snapshot}
+          views={views}
+        />
       ) : null}
     </main>
   );
@@ -1147,16 +1086,23 @@ function ProfilePage({
       )
       .map((opportunity) => ({ opportunity, project: view.project })),
   );
+  const globalLeader = createGlobalLeaders(
+    state.snapshot,
+    state.views,
+    state.cycleIndex,
+  ).find((leader) => leader.actor.login.toLowerCase() === login.toLowerCase());
   if (
     matches.length === 0 &&
     history.length === 0 &&
+    !globalLeader &&
     loginOpportunities.length === 0
   ) {
     return <NotFound title="Contributor not found" />;
   }
   const historicalActor = history[0]?.contributor.actor;
   const opportunityActor = loginOpportunities[0]?.opportunity.actor;
-  const actor: GitHubActor = matches[0]?.leader.actor ??
+  const actor: GitHubActor = globalLeader?.actor ??
+    matches[0]?.leader.actor ??
     opportunityActor ?? {
       id: historicalActor?.id ?? `historical:${login.toLowerCase()}`,
       login: historicalActor?.login ?? login,
@@ -1164,11 +1110,14 @@ function ProfilePage({
       url: `https://github.com/${encodeURIComponent(login)}`,
       kind: "User",
     };
-  const events = state.views.flatMap((view) =>
-    view.ledger
-      .filter((event) => event.actor.id === actor.id)
-      .map((event) => ({ event, project: view.project })),
-  );
+  const events = state.snapshot.ledger.flatMap((event) => {
+    if (event.actor.id !== actor.id) return [];
+    const project = findProjectByRepositoryId(event.repository);
+    if (!project) {
+      throw new TypeError(`Score event ${event.id} has no registered project`);
+    }
+    return [{ event, project }];
+  });
   const opportunities = loginOpportunities
     .filter(({ opportunity }) => opportunity.actor.id === actor.id)
     .sort(
@@ -1179,17 +1128,7 @@ function ProfilePage({
         left.opportunity.id.localeCompare(right.opportunity.id),
     )
     .slice(0, PROFILE_OPPORTUNITY_LIMIT);
-  const currentCycleKeys = new Set(
-    matches.map(({ view }) => `${view.project.id}\0${view.cycle.id}`),
-  );
-  const score =
-    matches.reduce((total, match) => total + match.leader.score, 0) +
-    history
-      .filter(
-        ({ cycle }) =>
-          !currentCycleKeys.has(`${cycle.projectId}\0${cycle.cycleId}`),
-      )
-      .reduce((total, { contributor }) => total + contributor.score, 0);
+  const score = globalLeader?.score ?? 0;
   const tokens = matches.reduce(
     (total, match) => total + match.leader.usage.relevantTokens,
     0,
@@ -1360,7 +1299,9 @@ function opportunityPointsLabel(opportunity: ScoreOpportunity): string {
     opportunity.kind === "missing-evidence" ||
     opportunity.kind === "partial-evidence"
   ) {
-    return `+${opportunity.potentialPoints} possible`;
+    // Evidence is the least certain category: each attachment must still pass
+    // remote structure and head-binding verification after merge.
+    return `+${opportunity.potentialPoints} if it verifies`;
   }
   return `+${opportunity.potentialPoints} if it qualifies`;
 }
@@ -1764,7 +1705,7 @@ function ProjectProposalPage() {
     ],
   );
   const manifestText = JSON.stringify(manifest, null, 2);
-  const agentBrief = `In a fork of elizaOS/army, add the Slop project "${name || "New project"}" for the public repository ${repository || "owner/repository"}. Read AGENTS.md, README.md, projects/eliza/project.json, skills/contribute-to-eliza, and skills/review-eliza-contributions before editing. Add projects/${slug}/project.json using the manifest below, a project-specific contributor skill with authenticated atomic update and signed ccusage receipt, a separate adversarial CI reviewer skill, and focused tests. Adapt the mission and repository instructions; do not copy Eliza-specific work criteria. Run projects:check, evaluations:check, every skill validator, typecheck, tests, build, and browser checks. Never add credentials, private keys, raw prompts, or autonomous payout/ban authority.\n\n${manifestText}`;
+  const agentBrief = `In a fork of elizaOS/slopdotcash, add the Slop project "${name || "New project"}" for the public repository ${repository || "owner/repository"}. Read AGENTS.md, README.md, projects/eliza/project.json, skills/contribute-to-eliza, and skills/review-eliza-contributions before editing. Add projects/${slug}/project.json using the manifest below, a project-specific contributor skill with authenticated atomic update and signed ccusage receipt, a separate adversarial CI reviewer skill, and focused tests. Adapt the mission and repository instructions; do not copy Eliza-specific work criteria. Run projects:check, evaluations:check, every skill validator, typecheck, tests, build, and browser checks. Never add credentials, private keys, raw prompts, or autonomous payout/ban authority.\n\n${manifestText}`;
   const githubUrl = `${PROJECT_PROPOSAL_ROOT}?filename=${encodeURIComponent(`projects/${slug}/project.json`)}&value=${encodeURIComponent(`${manifestText}\n`)}`;
   const valid =
     /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) &&

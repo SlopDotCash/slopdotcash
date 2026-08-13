@@ -15,9 +15,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: army-${{ github.event.pull_request.number || github.ref }}
-  # Quality-only PR supersessions may cancel. A trusted develop release must
-  # finish its deployment and byte verification before a newer run starts.
+  # PR supersessions cancel, while trusted runs keep independent quality lanes
+  # so a release awaiting approval cannot block fresh verification.
+  group: slop-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -81,11 +81,11 @@ jobs:
         run: |
           printf '%s\n' \
             'PyYAML==6.0.3 --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6' \
-            > "$RUNNER_TEMP/army-python-requirements.txt"
+            > "$RUNNER_TEMP/slop-python-requirements.txt"
           python -m pip install \
             --disable-pip-version-check \
             --require-hashes \
-            --requirement "$RUNNER_TEMP/army-python-requirements.txt"
+            --requirement "$RUNNER_TEMP/slop-python-requirements.txt"
 
       - name: Validate project registry and every skill
         run: |
@@ -132,7 +132,7 @@ jobs:
       - name: Upload Cloudflare Pages bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: army-pages-${{ github.run_id }}
+          name: slop-pages-${{ github.run_id }}
           path: dist
           if-no-files-found: error
           retention-days: 7
@@ -141,7 +141,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: army-browser-diagnostics-${{ github.run_id }}
+          name: slop-browser-diagnostics-${{ github.run_id }}
           path: |
             playwright-report
             test-results
@@ -158,8 +158,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
-      group: army-production
-      cancel-in-progress: false
+      # Cloudflare Pages publishes atomically; newest trusted develop wins and
+      # replaces an obsolete run that is still waiting for environment review.
+      group: slop-production
+      cancel-in-progress: true
     environment:
       name: eliza-army-production
       url: https://slop.cash
@@ -212,7 +214,7 @@ jobs:
       - name: Download verified Pages bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: army-pages-${{ github.run_id }}
+          name: slop-pages-${{ github.run_id }}
           path: dist
 
       - name: Require live release-input equivalence
@@ -220,7 +222,7 @@ jobs:
           set -euo pipefail
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
-              https://github.com/elizaOS/army.git refs/heads/develop |
+              https://github.com/elizaOS/slopdotcash.git refs/heads/develop |
               awk 'NR == 1 { print $1 }'
           )"
           if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
@@ -228,7 +230,7 @@ jobs:
             exit 1
           fi
           git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
-            "$live_develop:refs/remotes/origin/gitarmy-live-develop"
+            "$live_develop:refs/remotes/origin/slop-live-develop"
           if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
             echo "::error::Live develop changed a slop.cash release input after $GITHUB_SHA was tested."
             exit 1
@@ -292,7 +294,7 @@ jobs:
           set -euo pipefail
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
-              https://github.com/elizaOS/army.git refs/heads/develop |
+              https://github.com/elizaOS/slopdotcash.git refs/heads/develop |
               awk 'NR == 1 { print $1 }'
           )"
           if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
@@ -300,7 +302,7 @@ jobs:
             exit 1
           fi
           git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
-            "$live_develop:refs/remotes/origin/gitarmy-live-develop"
+            "$live_develop:refs/remotes/origin/slop-live-develop"
           if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
             echo "::error::Live develop changed a slop.cash release input immediately before deployment."
             exit 1
@@ -384,7 +386,7 @@ jobs:
             local artifact="$3"
             local received
             local attempt=1
-            received="$RUNNER_TEMP/army-${artifact//\//-}"
+            received="$RUNNER_TEMP/slop-${artifact//\//-}"
             while [ "$attempt" -le 3 ]; do
               if curl --fail --silent --show-error \
                 --connect-timeout 10 \
