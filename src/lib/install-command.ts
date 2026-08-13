@@ -115,6 +115,14 @@ from pathlib import PurePosixPath
 
 artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path = sys.argv[1:]
 repository = "elizaOS/army"
+# The GitHub repository was renamed to elizaOS/slopdotcash. GitHub reports the
+# current name in every API payload, so authority checks must compare against
+# it. The repository constant above stays on the historical protocol identity
+# that PROVENANCE.json and the authorization receipt are written with, until
+# the slop-identity-v1 activation record in PROTOCOL-MIGRATION.md lands.
+# Pinning the legacy name here would also trust whatever repository later
+# occupies it.
+github_repository = "elizaOS/slopdotcash"
 source_path = f"{skill_repository_path}/SKILL.md"
 release_label = "gitarmy-release-candidate"
 target_path = os.path.join(skills_root, skill_name)
@@ -245,7 +253,7 @@ def pull_records(revision):
     records = []
     for page in range(1, max_pull_pages + 1):
         response = api_json(
-            f"/repos/{repository}/commits/{revision}/pulls",
+            f"/repos/{github_repository}/commits/{revision}/pulls",
             (("page", str(page)), ("per_page", "100")),
         )
         if not isinstance(response, list):
@@ -264,7 +272,7 @@ def pull_timeline(number):
     records = []
     for page in range(1, max_timeline_pages + 1):
         response = api_json(
-            f"/repos/{repository}/issues/{number}/timeline",
+            f"/repos/{github_repository}/issues/{number}/timeline",
             (("page", str(page)), ("per_page", "100")),
         )
         if not isinstance(response, list) or len(response) > 100:
@@ -328,15 +336,15 @@ def pull_matches_repository_contract(pull, revision, *, require_open, require_la
         expected_state
         and pull.get("draft") is False
         and head.get("sha") == revision
-        and head_repository.get("full_name") == repository
+        and head_repository.get("full_name") == github_repository
         and base.get("ref") == "develop"
-        and base_repository.get("full_name") == repository
+        and base_repository.get("full_name") == github_repository
         and (not require_label or release_label in label_names)
     )
 
 
 def develop_head():
-    response = api_json(f"/repos/{repository}/git/ref/heads/develop")
+    response = api_json(f"/repos/{github_repository}/git/ref/heads/develop")
     if not isinstance(response, dict) or response.get("ref") != "refs/heads/develop":
         raise ValueError("GitHub develop ref response has the wrong identity")
     target = response.get("object")
@@ -398,7 +406,7 @@ def list_remote_skill_files(revision):
     while pending:
         directory = pending.pop()
         response = api_json(
-            f"/repos/{repository}/contents/{urllib.parse.quote(directory, safe='/')}",
+            f"/repos/{github_repository}/contents/{urllib.parse.quote(directory, safe='/')}",
             (("ref", revision),),
         )
         if not isinstance(response, list) or len(response) > 1000:
@@ -448,7 +456,7 @@ def remote_skill_bytes(revision):
     total = 0
     for path, entry in entries.items():
         raw_url = (
-            f"{raw_origin}/{repository}/{revision}/"
+            f"{raw_origin}/{github_repository}/{revision}/"
             f"{urllib.parse.quote(f'{skill_repository_path}/{path}', safe='/')}"
         )
         contents = fetch_bytes(raw_url, max_entry_bytes, raw_origin)
@@ -714,7 +722,7 @@ def extract_archive(archive_contents, extraction_root):
 
 
 def compare_is_ancestor(old_revision, new_revision):
-    comparison = api_json(f"/repos/{repository}/compare/{old_revision}...{new_revision}")
+    comparison = api_json(f"/repos/{github_repository}/compare/{old_revision}...{new_revision}")
     if not isinstance(comparison, dict):
         raise ValueError("GitHub compare response must be an object")
     base_commit = comparison.get("base_commit")

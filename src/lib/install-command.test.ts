@@ -203,9 +203,9 @@ function candidatePull(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    base: { ref: "develop", repo: { full_name: "elizaOS/army" } },
+    base: { ref: "develop", repo: { full_name: "elizaOS/slopdotcash" } },
     draft: false,
-    head: { repo: { full_name: "elizaOS/army" }, sha: revision },
+    head: { repo: { full_name: "elizaOS/slopdotcash" }, sha: revision },
     labels: [{ name: "gitarmy-release-candidate" }],
     number: 17424,
     state: "open",
@@ -396,7 +396,9 @@ describe("authenticated skill installer lifecycle", () => {
       ["unlabeled", { labels: [{ name: "safe-to-test" }] }],
       [
         "wrong head",
-        { head: { repo: { full_name: "elizaOS/army" }, sha: revisionB } },
+        {
+          head: { repo: { full_name: "elizaOS/slopdotcash" }, sha: revisionB },
+        },
       ],
     ] as const;
 
@@ -689,7 +691,7 @@ describe("authenticated skill installer lifecycle", () => {
       },
       developHead: revisionA,
       responseOverrides: {
-        "/repos/elizaOS/army/git/ref/heads/develop": {
+        "/repos/elizaOS/slopdotcash/git/ref/heads/develop": {
           object: { sha: revisionA, type: "commit" },
           ref: "refs/heads/not-develop",
         },
@@ -966,7 +968,7 @@ describe("authenticated skill installer lifecycle", () => {
     const symlinkRoot = freshRoot("source-symlink");
     const symlinkArtifact = writeArtifact(symlinkRoot, revisionA, archiveFiles);
     const contentsKey =
-      "/repos/elizaOS/army/contents/skills/contribute-to-eliza" +
+      "/repos/elizaOS/slopdotcash/contents/skills/contribute-to-eliza" +
       `?ref=${revisionA}`;
     const symlinkAuthority = configureAuthority(symlinkRoot, {
       developHead: revisionA,
@@ -1007,6 +1009,27 @@ describe("authenticated skill installer lifecycle", () => {
         },
       }),
     ).toThrow("must be an unparameterized file:// origin");
+  });
+
+  it("authorizes against the current GitHub name while writing the historical identity", () => {
+    const production = createInstallCommand(
+      "https://slop.cash",
+      `\${HOME}/.codex/skills`,
+    );
+
+    // GitHub reports elizaOS/slopdotcash in every API payload after the
+    // rename, so an authority comparison pinned to the old name matches
+    // nothing and refuses every install. The old name is also re-registrable,
+    // so it must never be what a release candidate is checked against.
+    expect(production).toContain('github_repository = "elizaOS/slopdotcash"');
+    expect(production).not.toMatch(/\/repos\/elizaOS\/army\//u);
+    expect(production).not.toContain('full_name") == repository');
+
+    // PROVENANCE.json and the authorization receipt keep the historical
+    // protocol identity until the slop-identity-v1 activation record lands,
+    // so these two identities are deliberately not unified.
+    expect(production).toContain('repository = "elizaOS/army"');
+    expect(production).toContain('"repository": repository');
   });
 
   it("uses a process-bound lock that recovers after an interrupted holder", async () => {
