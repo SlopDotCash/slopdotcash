@@ -12,7 +12,11 @@ import type {
   ModelAttribution,
 } from "./leaderboard";
 import { SCORE_CAPS } from "./leaderboard";
-import { createProjectView, formatCapUsageLine } from "./project-view";
+import {
+  createProjectView,
+  formatCapUsageLine,
+  projectCycleHasOpened,
+} from "./project-view";
 import type { ProjectRunReceipt } from "./run-receipts";
 
 const SECOND_ACTOR: GitHubActor = {
@@ -328,5 +332,19 @@ describe("project views", () => {
       "finish-line",
       "second-place",
     ]);
+  });
+});
+
+describe("prelaunch projects", () => {
+  it("reports a project whose pool starts after the snapshot as not opened", () => {
+    const snapshot = snapshotFixture();
+
+    // asi pledged its pool on 2026-08-12, after this snapshot's window ends,
+    // so it has no cycle to show yet while eliza does.
+    expect(projectCycleHasOpened(snapshot, "eliza")).toBe(true);
+    expect(projectCycleHasOpened(snapshot, "asi")).toBe(false);
+    expect(() => createProjectView(snapshot, "asi")).toThrow(
+      "does not overlap the available snapshot",
+    );
   });
 });

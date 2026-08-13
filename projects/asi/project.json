@@ -29,7 +29,7 @@
     "kind": "monthly-pool",
     "currency": "USDC",
     "chain": "solana",
-    "rewardStartAt": "2026-07-07T00:00:00.000Z",
+    "rewardStartAt": "2026-08-12T00:00:00.000Z",
     "cycle": "calendar-month-utc",
     "monthlyCapMinor": "5000000000",
     "monthlyCapDisplay": "$5,000",

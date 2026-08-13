@@ -46,6 +46,7 @@ import {
   formatCapUsageLine,
   type ProjectContributor,
   type ProjectView,
+  projectCycleHasOpened,
 } from "./lib/project-view";
 import {
   findProject,
@@ -285,9 +286,13 @@ function useSnapshot(): [DataState, () => void] {
         ]);
         assertLeaderboardSnapshot(value);
         assertCycleIndex(cycleValue);
-        const views = PROJECTS.map((project) =>
-          createProjectView(value, project.id),
-        );
+        // A project whose pool starts after this snapshot has no cycle to
+        // show yet. Skipping it keeps one future-dated registry entry from
+        // failing the whole page; every other contract violation still
+        // surfaces as a data error rather than being silently swallowed.
+        const views = PROJECTS.filter((project) =>
+          projectCycleHasOpened(value, project.id),
+        ).map((project) => createProjectView(value, project.id));
         if (active) {
           setState({
             status: "ready",
