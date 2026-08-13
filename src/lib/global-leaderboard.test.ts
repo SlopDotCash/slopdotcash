@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { cycleIndexFixture, snapshotFixture } from "../../tests/fixtures";
 import type { CycleIndexEntry } from "./cycle-index";
 import { createGlobalLeaders } from "./global-leaderboard";
-import { createProjectView } from "./project-view";
+import { createProjectView, projectCycleHasOpened } from "./project-view";
 import { PROJECTS } from "./projects.mjs";
 
 function archivedElizaCycle(
@@ -66,7 +66,9 @@ function projectViews() {
   const snapshot = snapshotFixture();
   return {
     snapshot,
-    views: PROJECTS.map((project) => createProjectView(snapshot, project.id)),
+    views: PROJECTS.filter((project) =>
+      projectCycleHasOpened(snapshot, project.id),
+    ).map((project) => createProjectView(snapshot, project.id)),
   };
 }
 

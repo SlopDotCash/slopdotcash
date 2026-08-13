@@ -23,7 +23,7 @@ describe("project registry", () => {
     expect(findProject("asi")?.reward).toMatchObject({
       kind: "monthly-pool",
       monthlyCapMinor: "5000000000",
-      rewardStartAt: "2026-07-07T00:00:00.000Z",
+      rewardStartAt: "2026-08-12T00:00:00.000Z",
     });
     expect(findProject("delta-star")?.reward).toMatchObject({
       kind: "external-prize-share",

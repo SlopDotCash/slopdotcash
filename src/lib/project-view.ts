@@ -457,6 +457,46 @@ function aggregateUsage(
 }
 
 /** Creates a deterministic project and reward-cycle view from one snapshot. */
+function projectCycleWindow(
+  snapshot: LeaderboardSnapshot,
+  project: ProjectDefinition,
+  requestedCycleId?: string,
+): {
+  calendar: { from: number; to: number };
+  cycleId: string;
+  from: number;
+  to: number;
+} {
+  const cycleId = requestedCycleId ?? monthIdFor(snapshot.window.to);
+  const calendar = cycleBounds(cycleId);
+  return {
+    calendar,
+    cycleId,
+    from: Math.max(
+      calendar.from,
+      Date.parse(project.reward.rewardStartAt),
+      Date.parse(snapshot.window.from),
+    ),
+    to: Math.min(calendar.to, Date.parse(snapshot.window.to)),
+  };
+}
+
+/**
+ * Reports whether a project's reward window has opened inside this snapshot.
+ * A project whose pool starts later is a valid registry entry with no cycle to
+ * show yet, so callers building every view can skip it instead of failing.
+ */
+export function projectCycleHasOpened(
+  snapshot: LeaderboardSnapshot,
+  projectId: ProjectId,
+  requestedCycleId?: string,
+): boolean {
+  const project = findProject(projectId);
+  if (!project) return false;
+  const window = projectCycleWindow(snapshot, project, requestedCycleId);
+  return window.to >= window.from;
+}
+
 export function createProjectView(
   snapshot: LeaderboardSnapshot,
   projectId: ProjectId,
@@ -465,15 +505,11 @@ export function createProjectView(
   const project = findProject(projectId);
   if (!project) throw new TypeError(`Unknown project: ${projectId}`);
   const snapshotTo = Date.parse(snapshot.window.to);
-  const cycleId = requestedCycleId ?? monthIdFor(snapshot.window.to);
-  const calendar = cycleBounds(cycleId);
-  const rewardStart = Date.parse(project.reward.rewardStartAt);
-  const from = Math.max(
-    calendar.from,
-    rewardStart,
-    Date.parse(snapshot.window.from),
+  const { calendar, cycleId, from, to } = projectCycleWindow(
+    snapshot,
+    project,
+    requestedCycleId,
   );
-  const to = Math.min(calendar.to, snapshotTo);
   if (to < from) {
     throw new RangeError(
       `Cycle ${cycleId} does not overlap the available snapshot for ${projectId}`,
