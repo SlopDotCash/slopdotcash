@@ -5,7 +5,15 @@
  */
 
 import assert from "node:assert";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -34,6 +42,7 @@ describe("project skill contracts", () => {
       assert.match(source, /claude-fable-5/u);
       assert.match(source, /run-receipt\.mjs start/u);
       assert.match(source, /run-receipt\.mjs finish/u);
+      assert.match(source, /live-report\.mjs --repo/u);
       assert.match(source, /token.*never earns|receipt cannot create score/is);
       assert.match(source, /untrusted/u);
       assert.match(source, /disposable.*sandbox/is);
@@ -61,6 +70,10 @@ describe("project skill contracts", () => {
       join(canonicalPackage.contributorRoot, "scripts", "run-receipt.mjs"),
       "utf8",
     );
+    const liveReportSource = readFileSync(
+      join(canonicalPackage.contributorRoot, "scripts", "live-report.mjs"),
+      "utf8",
+    );
     for (const { project, contributorRoot } of projectPackages) {
       assert.strictEqual(
         readFileSync(
@@ -69,6 +82,14 @@ describe("project skill contracts", () => {
         ),
         receiptSource,
         `${project.skill.id} receipt logic drifted`,
+      );
+      assert.strictEqual(
+        readFileSync(
+          join(contributorRoot, "scripts", "live-report.mjs"),
+          "utf8",
+        ),
+        liveReportSource,
+        `${project.skill.id} discovery logic drifted`,
       );
       const skillProject = JSON.parse(
         readFileSync(join(contributorRoot, "project.json"), "utf8"),
@@ -110,6 +131,41 @@ describe("project skill contracts", () => {
       assert.match(source, /accept.*partial.*reject.*hold/is);
       assert.match(source, /gitarmy-review/u);
       assert.doesNotMatch(source, /private key|seed phrase/is);
+    }
+  });
+
+  it("executes every contributor CLI through an installed-style skill symlink", () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-installed-skills-"));
+    try {
+      const skillsRoot = join(fixtureRoot, "skills");
+      mkdirSync(skillsRoot);
+      for (const { project, contributorRoot } of projectPackages) {
+        const installedSkill = join(skillsRoot, project.skill.id);
+        symlinkSync(contributorRoot, installedSkill);
+        const result = spawnSync(
+          process.execPath,
+          [join(installedSkill, "scripts", "run-receipt.mjs")],
+          { encoding: "utf8" },
+        );
+        assert.strictEqual(result.status, 1, result.stdout);
+        assert.match(
+          result.stderr,
+          /project run receipt failed: action must be start or finish/,
+          project.skill.id,
+        );
+        const reportResult = spawnSync(
+          process.execPath,
+          [join(installedSkill, "scripts", "live-report.mjs"), "--help"],
+          { encoding: "utf8" },
+        );
+        assert.strictEqual(reportResult.status, 0, reportResult.stderr);
+        assert.match(
+          reportResult.stdout,
+          /^Usage: node scripts\/live-report\.mjs/m,
+        );
+      }
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
     }
   });
 });

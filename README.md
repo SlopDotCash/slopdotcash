@@ -8,6 +8,10 @@ and reward projection. Project owners review a frozen monthly proposal before
 signing any payment. `eliza.army` remains a compatibility alias during the
 migration.
 
+Historical protocol identities and the one-way Slop writer transition are
+specified in [PROTOCOL-MIGRATION.md](PROTOCOL-MIGRATION.md). Redirects never
+grant source, release, score, wallet, or settlement authority.
+
 [Slop Git](https://git.slop.cash) is the public forge and work-navigation
 surface. GitHub remains the write-master for launch repositories; Slop Git
 mirrors them read-only so there is one authoritative issue, pull request, and

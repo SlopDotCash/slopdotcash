@@ -31,6 +31,7 @@ import {
   parseModelDisclosure,
   parsePaginatedJson,
   REQUIRED_EVIDENCE_ROWS,
+  readGhOpenActivity,
   readGhPages,
   renderMarkdown,
 } from "../skills/contribute-to-eliza/scripts/live-report.mjs";
@@ -351,6 +352,86 @@ describe("live report parsing", () => {
     assert.throws(
       () => parsePaginatedJson(undefined),
       /did not return text output/,
+    );
+  });
+
+  it("batches open issue and pull activity through two bounded GraphQL reads", () => {
+    const actor = {
+      __typename: "User",
+      databaseId: 42,
+      id: "U_42",
+      login: "reviewer",
+    };
+    const graphqlComment = {
+      databaseId: 10,
+      url: "https://github.com/elizaOS/eliza/issues/1#issuecomment-10",
+      body: "AI assistance: no — human-only claim\nAttribution status: self-reported",
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: actor,
+    };
+    const issueNode = {
+      number: 1,
+      comments: { totalCount: 1, nodes: [graphqlComment] },
+    };
+    const pullNode = {
+      number: 2,
+      comments: { totalCount: 0, nodes: [] },
+      reviews: {
+        totalCount: 1,
+        nodes: [
+          {
+            databaseId: 20,
+            url: "https://github.com/elizaOS/eliza/pull/2#pullrequestreview-20",
+            body: "Substantive review.",
+            submittedAt: "2026-01-18T12:00:00.000Z",
+            state: "APPROVED",
+            commit: { oid: HEAD_SHA },
+            author: actor,
+          },
+        ],
+      },
+      reviewThreads: {
+        totalCount: 1,
+        nodes: [{ comments: { totalCount: 1, nodes: [graphqlComment] } }],
+      },
+    };
+    const calls: string[][] = [];
+    const activity = readGhOpenActivity("elizaOS/eliza", (command, args) => {
+      assert.strictEqual(command, "gh");
+      calls.push(args);
+      const selector = args.at(-1);
+      return {
+        status: 0,
+        stderr: "",
+        stdout: `${JSON.stringify(
+          selector?.includes(".issues.") ? issueNode : pullNode,
+        )}\n`,
+      };
+    });
+
+    assert.strictEqual(calls.length, 2);
+    assert.ok(calls.every((args) => args.includes("graphql")));
+    assert.ok(calls.every((args) => args.includes("--paginate")));
+    assert.strictEqual(activity.issues.get(1)?.[0].user.id, 42);
+    assert.strictEqual(activity.pulls.get(2)?.reviews[0].commit_id, HEAD_SHA);
+    assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 1);
+  });
+
+  it("fails closed when nested GraphQL activity would be truncated", () => {
+    assert.throws(
+      () =>
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".issues.")
+            ? `${JSON.stringify({
+                number: 1,
+                comments: { totalCount: 101, nodes: [] },
+              })}\n`
+            : "",
+        })),
+      /exceeds the complete 100-record activity bound/,
     );
   });
 
@@ -1468,33 +1549,51 @@ describe("live report behavior", () => {
     );
   });
 
-  it("rejects decision reviews without current-head provenance", () => {
-    const incompleteReviews = [
-      { ...review(450, "reviewer", "APPROVED"), commit_id: null },
-      { ...review(451, "reviewer", "CHANGES_REQUESTED"), submitted_at: null },
-    ];
-    for (const incompleteReview of incompleteReviews) {
-      assert.throws(
-        () =>
-          collectLiveReport(
-            "elizaOS/eliza",
-            (endpoint) => {
-              if (endpoint.includes("/issues?state=open")) return [];
-              if (endpoint.includes("/pulls?state=open")) {
-                return [pullRequest(45)];
-              }
-              if (endpoint.includes("/issues/45/comments")) return [];
-              if (endpoint.includes("/pulls/45/comments")) return [];
-              if (endpoint.includes("/pulls/45/reviews")) {
-                return [incompleteReview];
-              }
-              assert.fail(`unexpected endpoint: ${endpoint}`);
-            },
-            NOW,
-          ),
-        /cannot prove a current-head (?:APPROVED|CHANGES_REQUESTED) decision/,
-      );
-    }
+  it("ignores unreachable reviewed history but rejects missing review timestamps", () => {
+    const report = collectLiveReport(
+      "elizaOS/eliza",
+      (endpoint) => {
+        if (endpoint.includes("/issues?state=open")) return [];
+        if (endpoint.includes("/pulls?state=open")) return [pullRequest(45)];
+        if (endpoint.includes("/issues/45/comments")) return [];
+        if (endpoint.includes("/pulls/45/comments")) return [];
+        if (endpoint.includes("/pulls/45/reviews")) {
+          return [{ ...review(450, "reviewer", "APPROVED"), commit_id: null }];
+        }
+        assert.fail(`unexpected endpoint: ${endpoint}`);
+      },
+      NOW,
+    );
+    assert.deepStrictEqual(
+      report.reviewablePullRequests.map((pull) => pull.number),
+      [45],
+    );
+
+    assert.throws(
+      () =>
+        collectLiveReport(
+          "elizaOS/eliza",
+          (endpoint) => {
+            if (endpoint.includes("/issues?state=open")) return [];
+            if (endpoint.includes("/pulls?state=open")) {
+              return [pullRequest(46)];
+            }
+            if (endpoint.includes("/issues/46/comments")) return [];
+            if (endpoint.includes("/pulls/46/comments")) return [];
+            if (endpoint.includes("/pulls/46/reviews")) {
+              return [
+                {
+                  ...review(451, "reviewer", "CHANGES_REQUESTED"),
+                  submitted_at: null,
+                },
+              ];
+            }
+            assert.fail(`unexpected endpoint: ${endpoint}`);
+          },
+          NOW,
+        ),
+      /missing the timestamp for its CHANGES_REQUESTED decision/,
+    );
   });
 });
 
