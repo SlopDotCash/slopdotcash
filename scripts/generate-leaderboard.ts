@@ -143,7 +143,7 @@ type ExpectedRecordState = "closed" | "merged" | "open";
 
 export class OpenSetChangedError extends Error {}
 
-/** Retries only a concurrent mutation of the non-scoring Slop snapshot. */
+/** Retries only a concurrent mutation of evidence-bound open work. */
 export async function retrySlopSnapshot<T>(
   collect: (attempt: number) => Promise<T>,
 ): Promise<T> {
@@ -152,14 +152,14 @@ export async function retrySlopSnapshot<T>(
     try {
       return await collect(attempt);
     } catch (error) {
-      // error-policy:J1 Open issues and pull requests are a non-scoring queue;
-      // only their typed concurrent mutation is recollected at this boundary.
+      // error-policy:J1 Open evidence is non-scoring; only its typed concurrent
+      // mutation is recollected at this boundary.
       if (!(error instanceof OpenSetChangedError)) throw error;
       lastChange = error;
     }
   }
   throw new Error(
-    `Open work set changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive verification attempts`,
+    `Open evidence changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive verification attempts`,
     { cause: lastChange },
   );
 }
@@ -1892,11 +1892,14 @@ export function deriveCurrentHeadReviewDecision(
     if (isBotActor(review.author) || isSelfReview) {
       continue;
     }
-    if (isDecision && (!review.submittedAt || commitId === null)) {
+    if (isDecision && !review.submittedAt) {
       throw new Error(
-        `Review ${review.id} cannot prove a current-head ${review.state} decision`,
+        `Review ${review.id} cannot prove a timestamped ${review.state} decision`,
       );
     }
+    // GitHub returns a null commit after the reviewed revision becomes
+    // unreachable, including when a merged pull request's branch is deleted.
+    // Such a review is valid history but cannot prove a current-head decision.
     if (
       !["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state) ||
       !review.submittedAt ||
@@ -2138,7 +2141,7 @@ export function selectDetailedMergedPullRequestIds(
   return selected;
 }
 
-async function collectStableOpenIssues(
+async function collectOpenIssues(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
   repositoryId: string,
@@ -2157,40 +2160,28 @@ async function collectStableOpenIssues(
     }
     assertEstimatedBudget(client, 0, before.references.length);
     try {
-      const records = await hydrateIssues(
+      return await hydrateIssues(
         client,
         before.references,
         "open",
         onProgress,
         "open-issues",
       );
-      const after = await collectOpenReferences(
-        client,
-        targetRepository,
-        OPEN_ISSUE_REFERENCES_QUERY,
-        "issues",
-        "Issue",
-      );
-      if (
-        after.repositoryId === repositoryId &&
-        sameReferenceSet(before.references, after.references)
-      ) {
-        return records;
-      }
     } catch (error) {
-      // error-policy:J1 The GitHub collection boundary retries only a typed
-      // concurrent-set change and fails after the bounded retry window.
+      // error-policy:J1 A record that closes while its details are read is
+      // recollected; unrelated additions do not invalidate the point-in-time
+      // queue reference set.
       if (!(error instanceof OpenSetChangedError)) {
         throw error;
       }
     }
   }
   throw new Error(
-    `Open issue set changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive collection attempts`,
+    `Open issue state changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive collection attempts`,
   );
 }
 
-async function collectStableOpenPullRequests(
+async function collectOpenPullRequests(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
   repositoryId: string,
@@ -2209,45 +2200,34 @@ async function collectStableOpenPullRequests(
     }
     assertEstimatedBudget(client, before.references.length, 0);
     try {
-      const records = await hydratePullRequests(
+      return await hydratePullRequests(
         client,
         before.references,
         "open",
         onProgress,
         "open-pull-requests",
       );
-      const after = await collectOpenReferences(
-        client,
-        targetRepository,
-        OPEN_PULL_REQUEST_REFERENCES_QUERY,
-        "pullRequests",
-        "PullRequest",
-      );
-      if (
-        after.repositoryId === repositoryId &&
-        sameReferenceSet(before.references, after.references)
-      ) {
-        return records;
-      }
     } catch (error) {
-      // error-policy:J1 The GitHub collection boundary retries only a typed
-      // concurrent-set change and fails after the bounded retry window.
+      // error-policy:J1 A record that closes or changes head while its nested
+      // details are read is recollected; unrelated additions do not invalidate
+      // the point-in-time queue reference set.
       if (!(error instanceof OpenSetChangedError)) {
         throw error;
       }
     }
   }
   throw new Error(
-    `Open pull-request set changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive collection attempts`,
+    `Open pull-request state changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive collection attempts`,
   );
 }
 
-export async function assertOpenPullRequestReferencesCurrent(
+export async function assertOpenEvidenceReferencesCurrent(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
   repositoryId: string,
   pullRequests: PullRequestRecord[],
 ): Promise<void> {
+  if (pullRequests.length === 0) return;
   const current = await collectOpenReferences(
     client,
     targetRepository,
@@ -2261,64 +2241,20 @@ export async function assertOpenPullRequestReferencesCurrent(
     outcome: null,
     openVersion: `${pullRequest.updatedAt}:${pullRequest.headRefOid}`,
   }));
+  const currentById = new Map(
+    current.references.map((reference) => [reference.id, reference]),
+  );
   if (
     current.repositoryId !== repositoryId ||
-    !sameReferenceSet(expected, current.references)
+    expected.some((reference) => {
+      const live = currentById.get(reference.id);
+      return !live || live.openVersion !== reference.openVersion;
+    })
   ) {
     throw new OpenSetChangedError(
-      "Open pull-request set changed during evidence verification",
+      "An open pull request with evidence changed during verification",
     );
   }
-}
-
-export async function assertOpenIssueReferencesCurrent(
-  client: GraphqlExecutor,
-  targetRepository: TargetRepository,
-  repositoryId: string,
-  issues: IssueRecord[],
-): Promise<void> {
-  const current = await collectOpenReferences(
-    client,
-    targetRepository,
-    OPEN_ISSUE_REFERENCES_QUERY,
-    "issues",
-    "Issue",
-  );
-  const expected: NodeReference[] = issues.map((issue) => ({
-    id: issue.id,
-    kind: "Issue",
-    outcome: null,
-    openVersion: `${issue.updatedAt}:`,
-  }));
-  if (
-    current.repositoryId !== repositoryId ||
-    !sameReferenceSet(expected, current.references)
-  ) {
-    throw new OpenSetChangedError(
-      "Open issue set changed during evidence verification",
-    );
-  }
-}
-
-export async function assertSlopReferencesCurrent(
-  client: GraphqlExecutor,
-  targetRepository: TargetRepository,
-  repositoryId: string,
-  issues: IssueRecord[],
-  pullRequests: PullRequestRecord[],
-): Promise<void> {
-  await assertOpenIssueReferencesCurrent(
-    client,
-    targetRepository,
-    repositoryId,
-    issues,
-  );
-  await assertOpenPullRequestReferencesCurrent(
-    client,
-    targetRepository,
-    repositoryId,
-    pullRequests,
-  );
 }
 
 function estimateBatchedConnectionCost(
@@ -2792,13 +2728,13 @@ export async function generateLeaderboardFromGitHub(
         "resolved-issues",
       )),
     );
-    collection.openIssues = await collectStableOpenIssues(
+    collection.openIssues = await collectOpenIssues(
       client,
       collection.repository,
       collection.preflight.id,
       onProgress,
     );
-    collection.openPullRequests = await collectStableOpenPullRequests(
+    collection.openPullRequests = await collectOpenPullRequests(
       client,
       collection.repository,
       collection.preflight.id,
@@ -2813,13 +2749,7 @@ export async function generateLeaderboardFromGitHub(
     await retrySlopSnapshot(async (attempt) => {
       if (attempt > 1) {
         for (const collection of collections) {
-          collection.openIssues = await collectStableOpenIssues(
-            client,
-            collection.repository,
-            collection.preflight.id,
-            onProgress,
-          );
-          collection.openPullRequests = await collectStableOpenPullRequests(
+          collection.openPullRequests = await collectOpenPullRequests(
             client,
             collection.repository,
             collection.preflight.id,
@@ -2838,12 +2768,18 @@ export async function generateLeaderboardFromGitHub(
         options,
       );
       for (const collection of collections) {
-        await assertSlopReferencesCurrent(
+        const evidenceCandidateIds = new Set(
+          evidenceVerificationCandidates(collection.openPullRequests).map(
+            ({ pullRequest }) => pullRequest.id,
+          ),
+        );
+        await assertOpenEvidenceReferencesCurrent(
           client,
           collection.repository,
           collection.preflight.id,
-          collection.openIssues,
-          collection.openPullRequests,
+          collection.openPullRequests.filter((pullRequest) =>
+            evidenceCandidateIds.has(pullRequest.id),
+          ),
         );
       }
       return {

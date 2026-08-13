@@ -8,6 +8,11 @@ and reward projection. Project owners review a frozen monthly proposal before
 signing any payment. `eliza.army` remains a compatibility alias during the
 migration.
 
+[Slop Git](https://git.slop.cash) is the public forge and work-navigation
+surface. GitHub remains the write-master for launch repositories; Slop Git
+mirrors them read-only so there is one authoritative issue, pull request, and
+review history.
+
 The active projects are:
 
 - **Eliza:** accepted work in [`elizaOS/eliza`](https://github.com/elizaOS/eliza)
@@ -272,8 +277,9 @@ revision it used.
 
 ## Deliberate v1 boundaries
 
-- GitHub is the only forge. Forgejo/Eliza Hub mirroring is deferred until the
-  GitHub loop is proven.
+- GitHub is the sole write-master for launch repositories. Slop Git at
+  `git.slop.cash` mirrors them read-only and must never create a competing issue,
+  pull request, CI, release, or star history.
 - Eliza Cloud sign-in and creator roles are deferred; contribution identity is
   the public GitHub actor plus optional wallets.
 - Pools are labeled pledged until a later non-custodial escrow contract can

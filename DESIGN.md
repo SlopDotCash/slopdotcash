@@ -86,6 +86,8 @@ seed phrase or private key” inside the component, not in a remote policy page.
 Rank is secondary to identity and score. Every row links to a durable profile.
 Project rows show relevant compute and bounded bonus; global rows show
 cumulative score and paid total. Historical-only contributors remain visible.
+The global score comes from accepted rolling-ledger events plus closed-cycle
+records, with the closed record replacing an overlapping project-month bucket.
 Empty data, loading, stale data, invalid data, and zero accepted work are five
 different states.
 

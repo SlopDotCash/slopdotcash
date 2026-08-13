@@ -624,6 +624,19 @@ describe("model attribution", () => {
     ).toEqual(["visible-declaration", "visible-declaration"]);
   });
 
+  it("does not duplicate a provider already present in the model identifier", () => {
+    const source = textSource(
+      "COMMENT_PROVIDER_QUALIFIED_MODEL",
+      "Models: OpenAI/openai/gpt-5.6-sol",
+    );
+
+    expect(
+      assessModelAttribution([source]).declarations.map(
+        (declaration) => declaration.identifier,
+      ),
+    ).toEqual(["openai/gpt-5.6-sol"]);
+  });
+
   it("recognizes the canonical pull-request model row", () => {
     const source = textSource(
       "COMMENT_CANONICAL_MODEL_ROW",
