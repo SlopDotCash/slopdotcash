@@ -1,29 +1,66 @@
-# ASI evidence and review rubric
+# ASI evidence rubric
 
-Proof must let a reviewer confirm the research or engineering outcome without
-trusting the summary.
+A result is a claim about a number. The evidence has to let a reviewer
+reproduce that number without trusting the summary.
 
-For every contribution, include:
+## Every measured claim carries
 
-- the exact learner, stream, validator, benchmark, or claim changed;
-- the verified commit SHA and exact commands, seeds, and configurations;
-- successful output from the focused tests and the lane's required validation;
-- the evidence tier of any measurement (development-grade vs promoted) and the
-  gates it has or has not passed;
-- the source files and modules that carry the result;
-- a reproducible artifact — curves, receipts, or generated evidence — when the
-  claim is empirical;
-- the exact model/client attribution and device-signed run receipt;
-- an honest statement of what remains open.
+- the lane and the exact metric, named as the repository names it;
+- the exact commands with every flag, and the commit SHA they ran at;
+- the seed list and `n`, stating which seeds were tuning and which were
+  evaluation;
+- baseline and candidate as **mean and spread**, plus the delta — never a
+  single run, never a best-of-`k`;
+- the baseline re-measured in the same environment as the candidate;
+- the artifact paths written under `outputs/`, attached as immutable GitHub
+  attachment URLs;
+- the evidence tier: development-grade and nonpromoting, or promoted through a
+  frozen protocol and its validator;
+- the focused tests and lane verification that ran, and their result;
+- every deviation from the pre-registration, with the reason;
+- what remains open, unexplained, or unmeasured.
 
-For a PR review, independently reproduce the changed path in an isolated
-environment, rerun the stated commands with the stated seeds, trace the
-evidence chain from raw artifact to claimed number, and compare the claim to
-`RESEARCH_STATUS.md` and the negative-results ledger. A green test suite does
-not prove a measurement means what the summary says.
+## What makes a comparison fair
 
-Reject or hold credit for edited or regenerated immutable `outputs/`
-artifacts, weakened validators, development-grade numbers presented as
-promoted results, non-reproducible measurements, unstated seed or config
-changes, copied work, unrelated token logs, or dependency and lockfile
-smuggling.
+One variable changes. Baseline and candidate share seeds, steps, data order,
+and hardware. Tuning happens on tuning seeds; evaluation seeds are touched
+once. The comparison is decided against a threshold chosen **before** the
+numbers existed.
+
+If the result is inside the seed-to-seed spread, it is not an improvement yet
+— say so and either raise `n` or report it as inconclusive.
+
+## Reviewing someone else's result
+
+Reproduce the changed path in an isolated environment, rerun the stated
+commands with the stated seeds, and trace the number from the raw artifact
+through its validator to the summary. Check the claim against
+`RESEARCH_STATUS.md` and `NEGATIVE_RESULTS_LEDGER.md`. A green test suite does
+not prove a measurement means what the summary says it means.
+
+For a ported method, read the cited paper section next to the implementation.
+Check that stated deviations are the only deviations, and that the paper's
+own baseline was reproduced or its failure to reproduce was reported.
+
+## Reject or hold
+
+- a number without its command, seeds, spread, or commit;
+- a single-seed or best-of-`k` claim presented as an improvement;
+- a candidate compared against a baseline from another environment, machine,
+  or commit;
+- tuning on evaluation seeds, or reusing consumed evidence seeds;
+- a threshold, validator, or test weakened to make the lane pass;
+- edited, regenerated, or deleted pinned `outputs/` artifacts;
+- development-grade numbers presented as promoted results;
+- an unstated seed, config, or protocol change;
+- a paper claim imported as if it were a measurement made here;
+- a change with no measured effect: a refactor, a rename, a new abstraction,
+  or a configuration knob nothing sets;
+- work that spreads across lanes instead of moving one.
+
+## Negative results are results
+
+A refutation that closes a direction is worth crediting when it is decisive,
+reproducible, and recorded in `NEGATIVE_RESULTS_LEDGER.md` conventions with
+the same rigour as a win. An inconclusive run reported honestly is worth more
+than a win claimed from noise.

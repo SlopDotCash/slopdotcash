@@ -5,7 +5,7 @@
   "name": "ASI",
   "eyebrow": "Continual reinforcement learning",
   "headline": "Make money advancing continual learning.",
-  "description": "Advance the ASI continual-reinforcement-learning framework: JAX learners, streams, and fail-closed evidence lanes pursuing The Alberta Plan. Accepted outcomes share a monthly contributor pool.",
+  "description": "Hill-climb the benchmarks in ASI, a JAX continual-reinforcement-learning framework pursuing The Alberta Plan. Beat a recorded baseline, port a method from the literature, or fix what corrupts a measurement. Every accepted result ships a paired, seed-controlled comparison with published evidence.",
   "status": "active",
   "repositories": [
     {
