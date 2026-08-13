@@ -7,6 +7,12 @@
 import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+} from "node:crypto";
+import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -20,8 +26,10 @@ import { fileURLToPath } from "node:url";
 import {
   footer,
   normalizeSessionReport,
+  signingPayload,
   usageDelta,
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
+import { assessModelAttribution } from "../src/lib/leaderboard";
 import { PROJECTS } from "../src/lib/projects.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -42,6 +50,9 @@ describe("project skill contracts", () => {
       assert.match(source, /claude-fable-5/u);
       assert.match(source, /run-receipt\.mjs start/u);
       assert.match(source, /run-receipt\.mjs finish/u);
+      assert.match(source, /run-receipt\.mjs preview/u);
+      assert.match(source, /run-receipt\.mjs doctor/u);
+      assert.match(source, /--allow-local-usage/u);
       assert.match(source, /live-report\.mjs --repo/u);
       assert.match(source, /token.*never earns|receipt cannot create score/is);
       assert.match(source, /untrusted/u);
@@ -144,15 +155,16 @@ describe("project skill contracts", () => {
         symlinkSync(contributorRoot, installedSkill);
         const result = spawnSync(
           process.execPath,
-          [join(installedSkill, "scripts", "run-receipt.mjs")],
+          [join(installedSkill, "scripts", "run-receipt.mjs"), "--help"],
           { encoding: "utf8" },
         );
-        assert.strictEqual(result.status, 1, result.stdout);
+        assert.strictEqual(result.status, 0, result.stderr);
         assert.match(
-          result.stderr,
-          /project run receipt failed: action must be start or finish/,
+          result.stdout,
+          /^Usage: node scripts\/run-receipt\.mjs/m,
           project.skill.id,
         );
+        assert.match(result.stdout, /preview[\s\S]+doctor[\s\S]+status/u);
         const reportResult = spawnSync(
           process.execPath,
           [join(installedSkill, "scripts", "live-report.mjs"), "--help"],
@@ -287,6 +299,11 @@ describe("project run usage", () => {
   });
 
   it("serializes one terminal v2 marker without private material", () => {
+    const key = generateKeyPairSync("ed25519");
+    const publicDer = createPublicKey(key.privateKey).export({
+      format: "der",
+      type: "spki",
+    });
     const receipt = {
       schemaVersion: "1",
       runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -312,10 +329,15 @@ describe("project run usage", () => {
       },
       trajectorySha256: null,
       signatureAlgorithm: "ed25519",
-      devicePublicKey: "public-key",
-      deviceKeyId: "c".repeat(64),
-      deviceSignature: "public-signature",
+      devicePublicKey: Buffer.from(publicDer).toString("base64url"),
+      deviceKeyId: createHash("sha256").update(publicDer).digest("hex"),
+      deviceSignature: "pending",
     };
+    receipt.deviceSignature = sign(
+      null,
+      Buffer.from(signingPayload(receipt), "utf8"),
+      key.privateKey,
+    ).toString("base64url");
     const rendered = footer(receipt, "lane-1");
     assert.match(rendered, /locally reported/u);
     assert.match(rendered, /— \[lane-1\]/u);
@@ -324,5 +346,26 @@ describe("project run usage", () => {
       /^<!-- elizaos-contribution-attribution:v2 /u,
     );
     assert.doesNotMatch(rendered, /PRIVATE KEY/u);
+    const assessed = assessModelAttribution([
+      {
+        id: "COMMENT_RECEIPT",
+        artifactId: "PR_1",
+        kind: "comment",
+        body: rendered,
+        url: "https://github.com/elizaOS/eliza/pull/1#issuecomment-1",
+        createdAt: "2026-07-29T11:00:00.000Z",
+        updatedAt: "2026-07-29T11:00:00.000Z",
+        author: {
+          id: "U_1",
+          login: "builder",
+          avatarUrl: "https://avatars.githubusercontent.com/builder",
+          url: "https://github.com/builder",
+          kind: "User",
+        },
+        authorAssociation: "MEMBER",
+      },
+    ]);
+    assert.deepStrictEqual(assessed.invalidMarkers, []);
+    assert.strictEqual(assessed.declarations[0]?.run?.runId, receipt.runId);
   });
 });

@@ -1,5 +1,9 @@
 {
   "version": 1,
   "include": ["/", "/projects/*", "/contributors/*", "/cycles/*"],
-  "exclude": []
+  "exclude": [
+    "/projects/*/*.md",
+    "/projects/*/*.json",
+    "/projects/*/downloads/*"
+  ]
 }

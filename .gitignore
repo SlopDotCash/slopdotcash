@@ -16,5 +16,8 @@ public/codex.md
 public/claude.md
 public/claude-code.md
 public/skill-manifest.json
+public/SKILL.md
+public/.well-known/
+public/llms.txt
 public/data/
 public/projects/

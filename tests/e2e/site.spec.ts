@@ -297,6 +297,89 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
 test("serves byte-consistent install and read-only artifacts for every project", async ({
   request,
 }) => {
+  const legacySkillResponse = await request.get("/skill.md", {
+    maxRedirects: 0,
+  });
+  expect(legacySkillResponse.status()).toBe(301);
+  expect(legacySkillResponse.headers().location).toBe(
+    "/projects/eliza/skill.md",
+  );
+
+  const [
+    bootstrapResponse,
+    discoveryResponse,
+    discoverySkillResponse,
+    projectDiscoveryResponse,
+    llmsResponse,
+  ] = await Promise.all([
+    request.get("/SKILL.md"),
+    request.get("/.well-known/agent-skills/index.json"),
+    request.get("/.well-known/agent-skills/slop/SKILL.md"),
+    request.get("/.well-known/slop/projects.json"),
+    request.get("/llms.txt"),
+  ]);
+  for (const response of [
+    bootstrapResponse,
+    discoveryResponse,
+    discoverySkillResponse,
+    projectDiscoveryResponse,
+    llmsResponse,
+  ]) {
+    expect(response.status()).toBe(200);
+  }
+  expect(bootstrapResponse.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  expect(bootstrapResponse.headers()["access-control-allow-origin"]).toBe("*");
+  expect(bootstrapResponse.headers()["cache-control"]).toContain("max-age=300");
+  expect(discoveryResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(discoverySkillResponse.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  expect(projectDiscoveryResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(llmsResponse.headers()["content-type"]).toContain("text/plain");
+  const bootstrap = await bootstrapResponse.body();
+  const bootstrapDigest = createHash("sha256").update(bootstrap).digest("hex");
+  const discovery = (await discoveryResponse.json()) as {
+    $schema: string;
+    skills: Array<{
+      digest: string;
+      name: string;
+      type: string;
+      url: string;
+    }>;
+  };
+  expect(discovery).toEqual({
+    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    skills: [
+      expect.objectContaining({
+        digest: `sha256:${bootstrapDigest}`,
+        name: "slop",
+        type: "skill-md",
+        url: "https://slop.cash/SKILL.md",
+      }),
+    ],
+  });
+  expect(await discoverySkillResponse.body()).toEqual(bootstrap);
+  expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
+  expect(bootstrap.toString()).toContain("No CLI upload");
+  expect(await projectDiscoveryResponse.json()).toEqual({
+    schemaVersion: "1",
+    projects: PROJECTS.flatMap((project) =>
+      project.repositories.map((repository) => ({
+        project_id: project.id,
+        project_url: `https://slop.cash/projects/${project.id}/`,
+        repository: repository.id,
+        skill: project.skill.id,
+        skill_source: project.skill.sourcePath,
+      })),
+    ),
+  });
+
   for (const project of PROJECTS) {
     const root = `/projects/${project.id}`;
     const [
@@ -324,6 +407,24 @@ test("serves byte-consistent install and read-only artifacts for every project",
     ]) {
       expect(response.status()).toBe(200);
     }
+    for (const response of [
+      skillResponse,
+      missionResponse,
+      codexResponse,
+      claudeResponse,
+      claudeCodeResponse,
+    ]) {
+      expect(response.headers()["content-type"]).toContain("text/markdown");
+      expect(response.headers()["access-control-allow-origin"]).toBe("*");
+      expect(response.headers()["cache-control"]).toContain("max-age=300");
+    }
+    expect(manifestResponse.headers()["content-type"]).toContain(
+      "application/json",
+    );
+    expect(manifestResponse.headers()["access-control-allow-origin"]).toBe("*");
+    expect(manifestResponse.headers()["cache-control"]).toContain(
+      "max-age=300",
+    );
     const skillBytes = await skillResponse.body();
     const manifest = (await manifestResponse.json()) as {
       archive: { sha256: string; url: string; checksumUrl: string };
@@ -341,6 +442,11 @@ test("serves byte-consistent install and read-only artifacts for every project",
     ]);
     expect(archiveResponse.status()).toBe(200);
     expect(checksumResponse.status()).toBe(200);
+    expect(archiveResponse.headers()["content-type"]).toContain(
+      "application/octet-stream",
+    );
+    expect(archiveResponse.headers()["content-disposition"]).toBe("attachment");
+    expect(archiveResponse.headers()["access-control-allow-origin"]).toBe("*");
     const archive = await archiveResponse.body();
     expect(createHash("sha256").update(archive).digest("hex")).toBe(
       manifest.archive.sha256,
