@@ -43,6 +43,16 @@ uses transient, pinned `ccusage@20.0.19`; it does not install a global package
 or upload raw local logs, and it creates a local Ed25519 device key on first
 use.
 
+Build the bounded, read-only live inventory before selecting work:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo elizaOS/asi
+```
+
+The report batches open activity, prints progress, and fails closed if a
+connection exceeds its published completeness bound. Re-read the chosen live
+issue or pull request immediately before acting.
+
 ## Choose one bounded research outcome
 
 Inspect open issues, PRs, `RESEARCH_STATUS.md`, and the active runbooks

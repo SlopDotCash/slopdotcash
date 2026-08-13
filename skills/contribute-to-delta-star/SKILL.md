@@ -41,6 +41,16 @@ For Claude Code use `--client claude-code --model claude-fable-5`. Capture uses
 transient, pinned `ccusage@20.0.19`; no global package is installed and no raw
 prompt, response, path, or session identifier is uploaded.
 
+Build the bounded, read-only live inventory before selecting work:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo lalalune/ArkLib
+```
+
+The report batches open activity, prints progress, and fails closed if a
+connection exceeds its published completeness bound. Re-read the chosen live
+issue or pull request immediately before acting.
+
 ## Choose one bounded research outcome
 
 Inspect open issues and PRs directly. Prefer the active Proximity Gap Grand

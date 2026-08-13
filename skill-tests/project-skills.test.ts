@@ -5,7 +5,15 @@
  */
 
 import assert from "node:assert";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,37 +22,40 @@ import {
   normalizeSessionReport,
   usageDelta,
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
+import { PROJECTS } from "../src/lib/projects.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const elizaSkill = join(root, "skills", "contribute-to-eliza");
-const deltaSkill = join(root, "skills", "contribute-to-delta-star");
-const reviewElizaSkill = join(root, "skills", "review-eliza-contributions");
-const reviewDeltaSkill = join(
-  root,
-  "skills",
-  "review-delta-star-contributions",
-);
+const projectPackages = PROJECTS.map((project) => ({
+  project,
+  contributorRoot: join(root, project.skill.sourcePath),
+  reviewerRoot: join(root, project.reviewSkill.sourcePath),
+}));
 
 describe("project skill contracts", () => {
-  it("keeps both skill packages focused, complete, and frontier-model explicit", () => {
-    const eliza = readFileSync(join(elizaSkill, "SKILL.md"), "utf8");
-    const delta = readFileSync(join(deltaSkill, "SKILL.md"), "utf8");
-
-    for (const [name, source] of [
-      ["contribute-to-eliza", eliza],
-      ["contribute-to-delta-star", delta],
-    ]) {
+  it("keeps every registered contributor package focused, complete, and frontier-model explicit", () => {
+    for (const { project, contributorRoot } of projectPackages) {
+      const source = readFileSync(join(contributorRoot, "SKILL.md"), "utf8");
+      const name = project.skill.id;
       assert.match(source, new RegExp(`^name: ${name}$`, "m"));
       assert.doesNotMatch(source, /\[TODO[:\]]/u);
       assert.match(source, /gpt-5\.6-sol/u);
       assert.match(source, /claude-fable-5/u);
       assert.match(source, /run-receipt\.mjs start/u);
       assert.match(source, /run-receipt\.mjs finish/u);
+      assert.match(source, /live-report\.mjs --repo/u);
       assert.match(source, /token.*never earns|receipt cannot create score/is);
       assert.match(source, /untrusted/u);
       assert.match(source, /disposable.*sandbox/is);
       assert.match(source, /Never self-approve|Leave acceptance and merge/is);
     }
+    const eliza = readFileSync(
+      join(root, "skills", "contribute-to-eliza", "SKILL.md"),
+      "utf8",
+    );
+    const delta = readFileSync(
+      join(root, "skills", "contribute-to-delta-star", "SKILL.md"),
+      "utf8",
+    );
     assert.match(eliza, /elizaOS\/eliza/u);
     assert.doesNotMatch(eliza, /lalalune\/ArkLib/u);
     assert.match(delta, /lalalune\/ArkLib/u);
@@ -53,24 +64,52 @@ describe("project skill contracts", () => {
     assert.match(delta, /does not.*guarantee.*dollar/is);
   });
 
-  it("ships byte-identical receipt logic with project data kept declarative", () => {
-    assert.strictEqual(
-      readFileSync(join(elizaSkill, "scripts", "run-receipt.mjs"), "utf8"),
-      readFileSync(join(deltaSkill, "scripts", "run-receipt.mjs"), "utf8"),
-    );
-    const eliza = JSON.parse(
-      readFileSync(join(elizaSkill, "project.json"), "utf8"),
-    );
-    const delta = JSON.parse(
-      readFileSync(join(deltaSkill, "project.json"), "utf8"),
-    );
-    assert.deepStrictEqual(eliza.models, delta.models);
-    assert.strictEqual(eliza.repositoryId, "elizaOS/eliza");
-    assert.strictEqual(delta.repositoryId, "lalalune/arklib");
+  it("ships byte-identical receipt logic with policy derived from the project inventory", () => {
+    const [canonicalPackage] = projectPackages;
     const receiptSource = readFileSync(
-      join(elizaSkill, "scripts", "run-receipt.mjs"),
+      join(canonicalPackage.contributorRoot, "scripts", "run-receipt.mjs"),
       "utf8",
     );
+    const liveReportSource = readFileSync(
+      join(canonicalPackage.contributorRoot, "scripts", "live-report.mjs"),
+      "utf8",
+    );
+    for (const { project, contributorRoot } of projectPackages) {
+      assert.strictEqual(
+        readFileSync(
+          join(contributorRoot, "scripts", "run-receipt.mjs"),
+          "utf8",
+        ),
+        receiptSource,
+        `${project.skill.id} receipt logic drifted`,
+      );
+      assert.strictEqual(
+        readFileSync(
+          join(contributorRoot, "scripts", "live-report.mjs"),
+          "utf8",
+        ),
+        liveReportSource,
+        `${project.skill.id} discovery logic drifted`,
+      );
+      const skillProject = JSON.parse(
+        readFileSync(join(contributorRoot, "project.json"), "utf8"),
+      );
+      assert.strictEqual(skillProject.projectId, project.id);
+      assert.strictEqual(skillProject.repositoryId, project.repositories[0].id);
+      assert.strictEqual(skillProject.skillName, project.skill.id);
+      assert.strictEqual(
+        skillProject.skillSourcePath,
+        project.skill.sourcePath,
+      );
+      assert.deepStrictEqual(
+        Object.entries(skillProject.models).map(([client, policy]) => ({
+          client,
+          provider: policy.provider,
+          model: policy.model,
+        })),
+        project.modelPolicy.approved,
+      );
+    }
     assert.match(receiptSource, /isSymbolicLink\(\)/u);
     assert.match(
       receiptSource,
@@ -78,12 +117,10 @@ describe("project skill contracts", () => {
     );
   });
 
-  it("keeps independent review skills hostile-input aware and non-punitive", () => {
-    for (const [name, directory] of [
-      ["review-eliza-contributions", reviewElizaSkill],
-      ["review-delta-star-contributions", reviewDeltaSkill],
-    ]) {
-      const source = readFileSync(join(directory, "SKILL.md"), "utf8");
+  it("keeps every registered review skill hostile-input aware and non-punitive", () => {
+    for (const { project, reviewerRoot } of projectPackages) {
+      const name = project.reviewSkill.id;
+      const source = readFileSync(join(reviewerRoot, "SKILL.md"), "utf8");
       assert.match(source, new RegExp(`^name: ${name}$`, "m"));
       assert.match(source, /gpt-5\.6-sol/u);
       assert.match(source, /claude-fable-5/u);
@@ -94,6 +131,41 @@ describe("project skill contracts", () => {
       assert.match(source, /accept.*partial.*reject.*hold/is);
       assert.match(source, /gitarmy-review/u);
       assert.doesNotMatch(source, /private key|seed phrase/is);
+    }
+  });
+
+  it("executes every contributor CLI through an installed-style skill symlink", () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-installed-skills-"));
+    try {
+      const skillsRoot = join(fixtureRoot, "skills");
+      mkdirSync(skillsRoot);
+      for (const { project, contributorRoot } of projectPackages) {
+        const installedSkill = join(skillsRoot, project.skill.id);
+        symlinkSync(contributorRoot, installedSkill);
+        const result = spawnSync(
+          process.execPath,
+          [join(installedSkill, "scripts", "run-receipt.mjs")],
+          { encoding: "utf8" },
+        );
+        assert.strictEqual(result.status, 1, result.stdout);
+        assert.match(
+          result.stderr,
+          /project run receipt failed: action must be start or finish/,
+          project.skill.id,
+        );
+        const reportResult = spawnSync(
+          process.execPath,
+          [join(installedSkill, "scripts", "live-report.mjs"), "--help"],
+          { encoding: "utf8" },
+        );
+        assert.strictEqual(reportResult.status, 0, reportResult.stderr);
+        assert.match(
+          reportResult.stdout,
+          /^Usage: node scripts\/live-report\.mjs/m,
+        );
+      }
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
     }
   });
 });

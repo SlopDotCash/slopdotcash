@@ -21,6 +21,8 @@ export const REMOTE_ARTIFACT_PATHS = [
   "skill.md",
   "mission.md",
   "codex.md",
+  "claude.md",
+  "claude-code.md",
   "skill-manifest.json",
   "downloads/contribute-to-eliza.skill",
   "downloads/contribute-to-eliza.skill.sha256",

@@ -13,6 +13,7 @@ import {
   type LeaderboardSnapshot,
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
+import { PROJECTS } from "../../src/lib/projects.mjs";
 
 const test = base.extend<{ browserDiagnostics: undefined }>({
   browserDiagnostics: [
@@ -293,27 +294,43 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("serves byte-consistent contributor skill artifacts for both projects", async ({
+test("serves byte-consistent install and read-only artifacts for every project", async ({
   request,
 }) => {
-  for (const project of [
-    { id: "eliza", skill: "contribute-to-eliza" },
-    { id: "delta-star", skill: "contribute-to-delta-star" },
-  ]) {
+  for (const project of PROJECTS) {
     const root = `/projects/${project.id}`;
-    const [skillResponse, manifestResponse] = await Promise.all([
+    const [
+      skillResponse,
+      manifestResponse,
+      missionResponse,
+      codexResponse,
+      claudeResponse,
+      claudeCodeResponse,
+    ] = await Promise.all([
       request.get(`${root}/skill.md`),
       request.get(`${root}/skill-manifest.json`),
+      request.get(`${root}/mission.md`),
+      request.get(`${root}/codex.md`),
+      request.get(`${root}/claude.md`),
+      request.get(`${root}/claude-code.md`),
     ]);
-    expect(skillResponse.status()).toBe(200);
-    expect(manifestResponse.status()).toBe(200);
+    for (const response of [
+      skillResponse,
+      manifestResponse,
+      missionResponse,
+      codexResponse,
+      claudeResponse,
+      claudeCodeResponse,
+    ]) {
+      expect(response.status()).toBe(200);
+    }
     const skillBytes = await skillResponse.body();
     const manifest = (await manifestResponse.json()) as {
       archive: { sha256: string; url: string; checksumUrl: string };
       name: string;
       source: { sha256: string };
     };
-    expect(manifest.name).toBe(project.skill);
+    expect(manifest.name).toBe(project.skill.id);
     expect(manifest.source.sha256).toBe(
       createHash("sha256").update(skillBytes).digest("hex"),
     );
@@ -329,6 +346,11 @@ test("serves byte-consistent contributor skill artifacts for both projects", asy
       manifest.archive.sha256,
     );
     expect(await checksumResponse.text()).toContain(manifest.archive.sha256);
+    expect(await missionResponse.text()).toContain(`name: ${project.skill.id}`);
+    expect(await codexResponse.text()).toContain("CODEX_HOME");
+    const claudeGuide = await claudeResponse.text();
+    expect(claudeGuide).toContain("CLAUDE_CONFIG_DIR");
+    expect(await claudeCodeResponse.text()).toBe(claudeGuide);
   }
 });
 
@@ -355,8 +377,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
 }) => {
   for (const path of [
     "/",
-    "/projects/eliza",
-    "/projects/delta-star",
+    ...PROJECTS.map((project) => `/projects/${project.id}`),
     "/projects/new",
   ]) {
     if (path === "/") {
