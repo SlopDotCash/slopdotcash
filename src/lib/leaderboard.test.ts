@@ -238,6 +238,7 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       repositoryId: "REPO_1",
       repositories: [
         { id: "elizaOS/eliza", repositoryId: "REPO_1" },
+        { id: "elizaOS/asi", repositoryId: "REPO_3" },
         { id: "lalalune/arklib", repositoryId: "REPO_2" },
       ],
       requestCount: 12,
@@ -1774,6 +1775,7 @@ describe("scoring and caps", () => {
     expect(snapshot.workQueue.pullRequests[0].repository).toBe("elizaOS/eliza");
     expect(snapshot.repositories.map((repository) => repository.id)).toEqual([
       "elizaOS/eliza",
+      "elizaOS/asi",
       "lalalune/arklib",
     ]);
     expect(() =>

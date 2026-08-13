@@ -31,8 +31,8 @@ describe("monthly reward close", () => {
       },
     );
 
-    expect(result.prepared).toEqual(["eliza", "delta-star"]);
-    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(result.prepared).toEqual(["eliza", "asi", "delta-star"]);
+    expect(prepare).toHaveBeenCalledTimes(3);
     expect(validateCycles).toHaveBeenCalledOnce();
   });
 
@@ -49,7 +49,7 @@ describe("monthly reward close", () => {
         validateCycles: vi.fn().mockResolvedValue({}),
       },
     );
-    expect(result.skippedExisting).toEqual(["eliza", "delta-star"]);
+    expect(result.skippedExisting).toEqual(["eliza", "asi", "delta-star"]);
 
     let call = 0;
     await expect(

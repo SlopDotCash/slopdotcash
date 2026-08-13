@@ -1512,8 +1512,14 @@ describe("current-head review selection", () => {
         requestCount += 1;
         const owner =
           typeof variables?.owner === "string" ? variables.owner : null;
+        const repositoryName =
+          typeof variables?.name === "string" ? variables.name : null;
         const repositoryNodeId =
-          owner === "lalalune" ? "REPOSITORY_ARKLIB" : "REPOSITORY_ELIZA";
+          owner === "lalalune"
+            ? "REPOSITORY_ARKLIB"
+            : repositoryName === "asi"
+              ? "REPOSITORY_ASI"
+              : "REPOSITORY_ELIZA";
         if (document.includes("query LeaderboardPreflight")) {
           return {
             repository: { id: repositoryNodeId, updatedAt },
@@ -1537,7 +1543,7 @@ describe("current-head review selection", () => {
           };
         }
         if (document.includes("query LeaderboardOpenPullRequestReferences")) {
-          if (owner === "lalalune") {
+          if (owner === "lalalune" || repositoryName === "asi") {
             return {
               repository: {
                 id: repositoryNodeId,
@@ -1622,6 +1628,7 @@ describe("current-head review selection", () => {
     const snapshot = await generateLeaderboardFromGitHub(client, { now });
     expect(snapshot.source.repositories).toEqual([
       { id: "elizaOS/eliza", repositoryId: "REPOSITORY_ELIZA" },
+      { id: "elizaOS/asi", repositoryId: "REPOSITORY_ASI" },
       { id: "lalalune/arklib", repositoryId: "REPOSITORY_ARKLIB" },
     ]);
     expect(snapshot.repositories).toEqual(
