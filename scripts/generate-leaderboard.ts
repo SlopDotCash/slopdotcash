@@ -2121,6 +2121,7 @@ export function selectDetailedMergedPullRequestIds(
   for (const candidate of [...candidates].sort(
     (left, right) =>
       right.outcome.mergedAt.localeCompare(left.outcome.mergedAt) ||
+      right.outcome.number - left.outcome.number ||
       left.outcome.id.localeCompare(right.outcome.id),
   )) {
     const { outcome, projectId } = candidate;

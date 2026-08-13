@@ -1170,6 +1170,45 @@ describe("rate-efficient query plan", () => {
     ).toThrow("verificationWindowFrom must be a valid date");
   });
 
+  it("deep-inspects the newest cap-relevant outcomes by number when merge timestamps tie", () => {
+    const mergedAt = "2026-07-15T12:00:00.000Z";
+    const outcome = (id: string): MergedPullRequestOutcome => ({
+      id,
+      number: Number(id.replace(/\D/gu, "")) || 1,
+      title: id,
+      url: `https://github.com/elizaOS/eliza/pull/${id}`,
+      body: "",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: mergedAt,
+      mergedAt,
+      author: actor("alice"),
+      additions: 1,
+      deletions: 0,
+    });
+    // Six PRs by the same author, project, and month merged in the same second
+    // (batch merge / merge queue produce identical second-precision timestamps).
+    // The base merged-PR score keeps the newest five by `number`, so the
+    // deep-inspection set must select the same five, otherwise a non-base-scored
+    // PR could earn detail-dependent bonuses.
+    const candidates = [
+      "PR_101",
+      "PR_102",
+      "PR_103",
+      "PR_104",
+      "PR_105",
+      "PR_106",
+    ].map((id) => ({ outcome: outcome(id), projectId: "eliza" }));
+
+    expect(
+      [
+        ...selectDetailedMergedPullRequestIds(
+          candidates,
+          new Date("2026-06-01T00:00:00.000Z"),
+        ),
+      ].sort(),
+    ).toEqual(["PR_102", "PR_103", "PR_104", "PR_105", "PR_106"].sort());
+  });
+
   it("recollects only typed concurrent changes to the non-scoring queue", async () => {
     let attempts = 0;
     await expect(
