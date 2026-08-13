@@ -8,10 +8,13 @@ and reward projection. Project owners review a frozen monthly proposal before
 signing any payment. `eliza.army` remains a compatibility alias during the
 migration.
 
-The launch projects are:
+The active projects are:
 
 - **Eliza:** accepted work in [`elizaOS/eliza`](https://github.com/elizaOS/eliza)
   shares a pledged maximum of **$10,000 USDC per UTC month**.
+- **ASI:** accepted work in [`elizaOS/asi`](https://github.com/elizaOS/asi),
+  the continual-reinforcement-learning framework pursuing The Alberta Plan,
+  shares a pledged maximum of **$5,000 USDC per UTC month**.
 - **Delta Star:** accepted work in
   [`lalalune/ArkLib`](https://github.com/lalalune/ArkLib) receives a provisional
   contribution percentage toward the external Ethereum Foundation Proximity

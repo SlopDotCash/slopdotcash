@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review ASI Contributions"
+  short_description: "Reproduce and red-team ASI continual-RL work"
+  default_prompt: "Use $review-asi-contributions to independently reproduce and assess this ASI contribution."

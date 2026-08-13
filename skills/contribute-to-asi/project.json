@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1",
+  "projectId": "asi",
+  "repositoryId": "elizaOS/asi",
+  "skillName": "contribute-to-asi",
+  "skillSourcePath": "skills/contribute-to-asi",
+  "publicOrigin": "https://slop.cash/projects/asi",
+  "models": {
+    "codex": {
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "ccusageSource": "codex"
+    },
+    "claude-code": {
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "ccusageSource": "claude"
+    }
+  }
+}
