@@ -41,6 +41,19 @@ function mockSnapshot(value: unknown = snapshotFixture()): void {
   );
 }
 
+function augustRollingSnapshot() {
+  const snapshot = snapshotFixture();
+  const to = snapshot.generatedAt;
+  const from = new Date(
+    Date.parse(to) - 35 * 24 * 60 * 60 * 1_000,
+  ).toISOString();
+  snapshot.window = { days: 35, from, to };
+  snapshot.source.cutoffAt = to;
+  snapshot.source.fetchedAt = to;
+  snapshot.source.verificationWindow = { days: 35, from, to };
+  return snapshot;
+}
+
 function archivedPaidCycleIndex() {
   const index = cycleIndexFixture();
   const prefix = "/data/cycles/eliza/2026-06";
@@ -115,6 +128,10 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn(),
   });
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -163,6 +180,26 @@ describe("discovery", () => {
     expect(screen.queryByText("THE GITARMY NETWORK")).not.toBeInTheDocument();
     expect(screen.queryByText("Work in. Money out.")).not.toBeInTheDocument();
     expect(screen.getByText("finish-line")).toBeInTheDocument();
+  });
+
+  it("scrolls hash navigation to the requested section", async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    mockSnapshot();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Leaderboard" });
+    fireEvent.click(screen.getByRole("link", { name: "Leaderboard" }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledOnce());
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "auto",
+      block: "start",
+    });
+    expect(window.location.hash).toBe("#leaderboard");
   });
 
   it("rotates the money-forward statement when motion is allowed", () => {
@@ -275,6 +312,17 @@ describe("discovery", () => {
     expect(row).toHaveTextContent("7");
     expect(row).toHaveTextContent("$1");
   });
+
+  it("ranks accepted prior-month work when the active project cycle has moved on", async () => {
+    mockSnapshot(augustRollingSnapshot());
+    render(<App />);
+
+    const contributor = await screen.findByText("finish-line");
+    const row = contributor.closest("tr");
+    expect(row).not.toBeNull();
+    expect(row).toHaveTextContent("34");
+    expect(row).toHaveTextContent("2 scored cycles");
+  });
 });
 
 describe("project routes", () => {
@@ -332,6 +380,20 @@ describe("project routes", () => {
 });
 
 describe("public records", () => {
+  it("keeps rolling-window contributors reachable outside the active cycle", async () => {
+    route("/contributors/finish-line");
+    mockSnapshot(augustRollingSnapshot());
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "finish-line" }),
+    ).toBeInTheDocument();
+    const totals = document.querySelector(".profile-totals");
+    expect(totals).not.toBeNull();
+    expect(totals).toHaveTextContent("34recorded score");
+    expect(screen.getByText("Harden the ark manifest loader")).toBeVisible();
+  });
+
   it("shows a contributor's cross-project score, tokens, projections, and evidence", async () => {
     route("/contributors/finish-line");
     mockSnapshot();
@@ -448,7 +510,7 @@ describe("project proposals", () => {
     const handoff = screen.getByRole("link", { name: /continue on github/i });
     expect(handoff).toHaveAttribute(
       "href",
-      expect.stringContaining("github.com/elizaOS/army/new/develop"),
+      expect.stringContaining("github.com/elizaOS/slopdotcash/new/develop"),
     );
     expect(handoff).toHaveAttribute(
       "href",

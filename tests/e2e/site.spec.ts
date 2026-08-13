@@ -152,6 +152,18 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();
+  const menuButton = page.getByRole("button", { name: "Open navigation" });
+  if (await menuButton.isVisible()) await menuButton.click();
+  await page.getByRole("link", { name: "Leaderboard" }).click();
+  await expect(page).toHaveURL(/\/#leaderboard$/u);
+  await expect
+    .poll(() =>
+      page.locator("#leaderboard").evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.top >= -1 && bounds.top < window.innerHeight;
+      }),
+    )
+    .toBe(true);
   await expect(
     page.getByText(/GitHub ledger \+ reward records live/u),
   ).toHaveCount(0);
@@ -268,7 +280,7 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
   const handoff = page.getByRole("link", { name: /Continue on GitHub/u });
   await expect(handoff).toHaveAttribute(
     "href",
-    /github\.com\/elizaOS\/army\/new\/develop/u,
+    /github\.com\/elizaOS\/slopdotcash\/new\/develop/u,
   );
   await expect(page.locator(".manifest-preview")).toContainText(
     '"monthlyCapMinor": "2500000000"',

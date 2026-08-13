@@ -68,7 +68,7 @@ describe("slop.cash deployment contract", () => {
     expect(
       deployJob.match(/diff --quiet "\$GITHUB_SHA" "\$live_develop" -- \./g),
     ).toHaveLength(2);
-    expect(deployJob).toContain("https://github.com/elizaOS/army.git");
+    expect(deployJob).toContain("https://github.com/elizaOS/slopdotcash.git");
     expect(wranglerConfiguration).toContain(
       'pages_build_output_dir = "./dist"',
     );
@@ -82,8 +82,8 @@ describe("slop.cash deployment contract", () => {
     expect(workflow).toContain(
       `cancel-in-progress: ${"$"}{{ github.event_name == 'pull_request' }}`,
     );
-    expect(workflow).not.toContain(
-      `group: army-${"$"}{{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true`,
+    expect(workflow).toContain(
+      `group: slop-${"$"}{{ github.event.pull_request.number || github.run_id }}`,
     );
     expect(deployJob).toContain(
       "github.event_name == 'push' && github.ref == 'refs/heads/develop'",
@@ -98,8 +98,8 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       'if [ "$GITHUB_REF" != "refs/heads/develop" ]; then',
     );
-    expect(deployJob).toContain("group: army-production");
-    expect(deployJob).toContain("cancel-in-progress: false");
+    expect(deployJob).toContain("group: slop-production");
+    expect(deployJob).toContain("cancel-in-progress: true");
     expect(deployJob).toContain("name: eliza-army-production");
   });
 

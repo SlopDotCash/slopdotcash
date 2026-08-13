@@ -7,7 +7,6 @@ import { parse } from "graphql";
 import { describe, expect, it, vi } from "vitest";
 import type {
   GitHubActor,
-  IssueRecord,
   LeaderboardSnapshot,
   MergedPullRequestOutcome,
   PullRequestRecord,
@@ -17,8 +16,7 @@ import {
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
 import {
-  assertOpenPullRequestReferencesCurrent,
-  assertSlopReferencesCurrent,
+  assertOpenEvidenceReferencesCurrent,
   collectSearchReferences,
   deriveCurrentHeadReviewDecision,
   deriveSourceUpdatedAt,
@@ -645,56 +643,43 @@ describe("post-evidence open-PR revalidation", () => {
 
     liveHead = "b".repeat(40);
     await expect(
-      assertOpenPullRequestReferencesCurrent(
+      assertOpenEvidenceReferencesCurrent(
         client,
         PRIMARY_REPOSITORY,
         "REPOSITORY_ELIZA",
         [pullRequest],
       ),
-    ).rejects.toThrow(
-      "Open pull-request set changed during evidence verification",
-    );
+    ).rejects.toThrow("An open pull request with evidence changed");
   });
 
-  it("fails when an issue changes while PR evidence is being fetched", async () => {
-    const issue: IssueRecord = {
-      id: "ISSUE_LABEL_RACE",
+  it("ignores unrelated open work while protecting evidence-bound versions", async () => {
+    const pullRequest = mergedPullRequestWithEvidence("", {
+      id: "PR_EVIDENCE_STABLE",
       number: 501,
-      title: "Keep the open queue current",
-      url: "https://github.com/elizaOS/eliza/issues/501",
-      body: "Acceptance criteria",
-      createdAt: "2026-07-30T09:00:00.000Z",
+      mergedAt: null,
       updatedAt: "2026-07-30T10:00:00.000Z",
-      closedAt: null,
-      stateReason: null,
-      author: actor("issue-author"),
-      assignees: [],
-      labels: [],
-      comments: [],
-      closedByPullRequests: [],
-    };
-    let liveUpdatedAt = issue.updatedAt;
+      headRefOid: "a".repeat(40),
+    });
     const client: GraphqlExecutor = {
       execute: async (document) => {
-        if (document.includes("query LeaderboardOpenIssueReferences")) {
-          return {
-            repository: {
-              id: "REPOSITORY_ELIZA",
-              issues: {
-                totalCount: 1,
-                nodes: [{ id: issue.id, updatedAt: liveUpdatedAt }],
-                pageInfo: { hasNextPage: false, endCursor: null },
-              },
-            },
-          };
-        }
         if (document.includes("query LeaderboardOpenPullRequestReferences")) {
           return {
             repository: {
               id: "REPOSITORY_ELIZA",
               pullRequests: {
-                totalCount: 0,
-                nodes: [],
+                totalCount: 2,
+                nodes: [
+                  {
+                    id: pullRequest.id,
+                    updatedAt: pullRequest.updatedAt,
+                    headRefOid: pullRequest.headRefOid,
+                  },
+                  {
+                    id: "PR_UNRELATED_NEW_WORK",
+                    updatedAt: "2026-07-30T10:01:00.000Z",
+                    headRefOid: "b".repeat(40),
+                  },
+                ],
                 pageInfo: { hasNextPage: false, endCursor: null },
               },
             },
@@ -712,16 +697,14 @@ describe("post-evidence open-PR revalidation", () => {
       }),
     };
 
-    liveUpdatedAt = "2026-07-30T10:01:00.000Z";
     await expect(
-      assertSlopReferencesCurrent(
+      assertOpenEvidenceReferencesCurrent(
         client,
         PRIMARY_REPOSITORY,
         "REPOSITORY_ELIZA",
-        [issue],
-        [],
+        [pullRequest],
       ),
-    ).rejects.toThrow("Open issue set changed during evidence verification");
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -1215,7 +1198,7 @@ describe("rate-efficient query plan", () => {
         throw new OpenSetChangedError("open issue moved");
       }),
     ).rejects.toThrow(
-      "Open work set changed during 3 consecutive verification attempts",
+      "Open evidence changed during 3 consecutive verification attempts",
     );
     expect(attempts).toBe(3);
   });
@@ -1389,7 +1372,7 @@ describe("current-head review selection", () => {
     );
   });
 
-  it("rejects decision reviews without enough current-head provenance", () => {
+  it("ignores unreachable reviewed commits and rejects missing timestamps", () => {
     const head = "a".repeat(40);
     const base = {
       id: "REVIEW_INCOMPLETE",
@@ -1398,16 +1381,16 @@ describe("current-head review selection", () => {
       commitId: head as string | null,
       author: actor("reviewer"),
     };
-    expect(() =>
+    expect(
       deriveCurrentHeadReviewDecision(head, actor("author"), [
         { ...base, commitId: null },
       ]),
-    ).toThrow("cannot prove a current-head CHANGES_REQUESTED decision");
+    ).toBeNull();
     expect(() =>
       deriveCurrentHeadReviewDecision(head, actor("author"), [
         { ...base, submittedAt: null },
       ]),
-    ).toThrow("cannot prove a current-head CHANGES_REQUESTED decision");
+    ).toThrow("cannot prove a timestamped CHANGES_REQUESTED decision");
   });
 
   it("derives the published queue from paginated GraphQL review commits", async () => {
@@ -1437,6 +1420,7 @@ describe("current-head review selection", () => {
     });
     const review = (
       id: string,
+      databaseId: number,
       state: string,
       commitId: string,
       reviewAuthor: typeof reviewer | null,
@@ -1445,17 +1429,24 @@ describe("current-head review selection", () => {
       body: "",
       state,
       submittedAt: updatedAt,
-      url: `https://github.com/elizaOS/eliza/pull/1#pullrequestreview-${id}`,
+      url: `https://github.com/elizaOS/eliza/pull/1#pullrequestreview-${databaseId}`,
       commit: { oid: commitId },
       author: reviewAuthor,
     });
     const staleReview = review(
       "REVIEW_STALE",
+      101,
       "CHANGES_REQUESTED",
       previousHead,
       reviewer,
     );
-    const ghostApproval = review("REVIEW_GHOST", "APPROVED", currentHead, null);
+    const ghostApproval = review(
+      "REVIEW_GHOST",
+      102,
+      "APPROVED",
+      currentHead,
+      null,
+    );
     const pullRequest = (
       id: string,
       number: number,
@@ -1506,6 +1497,7 @@ describe("current-head review selection", () => {
       ],
     ]);
     let requestCount = 0;
+    let openPullReferenceRequests = 0;
     let paginatedHead = currentHead;
     const client: GraphqlExecutor = {
       execute: async (document, variables) => {
@@ -1543,6 +1535,7 @@ describe("current-head review selection", () => {
           };
         }
         if (document.includes("query LeaderboardOpenPullRequestReferences")) {
+          openPullReferenceRequests += 1;
           if (owner === "lalalune" || repositoryName === "asi") {
             return {
               repository: {
@@ -1651,12 +1644,13 @@ describe("current-head review selection", () => {
     });
     expect(JSON.stringify(snapshot)).not.toContain("headRefOid");
     expect(JSON.stringify(snapshot)).not.toContain("commitId");
+    expect(openPullReferenceRequests).toBe(3);
 
     paginatedHead = previousHead;
     await expect(
       generateLeaderboardFromGitHub(client, { now }),
     ).rejects.toThrow(
-      "Open pull-request set changed during 3 consecutive collection attempts",
+      "Open pull-request state changed during 3 consecutive collection attempts",
     );
   });
 });
