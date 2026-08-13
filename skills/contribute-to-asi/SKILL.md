@@ -71,17 +71,56 @@ Breadth is not progress here. One lane, one variable, one result.
 
 ## Know the hill before you climb it
 
-Read, in this order: root `CLAUDE.md`/`AGENTS.md`, `RESEARCH_STATUS.md`, the
-runbook for the lane you intend to touch, `NEGATIVE_RESULTS_LEDGER.md`, and
+Read, in this order: `outputs/ipmnist_screening/RUNBOOK.md`,
+`outputs/ipmnist_screening/FINAL_REPORT.md` and `CEILING_ANALYSIS.md`,
+`NEGATIVE_RESULTS_LEDGER.md`, `RESEARCH_STATUS.md`, root `CLAUDE.md`, and
 [repository-contract.md](references/repository-contract.md).
 
-The active lanes, their entry points, and the current best recorded numbers
-live in those files and **move often**. Read them from the repository at the
-commit you are working on. Never quote a baseline from this skill, from a
-cached page, or from an older pull request — re-measure it yourself.
+**One lane is open for climbing: IPMNIST screening**
+(`alberta_framework.benchmarks.ipmnist_screening`). The metric is
+`average_online_accuracy` on the online input-permuted MNIST protocol —
+one example per step, scored before the update that consumes it, a fresh
+permutation every 5,000 steps. `micro_continual` is its cheap Gaussian inner
+loop and `rule_discovery` is its automated search driver.
 
-Check `NEGATIVE_RESULTS_LEDGER.md` before you start. Re-running a recorded
-dead end is the most common way to waste a month of compute here.
+Read the incumbent numbers out of the artifacts, not out of prose: the merged
+summaries under `outputs/ipmnist_screening/` and
+`publication_runs/RESULTS.md`. The root `CLAUDE.md` headline lags behind the
+campaign and has been wrong before — treat the summary JSON as authoritative,
+and re-measure the baseline yourself regardless. Never quote a baseline from
+this skill, a cached page, or an older pull request.
+
+Check `NEGATIVE_RESULTS_LEDGER.md` before you start. It records dead ends in
+detail — closed normalizer-decay stars, refuted update-rule waves, RLS
+forgetting that overflows, readout-only attacks on the convergence shortfall,
+and ensembling that cannot create accuracy no member has. Re-running one of
+these is the most common way to waste a month of compute here.
+
+`CEILING_ANALYSIS.md` holds the target ladder and names what the remaining
+headroom actually costs. `NEW_DIRECTIONS.md` and
+`RESEARCH_REPORT_AGE_OF_EXPERIENCE.md` carry pre-registered directions that
+are open and unexecuted — those are the best starting points for new work.
+
+## Lanes that are closed to you
+
+Some machinery in this repository consumes scarce, permanently frozen
+resources. **Do not issue a plan, reserve a seed, or start a shard in these**
+unless a maintainer has explicitly asked you to in writing:
+
+- the IPMNIST v3 frozen lifecycle — a failed or partial worker consumes that
+  learner and seed identity permanently and it can never be retried;
+- the label-permuted EMNIST, slowly-changing-regression, and continual-IA v2
+  lifecycles — unissued and nonpromoting;
+- the forager matched-current and matched-v3 campaigns — currently fail
+  closed, and no external baseline comparison is admissible.
+
+Two things look broken and are not. `alberta-evidence-status` exiting `2`
+means registered sources changed after artifacts were pinned; that is the
+fail-closed design, not a bug to silence. And the screening proxy validation
+reports a prefix mismatch for the control arm caused by a 1–2 ulp divergence
+between batched and unbatched compilation; paired within-runner comparisons
+cancel it, which is exactly why every comparison must be within-runner.
+Neither is your bug to fix.
 
 ## Search the literature before you invent
 
@@ -142,28 +181,62 @@ Before you measure anything, post this in the issue or discussion:
 Deciding what counts as success after seeing the numbers is how a benchmark
 suite rots. Pre-registration is what makes your result mean anything.
 
-## Run a paired comparison
+## Climb the ladder
+
+The house pattern is **screen cheap, confirm expensive, publish on held-out
+seeds** — always paired on shared seeds against a named incumbent, always
+writing to new paths. Verify every command against the runbook and `--help`
+at your commit; flags move.
+
+**Prototype on the micro suite** (minutes, not hours). It reproduces the
+campaign ordering on a synthetic stream at a large speedup, and it has an
+analytic Bayes ceiling to sanity-check against. A micro win promotes nothing;
+it only decides whether the real screen is worth the compute.
+
+**Register the arm.** A new arm is a spec in the screening registry — the CLI
+refuses any config name it does not know. The house convention is a
+**bit-exact reduction pin**: with your new mechanism's constant inert, the arm
+must reduce bit-for-bit to an existing arm, and you add the test that proves
+it, failing-test-first.
+
+**Screen at 60 tasks on the three paired seeds.** Baseline shards for the
+incumbent and the control already exist under
+`outputs/ipmnist_screening/shards/` — **reuse them**. Re-running them wastes
+compute and breaks pairing.
+
+**Merge into a new summary, against the incumbent.** Read
+`paired_vs_control`: `mean_diff`, `per_seed_diff`, `all_seeds_improve`. The
+standing bar to escalate is **a paired mean improvement over the incumbent
+champion with every seed positive** — check the runbook for the current
+threshold before you claim it. Never overwrite an existing summary, and never
+merge across protocol configs or noise modes; the merge validator refuses
+both, deliberately.
+
+**Confirm at 200 tasks**, then **publish on held-out seeds**, reporting the
+full-seed mean and the held-out-only mean separately. The held-out seeds are
+kept selection-untouched until the screen passes; that separation is the whole
+anti-cherry-picking mechanism, and spending it early cannot be undone.
+
+Throughout:
 
 - Change **one** variable. A change with two moving parts teaches nothing.
-- Run baseline and candidate with the same seeds, steps, data order, and
-  hardware. Re-run the baseline yourself; never compare your candidate against
-  a number produced in a different environment.
-- Tune on tuning seeds only. Evaluation seeds are touched once, at the end.
-  Reusing consumed evidence seeds is permanently nonpromoting.
-- Report mean **and** spread across `n` seeds. A single lucky run is not a
-  result, and neither is a best-of-five.
+- Share seeds, steps, data order, and hardware between baseline and candidate.
+- Report mean **and** spread across `n`. A single lucky run is not a result,
+  and neither is a best-of-five. A delta inside the seed-to-seed spread is
+  inconclusive — say so and raise `n` or stop.
 - State the compute budget the comparison consumed.
-- Then check you broke nothing: run the focused tests for the module you
-  touched, plus the lane's required verification.
+- Check you broke nothing:
 
 ```bash
 .venv/bin/python -m pytest tests/<file> -q -o addopts=""   # focused tests
 .venv/bin/python -m ruff check .                           # lint, line length 100
-.venv/bin/alberta-evidence-status                          # evidence registry
+.venv/bin/python -m mypy                                   # strict, py312
 ```
 
-`alberta-evidence-status` exits `0` accepted, `1` valid rejection or missing,
-`2` invalid. A valid rejection is a real outcome, not a failure to hide.
+Benchmark runs happen through CLIs, never inside pytest. Shards are immutable
+and written atomically, so parallel workers are safe and a completed shard is
+never overwritten — but a wrong shard is permanent, so check the arm and seed
+before launching a wave.
 
 ## Publish the evidence
 
