@@ -977,8 +977,29 @@ small {
   background: rgba(255, 253, 248, 0.7);
 }
 
+.profile-project-block {
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-project-block:last-child {
+  border-bottom: 0;
+}
+
+.profile-projects > .profile-project-block > a {
+  border-bottom: 0;
+}
+
+.profile-cap-line {
+  margin: 0;
+  padding: 0 20px 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .event-list > a,
-.profile-projects > a {
+.profile-projects > a,
+.profile-projects > .profile-project-block > a {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -994,7 +1015,8 @@ small {
 }
 
 .event-list > a:hover,
-.profile-projects > a:hover {
+.profile-projects > a:hover,
+.profile-projects > .profile-project-block > a:hover {
   background: rgba(255, 90, 25, 0.055);
 }
 
@@ -1076,6 +1098,22 @@ small {
   color: var(--orange-dark);
   font-size: 11px;
   font-weight: 800;
+}
+
+.opportunity-list > a {
+  grid-template-columns: minmax(5.5rem, 7rem) minmax(0, 1fr) auto;
+}
+
+.opportunity-list .event-points {
+  width: auto;
+  min-width: 5.5rem;
+  height: auto;
+  min-height: 42px;
+  padding: 8px 6px;
+  border-radius: 999px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
 }
 
 .cycle-hero {

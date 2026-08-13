@@ -168,6 +168,7 @@ Profiles preserve:
 
 - current and historical project score;
 - accepted evidence;
+- still-open scoring opportunities and monthly cap fill;
 - relevant and ambiguous token totals;
 - model and client provenance;
 - projections, approved amounts, and paid totals;
@@ -220,7 +221,9 @@ Track all of these without collapsing them into one vanity number:
   work, but shared monthly pools and external shares are the launch path);
 - private repositories or non-code community/design work;
 - hosted model execution inside third-party project CI;
-- a cross-project feed of every rejected or maintainer-closed attempt;
+- a cross-project feed of every rejected or maintainer-closed attempt
+  (per-profile still-open opportunities are in scope; a global rejection feed
+  is not);
 - autonomous banning;
 - raw prompt, response, source-file, or secret upload.
 

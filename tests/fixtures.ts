@@ -28,7 +28,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
     kind: "User",
   };
   return {
-    schemaVersion: "4",
+    schemaVersion: "5",
     repository: "elizaOS/eliza",
     repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
     ruleVersion: "gitarmy-v1",
@@ -285,6 +285,27 @@ export function snapshotFixture(): LeaderboardSnapshot {
           url: "https://github.com/elizaOS/eliza/pull/17200#pullrequestreview-1",
         },
         reason: "Substantive review completed before merge.",
+      },
+    ],
+    opportunities: [
+      {
+        id: "PR_open_fixture:opportunity:missing-evidence",
+        actor: leaderActor,
+        kind: "missing-evidence",
+        category: "evidence",
+        potentialPoints: 6,
+        occurredAt: "2026-07-29T18:00:00.000Z",
+        repository: "elizaOS/eliza",
+        source: {
+          id: "PR_open_fixture",
+          kind: "pull-request",
+          number: 17340,
+          title: "Finish the open contribution checklist",
+          url: "https://github.com/elizaOS/eliza/pull/17340",
+        },
+        reason:
+          "Open pull request evidence is missing with 0 of 6 points verified.",
+        hint: "Add verified screenshot, video, or log evidence before merge.",
       },
     ],
     attributions: [

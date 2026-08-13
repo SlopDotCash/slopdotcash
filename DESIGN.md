@@ -89,7 +89,8 @@ cumulative score and paid total. Historical-only contributors remain visible.
 The global score comes from accepted rolling-ledger events plus closed-cycle
 records, with the closed record replacing an overlapping project-month bucket.
 Empty data, loading, stale data, invalid data, and zero accepted work are five
-different states.
+different states. Profile opportunity rows lead with the next action, not a
+demerit; monthly caps appear as compact fill status, never a dropped-award list.
 
 ### Cycle
 

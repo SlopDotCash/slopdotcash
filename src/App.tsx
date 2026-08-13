@@ -33,7 +33,9 @@ import {
   assertLeaderboardSnapshot,
   type GitHubActor,
   type LeaderboardSnapshot,
+  PROFILE_OPPORTUNITY_LIMIT,
   type ScoreEvent,
+  type ScoreOpportunity,
 } from "./lib/leaderboard";
 import {
   formatMonthlyCapDisplay,
@@ -41,6 +43,7 @@ import {
 } from "./lib/project-schema.mjs";
 import {
   createProjectView,
+  formatCapUsageLine,
   type ProjectContributor,
   type ProjectView,
 } from "./lib/project-view";
@@ -1075,17 +1078,32 @@ function ProfilePage({
       )
       .map((contributor) => ({ contributor, cycle })),
   );
+  const loginOpportunities = state.views.flatMap((view) =>
+    view.opportunities
+      .filter(
+        (opportunity) =>
+          opportunity.actor.login.toLowerCase() === login.toLowerCase(),
+      )
+      .map((opportunity) => ({ opportunity, project: view.project })),
+  );
   const globalLeader = createGlobalLeaders(
     state.snapshot,
     state.views,
     state.cycleIndex,
   ).find((leader) => leader.actor.login.toLowerCase() === login.toLowerCase());
-  if (matches.length === 0 && history.length === 0 && !globalLeader) {
+  if (
+    matches.length === 0 &&
+    history.length === 0 &&
+    !globalLeader &&
+    loginOpportunities.length === 0
+  ) {
     return <NotFound title="Contributor not found" />;
   }
   const historicalActor = history[0]?.contributor.actor;
+  const opportunityActor = loginOpportunities[0]?.opportunity.actor;
   const actor: GitHubActor = globalLeader?.actor ??
-    matches[0]?.leader.actor ?? {
+    matches[0]?.leader.actor ??
+    opportunityActor ?? {
       id: historicalActor?.id ?? `historical:${login.toLowerCase()}`,
       login: historicalActor?.login ?? login,
       avatarUrl: `https://github.com/${encodeURIComponent(login)}.png?size=160`,
@@ -1100,6 +1118,16 @@ function ProfilePage({
     }
     return [{ event, project }];
   });
+  const opportunities = loginOpportunities
+    .filter(({ opportunity }) => opportunity.actor.id === actor.id)
+    .sort(
+      (left, right) =>
+        Date.parse(right.opportunity.occurredAt) -
+          Date.parse(left.opportunity.occurredAt) ||
+        left.opportunity.source.number - right.opportunity.source.number ||
+        left.opportunity.id.localeCompare(right.opportunity.id),
+    )
+    .slice(0, PROFILE_OPPORTUNITY_LIMIT);
   const score = globalLeader?.score ?? 0;
   const tokens = matches.reduce(
     (total, match) => total + match.leader.usage.relevantTokens,
@@ -1167,26 +1195,53 @@ function ProfilePage({
           </div>
         </div>
         <div className="profile-projects">
-          {matches.map(({ leader, view }) => (
-            <Link href={`/projects/${view.project.slug}`} key={view.project.id}>
-              <span>
-                <strong>{view.project.name}</strong>
-                <small>{view.cycle.id}</small>
-              </span>
-              <span>
-                <strong>{leader.score} score</strong>
-                <small>
-                  {formatCompact(leader.usage.relevantTokens)} tokens
-                </small>
-              </span>
-              <span>
-                <RewardValue leader={leader} />
-              </span>
-              <ChevronRight aria-hidden="true" />
-            </Link>
-          ))}
+          {matches.length === 0 ? (
+            <EmptyState text="No accepted project score in the current cycles yet." />
+          ) : (
+            matches.map(({ leader, view }) => {
+              const capLine = formatCapUsageLine(leader.capUsage);
+              return (
+                <div className="profile-project-block" key={view.project.id}>
+                  <Link href={`/projects/${view.project.slug}`}>
+                    <span>
+                      <strong>{view.project.name}</strong>
+                      <small>{view.cycle.id}</small>
+                    </span>
+                    <span>
+                      <strong>{leader.score} score</strong>
+                      <small>
+                        {formatCompact(leader.usage.relevantTokens)} tokens
+                      </small>
+                    </span>
+                    <span>
+                      <RewardValue leader={leader} />
+                    </span>
+                    <ChevronRight aria-hidden="true" />
+                  </Link>
+                  {capLine ? (
+                    <p className="profile-cap-line">{capLine}</p>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
+      {opportunities.length > 0 ? (
+        <section className="section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Still open</p>
+              <h2>Things that could be worked on.</h2>
+            </div>
+            <p>
+              Concrete next actions on still-open work that can still change the
+              score if they qualify under the published rules.
+            </p>
+          </div>
+          <OpportunityList opportunities={opportunities} />
+        </section>
+      ) : null}
       {history.length > 0 ? (
         <section className="section">
           <div className="section-heading">
@@ -1236,6 +1291,47 @@ function ProfilePage({
         <EventList events={events} />
       </section>
     </main>
+  );
+}
+
+function opportunityPointsLabel(opportunity: ScoreOpportunity): string {
+  if (
+    opportunity.kind === "missing-evidence" ||
+    opportunity.kind === "partial-evidence"
+  ) {
+    // Evidence is the least certain category: each attachment must still pass
+    // remote structure and head-binding verification after merge.
+    return `+${opportunity.potentialPoints} if it verifies`;
+  }
+  return `+${opportunity.potentialPoints} if it qualifies`;
+}
+
+function OpportunityList({
+  opportunities,
+}: {
+  opportunities: Array<{
+    opportunity: ScoreOpportunity;
+    project: ProjectDefinition;
+  }>;
+}) {
+  return (
+    <div className="event-list opportunity-list">
+      {opportunities.map(({ opportunity, project }) => (
+        <ExternalLinkAnchor href={opportunity.source.url} key={opportunity.id}>
+          <span className="event-points">
+            {opportunityPointsLabel(opportunity)}
+          </span>
+          <span>
+            <strong>{opportunity.hint}</strong>
+            <small>
+              {opportunity.source.title} · {project.name} ·{" "}
+              {formatDate(opportunity.occurredAt)}
+            </small>
+          </span>
+          <ExternalLink aria-hidden="true" size={16} />
+        </ExternalLinkAnchor>
+      ))}
+    </div>
   );
 }
 

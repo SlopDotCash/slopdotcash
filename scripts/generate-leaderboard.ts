@@ -1566,7 +1566,7 @@ async function collectOpenReferences(
     }
     expectedCount = expectedCount ?? result.page.totalCount;
     if (result.page.totalCount !== expectedCount) {
-      throw new Error(
+      throw new OpenSetChangedError(
         `Open ${field} changed from ${expectedCount} to ${result.page.totalCount} while listing; rerun for a coherent snapshot`,
       );
     }

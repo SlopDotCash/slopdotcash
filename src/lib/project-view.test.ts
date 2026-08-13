@@ -11,7 +11,8 @@ import type {
   LeaderboardSnapshot,
   ModelAttribution,
 } from "./leaderboard";
-import { createProjectView } from "./project-view";
+import { SCORE_CAPS } from "./leaderboard";
+import { createProjectView, formatCapUsageLine } from "./project-view";
 import type { ProjectRunReceipt } from "./run-receipts";
 
 const SECOND_ACTOR: GitHubActor = {
@@ -110,6 +111,74 @@ describe("project views", () => {
       kind: "external-prize-share",
       totalSharePartsPerMillion: 1_000_000,
     });
+  });
+
+  it("keeps still-open opportunities across cycle bounds and reports cap fill", () => {
+    const snapshot = snapshotFixture();
+    snapshot.opportunities = [
+      {
+        id: "PR_old_open:opportunity:missing-evidence",
+        actor: snapshot.leaders[0].actor,
+        kind: "missing-evidence",
+        category: "evidence",
+        potentialPoints: 6,
+        occurredAt: "2026-06-20T12:00:00.000Z",
+        repository: "elizaOS/eliza",
+        source: {
+          id: "PR_old_open",
+          kind: "pull-request",
+          number: 17000,
+          title: "Older open checklist",
+          url: "https://github.com/elizaOS/eliza/pull/17000",
+        },
+        reason:
+          "Open pull request evidence is missing with 0 of 6 points verified.",
+        hint: "Add verified screenshot, video, or log evidence before merge.",
+      },
+      {
+        id: "PR_arklib_open:opportunity:partial-evidence",
+        actor: snapshot.leaders[0].actor,
+        kind: "partial-evidence",
+        category: "evidence",
+        potentialPoints: 4,
+        occurredAt: "2026-07-29T12:00:00.000Z",
+        repository: "lalalune/arklib",
+        source: {
+          id: "PR_arklib_open",
+          kind: "pull-request",
+          number: 99,
+          title: "Ark open checklist",
+          url: "https://github.com/lalalune/arklib/pull/99",
+        },
+        reason:
+          "Open pull request evidence is partial with 2 of 6 points verified.",
+        hint: "Finish verified evidence categories before merge.",
+      },
+    ];
+
+    const eliza = createProjectView(snapshot, "eliza", "2026-07");
+    expect(eliza.opportunities).toHaveLength(1);
+    expect(eliza.opportunities[0].source.id).toBe("PR_old_open");
+    expect(eliza.leaders[0].capUsage).toMatchObject({
+      month: "2026-07",
+      mergedPullRequests: { used: 1, cap: SCORE_CAPS.mergedPullRequests },
+      resolvedIssues: { used: 1, cap: SCORE_CAPS.resolvedIssues },
+      materialTestChanges: { used: 1, cap: SCORE_CAPS.materialTestChanges },
+      evidencePoints: { used: 3, cap: SCORE_CAPS.evidencePoints },
+      substantiveReviews: { used: 1, cap: SCORE_CAPS.substantiveReviews },
+      evaluatedContributions: {
+        used: 0,
+        cap: SCORE_CAPS.evaluatedContributions,
+      },
+    });
+    expect(formatCapUsageLine(eliza.leaders[0].capUsage)).toBe(
+      "2026-07 caps · merges 1/5 · issues 1/5 · tests 1/5 · evidence 3/30 · reviews 1/10",
+    );
+
+    const delta = createProjectView(snapshot, "delta-star", "2026-07");
+    expect(delta.opportunities.map((row) => row.source.id)).toEqual([
+      "PR_arklib_open",
+    ]);
   });
 
   it("counts project receipts publicly but only weights runs tied to accepted outcomes", () => {

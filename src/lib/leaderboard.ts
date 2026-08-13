@@ -27,7 +27,8 @@ export {
 
 /** Backward-compatible alias for the primary registry repository. */
 export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY.id;
-export const LEADERBOARD_SCHEMA_VERSION = "4" as const;
+export const LEADERBOARD_SCHEMA_VERSION = "5" as const;
+export const PROFILE_OPPORTUNITY_LIMIT = 5 as const;
 export const SCORE_RULE_VERSION = "gitarmy-v1" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
@@ -283,6 +284,42 @@ export interface ScoreEvent {
   };
 }
 
+export type ScoreOpportunityKind =
+  | "near-material-test"
+  | "expand-review"
+  | "missing-evidence"
+  | "partial-evidence";
+
+/** Still-actionable scoring opportunities for public profile guidance. */
+export interface ScoreOpportunity {
+  id: string;
+  actor: GitHubActor;
+  kind: ScoreOpportunityKind;
+  category: ScoreCategory;
+  potentialPoints: number;
+  occurredAt: string;
+  repository: RepositoryId;
+  source: ScoreEvent["source"];
+  reason: string;
+  hint: string;
+}
+
+export interface CapUsageBucket {
+  used: number;
+  cap: number;
+}
+
+/** Per-contributor monthly cap fill for compact profile status lines. */
+export interface CapUsageStatus {
+  month: string;
+  mergedPullRequests: CapUsageBucket;
+  resolvedIssues: CapUsageBucket;
+  materialTestChanges: CapUsageBucket;
+  evidencePoints: CapUsageBucket;
+  substantiveReviews: CapUsageBucket;
+  evaluatedContributions: CapUsageBucket;
+}
+
 export interface LeaderboardEntry {
   rank: number;
   actor: GitHubActor;
@@ -456,6 +493,7 @@ export interface LeaderboardSnapshot {
   source: LeaderboardSourceMetadata;
   leaders: LeaderboardEntry[];
   ledger: ScoreEvent[];
+  opportunities: ScoreOpportunity[];
   attributions: ModelAttribution[];
   invalidAttributionMarkers: InvalidAttributionMarker[];
   attributionCoverage: AttributionCoverage;
@@ -844,7 +882,10 @@ export function isRecognizedTestFile(path: string): boolean {
   );
 }
 
-export function hasMaterialTestChange(files: PullRequestFile[]): boolean {
+export function materialTestStats(files: PullRequestFile[]): {
+  additions: number;
+  churn: number;
+} {
   const testFiles = files.filter((file) => isRecognizedTestFile(file.path));
   const additions = testFiles.reduce(
     (total, file) => total + file.additions,
@@ -854,7 +895,24 @@ export function hasMaterialTestChange(files: PullRequestFile[]): boolean {
     (total, file) => total + file.additions + file.deletions,
     0,
   );
+  return { additions, churn };
+}
+
+export function hasMaterialTestChange(files: PullRequestFile[]): boolean {
+  const { additions, churn } = materialTestStats(files);
   return additions >= MATERIAL_TEST_ADDITIONS && churn >= MATERIAL_TEST_CHURN;
+}
+
+/** Open PRs with non-trivial test progress that still miss the published bar. */
+export function isNearMaterialTestChange(files: PullRequestFile[]): boolean {
+  if (hasMaterialTestChange(files)) {
+    return false;
+  }
+  const { additions, churn } = materialTestStats(files);
+  return (
+    additions >= Math.ceil(MATERIAL_TEST_ADDITIONS / 2) ||
+    churn >= Math.ceil(MATERIAL_TEST_CHURN / 2)
+  );
 }
 
 const EVIDENCE_CATEGORIES: readonly EvidenceCategory[] = [
@@ -1473,6 +1531,44 @@ export function isSubstantiveReview(
   if (!["APPROVED", "CHANGES_REQUESTED"].includes(review.state)) {
     return false;
   }
+  return hasSubstantiveReviewBody(review);
+}
+
+/**
+ * Open-PR review that already chose APPROVED/CHANGES_REQUESTED but still needs
+ * substantive rationale or an inline comment to qualify after merge.
+ */
+export function isExpandableReviewOpportunity(
+  review: PullRequestReview,
+  pullRequest: PullRequestRecord,
+): boolean {
+  if (pullRequest.mergedAt !== null) {
+    return false;
+  }
+  if (
+    !review.author ||
+    isBotActor(review.author) ||
+    !pullRequest.author ||
+    isBotActor(pullRequest.author)
+  ) {
+    return false;
+  }
+  if (
+    review.author.id === pullRequest.author.id ||
+    review.author.login.toLowerCase() === pullRequest.author.login.toLowerCase()
+  ) {
+    return false;
+  }
+  if (!review.submittedAt) {
+    return false;
+  }
+  if (!["APPROVED", "CHANGES_REQUESTED"].includes(review.state)) {
+    return false;
+  }
+  return !hasSubstantiveReviewBody(review);
+}
+
+function hasSubstantiveReviewBody(review: PullRequestReview): boolean {
   const substantiveBody = review.body
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/[#*_>`~[\]()!-]/g, "")
@@ -2255,6 +2351,190 @@ function compareWorkItems(left: WorkItem, right: WorkItem): number {
   );
 }
 
+function compareOpportunities(
+  left: ScoreOpportunity,
+  right: ScoreOpportunity,
+): number {
+  return (
+    parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
+    left.source.number - right.source.number ||
+    left.id.localeCompare(right.id)
+  );
+}
+
+function hasOpenPullRequestOpportunitySignal(
+  pullRequest: PullRequestRecord,
+): boolean {
+  if (isNearMaterialTestChange(pullRequest.files)) {
+    return true;
+  }
+  if (materialTestStats(pullRequest.files).additions > 0) {
+    return true;
+  }
+  if (
+    pullRequest.reviews.some(
+      (review) =>
+        review.author &&
+        !isBotActor(review.author) &&
+        pullRequest.author &&
+        !sameActor(review.author, pullRequest.author),
+    )
+  ) {
+    return true;
+  }
+  return (
+    pullRequest.commitCount >= 1 &&
+    pullRequest.changedFiles >= 1 &&
+    pullRequest.additions + pullRequest.deletions >= 20
+  );
+}
+
+function collectOpenPullRequestOpportunities(
+  openPullRequests: PullRequestRecord[],
+  verifiedEvidence: VerifiedEvidenceArtifact[],
+): ScoreOpportunity[] {
+  const opportunities: ScoreOpportunity[] = [];
+
+  for (const pullRequest of openPullRequests) {
+    if (pullRequest.mergedAt !== null) {
+      continue;
+    }
+    const repository = repositoryIdFromUrl(pullRequest.url);
+    const pullRequestSource = {
+      id: pullRequest.id,
+      kind: "pull-request" as const,
+      number: pullRequest.number,
+      title: pullRequest.title,
+      url: pullRequest.url,
+    };
+
+    if (pullRequest.author && !isBotActor(pullRequest.author)) {
+      // Drafts are still open, but they are not ready for score-facing guidance.
+      if (!pullRequest.isDraft) {
+        if (isNearMaterialTestChange(pullRequest.files)) {
+          const { additions, churn } = materialTestStats(pullRequest.files);
+          opportunities.push({
+            id: `${pullRequest.id}:opportunity:near-material-test`,
+            actor: pullRequest.author,
+            kind: "near-material-test",
+            category: "material-test-change",
+            potentialPoints: 4,
+            occurredAt: pullRequest.updatedAt,
+            repository,
+            source: pullRequestSource,
+            reason: `Recognized test files currently add ${additions} lines and change ${churn} total lines; thresholds are ${MATERIAL_TEST_ADDITIONS} additions and ${MATERIAL_TEST_CHURN} churn.`,
+            hint: `Add recognized test coverage to reach ${MATERIAL_TEST_ADDITIONS} additions and ${MATERIAL_TEST_CHURN} total churn before merge.`,
+          });
+        }
+
+        const sources = pullRequestTextSources(pullRequest);
+        const evidence = assessEvidence(
+          sources,
+          verifiedEvidence.filter(
+            (artifact) =>
+              artifact.pullRequestId === pullRequest.id &&
+              artifact.pullRequestMergedAt === pullRequest.mergedAt &&
+              artifact.pullRequestHeadOid === pullRequest.headRefOid &&
+              artifact.pullRequestUpdatedAt === pullRequest.updatedAt,
+          ),
+        );
+        const status = evidenceStatus(evidence);
+        const publishEvidenceGap =
+          status.status === "partial" ||
+          (status.status === "missing" &&
+            hasOpenPullRequestOpportunitySignal(pullRequest));
+        if (publishEvidenceGap) {
+          const remaining = status.maxPoints - status.points;
+          opportunities.push({
+            id: `${pullRequest.id}:opportunity:${status.status}-evidence`,
+            actor: pullRequest.author,
+            kind:
+              status.status === "missing"
+                ? "missing-evidence"
+                : "partial-evidence",
+            category: "evidence",
+            potentialPoints: remaining,
+            occurredAt: pullRequest.updatedAt,
+            repository,
+            source: pullRequestSource,
+            reason: `Open pull request evidence is ${status.status} with ${status.points} of ${status.maxPoints} points verified.`,
+            hint:
+              status.status === "missing"
+                ? "Add verified screenshot, video, or log evidence before merge."
+                : "Finish verified evidence categories before merge.",
+          });
+        }
+      }
+    }
+
+    if (pullRequest.isDraft) {
+      continue;
+    }
+
+    // A reviewer who already left a qualifying review on this pull request
+    // scores once it merges, so telling them to expand a thinner review would
+    // be false guidance.
+    const qualifiedReviewers = new Set(
+      dedupeByNodeId(pullRequest.reviews).flatMap((review) =>
+        review.author &&
+        ["APPROVED", "CHANGES_REQUESTED"].includes(review.state) &&
+        hasSubstantiveReviewBody(review)
+          ? [review.author.id]
+          : [],
+      ),
+    );
+    const seenReviewers = new Set<string>();
+    for (const review of dedupeByNodeId(pullRequest.reviews).sort(
+      (left, right) => {
+        if (left.submittedAt === right.submittedAt) {
+          return left.id.localeCompare(right.id);
+        }
+        if (left.submittedAt === null) {
+          return -1;
+        }
+        if (right.submittedAt === null) {
+          return 1;
+        }
+        return left.submittedAt.localeCompare(right.submittedAt);
+      },
+    )) {
+      if (
+        !review.author ||
+        seenReviewers.has(review.author.id) ||
+        qualifiedReviewers.has(review.author.id) ||
+        !isExpandableReviewOpportunity(review, pullRequest)
+      ) {
+        continue;
+      }
+      seenReviewers.add(review.author.id);
+      if (!review.submittedAt) {
+        continue;
+      }
+      opportunities.push({
+        id: `${pullRequest.id}:opportunity:expand-review:${review.author.id}`,
+        actor: review.author,
+        kind: "expand-review",
+        category: "substantive-review",
+        potentialPoints: 3,
+        occurredAt: review.submittedAt,
+        repository,
+        source: {
+          id: review.id,
+          kind: "review",
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: review.url,
+        },
+        reason:
+          "Review is APPROVED or CHANGES_REQUESTED but still needs at least 20 characters of rationale or an inline comment.",
+        hint: "Add at least 20 characters of review rationale or an inline comment before merge.",
+      });
+    }
+  }
+
+  return opportunities.sort(compareOpportunities);
+}
+
 function latestSourceUpdate(input: LeaderboardInput): string {
   const timestamps = [
     input.sourceUpdatedAt,
@@ -2613,6 +2893,10 @@ export function createLeaderboardSnapshot(
       ),
     ),
   );
+  const opportunities = collectOpenPullRequestOpportunities(
+    openPullRequests,
+    verifiedEvidence,
+  );
   const overallAttribution = assessModelAttribution(
     [...scoredAttributionSources.values()],
     { requireEverySource: true },
@@ -2675,6 +2959,7 @@ export function createLeaderboardSnapshot(
         left.source.number - right.source.number ||
         left.id.localeCompare(right.id),
     ),
+    opportunities,
     attributions,
     invalidAttributionMarkers: overallAttribution.invalidMarkers.sort(
       (left, right) =>
@@ -3753,6 +4038,90 @@ function assertLedgerValue(
   }
 }
 
+function assertOpportunityValue(
+  value: unknown,
+  path: string,
+): asserts value is ScoreOpportunity {
+  const opportunity = assertObject(value, path);
+  assertString(opportunity.id, `${path}.id`);
+  assertActorValue(opportunity.actor, `${path}.actor`);
+  assertEnum(
+    opportunity.kind,
+    [
+      "near-material-test",
+      "expand-review",
+      "missing-evidence",
+      "partial-evidence",
+    ],
+    `${path}.kind`,
+  );
+  assertEnum(
+    opportunity.category,
+    [
+      "merged-pull-request",
+      "resolved-issue",
+      "material-test-change",
+      "evidence",
+      "substantive-review",
+      "evaluated-contribution",
+    ],
+    `${path}.category`,
+  );
+  assertPositiveInteger(opportunity.potentialPoints, `${path}.potentialPoints`);
+  const potentialPoints = Number(opportunity.potentialPoints);
+  const kind = opportunity.kind as ScoreOpportunityKind;
+  const category = opportunity.category as ScoreCategory;
+  const validPair =
+    (kind === "near-material-test" &&
+      category === "material-test-change" &&
+      potentialPoints === 4) ||
+    (kind === "expand-review" &&
+      category === "substantive-review" &&
+      potentialPoints === 3) ||
+    ((kind === "missing-evidence" || kind === "partial-evidence") &&
+      category === "evidence" &&
+      potentialPoints >= 1 &&
+      potentialPoints <= 6);
+  if (!validPair) {
+    throw new Error(
+      `${path} kind/category/potentialPoints combination is invalid`,
+    );
+  }
+  assertIsoTimestamp(opportunity.occurredAt, `${path}.occurredAt`);
+  assertString(opportunity.reason, `${path}.reason`);
+  assertString(opportunity.hint, `${path}.hint`);
+  if (opportunity.hint.length < 12) {
+    throw new Error(`${path}.hint must be an actionable next step`);
+  }
+  assertEnum(
+    opportunity.repository,
+    TARGET_REPOSITORIES.map((repository) => repository.id),
+    `${path}.repository`,
+  );
+  const source = assertObject(opportunity.source, `${path}.source`);
+  assertString(source.id, `${path}.source.id`);
+  assertEnum(
+    source.kind,
+    ["issue", "pull-request", "review"],
+    `${path}.source.kind`,
+  );
+  assertPositiveInteger(source.number, `${path}.source.number`);
+  assertString(source.title, `${path}.source.title`);
+  assertRepositoryUrl(
+    source.url,
+    `${path}.source.url`,
+    source.kind,
+    source.number,
+    opportunity.repository as RepositoryId,
+  );
+  if (kind === "expand-review" && source.kind !== "review") {
+    throw new Error(`${path}.source.kind must be review for expand-review`);
+  }
+  if (kind !== "expand-review" && source.kind !== "pull-request") {
+    throw new Error(`${path}.source.kind must be pull-request for ${kind}`);
+  }
+}
+
 function assertAttributionValue(
   value: unknown,
   path: string,
@@ -3917,6 +4286,35 @@ export function assertLeaderboardSnapshot(
   ) {
     throw new Error("snapshot.ledger must contain unique score event IDs");
   }
+
+  if (!Array.isArray(snapshot.opportunities)) {
+    throw new Error("snapshot.opportunities must be an array");
+  }
+  const validatedOpportunities = snapshot.opportunities.map(
+    (opportunity, index) => {
+      assertOpportunityValue(opportunity, `snapshot.opportunities[${index}]`);
+      return opportunity;
+    },
+  );
+  if (
+    new Set(validatedOpportunities.map((opportunity) => opportunity.id))
+      .size !== validatedOpportunities.length
+  ) {
+    throw new Error("snapshot.opportunities must contain unique IDs");
+  }
+  for (let index = 1; index < validatedOpportunities.length; index += 1) {
+    if (
+      compareOpportunities(
+        validatedOpportunities[index - 1],
+        validatedOpportunities[index],
+      ) > 0
+    ) {
+      throw new Error(
+        "snapshot.opportunities must be ordered newest-first by occurredAt",
+      );
+    }
+  }
+
   const evaluatedSources = new Set<string>();
   const projectCapUsage = new Map<
     string,

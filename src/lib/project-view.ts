@@ -5,13 +5,16 @@
  */
 
 import type {
+  CapUsageStatus,
   GitHubActor,
   LeaderboardSnapshot,
   ModelAttribution,
   ScoreCategory,
   ScoreEvent,
+  ScoreOpportunity,
   WorkItem,
 } from "./leaderboard";
+import { SCORE_CAPS } from "./leaderboard";
 import {
   findProject,
   type ProjectDefinition,
@@ -46,6 +49,7 @@ export interface ProjectContributor {
   evidenceEventIds: string[];
   reportedModels: string[];
   usage: ProjectUsageSummary;
+  capUsage: CapUsageStatus;
   projectedMinor: string | null;
   projectedSharePartsPerMillion: number | null;
 }
@@ -89,6 +93,7 @@ export interface ProjectView {
   };
   leaders: ProjectContributor[];
   ledger: ScoreEvent[];
+  opportunities: ScoreOpportunity[];
   workQueue: {
     issues: WorkItem[];
     pullRequests: WorkItem[];
@@ -119,6 +124,81 @@ function iso(value: number): string {
 
 function monthIdFor(timestamp: string): string {
   return timestamp.slice(0, 7);
+}
+
+function capUsageForEvents(
+  month: string,
+  events: ScoreEvent[],
+): CapUsageStatus {
+  const usage: CapUsageStatus = {
+    month,
+    mergedPullRequests: { used: 0, cap: SCORE_CAPS.mergedPullRequests },
+    resolvedIssues: { used: 0, cap: SCORE_CAPS.resolvedIssues },
+    materialTestChanges: { used: 0, cap: SCORE_CAPS.materialTestChanges },
+    evidencePoints: { used: 0, cap: SCORE_CAPS.evidencePoints },
+    substantiveReviews: { used: 0, cap: SCORE_CAPS.substantiveReviews },
+    evaluatedContributions: {
+      used: 0,
+      cap: SCORE_CAPS.evaluatedContributions,
+    },
+  };
+  for (const event of events) {
+    if (event.occurredAt.slice(0, 7) !== month) {
+      continue;
+    }
+    if (event.category === "merged-pull-request") {
+      usage.mergedPullRequests.used += 1;
+    } else if (event.category === "resolved-issue") {
+      usage.resolvedIssues.used += 1;
+    } else if (event.category === "material-test-change") {
+      usage.materialTestChanges.used += 1;
+    } else if (event.category === "evidence") {
+      usage.evidencePoints.used += event.points;
+    } else if (event.category === "substantive-review") {
+      usage.substantiveReviews.used += 1;
+    } else {
+      usage.evaluatedContributions.used += 1;
+    }
+  }
+  return usage;
+}
+
+export function formatCapUsageLine(capUsage: CapUsageStatus): string | null {
+  const parts: string[] = [];
+  if (capUsage.mergedPullRequests.used > 0) {
+    parts.push(
+      `merges ${capUsage.mergedPullRequests.used}/${capUsage.mergedPullRequests.cap}`,
+    );
+  }
+  if (capUsage.resolvedIssues.used > 0) {
+    parts.push(
+      `issues ${capUsage.resolvedIssues.used}/${capUsage.resolvedIssues.cap}`,
+    );
+  }
+  if (capUsage.materialTestChanges.used > 0) {
+    parts.push(
+      `tests ${capUsage.materialTestChanges.used}/${capUsage.materialTestChanges.cap}`,
+    );
+  }
+  if (capUsage.evidencePoints.used > 0) {
+    parts.push(
+      `evidence ${capUsage.evidencePoints.used}/${capUsage.evidencePoints.cap}`,
+    );
+  }
+  if (capUsage.substantiveReviews.used > 0) {
+    parts.push(
+      `reviews ${capUsage.substantiveReviews.used}/${capUsage.substantiveReviews.cap}`,
+    );
+  }
+  if (capUsage.evaluatedContributions.used > 0) {
+    parts.push(
+      `evaluated ${capUsage.evaluatedContributions.used}/${capUsage.evaluatedContributions.cap}`,
+    );
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  return `${capUsage.month} caps · ${parts.join(" · ")}`;
 }
 
 function cycleBounds(cycleId: string): { from: number; to: number } {
@@ -450,6 +530,7 @@ export function createProjectView(
         ),
       ].sort(),
       usage,
+      capUsage: capUsageForEvents(cycleId, events),
       projectedMinor: null,
       projectedSharePartsPerMillion: null,
     };
@@ -463,6 +544,15 @@ export function createProjectView(
   leaders.forEach((entry, index) => {
     entry.rank = index + 1;
   });
+
+  const opportunities = snapshot.opportunities
+    .filter((opportunity) => repositoryIds.has(opportunity.repository))
+    .sort(
+      (left, right) =>
+        Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
+        left.source.number - right.source.number ||
+        left.id.localeCompare(right.id),
+    );
 
   let reward: ProjectRewardProjection;
   if (project.reward.kind === "monthly-pool") {
@@ -525,6 +615,7 @@ export function createProjectView(
     },
     leaders,
     ledger,
+    opportunities,
     workQueue: {
       issues: snapshot.workQueue.issues.filter((item) =>
         repositoryIds.has(item.repository),

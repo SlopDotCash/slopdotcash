@@ -411,6 +411,123 @@ describe("public records", () => {
         exact: false,
       }).length,
     ).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("heading", { name: "Things that could be worked on." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Add verified screenshot, video, or log evidence before merge.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/2026-07 caps ·/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/\+6 if it verifies/)).toBeInTheDocument();
+  });
+
+  it("shows opportunity-only contributors that have still-open guidance", async () => {
+    route("/contributors/open-only");
+    const snapshot = snapshotFixture();
+    const openOnly: (typeof snapshot.leaders)[number]["actor"] = {
+      id: "U_open_only",
+      login: "open-only",
+      avatarUrl: "https://avatars.githubusercontent.com/u/99?v=4",
+      url: "https://github.com/open-only",
+      kind: "User",
+    };
+    snapshot.opportunities = [
+      {
+        id: "PR_open_only:opportunity:partial-evidence",
+        actor: openOnly,
+        kind: "partial-evidence",
+        category: "evidence",
+        potentialPoints: 4,
+        occurredAt: "2026-07-29T18:00:00.000Z",
+        repository: "elizaOS/eliza",
+        source: {
+          id: "PR_open_only",
+          kind: "pull-request",
+          number: 17399,
+          title: "Open-only checklist",
+          url: "https://github.com/elizaOS/eliza/pull/17399",
+        },
+        reason:
+          "Open pull request evidence is partial with 2 of 6 points verified.",
+        hint: "Finish verified evidence categories before merge.",
+      },
+    ];
+    mockSnapshot(snapshot);
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "open-only" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Things that could be worked on." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Finish verified evidence categories before merge."),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the opportunity section when the contributor has none", async () => {
+    route("/contributors/finish-line");
+    const emptyOpportunities = snapshotFixture();
+    emptyOpportunities.opportunities = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      Response.json(
+        String(input).includes("/data/cycles/")
+          ? cycleIndexFixture()
+          : emptyOpportunities,
+      ),
+    );
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "finish-line" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Things that could be worked on.",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps at most five still-open opportunities on a profile", async () => {
+    route("/contributors/finish-line");
+    const crowded = snapshotFixture();
+    const actor = crowded.leaders[0].actor;
+    crowded.opportunities = Array.from({ length: 7 }, (_, index) => {
+      const number = 18000 + index;
+      return {
+        id: `PR_crowd_${number}:opportunity:missing-evidence`,
+        actor,
+        kind: "missing-evidence" as const,
+        category: "evidence" as const,
+        potentialPoints: 6,
+        occurredAt: `2026-07-${String(29 - index).padStart(2, "0")}T12:00:00.000Z`,
+        repository: "elizaOS/eliza" as const,
+        source: {
+          id: `PR_crowd_${number}`,
+          kind: "pull-request" as const,
+          number,
+          title: `Open checklist ${number}`,
+          url: `https://github.com/elizaOS/eliza/pull/${number}`,
+        },
+        reason:
+          "Open pull request evidence is missing with 0 of 6 points verified.",
+        hint: "Add verified screenshot, video, or log evidence before merge.",
+      };
+    });
+    mockSnapshot(crowded);
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Things that could be worked on.",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/\+6 if it verifies/)).toHaveLength(5);
+    expect(screen.getByText(/Open checklist 18000/)).toBeInTheDocument();
+    expect(screen.queryByText(/Open checklist 18005/)).not.toBeInTheDocument();
   });
 
   it("shows an immutable public payout wallet on an archived profile", async () => {
