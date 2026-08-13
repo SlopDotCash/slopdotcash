@@ -280,8 +280,24 @@ describe("production artifact and network contract", () => {
       verifyRemoteArtifacts({
         artifacts: [{ contents, path: "index.html" }],
         cacheKey: "revision",
-        fetchImpl: async () => new Response("different", { status: 200 }),
+        fetchImpl: async () =>
+          new Response("different", {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          }),
       }),
     ).rejects.toThrow("does not match");
+
+    await expect(
+      verifyRemoteArtifacts({
+        artifacts: [{ contents, path: "index.html" }],
+        cacheKey: "revision",
+        fetchImpl: async () =>
+          new Response(contents, {
+            status: 200,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          }),
+      }),
+    ).rejects.toThrow("expected text/html");
   });
 });

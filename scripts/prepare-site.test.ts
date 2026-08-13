@@ -13,6 +13,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -37,6 +38,36 @@ let installerArtifactRoot: string;
 let installerArchivePath: string;
 let installerChecksumPath: string;
 
+function pythonWithYaml() {
+  const candidates = [
+    process.env.SLOP_PYTHON,
+    "python3",
+    "/usr/bin/python3",
+  ].filter(
+    (value, index, values): value is string =>
+      Boolean(value) && values.indexOf(value) === index,
+  );
+  for (const executable of candidates) {
+    if (
+      spawnSync(executable, [
+        "-c",
+        "import yaml,sys;sys.exit(0 if yaml.__version__ == '6.0.3' else 1)",
+      ]).status === 0
+    ) {
+      return { executable, prefix: [] as string[] };
+    }
+  }
+  if (spawnSync("uv", ["--version"]).status === 0) {
+    return {
+      executable: "uv",
+      prefix: ["run", "--with", "PyYAML==6.0.3", "python"],
+    };
+  }
+  throw new TypeError("test fixture requires Python with PyYAML 6.0.3 or uv");
+}
+
+const skillPython = pythonWithYaml();
+
 type JsonRecord = Record<string, unknown>;
 
 interface ArchiveInspection {
@@ -57,12 +88,8 @@ function sha256(contents: Buffer | string) {
   return createHash("sha256").update(contents).digest("hex");
 }
 
-function readCommittedSkillFile(path: string): Buffer {
-  return execFileSync(
-    "git",
-    ["show", `HEAD:skills/contribute-to-eliza/${path}`],
-    { cwd: repositoryRoot, encoding: null },
-  );
+function readSkillFile(path: string): Buffer {
+  return readFileSync(join(skillRoot, path));
 }
 
 function asRecord(value: unknown, context: string): JsonRecord {
@@ -253,15 +280,7 @@ beforeAll(() => {
   const committedFiles = Object.fromEntries(
     execFileSync(
       "git",
-      [
-        "ls-tree",
-        "-r",
-        "-z",
-        "--name-only",
-        "HEAD",
-        "--",
-        "skills/contribute-to-eliza",
-      ],
+      ["ls-files", "-z", "--", "skills/contribute-to-eliza"],
       { cwd: repositoryRoot, encoding: "utf8" },
     )
       .split("\0")
@@ -271,13 +290,7 @@ beforeAll(() => {
           "skills/contribute-to-eliza",
           repositoryPath,
         ).replaceAll("\\", "/");
-        return [
-          path,
-          execFileSync("git", ["show", `HEAD:${repositoryPath}`], {
-            cwd: repositoryRoot,
-            encoding: null,
-          }),
-        ];
+        return [path, readFileSync(join(repositoryRoot, repositoryPath))];
       }),
   );
   authorityRoot = mkdtempSync(join(tmpdir(), "eliza-skill-install-authority-"));
@@ -312,8 +325,9 @@ beforeAll(() => {
     )}\n`,
   );
   execFileSync(
-    "python3",
+    skillPython.executable,
     [
+      ...skillPython.prefix,
       join(repositoryRoot, "scripts/skill-validation/package_skill.py"),
       stagedSkill,
       join(installerArtifactRoot, "downloads"),
@@ -355,6 +369,99 @@ afterAll(() => {
 });
 
 describe("contribution skill package", () => {
+  it("publishes one byte-identical, digest-bound universal bootstrap skill", () => {
+    const source = readFileSync(
+      join(repositoryRoot, "skills", "slop", "SKILL.md"),
+    );
+    const digest = sha256(source);
+    const discovery = parseJsonRecord(
+      readFileSync(
+        join(publicRoot, ".well-known", "agent-skills", "index.json"),
+        "utf8",
+      ),
+      "agent skill discovery index",
+    );
+    const skills = discovery.skills;
+    if (!Array.isArray(skills)) {
+      throw new TypeError(
+        "agent skill discovery index.skills must be an array",
+      );
+    }
+
+    expect(readFileSync(join(publicRoot, "SKILL.md"))).toEqual(source);
+    expect(
+      readFileSync(
+        join(publicRoot, ".well-known", "agent-skills", "slop", "SKILL.md"),
+      ),
+    ).toEqual(source);
+    expect(discovery.$schema).toBe(
+      "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    );
+    expect(skills).toEqual([
+      {
+        name: "slop",
+        type: "skill-md",
+        description:
+          "Safely bootstrap a Slop contribution skill for the current funded repository. Use when an agent is asked to start contributing through slop.cash, install or update a project skill, preview local usage access, or diagnose Slop setup without exposing prompts, source, transcripts, credentials, or wallet secrets.",
+        url: "https://slop.cash/SKILL.md",
+        digest: `sha256:${digest}`,
+      },
+    ]);
+
+    const llms = readFileSync(join(publicRoot, "llms.txt"), "utf8");
+    expect(llms).toContain(`SHA-256: ${digest}`);
+    expect(llms).toContain("never authorizes wallet creation");
+    expect(source.toString()).toContain("No CLI upload");
+    expect(source.toString()).toContain("--allow-local-usage");
+
+    const projectDiscovery = parseJsonRecord(
+      readFileSync(
+        join(publicRoot, ".well-known", "slop", "projects.json"),
+        "utf8",
+      ),
+      "Slop project discovery",
+    );
+    expect(projectDiscovery).toEqual({
+      schemaVersion: "1",
+      projects: PROJECTS.flatMap((project) =>
+        project.repositories.map((repository) => ({
+          project_id: project.id,
+          project_url: `https://slop.cash/projects/${project.id}/`,
+          repository: repository.id,
+          skill: project.skill.id,
+          skill_source: project.skill.sourcePath,
+        })),
+      ),
+    });
+  });
+
+  it("serves discovery files with explicit portable content types", () => {
+    const headers = readFileSync(join(publicRoot, "_headers"), "utf8");
+    const redirects = readFileSync(join(publicRoot, "_redirects"), "utf8");
+    expect(headers).toContain(
+      "/SKILL.md\n  Content-Type: text/markdown; charset=utf-8",
+    );
+    expect(headers).toContain(
+      "/.well-known/agent-skills/index.json\n  Content-Type: application/json; charset=utf-8",
+    );
+    expect(headers).toContain(
+      "/llms.txt\n  Content-Type: text/plain; charset=utf-8",
+    );
+    expect(headers).toContain(
+      "/.well-known/slop/projects.json\n  Content-Type: application/json; charset=utf-8",
+    );
+    expect(headers).toContain(
+      "/projects/:project/:artifact.json\n  Content-Type: application/json; charset=utf-8",
+    );
+    expect(headers).toContain(
+      "/projects/:project/downloads/:archive\n  Content-Type: application/octet-stream",
+    );
+    expect(redirects).toContain("/skill.md /projects/eliza/skill.md 301");
+    expect(readFileSync(join(publicRoot, "SKILL.md"), "utf8")).toContain(
+      "name: slop",
+    );
+  });
+
   it("packages byte-identical skill archives for identical source and revision", () => {
     const firstArchive = readFileSync(archivePath);
     execFileSync("node", [join(packageRoot, "scripts", "prepare-site.mjs")], {
@@ -476,7 +583,9 @@ describe("contribution skill package", () => {
         join(repositoryRoot, "assets", "ogembeds", "eliza_ogembed.png"),
       ),
     );
-    expect(readFileSync(join(publicRoot, "skill.md"))).toEqual(skill);
+    expect(
+      readFileSync(join(publicRoot, "projects", "eliza", "skill.md")),
+    ).toEqual(skill);
     expect(checksum).toBe(`${sha256(archive)}  contribute-to-eliza.skill\n`);
     expect(manifest).toMatchObject({
       schemaVersion: "1",
@@ -487,7 +596,7 @@ describe("contribution skill package", () => {
         sha256: sha256(skill),
         path: "skills/contribute-to-eliza/SKILL.md",
         url: `https://github.com/elizaOS/army/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
-        publicUrl: "https://slop.cash/skill.md",
+        publicUrl: "https://slop.cash/projects/eliza/skill.md",
       },
     });
     expect(asRecord(manifest.archive, "skill manifest.archive")).toMatchObject({
@@ -495,6 +604,84 @@ describe("contribution skill package", () => {
       checksumUrl:
         "https://slop.cash/downloads/contribute-to-eliza.skill.sha256",
     });
+    const rendererSourceStatus = execFileSync(
+      "git",
+      [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        "scripts/render-install-guide.mjs",
+        "src/lib/install-command.ts",
+      ],
+      { cwd: repositoryRoot, encoding: "utf8" },
+    ).trim();
+    const rendererCommitted = rendererSourceStatus.length === 0;
+    const expectedRenderer = {
+      entrypoint: "scripts/render-install-guide.mjs",
+      repository: "elizaOS/slopdotcash",
+      revision: rendererCommitted ? head : null,
+      revisionStatus: rendererCommitted ? "committed" : "working-tree",
+      paths: ["scripts/render-install-guide.mjs", "src/lib/install-command.ts"],
+    };
+    expect(asRecord(manifest.guides, "skill manifest.guides")).toEqual({
+      codex: {
+        publicUrl: "https://slop.cash/codex.md",
+        sha256: sha256(codexGuide),
+        renderer: {
+          ...expectedRenderer,
+          arguments: [
+            "--artifact-origin",
+            "https://slop.cash/projects/eliza",
+            "--client",
+            "codex",
+            "--skill",
+            "contribute-to-eliza",
+            "--source",
+            "skills/contribute-to-eliza",
+          ],
+        },
+      },
+      claude: {
+        publicUrl: "https://slop.cash/claude.md",
+        sha256: sha256(claudeGuide),
+        renderer: {
+          ...expectedRenderer,
+          arguments: [
+            "--artifact-origin",
+            "https://slop.cash/projects/eliza",
+            "--client",
+            "claude-code",
+            "--skill",
+            "contribute-to-eliza",
+            "--source",
+            "skills/contribute-to-eliza",
+          ],
+        },
+      },
+    });
+    for (const [client, guide] of [
+      ["codex", codexGuide],
+      ["claude-code", claudeGuide],
+    ] as const) {
+      expect(
+        execFileSync(
+          "node",
+          [
+            join(repositoryRoot, "scripts", "render-install-guide.mjs"),
+            "--artifact-origin",
+            "https://slop.cash/projects/eliza",
+            "--client",
+            client,
+            "--skill",
+            "contribute-to-eliza",
+            "--source",
+            "skills/contribute-to-eliza",
+          ],
+          { cwd: repositoryRoot, encoding: "utf8" },
+        ),
+      ).toBe(guide);
+    }
     expect(
       asRecord(manifest.authority, "skill manifest.authority"),
     ).toMatchObject({
@@ -525,21 +712,122 @@ describe("contribution skill package", () => {
     );
     expect(codexGuide).toContain("https://api.github.com");
     expect(codexGuide).toContain("https://raw.githubusercontent.com");
-    expect(codexGuide).toContain("GITARMY_SKILL_OPERATION=rollback");
-    expect(codexGuide).toContain("GITARMY_SKILL_REVISION=");
     expect(codexGuide).toContain(
-      "rollback still requires current authorization",
+      `OPERATION="\${GITARMY_SKILL_OPERATION:-install}"`,
     );
-    expect(codexGuide).toContain("current GitHub authorization rules");
-    expect(codexGuide).toContain("cannot authorize rollback");
+    expect(codexGuide).toContain(
+      `ROLLBACK_REVISION="\${GITARMY_SKILL_REVISION:-}"`,
+    );
+    expect(codexGuide).toContain(
+      "explicit rollback target must still pass mutable GitHub policy now",
+    );
+    expect(codexGuide).toContain(
+      "GITARMY_SKILL_OPERATION must be install or rollback",
+    );
+    expect(codexGuide).toContain(
+      "requested rollback revision is not retained locally",
+    );
     expect(claudeGuide).toBe(claudeCodeGuide);
-    expect(claudeGuide).toContain("Then ask Claude Code:");
     expect(claudeGuide).toContain(
       `SKILLS_ROOT="\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills"`,
     );
     expect(claudeGuide).not.toContain("CODEX_HOME");
     for (const project of PROJECTS) {
       const projectRoot = join(publicRoot, "projects", project.id);
+      const projectManifest = parseJsonRecord(
+        readFileSync(join(projectRoot, "skill-manifest.json"), "utf8"),
+        `${project.id} skill manifest`,
+      );
+      const projectGuides = asRecord(
+        projectManifest.guides,
+        `${project.id} skill manifest.guides`,
+      );
+      for (const [guideKey, client] of [
+        ["codex", "codex"],
+        ["claude", "claude-code"],
+      ] as const) {
+        const guide = asRecord(
+          projectGuides[guideKey],
+          `${project.id} skill manifest.guides.${guideKey}`,
+        );
+        const renderer = asRecord(
+          guide.renderer,
+          `${project.id} skill manifest.guides.${guideKey}.renderer`,
+        );
+        const argumentsValue = renderer.arguments;
+        const rendererPaths = renderer.paths;
+        if (
+          !Array.isArray(argumentsValue) ||
+          argumentsValue.some((value) => typeof value !== "string")
+        ) {
+          throw new TypeError(`${project.id} renderer arguments are invalid`);
+        }
+        if (
+          !Array.isArray(rendererPaths) ||
+          rendererPaths.some((value) => typeof value !== "string")
+        ) {
+          throw new TypeError(`${project.id} renderer paths are invalid`);
+        }
+        expect(renderer).toMatchObject({
+          entrypoint: "scripts/render-install-guide.mjs",
+          repository: "elizaOS/slopdotcash",
+          paths: [
+            "scripts/render-install-guide.mjs",
+            "src/lib/install-command.ts",
+          ],
+        });
+        const rendererRevisionStatus = renderer.revisionStatus;
+        const rendererRevision = renderer.revision;
+        expect(rendererRevisionStatus).toBe(
+          rendererCommitted ? "committed" : "working-tree",
+        );
+        expect(rendererRevision).toBe(rendererCommitted ? head : null);
+        expect(argumentsValue).toEqual([
+          "--artifact-origin",
+          `https://slop.cash/projects/${project.id}`,
+          "--client",
+          client,
+          "--skill",
+          project.skill.id,
+          "--source",
+          project.skill.sourcePath,
+        ]);
+        const generatedGuide = readFileSync(
+          join(projectRoot, `${guideKey}.md`),
+          "utf8",
+        );
+        if (rendererCommitted) {
+          const rendererRoot = mkdtempSync(
+            join(tmpdir(), `${project.id}-${client}-renderer-`),
+          );
+          try {
+            for (const path of rendererPaths) {
+              const destination = join(rendererRoot, path);
+              mkdirSync(dirname(destination), { recursive: true });
+              writeFileSync(
+                destination,
+                execFileSync("git", ["show", `${head}:${path}`], {
+                  cwd: repositoryRoot,
+                  encoding: null,
+                }),
+              );
+            }
+            expect(
+              execFileSync(
+                "node",
+                [
+                  join(rendererRoot, "scripts", "render-install-guide.mjs"),
+                  ...argumentsValue,
+                ],
+                { cwd: rendererRoot, encoding: "utf8" },
+              ),
+            ).toBe(generatedGuide);
+          } finally {
+            rmSync(rendererRoot, { force: true, recursive: true });
+          }
+        }
+        expect(guide.sha256).toBe(sha256(generatedGuide));
+      }
       const projectClaudeGuide = readFileSync(
         join(projectRoot, "claude.md"),
         "utf8",
@@ -582,7 +870,11 @@ describe("contribution skill package", () => {
         "contribute-to-eliza",
       );
       expect(readFileSync(join(installedRoot, "SKILL.md"))).toEqual(
-        readCommittedSkillFile("SKILL.md"),
+        readSkillFile("SKILL.md"),
+      );
+      expect(lstatSync(installedRoot).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(installedRoot)).toMatch(
+        /^\.contribute-to-eliza-versions\/[0-9a-f]{40}$/u,
       );
       const installedProvenance = parseJsonRecord(
         readFileSync(join(installedRoot, "PROVENANCE.json"), "utf8"),
@@ -594,7 +886,59 @@ describe("contribution skill package", () => {
             .sha256,
           "installed provenance.source.sha256",
         ),
-      ).toBe(sha256(readCommittedSkillFile("SKILL.md")));
+      ).toBe(sha256(readSkillFile("SKILL.md")));
+
+      const previewRepo = join(validRoot, "eliza-repository");
+      mkdirSync(previewRepo);
+      execFileSync("git", ["init", "--quiet"], { cwd: previewRepo });
+      execFileSync(
+        "git",
+        ["remote", "add", "origin", "ssh://git@github.com/elizaOS/eliza.git"],
+        { cwd: previewRepo },
+      );
+      const previewRepoLink = join(validRoot, "eliza-repository-link");
+      symlinkSync(previewRepo, previewRepoLink);
+      const previewEnvironment = {
+        ...process.env,
+        HOME: join(validRoot, "preview-home"),
+        CODEX_HOME: join(validRoot, "preview-codex"),
+        CLAUDE_CONFIG_DIR: join(validRoot, "preview-claude"),
+        XDG_CONFIG_HOME: join(validRoot, "preview-config"),
+      };
+      const installedCli = join(installedRoot, "scripts", "run-receipt.mjs");
+      const previewArguments = [
+        installedCli,
+        "preview",
+        "--repo-root",
+        previewRepoLink,
+        "--client",
+        "codex",
+        "--json",
+      ];
+      const preview = spawnSync(process.execPath, previewArguments, {
+        encoding: "utf8",
+        env: previewEnvironment,
+      });
+      expect(preview.status, preview.stderr).toBe(0);
+      expect(JSON.parse(preview.stdout)).toMatchObject({
+        repositoryId: "elizaOS/eliza",
+        automaticUploads: [],
+      });
+      const installedProjectPath = join(installedRoot, "project.json");
+      const installedProject = readFileSync(installedProjectPath);
+      writeFileSync(
+        installedProjectPath,
+        installedProject.toString().replace("elizaOS/eliza", "elizaOS/other"),
+      );
+      const tamperedPreview = spawnSync(process.execPath, previewArguments, {
+        encoding: "utf8",
+        env: previewEnvironment,
+      });
+      expect(tamperedPreview.status).not.toBe(0);
+      expect(tamperedPreview.stderr).toContain(
+        "installed skill file does not match provenance: project.json",
+      );
+      writeFileSync(installedProjectPath, installedProject);
       const defaultInstall = runInstall(command, defaultRoot, {
         codexHome: false,
       });

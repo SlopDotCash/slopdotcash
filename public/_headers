@@ -25,6 +25,31 @@
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=300, must-revalidate
 
+/SKILL.md
+  Content-Type: text/markdown; charset=utf-8
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, must-revalidate
+
+/.well-known/agent-skills/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, must-revalidate
+
+/.well-known/agent-skills/index.json
+  Content-Type: application/json; charset=utf-8
+
+/.well-known/agent-skills/*/SKILL.md
+  Content-Type: text/markdown; charset=utf-8
+
+/.well-known/slop/projects.json
+  Content-Type: application/json; charset=utf-8
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, must-revalidate
+
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, must-revalidate
+
 /mission.md
   Content-Type: text/markdown; charset=utf-8
   Access-Control-Allow-Origin: *
@@ -45,7 +70,18 @@
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=300, must-revalidate
 
-/projects/*/*.md
+/projects/:project/:artifact.md
   Content-Type: text/markdown; charset=utf-8
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, must-revalidate
+
+/projects/:project/:artifact.json
+  Content-Type: application/json; charset=utf-8
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, must-revalidate
+
+/projects/:project/downloads/:archive
+  Content-Type: application/octet-stream
+  Content-Disposition: attachment
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=300, must-revalidate
