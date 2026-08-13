@@ -27,6 +27,7 @@ import {
   CLAIM_RECENCY_DAYS,
   collectLiveReport,
   isBotAccount,
+  MAX_ACTIVITY_CONNECTION_ITEMS,
   parseCliArguments,
   parseModelDisclosure,
   parsePaginatedJson,
@@ -413,12 +414,251 @@ describe("live report parsing", () => {
     assert.strictEqual(calls.length, 2);
     assert.ok(calls.every((args) => args.includes("graphql")));
     assert.ok(calls.every((args) => args.includes("--paginate")));
+    assert.ok(
+      calls.every((args) => args[args.indexOf("--method") + 1] === "POST"),
+    );
+    assert.ok(
+      calls.every((args) => {
+        const query = args.find((argument) => argument.startsWith("query="));
+        return query?.includes("query(") && !/\bmutation\b/i.test(query);
+      }),
+    );
     assert.strictEqual(activity.issues.get(1)?.[0].user.id, 42);
     assert.strictEqual(activity.pulls.get(2)?.reviews[0].commit_id, HEAD_SHA);
     assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 1);
   });
 
-  it("fails closed when nested GraphQL activity would be truncated", () => {
+  it("paginates overflowing issue activity through bounded GET-only REST", () => {
+    const actor = {
+      __typename: "User",
+      databaseId: 42,
+      id: "U_42",
+      login: "reviewer",
+    };
+    const graphqlComments = Array.from({ length: 100 }, (_, index) => ({
+      databaseId: index + 1,
+      url: `https://github.com/elizaOS/eliza/issues/1#issuecomment-${index + 1}`,
+      body: `Comment ${index + 1}`,
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: actor,
+    }));
+    const restComments = Array.from({ length: 351 }, (_, index) => ({
+      id: index + 1,
+      html_url: `https://github.com/elizaOS/eliza/issues/1#issuecomment-${index + 1}`,
+      body: `Comment ${index + 1}`,
+      created_at: "2026-01-18T12:00:00.000Z",
+      author_association: "MEMBER",
+      user: { id: 42, login: "reviewer", type: "User" },
+    }));
+    const calls: string[][] = [];
+    const activity = readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+      calls.push(args);
+      if (args.includes("graphql")) {
+        return {
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".issues.")
+            ? `${JSON.stringify({
+                number: 1,
+                comments: { totalCount: 351, nodes: graphqlComments },
+              })}\n`
+            : "",
+        };
+      }
+      assert.ok(args.includes("--method"));
+      assert.strictEqual(args[args.indexOf("--method") + 1], "GET");
+      assert.ok(args.includes("--paginate"));
+      assert.ok(
+        args.includes("repos/elizaOS/eliza/issues/1/comments?per_page=100"),
+      );
+      return {
+        status: 0,
+        stderr: "",
+        stdout: `${restComments.map((value) => JSON.stringify(value)).join("\n")}\n`,
+      };
+    });
+
+    assert.strictEqual(calls.length, 3);
+    assert.strictEqual(activity.issues.get(1)?.length, 351);
+    assert.strictEqual(activity.issues.get(1)?.at(-1)?.id, 351);
+  });
+
+  it("paginates every overflowing pull-request activity surface", () => {
+    const actor = {
+      __typename: "User",
+      databaseId: 42,
+      id: "U_42",
+      login: "reviewer",
+    };
+    const graphqlComment = (id: number) => ({
+      databaseId: id,
+      url: `https://github.com/elizaOS/eliza/pull/2#issuecomment-${id}`,
+      body: `Comment ${id}`,
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: actor,
+    });
+    const restComment = (id: number) => ({
+      id,
+      html_url: `https://github.com/elizaOS/eliza/pull/2#comment-${id}`,
+      body: `Comment ${id}`,
+      created_at: "2026-01-18T12:00:00.000Z",
+      author_association: "MEMBER",
+      user: { id: 42, login: "reviewer", type: "User" },
+    });
+    const graphqlReview = (id: number) => ({
+      databaseId: id,
+      url: `https://github.com/elizaOS/eliza/pull/2#pullrequestreview-${id}`,
+      body: `Review ${id}`,
+      submittedAt: "2026-01-18T12:00:00.000Z",
+      state: "COMMENTED",
+      commit: { oid: HEAD_SHA },
+      author: actor,
+    });
+    const restReview = (id: number) => ({
+      id,
+      html_url: `https://github.com/elizaOS/eliza/pull/2#pullrequestreview-${id}`,
+      body: `Review ${id}`,
+      submitted_at: "2026-01-18T12:00:00.000Z",
+      state: "COMMENTED",
+      commit_id: HEAD_SHA,
+      user: { id: 42, login: "reviewer", type: "User" },
+    });
+    const pullNode = {
+      number: 2,
+      comments: {
+        totalCount: 101,
+        nodes: Array.from({ length: 100 }, (_, index) =>
+          graphqlComment(index + 1),
+        ),
+      },
+      reviews: {
+        totalCount: 102,
+        nodes: Array.from({ length: 100 }, (_, index) =>
+          graphqlReview(index + 1),
+        ),
+      },
+      reviewThreads: {
+        totalCount: 101,
+        nodes: Array.from({ length: 100 }, (_, index) => ({
+          comments: {
+            totalCount: 1,
+            nodes: [graphqlComment(index + 1)],
+          },
+        })),
+      },
+    };
+    const calls: string[][] = [];
+    const activity = readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+      calls.push(args);
+      if (args.includes("graphql")) {
+        return {
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".pullRequests.")
+            ? `${JSON.stringify(pullNode)}\n`
+            : "",
+        };
+      }
+      const endpoint = args.at(-1);
+      let records: Array<Record<string, unknown>>;
+      if (endpoint === "repos/elizaOS/eliza/issues/2/comments?per_page=100") {
+        records = Array.from({ length: 101 }, (_, index) =>
+          restComment(index + 1),
+        );
+      } else if (
+        endpoint === "repos/elizaOS/eliza/pulls/2/reviews?per_page=100"
+      ) {
+        records = Array.from({ length: 102 }, (_, index) =>
+          restReview(index + 1),
+        );
+      } else {
+        assert.strictEqual(
+          endpoint,
+          "repos/elizaOS/eliza/pulls/2/comments?per_page=100",
+        );
+        records = Array.from({ length: 151 }, (_, index) =>
+          restComment(index + 1),
+        );
+      }
+      return {
+        status: 0,
+        stderr: "",
+        stdout: `${records.map((value) => JSON.stringify(value)).join("\n")}\n`,
+      };
+    });
+
+    assert.strictEqual(calls.length, 5);
+    assert.strictEqual(activity.pulls.get(2)?.issueComments.length, 101);
+    assert.strictEqual(activity.pulls.get(2)?.reviews.length, 102);
+    assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 151);
+  });
+
+  it("paginates a single overflowing review thread through flat REST", () => {
+    const actor = {
+      __typename: "User",
+      databaseId: 42,
+      id: "U_42",
+      login: "reviewer",
+    };
+    const graphqlComment = (id: number) => ({
+      databaseId: id,
+      url: `https://github.com/elizaOS/eliza/pull/2#discussion_r${id}`,
+      body: `Comment ${id}`,
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: actor,
+    });
+    const restComments = Array.from({ length: 101 }, (_, index) => ({
+      id: index + 1,
+      html_url: `https://github.com/elizaOS/eliza/pull/2#discussion_r${index + 1}`,
+      body: `Comment ${index + 1}`,
+      created_at: "2026-01-18T12:00:00.000Z",
+      author_association: "MEMBER",
+      user: { id: 42, login: "reviewer", type: "User" },
+    }));
+    const activity = readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+      if (args.includes("graphql")) {
+        return {
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".pullRequests.")
+            ? `${JSON.stringify({
+                number: 2,
+                comments: { totalCount: 0, nodes: [] },
+                reviews: { totalCount: 0, nodes: [] },
+                reviewThreads: {
+                  totalCount: 1,
+                  nodes: [
+                    {
+                      comments: {
+                        totalCount: 101,
+                        nodes: Array.from({ length: 100 }, (_, index) =>
+                          graphqlComment(index + 1),
+                        ),
+                      },
+                    },
+                  ],
+                },
+              })}\n`
+            : "",
+        };
+      }
+      assert.ok(
+        args.includes("repos/elizaOS/eliza/pulls/2/comments?per_page=100"),
+      );
+      return {
+        status: 0,
+        stderr: "",
+        stdout: `${restComments.map((value) => JSON.stringify(value)).join("\n")}\n`,
+      };
+    });
+
+    assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 101);
+  });
+
+  it("fails closed when nested GraphQL activity exceeds the bounded fallback", () => {
     assert.throws(
       () =>
         readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
@@ -427,11 +667,97 @@ describe("live report parsing", () => {
           stdout: args.at(-1)?.includes(".issues.")
             ? `${JSON.stringify({
                 number: 1,
-                comments: { totalCount: 101, nodes: [] },
+                comments: {
+                  totalCount: MAX_ACTIVITY_CONNECTION_ITEMS + 1,
+                  nodes: Array.from({ length: 100 }, () => ({})),
+                },
               })}\n`
             : "",
         })),
-      /exceeds the complete 100-record activity bound/,
+      /exceeds the complete 1000-record activity bound/,
+    );
+  });
+
+  it("fails closed on an incomplete initial GraphQL activity page", () => {
+    assert.throws(
+      () =>
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".issues.")
+            ? `${JSON.stringify({
+                number: 1,
+                comments: {
+                  totalCount: 351,
+                  nodes: Array.from({ length: 99 }, () => ({})),
+                },
+              })}\n`
+            : "",
+        })),
+      /returned 99 of the expected 100 initial activity records/,
+    );
+  });
+
+  it("fails closed when paginated REST activity exceeds the bound", () => {
+    const graphqlComments = Array.from({ length: 100 }, (_, index) => ({
+      databaseId: index + 1,
+      url: `https://github.com/elizaOS/eliza/issues/1#issuecomment-${index + 1}`,
+      body: "",
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: null,
+    }));
+    const restComments = Array.from(
+      { length: MAX_ACTIVITY_CONNECTION_ITEMS + 1 },
+      (_, index) => ({ id: index + 1 }),
+    );
+
+    assert.throws(
+      () =>
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
+          status: 0,
+          stderr: "",
+          stdout: args.includes("graphql")
+            ? args.at(-1)?.includes(".issues.")
+              ? `${JSON.stringify({
+                  number: 1,
+                  comments: { totalCount: 101, nodes: graphqlComments },
+                })}\n`
+              : ""
+            : `${restComments.map((value) => JSON.stringify(value)).join("\n")}\n`,
+        })),
+      /exceeds the complete 1000-record activity bound/,
+    );
+  });
+
+  it("fails closed when paginated REST activity disagrees with GraphQL", () => {
+    const graphqlComments = Array.from({ length: 100 }, (_, index) => ({
+      databaseId: index + 1,
+      url: `https://github.com/elizaOS/eliza/issues/1#issuecomment-${index + 1}`,
+      body: "",
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: null,
+    }));
+    const restComments = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+    }));
+
+    assert.throws(
+      () =>
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
+          status: 0,
+          stderr: "",
+          stdout: args.includes("graphql")
+            ? args.at(-1)?.includes(".issues.")
+              ? `${JSON.stringify({
+                  number: 1,
+                  comments: { totalCount: 101, nodes: graphqlComments },
+                })}\n`
+              : ""
+            : `${restComments.map((value) => JSON.stringify(value)).join("\n")}\n`,
+        })),
+      /returned 100 records after reporting 101/,
     );
   });
 
