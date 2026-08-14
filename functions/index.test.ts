@@ -47,5 +47,41 @@ describe("hostname-aware social metadata", () => {
       'content="https://slop.tech/og-shipping-slop-tech.png"',
     );
     expect(response.headers.get("vary")).toBe("Host");
+    expect(response.headers.get("cache-control")).toBe("no-transform");
+  });
+
+  it("prevents edge transformations without changing slop.cash HTML", async () => {
+    const response = await onRequest({
+      request: new Request("https://slop.cash/projects/eliza"),
+      next: async () =>
+        new Response(indexHtml, {
+          headers: {
+            "cache-control": "public, max-age=0, must-revalidate",
+            "content-type": "text/html; charset=utf-8",
+          },
+        }),
+    });
+
+    expect(await response.text()).toBe(indexHtml);
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=0, must-revalidate, no-transform",
+    );
+    expect(response.headers.get("vary")).toBeNull();
+  });
+
+  it("does not alter non-HTML responses", async () => {
+    const original = new Response('{"ok":true}', {
+      headers: {
+        "cache-control": "public, max-age=300",
+        "content-type": "application/json",
+      },
+    });
+    const response = await onRequest({
+      request: new Request("https://slop.cash/data/leaderboard.json"),
+      next: async () => original,
+    });
+
+    expect(response).toBe(original);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
   });
 });
