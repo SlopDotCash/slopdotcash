@@ -869,6 +869,9 @@ describe("contribution skill package", () => {
     const defaultRoot = mkdtempSync(
       join(tmpdir(), "eliza-skill-install-default-home-"),
     );
+    const claudeRoot = mkdtempSync(
+      join(tmpdir(), "eliza-skill-install-claude-home-"),
+    );
     const corruptPublic = join(invalidRoot, "public");
     const ambiguousPublic = join(ambiguousRoot, "public");
     try {
@@ -937,6 +940,39 @@ describe("contribution skill package", () => {
       });
       expect(preview.status, preview.stderr).toBe(0);
       expect(JSON.parse(preview.stdout)).toMatchObject({
+        repositoryId: "elizaOS/eliza",
+        automaticUploads: [],
+      });
+      const claudeCommand = createInstallCommand(
+        pathToFileURL(installerArtifactRoot).href.replace(/\/$/u, ""),
+        `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`,
+        { testAuthority },
+      );
+      const claudeInstall = runInstall(claudeCommand, claudeRoot);
+      expect(claudeInstall.status, claudeInstall.stderr).toBe(0);
+      const claudeInstalledRoot = join(
+        claudeRoot,
+        "home",
+        ".claude",
+        "skills",
+        "contribute-to-eliza",
+      );
+      expect(lstatSync(claudeInstalledRoot).isSymbolicLink()).toBe(true);
+      const claudePreview = spawnSync(
+        process.execPath,
+        [
+          join(claudeInstalledRoot, "scripts", "run-receipt.mjs"),
+          "preview",
+          "--repo-root",
+          previewRepoLink,
+          "--client",
+          "claude-code",
+          "--json",
+        ],
+        { encoding: "utf8", env: previewEnvironment },
+      );
+      expect(claudePreview.status, claudePreview.stderr).toBe(0);
+      expect(JSON.parse(claudePreview.stdout)).toMatchObject({
         repositoryId: "elizaOS/eliza",
         automaticUploads: [],
       });
@@ -1046,6 +1082,7 @@ describe("contribution skill package", () => {
       rmSync(invalidRoot, { force: true, recursive: true });
       rmSync(ambiguousRoot, { force: true, recursive: true });
       rmSync(defaultRoot, { force: true, recursive: true });
+      rmSync(claudeRoot, { force: true, recursive: true });
     }
   });
 
