@@ -472,12 +472,60 @@ function graphqlConnection(record, field, context) {
   };
 }
 
-function readOverflowActivity(endpoint, expectedCount, context, spawn) {
-  const records = readGhPages(endpoint, spawn);
-  if (records.length > MAX_ACTIVITY_CONNECTION_ITEMS) {
+function readGhActivityPage(endpoint, pageNumber, context, spawn) {
+  const separator = endpoint.includes("?") ? "&" : "?";
+  const pagedEndpoint = `${endpoint}${separator}page=${pageNumber}`;
+  const result = spawn(
+    "gh",
+    ["api", "--method", "GET", "--jq", ".[]", pagedEndpoint],
+    {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail =
+      typeof result.stderr === "string" && result.stderr.trim().length > 0
+        ? `: ${result.stderr.trim()}`
+        : "";
+    throw new Error(`gh api failed for ${context} page ${pageNumber}${detail}`);
+  }
+  const records = parsePaginatedJson(
+    result.stdout,
+    `${context} page ${pageNumber}`,
+  );
+  if (records.length > ACTIVITY_PAGE_SIZE) {
     throw new RangeError(
-      `${context} exceeds the complete ${MAX_ACTIVITY_CONNECTION_ITEMS}-record activity bound`,
+      `${context} page ${pageNumber} returned ${records.length} records, exceeding the ${ACTIVITY_PAGE_SIZE}-record page bound`,
     );
+  }
+  return records;
+}
+
+function readOverflowActivity(endpoint, expectedCount, context, spawn) {
+  const records = [];
+  const maximumPages = Math.ceil(
+    MAX_ACTIVITY_CONNECTION_ITEMS / ACTIVITY_PAGE_SIZE,
+  );
+  for (let pageNumber = 1; pageNumber <= maximumPages + 1; pageNumber += 1) {
+    const page = readGhActivityPage(endpoint, pageNumber, context, spawn);
+    if (pageNumber > maximumPages) {
+      if (page.length > 0) {
+        throw new RangeError(
+          `${context} exceeds the complete ${MAX_ACTIVITY_CONNECTION_ITEMS}-record activity bound`,
+        );
+      }
+      break;
+    }
+    records.push(...page);
+    if (expectedCount !== null && records.length > expectedCount) {
+      throw new RangeError(
+        `${context} returned more than the ${expectedCount} records it reported`,
+      );
+    }
+    if (page.length < ACTIVITY_PAGE_SIZE) break;
   }
   if (expectedCount !== null && records.length !== expectedCount) {
     throw new RangeError(
@@ -568,6 +616,24 @@ function readGraphqlActivityNodes(repo, query, selector, spawn, context) {
     throw new Error(`gh api graphql failed for ${context}${detail}`);
   }
   return parsePaginatedJson(result.stdout, context);
+}
+
+export function createGhCommandBudget(spawn = spawnSync) {
+  let count = 0;
+  return {
+    get count() {
+      return count;
+    },
+    run: (command, args, options) => {
+      if (count >= MAX_API_READS) {
+        throw new RangeError(
+          `Live discovery exceeds the ${MAX_API_READS}-command safety bound`,
+        );
+      }
+      count += 1;
+      return spawn(command, args, options);
+    },
+  };
 }
 
 /** Reads open activity in two batches plus bounded overflow pagination. */
@@ -1666,20 +1732,11 @@ export function main(args = process.argv.slice(2)) {
     process.stdout.write(usage());
     return;
   }
-  let apiReads = 0;
-  const boundedSpawn = (command, commandArgs, spawnOptions) => {
-    apiReads += 1;
-    if (apiReads > MAX_API_READS) {
-      throw new RangeError(
-        `Live discovery exceeds the ${MAX_API_READS}-command safety bound`,
-      );
-    }
-    return spawnSync(command, commandArgs, spawnOptions);
-  };
+  const commandBudget = createGhCommandBudget();
   const boundedRead = (endpoint) => {
-    return readGhPages(endpoint, boundedSpawn);
+    return readGhPages(endpoint, commandBudget.run);
   };
-  const openActivity = readGhOpenActivity(options.repo, boundedSpawn);
+  const openActivity = readGhOpenActivity(options.repo, commandBudget.run);
   const report = collectLiveReport(
     options.repo,
     boundedRead,
@@ -1687,7 +1744,7 @@ export function main(args = process.argv.slice(2)) {
     ({ phase, current, total }) => {
       if (current === 0 || current === total || current % 10 === 0) {
         process.stderr.write(
-          `[Slop] scanning ${phase}: ${current}/${total} (${apiReads} bounded GitHub commands)\n`,
+          `[Slop] scanning ${phase}: ${current}/${total} (${commandBudget.count} bounded GitHub commands)\n`,
         );
       }
     },

@@ -26,6 +26,7 @@ import {
   auditPrEvidence,
   CLAIM_RECENCY_DAYS,
   collectLiveReport,
+  createGhCommandBudget,
   isBotAccount,
   MAX_ACTIVITY_CONNECTION_ITEMS,
   parseCliArguments,
@@ -122,6 +123,18 @@ function evidenceBody() {
       `<!-- evidence-row:${id} -->\n- [x] ${id}: N/A - no affected ${id} surface.`,
   ).join("\n\n");
   return `${rows}\n\nAI provider/model: OpenAI / gpt-5.6-codex`;
+}
+
+function pagedStdout(args: string[], records: unknown[]) {
+  const endpoint = args.at(-1);
+  assert.strictEqual(typeof endpoint, "string");
+  const pageMatch = endpoint.match(/[?&]page=(\d+)$/);
+  assert.ok(pageMatch, `missing explicit page in ${endpoint}`);
+  const start = (Number(pageMatch[1]) - 1) * 100;
+  const page = records.slice(start, start + 100);
+  return page.length === 0
+    ? ""
+    : `${page.map((value) => JSON.stringify(value)).join("\n")}\n`;
 }
 
 describe("contribute-to-eliza skill structure", () => {
@@ -452,7 +465,7 @@ describe("live report parsing", () => {
       user: { id: 42, login: "reviewer", type: "User" },
     }));
     const calls: string[][] = [];
-    const activity = readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+    const commandBudget = createGhCommandBudget((_command, args) => {
       calls.push(args);
       if (args.includes("graphql")) {
         return {
@@ -468,18 +481,24 @@ describe("live report parsing", () => {
       }
       assert.ok(args.includes("--method"));
       assert.strictEqual(args[args.indexOf("--method") + 1], "GET");
-      assert.ok(args.includes("--paginate"));
+      assert.ok(!args.includes("--paginate"));
       assert.ok(
-        args.includes("repos/elizaOS/eliza/issues/1/comments?per_page=100"),
+        args
+          .at(-1)
+          ?.startsWith(
+            "repos/elizaOS/eliza/issues/1/comments?per_page=100&page=",
+          ),
       );
       return {
         status: 0,
         stderr: "",
-        stdout: `${restComments.map((value) => JSON.stringify(value)).join("\n")}\n`,
+        stdout: pagedStdout(args, restComments),
       };
     });
+    const activity = readGhOpenActivity("elizaOS/eliza", commandBudget.run);
 
-    assert.strictEqual(calls.length, 3);
+    assert.strictEqual(calls.length, 6);
+    assert.strictEqual(commandBudget.count, 6);
     assert.strictEqual(activity.issues.get(1)?.length, 351);
     assert.strictEqual(activity.issues.get(1)?.at(-1)?.id, 351);
   });
@@ -561,22 +580,29 @@ describe("live report parsing", () => {
             : "",
         };
       }
-      const endpoint = args.at(-1);
+      const endpoint = args.at(-1) ?? "";
       let records: Array<Record<string, unknown>>;
-      if (endpoint === "repos/elizaOS/eliza/issues/2/comments?per_page=100") {
+      if (
+        endpoint.startsWith(
+          "repos/elizaOS/eliza/issues/2/comments?per_page=100&page=",
+        )
+      ) {
         records = Array.from({ length: 101 }, (_, index) =>
           restComment(index + 1),
         );
       } else if (
-        endpoint === "repos/elizaOS/eliza/pulls/2/reviews?per_page=100"
+        endpoint.startsWith(
+          "repos/elizaOS/eliza/pulls/2/reviews?per_page=100&page=",
+        )
       ) {
         records = Array.from({ length: 102 }, (_, index) =>
           restReview(index + 1),
         );
       } else {
-        assert.strictEqual(
-          endpoint,
-          "repos/elizaOS/eliza/pulls/2/comments?per_page=100",
+        assert.ok(
+          endpoint.startsWith(
+            "repos/elizaOS/eliza/pulls/2/comments?per_page=100&page=",
+          ),
         );
         records = Array.from({ length: 151 }, (_, index) =>
           restComment(index + 1),
@@ -585,11 +611,11 @@ describe("live report parsing", () => {
       return {
         status: 0,
         stderr: "",
-        stdout: `${records.map((value) => JSON.stringify(value)).join("\n")}\n`,
+        stdout: pagedStdout(args, records),
       };
     });
 
-    assert.strictEqual(calls.length, 5);
+    assert.strictEqual(calls.length, 8);
     assert.strictEqual(activity.pulls.get(2)?.issueComments.length, 101);
     assert.strictEqual(activity.pulls.get(2)?.reviews.length, 102);
     assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 151);
@@ -618,7 +644,9 @@ describe("live report parsing", () => {
       author_association: "MEMBER",
       user: { id: 42, login: "reviewer", type: "User" },
     }));
+    const calls: string[][] = [];
     const activity = readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+      calls.push(args);
       if (args.includes("graphql")) {
         return {
           status: 0,
@@ -646,15 +674,20 @@ describe("live report parsing", () => {
         };
       }
       assert.ok(
-        args.includes("repos/elizaOS/eliza/pulls/2/comments?per_page=100"),
+        args
+          .at(-1)
+          ?.startsWith(
+            "repos/elizaOS/eliza/pulls/2/comments?per_page=100&page=",
+          ),
       );
       return {
         status: 0,
         stderr: "",
-        stdout: `${restComments.map((value) => JSON.stringify(value)).join("\n")}\n`,
+        stdout: pagedStdout(args, restComments),
       };
     });
 
+    assert.strictEqual(calls.length, 4);
     assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 101);
   });
 
@@ -699,35 +732,43 @@ describe("live report parsing", () => {
   });
 
   it("fails closed when paginated REST activity exceeds the bound", () => {
-    const graphqlComments = Array.from({ length: 100 }, (_, index) => ({
-      databaseId: index + 1,
-      url: `https://github.com/elizaOS/eliza/issues/1#issuecomment-${index + 1}`,
-      body: "",
-      createdAt: "2026-01-18T12:00:00.000Z",
-      authorAssociation: "MEMBER",
-      author: null,
-    }));
     const restComments = Array.from(
       { length: MAX_ACTIVITY_CONNECTION_ITEMS + 1 },
       (_, index) => ({ id: index + 1 }),
     );
+    const calls: string[][] = [];
 
     assert.throws(
       () =>
-        readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
-          status: 0,
-          stderr: "",
-          stdout: args.includes("graphql")
-            ? args.at(-1)?.includes(".issues.")
-              ? `${JSON.stringify({
-                  number: 1,
-                  comments: { totalCount: 101, nodes: graphqlComments },
-                })}\n`
-              : ""
-            : `${restComments.map((value) => JSON.stringify(value)).join("\n")}\n`,
-        })),
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+          calls.push(args);
+          if (args.includes("graphql")) {
+            return {
+              status: 0,
+              stderr: "",
+              stdout: args.at(-1)?.includes(".pullRequests.")
+                ? `${JSON.stringify({
+                    number: 2,
+                    comments: { totalCount: 0, nodes: [] },
+                    reviews: { totalCount: 0, nodes: [] },
+                    reviewThreads: {
+                      totalCount: 101,
+                      nodes: Array.from({ length: 100 }, () => ({})),
+                    },
+                  })}\n`
+                : "",
+            };
+          }
+          return {
+            status: 0,
+            stderr: "",
+            stdout: pagedStdout(args, restComments),
+          };
+        }),
       /exceeds the complete 1000-record activity bound/,
     );
+    assert.strictEqual(calls.length, 13);
+    assert.match(calls.at(-1)?.at(-1) ?? "", /[?&]page=11$/);
   });
 
   it("fails closed when paginated REST activity disagrees with GraphQL", () => {
@@ -755,10 +796,32 @@ describe("live report parsing", () => {
                   comments: { totalCount: 101, nodes: graphqlComments },
                 })}\n`
               : ""
-            : `${restComments.map((value) => JSON.stringify(value)).join("\n")}\n`,
+            : pagedStdout(args, restComments),
         })),
       /returned 100 records after reporting 101/,
     );
+  });
+
+  it("rejects the seventeenth GitHub command before spawning it", () => {
+    let invocations = 0;
+    const commandBudget = createGhCommandBudget(() => {
+      invocations += 1;
+      return { status: 0, stderr: "", stdout: "" };
+    });
+    for (let index = 0; index < 16; index += 1) {
+      commandBudget.run("gh", ["api", "endpoint"], { encoding: "utf8" });
+    }
+    assert.strictEqual(commandBudget.count, 16);
+    assert.strictEqual(invocations, 16);
+    assert.throws(
+      () =>
+        commandBudget.run("gh", ["api", "endpoint"], {
+          encoding: "utf8",
+        }),
+      /exceeds the 16-command safety bound/,
+    );
+    assert.strictEqual(commandBudget.count, 16);
+    assert.strictEqual(invocations, 16);
   });
 
   it("accepts exact provider/model pairs and rejects placeholders", () => {
