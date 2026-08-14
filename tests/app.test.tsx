@@ -177,6 +177,7 @@ describe("discovery", () => {
     expect(homePrompt).toHaveTextContent(
       "contribute to github.com/elizaOS/eliza",
     );
+    expect(homePrompt.querySelectorAll("wbr")).toHaveLength(2);
     expect(
       await screen.findByRole("heading", { name: "Leaderboard" }),
     ).toBeInTheDocument();
