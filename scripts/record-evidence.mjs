@@ -497,8 +497,10 @@ try {
       state: "visible",
       timeout: 20_000,
     });
+    const visibleHeroAction =
+      viewport.width <= 680 ? ".hero-mobile-action" : ".hero-typewriter";
     await page
-      .locator(".hero-typewriter")
+      .locator(visibleHeroAction)
       .filter({ hasText: /^SHIPPING SLOP\.$/u })
       .waitFor({ state: "visible", timeout: 10_000 });
     await page.locator("#projects").waitFor({ state: "visible" });

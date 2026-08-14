@@ -77,10 +77,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (context.request.method !== "GET") return context.next();
 
   const hostname = new URL(context.request.url).hostname;
-  if (publicSocialMetadata(hostname).domain === CASH_DOMAIN) {
-    return context.next();
-  }
-
   const response = await context.next();
   if (!response.headers.get("content-type")?.includes("text/html")) {
     return response;
@@ -88,6 +84,27 @@ export async function onRequest(context: PagesContext): Promise<Response> {
 
   const headers = new Headers(response.headers);
   headers.delete("content-length");
+  const cacheControl = headers.get("cache-control");
+  if (
+    !cacheControl
+      ?.toLowerCase()
+      .split(/\s*,\s*/u)
+      .includes("no-transform")
+  ) {
+    headers.set(
+      "cache-control",
+      cacheControl === null ? "no-transform" : `${cacheControl}, no-transform`,
+    );
+  }
+
+  if (publicSocialMetadata(hostname).domain === CASH_DOMAIN) {
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+
   const vary = headers.get("vary");
   if (vary === null) headers.set("vary", "Host");
   else if (
