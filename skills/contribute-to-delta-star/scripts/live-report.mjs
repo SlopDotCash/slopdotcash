@@ -6,7 +6,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const MODEL_DISCLOSURE_PREFIX = "AI provider/model:";
@@ -20,6 +21,7 @@ export const REQUIRED_EVIDENCE_ROWS = [
   "domain-artifacts",
 ];
 export const CLAIM_RECENCY_DAYS = 7;
+export const MISSION_READY_LABEL = "mission-ready";
 export const MAX_OPEN_ITEMS = 1_000;
 export const MAX_API_READS = 16;
 
@@ -66,7 +68,8 @@ const SENSITIVE_LABEL_RE =
   /(?:^|[-_ ])(?:security|vulnerability|credential[-_ ]?leak|secret[-_ ]?leak|cve)(?:$|[-_ ])/i;
 const EPIC_TITLE_RE = /^\s*(?:\[[^\]]*\bepic\b[^\]]*\]|epic\s*:)/i;
 const EPIC_LABEL_RE = /^epic(?:\s+\d+)?$/i;
-const CONTRIBUTOR_READY_LABELS = new Set([
+const DEFAULT_CONTRIBUTOR_READY_LABELS = [
+  MISSION_READY_LABEL,
   "bug-confirmed",
   "demo-blocker",
   "good first issue",
@@ -79,7 +82,7 @@ const CONTRIBUTOR_READY_LABELS = new Set([
   "p2",
   "priority: high",
   "triage-reviewed",
-]);
+];
 const TRUSTED_CLAIM_ASSOCIATIONS = new Set(["COLLABORATOR", "MEMBER", "OWNER"]);
 const EVIDENCE_MARKER_RE = /<!--\s*evidence-row:([a-z0-9-]+)\s*-->/gi;
 const NA_WITH_REASON_RE =
@@ -295,6 +298,58 @@ function labelNames(item, context) {
       `${context}.labels[${index}]`,
     ).trim();
   });
+}
+
+function eligibleIssueLabels(value, context) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 20) {
+    throw new TypeError(`${context} must be a non-empty array of labels`);
+  }
+  const labels = value.map((label, index) => {
+    if (typeof label !== "string") {
+      throw new TypeError(`${context}[${index}] must be a string`);
+    }
+    const normalized = label.trim().toLowerCase();
+    if (normalized.length === 0 || normalized.length > 50) {
+      throw new TypeError(`${context}[${index}] must be a bounded label`);
+    }
+    return normalized;
+  });
+  if (new Set(labels).size !== labels.length) {
+    throw new TypeError(`${context} must not contain duplicate labels`);
+  }
+  return labels;
+}
+
+/** Loads the project-owned discovery policy next to the installed skill. */
+export function readProjectSelectionPolicy(scriptUrl = import.meta.url) {
+  const projectPath = join(
+    dirname(dirname(fileURLToPath(scriptUrl))),
+    "project.json",
+  );
+  let project;
+  try {
+    project = JSON.parse(readFileSync(projectPath, "utf8"));
+  } catch (cause) {
+    throw new Error(
+      `Cannot read contributor selection policy: ${projectPath}`,
+      {
+        cause,
+      },
+    );
+  }
+  const record = asRecord(project, "skill project");
+  if (record.selection === undefined) {
+    return {
+      eligibleIssueLabels: [...DEFAULT_CONTRIBUTOR_READY_LABELS],
+    };
+  }
+  const selection = asRecord(record.selection, "skill project.selection");
+  return {
+    eligibleIssueLabels: eligibleIssueLabels(
+      selection.eligibleIssueLabels,
+      "skill project.selection.eligibleIssueLabels",
+    ),
+  };
 }
 
 function compareByNumber(left, right) {
@@ -1201,11 +1256,15 @@ export function collectLiveReport(
   now = new Date(),
   onProgress = () => {},
   openActivity = null,
+  projectEligibleIssueLabels = DEFAULT_CONTRIBUTOR_READY_LABELS,
 ) {
   if (!REPOSITORY_RE.test(repo)) {
     throw new TypeError("Repository must use the owner/name form");
   }
   const referenceTime = nowTime(now);
+  const candidateLabelSet = new Set(
+    eligibleIssueLabels(projectEligibleIssueLabels, "eligible issue labels"),
+  );
 
   const issueEndpoint = `repos/${repo}/issues?state=open&per_page=100&sort=created&direction=asc`;
   const pullEndpoint = `repos/${repo}/pulls?state=open&per_page=100&sort=created&direction=asc`;
@@ -1300,15 +1359,13 @@ export function collectLiveReport(
       labels.some((label) => EPIC_LABEL_RE.test(label.trim()));
     if (
       epic ||
-      !labels.some((label) =>
-        CONTRIBUTOR_READY_LABELS.has(label.trim().toLowerCase()),
-      )
+      !labels.some((label) => candidateLabelSet.has(label.trim().toLowerCase()))
     ) {
       untriagedIssues.push({
         ...summary,
         reason: epic
           ? "epic requires a bounded child issue"
-          : "missing maintainer contributor-ready label",
+          : `missing eligible maintainer label (${[...candidateLabelSet].sort().join(", ")})`,
       });
       continue;
     }
@@ -1441,6 +1498,9 @@ export function collectLiveReport(
 
   return {
     repository: repo,
+    selection: {
+      eligibleIssueLabels: [...candidateLabelSet].sort(),
+    },
     totals: {
       openIssues: issueItems.length,
       openPullRequests: pullItems.length,
@@ -1487,6 +1547,10 @@ function markdownItems(items) {
 }
 
 export function renderMarkdown(report) {
+  const eligibleLabels = eligibleIssueLabels(
+    report.selection?.eligibleIssueLabels,
+    "report.selection.eligibleIssueLabels",
+  );
   const lines = [
     `# elizaOS contribution report — ${report.repository}`,
     "",
@@ -1538,7 +1602,7 @@ export function renderMarkdown(report) {
   lines.push(gaps.length > 0 ? gaps.join("\n") : "_No audited gaps._");
   lines.push(
     "",
-    `_Read-only heuristic report: issue candidates require a maintainer-controlled contributor-ready label. Claim comments expire after ${CLAIM_RECENCY_DAYS} days and count only from repository owners, members, or collaborators unless durable repository state remains; active GitHub review requests persist until cleared. Verify live Project state and newest comments before claiming._`,
+    `_Read-only heuristic report: issue candidates require one configured maintainer-controlled repository label (${eligibleLabels.join(", ")}); titles, bodies, comments, Discussions, and other labels cannot substitute. Claim comments expire after ${CLAIM_RECENCY_DAYS} days and count only from repository owners, members, or collaborators unless durable repository state remains; active GitHub review requests persist until cleared. Verify live Project state and newest comments before claiming._`,
     "",
   );
   return lines.join("\n");
@@ -1600,6 +1664,7 @@ export function main(args = process.argv.slice(2)) {
   };
   apiReads += 2;
   const openActivity = readGhOpenActivity(options.repo);
+  const selectionPolicy = readProjectSelectionPolicy();
   const report = collectLiveReport(
     options.repo,
     boundedRead,
@@ -1612,6 +1677,7 @@ export function main(args = process.argv.slice(2)) {
       }
     },
     openActivity,
+    selectionPolicy.eligibleIssueLabels,
   );
   process.stdout.write(
     options.json

@@ -5,6 +5,9 @@
   "skillName": "contribute-to-eliza",
   "skillSourcePath": "skills/contribute-to-eliza",
   "publicOrigin": "https://slop.cash/projects/eliza",
+  "selection": {
+    "eligibleIssueLabels": ["mission-ready"]
+  },
   "models": {
     "codex": {
       "provider": "openai",

@@ -36,12 +36,16 @@ dependency issue publicly. Follow `SECURITY.md`.
 
 ## GitHub-native coordination
 
-- Open or reuse an issue for non-trivial work. Scope it with acceptance
-  criteria and an evidence plan.
+- Use an open issue carrying the exact repository label `mission-ready`, or an
+  explicit operator request. Other labels, Project membership, and text that
+  merely says `mission-ready` do not authorize work. Never apply, request, or
+  automate that label. Never create an issue automatically; a new issue
+  requires explicit approval after reproduction, duplicate search, mission
+  check, and an evidence plan.
 - The platform does not reserve work. Check assignees, labels, Project state,
   active reviews, linked PRs, and newest comments immediately before starting.
-- Avoid duplicated work and say what bounded outcome you are pursuing when
-  coordination is useful.
+- Keep one active contribution, avoid duplicated work, and say what bounded
+  outcome you are pursuing when coordination is useful.
 - Target `develop` from a `feat/`, `fix/`, `docs/`, or `chore/` branch. Never
   push feature or fix work directly to `develop`.
 - Rebase on `origin/develop` and rerun relevant verification before final proof.

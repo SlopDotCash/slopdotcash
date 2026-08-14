@@ -108,6 +108,13 @@ describe("project skill contracts", () => {
       assert.strictEqual(skillProject.projectId, project.id);
       assert.strictEqual(skillProject.repositoryId, project.repositories[0].id);
       assert.strictEqual(skillProject.skillName, project.skill.id);
+      if (project.id === "eliza") {
+        assert.deepStrictEqual(skillProject.selection, {
+          eligibleIssueLabels: ["mission-ready"],
+        });
+      } else {
+        assert.strictEqual(skillProject.selection, undefined);
+      }
       assert.strictEqual(
         skillProject.skillSourcePath,
         project.skill.sourcePath,

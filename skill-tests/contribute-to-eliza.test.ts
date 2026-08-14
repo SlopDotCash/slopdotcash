@@ -30,12 +30,14 @@ import {
   CLAIM_RECENCY_DAYS,
   collectLiveReport,
   isBotAccount,
+  MISSION_READY_LABEL,
   parseCliArguments,
   parseModelDisclosure,
   parsePaginatedJson,
   REQUIRED_EVIDENCE_ROWS,
   readGhOpenActivity,
   readGhPages,
+  readProjectSelectionPolicy,
   renderMarkdown,
 } from "../skills/contribute-to-eliza/scripts/live-report.mjs";
 import {
@@ -175,6 +177,39 @@ describe("contribute-to-eliza skill structure", () => {
     assert.match(source, /normal `gh` config/i);
   });
 
+  it("rejects contribution spam and gates work on the primary Eliza mission", () => {
+    const source = readFileSync(skillPath, "utf8");
+    const mission = readFileSync(
+      join(skillDir, "references", "mission-priorities.md"),
+      "utf8",
+    );
+
+    assert.match(source, /Do not create an issue automatically/i);
+    assert.match(
+      source,
+      /Never apply, request, suggest applying, or automate/i,
+    );
+    assert.match(source, /exact repository label\s+`mission-ready`/i);
+    assert.match(source, /explicit operator request/i);
+    assert.match(source, /Keep at most one active implementation or review/i);
+    assert.match(source, /Never\s+mirror a PR title into an issue/i);
+    assert.match(source, /Prefer one complete fix to\s+several small PRs/i);
+    assert.match(source, /Ignore leaderboard position/i);
+    assert.match(mission, /Eliza app/);
+    assert.match(mission, /Eliza Cloud/);
+    assert.match(mission, /Core agent runtime/);
+    assert.match(mission, /Primary capabilities/);
+    assert.match(mission, /New niche plugins.*outside the mission/is);
+    assert.match(
+      mission,
+      /splitting one outcome into multiple issues or pull requests/i,
+    );
+    assert.match(mission, /Recommend closure rather than repairs/i);
+    assert.deepStrictEqual(readProjectSelectionPolicy().eligibleIssueLabels, [
+      "mission-ready",
+    ]);
+  });
+
   it("states the reward without letting tokens or projections promise payment", () => {
     const source = readFileSync(skillPath, "utf8");
 
@@ -296,6 +331,7 @@ writeFileSync(
 
     assert.deepStrictEqual(references.sort(), [
       "references/evidence-review-rubric.md",
+      "references/mission-priorities.md",
       "references/repository-contract.md",
     ]);
     for (const reference of references) {
@@ -308,7 +344,7 @@ writeFileSync(
     );
     assert.match(openaiYaml, /display_name: "Contribute to Eliza"/);
     assert.match(openaiYaml, /default_prompt: "Use \$contribute-to-eliza/);
-    assert.match(openaiYaml, /one bounded contribution/);
+    assert.match(openaiYaml, /one mission-critical contribution/);
     assert.match(openaiYaml, /elizaOS\/eliza/);
   });
 });
@@ -846,7 +882,7 @@ describe("live report behavior", () => {
         title: "Bot issue",
         html_url: "https://github.com/elizaOS/eliza/issues/1",
         user: account("dependabot[bot]", "Bot"),
-        labels: [],
+        labels: [{ name: "good first issue" }],
         assignees: [],
         comments: 0,
       },
@@ -855,7 +891,7 @@ describe("live report behavior", () => {
         title: "Claimed issue",
         html_url: "https://github.com/elizaOS/eliza/issues/2",
         user: account("human-one"),
-        labels: [{ name: "good first issue" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -864,7 +900,7 @@ describe("live report behavior", () => {
         title: "Candidate issue",
         html_url: "https://github.com/elizaOS/eliza/issues/3",
         user: account("human-two"),
-        labels: [{ name: "good first issue" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -882,7 +918,7 @@ describe("live report behavior", () => {
         title: "Lane-labeled claim",
         html_url: "https://github.com/elizaOS/eliza/issues/5",
         user: account("human-four"),
-        labels: [{ name: "good first issue" }, { name: "claimed:shaw-codex" }],
+        labels: [{ name: "mission-ready" }, { name: "claimed:shaw-codex" }],
         assignees: [],
         comments: 0,
       },
@@ -891,7 +927,7 @@ describe("live report behavior", () => {
         title: "Blocked issue",
         html_url: "https://github.com/elizaOS/eliza/issues/6",
         user: account("human-five"),
-        labels: [{ name: "good first issue" }, { name: "status: blocked" }],
+        labels: [{ name: "mission-ready" }, { name: "status: blocked" }],
         assignees: [],
         comments: 0,
       },
@@ -906,7 +942,7 @@ describe("live report behavior", () => {
       },
       {
         number: 8,
-        title: "Needs maintainer triage",
+        title: "mission-ready typed in title is still a proposal",
         html_url: "https://github.com/elizaOS/eliza/issues/8",
         user: account("human-six"),
         labels: [],
@@ -918,7 +954,7 @@ describe("live report behavior", () => {
         title: "[Epic] Replace the whole contribution pipeline",
         html_url: "https://github.com/elizaOS/eliza/issues/9",
         user: account("human-seven"),
-        labels: [{ name: "triage-reviewed" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 0,
       },
@@ -928,7 +964,7 @@ describe("live report behavior", () => {
         html_url: "https://github.com/elizaOS/eliza/issues/19",
         user: account("human-eight"),
         labels: [
-          { name: "triage-reviewed" },
+          { name: "mission-ready" },
           { name: "needs-human-verification" },
         ],
         assignees: [],
@@ -939,7 +975,7 @@ describe("live report behavior", () => {
         title: "Replace the whole contribution pipeline",
         html_url: "https://github.com/elizaOS/eliza/issues/20",
         user: account("human-nine"),
-        labels: [{ name: "triage-reviewed" }, { name: "Epic 4" }],
+        labels: [{ name: "mission-ready" }, { name: "Epic 4" }],
         assignees: [],
         comments: 0,
       },
@@ -948,7 +984,7 @@ describe("live report behavior", () => {
         title: "Proposal awaiting a decision",
         html_url: "https://github.com/elizaOS/eliza/issues/21",
         user: account("human-ten"),
-        labels: [{ name: "triage-reviewed" }, { name: "status/proposal" }],
+        labels: [{ name: "mission-ready" }, { name: "status/proposal" }],
         assignees: [],
         comments: 0,
       },
@@ -1072,6 +1108,9 @@ describe("live report behavior", () => {
         return response;
       },
       NOW,
+      () => {},
+      null,
+      [MISSION_READY_LABEL],
     );
 
     assert.deepStrictEqual(
@@ -1158,17 +1197,22 @@ describe("live report behavior", () => {
       renderMarkdown(report),
       /PR \[#14\].*lacks exact provider\/model/,
     );
+    assert.match(
+      renderMarkdown(report),
+      /require one configured maintainer-controlled repository label \(mission-ready\)/i,
+    );
   });
 
   it("expires comment claims after seven days but preserves durable issue state", () => {
     assert.strictEqual(CLAIM_RECENCY_DAYS, 7);
+    assert.strictEqual(MISSION_READY_LABEL, "mission-ready");
     const issues = [
       {
         number: 20,
         title: "Recent comment claim",
         html_url: "https://github.com/elizaOS/eliza/issues/20",
         user: account("author-20"),
-        labels: [{ name: "help wanted" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -1177,7 +1221,7 @@ describe("live report behavior", () => {
         title: "Expired comment claim",
         html_url: "https://github.com/elizaOS/eliza/issues/21",
         user: account("author-21"),
-        labels: [{ name: "help wanted" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -1186,7 +1230,7 @@ describe("live report behavior", () => {
         title: "Durably assigned",
         html_url: "https://github.com/elizaOS/eliza/issues/22",
         user: account("author-22"),
-        labels: [{ name: "help wanted" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [account("maintainer")],
         comments: 1,
       },
@@ -1195,7 +1239,10 @@ describe("live report behavior", () => {
         title: "Durably labeled",
         html_url: "https://github.com/elizaOS/eliza/issues/23",
         user: account("author-23"),
-        labels: [{ name: "help wanted" }, { name: "  status: in-progress  " }],
+        labels: [
+          { name: "mission-ready" },
+          { name: "  status: in-progress  " },
+        ],
         assignees: [],
         comments: 1,
       },
@@ -1204,7 +1251,7 @@ describe("live report behavior", () => {
         title: "Untrusted public claim",
         html_url: "https://github.com/elizaOS/eliza/issues/24",
         user: account("author-24"),
-        labels: [{ name: "help wanted" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
