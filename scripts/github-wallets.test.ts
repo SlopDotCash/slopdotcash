@@ -1,4 +1,4 @@
-/** Tests immutable GitHub wallet observation without reaching the network. */
+/** Tests GitHub issue and immutable README wallet observation without a network. */
 
 import { describe, expect, it, vi } from "vitest";
 import { formatPublishedWallet } from "../src/lib/wallets";
@@ -19,6 +19,7 @@ describe("GitHub wallet observation", () => {
     const markdown = `# finish-line\n${formatPublishedWallet(ADDRESS)}\n`;
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse({ path: "README.md" }))
       .mockResolvedValueOnce(jsonResponse([{ sha: COMMIT }]))
       .mockResolvedValueOnce(
@@ -41,19 +42,76 @@ describe("GitHub wallet observation", () => {
       sourceCommit: COMMIT,
       sourceUrl: `https://github.com/finish-line/finish-line/blob/${COMMIT}/README.md`,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[2][0]).toContain(`?ref=${COMMIT}`);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[3][0]).toContain(`?ref=${COMMIT}`);
+  });
+
+  it("prefers one canonical open Slop wallet claim issue", async () => {
+    const marker = formatPublishedWallet(ADDRESS);
+    const body = `# Wallet claim\n\n${marker}\n`;
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse([
+        {
+          number: 42,
+          node_id: "I_wallet_claim",
+          title: "Slop wallet claim",
+          body,
+          updated_at: "2026-08-01T12:00:00.000Z",
+          html_url: "https://github.com/elizaOS/slopdotcash/issues/42",
+          user: { login: "finish-line", node_id: "U_finish_line" },
+        },
+      ]),
+    );
+    await expect(
+      fetchPublishedGithubWallet("finish-line", "2026-08-02T00:00:00.000Z", {
+        fetch: fetchMock,
+      }),
+    ).resolves.toMatchObject({
+      address: ADDRESS,
+      chain: "solana",
+      sourceActorId: "U_finish_line",
+      sourceIssueId: "I_wallet_claim",
+      sourceIssueNumber: 42,
+      sourceUpdatedAt: "2026-08-01T12:00:00.000Z",
+      sourceUrl: "https://github.com/elizaOS/slopdotcash/issues/42",
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed on duplicate open wallet claim issues", async () => {
+    const issue = {
+      number: 42,
+      node_id: "I_wallet_claim",
+      title: "Slop wallet claim",
+      body: formatPublishedWallet(ADDRESS),
+      updated_at: "2026-08-01T12:00:00.000Z",
+      html_url: "https://github.com/elizaOS/slopdotcash/issues/42",
+      user: { login: "finish-line", node_id: "U_finish_line" },
+    };
+    await expect(
+      fetchPublishedGithubWallet("finish-line", "2026-08-02T00:00:00.000Z", {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(
+            jsonResponse([issue, { ...issue, number: 43 }]),
+          ),
+      }),
+    ).rejects.toThrow(/multiple open wallet claim issues/u);
   });
 
   it("returns null for a missing profile repository or absent marker", async () => {
     await expect(
       fetchPublishedGithubWallet("no-profile", "2026-08-02T00:00:00.000Z", {
-        fetch: vi.fn().mockResolvedValue(jsonResponse({}, 404)),
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(jsonResponse([]))
+          .mockResolvedValueOnce(jsonResponse({}, 404)),
       }),
     ).resolves.toBeNull();
 
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse({ path: "README.md" }))
       .mockResolvedValueOnce(jsonResponse([{ sha: COMMIT }]))
       .mockResolvedValueOnce(
@@ -74,6 +132,7 @@ describe("GitHub wallet observation", () => {
   it("fails closed on moving references and malformed immutable bytes", async () => {
     const mutable = vi
       .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse({ path: "README.md" }))
       .mockResolvedValueOnce(jsonResponse([{ sha: "main" }]));
     await expect(
@@ -84,6 +143,7 @@ describe("GitHub wallet observation", () => {
 
     const malformed = vi
       .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse({ path: "README.md" }))
       .mockResolvedValueOnce(jsonResponse([{ sha: COMMIT }]))
       .mockResolvedValueOnce(
@@ -124,6 +184,7 @@ describe("GitHub wallet observation", () => {
           code: "ConnectionRefused",
         }),
       )
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse({}, 404));
 
     await expect(
@@ -131,6 +192,6 @@ describe("GitHub wallet observation", () => {
         fetch: fetchMock,
       }),
     ).resolves.toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

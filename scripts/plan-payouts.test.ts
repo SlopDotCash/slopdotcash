@@ -14,6 +14,10 @@ import type {
   LeaderboardSnapshot,
   ScoreEvent,
 } from "../src/lib/leaderboard";
+import {
+  mergedPullRequestPoints,
+  SCORE_RULE_VERSION,
+} from "../src/lib/leaderboard";
 import { snapshotFixture } from "../tests/fixtures";
 import {
   ACCOUNT_LINKAGE_STATUS,
@@ -94,7 +98,7 @@ function planningSnapshot(
         id: `${sourceId}:merged`,
         actor,
         category: "merged-pull-request",
-        points: 10,
+        points: mergedPullRequestPoints(mergedPullRequests - merged),
         occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
@@ -104,7 +108,8 @@ function planningSnapshot(
           title: `Merged work ${merged} by ${spec.login}`,
           url: `https://github.com/elizaOS/eliza/pull/${pullRequestNumber}`,
         },
-        reason: "Pull request merged during the rolling window.",
+        reason:
+          "Pull request merged during the rolling window; uncapped diminishing credit applies within its project and UTC month.",
       });
     }
     for (let review = 0; review < substantiveReviews; review += 1) {
@@ -126,12 +131,16 @@ function planningSnapshot(
         reason: "Substantive review completed before merge.",
       });
     }
+    const mergedPoints = Array.from(
+      { length: mergedPullRequests },
+      (_, merged) => mergedPullRequestPoints(merged + 1),
+    ).reduce((total, points) => total + points, 0);
     entries.push({
       rank: 1,
       actor,
-      score: mergedPullRequests * 10 + substantiveReviews * 3,
+      score: mergedPoints + substantiveReviews * 3,
       points: {
-        mergedPullRequests: mergedPullRequests * 10,
+        mergedPullRequests: mergedPoints,
         resolvedIssues: 0,
         materialTestChanges: 0,
         evidence: 0,
@@ -265,9 +274,9 @@ describe("weighted allocation", () => {
         allocation.amountMinorUnits,
       ]),
     ).toEqual([
-      ["ada", 50_000n],
-      ["bo", 30_000n],
-      ["cy", 20_000n],
+      ["ada", 44_737n],
+      ["bo", 31_579n],
+      ["cy", 23_684n],
     ]);
   });
 
@@ -287,9 +296,9 @@ describe("weighted allocation", () => {
         allocation.remainderUnitAwarded,
       ]),
     ).toEqual([
-      ["cy", 67n, true],
-      ["ada", 17n, true],
-      ["bo", 16n, false],
+      ["cy", 59n, false],
+      ["ada", 21n, true],
+      ["bo", 20n, false],
     ]);
     expect(
       allocations.reduce(
@@ -382,17 +391,17 @@ describe("payout plan", () => {
     });
     expect(payoutPlan.rule.rounding.mode).toBe("floor-then-largest-remainder");
     expect(payoutPlan.snapshot.digest).toBe(SNAPSHOT_DIGEST);
-    expect(payoutPlan.snapshot.ruleVersion).toBe("gitarmy-v1");
-    expect(payoutPlan.snapshot.ledgerPointTotal).toBe(100);
+    expect(payoutPlan.snapshot.ruleVersion).toBe(SCORE_RULE_VERSION);
+    expect(payoutPlan.snapshot.ledgerPointTotal).toBe(76);
     expect(
       payoutPlan.allocations.map((allocation) => [
         allocation.contributor.githubLogin,
         allocation.allocation.amount,
       ]),
     ).toEqual([
-      ["ada", "5000.00"],
-      ["bo", "3000.00"],
-      ["cy", "2000.00"],
+      ["ada", "4473.68"],
+      ["bo", "3157.90"],
+      ["cy", "2368.42"],
     ]);
     expect(payoutPlan.totals.allocated).toBe("10000.00");
     expect(payoutPlan.totals.unallocatedMinorUnits).toBe("0");
@@ -405,13 +414,13 @@ describe("payout plan", () => {
     ]);
     const [allocation] = plan(snapshot).allocations;
     expect(allocation.points).toMatchObject({
-      total: 32,
-      mergedPullRequests: 20,
+      total: 30,
+      mergedPullRequests: 18,
       substantiveReviews: 12,
     });
     expect(allocation.ledger.eventCount).toBe(6);
     expect(allocation.ledger.byRepository).toEqual([
-      { repository: "elizaOS/eliza", points: 32, events: 6 },
+      { repository: "elizaOS/eliza", points: 30, events: 6 },
     ]);
   });
 
@@ -476,11 +485,11 @@ describe("payout plan", () => {
       payoutPlan.allocations.map(
         (allocation) => allocation.allocation.amountMinorUnits,
       ),
-    ).toEqual(["2", "0", "0"]);
-    expect(payoutPlan.totals.zeroAllocationContributors).toBe(2);
+    ).toEqual(["1", "1", "0"]);
+    expect(payoutPlan.totals.zeroAllocationContributors).toBe(1);
     expect(totalAllocated(payoutPlan)).toBe(2n);
     expect(formatPayoutPlanSummary(payoutPlan)).toContain(
-      "2 eligible contributor(s) allocate zero cents",
+      "1 eligible contributor(s) allocate zero cents",
     );
   });
 
@@ -562,7 +571,7 @@ describe("payout plan", () => {
     ]);
     const payoutPlan = plan(snapshot, { currency: "USDC", pool: "10000" });
     expect(payoutPlan.rule.inputs.poolMinorUnits).toBe("10000000000");
-    expect(payoutPlan.allocations[0].allocation.amount).toBe("6666.666667");
+    expect(payoutPlan.allocations[0].allocation.amount).toBe("6428.571429");
     expect(totalAllocated(payoutPlan)).toBe(10_000_000_000n);
   });
 });
@@ -627,7 +636,7 @@ describe("refusals", () => {
       { login: "ada", mergedPullRequests: 1 },
     ]);
     expect(() => plan(snapshot, { pool: "10000" })).toThrow(
-      /include the bot dependabot\[bot\] \(actor kind Bot, rank 1, 40 points\)/,
+      /include the bot dependabot\[bot\] \(actor kind Bot, rank 1, 29 points\)/,
     );
 
     const disguised = planningSnapshot([
@@ -876,8 +885,8 @@ describe("readable summary", () => {
     expect(summary).toContain("0 linked Eliza Cloud accounts, 3 unresolved");
     expect(summary).toContain(ELIGIBLE_ACTOR_REQUIREMENT);
     expect(summary).toContain("eliza-cloud-account-linkage-unresolved");
-    expect(summary).toMatch(/ada .* 50\.00% .*5000\.00/);
-    expect(summary).toMatch(/eligible total .*100 .*100\.00% .*10000\.00/);
+    expect(summary).toMatch(/ada .* 44\.73% .*4473\.68/);
+    expect(summary).toMatch(/eligible total .*76 .*100\.00% .*10000\.00/);
   });
 
   it("totals only the contributors the plan allocates to", () => {
@@ -891,7 +900,7 @@ describe("readable summary", () => {
     expect(summary).toContain(
       "1 of 2 scoring contributors (minimum 10 points)",
     );
-    expect(summary).toMatch(/eligible total .*50 .*100\.00% .*10000\.00/);
+    expect(summary).toMatch(/eligible total .*34 .*100\.00% .*10000\.00/);
     expect(summary).not.toContain("bo ");
   });
 });

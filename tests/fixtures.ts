@@ -6,6 +6,7 @@
 import type { CycleIndex } from "../src/lib/cycle-index";
 import {
   type LeaderboardSnapshot,
+  SCORE_RULE_VERSION,
   TARGET_REPOSITORIES,
 } from "../src/lib/leaderboard";
 
@@ -31,7 +32,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
     schemaVersion: "5",
     repository: "elizaOS/eliza",
     repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
-    ruleVersion: "gitarmy-v1",
+    ruleVersion: SCORE_RULE_VERSION,
     generatedAt,
     sourceUpdatedAt: generatedAt,
     stale: false,

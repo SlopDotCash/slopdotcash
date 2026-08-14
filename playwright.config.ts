@@ -26,7 +26,8 @@ export default defineConfig({
   webServer: externalBaseUrl
     ? undefined
     : {
-        command: "bun run build && bun run preview --host 127.0.0.1",
+        command:
+          "bun run build && bunx wrangler pages dev dist --ip 127.0.0.1 --port 4466 --log-level warn --show-interactive-dev-session=false",
         url: "http://127.0.0.1:4466",
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,

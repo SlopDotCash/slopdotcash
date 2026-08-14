@@ -29,7 +29,7 @@ export {
 export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY.id;
 export const LEADERBOARD_SCHEMA_VERSION = "5" as const;
 export const PROFILE_OPPORTUNITY_LIMIT = 5 as const;
-export const SCORE_RULE_VERSION = "gitarmy-v1" as const;
+export const SCORE_RULE_VERSION = "slop-score-v1" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
 export const SCORE_WINDOW_DAYS = 35;
@@ -38,16 +38,30 @@ export const MATERIAL_TEST_ADDITIONS = 10;
 export const MATERIAL_TEST_CHURN = 20;
 export const CLAIM_MAX_AGE_DAYS = 7;
 export const SCORE_CAPS = {
-  mergedPullRequests: 5,
+  mergedPullRequests: null,
   resolvedIssues: 5,
   materialTestChanges: 5,
   evidencePoints: 30,
   substantiveReviews: 10,
   evaluatedContributions: 3,
 } as const;
+export const DETAILED_MERGED_PULL_REQUESTS_PER_MONTH = 5;
 const MAX_PROJECT_CYCLE_BUCKETS =
   new Set(TARGET_REPOSITORIES.map((repository) => repository.projectId)).size *
   (Math.ceil(SCORE_WINDOW_DAYS / 28) + 1);
+
+/**
+ * Gives every accepted merge positive credit while reducing the marginal
+ * reward for repeated outcomes in the same project and UTC month.
+ */
+export function mergedPullRequestPoints(ordinal: number): number {
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1) {
+    throw new TypeError(
+      "merged pull request ordinal must be a positive integer",
+    );
+  }
+  return Math.max(1, Math.ceil(10 / Math.sqrt(ordinal)));
+}
 
 export type GitHubActorKind =
   | "Bot"
@@ -306,7 +320,7 @@ export interface ScoreOpportunity {
 
 export interface CapUsageBucket {
   used: number;
-  cap: number;
+  cap: number | null;
 }
 
 /** Per-contributor monthly cap fill for compact profile status lines. */
@@ -1583,8 +1597,8 @@ function methodology(): LeaderboardMethodology {
     scoringRules: [
       {
         id: "merged-pull-request",
-        points: "10",
-        cap: `newest ${SCORE_CAPS.mergedPullRequests} merged pull requests per contributor, project, and UTC calendar month`,
+        points: "ceil(10 / sqrt(monthly accepted-merge ordinal)), minimum 1",
+        cap: "uncapped; every accepted merge receives positive credit",
         qualification:
           "Authored pull request merged during the rolling window.",
       },
@@ -1592,21 +1606,19 @@ function methodology(): LeaderboardMethodology {
         id: "resolved-issue",
         points: "4",
         cap: `newest ${SCORE_CAPS.resolvedIssues} linked issue resolutions per contributor, project, and UTC calendar month`,
-        qualification:
-          "One of the author's newest five base-scored merged pull requests for the project and UTC month is recorded by GitHub as the closer of an issue in the 35-day verification window; issue authorship alone never scores.",
+        qualification: `One of the author's newest ${DETAILED_MERGED_PULL_REQUESTS_PER_MONTH} deep-inspected merged pull requests for the project and UTC month is recorded by GitHub as the closer of an issue in the 35-day verification window; issue authorship alone never scores.`,
       },
       {
         id: "material-test-change",
         points: "4",
         cap: `newest ${SCORE_CAPS.materialTestChanges} qualifying merged pull requests per contributor, project, and UTC calendar month`,
-        qualification: `For the author's newest five base-scored merged pull requests per project and UTC month, recognized test files add at least ${MATERIAL_TEST_ADDITIONS} lines and change at least ${MATERIAL_TEST_CHURN} total lines.`,
+        qualification: `For the author's newest ${DETAILED_MERGED_PULL_REQUESTS_PER_MONTH} deep-inspected merged pull requests per project and UTC month, recognized test files add at least ${MATERIAL_TEST_ADDITIONS} lines and change at least ${MATERIAL_TEST_CHURN} total lines.`,
       },
       {
         id: "evidence",
         points: "up to 6",
         cap: `one award per evidence category per merged pull request, six per pull request, ${SCORE_CAPS.evidencePoints} evidence points per contributor, project, and UTC calendar month`,
-        qualification:
-          "For the author's newest five base-scored merged pull requests per project and UTC month, contributor-authored proof is bound to the merged head via a single evidence-head marker, appears in a stable evidence row in the canonical PR body, uses an immutable GitHub attachment URL, and passes bounded remote byte and structure verification. Author post-merge body edits still void the package; a non-author post-merge body edit keeps the package only while the evidence-head still matches the merged OID. Mutable release assets, comment copies, inline text, N/A rows, unreachable artifacts, and third-party claims do not qualify.",
+        qualification: `For the author's newest ${DETAILED_MERGED_PULL_REQUESTS_PER_MONTH} deep-inspected merged pull requests per project and UTC month, contributor-authored proof is bound to the merged head via a single evidence-head marker, appears in a stable evidence row in the canonical PR body, uses an immutable GitHub attachment URL, and passes bounded remote byte and structure verification. Author post-merge body edits still void the package; a non-author post-merge body edit keeps the package only while the evidence-head still matches the merged OID. Mutable release assets, comment copies, inline text, N/A rows, unreachable artifacts, and third-party claims do not qualify.`,
       },
       {
         id: "substantive-review",
@@ -1652,8 +1664,7 @@ function methodology(): LeaderboardMethodology {
     ],
     provenancePolicy:
       "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
-    collectionPolicy:
-      "The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID, every artifact keeps its repository attribution, and per-contributor caps apply independently to each project and UTC reward month. Every scalar merged outcome is collected over 35 days for complete base scoring. Nested PR, review, file, evidence, and linked-issue inspection is limited to each actor's newest five outcomes per project and UTC month, the deterministic set that can survive the base-score cap. Project reward views exclude work before the published reward start. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain explicitly unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete, internally stable repository connections. Only open pull requests whose remote evidence bytes are consumed are re-collected when that evidence-bound revision changes; unrelated queue activity cannot starve accepted-score publication. Merged payout input is never sampled or downgraded. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.",
+    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID, every artifact keeps its repository attribution, and per-contributor limits apply independently to each project and UTC reward month. Every scalar merged outcome is collected over 35 days and receives uncapped diminishing base credit. Nested PR, review, file, evidence, and linked-issue inspection is limited to each actor's newest ${DETAILED_MERGED_PULL_REQUESTS_PER_MONTH} outcomes per project and UTC month as a deterministic API and evidence-verification budget; that technical limit never removes base merge credit. Project reward views exclude work before the published reward start. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain explicitly unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete, internally stable repository connections. Only open pull requests whose remote evidence bytes are consumed are re-collected when that evidence-bound revision changes; unrelated queue activity cannot starve accepted-score publication. Merged payout input is never sampled or downgraded. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.`,
   };
 }
 
@@ -1733,9 +1744,6 @@ function addScore(
     evidencePoints: 0,
   };
   const atCap =
-    (event.category === "merged-pull-request" &&
-      capUsage.acceptedOutcomes.mergedPullRequests >=
-        SCORE_CAPS.mergedPullRequests) ||
     (event.category === "resolved-issue" &&
       capUsage.acceptedOutcomes.resolvedIssues >= SCORE_CAPS.resolvedIssues) ||
     (event.category === "material-test-change" &&
@@ -1752,35 +1760,46 @@ function addScore(
   if (atCap) {
     return false;
   }
-  entry.score += event.points;
-  if (event.category === "merged-pull-request") {
-    entry.points.mergedPullRequests += event.points;
+  const scoredEvent =
+    event.category === "merged-pull-request"
+      ? {
+          ...event,
+          points: mergedPullRequestPoints(
+            capUsage.acceptedOutcomes.mergedPullRequests + 1,
+          ),
+          reason:
+            "Pull request merged during the rolling window; uncapped diminishing credit applies within its project and UTC month.",
+        }
+      : event;
+  entry.score += scoredEvent.points;
+  if (scoredEvent.category === "merged-pull-request") {
+    entry.points.mergedPullRequests += scoredEvent.points;
     entry.acceptedOutcomes.mergedPullRequests += 1;
     capUsage.acceptedOutcomes.mergedPullRequests += 1;
-  } else if (event.category === "resolved-issue") {
-    entry.points.resolvedIssues += event.points;
+  } else if (scoredEvent.category === "resolved-issue") {
+    entry.points.resolvedIssues += scoredEvent.points;
     entry.acceptedOutcomes.resolvedIssues += 1;
     capUsage.acceptedOutcomes.resolvedIssues += 1;
-  } else if (event.category === "material-test-change") {
-    entry.points.materialTestChanges += event.points;
+  } else if (scoredEvent.category === "material-test-change") {
+    entry.points.materialTestChanges += scoredEvent.points;
     entry.acceptedOutcomes.materialTestChanges += 1;
     capUsage.acceptedOutcomes.materialTestChanges += 1;
-  } else if (event.category === "evidence") {
-    entry.points.evidence += event.points;
+  } else if (scoredEvent.category === "evidence") {
+    entry.points.evidence += scoredEvent.points;
     entry.acceptedOutcomes.evidenceCategories += 1;
-    capUsage.evidencePoints += event.points;
+    capUsage.evidencePoints += scoredEvent.points;
     capUsage.acceptedOutcomes.evidenceCategories += 1;
-  } else if (event.category === "substantive-review") {
-    entry.points.substantiveReviews += event.points;
+  } else if (scoredEvent.category === "substantive-review") {
+    entry.points.substantiveReviews += scoredEvent.points;
     entry.acceptedOutcomes.substantiveReviews += 1;
     capUsage.acceptedOutcomes.substantiveReviews += 1;
   } else {
-    entry.points.evaluatedContributions += event.points;
+    entry.points.evaluatedContributions += scoredEvent.points;
     entry.acceptedOutcomes.evaluatedContributions += 1;
     capUsage.acceptedOutcomes.evaluatedContributions += 1;
   }
   entry.projectCapUsage.set(capKey, capUsage);
-  ledger.push(event);
+  ledger.push(scoredEvent);
   return true;
 }
 
@@ -3537,8 +3556,6 @@ function assertLeaderValue(
   );
   assertNonNegativeInteger(evidencePoints, `${path}.points.evidence`);
   if (
-    acceptedMergedPullRequests >
-      SCORE_CAPS.mergedPullRequests * MAX_PROJECT_CYCLE_BUCKETS ||
     acceptedResolvedIssues >
       SCORE_CAPS.resolvedIssues * MAX_PROJECT_CYCLE_BUCKETS ||
     acceptedMaterialTestChanges >
@@ -3928,7 +3945,10 @@ function assertLedgerValue(
   assertNonNegativeNumber(event.points, `${path}.points`);
   const eventPoints = Number(event.points);
   const validPoints =
-    (event.category === "merged-pull-request" && eventPoints === 10) ||
+    (event.category === "merged-pull-request" &&
+      Number.isInteger(eventPoints) &&
+      eventPoints >= 1 &&
+      eventPoints <= 10) ||
     (event.category === "resolved-issue" && eventPoints === 4) ||
     (event.category === "material-test-change" && eventPoints === 4) ||
     (event.category === "substantive-review" && eventPoints === 3) ||
@@ -4316,6 +4336,7 @@ export function assertLeaderboardSnapshot(
   }
 
   const evaluatedSources = new Set<string>();
+  const mergedEventsByProjectMonth = new Map<string, ScoreEvent[]>();
   const projectCapUsage = new Map<
     string,
     {
@@ -4341,8 +4362,12 @@ export function assertLeaderboardSnapshot(
       resolvedIssues: 0,
       substantiveReviews: 0,
     };
-    if (event.category === "merged-pull-request") usage.mergedPullRequests += 1;
-    else if (event.category === "resolved-issue") usage.resolvedIssues += 1;
+    if (event.category === "merged-pull-request") {
+      usage.mergedPullRequests += 1;
+      const group = mergedEventsByProjectMonth.get(capKey) ?? [];
+      group.push(event);
+      mergedEventsByProjectMonth.set(capKey, group);
+    } else if (event.category === "resolved-issue") usage.resolvedIssues += 1;
     else if (event.category === "material-test-change") {
       usage.materialTestChanges += 1;
     } else if (event.category === "evidence")
@@ -4372,7 +4397,6 @@ export function assertLeaderboardSnapshot(
       }
     }
     if (
-      usage.mergedPullRequests > SCORE_CAPS.mergedPullRequests ||
       usage.resolvedIssues > SCORE_CAPS.resolvedIssues ||
       usage.materialTestChanges > SCORE_CAPS.materialTestChanges ||
       usage.evidencePoints > SCORE_CAPS.evidencePoints ||
@@ -4384,6 +4408,23 @@ export function assertLeaderboardSnapshot(
       );
     }
     projectCapUsage.set(capKey, usage);
+  }
+  for (const events of mergedEventsByProjectMonth.values()) {
+    events
+      .sort(
+        (left, right) =>
+          right.occurredAt.localeCompare(left.occurredAt) ||
+          right.source.number - left.source.number ||
+          left.id.localeCompare(right.id),
+      )
+      .forEach((event, index) => {
+        const expectedPoints = mergedPullRequestPoints(index + 1);
+        if (event.points !== expectedPoints) {
+          throw new Error(
+            `snapshot.ledger merged event ${event.id} must award ${expectedPoints} points at ordinal ${index + 1}`,
+          );
+        }
+      });
   }
   const leaderByActorId = new Map(
     validatedLeaders.map((entry) => [entry.actor.id, entry]),

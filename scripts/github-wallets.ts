@@ -1,11 +1,16 @@
 /**
- * Resolves a Solana wallet marker from an immutable revision of a contributor's
- * public GitHub profile README. API responses are bounded and exact repository,
- * path, revision, and marker identities are rechecked before returning proof.
+ * Resolves a Solana wallet marker from a canonical Slop claim issue or an
+ * immutable revision of the contributor's public profile README. API responses
+ * are bounded and every source is rebound to the exact GitHub actor.
  */
 
+import { createHash } from "node:crypto";
 import type { WalletProof } from "../src/lib/rewards";
-import { parsePublishedWallet } from "../src/lib/wallets";
+import {
+  parsePublishedWallet,
+  WALLET_CLAIM_REPOSITORY,
+  WALLET_CLAIM_TITLE,
+} from "../src/lib/wallets";
 
 const API_ORIGIN = "https://api.github.com";
 const MAX_API_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -161,7 +166,80 @@ function object(value: unknown, context: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/** Returns immutable public wallet attribution, or null when none is published. */
+async function fetchIssueWallet(
+  login: string,
+  observedAt: string,
+  token: string | undefined,
+  fetchImpl: FetchLike,
+): Promise<WalletProof | null> {
+  const response = await apiJson(
+    `/repos/${WALLET_CLAIM_REPOSITORY}/issues?state=open&creator=${encodeURIComponent(login)}&sort=updated&direction=desc&per_page=100`,
+    token,
+    fetchImpl,
+  );
+  if (response === null) return null;
+  if (!Array.isArray(response)) {
+    throw new TypeError("GitHub wallet claim lookup is not an array");
+  }
+  if (response.length === 100) {
+    throw new RangeError("GitHub wallet claim lookup reached its issue bound");
+  }
+  const claims = response.filter((value) => {
+    const issue = object(value, "GitHub wallet claim issue");
+    return issue.title === WALLET_CLAIM_TITLE && !("pull_request" in issue);
+  });
+  if (claims.length === 0) return null;
+  if (claims.length !== 1) {
+    throw new TypeError("GitHub account has multiple open wallet claim issues");
+  }
+  const issue = object(claims[0], "GitHub wallet claim issue");
+  const actor = object(issue.user, "GitHub wallet claim author");
+  if (
+    typeof actor.login !== "string" ||
+    actor.login.toLowerCase() !== login.toLowerCase() ||
+    typeof actor.node_id !== "string" ||
+    !/^[A-Za-z0-9_=-]+$/u.test(actor.node_id)
+  ) {
+    throw new TypeError(
+      "GitHub wallet claim author does not match the contributor",
+    );
+  }
+  if (typeof issue.body !== "string" || issue.body.length > 1_000_000) {
+    throw new TypeError("GitHub wallet claim body is invalid or too large");
+  }
+  const published = parsePublishedWallet(issue.body);
+  if (!published) {
+    throw new TypeError("GitHub wallet claim issue has no wallet marker");
+  }
+  if (
+    !Number.isSafeInteger(issue.number) ||
+    (issue.number as number) < 1 ||
+    typeof issue.node_id !== "string" ||
+    !/^[A-Za-z0-9_=-]+$/u.test(issue.node_id) ||
+    typeof issue.updated_at !== "string" ||
+    !Number.isFinite(Date.parse(issue.updated_at))
+  ) {
+    throw new TypeError("GitHub wallet claim identity is invalid");
+  }
+  const sourceIssueNumber = issue.number as number;
+  const sourceUrl = `https://github.com/${WALLET_CLAIM_REPOSITORY}/issues/${sourceIssueNumber}`;
+  if (issue.html_url !== sourceUrl) {
+    throw new TypeError("GitHub wallet claim URL is not canonical");
+  }
+  return {
+    address: published.address,
+    chain: "solana",
+    observedAt,
+    sourceActorId: actor.node_id,
+    sourceBodySha256: createHash("sha256").update(issue.body).digest("hex"),
+    sourceIssueId: issue.node_id,
+    sourceIssueNumber,
+    sourceUpdatedAt: issue.updated_at,
+    sourceUrl,
+  };
+}
+
+/** Returns public wallet attribution, preferring one canonical open claim. */
 export async function fetchPublishedGithubWallet(
   loginInput: string,
   observedAt: string,
@@ -172,6 +250,13 @@ export async function fetchPublishedGithubWallet(
     throw new TypeError("Wallet observation time is invalid");
   }
   const fetchImpl = options.fetch ?? fetch;
+  const issueWallet = await fetchIssueWallet(
+    login,
+    observedAt,
+    options.token,
+    fetchImpl,
+  );
+  if (issueWallet) return issueWallet;
   const repository = `${login}/${login}`;
   const readmeResponse = await apiJson(
     `/repos/${encodeURIComponent(login)}/${encodeURIComponent(login)}/readme`,

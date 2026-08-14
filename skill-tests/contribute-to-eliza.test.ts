@@ -4,17 +4,20 @@
  */
 
 import assert from "node:assert";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,6 +47,7 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const skillDir = join(testDir, "..", "skills", "contribute-to-eliza");
 const skillPath = join(skillDir, "SKILL.md");
 const liveReportPath = join(skillDir, "scripts", "live-report.mjs");
+const runReceiptPath = join(skillDir, "scripts", "run-receipt.mjs");
 const NOW = new Date("2026-01-20T12:00:00.000Z");
 const HEAD_SHA = "a".repeat(40);
 const PRIOR_SHA = "b".repeat(40);
@@ -328,6 +332,25 @@ describe("live report parsing", () => {
       assert.strictEqual(result.stderr, "");
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects options that the selected receipt command would ignore", () => {
+    const cases = [
+      ["start", "--trajectory", "proof.json"],
+      ["start", "--run", `run_${"0".repeat(26)}`],
+      ["doctor", "--lane", "ignored-lane"],
+      ["preview", "--model", "ignored-model"],
+      ["status", "--repo-root", "/tmp"],
+    ];
+    for (const argumentsValue of cases) {
+      const result = spawnSync(
+        process.execPath,
+        [runReceiptPath, ...argumentsValue],
+        { encoding: "utf8" },
+      );
+      assert.strictEqual(result.status, 1);
+      assert.match(result.stderr, /is not valid with/u);
     }
   });
 
@@ -1598,12 +1621,48 @@ describe("live report behavior", () => {
 });
 
 describe("run receipt CLI", () => {
-  const runReceiptPath = join(skillDir, "scripts", "run-receipt.mjs");
-
   function runGit(cwd: string, args: string[]) {
     const result = spawnSync("git", args, { cwd, encoding: "utf8" });
     assert.strictEqual(result.status, 0, result.stderr);
     return result.stdout.trim();
+  }
+
+  function runAsync(
+    executable: string,
+    args: string[],
+    options: { env: NodeJS.ProcessEnv },
+  ) {
+    return new Promise<{
+      status: number | null;
+      stderr: string;
+      stdout: string;
+    }>((resolvePromise) => {
+      const child = spawn(executable, args, {
+        env: options.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("close", (status) => {
+        resolvePromise({ status, stderr, stdout });
+      });
+    });
+  }
+
+  async function waitForPath(path: string, timeoutMs = 5_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!existsSync(path)) {
+      if (Date.now() >= deadline) {
+        assert.fail(`timed out waiting for ${path}`);
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
   }
 
   function encodedDirectoryName(path: string) {
@@ -1640,11 +1699,8 @@ describe("run receipt CLI", () => {
         encoding: "utf8",
       });
 
-      assert.strictEqual(result.status, 1, result.stdout);
-      assert.match(
-        result.stderr,
-        /project run receipt failed: action must be start or finish/,
-      );
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.match(result.stdout, /^Usage: node scripts\/run-receipt\.mjs/m);
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }
@@ -1695,7 +1751,7 @@ describe("run receipt CLI", () => {
     assert.strictEqual(delta.totalTokens, 150);
   });
 
-  it("starts and finishes a measured run without passing --project to ccusage", () => {
+  it("starts and finishes a measured run without passing --project to ccusage", async () => {
     const fixtureRoot = realpathSync(
       mkdtempSync(join(tmpdir(), "contribute-to-eliza-start-")),
     );
@@ -1709,36 +1765,91 @@ describe("run receipt CLI", () => {
         "origin",
         "git@github.com:elizaOS/eliza.git",
       ]);
-      cpSync(skillDir, join(repoRoot, "skills", "contribute-to-eliza"), {
+      const installedSkillRoot = join(
+        fixtureRoot,
+        "installed",
+        "contribute-to-eliza",
+      );
+      cpSync(skillDir, installedSkillRoot, { recursive: true });
+      const sourceRevision = "a".repeat(40);
+      const installedFiles = readdirSync(installedSkillRoot, {
         recursive: true,
-      });
-      runGit(repoRoot, ["add", "."]);
-      runGit(repoRoot, [
-        "-c",
-        "user.email=skill-tests@example.com",
-        "-c",
-        "user.name=skill-tests",
-        "commit",
-        "--quiet",
-        "-m",
-        "fixture",
-      ]);
+        withFileTypes: true,
+      })
+        .filter((entry) => entry.isFile())
+        .map((entry) =>
+          join(entry.parentPath, entry.name)
+            .slice(installedSkillRoot.length + 1)
+            .replaceAll("\\", "/"),
+        )
+        .sort();
+      writeFileSync(
+        join(installedSkillRoot, "PROVENANCE.json"),
+        `${JSON.stringify(
+          {
+            schemaVersion: "1",
+            name: "contribute-to-eliza",
+            repository: "elizaOS/army",
+            revision: sourceRevision,
+            revisionStatus: "committed",
+            source: {
+              path: "skills/contribute-to-eliza/SKILL.md",
+              sha256: createHash("sha256")
+                .update(readFileSync(join(installedSkillRoot, "SKILL.md")))
+                .digest("hex"),
+            },
+            files: installedFiles.map((path) => ({
+              path,
+              sha256: createHash("sha256")
+                .update(readFileSync(join(installedSkillRoot, path)))
+                .digest("hex"),
+            })),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      writeFileSync(
+        join(installedSkillRoot, ".gitarmy-authorization.json"),
+        `${JSON.stringify(
+          {
+            schemaVersion: "1",
+            repository: "elizaOS/army",
+            revision: sourceRevision,
+            authorization: {
+              kind: "develop",
+              develop: sourceRevision,
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
 
       const shimDir = join(fixtureRoot, "bin");
       mkdirSync(shimDir);
       const argsLog = join(fixtureRoot, "ccusage-args.log");
       const fixturePayload = join(fixtureRoot, "ccusage-report.json");
+      const failureFlag = join(fixtureRoot, "ccusage-fail");
+      const quotedArgsLog = `'${argsLog.replaceAll("'", `'"'"'`)}'`;
+      const quotedFixture = `'${fixturePayload.replaceAll("'", `'"'"'`)}'`;
+      const quotedFailureFlag = `'${failureFlag.replaceAll("'", `'"'"'`)}'`;
       const shimSource = [
         "#!/bin/sh",
         'if [ "$1" = "--version" ]; then',
         "  echo 1.3.14",
         "  exit 0",
         "fi",
-        'if [ "$CCUSAGE_MODE" = "fail" ]; then',
+        'if [ "$3" = "--version" ]; then',
+        `  printf '%s\\n' "$*" >> ${quotedArgsLog}`,
+        "  echo 20.0.19",
+        "  exit 0",
+        "fi",
+        `if [ -f ${quotedFailureFlag} ]; then`,
         "  exit 7",
         "fi",
-        `printf '%s\\n' "$*" >> "$CCUSAGE_ARGS_LOG"`,
-        'cat "$CCUSAGE_FIXTURE"',
+        `printf '%s\\n' "$*" >> ${quotedArgsLog}`,
+        `/bin/cat ${quotedFixture}`,
         "",
       ].join("\n");
       writeFileSync(join(shimDir, "bun"), shimSource);
@@ -1747,18 +1858,13 @@ describe("run receipt CLI", () => {
       const encodedRepo = encodedDirectoryName(repoRoot);
       const environment = {
         ...process.env,
-        PATH: `${shimDir}:${process.env.PATH}`,
+        PATH: `${shimDir}:/usr/bin:/bin`,
+        HOME: join(fixtureRoot, "home"),
+        CODEX_HOME: join(fixtureRoot, "codex"),
+        CLAUDE_CONFIG_DIR: join(fixtureRoot, "claude"),
         XDG_CONFIG_HOME: join(fixtureRoot, "config"),
-        CCUSAGE_ARGS_LOG: argsLog,
-        CCUSAGE_FIXTURE: fixturePayload,
       };
-      const entrypoint = join(
-        repoRoot,
-        "skills",
-        "contribute-to-eliza",
-        "scripts",
-        "run-receipt.mjs",
-      );
+      const entrypoint = join(installedSkillRoot, "scripts", "run-receipt.mjs");
       const cliArguments = [
         "--repo-root",
         repoRoot,
@@ -1771,6 +1877,135 @@ describe("run receipt CLI", () => {
         "--json",
       ];
 
+      const preview = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "preview",
+          "--repo-root",
+          repoRoot,
+          "--client",
+          "claude-code",
+          "--json",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(preview.status, 0, preview.stderr);
+      const previewReport = JSON.parse(preview.stdout);
+      assert.deepStrictEqual(previewReport.automaticUploads, []);
+      assert.strictEqual(
+        previewReport.modelEvidence,
+        "declared-local-not-provider-attested",
+      );
+      assert.strictEqual(previewReport.consentFlag, "--allow-local-usage");
+      assert.strictEqual(
+        previewReport.packageExecutionConsentFlag,
+        "--allow-package-execution",
+      );
+      assert.match(previewReport.linkabilityDisclosure, /link receipts/u);
+      assert.match(previewReport.localReads.join("\n"), /claude.*projects/is);
+      assert.strictEqual(existsSync(argsLog), false);
+      assert.strictEqual(existsSync(join(fixtureRoot, "config")), false);
+
+      const missingDoctorConsent = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "doctor",
+          "--repo-root",
+          repoRoot,
+          "--client",
+          "claude-code",
+          "--model",
+          "claude-fable-5",
+          "--json",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(missingDoctorConsent.status, 1);
+      assert.match(
+        missingDoctorConsent.stderr,
+        /requires --allow-package-execution/u,
+      );
+      assert.strictEqual(existsSync(argsLog), false);
+
+      const doctor = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "doctor",
+          "--repo-root",
+          repoRoot,
+          "--client",
+          "claude-code",
+          "--model",
+          "claude-fable-5",
+          "--allow-package-execution",
+          "--json",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(doctor.status, 0, doctor.stderr);
+      const doctorReport = JSON.parse(doctor.stdout);
+      assert.strictEqual(doctorReport.ccusage.version, "20.0.19");
+      assert.strictEqual(doctorReport.ccusage.logsRead, false);
+      assert.deepStrictEqual(readFileSync(argsLog, "utf8").trim().split("\n"), [
+        "x ccusage@20.0.19 --version",
+      ]);
+
+      const missingConsent = spawnSync(
+        process.execPath,
+        [entrypoint, "start", ...cliArguments],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(missingConsent.status, 1, missingConsent.stdout);
+      assert.match(missingConsent.stderr, /requires --allow-local-usage/u);
+      assert.strictEqual(
+        readFileSync(argsLog, "utf8").trim().split("\n").length,
+        1,
+      );
+
+      const stateRoot = join(environment.XDG_CONFIG_HOME, "gitarmy", "runs");
+      writeFileSync(
+        fixturePayload,
+        JSON.stringify({
+          sessions: [
+            session("unsafe-session", encodedRepo, Number.MAX_SAFE_INTEGER + 1),
+          ],
+        }),
+      );
+      const unsafeStarted = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "start",
+          ...cliArguments,
+          "--allow-package-execution",
+          "--allow-local-usage",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(unsafeStarted.status, 0, unsafeStarted.stderr);
+      const unsafeStartReport = JSON.parse(unsafeStarted.stdout);
+      assert.strictEqual(unsafeStartReport.usageStatus, "unavailable");
+      const unsafeActivePath = join(
+        stateRoot,
+        "active",
+        `${unsafeStartReport.runId}.json`,
+      );
+      assert.strictEqual(
+        JSON.parse(readFileSync(unsafeActivePath, "utf8")).baseline,
+        null,
+      );
+      const unsafeStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(unsafeStatus.status, 0, unsafeStatus.stderr);
+      assert.strictEqual(JSON.parse(unsafeStatus.stdout).runs.length, 1);
+      rmSync(unsafeActivePath);
+
       writeFileSync(
         fixturePayload,
         JSON.stringify({
@@ -1779,7 +2014,13 @@ describe("run receipt CLI", () => {
       );
       const started = spawnSync(
         process.execPath,
-        [entrypoint, "start", ...cliArguments],
+        [
+          entrypoint,
+          "start",
+          ...cliArguments,
+          "--allow-package-execution",
+          "--allow-local-usage",
+        ],
         { encoding: "utf8", env: environment },
       );
       assert.strictEqual(started.status, 0, started.stderr);
@@ -1787,10 +2028,106 @@ describe("run receipt CLI", () => {
       assert.strictEqual(startReport.usageStatus, "capturing");
       assert.match(startReport.runId, /^run_[0-9A-HJKMNP-TV-Z]{26}$/);
 
+      const activeDirectory = join(stateRoot, "active");
+      const foreignRunId = `run_${"0".repeat(26)}`;
+      const foreignStatePath = join(activeDirectory, `${foreignRunId}.json`);
+      writeFileSync(
+        foreignStatePath,
+        `${JSON.stringify({ projectId: "asi" })}\n`,
+      );
+      const activeStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(activeStatus.status, 0, activeStatus.stderr);
+      const activeRuns = JSON.parse(activeStatus.stdout).runs;
+      assert.strictEqual(activeRuns.length, 1);
+      assert.deepStrictEqual(
+        { ...activeRuns[0], startedAt: null },
+        {
+          runId: startReport.runId,
+          state: "active",
+          client: "claude-code",
+          model: "claude-fable-5",
+          lane: "skill-tests",
+          startedAt: null,
+          completedAt: null,
+        },
+      );
+      assert.strictEqual(
+        new Date(activeRuns[0].startedAt).toISOString(),
+        activeRuns[0].startedAt,
+      );
+      const activePath = join(activeDirectory, `${startReport.runId}.json`);
+      const activeBytes = readFileSync(activePath, "utf8");
+      writeFileSync(
+        activePath,
+        `${JSON.stringify({
+          projectId: "eliza",
+          runId: startReport.runId,
+        })}\n`,
+      );
+      const truncatedActiveStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(truncatedActiveStatus.status, 1);
+      assert.match(truncatedActiveStatus.stderr, /invalid identity/u);
+      writeFileSync(activePath, activeBytes);
+
+      const mismatchedFilename = join(
+        activeDirectory,
+        `run_${"4".repeat(26)}.json`,
+      );
+      writeFileSync(mismatchedFilename, activeBytes);
+      const mismatchedFilenameStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(mismatchedFilenameStatus.status, 1);
+      assert.match(mismatchedFilenameStatus.stderr, /filename.*run id/u);
+      rmSync(mismatchedFilename);
+      rmSync(foreignStatePath);
+
+      for (const [field, value] of [
+        ["provider", "evil"],
+        [
+          "skillRevision",
+          `elizaOS/army@${"b".repeat(40)}:skills/contribute-to-eliza`,
+        ],
+        ["skillSha256", "b".repeat(64)],
+      ]) {
+        const tamperedActive = JSON.parse(activeBytes);
+        tamperedActive[field] = value;
+        writeFileSync(
+          activePath,
+          `${JSON.stringify(tamperedActive, null, 2)}\n`,
+        );
+        const tamperedFinish = spawnSync(
+          process.execPath,
+          [
+            entrypoint,
+            "finish",
+            ...cliArguments,
+            "--run",
+            startReport.runId,
+            "--allow-package-execution",
+          ],
+          { encoding: "utf8", env: environment },
+        );
+        assert.strictEqual(tamperedFinish.status, 1);
+      }
+      writeFileSync(activePath, activeBytes);
+
       const ccusageInvocations = readFileSync(argsLog, "utf8")
         .trim()
         .split("\n");
       assert.deepStrictEqual(ccusageInvocations, [
+        "x ccusage@20.0.19 --version",
+        "x ccusage@20.0.19 claude session --json --mode calculate",
         "x ccusage@20.0.19 claude session --json --mode calculate",
       ]);
 
@@ -1800,26 +2137,282 @@ describe("run receipt CLI", () => {
           sessions: [session("fixture-session", encodedRepo, 166)],
         }),
       );
+      const trajectoryPath = join(fixtureRoot, "trajectory.json");
+      writeFileSync(trajectoryPath, '{"result":"accepted"}\n');
       const finished = spawnSync(
         process.execPath,
-        [entrypoint, "finish", ...cliArguments, "--run", startReport.runId],
+        [
+          entrypoint,
+          "finish",
+          ...cliArguments,
+          "--run",
+          startReport.runId,
+          "--trajectory",
+          trajectoryPath,
+          "--allow-package-execution",
+        ],
         { encoding: "utf8", env: environment },
       );
       assert.strictEqual(finished.status, 0, finished.stderr);
       const finishReport = JSON.parse(finished.stdout);
       assert.strictEqual(finishReport.receipt.usage.confidence, "exact");
       assert.strictEqual(finishReport.receipt.usage.totalTokens, 150);
+      assert.strictEqual(
+        finishReport.receipt.trajectorySha256,
+        createHash("sha256").update(readFileSync(trajectoryPath)).digest("hex"),
+      );
       assert.match(
         finishReport.footer,
         /Compute receipt: 150 project-attributed tokens \(exact/,
       );
+      const replayed = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...cliArguments,
+          "--run",
+          startReport.runId,
+          "--allow-package-execution",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(replayed.status, 0, replayed.stderr);
+      assert.strictEqual(
+        JSON.parse(replayed.stdout).footer,
+        finishReport.footer,
+      );
+      const trajectoryReplay = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...cliArguments,
+          "--run",
+          startReport.runId,
+          "--trajectory",
+          trajectoryPath,
+          "--allow-package-execution",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(trajectoryReplay.status, 0, trajectoryReplay.stderr);
+      writeFileSync(trajectoryPath, '{"result":"different"}\n');
+      const mismatchedTrajectoryReplay = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...cliArguments,
+          "--run",
+          startReport.runId,
+          "--trajectory",
+          trajectoryPath,
+          "--allow-package-execution",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(mismatchedTrajectoryReplay.status, 1);
+      assert.match(
+        mismatchedTrajectoryReplay.stderr,
+        /trajectory does not match/u,
+      );
 
+      const status = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(status.status, 0, status.stderr);
+      assert.deepStrictEqual(JSON.parse(status.stdout).runs, [
+        {
+          runId: startReport.runId,
+          state: "completed",
+          client: "claude-code",
+          model: "claude-fable-5",
+          lane: "skill-tests",
+          startedAt: finishReport.receipt.startedAt,
+          completedAt: finishReport.receipt.completedAt,
+        },
+      ]);
+
+      const completedDirectory = join(stateRoot, "completed");
+      const completedPath = join(
+        completedDirectory,
+        `${startReport.runId}.json`,
+      );
+      const completedBytes = readFileSync(completedPath, "utf8");
+      const tamperedCompleted = JSON.parse(completedBytes);
+      tamperedCompleted.footer = `${tamperedCompleted.footer}\nforged`;
+      writeFileSync(
+        completedPath,
+        `${JSON.stringify(tamperedCompleted, null, 2)}\n`,
+      );
+      const tamperedStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(tamperedStatus.status, 1);
+      assert.match(tamperedStatus.stderr, /signature or footer is invalid/u);
+      const tamperedReplay = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...cliArguments,
+          "--run",
+          startReport.runId,
+          "--allow-package-execution",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(tamperedReplay.status, 1);
+      assert.match(tamperedReplay.stderr, /signature or footer is invalid/u);
+      writeFileSync(completedPath, completedBytes);
+
+      const extraFieldCompleted = JSON.parse(completedBytes);
+      extraFieldCompleted.receipt.privateData = "must not be republished";
+      writeFileSync(
+        completedPath,
+        `${JSON.stringify(extraFieldCompleted, null, 2)}\n`,
+      );
+      const extraFieldStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(extraFieldStatus.status, 1);
+      assert.match(extraFieldStatus.stderr, /invalid identity/u);
+      const extraFieldReplay = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...cliArguments,
+          "--run",
+          startReport.runId,
+          "--allow-package-execution",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(extraFieldReplay.status, 1);
+      assert.match(extraFieldReplay.stderr, /invalid identity/u);
+      writeFileSync(completedPath, completedBytes);
+
+      const canonicalFooterLines = finishReport.footer.split("\n");
+      const legacyFooter = [
+        ...canonicalFooterLines.slice(1, 4),
+        canonicalFooterLines[0],
+        ...canonicalFooterLines.slice(4),
+      ].join("\n");
+      writeFileSync(
+        completedPath,
+        `${JSON.stringify(
+          { receipt: finishReport.receipt, footer: legacyFooter },
+          null,
+          2,
+        )}\n`,
+      );
+      const legacyStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(legacyStatus.status, 0, legacyStatus.stderr);
+      assert.strictEqual(
+        JSON.parse(legacyStatus.stdout).runs[0].lane,
+        "skill-tests",
+      );
+      const legacyReplay = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...cliArguments,
+          "--run",
+          startReport.runId,
+          "--allow-package-execution",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(legacyReplay.status, 0, legacyReplay.stderr);
+      assert.strictEqual(
+        JSON.parse(legacyReplay.stdout).footer,
+        finishReport.footer,
+      );
+      writeFileSync(completedPath, completedBytes);
+
+      const adversarialRunIds = ["1", "2", "3"].map(
+        (digit) => `run_${digit.repeat(26)}`,
+      );
+      const malformedPath = join(
+        completedDirectory,
+        `${adversarialRunIds[0]}.json`,
+      );
+      writeFileSync(malformedPath, "{\n");
+      const malformedStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(malformedStatus.status, 1);
+      assert.match(malformedStatus.stderr, /not valid JSON/u);
+      rmSync(malformedPath);
+
+      const symlinkedPath = join(
+        completedDirectory,
+        `${adversarialRunIds[1]}.json`,
+      );
+      symlinkSync(completedPath, symlinkedPath);
+      const symlinkedStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(symlinkedStatus.status, 1);
+      assert.match(symlinkedStatus.stderr, /not a bounded regular file/u);
+      rmSync(symlinkedPath);
+
+      const oversizedPath = join(
+        completedDirectory,
+        `${adversarialRunIds[2]}.json`,
+      );
+      writeFileSync(oversizedPath, "");
+      truncateSync(oversizedPath, 34 * 1024 * 1024);
+      const oversizedStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(oversizedStatus.status, 1);
+      assert.match(oversizedStatus.stderr, /not a bounded regular file/u);
+      rmSync(oversizedPath);
+
+      const unexpectedPath = join(completedDirectory, "interrupted.tmp");
+      writeFileSync(unexpectedPath, "pending\n");
+      const unexpectedStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(unexpectedStatus.status, 1);
+      assert.match(unexpectedStatus.stderr, /unexpected entry/u);
+      rmSync(unexpectedPath);
+
+      writeFileSync(failureFlag, "fail exact ccusage runner\n");
       const failedCapture = spawnSync(
         process.execPath,
-        [entrypoint, "start", ...cliArguments],
+        [
+          entrypoint,
+          "start",
+          ...cliArguments,
+          "--allow-package-execution",
+          "--allow-local-usage",
+        ],
         {
           encoding: "utf8",
-          env: { ...environment, CCUSAGE_MODE: "fail" },
+          env: environment,
         },
       );
       assert.strictEqual(failedCapture.status, 0, failedCapture.stderr);
@@ -1827,6 +2420,163 @@ describe("run receipt CLI", () => {
         JSON.parse(failedCapture.stdout).usageStatus,
         "unavailable",
       );
+      const concurrentRunId = JSON.parse(failedCapture.stdout).runId;
+      rmSync(failureFlag);
+      const concurrentArguments = [
+        entrypoint,
+        "finish",
+        ...cliArguments,
+        "--run",
+        concurrentRunId,
+        "--allow-package-execution",
+      ];
+      const raceHook = join(fixtureRoot, "finish-race-hook.mjs");
+      const raceReady = join(fixtureRoot, "finish-race-ready");
+      const raceRelease = join(fixtureRoot, "finish-race-release");
+      const concurrentActivePath = join(
+        activeDirectory,
+        `${concurrentRunId}.json`,
+      );
+      writeFileSync(
+        raceHook,
+        [
+          'import fs from "node:fs";',
+          'import { syncBuiltinESMExports } from "node:module";',
+          "const originalExists = fs.existsSync.bind(fs);",
+          "const originalRead = fs.readFileSync.bind(fs);",
+          "const originalWrite = fs.writeFileSync.bind(fs);",
+          "const { RACE_ACTIVE: active, RACE_READY: ready, RACE_RELEASE: release } = process.env;",
+          "let blocked = false;",
+          "const sleeper = new Int32Array(new SharedArrayBuffer(4));",
+          "fs.readFileSync = (path, ...args) => {",
+          "  if (!blocked && String(path) === active) {",
+          "    blocked = true;",
+          '    originalWrite(ready, "ready\\n", { flag: "wx" });',
+          "    while (!originalExists(release)) Atomics.wait(sleeper, 0, 0, 10);",
+          "  }",
+          "  return originalRead(path, ...args);",
+          "};",
+          "syncBuiltinESMExports();",
+          "",
+        ].join("\n"),
+      );
+      const nodeLookup = spawnSync("sh", ["-c", "command -v node"], {
+        encoding: "utf8",
+      });
+      assert.strictEqual(nodeLookup.status, 0, nodeLookup.stderr);
+      const loserPromise = runAsync(
+        nodeLookup.stdout.trim(),
+        ["--import", raceHook, ...concurrentArguments],
+        {
+          env: {
+            ...environment,
+            RACE_ACTIVE: concurrentActivePath,
+            RACE_READY: raceReady,
+            RACE_RELEASE: raceRelease,
+          },
+        },
+      );
+      let winnerResult: Awaited<ReturnType<typeof runAsync>> | null = null;
+      let coordinationError: unknown = null;
+      try {
+        await waitForPath(raceReady);
+        winnerResult = await runAsync(process.execPath, concurrentArguments, {
+          env: environment,
+        });
+      } catch (error) {
+        coordinationError = error;
+      } finally {
+        if (!existsSync(raceRelease)) writeFileSync(raceRelease, "release\n");
+      }
+      const loserResult = await loserPromise;
+      if (coordinationError) throw coordinationError;
+      assert.ok(winnerResult);
+      assert.strictEqual(winnerResult.status, 0, winnerResult.stderr);
+      assert.strictEqual(loserResult.status, 0, loserResult.stderr);
+      assert.strictEqual(
+        JSON.parse(winnerResult.stdout).footer,
+        JSON.parse(loserResult.stdout).footer,
+      );
+      assert.deepStrictEqual(readdirSync(join(stateRoot, "pending")), []);
+      assert.strictEqual(existsSync(concurrentActivePath), false);
+      const concurrentStatus = spawnSync(
+        process.execPath,
+        [entrypoint, "status", "--json"],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(concurrentStatus.status, 0, concurrentStatus.stderr);
+      assert.ok(
+        JSON.parse(concurrentStatus.stdout).runs.some(
+          (run: { runId: string; state: string }) =>
+            run.runId === concurrentRunId && run.state === "completed",
+        ),
+      );
+
+      writeFileSync(
+        join(shimDir, "bun"),
+        shimSource.replace("echo 20.0.19", "echo 120.0.19"),
+      );
+      const npxShimSource = [
+        "#!/bin/sh",
+        'if [ "$1" = "--version" ]; then',
+        "  echo 11.0.0",
+        "  exit 0",
+        "fi",
+        'if [ "$3" = "--version" ]; then',
+        `  printf '%s\\n' "$*" >> ${quotedArgsLog}`,
+        "  echo 20.0.19",
+        "  exit 0",
+        "fi",
+        "exit 7",
+        "",
+      ].join("\n");
+      writeFileSync(join(shimDir, "npx"), npxShimSource);
+      chmodSync(join(shimDir, "npx"), 0o755);
+      const fallbackDoctor = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "doctor",
+          "--repo-root",
+          repoRoot,
+          "--client",
+          "claude-code",
+          "--model",
+          "claude-fable-5",
+          "--allow-package-execution",
+          "--json",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(fallbackDoctor.status, 0, fallbackDoctor.stderr);
+      const fallbackReport = JSON.parse(fallbackDoctor.stdout);
+      assert.strictEqual(fallbackReport.ok, true);
+      assert.strictEqual(fallbackReport.ccusage.runner, "npx");
+
+      writeFileSync(
+        join(shimDir, "npx"),
+        npxShimSource.replace("echo 20.0.19", "echo noisy-20.0.19"),
+      );
+      const wrongVersionDoctor = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "doctor",
+          "--repo-root",
+          repoRoot,
+          "--client",
+          "claude-code",
+          "--model",
+          "claude-fable-5",
+          "--allow-package-execution",
+          "--json",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(wrongVersionDoctor.status, 1);
+      const wrongVersionReport = JSON.parse(wrongVersionDoctor.stdout);
+      assert.strictEqual(wrongVersionReport.ok, false);
+      assert.strictEqual(wrongVersionReport.ccusage.version, null);
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }

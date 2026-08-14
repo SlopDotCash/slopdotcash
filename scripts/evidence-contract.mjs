@@ -18,7 +18,12 @@ const FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export const REMOTE_ARTIFACT_PATHS = [
   "index.html",
-  "skill.md",
+  "SKILL.md",
+  ".well-known/agent-skills/index.json",
+  ".well-known/agent-skills/slop/SKILL.md",
+  ".well-known/slop/projects.json",
+  "llms.txt",
+  "projects/eliza/skill.md",
   "mission.md",
   "codex.md",
   "claude.md",
@@ -47,6 +52,15 @@ const REQUIRED_SECURITY_HEADERS = {
   "strict-transport-security": ["max-age=31536000", "includesubdomains"],
   "x-content-type-options": ["nosniff"],
 };
+
+function artifactContentType(path) {
+  if (path === "index.html") return "text/html";
+  if (path === "llms.txt") return "text/plain";
+  if (path.startsWith("downloads/")) return "application/octet-stream";
+  if (path.endsWith(".json")) return "application/json";
+  if (path.endsWith(".md")) return "text/markdown";
+  throw new TypeError(`remote artifact has no MIME contract: ${path}`);
+}
 
 function sha256(contents) {
   return createHash("sha256").update(contents).digest("hex");
@@ -394,6 +408,16 @@ export async function verifyRemoteArtifacts({
         `production ${artifact.path} returned HTTP ${response.status}`,
       );
     }
+    const contentType = response.headers.get("content-type");
+    const expectedContentType = artifactContentType(artifact.path);
+    if (
+      typeof contentType !== "string" ||
+      contentType.toLowerCase().split(";", 1)[0].trim() !== expectedContentType
+    ) {
+      throw new Error(
+        `production ${artifact.path} returned ${contentType ?? "no Content-Type"}; expected ${expectedContentType}`,
+      );
+    }
     const received = Buffer.from(await response.arrayBuffer());
     const expectedDigest = sha256(artifact.contents);
     const receivedDigest = sha256(received);
@@ -408,7 +432,7 @@ export async function verifyRemoteArtifacts({
     results.push({
       bytes: received.length,
       cacheControl: response.headers.get("cache-control"),
-      contentType: response.headers.get("content-type"),
+      contentType,
       path: artifact.path,
       sha256: receivedDigest,
       status: response.status,

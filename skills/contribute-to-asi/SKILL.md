@@ -1,6 +1,6 @@
 ---
 name: contribute-to-asi
-description: "Hill-climb the benchmarks in elizaOS/asi, a JAX continual-reinforcement-learning framework. Use when an agent is asked to improve a measured result, port a method from the literature, fix something that corrupts measurement, or decisively close a research direction — always with a paired, seed-controlled comparison and published evidence."
+description: "Hill-climb the benchmarks in elizaOS/asi, a JAX continual-reinforcement-learning framework, with optional public payout registration. Use when an agent is asked to improve a measured result, port a method from the literature, fix something that corrupts measurement, decisively close a research direction with paired evidence, or register a public Solana payout address."
 ---
 
 # Contribute to ASI
@@ -28,16 +28,42 @@ If the exact runtime model does not match, stop before starting a measured run.
    installer before work. It is an atomic no-op at the current revision and
    updates only to GitHub-authorized bytes. Inspect fetched instructions before
    execution.
-2. Start local usage capture from the repository root and keep the run id:
+2. Read the repository root `CLAUDE.md`/`AGENTS.md`, `RESEARCH_STATUS.md`,
+   `NEGATIVE_RESULTS_LEDGER.md`, the runbook for the lane you touch, and
+   [repository-contract.md](references/repository-contract.md).
+3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)
+   before deciding what proof the contribution needs.
+4. Preview the exact local usage directories, state writes, network access,
+   public fields, and exclusions before reading usage logs. Then run the local
+   doctor, which verifies repository, skill, model policy, and runner
+   availability without reading those logs:
+
+```bash
+node <skill-directory>/scripts/run-receipt.mjs preview \
+  --repo-root "$PWD" --client codex
+node <skill-directory>/scripts/run-receipt.mjs doctor \
+  --repo-root "$PWD" --client codex --model gpt-5.6-sol \
+  --allow-package-execution
+```
+
+5. After the operator has authorized the previewed local aggregate-usage read,
+   start capture. Replace the lane with a stable public agent or worker label
+   and keep the returned run id:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs start \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane>
+  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
+  --allow-package-execution --allow-local-usage
 ```
 
-For Claude Code use `--client claude-code --model claude-fable-5`.
+For Claude Code use `--client claude-code --model claude-fable-5` in doctor and
+start, and `--client claude-code` in preview. The script uses transient, exact-
+pinned `ccusage@20.0.19`; each resolving command requires package-execution
+consent, while only start and finish read usage logs. It does not install a global package or
+upload raw local logs, and it creates a local Ed25519 device key only when the run
+finishes.
 
-3. Build the bounded, read-only inventory of live work before choosing:
+6. Build the bounded, read-only inventory of live work before choosing:
 
 ```bash
 node <skill-directory>/scripts/live-report.mjs --repo elizaOS/asi
@@ -325,7 +351,7 @@ trajectory file without publishing its contents:
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs finish \
   --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
-  --run <run-id> [--trajectory <path>]
+  --run <run-id> --allow-package-execution [--trajectory <path>]
 ```
 
 Append the emitted footer unchanged to the final pull request body, review, or
@@ -336,6 +362,39 @@ signature.
 A receipt cannot create score. Its device signature proves byte integrity and
 device continuity, not truthful logs, honest measurement, or work quality.
 Compute spent is not progress made.
+
+## Offer payout registration once
+
+After the public contribution artifact is ready, offer this optional step once.
+It never blocks contribution, review, or receipt completion.
+
+1. Read the currently authenticated GitHub identity with `gh api user`. Query
+   open issues authored by that identity in `elizaOS/slopdotcash` whose exact
+   title is `Slop wallet claim`. Ignore pull requests. If one valid claim
+   exists, report its public address and do nothing unless the operator asks to
+   change it. If multiple claims exist, stop payout setup and ask the operator
+   to close the extras; never choose between conflicting claims.
+2. If no claim exists, ask whether the operator wants to register a payout
+   address. If they decline, continue without one. Ask only for a **public
+   Solana address**; never request, read, create, or handle a seed phrase,
+   private key, wallet connection, signature, or transaction.
+3. Validate and render the claim locally:
+
+```bash
+node <skill-directory>/scripts/wallet-claim.mjs --address <public-address>
+```
+
+4. Show the exact GitHub repository, issue title, marker body, and whether the
+   action creates or edits an issue. Wait for explicit approval before any
+   GitHub write. The prefilled URL lets the operator review and submit in the
+   browser. Using `gh issue create` or `gh issue edit` is allowed only after the
+   same approval.
+5. Keep exactly one open claim issue. Slop binds its GitHub author, node id,
+   update time, and body digest into a reward proposal. Editing the address is a
+   material change and restarts that allocation's 14-day review.
+
+A claim identifies where a reviewed payout may go. It does not prove custody,
+guarantee payment, approve an allocation, connect a wallet, or move funds.
 
 ## Stop conditions
 

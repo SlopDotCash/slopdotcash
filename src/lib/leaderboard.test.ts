@@ -1,6 +1,7 @@
 /**
  * Proves the public scoring contract with deterministic GitHub-shaped records,
- * including the anti-gaming caps and provenance parsing used by live snapshots.
+ * including uncapped diminishing merge credit, bounded quality categories, and
+ * provenance parsing used by live snapshots.
  */
 
 import { createHash } from "node:crypto";
@@ -26,6 +27,7 @@ import {
   type LeaderboardInput,
   MATERIAL_TEST_ADDITIONS,
   MATERIAL_TEST_CHURN,
+  mergedPullRequestPoints,
   type PullRequestRecord,
   parseEvidenceHeadOid,
   pullRequestTextSources,
@@ -1264,7 +1266,24 @@ describe("outcome qualification", () => {
   });
 });
 
-describe("scoring and caps", () => {
+describe("scoring and limits", () => {
+  it("keeps accepted merge credit uncapped, positive, and diminishing", () => {
+    const points = Array.from({ length: 1_000 }, (_, index) =>
+      mergedPullRequestPoints(index + 1),
+    );
+
+    expect(points.slice(0, 6)).toEqual([10, 8, 6, 5, 5, 5]);
+    expect(points.at(-1)).toBe(1);
+    expect(points.every((value) => value >= 1)).toBe(true);
+    expect(
+      points.every((value, index) => index === 0 || value <= points[index - 1]),
+    ).toBe(true);
+    expect(points.reduce((total, value) => total + value, 0)).toBeGreaterThan(
+      points.slice(0, -1).reduce((total, value) => total + value, 0),
+    );
+    expect(() => mergedPullRequestPoints(0)).toThrow("positive integer");
+  });
+
   function evaluatedContribution(
     index: number,
     contributor = actor("partial-author"),
@@ -1591,7 +1610,7 @@ describe("scoring and caps", () => {
     expect(reversed.leaders).toEqual(forward.leaders);
   });
 
-  it("applies every contributor cap newest-first and independently of input order", () => {
+  it("applies category limits newest-first without capping accepted merges", () => {
     const contributor = actor("cap-author");
     const reviewer = actor("cap-reviewer");
     const richPullRequests = Array.from({ length: 12 }, (_, index) => {
@@ -1679,23 +1698,30 @@ describe("scoring and caps", () => {
     expect(
       forward.leaders.find((entry) => entry.actor.id === contributor.id),
     ).toMatchObject({
-      score: 120,
+      score: 132,
       acceptedOutcomes: {
-        mergedPullRequests: SCORE_CAPS.mergedPullRequests,
+        mergedPullRequests: 12,
         resolvedIssues: SCORE_CAPS.resolvedIssues,
         materialTestChanges: SCORE_CAPS.materialTestChanges,
         evidenceCategories: 25,
       },
       points: {
-        mergedPullRequests: 50,
+        mergedPullRequests: 62,
         resolvedIssues: 20,
         materialTestChanges: 20,
         evidence: SCORE_CAPS.evidencePoints,
       },
       reportedModels: [
+        "OpenAI/gpt-5.1",
         "OpenAI/gpt-5.10",
         "OpenAI/gpt-5.11",
         "OpenAI/gpt-5.12",
+        "OpenAI/gpt-5.2",
+        "OpenAI/gpt-5.3",
+        "OpenAI/gpt-5.4",
+        "OpenAI/gpt-5.5",
+        "OpenAI/gpt-5.6",
+        "OpenAI/gpt-5.7",
         "OpenAI/gpt-5.8",
         "OpenAI/gpt-5.9",
       ],
@@ -1713,7 +1739,7 @@ describe("scoring and caps", () => {
         .filter((event) => event.category === "merged-pull-request")
         .map((event) => event.source.number)
         .sort((left, right) => right - left),
-    ).toEqual([12, 11, 10, 9, 8]);
+    ).toEqual([12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
     expect(
       forward.ledger
         .filter((event) => event.category === "resolved-issue")
@@ -1755,7 +1781,7 @@ describe("scoring and caps", () => {
     );
 
     expect(entry).toMatchObject({
-      score: 70,
+      score: 53,
       acceptedOutcomes: { mergedPullRequests: 7 },
     });
     expect(mergedEvents).toHaveLength(7);
@@ -3127,7 +3153,7 @@ describe("deduplication and public schema", () => {
       "does not match the public ledger",
     );
     expect(() => assertLeaderboardSnapshot(wrongEventWeight)).toThrow(
-      "points does not match its scoring category",
+      "must award 10 points at ordinal 1",
     );
   });
 

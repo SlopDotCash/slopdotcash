@@ -1,11 +1,13 @@
 /**
- * Parses the single public wallet marker allowed in a GitHub profile README.
- * The marker proves public attribution by the GitHub account, not custody of
- * the key; payout reviewers must preserve the immutable README observation.
+ * Parses the single public wallet marker allowed in a canonical GitHub claim
+ * source. The marker proves public attribution by the GitHub account, not
+ * custody of the key; payout reviewers preserve the exact source observation.
  */
 
 export const WALLET_MARKER_VERSION = "1" as const;
 export const WALLET_MARKER_PREFIX = "gitarmy-wallet:v1" as const;
+export const WALLET_CLAIM_REPOSITORY = "elizaOS/slopdotcash" as const;
+export const WALLET_CLAIM_TITLE = "Slop wallet claim" as const;
 
 export interface PublishedWallet {
   address: string;
@@ -123,7 +125,7 @@ export function parsePublishedWallet(markdown: string): PublishedWallet | null {
   return { address: marker.address, chain: "solana" };
 }
 
-/** Produces the exact marker contributors publish in their profile README. */
+/** Produces the exact marker contributors publish in a GitHub claim source. */
 export function formatPublishedWallet(address: string): string {
   if (!isSolanaAddress(address)) {
     throw new TypeError("Cannot format an invalid Solana address");

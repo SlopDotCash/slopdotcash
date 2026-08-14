@@ -153,6 +153,23 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();
+  await expect(page.getByText(/This month is the default/u)).toBeVisible();
+  await expect(page.getByRole("tab", { name: "This month" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("tab", { name: "Eliza, $10,000 monthly pool" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("columnheader", { name: "Accepted score" }),
+  ).toBeAttached();
+  await expect(
+    page.getByRole("columnheader", { name: "Current estimate" }),
+  ).toBeAttached();
+  await expect(
+    page.getByText("How score and compute affect rewards"),
+  ).toBeVisible();
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();
@@ -173,10 +190,40 @@ test("discovers both reward models and a score-ranked global ledger", async ({
 
   const rows = page.locator("#leaderboard tbody .leader-row");
   if (snapshot.leaders.length === 0) await expect(rows).toHaveCount(0);
-  else expect(await rows.count()).toBeGreaterThan(0);
+  else {
+    expect(await rows.count()).toBeGreaterThan(0);
+    const viewport = page.viewportSize();
+    if (viewport && viewport.width <= 680) {
+      const projection = rows.first().locator("td").nth(4);
+      await expect(projection).toBeVisible();
+      const projectionBounds = await projection.boundingBox();
+      expect(projectionBounds).not.toBeNull();
+      expect(projectionBounds?.x ?? -1).toBeGreaterThanOrEqual(0);
+      expect(
+        (projectionBounds?.x ?? 0) + (projectionBounds?.width ?? 0),
+      ).toBeLessThanOrEqual(viewport.width + 1);
+      expect(
+        await page
+          .locator("#leaderboard")
+          .evaluate(
+            (element) => element.scrollWidth <= element.clientWidth + 1,
+          ),
+      ).toBe(true);
+    }
+  }
+  await page.getByRole("tab", { name: "All-time record" }).click();
+  await expect(
+    page.getByRole("table", { name: "All-time accepted-work record" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("columnheader", { name: "Paid to date" }),
+  ).toBeAttached();
+  await expect(
+    page.getByRole("columnheader", { name: "Current estimate" }),
+  ).toHaveCount(0);
 });
 
-test("starts Eliza in one command and generates a public payout marker", async ({
+test("starts Eliza with one prompt and no separate payout form", async ({
   context,
   page,
 }) => {
@@ -185,22 +232,63 @@ test("starts Eliza in one command and generates a public payout marker", async (
   await expect(
     page.getByRole("heading", { name: "Make money building agents." }),
   ).toBeVisible();
-  const command = page.getByRole("textbox", { name: "Install command" });
+  const prompt = page.getByRole("status", { name: "Agent prompt" });
+  await expect(prompt).toContainText(/\/SKILL\.md/u);
+  await expect(prompt).toContainText(
+    /contribute to github\.com\/elizaOS\/eliza/u,
+  );
+  await expect(prompt).not.toContainText(
+    /Before installing anything or reading local usage/u,
+  );
+  await page.getByRole("button", { name: "Copy agent prompt" }).click();
+  await expect(page.getByRole("button", { name: /Copied/u })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+    "/SKILL.md",
+  );
+  await page.getByText("Advanced options").click();
+  const command = page.getByRole("textbox", {
+    name: "Manual install command",
+  });
   await expect(command).toHaveValue(/skills\/contribute-to-eliza/u);
   await expect(command).toHaveValue(/\/projects\/eliza/u);
-  await page.getByRole("button", { name: "Copy install command" }).click();
-  await expect(page.getByRole("button", { name: /Copied/u })).toBeVisible();
+  await expect(command).toHaveValue(
+    /SKILLS_ROOT="\$\{HOME\}\/\.agents\/skills"/u,
+  );
+  await expect(command).not.toHaveValue(/CODEX_HOME/u);
+  await page
+    .getByRole("button", { name: "Copy manual install command" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Copied manual install command" }),
+  ).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
     "skills/contribute-to-eliza",
   );
-
-  const address = "11111111111111111111111111111111";
-  await page.getByLabel("Solana public address").fill(address);
-  await page.getByRole("button", { name: "Copy marker" }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `<!-- gitarmy-wallet:v1 {"chain":"solana","address":"${address}"} -->`,
-  );
-  await expect(page.getByText(/Never paste a seed phrase/u)).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Preview the complete workflow/u }),
+  ).toHaveAttribute("href", /\/projects\/eliza\/mission\.md$/u);
+  await expect(
+    page.getByText(/contribution, evidence, and optional payout setup/u),
+  ).toBeVisible();
+  await expect(page.getByLabel("Solana public address")).toHaveCount(0);
+  await expect(page.getByText(/GitHub profile README/u)).toHaveCount(0);
+  await expect(page.getByText(/Outcome score leads/u)).toHaveCount(0);
+  await expect(
+    page.getByText(/GitHub ledger \+ reward records live/u),
+  ).toHaveCount(0);
+  await expect(page.getByText(/^Updated /u)).toBeVisible();
+  await expect(page.getByText(/receipt-linked tokens/u).first()).toBeVisible();
+  const displayedProjectionCents = await page
+    .locator(".project-leader-row")
+    .evaluateAll((rows) =>
+      rows.reduce((total, row) => {
+        const projection = row.querySelectorAll("td")[4]?.textContent ?? "";
+        return (
+          total + Math.round(Number(projection.replace(/[^0-9.-]/gu, "")) * 100)
+        );
+      }, 0),
+    );
+  expect(displayedProjectionCents).toBe(1_000_000);
   await expect(page.getByText("Live from GitHub")).toHaveCount(0);
   await expect(page.getByText("How credit survives review")).toHaveCount(0);
 });
@@ -264,6 +352,8 @@ test("renders contributor and cycle records from validated public data", async (
       page.getByRole("heading", { name: `Eliza · ${view.cycle.id}` }),
     ).toBeVisible();
     await expect(page.getByText("14-day review")).toBeVisible();
+    await expect(page.getByText("Cycle evidence.")).toHaveCount(0);
+    await expect(page.getByText(/score events ·/u)).toHaveCount(0);
   }
 });
 
@@ -297,6 +387,89 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
 test("serves byte-consistent install and read-only artifacts for every project", async ({
   request,
 }) => {
+  const legacySkillResponse = await request.get("/skill.md", {
+    maxRedirects: 0,
+  });
+  expect(legacySkillResponse.status()).toBe(301);
+  expect(legacySkillResponse.headers().location).toBe(
+    "/projects/eliza/skill.md",
+  );
+
+  const [
+    bootstrapResponse,
+    discoveryResponse,
+    discoverySkillResponse,
+    projectDiscoveryResponse,
+    llmsResponse,
+  ] = await Promise.all([
+    request.get("/SKILL.md"),
+    request.get("/.well-known/agent-skills/index.json"),
+    request.get("/.well-known/agent-skills/slop/SKILL.md"),
+    request.get("/.well-known/slop/projects.json"),
+    request.get("/llms.txt"),
+  ]);
+  for (const response of [
+    bootstrapResponse,
+    discoveryResponse,
+    discoverySkillResponse,
+    projectDiscoveryResponse,
+    llmsResponse,
+  ]) {
+    expect(response.status()).toBe(200);
+  }
+  expect(bootstrapResponse.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  expect(bootstrapResponse.headers()["access-control-allow-origin"]).toBe("*");
+  expect(bootstrapResponse.headers()["cache-control"]).toContain("max-age=300");
+  expect(discoveryResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(discoverySkillResponse.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  expect(projectDiscoveryResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(llmsResponse.headers()["content-type"]).toContain("text/plain");
+  const bootstrap = await bootstrapResponse.body();
+  const bootstrapDigest = createHash("sha256").update(bootstrap).digest("hex");
+  const discovery = (await discoveryResponse.json()) as {
+    $schema: string;
+    skills: Array<{
+      digest: string;
+      name: string;
+      type: string;
+      url: string;
+    }>;
+  };
+  expect(discovery).toEqual({
+    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    skills: [
+      expect.objectContaining({
+        digest: `sha256:${bootstrapDigest}`,
+        name: "slop",
+        type: "skill-md",
+        url: "https://slop.cash/SKILL.md",
+      }),
+    ],
+  });
+  expect(await discoverySkillResponse.body()).toEqual(bootstrap);
+  expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
+  expect(bootstrap.toString()).toContain("No CLI upload");
+  expect(await projectDiscoveryResponse.json()).toEqual({
+    schemaVersion: "1",
+    projects: PROJECTS.flatMap((project) =>
+      project.repositories.map((repository) => ({
+        project_id: project.id,
+        project_url: `https://slop.cash/projects/${project.id}/`,
+        repository: repository.id,
+        skill: project.skill.id,
+        skill_source: project.skill.sourcePath,
+      })),
+    ),
+  });
+
   for (const project of PROJECTS) {
     const root = `/projects/${project.id}`;
     const [
@@ -324,6 +497,24 @@ test("serves byte-consistent install and read-only artifacts for every project",
     ]) {
       expect(response.status()).toBe(200);
     }
+    for (const response of [
+      skillResponse,
+      missionResponse,
+      codexResponse,
+      claudeResponse,
+      claudeCodeResponse,
+    ]) {
+      expect(response.headers()["content-type"]).toContain("text/markdown");
+      expect(response.headers()["access-control-allow-origin"]).toBe("*");
+      expect(response.headers()["cache-control"]).toContain("max-age=300");
+    }
+    expect(manifestResponse.headers()["content-type"]).toContain(
+      "application/json",
+    );
+    expect(manifestResponse.headers()["access-control-allow-origin"]).toBe("*");
+    expect(manifestResponse.headers()["cache-control"]).toContain(
+      "max-age=300",
+    );
     const skillBytes = await skillResponse.body();
     const manifest = (await manifestResponse.json()) as {
       archive: { sha256: string; url: string; checksumUrl: string };
@@ -341,13 +532,20 @@ test("serves byte-consistent install and read-only artifacts for every project",
     ]);
     expect(archiveResponse.status()).toBe(200);
     expect(checksumResponse.status()).toBe(200);
+    expect(archiveResponse.headers()["content-type"]).toContain(
+      "application/octet-stream",
+    );
+    expect(archiveResponse.headers()["content-disposition"]).toBe("attachment");
+    expect(archiveResponse.headers()["access-control-allow-origin"]).toBe("*");
     const archive = await archiveResponse.body();
     expect(createHash("sha256").update(archive).digest("hex")).toBe(
       manifest.archive.sha256,
     );
     expect(await checksumResponse.text()).toContain(manifest.archive.sha256);
     expect(await missionResponse.text()).toContain(`name: ${project.skill.id}`);
-    expect(await codexResponse.text()).toContain("CODEX_HOME");
+    expect(await codexResponse.text()).toContain(
+      `SKILLS_ROOT="\${HOME}/.agents/skills"`,
+    );
     const claudeGuide = await claudeResponse.text();
     expect(claudeGuide).toContain("CLAUDE_CONFIG_DIR");
     expect(await claudeCodeResponse.text()).toBe(claudeGuide);

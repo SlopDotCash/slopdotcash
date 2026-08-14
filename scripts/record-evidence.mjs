@@ -449,6 +449,7 @@ try {
   ) {
     const context = await browser.newContext({
       deviceScaleFactor: 1,
+      reducedMotion: "reduce",
       extraHTTPHeaders: {
         "Cache-Control": "no-cache",
         Pragma: "no-cache",
@@ -498,7 +499,7 @@ try {
     });
     await page
       .locator(".hero-typewriter")
-      .filter({ hasText: /^PROVING MATH\.$/u })
+      .filter({ hasText: /^SHIPPING SLOP\.$/u })
       .waitFor({ state: "visible", timeout: 10_000 });
     await page.locator("#projects").waitFor({ state: "visible" });
     await page.locator("#leaderboard table").waitFor({ state: "visible" });
@@ -528,10 +529,7 @@ try {
       await page.locator("h1").waitFor({ state: "visible" });
       await page.locator("#start").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
-      await page
-        .getByRole("textbox", { name: "Solana public address" })
-        .fill("11111111111111111111111111111111");
-      await page.locator("#wallet").scrollIntoViewIfNeeded();
+      await page.locator(".project-leader-section").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
 
       await page.goto(`${baseUrl}/projects/delta-star?evidence=${cacheKey}`, {

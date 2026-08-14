@@ -20,13 +20,15 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createInstallCommand } from "../src/lib/install-command.ts";
 import { PROJECTS } from "../src/lib/projects.mjs";
+import { renderInstallGuide } from "./render-install-guide.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = packageRoot;
 const publicRoot = join(packageRoot, "public");
 const downloadsRoot = join(publicRoot, "downloads");
+const bootstrapSkillRoot = join(repositoryRoot, "skills", "slop");
+const bootstrapSkillSource = join(bootstrapSkillRoot, "SKILL.md");
 const skillRoot = join(repositoryRoot, "skills", "contribute-to-eliza");
 const skillSource = join(skillRoot, "SKILL.md");
 const repositoryContractPath = join(
@@ -45,6 +47,12 @@ const packager = join(
   "skill-validation",
   "package_skill.py",
 );
+const skillValidator = join(
+  repositoryRoot,
+  "scripts",
+  "skill-validation",
+  "quick_validate.py",
+);
 const archiveNormalizer = join(
   packageRoot,
   "scripts",
@@ -55,9 +63,29 @@ const archivePath = join(downloadsRoot, archiveName);
 const skillRepositoryPath = "skills/contribute-to-eliza";
 const sourcePath = `${skillRepositoryPath}/SKILL.md`;
 const publicSiteOrigin = "https://slop.cash";
+const sourceRepository = "elizaOS/slopdotcash";
 
 function sha256(contents) {
   return createHash("sha256").update(contents).digest("hex");
+}
+
+function frontmatterValue(source, field) {
+  const match = source.match(new RegExp(`^${field}:\\s*(.+)$`, "mu"));
+  if (!match) {
+    throw new TypeError(`[Slop] bootstrap skill omitted ${field}`);
+  }
+  const value = match[1].trim();
+  if (value.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === "string" && parsed.length > 0) return parsed;
+    } catch {
+      // error-policy:J3 malformed source metadata is an explicit build failure.
+    }
+  } else if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value)) {
+    return value;
+  }
+  throw new TypeError(`[Slop] bootstrap skill has invalid ${field}`);
 }
 
 function run(executable, args, cwd = repositoryRoot) {
@@ -65,6 +93,46 @@ function run(executable, args, cwd = repositoryRoot) {
     cwd,
     stdio: "inherit",
   });
+}
+
+function pythonCommand() {
+  const candidates = [
+    process.env.SLOP_PYTHON,
+    "python3",
+    "/usr/bin/python3",
+  ].filter((value, index, values) => value && values.indexOf(value) === index);
+  for (const executable of candidates) {
+    try {
+      execFileSync(
+        executable,
+        [
+          "-c",
+          "import yaml,sys;sys.exit(0 if yaml.__version__ == '6.0.3' else 1)",
+        ],
+        { cwd: repositoryRoot, stdio: "ignore" },
+      );
+      return { executable, prefix: [] };
+    } catch {
+      // error-policy:J3 an unavailable validator runtime tries the next pinned path.
+    }
+  }
+  try {
+    execFileSync("uv", ["--version"], { stdio: "ignore" });
+    return {
+      executable: "uv",
+      prefix: ["run", "--with", "PyYAML==6.0.3", "python"],
+    };
+  } catch {
+    throw new TypeError(
+      "[Slop] skill packaging requires Python with PyYAML 6.0.3 or uv; set SLOP_PYTHON to an interpreter with that exact version",
+    );
+  }
+}
+
+const python = pythonCommand();
+
+function runPython(args, cwd = repositoryRoot) {
+  run(python.executable, [...python.prefix, ...args], cwd);
 }
 
 function listRegularSkillFiles(root, prefix = "") {
@@ -91,6 +159,7 @@ function listRegularSkillFiles(root, prefix = "") {
 
 mkdirSync(publicRoot, { recursive: true });
 mkdirSync(downloadsRoot, { recursive: true });
+runPython([skillValidator, bootstrapSkillRoot]);
 
 const skillMarkdown = readFileSync(skillSource);
 const repositoryContract = readFileSync(repositoryContractPath, "utf8");
@@ -148,6 +217,41 @@ const commit = execFileSync("git", ["rev-parse", "HEAD"], {
 if (!/^[0-9a-f]{40}$/.test(commit)) {
   throw new TypeError("[Slop] git did not return a full commit SHA");
 }
+const bootstrapFiles = listRegularSkillFiles(bootstrapSkillRoot);
+if (bootstrapFiles.length !== 1 || bootstrapFiles[0] !== "SKILL.md") {
+  throw new TypeError(
+    "[Slop] universal bootstrap must remain one reviewable SKILL.md",
+  );
+}
+const bootstrapSkillBytes = readFileSync(bootstrapSkillSource);
+const bootstrapSkillText = bootstrapSkillBytes.toString("utf8");
+const bootstrapSkillName = frontmatterValue(bootstrapSkillText, "name");
+const bootstrapSkillDescription = frontmatterValue(
+  bootstrapSkillText,
+  "description",
+);
+if (bootstrapSkillName !== "slop") {
+  throw new TypeError("[Slop] universal bootstrap must be named slop");
+}
+const bootstrapSkillDigest = sha256(bootstrapSkillBytes);
+let bootstrapRevisionStatus = "working-tree";
+try {
+  const committedBootstrap = execFileSync(
+    "git",
+    ["show", "HEAD:skills/slop/SKILL.md"],
+    {
+      cwd: repositoryRoot,
+      encoding: null,
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
+  if (bootstrapSkillBytes.equals(committedBootstrap)) {
+    bootstrapRevisionStatus = "committed";
+  }
+} catch {
+  // error-policy:J3 an absent committed source is an explicit working-tree state.
+}
 const committedSkillFiles = execFileSync(
   "git",
   ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", skillRepositoryPath],
@@ -174,6 +278,28 @@ const sourceMatchesCommit =
       ),
   );
 const sourceRevisionStatus = sourceMatchesCommit ? "committed" : "working-tree";
+const guideRendererPaths = [
+  "scripts/render-install-guide.mjs",
+  "src/lib/install-command.ts",
+];
+const rendererMatchesCommit = guideRendererPaths.every((path) => {
+  try {
+    return readFileSync(join(repositoryRoot, path)).equals(
+      execFileSync("git", ["show", `HEAD:${path}`], {
+        cwd: repositoryRoot,
+        encoding: null,
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "ignore"],
+      }),
+    );
+  } catch {
+    // error-policy:J3 an absent immutable renderer is an explicit working-tree state.
+    return false;
+  }
+});
+const rendererRevisionStatus = rendererMatchesCommit
+  ? "committed"
+  : "working-tree";
 
 run(process.execPath, [
   join(repositoryRoot, "scripts", "sync-brand-assets.mjs"),
@@ -218,9 +344,9 @@ try {
       2,
     )}\n`,
   );
-  run("python3", [packager, stagedSkillRoot, stagedDownloadsRoot]);
+  runPython([packager, stagedSkillRoot, stagedDownloadsRoot]);
   const packagedArchive = join(stagedDownloadsRoot, archiveName);
-  run("python3", [archiveNormalizer, packagedArchive]);
+  runPython([archiveNormalizer, packagedArchive]);
   archive = readFileSync(packagedArchive);
   if (archive.length === 0) {
     throw new Error("[Slop] packaged skill archive is empty");
@@ -234,7 +360,58 @@ try {
 
 const archiveDigest = sha256(archive);
 
-copyFileSync(skillSource, join(publicRoot, "skill.md"));
+const discoveryRoot = join(publicRoot, ".well-known", "agent-skills");
+const discoverySkillRoot = join(discoveryRoot, "slop");
+rmSync(discoveryRoot, { force: true, recursive: true });
+mkdirSync(discoverySkillRoot, { recursive: true });
+copyFileSync(bootstrapSkillSource, join(publicRoot, "SKILL.md"));
+copyFileSync(bootstrapSkillSource, join(discoverySkillRoot, "SKILL.md"));
+writeFileSync(
+  join(discoveryRoot, "index.json"),
+  `${JSON.stringify(
+    {
+      $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+      skills: [
+        {
+          name: bootstrapSkillName,
+          type: "skill-md",
+          description: bootstrapSkillDescription,
+          url: `${publicSiteOrigin}/SKILL.md`,
+          digest: `sha256:${bootstrapSkillDigest}`,
+        },
+      ],
+    },
+    null,
+    2,
+  )}\n`,
+);
+writeFileSync(
+  join(publicRoot, "llms.txt"),
+  `# Slop\n\n> Outcome-first open-source contribution funding with privacy-preserving local usage receipts.\n\n## Agent onboarding\n\n- [Slop bootstrap skill](${publicSiteOrigin}/SKILL.md): Inspect and install the repository-specific contribution skill. SHA-256: ${bootstrapSkillDigest}.\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n\nThe bootstrap source revision is ${commit} (${bootstrapRevisionStatus}). It never authorizes wallet creation, background upload, raw prompt, transcript, source, credential, or private-key disclosure.\n`,
+);
+const projectDiscoveryRoot = join(publicRoot, ".well-known", "slop");
+rmSync(projectDiscoveryRoot, { force: true, recursive: true });
+mkdirSync(projectDiscoveryRoot, { recursive: true });
+writeFileSync(
+  join(projectDiscoveryRoot, "projects.json"),
+  `${JSON.stringify(
+    {
+      schemaVersion: "1",
+      projects: PROJECTS.flatMap((project) =>
+        project.repositories.map((repository) => ({
+          project_id: project.id,
+          project_url: `${publicSiteOrigin}/projects/${project.id}/`,
+          repository: repository.id,
+          skill: project.skill.id,
+          skill_source: project.skill.sourcePath,
+        })),
+      ),
+    },
+    null,
+    2,
+  )}\n`,
+);
+
 const standaloneMission = `${skillMarkdown.toString()}
 
 ---
@@ -256,69 +433,58 @@ ${evidenceRubric}
 `;
 writeFileSync(join(publicRoot, "mission.md"), standaloneMission);
 
-const codexBootstrap = `# Install contribute-to-eliza for Codex
-
-Install or update the complete skill archive. The installer accepts the current
-\`develop\` commit, a develop ancestor only while its complete canonical skill
-tree remains byte-identical to current \`develop\`, or a same-repository,
-non-draft pull request labeled
-\`gitarmy-release-candidate\` after its exact current-head event and fully
-synchronized with \`develop\`, then independently compares every packaged byte
-with GitHub's immutable source. This does not replace a repository's \`AGENTS.md\`
-or any local instructions.
-
-\`\`\`bash
-${createInstallCommand(
-  publicSiteOrigin,
-  `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
-)}
-\`\`\`
-
-Then ask Codex:
-
-\`\`\`text
-Use $contribute-to-eliza to finish one scoped elizaOS issue or independently
-review one open elizaOS pull request.
-\`\`\`
-
-Versions live beside one atomic \`contribute-to-eliza\` symlink. Re-running the
-command is a no-op at the same revision and updates only when GitHub proves the
-installed revision is an ancestor of the newly authorized revision. The prior
-verified version is retained, but rollback still requires current authorization.
-To roll back, export
-\`GITARMY_SKILL_OPERATION=rollback\` and
-\`GITARMY_SKILL_REVISION=<retained-40-character-revision>\`, then run the
-same command. The rollback byte-verifies both the active and retained versions,
-then applies the current GitHub authorization rules to the requested target
-immediately before switching the symlink. The stored receipt records how a
-version entered the local store; it cannot authorize rollback. Unset both
-variables afterward so the next invocation returns to install/update mode.
-
-Inspect the installed source before running it:
-
-\`\`\`bash
-curl -fsSL ${publicSiteOrigin}/skill-manifest.json
-SKILLS_ROOT="\${CODEX_HOME:-\${HOME}/.codex}/skills"
-cat "\${SKILLS_ROOT}/contribute-to-eliza/PROVENANCE.json"
-sed -n '1,240p' "\${SKILLS_ROOT}/contribute-to-eliza/SKILL.md"
-\`\`\`
-`;
+const primaryGuideOptions = {
+  artifactOrigin: `${publicSiteOrigin}/projects/eliza`,
+  skillName: "contribute-to-eliza",
+  skillRepositoryPath: "skills/contribute-to-eliza",
+};
+const codexBootstrap = renderInstallGuide({
+  ...primaryGuideOptions,
+  client: "codex",
+});
 
 writeFileSync(join(publicRoot, "codex.md"), codexBootstrap);
-const shellDollar = "$";
-const claudeBootstrap = codexBootstrap
-  .replace(" for Codex", " for Claude Code")
-  .replace("Then ask Codex:", "Then ask Claude Code:")
-  .replaceAll(
-    `${shellDollar}{CODEX_HOME:-${shellDollar}{HOME}/.codex}`,
-    `${shellDollar}{CLAUDE_CONFIG_DIR:-${shellDollar}{HOME}/.claude}`,
-  );
+const claudeBootstrap = renderInstallGuide({
+  ...primaryGuideOptions,
+  client: "claude-code",
+});
 writeFileSync(join(publicRoot, "claude.md"), claudeBootstrap);
 writeFileSync(join(publicRoot, "claude-code.md"), claudeBootstrap);
 writeFileSync(
   join(downloadsRoot, `${archiveName}.sha256`),
   `${archiveDigest}  ${archiveName}\n`,
 );
+
+function guideRecord({
+  artifactOrigin,
+  client,
+  publicUrl,
+  skillName,
+  skillRepositoryPath,
+  source,
+}) {
+  return {
+    publicUrl,
+    sha256: sha256(source),
+    renderer: {
+      entrypoint: "scripts/render-install-guide.mjs",
+      repository: sourceRepository,
+      revision: rendererMatchesCommit ? commit : null,
+      revisionStatus: rendererRevisionStatus,
+      paths: guideRendererPaths,
+      arguments: [
+        "--artifact-origin",
+        artifactOrigin,
+        "--client",
+        client,
+        "--skill",
+        skillName,
+        "--source",
+        skillRepositoryPath,
+      ],
+    },
+  };
+}
 
 const manifest = {
   schemaVersion: "1",
@@ -330,13 +496,31 @@ const manifest = {
   source: {
     path: sourcePath,
     url: `https://github.com/elizaOS/army/blob/${commit}/${sourcePath}`,
-    publicUrl: `${publicSiteOrigin}/skill.md`,
+    publicUrl: `${publicSiteOrigin}/projects/eliza/skill.md`,
     sha256: skillDigest,
   },
   archive: {
     url: `${publicSiteOrigin}/downloads/${archiveName}`,
     sha256: archiveDigest,
     checksumUrl: `${publicSiteOrigin}/downloads/${archiveName}.sha256`,
+  },
+  guides: {
+    codex: guideRecord({
+      artifactOrigin: primaryGuideOptions.artifactOrigin,
+      client: "codex",
+      publicUrl: `${publicSiteOrigin}/codex.md`,
+      skillName: primaryGuideOptions.skillName,
+      skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
+      source: codexBootstrap,
+    }),
+    claude: guideRecord({
+      artifactOrigin: primaryGuideOptions.artifactOrigin,
+      client: "claude-code",
+      publicUrl: `${publicSiteOrigin}/claude.md`,
+      skillName: primaryGuideOptions.skillName,
+      skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
+      source: claudeBootstrap,
+    }),
   },
   authority: {
     apiOrigin: "https://api.github.com",
@@ -361,33 +545,6 @@ writeFileSync(
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 
-function projectBootstrap({
-  artifactOrigin,
-  name,
-  skillRepositoryPath,
-  skillsRoot = `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
-}) {
-  return `# Install ${name}
-
-Install or update the complete skill archive. The authenticated installer
-accepts the current \`develop\` revision, a byte-identical authorized ancestor,
-or an explicitly labeled same-repository release candidate. It independently
-compares packaged bytes with immutable GitHub source before atomic activation.
-
-\`\`\`bash
-${createInstallCommand(artifactOrigin, skillsRoot, {
-  skillName: name,
-  skillRepositoryPath,
-})}
-\`\`\`
-
-Re-run the command whenever the skill starts. It is a no-op at the current
-verified revision and retains the prior version for an explicitly authorized
-rollback. Inspect \`PROVENANCE.json\` and \`SKILL.md\` before first use. Never
-enter a wallet seed phrase, private key, or unrelated credential.
-`;
-}
-
 function publishPrimaryProjectAlias() {
   const projectRoot = join(publicRoot, "projects", "eliza");
   const projectDownloads = join(projectRoot, "downloads");
@@ -399,26 +556,33 @@ function publishPrimaryProjectAlias() {
     join(downloadsRoot, `${archiveName}.sha256`),
     join(projectDownloads, `${archiveName}.sha256`),
   );
-  writeFileSync(
-    join(projectRoot, "codex.md"),
-    projectBootstrap({
-      artifactOrigin: `${publicSiteOrigin}/projects/eliza`,
-      name: "contribute-to-eliza",
-      skillRepositoryPath: "skills/contribute-to-eliza",
-    }),
-  );
-  const claudeGuide = projectBootstrap({
-    artifactOrigin: `${publicSiteOrigin}/projects/eliza`,
-    name: "contribute-to-eliza",
-    skillRepositoryPath: "skills/contribute-to-eliza",
-    skillsRoot: `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`,
-  });
+  const codexGuide = codexBootstrap;
+  writeFileSync(join(projectRoot, "codex.md"), codexGuide);
+  const claudeGuide = claudeBootstrap;
   writeFileSync(join(projectRoot, "claude.md"), claudeGuide);
   writeFileSync(join(projectRoot, "claude-code.md"), claudeGuide);
   const projectManifest = structuredClone(manifest);
   projectManifest.source.publicUrl = `${publicSiteOrigin}/projects/eliza/skill.md`;
   projectManifest.archive.url = `${publicSiteOrigin}/projects/eliza/downloads/${archiveName}`;
   projectManifest.archive.checksumUrl = `${projectManifest.archive.url}.sha256`;
+  projectManifest.guides = {
+    codex: guideRecord({
+      artifactOrigin: primaryGuideOptions.artifactOrigin,
+      client: "codex",
+      publicUrl: `${publicSiteOrigin}/projects/eliza/codex.md`,
+      skillName: primaryGuideOptions.skillName,
+      skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
+      source: codexGuide,
+    }),
+    claude: guideRecord({
+      artifactOrigin: primaryGuideOptions.artifactOrigin,
+      client: "claude-code",
+      publicUrl: `${publicSiteOrigin}/projects/eliza/claude.md`,
+      skillName: primaryGuideOptions.skillName,
+      skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
+      source: claudeGuide,
+    }),
+  };
   writeFileSync(
     join(projectRoot, "skill-manifest.json"),
     `${JSON.stringify(projectManifest, null, 2)}\n`,
@@ -517,9 +681,9 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
         2,
       )}\n`,
     );
-    run("python3", [packager, stagedSkillRoot, stagedDownloadsRoot]);
+    runPython([packager, stagedSkillRoot, stagedDownloadsRoot]);
     const packagedArchive = join(stagedDownloadsRoot, archiveName);
-    run("python3", [archiveNormalizer, packagedArchive]);
+    runPython([archiveNormalizer, packagedArchive]);
     archive = readFileSync(packagedArchive);
     if (archive.length === 0) throw new Error(`[Slop] ${archiveName} is empty`);
     copyFileSync(packagedArchive, stagedArchive);
@@ -538,19 +702,18 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
     join(projectRoot, "mission.md"),
     `${skillBytes.toString()}\n\n---\n\n${references.join("\n\n---\n\n")}`,
   );
-  writeFileSync(
-    join(projectRoot, "codex.md"),
-    projectBootstrap({
-      artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
-      name,
-      skillRepositoryPath,
-    }),
-  );
-  const claudeGuide = projectBootstrap({
+  const codexGuide = renderInstallGuide({
     artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
-    name,
+    client: "codex",
+    skillName: name,
     skillRepositoryPath,
-    skillsRoot: `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`,
+  });
+  writeFileSync(join(projectRoot, "codex.md"), codexGuide);
+  const claudeGuide = renderInstallGuide({
+    artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
+    client: "claude-code",
+    skillName: name,
+    skillRepositoryPath,
   });
   writeFileSync(join(projectRoot, "claude.md"), claudeGuide);
   writeFileSync(join(projectRoot, "claude-code.md"), claudeGuide);
@@ -575,6 +738,24 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
       url: `${publicSiteOrigin}/projects/${id}/downloads/${archiveName}`,
       sha256: archiveDigest,
       checksumUrl: `${publicSiteOrigin}/projects/${id}/downloads/${archiveName}.sha256`,
+    },
+    guides: {
+      codex: guideRecord({
+        artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
+        client: "codex",
+        publicUrl: `${publicSiteOrigin}/projects/${id}/codex.md`,
+        skillName: name,
+        skillRepositoryPath,
+        source: codexGuide,
+      }),
+      claude: guideRecord({
+        artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
+        client: "claude-code",
+        publicUrl: `${publicSiteOrigin}/projects/${id}/claude.md`,
+        skillName: name,
+        skillRepositoryPath,
+        source: claudeGuide,
+      }),
     },
     authority: {
       apiOrigin: "https://api.github.com",

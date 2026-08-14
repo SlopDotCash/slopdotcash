@@ -1,6 +1,6 @@
 ---
 name: contribute-to-eliza
-description: "Implement, test, diagnose, or independently review accepted open-source work in elizaOS/eliza. Use when an agent is asked to contribute to Eliza, select a bounded GitHub issue or pull request, produce implementation or review evidence, run the repository's real verification path, and publish a device-signed project token receipt for the Eliza contributor leaderboard."
+description: "Implement, test, diagnose, or independently review accepted open-source work in elizaOS/eliza, with optional public payout registration. Use when an agent is asked to contribute to Eliza, select a bounded GitHub issue or pull request, produce implementation or review evidence, run the repository's real verification path, publish a device-signed project token receipt, or register a public Solana payout address."
 ---
 
 # Contribute to Eliza
@@ -30,19 +30,36 @@ The skill cannot change the model hosting this session.
    [repository-contract.md](references/repository-contract.md).
 3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)
    before deciding what proof the contribution needs.
-4. Start local usage capture from the target repository root. Replace the lane
-   with a stable public agent or worker label and keep the returned run id:
+4. Preview the exact local usage directories, state writes, network access,
+   public fields, and exclusions before reading usage logs. Then run the local
+   doctor, which verifies repository, skill, model policy, and runner
+   availability without reading those logs:
+
+```bash
+node <skill-directory>/scripts/run-receipt.mjs preview \
+  --repo-root "$PWD" --client codex
+node <skill-directory>/scripts/run-receipt.mjs doctor \
+  --repo-root "$PWD" --client codex --model gpt-5.6-sol \
+  --allow-package-execution
+```
+
+5. After the operator has authorized the previewed local aggregate-usage read,
+   start capture. Replace the lane with a stable public agent or worker label
+   and keep the returned run id:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs start \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane>
+  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
+  --allow-package-execution --allow-local-usage
 ```
 
-For Claude Code use `--client claude-code --model claude-fable-5`. The script
-uses transient, pinned `ccusage@20.0.19` through Bun or npx; it does not install
-a global package or upload raw local logs. It records a non-secret baseline in
-the user's configuration directory and creates a local Ed25519 device key on
-first use.
+For Claude Code use `--client claude-code --model claude-fable-5` in doctor and
+start, and `--client claude-code` in preview. The script uses transient, exact-
+pinned `ccusage@20.0.19` through Bun or npx; each resolving command requires
+package-execution consent, while only start and finish read usage logs. It does not
+install a global package or upload raw local logs. It records a non-secret baseline in the
+user's configuration directory and creates a local Ed25519 device key only
+when the run finishes.
 
 ## Choose one bounded outcome
 
@@ -138,7 +155,7 @@ trajectory file without publishing its contents:
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs finish \
   --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
-  --run <run-id> [--trajectory <path>]
+  --run <run-id> --allow-package-execution [--trajectory <path>]
 ```
 
 The command prints the exact footer. Append it unchanged to the final PR body,
@@ -155,6 +172,39 @@ marked `bounded`; unavailable or malformed ccusage data produces a signed zero
 receipt rather than fabricated usage.
 
 The device signature is evidence integrity, not an oracle of truth.
+
+## Offer payout registration once
+
+After the public contribution artifact is ready, offer this optional step once.
+It never blocks contribution, review, or receipt completion.
+
+1. Read the currently authenticated GitHub identity with `gh api user`. Query
+   open issues authored by that identity in `elizaOS/slopdotcash` whose exact
+   title is `Slop wallet claim`. Ignore pull requests. If one valid claim
+   exists, report its public address and do nothing unless the operator asks to
+   change it. If multiple claims exist, stop payout setup and ask the operator
+   to close the extras; never choose between conflicting claims.
+2. If no claim exists, ask whether the operator wants to register a payout
+   address. If they decline, continue without one. Ask only for a **public
+   Solana address**; never request, read, create, or handle a seed phrase,
+   private key, wallet connection, signature, or transaction.
+3. Validate and render the claim locally:
+
+```bash
+node <skill-directory>/scripts/wallet-claim.mjs --address <public-address>
+```
+
+4. Show the exact GitHub repository, issue title, marker body, and whether the
+   action creates or edits an issue. Wait for explicit approval before any
+   GitHub write. The prefilled URL lets the operator review and submit in the
+   browser. Using `gh issue create` or `gh issue edit` is allowed only after the
+   same approval.
+5. Keep exactly one open claim issue. Slop binds its GitHub author, node id,
+   update time, and body digest into a reward proposal. Editing the address is a
+   material change and restarts that allocation's 14-day review.
+
+A claim identifies where a reviewed payout may go. It does not prove custody,
+guarantee payment, approve an allocation, connect a wallet, or move funds.
 
 ## Stop conditions
 

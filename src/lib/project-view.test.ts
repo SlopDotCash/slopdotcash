@@ -94,6 +94,7 @@ describe("project views", () => {
     expect(eliza.leaders[0]).toMatchObject({
       score: 24,
       projectedMinor: "10000000000",
+      projectedDisplayMinor: "10000000000",
       projectedSharePartsPerMillion: null,
     });
     expect(eliza.ledger).toHaveLength(6);
@@ -109,6 +110,7 @@ describe("project views", () => {
     expect(delta.leaders[0]).toMatchObject({
       score: 10,
       projectedMinor: null,
+      projectedDisplayMinor: null,
       projectedSharePartsPerMillion: 1_000_000,
     });
     expect(delta.reward).toMatchObject({
@@ -165,7 +167,7 @@ describe("project views", () => {
     expect(eliza.opportunities[0].source.id).toBe("PR_old_open");
     expect(eliza.leaders[0].capUsage).toMatchObject({
       month: "2026-07",
-      mergedPullRequests: { used: 1, cap: SCORE_CAPS.mergedPullRequests },
+      mergedPullRequests: { used: 1, cap: null },
       resolvedIssues: { used: 1, cap: SCORE_CAPS.resolvedIssues },
       materialTestChanges: { used: 1, cap: SCORE_CAPS.materialTestChanges },
       evidencePoints: { used: 3, cap: SCORE_CAPS.evidencePoints },
@@ -176,7 +178,7 @@ describe("project views", () => {
       },
     });
     expect(formatCapUsageLine(eliza.leaders[0].capUsage)).toBe(
-      "2026-07 caps · merges 1/5 · issues 1/5 · tests 1/5 · evidence 3/30 · reviews 1/10",
+      "2026-07 scoring · merges 1 uncapped · issues 1/5 · tests 1/5 · evidence 3/30 · reviews 1/10",
     );
 
     const delta = createProjectView(snapshot, "delta-star", "2026-07");
@@ -328,6 +330,17 @@ describe("project views", () => {
         0n,
       ),
     ).toBe(10_000_000_000n);
+    expect(
+      view.leaders.reduce(
+        (total, entry) => total + BigInt(entry.projectedDisplayMinor ?? "0"),
+        0n,
+      ),
+    ).toBe(10_000_000_000n);
+    expect(
+      view.leaders.every(
+        (entry) => BigInt(entry.projectedDisplayMinor ?? "0") % 10_000n === 0n,
+      ),
+    ).toBe(true);
     expect(view.leaders.map((entry) => entry.actor.login)).toEqual([
       "finish-line",
       "second-place",

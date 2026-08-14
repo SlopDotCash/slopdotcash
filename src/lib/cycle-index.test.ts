@@ -84,6 +84,26 @@ describe("public cycle index", () => {
     expect(() => assertCycleIndex(value)).not.toThrow();
   });
 
+  it("accepts an actor-bound Slop wallet claim issue", () => {
+    const claimed = entry();
+    claimed.contributors[0].wallet = {
+      address: "11111111111111111111111111111111",
+      chain: "solana",
+      observedAt: "2026-08-02T00:00:00.000Z",
+      sourceActorId: "U_fixture",
+      sourceBodySha256: "b".repeat(64),
+      sourceIssueId: "I_wallet_claim",
+      sourceIssueNumber: 42,
+      sourceUpdatedAt: "2026-08-01T00:00:00.000Z",
+      sourceUrl: "https://github.com/elizaOS/slopdotcash/issues/42",
+    };
+    expect(() => assertCycleIndex(index([claimed]))).not.toThrow();
+    claimed.contributors[0].wallet.sourceActorId = "U_attacker";
+    expect(() => assertCycleIndex(index([claimed]))).toThrow(
+      /does not match the contributor/u,
+    );
+  });
+
   it("requires lifecycle files before claiming payment readiness or payment", () => {
     expect(() =>
       assertCycleIndex(index([entry({ state: "payment-ready" })])),
