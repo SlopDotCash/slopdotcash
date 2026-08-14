@@ -392,12 +392,14 @@ test("serves byte-consistent install and read-only artifacts for every project",
     bootstrapResponse,
     discoveryResponse,
     discoverySkillResponse,
+    identityResponse,
     projectDiscoveryResponse,
     llmsResponse,
   ] = await Promise.all([
     request.get("/SKILL.md"),
     request.get("/.well-known/agent-skills/index.json"),
     request.get("/.well-known/agent-skills/slop/SKILL.md"),
+    request.get("/protocol/identity-v1.json"),
     request.get("/.well-known/slop/projects.json"),
     request.get("/llms.txt"),
   ]);
@@ -405,6 +407,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
     bootstrapResponse,
     discoveryResponse,
     discoverySkillResponse,
+    identityResponse,
     projectDiscoveryResponse,
     llmsResponse,
   ]) {
@@ -421,6 +424,15 @@ test("serves byte-consistent install and read-only artifacts for every project",
   expect(discoverySkillResponse.headers()["content-type"]).toContain(
     "text/markdown",
   );
+  expect(identityResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(identityResponse.headers()["access-control-allow-origin"]).toBe("*");
+  expect(identityResponse.headers()["cache-control"]).toContain("max-age=300");
+  expect(await identityResponse.json()).toMatchObject({
+    identityVersion: "slop-identity-v1",
+    paymentMode: "disabled",
+  });
   expect(projectDiscoveryResponse.headers()["content-type"]).toContain(
     "application/json",
   );
