@@ -63,8 +63,8 @@ wrangler.toml         Cloudflare Pages Direct Upload contract
 ```
 
 Generated files under `public/brand/`, `public/downloads/`, `public/projects/`,
-and `public/data/cycles/` are produced by `prepare:site`. Do not edit them by
-hand.
+`public/protocol/`, and `public/data/cycles/` are produced by `prepare:site`.
+Do not edit them by hand.
 
 ## Commands
 
