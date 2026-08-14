@@ -542,9 +542,11 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
 
 function Avatar({
   actor,
+  loading = "lazy",
   size = "medium",
 }: {
   actor: GitHubActor;
+  loading?: "eager" | "lazy";
   size?: "large" | "medium" | "small";
 }) {
   return (
@@ -552,7 +554,7 @@ function Avatar({
       alt=""
       className={`avatar avatar-${size}`}
       height={size === "large" ? 80 : size === "small" ? 30 : 42}
-      loading="lazy"
+      loading={loading}
       src={actor.avatarUrl}
       width={size === "large" ? 80 : size === "small" ? 30 : 42}
     />
@@ -704,7 +706,7 @@ function GlobalLeaderboard({
                                 className="person-link"
                                 href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
                               >
-                                <Avatar actor={leader.actor} />
+                                <Avatar actor={leader.actor} loading="eager" />
                                 <span>
                                   <strong>{leader.actor.login}</strong>
                                   <small>
@@ -889,7 +891,16 @@ function AgentPromptBox({ prompt }: { prompt: string }) {
   return (
     <div className="command-box agent-prompt-box">
       <output aria-label="Agent prompt" className="agent-prompt-copy">
-        <code>{prompt}</code>
+        <code>
+          {prompt
+            .split(/(https?:\/\/[^/\s]+\/|github\.com\/)/u)
+            .map((segment, index) => (
+              <span key={segment}>
+                {segment}
+                {index % 2 === 1 ? <wbr /> : null}
+              </span>
+            ))}
+        </code>
       </output>
       <button
         aria-label={

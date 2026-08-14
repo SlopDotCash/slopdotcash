@@ -165,6 +165,12 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(homePrompt).toContainText(
     /contribute to github\.com\/elizaOS\/eliza/u,
   );
+  await expect(homePrompt.locator("wbr")).toHaveCount(2);
+  expect(
+    await homePrompt.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();
