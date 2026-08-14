@@ -449,6 +449,7 @@ try {
   ) {
     const context = await browser.newContext({
       deviceScaleFactor: 1,
+      reducedMotion: "reduce",
       extraHTTPHeaders: {
         "Cache-Control": "no-cache",
         Pragma: "no-cache",
@@ -498,7 +499,7 @@ try {
     });
     await page
       .locator(".hero-typewriter")
-      .filter({ hasText: /^PROVING MATH\.$/u })
+      .filter({ hasText: /^SHIPPING SLOP\.$/u })
       .waitFor({ state: "visible", timeout: 10_000 });
     await page.locator("#projects").waitFor({ state: "visible" });
     await page.locator("#leaderboard table").waitFor({ state: "visible" });

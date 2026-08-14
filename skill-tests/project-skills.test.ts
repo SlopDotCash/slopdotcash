@@ -223,6 +223,57 @@ describe("project run usage", () => {
     );
   });
 
+  it("rejects unsafe ccusage counters before they can become persisted state", () => {
+    const invalidSessions = [
+      {
+        sessionId: "individual-overflow",
+        projectPath: repositoryRoot,
+        inputTokens: Number.MAX_SAFE_INTEGER + 1,
+      },
+      {
+        sessionId: "aggregate-overflow",
+        projectPath: repositoryRoot,
+        inputTokens: Number.MAX_SAFE_INTEGER,
+        outputTokens: 1,
+      },
+      {
+        sessionId: "cost-overflow",
+        projectPath: repositoryRoot,
+        totalCost: Number.MAX_SAFE_INTEGER,
+      },
+      {
+        sessionId: "negative-counter",
+        projectPath: repositoryRoot,
+        inputTokens: -1,
+      },
+      {
+        sessionId: "fractional-counter",
+        projectPath: repositoryRoot,
+        inputTokens: 1.5,
+      },
+      {
+        sessionId: "nonfinite-counter",
+        projectPath: repositoryRoot,
+        inputTokens: Number.POSITIVE_INFINITY,
+      },
+      {
+        sessionId: "negative-cost",
+        projectPath: repositoryRoot,
+        totalCost: -0.01,
+      },
+    ];
+    for (const invalidSession of invalidSessions) {
+      assert.throws(
+        () =>
+          normalizeSessionReport(
+            { sessions: [invalidSession] },
+            repositoryRoot,
+          ),
+        /invalid|unsafe/u,
+      );
+    }
+  });
+
   it("uses monotonic deltas and keeps pathless or Codex attribution bounded", () => {
     const after = normalizeSessionReport(
       {

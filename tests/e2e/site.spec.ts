@@ -153,6 +153,23 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();
+  await expect(page.getByText(/This month is the default/u)).toBeVisible();
+  await expect(page.getByRole("tab", { name: "This month" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("tab", { name: "Eliza, $10,000 monthly pool" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("columnheader", { name: "Accepted score" }),
+  ).toBeAttached();
+  await expect(
+    page.getByRole("columnheader", { name: "Current estimate" }),
+  ).toBeAttached();
+  await expect(
+    page.getByText("How score and compute affect rewards"),
+  ).toBeVisible();
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();
@@ -173,7 +190,37 @@ test("discovers both reward models and a score-ranked global ledger", async ({
 
   const rows = page.locator("#leaderboard tbody .leader-row");
   if (snapshot.leaders.length === 0) await expect(rows).toHaveCount(0);
-  else expect(await rows.count()).toBeGreaterThan(0);
+  else {
+    expect(await rows.count()).toBeGreaterThan(0);
+    const viewport = page.viewportSize();
+    if (viewport && viewport.width <= 680) {
+      const projection = rows.first().locator("td").nth(4);
+      await expect(projection).toBeVisible();
+      const projectionBounds = await projection.boundingBox();
+      expect(projectionBounds).not.toBeNull();
+      expect(projectionBounds?.x ?? -1).toBeGreaterThanOrEqual(0);
+      expect(
+        (projectionBounds?.x ?? 0) + (projectionBounds?.width ?? 0),
+      ).toBeLessThanOrEqual(viewport.width + 1);
+      expect(
+        await page
+          .locator("#leaderboard")
+          .evaluate(
+            (element) => element.scrollWidth <= element.clientWidth + 1,
+          ),
+      ).toBe(true);
+    }
+  }
+  await page.getByRole("tab", { name: "All-time record" }).click();
+  await expect(
+    page.getByRole("table", { name: "All-time accepted-work record" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("columnheader", { name: "Paid to date" }),
+  ).toBeAttached();
+  await expect(
+    page.getByRole("columnheader", { name: "Current estimate" }),
+  ).toHaveCount(0);
 });
 
 test("starts Eliza in one command and generates a public payout marker", async ({
@@ -185,14 +232,39 @@ test("starts Eliza in one command and generates a public payout marker", async (
   await expect(
     page.getByRole("heading", { name: "Make money building agents." }),
   ).toBeVisible();
-  const command = page.getByRole("textbox", { name: "Install command" });
+  const prompt = page.getByRole("textbox", { name: "Agent prompt" });
+  await expect(prompt).toHaveValue(/\/SKILL\.md/u);
+  await expect(prompt).toHaveValue(/contribute to elizaOS\/eliza/u);
+  await expect(prompt).toHaveValue(
+    /Before installing anything or reading local usage/u,
+  );
+  await page.getByRole("button", { name: "Copy agent prompt" }).click();
+  await expect(page.getByRole("button", { name: /Copied/u })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+    "/SKILL.md",
+  );
+  await page.getByText("Advanced options").click();
+  const command = page.getByRole("textbox", {
+    name: "Manual install command",
+  });
   await expect(command).toHaveValue(/skills\/contribute-to-eliza/u);
   await expect(command).toHaveValue(/\/projects\/eliza/u);
-  await page.getByRole("button", { name: "Copy install command" }).click();
-  await expect(page.getByRole("button", { name: /Copied/u })).toBeVisible();
+  await expect(command).toHaveValue(
+    /SKILLS_ROOT="\$\{HOME\}\/\.agents\/skills"/u,
+  );
+  await expect(command).not.toHaveValue(/CODEX_HOME/u);
+  await page
+    .getByRole("button", { name: "Copy manual install command" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Copied manual install command" }),
+  ).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
     "skills/contribute-to-eliza",
   );
+  await expect(
+    page.getByRole("link", { name: /Preview the complete workflow/u }),
+  ).toHaveAttribute("href", /\/projects\/eliza\/mission\.md$/u);
 
   const address = "11111111111111111111111111111111";
   await page.getByLabel("Solana public address").fill(address);
@@ -453,7 +525,9 @@ test("serves byte-consistent install and read-only artifacts for every project",
     );
     expect(await checksumResponse.text()).toContain(manifest.archive.sha256);
     expect(await missionResponse.text()).toContain(`name: ${project.skill.id}`);
-    expect(await codexResponse.text()).toContain("CODEX_HOME");
+    expect(await codexResponse.text()).toContain(
+      `SKILLS_ROOT="\${HOME}/.agents/skills"`,
+    );
     const claudeGuide = await claudeResponse.text();
     expect(claudeGuide).toContain("CLAUDE_CONFIG_DIR");
     expect(await claudeCodeResponse.text()).toBe(claudeGuide);

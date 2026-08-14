@@ -367,6 +367,14 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function formatCycleMonth(value: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    timeZone: "UTC",
+    year: "numeric",
+  }).format(new Date(`${value}-01T00:00:00.000Z`));
+}
+
 function stale(snapshot: LeaderboardSnapshot): boolean {
   return Date.now() - Date.parse(snapshot.generatedAt) > 8 * 60 * 60 * 1_000;
 }
@@ -577,68 +585,277 @@ function GlobalLeaderboard({
   views: readonly ProjectView[];
 }) {
   const leaders = createGlobalLeaders(snapshot, views, cycleIndex);
+  const [mode, setMode] = useState<"current" | "record">("current");
+  const [selectedProjectId, setSelectedProjectId] = useState(
+    views[0]?.project.id ?? "",
+  );
+  const selectedView =
+    views.find((view) => view.project.id === selectedProjectId) ?? views[0];
+  const hasRelevantReceipts =
+    selectedView?.usage.relevantRunCount !== undefined &&
+    selectedView.usage.relevantRunCount > 0;
+  const cycleMonth = selectedView
+    ? formatCycleMonth(selectedView.cycle.id)
+    : "Current month";
+  const selectedRewardLabel = selectedView
+    ? selectedView.reward.kind === "monthly-pool"
+      ? `${selectedView.project.reward.monthlyCapDisplay} monthly pool`
+      : `${selectedView.reward.advertisedAmountDisplay} external opportunity`
+    : "Current reward cycle";
   return (
     <section
       className="section shell home-leaderboard-section"
       id="leaderboard"
     >
-      <h2 className="home-section-title">Leaderboard</h2>
-      {leaders.length === 0 ? (
-        <EmptyState text="No accepted outcomes in the published record yet." />
+      <div className="home-leaderboard-heading">
+        <h2 className="home-section-title">Leaderboard</h2>
+        <p>
+          This month is the default because every project runs its own reward
+          cycle. Choose one project to see the rank that determines its current
+          estimate. The all-time record is separate history.
+        </p>
+      </div>
+      <div
+        aria-label="Leaderboard timeframe"
+        className="leaderboard-mode-tabs"
+        role="tablist"
+      >
+        <button
+          aria-controls="leaderboard-current-panel"
+          aria-selected={mode === "current"}
+          id="leaderboard-current-tab"
+          onClick={() => setMode("current")}
+          role="tab"
+          type="button"
+        >
+          This month
+        </button>
+        <button
+          aria-controls="leaderboard-record-panel"
+          aria-selected={mode === "record"}
+          id="leaderboard-record-tab"
+          onClick={() => setMode("record")}
+          role="tab"
+          type="button"
+        >
+          All-time record
+        </button>
+      </div>
+      <details className="leaderboard-methodology">
+        <summary>How score and compute affect rewards</summary>
+        <p>
+          Accepted outcomes—not commits, lines, tokens, or hours—earn score
+          under each project's published rules. With consent, an installed skill
+          measures a pinned ccusage interval and signs the aggregate receipt.
+          Only usage joined to accepted work can add a diminishing bonus of up
+          to 20% to that project's weight. Device signatures protect receipt
+          bytes; they do not prove provider billing or model identity. Estimates
+          can change until review and approval.{" "}
+          {hasRelevantReceipts
+            ? ""
+            : "No relevant signed receipts are counted for the selected project."}
+        </p>
+      </details>
+      {mode === "current" ? (
+        <div
+          aria-labelledby="leaderboard-current-tab"
+          id="leaderboard-current-panel"
+          role="tabpanel"
+        >
+          <div
+            aria-label="Current reward project"
+            className="leaderboard-project-tabs"
+            role="tablist"
+          >
+            {views.map((view) => {
+              const rewardLabel =
+                view.reward.kind === "monthly-pool"
+                  ? `${view.project.reward.monthlyCapDisplay} monthly pool`
+                  : "External prize share";
+              return (
+                <button
+                  aria-controls="leaderboard-project-panel"
+                  aria-label={`${view.project.name}, ${rewardLabel}`}
+                  aria-selected={view.project.id === selectedView?.project.id}
+                  id={`leaderboard-project-${view.project.id}`}
+                  key={view.project.id}
+                  onClick={() => setSelectedProjectId(view.project.id)}
+                  role="tab"
+                  type="button"
+                >
+                  <strong>{view.project.name}</strong>
+                  <span>{rewardLabel}</span>
+                </button>
+              );
+            })}
+          </div>
+          {selectedView ? (
+            <div
+              aria-labelledby={`leaderboard-project-${selectedView.project.id}`}
+              id="leaderboard-project-panel"
+              role="tabpanel"
+            >
+              <div className="leaderboard-cycle-summary">
+                <div>
+                  <strong>
+                    {cycleMonth} · {selectedView.project.name}
+                  </strong>
+                  <span>{selectedRewardLabel}</span>
+                </div>
+                <p>
+                  {selectedView.reward.kind === "monthly-pool"
+                    ? "Rank and estimate use only this project's accepted work in the current UTC month."
+                    : "This is a provisional contribution share, not a Slop-funded dollar payout."}
+                </p>
+              </div>
+              {selectedView.leaders.length === 0 ? (
+                <EmptyState text="No accepted outcomes in this project cycle yet." />
+              ) : (
+                <>
+                  <div className="leader-table global-leader-table">
+                    <table className="leader-grid global-leader-grid">
+                      <caption className="visually-hidden">
+                        {selectedView.project.name} {cycleMonth} reward
+                        leaderboard
+                      </caption>
+                      <thead>
+                        <tr className="leader-row leader-head global-leader-head">
+                          <th scope="col">Rank</th>
+                          <th scope="col">Contributor</th>
+                          <th scope="col">Accepted score</th>
+                          <th scope="col">Relevant tokens</th>
+                          <th scope="col">Current estimate</th>
+                          <th scope="col">Weight bonus</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedView.leaders.slice(0, 20).map((leader) => (
+                          <tr
+                            className="leader-row global-leader-row"
+                            key={leader.actor.id}
+                          >
+                            <td className="rank-cell">#{leader.rank}</td>
+                            <td className="person-cell">
+                              <Link
+                                className="person-link"
+                                href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
+                              >
+                                <Avatar actor={leader.actor} />
+                                <span>
+                                  <strong>{leader.actor.login}</strong>
+                                  <small>
+                                    {leader.acceptedOutcomeCount} accepted event
+                                    {leader.acceptedOutcomeCount === 1
+                                      ? ""
+                                      : "s"}
+                                  </small>
+                                </span>
+                              </Link>
+                            </td>
+                            <td data-label="Accepted score">
+                              <strong>{leader.score}</strong>
+                            </td>
+                            <td data-label="Relevant tokens">
+                              {formatCompact(leader.usage.relevantTokens)}
+                            </td>
+                            <td data-label="Current estimate">
+                              <strong>
+                                <RewardValue leader={leader} />
+                              </strong>
+                            </td>
+                            <td data-label="Weight bonus">
+                              +
+                              {(leader.computeBonusBasisPoints / 100).toFixed(
+                                2,
+                              )}
+                              %
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Link
+                    className="leaderboard-project-link"
+                    href={`/projects/${selectedView.project.slug}`}
+                  >
+                    View the full {selectedView.project.name} cycle
+                    <ArrowRight aria-hidden="true" />
+                  </Link>
+                </>
+              )}
+            </div>
+          ) : (
+            <EmptyState text="No current project cycle is published yet." />
+          )}
+        </div>
       ) : (
-        <div className="leader-table">
-          <table className="leader-grid">
-            <caption className="visually-hidden">
-              Cumulative accepted-score leaderboard
-            </caption>
-            <thead>
-              <tr className="leader-row leader-head">
-                <th scope="col">Rank</th>
-                <th scope="col">Contributor</th>
-                <th scope="col">Score</th>
-                <th scope="col">Tokens</th>
-                <th scope="col">Projected</th>
-                <th scope="col">Total paid</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leaders.slice(0, 20).map((leader, index) => (
-                <tr className="leader-row" key={leader.actor.id}>
-                  <td className="rank-cell">#{index + 1}</td>
-                  <td className="person-cell">
-                    <Link
-                      className="person-link"
-                      href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
+        <div
+          aria-labelledby="leaderboard-record-tab"
+          id="leaderboard-record-panel"
+          role="tabpanel"
+        >
+          <div className="leaderboard-record-summary">
+            <strong>Accepted-work record</strong>
+            <p>
+              Cumulative score across published cycles. This rank does not
+              determine any current monthly pool.
+            </p>
+          </div>
+          {leaders.length === 0 ? (
+            <EmptyState text="No accepted outcomes in the published record yet." />
+          ) : (
+            <div className="leader-table global-leader-table">
+              <table className="leader-grid global-leader-grid">
+                <caption className="visually-hidden">
+                  All-time accepted-work record
+                </caption>
+                <thead>
+                  <tr className="leader-row leader-head global-leader-head global-record-row">
+                    <th scope="col">Rank</th>
+                    <th scope="col">Contributor</th>
+                    <th scope="col">Accepted score</th>
+                    <th scope="col">Paid to date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaders.slice(0, 20).map((leader, index) => (
+                    <tr
+                      className="leader-row global-leader-row global-record-row"
+                      key={leader.actor.id}
                     >
-                      <Avatar actor={leader.actor} />
-                      <span>
-                        <strong>{leader.actor.login}</strong>
-                        <small>
-                          {leader.projects} project
-                          {leader.projects === 1 ? "" : "s"} · {leader.cycles}{" "}
-                          scored cycle{leader.cycles === 1 ? "" : "s"}
-                        </small>
-                      </span>
-                    </Link>
-                  </td>
-                  <td>
-                    <strong>{leader.score}</strong>
-                  </td>
-                  <td>{formatCompact(leader.tokens)}</td>
-                  <td>
-                    <strong>
-                      {formatMicroUsdc(leader.projectedMinor.toString())}
-                    </strong>
-                  </td>
-                  <td>
-                    <strong>
-                      {formatMicroUsdc(leader.paidMinor.toString())}
-                    </strong>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      <td className="rank-cell">#{index + 1}</td>
+                      <td className="person-cell">
+                        <Link
+                          className="person-link"
+                          href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
+                        >
+                          <Avatar actor={leader.actor} />
+                          <span>
+                            <strong>{leader.actor.login}</strong>
+                            <small>
+                              {leader.projects} project
+                              {leader.projects === 1 ? "" : "s"} ·{" "}
+                              {leader.cycles} scored cycle
+                              {leader.cycles === 1 ? "" : "s"}
+                            </small>
+                          </span>
+                        </Link>
+                      </td>
+                      <td data-label="Accepted score">
+                        <strong>{leader.score}</strong>
+                      </td>
+                      <td data-label="Paid to date">
+                        <strong>
+                          {formatMicroUsdc(leader.paidMinor.toString())}
+                        </strong>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -677,34 +894,37 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
 
 function projectInstallCommand(project: ProjectDefinition): string {
   const origin = `${window.location.origin.replace(/\/$/u, "")}/projects/${project.slug}`;
-  return createInstallCommand(
-    origin,
-    `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
-    {
-      skillName: project.skill.id,
-      skillRepositoryPath: project.skill.sourcePath,
-    },
-  );
+  return createInstallCommand(origin, `\${HOME}/.agents/skills`, {
+    skillName: project.skill.id,
+    skillRepositoryPath: project.skill.sourcePath,
+  });
 }
 
 function InstallPanel({ project }: { project: ProjectDefinition }) {
-  const [mode, setMode] = useState<"codex" | "prompt">("codex");
-  const [copy, setCopy] = useState<"copied" | "error" | "idle">("idle");
-  const command =
-    mode === "codex"
-      ? projectInstallCommand(project)
-      : `Read ${window.location.origin}/projects/${project.slug}/mission.md and follow it exactly.`;
-  const copyCommand = async () => {
+  const [copy, setCopy] = useState<
+    "manual-copied" | "prompt-copied" | "error" | "idle"
+  >("idle");
+  const origin = window.location.origin.replace(/\/$/u, "");
+  const repository = project.repositories[0]?.id;
+  if (!repository) {
+    throw new TypeError(`Project ${project.id} has no contribution repository`);
+  }
+  const agentPrompt = `Read ${origin}/SKILL.md and follow it to contribute to ${repository}. Before installing anything or reading local usage, show me the exact version, files, permissions, and data that would leave my machine.`;
+  const manualCommand = projectInstallCommand(project);
+  const copyText = async (
+    value: string,
+    copiedState: "manual-copied" | "prompt-copied",
+  ) => {
     try {
-      await navigator.clipboard.writeText(command);
-      setCopy("copied");
+      await navigator.clipboard.writeText(value);
+      setCopy(copiedState);
     } catch {
       // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
       setCopy("error");
     }
   };
   useEffect(() => {
-    if (copy !== "copied") return;
+    if (copy !== "manual-copied" && copy !== "prompt-copied") return;
     const timer = window.setTimeout(() => setCopy("idle"), 1_600);
     return () => window.clearTimeout(timer);
   }, [copy]);
@@ -712,52 +932,33 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
     <div className="install-panel" id="start">
       <div className="install-heading">
         <div>
-          <p className="eyebrow">One-command start</p>
-          <h2>Give this to your agent.</h2>
-        </div>
-        <div
-          className="install-tabs"
-          role="tablist"
-          aria-label="Installation method"
-        >
-          <button
-            aria-selected={mode === "codex"}
-            onClick={() => setMode("codex")}
-            role="tab"
-            type="button"
-          >
-            Install
-          </button>
-          <button
-            aria-selected={mode === "prompt"}
-            onClick={() => setMode("prompt")}
-            role="tab"
-            type="button"
-          >
-            Read only
-          </button>
+          <h2>Copy this into your agent.</h2>
+          <p>
+            One prompt handles secure discovery, shows the permission plan, and
+            starts the right project workflow.
+          </p>
         </div>
       </div>
-      <div className="command-box">
+      <div className="command-box agent-prompt-box">
         <textarea
-          aria-label="Install command"
+          aria-label="Agent prompt"
           readOnly
           spellCheck={false}
-          value={command}
+          value={agentPrompt}
         />
         <button
           aria-label={
-            copy === "copied"
-              ? "Copied install command"
+            copy === "prompt-copied"
+              ? "Copied agent prompt"
               : copy === "error"
-                ? "Copy unavailable; select install command"
-                : "Copy install command"
+                ? "Copy unavailable; select agent prompt"
+                : "Copy agent prompt"
           }
-          onClick={() => void copyCommand()}
+          onClick={() => void copyText(agentPrompt, "prompt-copied")}
           type="button"
         >
-          {copy === "copied" ? <Check /> : <Clipboard />}
-          {copy === "copied"
+          {copy === "prompt-copied" ? <Check /> : <Clipboard />}
+          {copy === "prompt-copied"
             ? "Copied"
             : copy === "error"
               ? "Select text"
@@ -765,10 +966,51 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
         </button>
       </div>
       <p className="install-note">
-        Installs or updates atomically from GitHub-verified bytes. The skill
-        starts ccusage locally, restricts the approved model, and prints a
-        signed contribution footer when the run finishes.
+        Works in Codex and Claude Code. Nothing is installed and no local usage
+        is read until the agent shows the plan and you approve it.
       </p>
+      <details className="install-advanced">
+        <summary>Advanced options</summary>
+        <p>
+          Use the direct installer if your agent cannot follow the prompt, or
+          open the workflow document to inspect the instructions without running
+          them.
+        </p>
+        <div className="command-box command-box-secondary">
+          <textarea
+            aria-label="Manual install command"
+            readOnly
+            spellCheck={false}
+            value={manualCommand}
+          />
+          <button
+            aria-label={
+              copy === "manual-copied"
+                ? "Copied manual install command"
+                : copy === "error"
+                  ? "Copy unavailable; select manual install command"
+                  : "Copy manual install command"
+            }
+            onClick={() => void copyText(manualCommand, "manual-copied")}
+            type="button"
+          >
+            {copy === "manual-copied" ? <Check /> : <Clipboard />}
+            {copy === "manual-copied"
+              ? "Copied"
+              : copy === "error"
+                ? "Select text"
+                : "Copy"}
+          </button>
+        </div>
+        <a
+          href={`${origin}/projects/${project.slug}/mission.md`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Preview the complete workflow
+          <ExternalLink aria-hidden="true" />
+        </a>
+      </details>
     </div>
   );
 }

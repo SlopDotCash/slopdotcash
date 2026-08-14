@@ -242,25 +242,17 @@ print(json.dumps(result))
 function installCommand(artifactRoot = installerArtifactRoot) {
   return createInstallCommand(
     pathToFileURL(artifactRoot).href.replace(/\/$/u, ""),
-    `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
+    `\${HOME}/.agents/skills`,
     { testAuthority },
   );
 }
 
-function runInstall(
-  command: string,
-  root: string,
-  { codexHome = true }: { codexHome?: boolean } = {},
-) {
+function runInstall(command: string, root: string) {
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: join(root, "home"),
   };
-  if (codexHome) {
-    environment.CODEX_HOME = join(root, "codex");
-  } else {
-    delete environment.CODEX_HOME;
-  }
+  delete environment.CODEX_HOME;
   return spawnSync("bash", ["-c", command], {
     cwd: packageRoot,
     encoding: "utf8",
@@ -856,16 +848,15 @@ describe("contribution skill package", () => {
     const ambiguousPublic = join(ambiguousRoot, "public");
     try {
       const command = installCommand();
-      expect(command).toContain(
-        `SKILLS_ROOT="\${CODEX_HOME:-\${HOME}/.codex}/skills"`,
-      );
-      expect(command).not.toContain('SKILLS_ROOT="\\${CODEX_HOME');
+      expect(command).toContain(`SKILLS_ROOT="\${HOME}/.agents/skills"`);
+      expect(command).not.toContain("CODEX_HOME");
 
       const valid = runInstall(command, validRoot);
       expect(valid.status, valid.stderr).toBe(0);
       const installedRoot = join(
         validRoot,
-        "codex",
+        "home",
+        ".agents",
         "skills",
         "contribute-to-eliza",
       );
@@ -939,16 +930,14 @@ describe("contribution skill package", () => {
         "installed skill file does not match provenance: project.json",
       );
       writeFileSync(installedProjectPath, installedProject);
-      const defaultInstall = runInstall(command, defaultRoot, {
-        codexHome: false,
-      });
+      const defaultInstall = runInstall(command, defaultRoot);
       expect(defaultInstall.status, defaultInstall.stderr).toBe(0);
       expect(
         existsSync(
           join(
             defaultRoot,
             "home",
-            ".codex",
+            ".agents",
             "skills",
             "contribute-to-eliza",
             "SKILL.md",
@@ -959,8 +948,8 @@ describe("contribution skill package", () => {
         existsSync(
           join(
             packageRoot,
-            `\${CODEX_HOME:-\${HOME}`,
-            ".codex}",
+            `\${HOME}`,
+            ".agents",
             "skills",
             "contribute-to-eliza",
           ),
@@ -993,7 +982,8 @@ describe("contribution skill package", () => {
         readFileSync(
           join(
             invalidRoot,
-            "codex",
+            "home",
+            ".agents",
             "skills",
             "contribute-to-eliza",
             "SKILL.md",
@@ -1018,7 +1008,8 @@ describe("contribution skill package", () => {
         readFileSync(
           join(
             ambiguousRoot,
-            "codex",
+            "home",
+            ".agents",
             "skills",
             "contribute-to-eliza",
             "SKILL.md",
@@ -1097,7 +1088,13 @@ with zipfile.ZipFile(archive_path, "w") as archive:
       expect(existsSync(join(traversalRoot, "escaped.txt"))).toBe(false);
       expect(
         existsSync(
-          join(traversalRoot, "codex", "skills", "contribute-to-eliza"),
+          join(
+            traversalRoot,
+            "home",
+            ".agents",
+            "skills",
+            "contribute-to-eliza",
+          ),
         ),
       ).toBe(false);
 
@@ -1108,17 +1105,24 @@ with zipfile.ZipFile(archive_path, "w") as archive:
       expect(symlinkArchive.status).not.toBe(0);
       expect(
         existsSync(
-          join(symlinkArchiveRoot, "codex", "skills", "contribute-to-eliza"),
+          join(
+            symlinkArchiveRoot,
+            "home",
+            ".agents",
+            "skills",
+            "contribute-to-eliza",
+          ),
         ),
       ).toBe(false);
 
       const brokenTarget = join(
         brokenTargetRoot,
-        "codex",
+        "home",
+        ".agents",
         "skills",
         "contribute-to-eliza",
       );
-      mkdirSync(join(brokenTargetRoot, "codex", "skills"), {
+      mkdirSync(join(brokenTargetRoot, "home", ".agents", "skills"), {
         recursive: true,
       });
       symlinkSync("missing-local-skill", brokenTarget);
@@ -1232,7 +1236,9 @@ with zipfile.ZipFile(archive_path, "r") as archive:
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("Refusing skill operation:");
       expect(
-        existsSync(join(forgedRoot, "codex", "skills", "contribute-to-eliza")),
+        existsSync(
+          join(forgedRoot, "home", ".agents", "skills", "contribute-to-eliza"),
+        ),
       ).toBe(false);
     } finally {
       rmSync(forgedRoot, { force: true, recursive: true });

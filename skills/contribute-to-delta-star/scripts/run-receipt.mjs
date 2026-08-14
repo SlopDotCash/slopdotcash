@@ -93,16 +93,26 @@ function canonicalIso(value = new Date()) {
   return new Date(time).toISOString();
 }
 
-function _safeInteger(value) {
-  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+function safeInteger(value, field) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    fail(`ccusage returned an unsafe ${field}`);
+  }
+  return value;
 }
 
-function numericField(record, names) {
+function numericField(record, names, field, requireInteger = false) {
   for (const name of names) {
+    if (!Object.hasOwn(record, name)) continue;
     const value = record[name];
-    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-      return value;
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      (requireInteger && !Number.isSafeInteger(value))
+    ) {
+      fail(`ccusage returned an invalid ${field}`);
     }
+    return value;
   }
   return 0;
 }
@@ -157,41 +167,59 @@ export function normalizeSessionReport(payload, repositoryRoot) {
       basename(normalizedProject).toLowerCase() === expectedName;
     if (normalizedProject !== null && !pathMatched && !nameMatched) continue;
 
-    const inputTokens = Math.floor(
-      numericField(value, ["inputTokens", "input_tokens"]),
+    const inputTokens = numericField(
+      value,
+      ["inputTokens", "input_tokens"],
+      "input token count",
+      true,
     );
-    const outputTokens = Math.floor(
-      numericField(value, ["outputTokens", "output_tokens"]),
+    const outputTokens = numericField(
+      value,
+      ["outputTokens", "output_tokens"],
+      "output token count",
+      true,
     );
-    const cacheCreationTokens = Math.floor(
-      numericField(value, [
-        "cacheCreationTokens",
-        "cache_creation_tokens",
-        "cacheWriteTokens",
-      ]),
+    const cacheCreationTokens = numericField(
+      value,
+      ["cacheCreationTokens", "cache_creation_tokens", "cacheWriteTokens"],
+      "cache creation token count",
+      true,
     );
-    const cacheReadTokens = Math.floor(
-      numericField(value, ["cacheReadTokens", "cache_read_tokens"]),
+    const cacheReadTokens = numericField(
+      value,
+      ["cacheReadTokens", "cache_read_tokens"],
+      "cache read token count",
+      true,
     );
-    const visibleTotal =
-      inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens;
-    const totalTokens = Math.floor(
+    const visibleTotal = safeInteger(
+      inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens,
+      "visible token total",
+    );
+    const totalTokens = safeInteger(
       Math.max(
         visibleTotal,
-        numericField(value, ["totalTokens", "total_tokens"]),
+        numericField(
+          value,
+          ["totalTokens", "total_tokens"],
+          "total token count",
+          true,
+        ),
       ),
+      "total token count",
     );
-    const costUsd = numericField(value, [
-      "totalCost",
-      "costUSD",
-      "costUsd",
-      "cost",
-    ]);
+    const costUsd = numericField(
+      value,
+      ["totalCost", "costUSD", "costUsd", "cost"],
+      "USD cost",
+    );
     const idHash = sha256(id);
     sessions[idHash] = {
       cacheCreationTokens,
       cacheReadTokens,
-      costMicroUsd: Math.max(0, Math.round(costUsd * 1_000_000)),
+      costMicroUsd: safeInteger(
+        Math.round(costUsd * 1_000_000),
+        "micro-USD cost",
+      ),
       inputTokens,
       outputTokens,
       pathMatched,
@@ -644,8 +672,9 @@ function readStateFile(path, name = basename(path)) {
   ) {
     fail(`run state is not a bounded regular file: ${name}`);
   }
+  const contents = readFileSync(path, "utf8");
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    return JSON.parse(contents);
   } catch {
     // error-policy:J3 malformed local state is an explicit invalid result.
     fail(`run state is not valid JSON: ${name}`);
@@ -1423,7 +1452,7 @@ function startRun(options) {
   const repositoryRoot = requireRepository(options.repoRoot);
   const model = PROJECT.models[options.client];
   const runId = createRunId();
-  const state = {
+  const state = validateActiveRecord({
     schemaVersion: "1",
     runId,
     projectId: PROJECT.projectId,
@@ -1436,7 +1465,7 @@ function startRun(options) {
     startedAt: canonicalIso(),
     baseline: collectUsage(options.client, repositoryRoot),
     ...provenance,
-  };
+  });
   const directories = runDirectories();
   writeJsonExclusive(join(directories.active, `${runId}.json`), state);
   renderResult(
@@ -1455,7 +1484,8 @@ function finishRun(options) {
   const directories = runDirectories();
   const activePath = join(directories.active, `${options.runId}.json`);
   const completedPath = join(directories.completed, `${options.runId}.json`);
-  if (existsSync(completedPath)) {
+  const replayCompleted = () => {
+    if (!existsSync(completedPath)) return false;
     const completed = validateCompletedState(
       readStateFile(completedPath),
       options,
@@ -1477,10 +1507,20 @@ function finishRun(options) {
       },
       options.json,
     );
-    return;
+    return true;
+  };
+  if (replayCompleted()) return;
+  if (!existsSync(activePath)) {
+    if (replayCompleted()) return;
+    fail("active run state was not found");
   }
-  if (!existsSync(activePath)) fail("active run state was not found");
-  const state = validateActiveRecord(readStateFile(activePath));
+  let state;
+  try {
+    state = validateActiveRecord(readStateFile(activePath));
+  } catch (error) {
+    if (error?.code === "ENOENT" && replayCompleted()) return;
+    throw error;
+  }
   if (
     state.runId !== options.runId ||
     state.projectId !== PROJECT.projectId ||

@@ -155,6 +155,41 @@ describe("discovery", () => {
     expect(
       await screen.findByRole("heading", { name: "Leaderboard" }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/This month is the default/u)).toHaveTextContent(
+      /all-time record is separate history/u,
+    );
+    expect(screen.getByRole("tab", { name: "This month" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("tab", { name: "Eliza, $10,000 monthly pool" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/July 2026 · Eliza/u)).toBeInTheDocument();
+    const leaderboard = screen.getByRole("table", {
+      name: /Eliza July 2026 reward leaderboard/u,
+    });
+    expect(
+      within(leaderboard).getByRole("columnheader", {
+        name: "Accepted score",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(leaderboard).getByRole("columnheader", {
+        name: "Current estimate",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(leaderboard).queryByRole("columnheader", {
+        name: "Paid to date",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("How score and compute affect rewards"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/No relevant signed receipts are counted/u),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Projects" }),
     ).toBeInTheDocument();
@@ -180,6 +215,24 @@ describe("discovery", () => {
     expect(screen.queryByText("THE GITARMY NETWORK")).not.toBeInTheDocument();
     expect(screen.queryByText("Work in. Money out.")).not.toBeInTheDocument();
     expect(screen.getByText("finish-line")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "All-time record" }));
+    const record = screen.getByRole("table", {
+      name: "All-time accepted-work record",
+    });
+    expect(
+      within(record).getByRole("columnheader", { name: "Paid to date" }),
+    ).toBeInTheDocument();
+    expect(
+      within(record).queryByRole("columnheader", {
+        name: "Current estimate",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /This rank does not determine any current monthly pool/u,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("scrolls hash navigation to the requested section", async () => {
@@ -306,6 +359,9 @@ describe("discovery", () => {
     );
     render(<App />);
 
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "All-time record" }),
+    );
     const contributor = await screen.findByText("archive-only");
     const row = contributor.closest("tr");
     expect(row).not.toBeNull();
@@ -317,6 +373,9 @@ describe("discovery", () => {
     mockSnapshot(augustRollingSnapshot());
     render(<App />);
 
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "All-time record" }),
+    );
     const contributor = await screen.findByText("finish-line");
     const row = contributor.closest("tr");
     expect(row).not.toBeNull();
@@ -329,7 +388,7 @@ describe("project routes", () => {
   it("renders an Eliza-only leaderboard and authenticated one-command installer", async () => {
     route("/projects/eliza");
     mockSnapshot();
-    const { container } = render(<App />);
+    render(<App />);
 
     expect(
       await screen.findByRole("heading", {
@@ -340,23 +399,49 @@ describe("project routes", () => {
       screen.getAllByText("$10,000", { exact: true }).length,
     ).toBeGreaterThan(0);
     expect(screen.getAllByText("24").length).toBeGreaterThan(0);
-    const command = container.querySelector<HTMLTextAreaElement>(
-      ".command-box textarea",
+    const prompt = screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Agent prompt",
+    });
+    expect(prompt.value).toContain(`${window.location.origin}/SKILL.md`);
+    expect(prompt.value).toContain("contribute to elizaOS/eliza");
+    expect(prompt.value).toContain(
+      "Before installing anything or reading local usage",
     );
-    expect(command).not.toBeNull();
-    expect(command?.value).toContain(
+    expect(
+      screen.getByText(/Works in Codex and Claude Code/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Nothing is installed and no local usage is read/u),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Manual install command")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Copy agent prompt" }));
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(prompt.value),
+    );
+
+    fireEvent.click(screen.getByText("Advanced options"));
+    const command = screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Manual install command",
+    });
+    expect(command.value).toContain(
       `python3 - '${window.location.origin}/projects/eliza'`,
     );
-    expect(command?.value).toContain("skills/contribute-to-eliza");
+    expect(command.value).toContain("skills/contribute-to-eliza");
+    expect(
+      screen.getByRole("link", { name: /Preview the complete workflow/u }),
+    ).toHaveAttribute(
+      "href",
+      `${window.location.origin}/projects/eliza/mission.md`,
+    );
     expect(screen.queryByText("Live from GitHub")).not.toBeInTheDocument();
     expect(
       screen.queryByText("How credit survives review"),
     ).not.toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Copy install command" }),
+      screen.getByRole("button", { name: "Copy manual install command" }),
     );
     await waitFor(() =>
-      expect(navigator.clipboard.writeText).toHaveBeenCalledOnce(),
+      expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(2),
     );
   });
 

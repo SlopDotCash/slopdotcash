@@ -32,7 +32,7 @@ export function renderInstallGuide({
   const isClaude = client === "claude-code";
   const skillsRoot = isClaude
     ? `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`
-    : `\${CODEX_HOME:-\${HOME}/.codex}/skills`;
+    : `\${HOME}/.agents/skills`;
   return `# Install ${skillName} for ${isClaude ? "Claude Code" : "Codex"}
 
 Install or update the complete skill archive. The authenticated installer

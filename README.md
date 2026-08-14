@@ -50,10 +50,12 @@ flowchart LR
 Contributor onboarding is one command from a project page. The installer
 authenticates the requested skill revision against GitHub, compares every
 packaged byte with immutable source, activates it atomically, and checks for an
-authorized update whenever the skill starts. The skill sets the required
-frontier model, installs or runs pinned `ccusage` tooling transiently, records
-aggregate token usage, and prints a signed contribution marker for the GitHub
-submission.
+authorized update whenever the skill starts. The skill requires the published
+frontier-model policy but cannot change the model hosting the agent. With
+operator consent, it transiently runs pinned `ccusage`, records an aggregate
+usage interval, and prints a device-signed contribution marker for the GitHub
+submission. The signature protects the receipt bytes; it does not attest
+provider billing or model identity.
 
 Creators add projects through a normal pull request containing:
 
