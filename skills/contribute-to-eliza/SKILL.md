@@ -159,7 +159,7 @@ node <skill-directory>/scripts/run-receipt.mjs finish \
 ```
 
 The command prints the exact footer. Append it unchanged to the final PR body,
-review, or issue comment that carries the contribution. The hidden v2 marker
+review, or issue comment that carries the contribution. The hidden Slop marker
 must be the final line. Do not hand-edit token counts, identifiers, timestamps,
 digests, key material, or signature. Re-running `finish` is idempotent.
 

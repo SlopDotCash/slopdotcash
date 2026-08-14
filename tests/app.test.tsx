@@ -152,6 +152,7 @@ describe("discovery", () => {
     expect(
       screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Payouts are disabled/u)).toBeInTheDocument();
     expect(
       await screen.findByRole("heading", { name: "Leaderboard" }),
     ).toBeInTheDocument();
@@ -163,7 +164,7 @@ describe("discovery", () => {
       "true",
     );
     expect(
-      screen.getByRole("tab", { name: "Eliza, $10,000 monthly pool" }),
+      screen.getByRole("tab", { name: "Eliza, $10,000 simulation" }),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText(/July 2026 · Eliza/u)).toBeInTheDocument();
     const leaderboard = screen.getByRole("table", {
@@ -176,7 +177,7 @@ describe("discovery", () => {
     ).toBeInTheDocument();
     expect(
       within(leaderboard).getByRole("columnheader", {
-        name: "Current estimate",
+        name: "Simulated share",
       }),
     ).toBeInTheDocument();
     expect(
@@ -184,12 +185,8 @@ describe("discovery", () => {
         name: "Paid to date",
       }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText("How score and compute affect rewards"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/No relevant signed receipts are counted/u),
-    ).toBeInTheDocument();
+    expect(screen.getByText("How the simulation works")).toBeInTheDocument();
+    expect(screen.getByText(/Payments are disabled/u)).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Projects" }),
     ).toBeInTheDocument();
@@ -225,7 +222,7 @@ describe("discovery", () => {
     ).toBeInTheDocument();
     expect(
       within(record).queryByRole("columnheader", {
-        name: "Current estimate",
+        name: "Simulated share",
       }),
     ).not.toBeInTheDocument();
     expect(
@@ -426,8 +423,8 @@ describe("project routes", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText(/^Updated /u)).toBeInTheDocument();
     expect(
-      screen.getAllByText(/receipt-linked tokens/u).length,
-    ).toBeGreaterThan(0);
+      screen.queryByText(/receipt-linked tokens/u),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Manual install command")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Copy agent prompt" }));
     await waitFor(() =>

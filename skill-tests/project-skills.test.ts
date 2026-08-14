@@ -156,7 +156,7 @@ describe("project skill contracts", () => {
       assert.strictEqual(plan.title, "Slop wallet claim");
       assert.strictEqual(
         plan.body,
-        '<!-- gitarmy-wallet:v1 {"chain":"solana","address":"11111111111111111111111111111111"} -->',
+        '<!-- slop-wallet:v1 {"chain":"solana","address":"11111111111111111111111111111111"} -->',
       );
       const issueUrl = new URL(plan.newIssueUrl);
       assert.strictEqual(
@@ -191,7 +191,7 @@ describe("project skill contracts", () => {
       assert.match(source, /Do not penalize.*self-closed/is);
       assert.match(source, /never bans|never\n+bans/is);
       assert.match(source, /accept.*partial.*reject.*hold/is);
-      assert.match(source, /gitarmy-review/u);
+      assert.match(source, /slop-review/u);
       assert.doesNotMatch(source, /private key|seed phrase/is);
     }
   });
@@ -400,7 +400,7 @@ describe("project run usage", () => {
     });
   });
 
-  it("serializes one terminal v2 marker without private material", () => {
+  it("serializes one terminal Slop marker without private material", () => {
     const key = generateKeyPairSync("ed25519");
     const publicDer = createPublicKey(key.privateKey).export({
       format: "der",
@@ -416,7 +416,7 @@ describe("project run usage", () => {
       provider: "openai",
       model: "gpt-5.6-sol",
       client: "codex",
-      skillRevision: `elizaOS/army@${"a".repeat(40)}:skills/contribute-to-eliza`,
+      skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
       skillSha256: "b".repeat(64),
       usage: {
         source: "ccusage-session-v20",
@@ -445,7 +445,7 @@ describe("project run usage", () => {
     assert.match(rendered, /— \[lane-1\]/u);
     assert.match(
       rendered.split("\n").at(-1) ?? "",
-      /^<!-- elizaos-contribution-attribution:v2 /u,
+      /^<!-- slop-contribution-attribution:v1 /u,
     );
     assert.doesNotMatch(rendered, /PRIVATE KEY/u);
     const assessed = assessModelAttribution([

@@ -86,7 +86,7 @@ submissions may become a risk signal. A model finding never bans a
 contributor; it places the item on hold for a maintainer decision with linked
 evidence.
 
-Run receipts are supporting evidence only. Verify the terminal v2 marker,
+Run receipts are supporting evidence only. Verify the terminal Slop marker,
 device signature, project and repository identity, model, skill revision, time
 window, and replay status. Tokens and compute spent cannot create score,
 excuse an unreproducible number, or override a security finding.
@@ -114,9 +114,9 @@ issue, pull request, commit, or test that proves its value.
 
 Return human-readable findings first, ordered by severity, with file and line
 references. State the reproduced numbers explicitly. End with one JSON object
-inside a fenced `gitarmy-review` block:
+inside a fenced `slop-review` block:
 
-```gitarmy-review
+```slop-review
 {"schemaVersion":"1","projectId":"asi","artifactUrl":"https://github.com/elizaOS/asi/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 

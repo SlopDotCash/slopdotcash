@@ -8,7 +8,11 @@ import { createHash } from "node:crypto";
 import { link, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findProject, type ProjectId } from "../src/lib/projects.mjs";
+import {
+  assertProjectPaymentsEnabled,
+  findProject,
+  type ProjectId,
+} from "../src/lib/projects.mjs";
 import { createSettlementExecutionPlan } from "../src/lib/settlement-plan";
 import { validateCycleTransition } from "./sync-cycle-index";
 
@@ -106,6 +110,7 @@ export async function prepareSettlementPlan(
     write?: (path: string, value: unknown) => Promise<void>;
   } = {},
 ) {
+  assertProjectPaymentsEnabled(arguments_.projectId);
   const cycle = await (options.validate ?? validateCycleTransition)(
     arguments_.projectId,
     arguments_.cycleId,

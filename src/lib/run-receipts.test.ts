@@ -19,7 +19,7 @@ const receipt: ProjectRunReceipt = {
   provider: "openai",
   model: "gpt-5.6-sol",
   client: "codex",
-  skillRevision: `elizaOS/army@${"a".repeat(40)}:skills/contribute-to-eliza`,
+  skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
   skillSha256: "b".repeat(64),
   usage: {
     source: "ccusage-session-v20",
@@ -42,7 +42,7 @@ const receipt: ProjectRunReceipt = {
 describe("project run receipt", () => {
   it("round-trips the canonical final-line marker", () => {
     const marker = serializeRunMarker(receipt);
-    expect(marker).toContain("elizaos-contribution-attribution:v2");
+    expect(marker).toContain("slop-contribution-attribution:v1");
     expect(parseRunMarker(marker)).toEqual(receipt);
   });
 

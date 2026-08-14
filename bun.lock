@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@elizaos/army",
+      "name": "@elizaos/slopdotcash",
       "dependencies": {
         "@fontsource/poppins": "^5.2.7",
         "@vitejs/plugin-react": "^6.0.0",

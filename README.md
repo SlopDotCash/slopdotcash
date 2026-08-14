@@ -120,7 +120,7 @@ and unrelated token use are excluded or held for review; an LLM finding alone
 cannot ban a contributor or move money.
 
 Useful unmerged work may receive partial credit only through a reviewed file in
-`evaluations/`. The review agent emits an advisory `gitarmy-review` record;
+`evaluations/`. The review agent emits an advisory `slop-review` record;
 a maintainer then opens a public Slop PR with the actor, source, rationale,
 decision link, and 1–8 point award. The ordinary GitHub ledger and a manual
 award cannot score the same source twice.
@@ -143,10 +143,10 @@ copied between actors, one device key spanning identities, wrong repositories,
 outside-window runs, impossible values, invalid signatures, and unapproved
 models.
 
-Only tokens tied to an accepted outcome are relevant. Relevant usage receives
-a diminishing compute-weight bonus capped at 20%; each accepted outcome can
-credit at most one million tokens. Tokens without an accepted matching outcome
-remain public as ambiguous and do not increase payout weight.
+Only tokens tied to an accepted outcome are labeled relevant. Local usage is
+diagnostic evidence: it never changes score, rank, a simulated share, or a
+future payout. Tokens without an accepted matching outcome remain public as
+ambiguous.
 
 The implementation does **not** upload raw prompts, responses, source files,
 secrets, or full private trajectories by default. Those streams commonly
@@ -186,7 +186,7 @@ Contributor wallet discovery reads this exact marker from the source of the
 contributor’s public GitHub profile README and pins the observed commit:
 
 ```html
-<!-- gitarmy-wallet:v1 {"chain":"solana","address":"PUBLIC_ADDRESS"} -->
+<!-- slop-wallet:v1 {"chain":"solana","address":"PUBLIC_ADDRESS"} -->
 ```
 
 This proves a public GitHub account published an address; it is not proof that

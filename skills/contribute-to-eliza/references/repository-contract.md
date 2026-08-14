@@ -105,13 +105,12 @@ comments, labels, reviews, or mutations.
 ## Attribution and payout evidence
 
 Start the bundled run-receipt script before work and finish it after proof. Use
-the emitted footer unchanged on the final score-bearing GitHub source. The v2
-marker carries the exact approved model, repository identity, skill revision,
+the emitted footer unchanged on the final score-bearing GitHub source. The Slop
+marker carries the declared approved model, repository identity, skill revision,
 bounded ccusage delta, optional trajectory digest, device public key, and
 signature.
 
-The public projection uses accepted outcome score with a diminishing token
-evidence bonus capped at 20%. A receipt cannot create score. A copied,
-conflicting, malformed, unsigned, out-of-window, wrong-project, wrong-model, or
-unlinked receipt is excluded from reward weight and remains reviewable as a
-risk signal.
+The public simulation uses accepted outcome score only. A receipt cannot create
+score or change allocation weight. A copied, conflicting, malformed, unsigned,
+out-of-window, wrong-project, wrong-model, or unlinked receipt remains
+reviewable as a risk signal.

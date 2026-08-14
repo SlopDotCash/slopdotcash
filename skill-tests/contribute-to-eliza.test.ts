@@ -158,7 +158,7 @@ describe("contribute-to-eliza skill structure", () => {
     assert.match(source, /run-receipt\.mjs finish/);
     assert.match(source, /gpt-5\.6-sol/);
     assert.match(source, /claude-fable-5/);
-    assert.match(source, /v2 marker/i);
+    assert.match(source, /Slop marker/i);
     assert.match(source, /device signature/i);
     assert.match(source, /updates only to GitHub-authorized bytes/i);
     assert.match(source, /SECURITY\.md/);
@@ -1789,7 +1789,7 @@ describe("run receipt CLI", () => {
           {
             schemaVersion: "1",
             name: "contribute-to-eliza",
-            repository: "elizaOS/army",
+            repository: "elizaOS/slopdotcash",
             revision: sourceRevision,
             revisionStatus: "committed",
             source: {
@@ -1810,11 +1810,11 @@ describe("run receipt CLI", () => {
         )}\n`,
       );
       writeFileSync(
-        join(installedSkillRoot, ".gitarmy-authorization.json"),
+        join(installedSkillRoot, ".slop-authorization.json"),
         `${JSON.stringify(
           {
             schemaVersion: "1",
-            repository: "elizaOS/army",
+            repository: "elizaOS/slopdotcash",
             revision: sourceRevision,
             authorization: {
               kind: "develop",
@@ -1965,7 +1965,7 @@ describe("run receipt CLI", () => {
         1,
       );
 
-      const stateRoot = join(environment.XDG_CONFIG_HOME, "gitarmy", "runs");
+      const stateRoot = join(environment.XDG_CONFIG_HOME, "slop", "runs");
       writeFileSync(
         fixturePayload,
         JSON.stringify({
@@ -2096,7 +2096,7 @@ describe("run receipt CLI", () => {
         ["provider", "evil"],
         [
           "skillRevision",
-          `elizaOS/army@${"b".repeat(40)}:skills/contribute-to-eliza`,
+          `elizaOS/slopdotcash@${"b".repeat(40)}:skills/contribute-to-eliza`,
         ],
         ["skillSha256", "b".repeat(64)],
       ]) {
@@ -2304,7 +2304,14 @@ describe("run receipt CLI", () => {
       const legacyFooter = [
         ...canonicalFooterLines.slice(1, 4),
         canonicalFooterLines[0],
-        ...canonicalFooterLines.slice(4),
+        ...canonicalFooterLines
+          .slice(4)
+          .map((line) =>
+            line.replace(
+              "slop-contribution-attribution:v1",
+              "elizaos-contribution-attribution:v2",
+            ),
+          ),
       ].join("\n");
       writeFileSync(
         completedPath,

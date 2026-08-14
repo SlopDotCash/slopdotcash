@@ -46,7 +46,7 @@ const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const SHA_PATTERN = /^[0-9a-f]{64}$/u;
 const MAX_STATE_BYTES = MAX_REPORT_BYTES + 1024 * 1024;
-const AUTHORIZATION_RECEIPT = ".gitarmy-authorization.json";
+const AUTHORIZATION_RECEIPT = ".slop-authorization.json";
 
 const HELP = `Usage: node scripts/run-receipt.mjs <command> [options]
 
@@ -445,11 +445,11 @@ function collectUsage(client, repositoryRoot) {
   });
 }
 
-function configurationRoot() {
+function configurationRoot(namespace = "slop") {
   const configured = process.env.XDG_CONFIG_HOME;
   return configured && resolve(configured) === configured
-    ? join(configured, "gitarmy")
-    : join(homedir(), ".config", "gitarmy");
+    ? join(configured, namespace)
+    : join(homedir(), ".config", namespace);
 }
 
 function usageInputPaths(client) {
@@ -654,7 +654,7 @@ function validateActiveRecord(value) {
     canonicalIso(value.startedAt) !== value.startedAt ||
     !/^[0-9a-f]{40}$/u.test(value.revision ?? "") ||
     value.skillRevision !==
-      `elizaOS/army@${value.revision}:${PROJECT.skillSourcePath}` ||
+      `elizaOS/slopdotcash@${value.revision}:${PROJECT.skillSourcePath}` ||
     !SHA_PATTERN.test(value.skillSha256 ?? "")
   ) {
     fail("active run state has an invalid identity");
@@ -764,7 +764,7 @@ function resolveSkillProvenance() {
     if (
       provenance?.schemaVersion !== "1" ||
       provenance?.name !== PROJECT.skillName ||
-      provenance?.repository !== "elizaOS/army" ||
+      provenance?.repository !== "elizaOS/slopdotcash" ||
       provenance?.revisionStatus !== "committed" ||
       !/^[0-9a-f]{40}$/u.test(provenance?.revision) ||
       provenance?.source?.path !== `${PROJECT.skillSourcePath}/SKILL.md` ||
@@ -818,7 +818,7 @@ function resolveSkillProvenance() {
     }
     return {
       revision: provenance.revision,
-      skillRevision: `elizaOS/army@${provenance.revision}:${PROJECT.skillSourcePath}`,
+      skillRevision: `elizaOS/slopdotcash@${provenance.revision}:${PROJECT.skillSourcePath}`,
       skillSha256: digest,
     };
   }
@@ -850,7 +850,7 @@ function resolveSkillProvenance() {
   ]);
   return {
     revision,
-    skillRevision: `elizaOS/army@${revision}:${relativeSkill}`,
+    skillRevision: `elizaOS/slopdotcash@${revision}:${relativeSkill}`,
     skillSha256: digest,
   };
 }
@@ -876,7 +876,7 @@ function validateAuthorizationReceipt(revision) {
   }
   if (
     receipt?.schemaVersion !== "1" ||
-    receipt?.repository !== "elizaOS/army" ||
+    receipt?.repository !== "elizaOS/slopdotcash" ||
     receipt?.revision !== revision ||
     !receipt.authorization ||
     typeof receipt.authorization !== "object" ||
@@ -904,7 +904,7 @@ function validateAuthorizationReceipt(revision) {
   const expectedReceipt = expectedAuthorization
     ? {
         schemaVersion: "1",
-        repository: "elizaOS/army",
+        repository: "elizaOS/slopdotcash",
         revision,
         authorization: expectedAuthorization,
       }
@@ -987,6 +987,19 @@ export function signingPayload(receipt) {
 }
 
 export function footer(receipt, lane) {
+  const value = marker(receipt);
+  return [
+    `Compute receipt: ${receipt.usage.totalTokens} project-attributed tokens (${receipt.usage.confidence}; device-signed, locally reported)`,
+    `AI provider/model: ${receipt.provider} / ${receipt.model}`,
+    `Client / agent tooling: ${receipt.client}`,
+    `Contribution skill revision: ${receipt.skillRevision}`,
+    "Attribution status: self-reported",
+    `— [${lane}]`,
+    `<!-- slop-contribution-attribution:v1 ${JSON.stringify(value)} -->`,
+  ].join("\n");
+}
+
+function preActivationFooter(receipt, lane) {
   const value = marker(receipt);
   return [
     `Compute receipt: ${receipt.usage.totalTokens} project-attributed tokens (${receipt.usage.confidence}; device-signed, locally reported)`,
@@ -1092,7 +1105,7 @@ function validateCompletedRecord(value) {
     receipt.provider !== approvedModel.provider ||
     receipt.model !== approvedModel.model ||
     !new RegExp(
-      `^elizaOS/army@[0-9a-f]{40}:${PROJECT.skillSourcePath.replaceAll("/", "\\/")}$`,
+      `^elizaOS/(?:slopdotcash|army)@[0-9a-f]{40}:${PROJECT.skillSourcePath.replaceAll("/", "\\/")}$`,
       "u",
     ).test(receipt.skillRevision ?? "") ||
     canonicalIso(receipt.startedAt) !== receipt.startedAt ||
@@ -1146,7 +1159,12 @@ function validateCompletedRecord(value) {
     Buffer.from(receipt.deviceSignature, "base64url"),
   );
   const canonicalFooter = footer(receipt, lane);
-  if (!valid || (wrapperIsCurrent && value.footer !== canonicalFooter)) {
+  if (
+    !valid ||
+    (wrapperIsCurrent &&
+      value.footer !== canonicalFooter &&
+      value.footer !== preActivationFooter(receipt, lane))
+  ) {
     fail("completed run signature or footer is invalid");
   }
   return {
@@ -1430,9 +1448,18 @@ function doctorRun(options) {
 
 function statusRun(options) {
   const root = join(configurationRoot(), "runs");
-  const runs = [
+  const currentRuns = [
     ...readStateRecords(join(root, "active"), "active"),
     ...readStateRecords(join(root, "completed"), "completed"),
+  ];
+  const legacyCompleted = readStateRecords(
+    join(configurationRoot("gitarmy"), "runs", "completed"),
+    "completed",
+  );
+  const runs = [
+    ...new Map(
+      [...currentRuns, ...legacyCompleted].map((run) => [run.runId, run]),
+    ).values(),
   ].sort((left, right) => left.runId.localeCompare(right.runId));
   renderResult(
     {
@@ -1483,11 +1510,21 @@ function finishRun(options) {
   const repositoryRoot = requireRepository(options.repoRoot);
   const directories = runDirectories();
   const activePath = join(directories.active, `${options.runId}.json`);
-  const completedPath = join(directories.completed, `${options.runId}.json`);
+  const completedPaths = [
+    join(directories.completed, `${options.runId}.json`),
+    join(
+      configurationRoot("gitarmy"),
+      "runs",
+      "completed",
+      `${options.runId}.json`,
+    ),
+  ];
+  const completedPath = completedPaths[0];
   const replayCompleted = () => {
-    if (!existsSync(completedPath)) return false;
+    const replayPath = completedPaths.find((path) => existsSync(path));
+    if (!replayPath) return false;
     const completed = validateCompletedState(
-      readStateFile(completedPath),
+      readStateFile(replayPath),
       options,
       repositoryRoot,
     );

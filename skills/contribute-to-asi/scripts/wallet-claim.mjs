@@ -10,7 +10,7 @@ const BASE58_INDEX = new Map(
 );
 const CLAIM_REPOSITORY = "elizaOS/slopdotcash";
 const CLAIM_TITLE = "Slop wallet claim";
-const MARKER_PREFIX = "gitarmy-wallet:v1";
+const MARKER_PREFIX = "slop-wallet:v1";
 
 function decodeBase58(value) {
   if (!value || value.length > 44) return null;

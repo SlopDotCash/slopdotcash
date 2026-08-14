@@ -51,7 +51,7 @@ const CONTRIBUTION_CLAIM_RE = /^CLAIMING(?:\s+REVIEW|\s+LEVER)?:\s*\S/i;
 const AI_PROVENANCE_DECLARATION_RE =
   /^(?:AI provider\/model\s*:|AI assistance\s*:\s*yes\b|Models?(?:\s+used)?\s*:|Model\(s\)\s+used\s*:|Client\s*\/\s*agent tooling\s*:|Contribution skill revision\s*:)/i;
 const AI_PROVENANCE_MARKER_LINE_RE =
-  /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:v1\b[^\r\n]*-->\s*$/i;
+  /^<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v1|slop-contribution-attribution:v1)\b[^\r\n]*-->\s*$/i;
 const HUMAN_ONLY_CLAIM_FOOTER_RE =
   /(?:^|\r?\n)\s*AI assistance:\s*no\s*[-\u2013\u2014]\s*human-only claim\s*\r?\n\s*Attribution status:\s*self-reported\s*$/i;
 const HUMAN_ONLY_PR_RE =

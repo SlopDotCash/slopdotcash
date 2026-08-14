@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -21,6 +22,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROJECTS } from "../src/lib/projects.mjs";
+import { readIdentityRecord } from "./protocol-identity.mjs";
 import { renderInstallGuide } from "./render-install-guide.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -159,6 +161,16 @@ function listRegularSkillFiles(root, prefix = "") {
 
 mkdirSync(publicRoot, { recursive: true });
 mkdirSync(downloadsRoot, { recursive: true });
+const identityRecordPath = join(repositoryRoot, "protocol", "identity-v1.json");
+if (existsSync(identityRecordPath)) {
+  readIdentityRecord(identityRecordPath);
+  const publicProtocolRoot = join(publicRoot, "protocol");
+  mkdirSync(publicProtocolRoot, { recursive: true });
+  copyFileSync(
+    identityRecordPath,
+    join(publicProtocolRoot, "identity-v1.json"),
+  );
+}
 runPython([skillValidator, bootstrapSkillRoot]);
 
 const skillMarkdown = readFileSync(skillSource);
@@ -309,9 +321,7 @@ run(process.execPath, [
   "--ogembeds",
 ]);
 
-const packagingRoot = mkdtempSync(
-  join(tmpdir(), "eliza-computer-skill-package-"),
-);
+const packagingRoot = mkdtempSync(join(tmpdir(), "slop-skill-package-"));
 const stagedSkillRoot = join(packagingRoot, "contribute-to-eliza");
 const stagedDownloadsRoot = join(packagingRoot, "downloads");
 const stagedPublicArchive = join(
@@ -331,7 +341,7 @@ try {
       {
         schemaVersion: "1",
         name: "contribute-to-eliza",
-        repository: "elizaOS/army",
+        repository: "elizaOS/slopdotcash",
         revision: sourceRevisionStatus === "committed" ? commit : null,
         revisionStatus: sourceRevisionStatus,
         source: {
@@ -402,6 +412,8 @@ writeFileSync(
           project_id: project.id,
           project_url: `${publicSiteOrigin}/projects/${project.id}/`,
           repository: repository.id,
+          review_skill: project.reviewSkill.id,
+          review_skill_manifest: `${publicSiteOrigin}/projects/${project.id}/review-skill-manifest.json`,
           skill: project.skill.id,
           skill_source: project.skill.sourcePath,
         })),
@@ -489,13 +501,13 @@ function guideRecord({
 const manifest = {
   schemaVersion: "1",
   name: "contribute-to-eliza",
-  repository: "elizaOS/army",
+  repository: "elizaOS/slopdotcash",
   revision: commit,
   revisionStatus: sourceRevisionStatus,
   generatedAt: new Date().toISOString(),
   source: {
     path: sourcePath,
-    url: `https://github.com/elizaOS/army/blob/${commit}/${sourcePath}`,
+    url: `https://github.com/elizaOS/slopdotcash/blob/${commit}/${sourcePath}`,
     publicUrl: `${publicSiteOrigin}/projects/eliza/skill.md`,
     sha256: skillDigest,
   },
@@ -526,7 +538,7 @@ const manifest = {
     apiOrigin: "https://api.github.com",
     rawOrigin: "https://raw.githubusercontent.com",
     canonicalPath: skillRepositoryPath,
-    releaseCandidateLabel: "gitarmy-release-candidate",
+    releaseCandidateLabel: "slop-release-candidate",
     acceptedRevisions: [
       "current develop head",
       "develop ancestor whose complete canonical skill tree is byte-identical to current develop",
@@ -589,7 +601,12 @@ function publishPrimaryProjectAlias() {
   );
 }
 
-function publishAdditionalProject({ id, name, skillRepositoryPath }) {
+function publishAdditionalProject({
+  id,
+  name,
+  publicationPrefix = "",
+  skillRepositoryPath,
+}) {
   const additionalSkillRoot = join(repositoryRoot, skillRepositoryPath);
   const additionalSkillSource = join(additionalSkillRoot, "SKILL.md");
   const sourcePath = `${skillRepositoryPath}/SKILL.md`;
@@ -671,7 +688,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
         {
           schemaVersion: "1",
           name,
-          repository: "elizaOS/army",
+          repository: "elizaOS/slopdotcash",
           revision: revisionStatus === "committed" ? commit : null,
           revisionStatus,
           source: { path: sourcePath, sha256: sha256(skillBytes) },
@@ -697,9 +714,9 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
   const references = trackedFiles
     .filter((path) => path.startsWith("references/") && path.endsWith(".md"))
     .map((path) => readFileSync(join(additionalSkillRoot, path), "utf8"));
-  writeFileSync(join(projectRoot, "skill.md"), skillBytes);
+  writeFileSync(join(projectRoot, `${publicationPrefix}skill.md`), skillBytes);
   writeFileSync(
-    join(projectRoot, "mission.md"),
+    join(projectRoot, `${publicationPrefix}mission.md`),
     `${skillBytes.toString()}\n\n---\n\n${references.join("\n\n---\n\n")}`,
   );
   const codexGuide = renderInstallGuide({
@@ -708,15 +725,21 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
     skillName: name,
     skillRepositoryPath,
   });
-  writeFileSync(join(projectRoot, "codex.md"), codexGuide);
+  writeFileSync(join(projectRoot, `${publicationPrefix}codex.md`), codexGuide);
   const claudeGuide = renderInstallGuide({
     artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
     client: "claude-code",
     skillName: name,
     skillRepositoryPath,
   });
-  writeFileSync(join(projectRoot, "claude.md"), claudeGuide);
-  writeFileSync(join(projectRoot, "claude-code.md"), claudeGuide);
+  writeFileSync(
+    join(projectRoot, `${publicationPrefix}claude.md`),
+    claudeGuide,
+  );
+  writeFileSync(
+    join(projectRoot, `${publicationPrefix}claude-code.md`),
+    claudeGuide,
+  );
   writeFileSync(
     join(projectDownloads, `${archiveName}.sha256`),
     `${archiveDigest}  ${archiveName}\n`,
@@ -724,14 +747,14 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
   const additionalManifest = {
     schemaVersion: "1",
     name,
-    repository: "elizaOS/army",
+    repository: "elizaOS/slopdotcash",
     revision: commit,
     revisionStatus,
     generatedAt: new Date().toISOString(),
     source: {
       path: sourcePath,
-      url: `https://github.com/elizaOS/army/blob/${commit}/${sourcePath}`,
-      publicUrl: `${publicSiteOrigin}/projects/${id}/skill.md`,
+      url: `https://github.com/elizaOS/slopdotcash/blob/${commit}/${sourcePath}`,
+      publicUrl: `${publicSiteOrigin}/projects/${id}/${publicationPrefix}skill.md`,
       sha256: sha256(skillBytes),
     },
     archive: {
@@ -743,7 +766,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
       codex: guideRecord({
         artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
         client: "codex",
-        publicUrl: `${publicSiteOrigin}/projects/${id}/codex.md`,
+        publicUrl: `${publicSiteOrigin}/projects/${id}/${publicationPrefix}codex.md`,
         skillName: name,
         skillRepositoryPath,
         source: codexGuide,
@@ -751,7 +774,7 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
       claude: guideRecord({
         artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
         client: "claude-code",
-        publicUrl: `${publicSiteOrigin}/projects/${id}/claude.md`,
+        publicUrl: `${publicSiteOrigin}/projects/${id}/${publicationPrefix}claude.md`,
         skillName: name,
         skillRepositoryPath,
         source: claudeGuide,
@@ -761,17 +784,26 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
       apiOrigin: "https://api.github.com",
       rawOrigin: "https://raw.githubusercontent.com",
       canonicalPath: skillRepositoryPath,
-      releaseCandidateLabel: "gitarmy-release-candidate",
+      releaseCandidateLabel: "slop-release-candidate",
       acceptedRevisions: manifest.authority.acceptedRevisions,
     },
-    telemetry: {
-      source: "ccusage@20.0.19",
-      policy:
-        "Raw sessions stay local. Public receipts contain aggregate locally reported usage, provenance, optional trajectory digest, and a device signature.",
-    },
+    ...(publicationPrefix
+      ? {
+          review: {
+            policy:
+              "Advisory review only. Maintainers decide acceptance, score, and every money-state transition.",
+          },
+        }
+      : {
+          telemetry: {
+            source: "ccusage@20.0.19",
+            policy:
+              "Raw sessions stay local. Public receipts contain aggregate locally reported usage, provenance, optional trajectory digest, and a device signature.",
+          },
+        }),
   };
   writeFileSync(
-    join(projectRoot, "skill-manifest.json"),
+    join(projectRoot, `${publicationPrefix}skill-manifest.json`),
     `${JSON.stringify(additionalManifest, null, 2)}\n`,
   );
   console.log(
@@ -781,11 +813,18 @@ function publishAdditionalProject({ id, name, skillRepositoryPath }) {
 
 publishPrimaryProjectAlias();
 for (const project of PROJECTS) {
-  if (project.id === "eliza") continue;
+  if (project.id !== "eliza") {
+    publishAdditionalProject({
+      id: project.id,
+      name: project.skill.id,
+      skillRepositoryPath: project.skill.sourcePath,
+    });
+  }
   publishAdditionalProject({
     id: project.id,
-    name: project.skill.id,
-    skillRepositoryPath: project.skill.sourcePath,
+    name: project.reviewSkill.id,
+    publicationPrefix: "review-",
+    skillRepositoryPath: project.reviewSkill.sourcePath,
   });
 }
 run("bun", [join(repositoryRoot, "scripts", "sync-cycle-index.ts")]);

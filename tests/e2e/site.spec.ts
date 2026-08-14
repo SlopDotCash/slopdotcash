@@ -134,17 +134,12 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   expect(deltaBox?.width).toBeGreaterThan((gridBox?.width ?? 0) - 2);
   expect(deltaBox?.y).toBeGreaterThan((elizaBox?.y ?? 0) + 1);
   const visibleHeroGap = await page.evaluate(() => {
-    const typewriter = document.querySelector(".hero-typewriter");
+    const heroBoundary = document.querySelector(".beta-status");
     const projectHeading = document.querySelector("#projects h2");
-    const textNode = typewriter?.firstChild;
-    if (!textNode || !projectHeading) return null;
-    const range = document.createRange();
-    range.selectNodeContents(textNode);
-    const textRects = Array.from(range.getClientRects());
-    const lastTextRect = textRects.at(-1);
-    if (!lastTextRect) return null;
+    if (!heroBoundary || !projectHeading) return null;
     return Math.round(
-      projectHeading.getBoundingClientRect().top - lastTextRect.bottom,
+      projectHeading.getBoundingClientRect().top -
+        heroBoundary.getBoundingClientRect().bottom,
     );
   });
   expect(visibleHeroGap).not.toBeNull();
@@ -159,17 +154,15 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     "true",
   );
   await expect(
-    page.getByRole("tab", { name: "Eliza, $10,000 monthly pool" }),
+    page.getByRole("tab", { name: "Eliza, $10,000 simulation" }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
     page.getByRole("columnheader", { name: "Accepted score" }),
   ).toBeAttached();
   await expect(
-    page.getByRole("columnheader", { name: "Current estimate" }),
+    page.getByRole("columnheader", { name: "Simulated share" }),
   ).toBeAttached();
-  await expect(
-    page.getByText("How score and compute affect rewards"),
-  ).toBeVisible();
+  await expect(page.getByText("How the simulation works")).toBeVisible();
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();
@@ -194,7 +187,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     expect(await rows.count()).toBeGreaterThan(0);
     const viewport = page.viewportSize();
     if (viewport && viewport.width <= 680) {
-      const projection = rows.first().locator("td").nth(4);
+      const projection = rows.first().locator("td").nth(3);
       await expect(projection).toBeVisible();
       const projectionBounds = await projection.boundingBox();
       expect(projectionBounds).not.toBeNull();
@@ -219,7 +212,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     page.getByRole("columnheader", { name: "Paid to date" }),
   ).toBeAttached();
   await expect(
-    page.getByRole("columnheader", { name: "Current estimate" }),
+    page.getByRole("columnheader", { name: "Simulated share" }),
   ).toHaveCount(0);
 });
 
@@ -277,12 +270,12 @@ test("starts Eliza with one prompt and no separate payout form", async ({
     page.getByText(/GitHub ledger \+ reward records live/u),
   ).toHaveCount(0);
   await expect(page.getByText(/^Updated /u)).toBeVisible();
-  await expect(page.getByText(/receipt-linked tokens/u).first()).toBeVisible();
+  await expect(page.getByText(/receipt-linked tokens/u)).toHaveCount(0);
   const displayedProjectionCents = await page
     .locator(".project-leader-row")
     .evaluateAll((rows) =>
       rows.reduce((total, row) => {
-        const projection = row.querySelectorAll("td")[4]?.textContent ?? "";
+        const projection = row.querySelectorAll("td")[3]?.textContent ?? "";
         return (
           total + Math.round(Number(projection.replace(/[^0-9.-]/gu, "")) * 100)
         );
@@ -464,6 +457,8 @@ test("serves byte-consistent install and read-only artifacts for every project",
         project_id: project.id,
         project_url: `https://slop.cash/projects/${project.id}/`,
         repository: repository.id,
+        review_skill: project.reviewSkill.id,
+        review_skill_manifest: `https://slop.cash/projects/${project.id}/review-skill-manifest.json`,
         skill: project.skill.id,
         skill_source: project.skill.sourcePath,
       })),

@@ -1,5 +1,5 @@
 {
-  "name": "@elizaos/army",
+  "name": "@elizaos/slopdotcash",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -17,6 +17,7 @@
     "cycles:sync": "bun scripts/sync-cycle-index.ts",
     "cycles:check": "bun scripts/sync-cycle-index.ts --check",
     "cycles:verify": "bun scripts/sync-cycle-index.ts --check --online",
+    "protocol:check": "node scripts/protocol-identity.mjs",
     "payouts:plan": "bun scripts/plan-payouts.ts",
     "rewards:propose": "bun scripts/prepare-reward-cycle.ts",
     "rewards:close-month": "bun scripts/prepare-monthly-rewards.ts",

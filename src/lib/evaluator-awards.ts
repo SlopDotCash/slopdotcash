@@ -172,12 +172,14 @@ function review(value: unknown, field: string): EvaluatorAwardReview {
   if (
     parsed.protocol !== "https:" ||
     parsed.hostname !== "github.com" ||
-    !/^\/elizaOS\/army\/pull\/[1-9]\d*$/iu.test(parsed.pathname) ||
+    !/^\/elizaOS\/(?:slopdotcash|army)\/pull\/[1-9]\d*$/iu.test(
+      parsed.pathname,
+    ) ||
     parsed.search ||
     parsed.hash
   ) {
     throw new TypeError(
-      `${field}.decisionUrl must be an elizaOS/army pull request`,
+      `${field}.decisionUrl must be an elizaOS/slopdotcash pull request`,
     );
   }
   return {

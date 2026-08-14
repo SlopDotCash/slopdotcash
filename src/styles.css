@@ -120,7 +120,7 @@ input:focus-visible {
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  padding-block: clamp(56px, 6vh, 72px) clamp(28px, 6.25vw, 90px);
+  padding-block: clamp(56px, 6vh, 72px) clamp(28px, 3vw, 48px);
 }
 
 .data-notice {
@@ -231,6 +231,20 @@ p {
 .hero-message {
   display: flex;
   flex-direction: column;
+}
+
+.beta-status {
+  align-items: baseline;
+  border-block: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: clamp(1.5rem, 4vw, 3rem) 0 0;
+  padding: 0.8rem 0;
+}
+
+.beta-status strong {
+  color: var(--ink);
 }
 
 .hero-switch {
@@ -1090,7 +1104,12 @@ small {
 
 .project-leader-head,
 .project-leader-row {
-  grid-template-columns: 62px minmax(190px, 1.4fr) 0.5fr 0.75fr 0.8fr 0.7fr;
+  grid-template-columns: 62px minmax(190px, 1.4fr) 0.5fr 0.8fr;
+}
+
+.global-leader-head,
+.global-leader-row {
+  grid-template-columns: 72px minmax(220px, 1.5fr) 0.6fr 0.8fr;
 }
 
 .event-list,
@@ -1572,14 +1591,9 @@ small {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .project-leader-head > :nth-child(6),
-  .project-leader-row > :nth-child(6) {
-    display: none;
-  }
-
   .project-leader-head,
   .project-leader-row {
-    grid-template-columns: 55px minmax(170px, 1.4fr) 0.5fr 0.7fr 0.8fr;
+    grid-template-columns: 55px minmax(170px, 1.4fr) 0.5fr 0.8fr;
   }
 
   .project-hero-grid {

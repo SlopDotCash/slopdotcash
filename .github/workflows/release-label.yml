@@ -8,7 +8,7 @@ on:
     types: [synchronize]
 
 concurrency:
-  group: gitarmy-release-label-${{ github.event.pull_request.number }}
+  group: slop-release-label-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          target_label="gitarmy-release-candidate"
+          target_label="slop-release-candidate"
 
           if [[ "$EVENT_NAME" != "pull_request_target" ||
                 "$EVENT_ACTION" != "synchronize" ||

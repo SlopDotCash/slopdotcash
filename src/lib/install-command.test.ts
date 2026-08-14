@@ -98,7 +98,7 @@ function writeArtifact(
       {
         schemaVersion: "1",
         name: "contribute-to-eliza",
-        repository: "elizaOS/army",
+        repository: "elizaOS/slopdotcash",
         revision:
           options.provenanceRevision === undefined
             ? revision
@@ -206,7 +206,7 @@ function candidatePull(
     base: { ref: "develop", repo: { full_name: "elizaOS/slopdotcash" } },
     draft: false,
     head: { repo: { full_name: "elizaOS/slopdotcash" }, sha: revision },
-    labels: [{ name: "gitarmy-release-candidate" }],
+    labels: [{ name: "slop-release-candidate" }],
     number: 17424,
     state: "open",
     ...overrides,
@@ -218,7 +218,7 @@ function freshCandidateTimeline(revision: string): unknown[] {
     { event: "committed", sha: revision },
     {
       event: "labeled",
-      label: { name: "gitarmy-release-candidate" },
+      label: { name: "slop-release-candidate" },
     },
   ];
 }
@@ -254,10 +254,7 @@ describe("authenticated skill installer lifecycle", () => {
     expect(
       JSON.parse(
         readFileSync(
-          join(
-            versionPath(installRoot, revisionA),
-            ".gitarmy-authorization.json",
-          ),
+          join(versionPath(installRoot, revisionA), ".slop-authorization.json"),
           "utf8",
         ),
       ),
@@ -457,7 +454,7 @@ describe("authenticated skill installer lifecycle", () => {
         readFileSync(
           join(
             versionPath(join(acceptedRoot, "install"), revisionC),
-            ".gitarmy-authorization.json",
+            ".slop-authorization.json",
           ),
           "utf8",
         ),
@@ -482,7 +479,7 @@ describe("authenticated skill installer lifecycle", () => {
         17424: [
           {
             event: "labeled",
-            label: { name: "gitarmy-release-candidate" },
+            label: { name: "slop-release-candidate" },
           },
           { event: "committed", sha: revisionC },
         ],
@@ -585,8 +582,8 @@ describe("authenticated skill installer lifecycle", () => {
       command(mergedArtifact, authority),
       installRoot,
       {
-        GITARMY_SKILL_OPERATION: "rollback",
-        GITARMY_SKILL_REVISION: revisionC,
+        SLOP_SKILL_OPERATION: "rollback",
+        SLOP_SKILL_REVISION: revisionC,
       },
     );
     expect(withdrawnRollback.status).not.toBe(0);
@@ -655,8 +652,8 @@ describe("authenticated skill installer lifecycle", () => {
     });
 
     const withdrawnCurrent = run(command(artifactC, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionC,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionC,
     });
     expect(withdrawnCurrent.status).not.toBe(0);
     expect(withdrawnCurrent.stderr).toContain(
@@ -667,8 +664,8 @@ describe("authenticated skill installer lifecycle", () => {
     );
 
     const rollback = run(command(artifactC, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionA,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionA,
     });
     expect(rollback.status, rollback.stderr).toBe(0);
     expect(currentLink(installRoot)).toBe(
@@ -676,8 +673,8 @@ describe("authenticated skill installer lifecycle", () => {
     );
 
     const sameRevision = run(command(artifactC, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionA,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionA,
     });
     expect(sameRevision.status, sameRevision.stderr).toBe(0);
     expect(sameRevision.stdout).toContain("no changes made");
@@ -706,8 +703,8 @@ describe("authenticated skill installer lifecycle", () => {
       timelines: { 17424: freshCandidateTimeline(revisionC) },
     });
     const malformedAuthority = run(command(artifactC, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionC,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionC,
     });
     expect(malformedAuthority.status).not.toBe(0);
     expect(malformedAuthority.stderr).toContain("wrong identity");
@@ -720,8 +717,8 @@ describe("authenticated skill installer lifecycle", () => {
       "locally modified\n",
     );
     const modified = run(command(artifactC, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionC,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionC,
     });
     expect(modified.status).not.toBe(0);
     expect(modified.stderr).toContain("differs from GitHub");
@@ -730,8 +727,8 @@ describe("authenticated skill installer lifecycle", () => {
     );
 
     const missing = run(command(artifactC, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionD,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionD,
     });
     expect(missing.status).not.toBe(0);
     expect(missing.stderr).toContain("not retained locally");
@@ -763,8 +760,8 @@ describe("authenticated skill installer lifecycle", () => {
     expect(run(command(artifactB, authority), installRoot).status).toBe(0);
 
     const stale = run(command(artifactB, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionA,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionA,
     });
     expect(stale.status).not.toBe(0);
     expect(stale.stderr).toContain("canonical skill bytes changed");
@@ -792,8 +789,8 @@ describe("authenticated skill installer lifecycle", () => {
       },
     });
     const reauthorized = run(command(artifactB, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionA,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionA,
     });
     expect(reauthorized.status, reauthorized.stderr).toBe(0);
     expect(currentLink(installRoot)).toBe(
@@ -833,10 +830,7 @@ describe("authenticated skill installer lifecycle", () => {
     expect(run(command(artifactC, authority), installRoot).status).toBe(0);
     const candidateReceipt = JSON.parse(
       readFileSync(
-        join(
-          versionPath(installRoot, revisionC),
-          ".gitarmy-authorization.json",
-        ),
+        join(versionPath(installRoot, revisionC), ".slop-authorization.json"),
         "utf8",
       ),
     );
@@ -894,8 +888,8 @@ describe("authenticated skill installer lifecycle", () => {
       },
     });
     const rollback = run(command(artifactD, authority), installRoot, {
-      GITARMY_SKILL_OPERATION: "rollback",
-      GITARMY_SKILL_REVISION: revisionC,
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: revisionC,
     });
     expect(rollback.status, rollback.stderr).toBe(0);
     expect(currentLink(installRoot)).toBe(
@@ -1011,7 +1005,7 @@ describe("authenticated skill installer lifecycle", () => {
     ).toThrow("must be an unparameterized file:// origin");
   });
 
-  it("authorizes against the current GitHub name while writing the historical identity", () => {
+  it("uses the current Slop repository for GitHub authority and local provenance", () => {
     const production = createInstallCommand(
       "https://slop.cash",
       `\${HOME}/.codex/skills`,
@@ -1026,9 +1020,7 @@ describe("authenticated skill installer lifecycle", () => {
     expect(production).not.toContain('full_name") == repository');
 
     // PROVENANCE.json and the authorization receipt keep the historical
-    // protocol identity until the slop-identity-v1 activation record lands,
-    // so these two identities are deliberately not unified.
-    expect(production).toContain('repository = "elizaOS/army"');
+    expect(production).toContain('repository = "elizaOS/slopdotcash"');
     expect(production).toContain('"repository": repository');
   });
 

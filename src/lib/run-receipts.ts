@@ -12,8 +12,8 @@ import {
 import type { RepositoryId } from "./repositories.mjs";
 
 export const RUN_RECEIPT_SCHEMA_VERSION = "1" as const;
-export const RUN_MARKER_VERSION = "v2" as const;
-export const RUN_MARKER_NAME = "elizaos-contribution-attribution" as const;
+export const RUN_MARKER_VERSION = "v1" as const;
+export const RUN_MARKER_NAME = "slop-contribution-attribution" as const;
 
 const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
@@ -493,11 +493,13 @@ export function serializeRunMarker(receipt: ProjectRunReceipt): string {
   return `<!-- ${RUN_MARKER_NAME}:${RUN_MARKER_VERSION} ${JSON.stringify(runReceiptMarker(receipt))} -->`;
 }
 
-/** Parses one standalone v2 marker line. */
+/** Parses one current Slop marker or an immutable pre-activation marker. */
 export function parseRunMarker(line: string): ProjectRunReceipt {
   const match = line
     .trim()
-    .match(/^<!--\s*elizaos-contribution-attribution:v2\s+([\s\S]+?)\s*-->$/u);
+    .match(
+      /^<!--\s*(?:slop-contribution-attribution:v1|elizaos-contribution-attribution:v2)\s+([\s\S]+?)\s*-->$/u,
+    );
   if (!match) throw new TypeError("run marker line is malformed");
   let payload: unknown;
   try {

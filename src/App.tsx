@@ -573,15 +573,12 @@ function GlobalLeaderboard({
   );
   const selectedView =
     views.find((view) => view.project.id === selectedProjectId) ?? views[0];
-  const hasRelevantReceipts =
-    selectedView?.usage.relevantRunCount !== undefined &&
-    selectedView.usage.relevantRunCount > 0;
   const cycleMonth = selectedView
     ? formatCycleMonth(selectedView.cycle.id)
     : "Current month";
   const selectedRewardLabel = selectedView
     ? selectedView.reward.kind === "monthly-pool"
-      ? `${selectedView.project.reward.monthlyCapDisplay} monthly pool`
+      ? `${selectedView.project.reward.monthlyCapDisplay} share simulation`
       : `${selectedView.reward.advertisedAmountDisplay} external opportunity`
     : "Current reward cycle";
   return (
@@ -624,18 +621,13 @@ function GlobalLeaderboard({
         </button>
       </div>
       <details className="leaderboard-methodology">
-        <summary>How score and compute affect rewards</summary>
+        <summary>How the simulation works</summary>
         <p>
-          Accepted outcomes—not commits, lines, tokens, or hours—earn score
-          under each project's published rules. With consent, an installed skill
-          measures a pinned ccusage interval and signs the aggregate receipt.
-          Only usage joined to accepted work can add a diminishing bonus of up
-          to 20% to that project's weight. Device signatures protect receipt
-          bytes; they do not prove provider billing or model identity. Estimates
-          can change until review and approval.{" "}
-          {hasRelevantReceipts
-            ? ""
-            : "No relevant signed receipts are counted for the selected project."}
+          Accepted outcomes—not commits, lines, hours, or token volume—earn
+          score under each project's published rules. The displayed amounts
+          simulate how the advertised cap would divide today. Payments are
+          disabled and no allocation is approved. Signed local usage remains
+          visible as diagnostic evidence only.
         </p>
       </details>
       {mode === "current" ? (
@@ -652,7 +644,7 @@ function GlobalLeaderboard({
             {views.map((view) => {
               const rewardLabel =
                 view.reward.kind === "monthly-pool"
-                  ? `${view.project.reward.monthlyCapDisplay} monthly pool`
+                  ? `${view.project.reward.monthlyCapDisplay} simulation`
                   : "External prize share";
               return (
                 <button
@@ -686,7 +678,7 @@ function GlobalLeaderboard({
                 </div>
                 <p>
                   {selectedView.reward.kind === "monthly-pool"
-                    ? "Rank and estimate use only this project's accepted work in the current UTC month."
+                    ? "Rank and simulated share use only this project's accepted work in the current UTC month. Payments are off."
                     : "This is a provisional contribution share, not a Slop-funded dollar payout."}
                 </p>
               </div>
@@ -705,9 +697,7 @@ function GlobalLeaderboard({
                           <th scope="col">Rank</th>
                           <th scope="col">Contributor</th>
                           <th scope="col">Accepted score</th>
-                          <th scope="col">Receipt-linked tokens</th>
-                          <th scope="col">Current estimate</th>
-                          <th scope="col">Weight bonus</th>
+                          <th scope="col">Simulated share</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -737,20 +727,10 @@ function GlobalLeaderboard({
                             <td data-label="Accepted score">
                               <strong>{leader.score}</strong>
                             </td>
-                            <td data-label="Receipt-linked tokens">
-                              {formatCompact(leader.usage.relevantTokens)}
-                            </td>
-                            <td data-label="Current estimate">
+                            <td data-label="Simulated share">
                               <strong>
                                 <RewardValue leader={leader} />
                               </strong>
-                            </td>
-                            <td data-label="Weight bonus">
-                              +
-                              {(leader.computeBonusBasisPoints / 100).toFixed(
-                                2,
-                              )}
-                              %
                             </td>
                           </tr>
                         ))}
@@ -853,6 +833,10 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
           <DataNotice state={state} retry={retry} />
         )}
         <TypewriterHeroHeading />
+        <p className="beta-status">
+          <strong>Public beta.</strong> Scoring and share simulations are live.
+          Payouts are disabled.
+        </p>
       </section>
 
       <section className="section shell home-projects-section" id="projects">
@@ -992,6 +976,14 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
           Preview the complete workflow
           <ExternalLink aria-hidden="true" />
         </a>
+        <a
+          href={`${origin}/projects/${project.slug}/review-codex.md`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Install the independent reviewer skill
+          <ExternalLink aria-hidden="true" />
+        </a>
       </details>
     </div>
   );
@@ -1034,9 +1026,7 @@ function ProjectLeaderboard({
                 <th scope="col">Rank</th>
                 <th scope="col">Contributor</th>
                 <th scope="col">Score</th>
-                <th scope="col">Receipt-linked tokens</th>
-                <th scope="col">Projection</th>
-                <th scope="col">Weight bonus</th>
+                <th scope="col">Simulated share</th>
               </tr>
             </thead>
             <tbody>
@@ -1063,13 +1053,11 @@ function ProjectLeaderboard({
                   <td>
                     <strong>{leader.score}</strong>
                   </td>
-                  <td>{formatCompact(leader.usage.relevantTokens)}</td>
                   <td>
                     <strong>
                       <RewardValue leader={leader} />
                     </strong>
                   </td>
-                  <td>+{(leader.computeBonusBasisPoints / 100).toFixed(2)}%</td>
                 </tr>
               ))}
             </tbody>
@@ -1089,6 +1077,10 @@ function ProjectStats({ view }: { view: ProjectView }) {
     (sum, leader) => sum + leader.score,
     0,
   );
+  const acceptedOutcomes = view.leaders.reduce(
+    (sum, leader) => sum + leader.acceptedOutcomeCount,
+    0,
+  );
   const projected =
     view.reward.kind === "monthly-pool"
       ? formatMicroUsdc(view.reward.projectedPrincipalMinor)
@@ -1099,7 +1091,7 @@ function ProjectStats({ view }: { view: ProjectView }) {
         <strong>{projected}</strong>
         <span>
           {view.reward.kind === "monthly-pool"
-            ? "cycle projection"
+            ? "simulated monthly pool"
             : "opportunity size"}
         </span>
       </div>
@@ -1112,8 +1104,8 @@ function ProjectStats({ view }: { view: ProjectView }) {
         <span>accepted score</span>
       </div>
       <div>
-        <strong>{formatCompact(view.usage.relevantTokens)}</strong>
-        <span>receipt-linked tokens</span>
+        <strong>{formatCompact(acceptedOutcomes)}</strong>
+        <span>accepted outcomes</span>
       </div>
     </div>
   );
@@ -1286,8 +1278,8 @@ function ProfilePage({
     )
     .slice(0, PROFILE_OPPORTUNITY_LIMIT);
   const score = globalLeader?.score ?? 0;
-  const tokens = matches.reduce(
-    (total, match) => total + match.leader.usage.relevantTokens,
+  const acceptedOutcomes = matches.reduce(
+    (total, match) => total + match.leader.acceptedOutcomeCount,
     0,
   );
   const projected = matches.reduce(
@@ -1332,12 +1324,12 @@ function ProfilePage({
           <span>recorded score</span>
         </div>
         <div>
-          <strong>{formatCompact(tokens)}</strong>
-          <span>current receipt-linked tokens</span>
+          <strong>{formatCompact(acceptedOutcomes)}</strong>
+          <span>current accepted outcomes</span>
         </div>
         <div>
           <strong>{formatMicroUsdc(projected.toString())}</strong>
-          <span>current projection</span>
+          <span>current simulated share</span>
         </div>
         <div>
           <strong>{formatMicroUsdc(paid.toString())}</strong>
@@ -1367,8 +1359,8 @@ function ProfilePage({
                     <span>
                       <strong>{leader.score} score</strong>
                       <small>
-                        {formatCompact(leader.usage.relevantTokens)}{" "}
-                        receipt-linked tokens
+                        {leader.acceptedOutcomeCount} accepted outcome
+                        {leader.acceptedOutcomeCount === 1 ? "" : "s"}
                       </small>
                     </span>
                     <span>
@@ -1817,6 +1809,7 @@ function ProjectProposalPage() {
         monthlyCapMinor: pool.minor,
         monthlyCapDisplay: pool.display,
         committedMinor: "0",
+        paymentMode: "disabled",
         feeBasisPoints: 100,
         unusedFunds: "rollover-without-cap-increase",
         fundingState: "pledged",
