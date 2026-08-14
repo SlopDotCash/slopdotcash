@@ -87,13 +87,14 @@ Generated files under `public/brand`, `public/downloads`, `public/projects`, and
 
 ## Contribution score
 
-The public `gitarmy-v1` score rewards accepted outcomes, not motion. Its legacy
-identifier remains stable so existing score snapshots and reward records keep
-their meaning:
+The public `slop-score-v1` score rewards accepted outcomes, not motion. Merge
+credit is uncapped and diminishes within each contributor, project, and UTC
+month, so sustained accepted work always helps without paying every repeated
+outcome as though it were the first:
 
 | Outcome | Points | Per-contributor/project/month cap |
 | --- | ---: | ---: |
-| Merged non-bot pull request | 10 | 5 |
+| Merged non-bot pull request | `ceil(10 / sqrt(ordinal))`, minimum 1 | Uncapped |
 | Confirmed resolved issue | 4 | 5 |
 | Material test change | 4 | 5 |
 | Verified evidence | 1–2 by category | 30 points |
@@ -104,10 +105,11 @@ Every rolling snapshot covers 35 complete days. That is long enough for a
 first-of-month job to freeze the entire prior UTC month. Every merged outcome
 is collected for base score. Expensive nested PR, review, file, evidence, and
 linked-issue inspection is limited to each actor's newest five outcomes per
-project and UTC month—the same deterministic set that can survive the base
-score cap. This keeps the complete ledger inside GitHub Actions' bounded API
-budget without sampling or letting input ordering choose winners. Review credit
-is therefore awarded only on that published deep-inspection set. A snapshot
+project and UTC month. This is only a deterministic API and evidence budget;
+it never removes base merge credit. It keeps the complete ledger inside GitHub
+Actions' bounded API budget without sampling or letting input ordering choose
+winners. Review credit is therefore awarded only on that published
+deep-inspection set. A snapshot
 that exceeds a bounded verification limit is visibly marked incomplete and
 cannot produce a reward proposal.
 

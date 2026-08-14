@@ -5,7 +5,7 @@
  */
 
 import { findProject, type ProjectId } from "./projects.mjs";
-import { isSolanaAddress } from "./wallets";
+import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
 
 export const REWARD_PROTOCOL_VERSION = "1" as const;
 export const REVIEW_WINDOW_DAYS = 14;
@@ -18,13 +18,27 @@ export type AllocationState =
   | "proposed"
   | "unclaimed";
 
-export interface WalletProof {
+export interface ProfileReadmeWalletProof {
   address: string;
   chain: "solana";
   observedAt: string;
   sourceCommit: string;
   sourceUrl: string;
 }
+
+export interface GithubIssueWalletProof {
+  address: string;
+  chain: "solana";
+  observedAt: string;
+  sourceActorId: string;
+  sourceBodySha256: string;
+  sourceIssueId: string;
+  sourceIssueNumber: number;
+  sourceUpdatedAt: string;
+  sourceUrl: string;
+}
+
+export type WalletProof = ProfileReadmeWalletProof | GithubIssueWalletProof;
 
 export interface RewardAllocation {
   intentId: string;
@@ -239,20 +253,12 @@ function assertWallet(
 ): WalletProof | null {
   if (value === null) return null;
   const wallet = record(value, path);
-  exactKeys(
-    wallet,
-    ["address", "chain", "observedAt", "sourceCommit", "sourceUrl"],
-    path,
-  );
   if (wallet.chain !== "solana") {
     throw new TypeError(`${path}.chain must be solana`);
   }
   if (!isSolanaAddress(wallet.address)) {
     throw new TypeError(`${path}.address is not a Solana public key`);
   }
-  const sourceCommit = text(wallet.sourceCommit, `${path}.sourceCommit`, {
-    pattern: /^[0-9a-f]{40}$/u,
-  });
   const sourceUrl = text(wallet.sourceUrl, `${path}.sourceUrl`, { max: 512 });
   let parsedUrl: URL;
   try {
@@ -260,26 +266,95 @@ function assertWallet(
   } catch (error) {
     throw new TypeError(`${path}.sourceUrl is not a URL`, { cause: error });
   }
-  const expectedPath = `/${actor.login}/${actor.login}/blob/${sourceCommit}/README.md`;
-  if (
+  const commonUrlInvalid =
     parsedUrl.protocol !== "https:" ||
     parsedUrl.hostname !== "github.com" ||
-    parsedUrl.pathname.toLowerCase() !== expectedPath.toLowerCase() ||
     parsedUrl.search ||
     parsedUrl.hash ||
     parsedUrl.username ||
     parsedUrl.password ||
-    parsedUrl.port
+    parsedUrl.port;
+  if ("sourceCommit" in wallet) {
+    exactKeys(
+      wallet,
+      ["address", "chain", "observedAt", "sourceCommit", "sourceUrl"],
+      path,
+    );
+    const sourceCommit = text(wallet.sourceCommit, `${path}.sourceCommit`, {
+      pattern: /^[0-9a-f]{40}$/u,
+    });
+    const expectedPath = `/${actor.login}/${actor.login}/blob/${sourceCommit}/README.md`;
+    if (
+      commonUrlInvalid ||
+      parsedUrl.pathname.toLowerCase() !== expectedPath.toLowerCase()
+    ) {
+      throw new TypeError(
+        `${path}.sourceUrl must be the actor's immutable GitHub profile README`,
+      );
+    }
+    return {
+      address: wallet.address,
+      chain: "solana",
+      observedAt: iso(wallet.observedAt, `${path}.observedAt`),
+      sourceCommit,
+      sourceUrl,
+    };
+  }
+  exactKeys(
+    wallet,
+    [
+      "address",
+      "chain",
+      "observedAt",
+      "sourceActorId",
+      "sourceBodySha256",
+      "sourceIssueId",
+      "sourceIssueNumber",
+      "sourceUpdatedAt",
+      "sourceUrl",
+    ],
+    path,
+  );
+  const sourceActorId = text(wallet.sourceActorId, `${path}.sourceActorId`, {
+    max: 128,
+  });
+  if (sourceActorId !== actor.id) {
+    throw new TypeError(`${path}.sourceActorId does not match the contributor`);
+  }
+  const sourceBodySha256 = text(
+    wallet.sourceBodySha256,
+    `${path}.sourceBodySha256`,
+    { pattern: /^[0-9a-f]{64}$/u },
+  );
+  const sourceIssueId = text(wallet.sourceIssueId, `${path}.sourceIssueId`, {
+    max: 128,
+    pattern: /^[A-Za-z0-9_=-]+$/u,
+  });
+  if (
+    !Number.isSafeInteger(wallet.sourceIssueNumber) ||
+    (wallet.sourceIssueNumber as number) < 1
+  ) {
+    throw new TypeError(`${path}.sourceIssueNumber is invalid`);
+  }
+  const sourceIssueNumber = wallet.sourceIssueNumber as number;
+  const expectedIssuePath = `/${WALLET_CLAIM_REPOSITORY}/issues/${sourceIssueNumber}`;
+  if (
+    commonUrlInvalid ||
+    parsedUrl.pathname.toLowerCase() !== expectedIssuePath.toLowerCase()
   ) {
     throw new TypeError(
-      `${path}.sourceUrl must be the actor's immutable GitHub profile README`,
+      `${path}.sourceUrl is not the canonical wallet claim issue`,
     );
   }
   return {
     address: wallet.address,
     chain: "solana",
     observedAt: iso(wallet.observedAt, `${path}.observedAt`),
-    sourceCommit,
+    sourceActorId,
+    sourceBodySha256,
+    sourceIssueId,
+    sourceIssueNumber,
+    sourceUpdatedAt: iso(wallet.sourceUpdatedAt, `${path}.sourceUpdatedAt`),
     sourceUrl,
   };
 }

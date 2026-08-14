@@ -223,7 +223,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   ).toHaveCount(0);
 });
 
-test("starts Eliza in one command and generates a public payout marker", async ({
+test("starts Eliza with one prompt and no separate payout form", async ({
   context,
   page,
 }) => {
@@ -232,10 +232,12 @@ test("starts Eliza in one command and generates a public payout marker", async (
   await expect(
     page.getByRole("heading", { name: "Make money building agents." }),
   ).toBeVisible();
-  const prompt = page.getByRole("textbox", { name: "Agent prompt" });
-  await expect(prompt).toHaveValue(/\/SKILL\.md/u);
-  await expect(prompt).toHaveValue(/contribute to elizaOS\/eliza/u);
-  await expect(prompt).toHaveValue(
+  const prompt = page.getByRole("status", { name: "Agent prompt" });
+  await expect(prompt).toContainText(/\/SKILL\.md/u);
+  await expect(prompt).toContainText(
+    /contribute to github\.com\/elizaOS\/eliza/u,
+  );
+  await expect(prompt).not.toContainText(
     /Before installing anything or reading local usage/u,
   );
   await page.getByRole("button", { name: "Copy agent prompt" }).click();
@@ -265,14 +267,28 @@ test("starts Eliza in one command and generates a public payout marker", async (
   await expect(
     page.getByRole("link", { name: /Preview the complete workflow/u }),
   ).toHaveAttribute("href", /\/projects\/eliza\/mission\.md$/u);
-
-  const address = "11111111111111111111111111111111";
-  await page.getByLabel("Solana public address").fill(address);
-  await page.getByRole("button", { name: "Copy marker" }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `<!-- gitarmy-wallet:v1 {"chain":"solana","address":"${address}"} -->`,
-  );
-  await expect(page.getByText(/Never paste a seed phrase/u)).toBeVisible();
+  await expect(
+    page.getByText(/contribution, evidence, and optional payout setup/u),
+  ).toBeVisible();
+  await expect(page.getByLabel("Solana public address")).toHaveCount(0);
+  await expect(page.getByText(/GitHub profile README/u)).toHaveCount(0);
+  await expect(page.getByText(/Outcome score leads/u)).toHaveCount(0);
+  await expect(
+    page.getByText(/GitHub ledger \+ reward records live/u),
+  ).toHaveCount(0);
+  await expect(page.getByText(/^Updated /u)).toBeVisible();
+  await expect(page.getByText(/receipt-linked tokens/u).first()).toBeVisible();
+  const displayedProjectionCents = await page
+    .locator(".project-leader-row")
+    .evaluateAll((rows) =>
+      rows.reduce((total, row) => {
+        const projection = row.querySelectorAll("td")[4]?.textContent ?? "";
+        return (
+          total + Math.round(Number(projection.replace(/[^0-9.-]/gu, "")) * 100)
+        );
+      }, 0),
+    );
+  expect(displayedProjectionCents).toBe(1_000_000);
   await expect(page.getByText("Live from GitHub")).toHaveCount(0);
   await expect(page.getByText("How credit survives review")).toHaveCount(0);
 });
@@ -336,6 +352,8 @@ test("renders contributor and cycle records from validated public data", async (
       page.getByRole("heading", { name: `Eliza · ${view.cycle.id}` }),
     ).toBeVisible();
     await expect(page.getByText("14-day review")).toBeVisible();
+    await expect(page.getByText("Cycle evidence.")).toHaveCount(0);
+    await expect(page.getByText(/score events ·/u)).toHaveCount(0);
   }
 });
 

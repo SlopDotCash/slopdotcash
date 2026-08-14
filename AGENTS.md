@@ -110,8 +110,10 @@ one complete transaction.
 - Keep rules versioned, public, and deterministic.
 - Deduplicate by immutable GitHub IDs.
 - Exclude bots, self-review, post-merge review, and repeated low-value comments.
-- Apply caps by contributor, project, and UTC month. Input order must not select
-  which qualifying outcomes survive a cap.
+- Give every accepted merge positive diminishing credit with no scoring cap.
+  Apply declared limits to the other categories by contributor, project, and
+  UTC month. Input order must not select which outcomes receive higher marginal
+  credit or survive a limit.
 - Permit unusual useful work only through a strict `evaluations/` manifest whose
   public Slop PR is the human decision. Never score a source already rewarded
   by the ordinary GitHub ledger.
@@ -159,8 +161,9 @@ must say so explicitly.
 - Proposal review lasts 14 days. Reductions need a public reason. Wallet changes
   reset the review deadline. Missing wallets stay unclaimed; suspicious rows
   stay visible as held or excluded. Related-party money needs separate approval.
-- A GitHub profile README wallet marker is a public observation pinned to one
-  commit, not cryptographic wallet-ownership proof.
+- A wallet claim is one open issue authored by the contributor and bound to its
+  exact GitHub identity and body snapshot. An immutable profile README marker
+  is a compatibility fallback. Neither proves cryptographic wallet ownership.
 - Settlement tools create unsigned Solana mainnet USDC plans only. They never
   read keys, sign, broadcast, or claim success optimistically.
 - `paid` requires finalized transaction evidence whose exact source and

@@ -399,24 +399,41 @@ describe("project routes", () => {
       screen.getAllByText("$10,000", { exact: true }).length,
     ).toBeGreaterThan(0);
     expect(screen.getAllByText("24").length).toBeGreaterThan(0);
-    const prompt = screen.getByRole<HTMLTextAreaElement>("textbox", {
-      name: "Agent prompt",
-    });
-    expect(prompt.value).toContain(`${window.location.origin}/SKILL.md`);
-    expect(prompt.value).toContain("contribute to elizaOS/eliza");
-    expect(prompt.value).toContain(
+    const prompt = screen.getByLabelText("Agent prompt");
+    expect(prompt).toHaveTextContent(`${window.location.origin}/SKILL.md`);
+    expect(prompt).toHaveTextContent("contribute to github.com/elizaOS/eliza");
+    expect(prompt).not.toHaveTextContent(
       "Before installing anything or reading local usage",
     );
     expect(
       screen.getByText(/Works in Codex and Claude Code/u),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Nothing is installed and no local usage is read/u),
+      screen.getByText(/contribution, evidence, and optional payout setup/u),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(/asks only for a public Solana address/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Solana public address"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/GitHub profile README/u),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Outcome score leads/u)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/GitHub ledger \+ reward records live/u),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/^Updated /u)).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/receipt-linked tokens/u).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByLabelText("Manual install command")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Copy agent prompt" }));
     await waitFor(() =>
-      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(prompt.value),
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        prompt.textContent,
+      ),
     );
 
     fireEvent.click(screen.getByText("Advanced options"));
@@ -504,7 +521,7 @@ describe("public records", () => {
         "Add verified screenshot, video, or log evidence before merge.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getAllByText(/2026-07 caps ·/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/2026-07 scoring ·/).length).toBeGreaterThan(0);
     expect(screen.getByText(/\+6 if it verifies/)).toBeInTheDocument();
   });
 
@@ -632,7 +649,7 @@ describe("public records", () => {
     expect(wallet).toHaveAttribute("href", expect.stringContaining("/blob/"));
   });
 
-  it("shows review stages and exact cycle evidence without implying settlement", async () => {
+  it("shows review stages and the cycle leaderboard without duplicate evidence", async () => {
     route("/cycles/eliza/2026-07");
     mockSnapshot();
     render(<App />);
@@ -643,8 +660,9 @@ describe("public records", () => {
     expect(screen.getByText("14-day review")).toBeInTheDocument();
     expect(screen.getByText("Settlement")).toBeInTheDocument();
     expect(
-      screen.getByText("6 score events", { exact: false }),
+      screen.getByRole("heading", { name: "Contribution leaderboard." }),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Cycle evidence.")).not.toBeInTheDocument();
   });
 
   it("renders a zero-award month as closed instead of payment-ready", async () => {

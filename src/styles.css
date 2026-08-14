@@ -153,6 +153,14 @@ input:focus-visible {
   font-size: 11px;
 }
 
+.data-freshness {
+  justify-self: end;
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .data-error {
   border-color: rgba(185, 51, 21, 0.3);
   color: #9f2f17;
@@ -977,11 +985,30 @@ small {
   word-break: break-word;
 }
 
-.agent-prompt-box textarea {
-  height: 112px;
+.agent-prompt-box {
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.agent-prompt-copy {
+  min-width: 0;
+  color: #f8f4eb;
   font-family: inherit;
   font-size: 13px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.agent-prompt-copy code {
+  font: inherit;
+}
+
+.agent-prompt-box button {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
 }
 
 .command-box button,
@@ -1055,114 +1082,6 @@ small {
 .install-advanced > a svg {
   width: 13px;
   height: 13px;
-}
-
-.wallet-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-  gap: 56px;
-  margin-top: 24px;
-  padding: 40px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 253, 248, 0.7);
-}
-
-.wallet-panel h2 {
-  margin-bottom: 18px;
-  font-size: clamp(30px, 4vw, 48px);
-  letter-spacing: -0.05em;
-}
-
-.wallet-panel p,
-.wallet-generator li {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.65;
-}
-
-.wallet-warning {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 24px;
-  color: #9f2f17;
-  font-weight: 700;
-}
-
-.wallet-generator label {
-  display: block;
-  margin-bottom: 8px;
-  color: #4e493f;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.wallet-generator input {
-  width: 100%;
-  min-height: 48px;
-  padding: 11px 13px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: white;
-  color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-}
-
-.wallet-marker {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 14px;
-  margin-top: 12px;
-  padding: 15px;
-  border-radius: 10px;
-  background: var(--ink);
-  color: white;
-}
-
-.wallet-marker code {
-  overflow-wrap: anywhere;
-  font-size: 10px;
-  line-height: 1.6;
-}
-
-.wallet-marker button {
-  display: inline-flex;
-  min-height: 40px;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.wallet-marker button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.wallet-marker svg {
-  width: 14px;
-  height: 14px;
-}
-
-.wallet-marker-empty {
-  background: #ded8cd;
-  color: #5f574c;
-}
-
-.wallet-generator ol {
-  margin: 20px 0 0;
-  padding-left: 20px;
 }
 
 .project-leader-section {
@@ -1640,7 +1559,6 @@ small {
   .home-leaderboard-heading,
   .project-hero-grid,
   .cycle-hero,
-  .wallet-panel,
   .proposal-grid {
     grid-template-columns: 1fr;
   }
@@ -1765,6 +1683,10 @@ small {
   .section-heading {
     gap: 20px;
     margin-bottom: 30px;
+  }
+
+  .data-freshness {
+    justify-self: start;
   }
 
   .home-leaderboard-heading {
@@ -1929,16 +1851,12 @@ small {
     grid-template-columns: 1fr;
   }
 
-  .wallet-panel {
-    padding: 24px;
+  .agent-prompt-box {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .wallet-marker {
-    grid-template-columns: 1fr;
-  }
-
-  .wallet-marker button {
-    justify-self: start;
+  .agent-prompt-copy-label {
+    display: none;
   }
 
   .command-box button {

@@ -121,11 +121,13 @@ award PR.
 
 ### Get paid
 
-An Eliza contributor publishes a Solana public address marker in the source of
-their GitHub profile README. At month close, the platform pins the exact README
-commit and opens a 14-day proposal review. After approval, the creator signs
-the exact transfer plan externally. Only finalized, reconciled USDC balance
-changes become “paid.”
+After a contribution, the same skill optionally registers a Solana public
+address in one open `Slop wallet claim` issue authored by the contributor in
+`elizaOS/slopdotcash`. At month close, the platform binds the issue author,
+node id, update time, and body digest into a 14-day proposal. Immutable GitHub
+profile README markers remain a compatibility fallback. After approval, the
+creator signs the exact transfer plan externally. Only finalized, reconciled
+USDC balance changes become “paid.”
 
 ## Creator journey
 

@@ -117,6 +117,32 @@ describe("reward manifests", () => {
     );
   });
 
+  it("binds a wallet claim issue to the exact contributor and body snapshot", () => {
+    const manifest = allocationManifest() as unknown as {
+      allocations: Array<{ wallet: unknown }>;
+    };
+    manifest.allocations[0].wallet = {
+      address: wallet.address,
+      chain: "solana",
+      observedAt: wallet.observedAt,
+      sourceActorId: "U_1",
+      sourceBodySha256: "b".repeat(64),
+      sourceIssueId: "I_wallet_claim",
+      sourceIssueNumber: 42,
+      sourceUpdatedAt: "2026-08-09T00:00:00.000Z",
+      sourceUrl: "https://github.com/elizaOS/slopdotcash/issues/42",
+    };
+    expect(() => assertRewardAllocationManifest(manifest)).not.toThrow();
+
+    const forged = structuredClone(manifest) as {
+      allocations: Array<{ wallet: { sourceActorId: string } }>;
+    };
+    forged.allocations[0].wallet.sourceActorId = "U_attacker";
+    expect(() => assertRewardAllocationManifest(forged)).toThrow(
+      /does not match the contributor/u,
+    );
+  });
+
   it("represents Delta Star as a provisional percentage, never dollars", () => {
     const manifest = assertExternalContributionShareManifest({
       schemaVersion: "1",

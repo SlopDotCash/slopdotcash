@@ -529,10 +529,7 @@ try {
       await page.locator("h1").waitFor({ state: "visible" });
       await page.locator("#start").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
-      await page
-        .getByRole("textbox", { name: "Solana public address" })
-        .fill("11111111111111111111111111111111");
-      await page.locator("#wallet").scrollIntoViewIfNeeded();
+      await page.locator(".project-leader-section").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
 
       await page.goto(`${baseUrl}/projects/delta-star?evidence=${cacheKey}`, {

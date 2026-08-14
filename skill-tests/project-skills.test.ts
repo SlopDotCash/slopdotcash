@@ -128,6 +128,57 @@ describe("project skill contracts", () => {
     );
   });
 
+  it("renders the same bounded payout claim for every monthly pool skill", () => {
+    const monthlyPackages = projectPackages.filter(
+      ({ project }) => project.reward.kind === "monthly-pool",
+    );
+    assert.strictEqual(monthlyPackages.length, 2);
+    const [canonicalPackage] = monthlyPackages;
+    const canonicalSource = readFileSync(
+      join(canonicalPackage.contributorRoot, "scripts", "wallet-claim.mjs"),
+      "utf8",
+    );
+    for (const { project, contributorRoot } of monthlyPackages) {
+      const script = join(contributorRoot, "scripts", "wallet-claim.mjs");
+      assert.strictEqual(
+        readFileSync(script, "utf8"),
+        canonicalSource,
+        `${project.skill.id} wallet claim logic drifted`,
+      );
+      const result = spawnSync(
+        process.execPath,
+        [script, "--address", "11111111111111111111111111111111"],
+        { encoding: "utf8" },
+      );
+      assert.strictEqual(result.status, 0, result.stderr);
+      const plan = JSON.parse(result.stdout);
+      assert.strictEqual(plan.repository, "elizaOS/slopdotcash");
+      assert.strictEqual(plan.title, "Slop wallet claim");
+      assert.strictEqual(
+        plan.body,
+        '<!-- gitarmy-wallet:v1 {"chain":"solana","address":"11111111111111111111111111111111"} -->',
+      );
+      const issueUrl = new URL(plan.newIssueUrl);
+      assert.strictEqual(
+        `${issueUrl.origin}${issueUrl.pathname}`,
+        "https://github.com/elizaOS/slopdotcash/issues/new",
+      );
+      assert.strictEqual(issueUrl.searchParams.get("title"), plan.title);
+      assert.strictEqual(issueUrl.searchParams.get("body"), plan.body);
+    }
+    const invalid = spawnSync(
+      process.execPath,
+      [
+        join(canonicalPackage.contributorRoot, "scripts", "wallet-claim.mjs"),
+        "--address",
+        "not-a-wallet",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notStrictEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /refused.*canonical 32-byte Solana/u);
+  });
+
   it("keeps every registered review skill hostile-input aware and non-punitive", () => {
     for (const { project, reviewerRoot } of projectPackages) {
       const name = project.reviewSkill.id;

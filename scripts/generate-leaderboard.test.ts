@@ -1170,7 +1170,7 @@ describe("rate-efficient query plan", () => {
     ).toThrow("verificationWindowFrom must be a valid date");
   });
 
-  it("deep-inspects the newest cap-relevant outcomes by number when merge timestamps tie", () => {
+  it("deep-inspects the newest budgeted outcomes when merge timestamps tie", () => {
     const mergedAt = "2026-07-15T12:00:00.000Z";
     const outcome = (id: string): MergedPullRequestOutcome => ({
       id,
@@ -1187,9 +1187,9 @@ describe("rate-efficient query plan", () => {
     });
     // Six PRs by the same author, project, and month merged in the same second
     // (batch merge / merge queue produce identical second-precision timestamps).
-    // The base merged-PR score keeps the newest five by `number`, so the
-    // deep-inspection set must select the same five, otherwise a non-base-scored
-    // PR could earn detail-dependent bonuses.
+    // Batch merges can share a second-precision timestamp. Number provides the
+    // stable tie-break for the separate five-outcome hydration budget; all six
+    // still receive base merge credit.
     const candidates = [
       "PR_101",
       "PR_102",

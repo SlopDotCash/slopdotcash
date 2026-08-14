@@ -65,26 +65,29 @@ phrase, and respects reduced motion. A small responsive gap separates that
 stable type box from Projects. Nothing else competes inside the hero.
 Each full-rail project row shows its name, one manifest-backed sentence, and
 money; monthly bounties and external prizes remain textually distinct. The
-global leaderboard follows immediately and shows score, relevant tokens, live
-projection, and total paid without defaulting to the richest contributor.
+global leaderboard follows immediately and shows score, receipt-linked tokens,
+live projection, and total paid without defaulting to the richest contributor.
 
 ### Project
 
 The mission and reward type must fit above the fold at desktop widths. A
 monthly pool reads “MONTHLY POOL”; an external opportunity reads “EXTERNAL
 OPPORTUNITY” and says who controls payment. The one-command panel is the visual
-center. Wallet setup follows only for platform-paid projects.
+center. Optional payout setup happens inside the agent workflow, never as a
+second required form on the page.
 
-### Wallet marker
+### Agent prompt and payout claim
 
-Accept one public Solana address, validate locally, generate the exact hidden
-README marker, and provide visible clipboard feedback. Place “Never paste a
-seed phrase or private key” inside the component, not in a remote policy page.
+Expose one compact prompt that discovers and installs the right project skill.
+The skill handles contribution, evidence, and optional payout registration.
+When payout is chosen, it asks only for a public Solana address, shows the exact
+GitHub claim issue before writing, and waits for approval. Never render a seed,
+private-key, wallet-connection, or transaction input.
 
 ### Leaderboards and profiles
 
 Rank is secondary to identity and score. Every row links to a durable profile.
-Project rows show relevant compute and bounded bonus; global rows show
+Project rows show receipt-linked compute and bounded bonus; global rows show
 cumulative score and paid total. Historical-only contributors remain visible.
 The global score comes from accepted rolling-ledger events plus closed-cycle
 records, with the closed record replacing an overlapping project-month bucket.

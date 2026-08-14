@@ -12,6 +12,7 @@ import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertPublishableLeaderboardSnapshot,
   createLeaderboardSnapshot,
+  DETAILED_MERGED_PULL_REQUESTS_PER_MONTH,
   dedupeByNodeId,
   type EvidenceCategory,
   type GitHubActor,
@@ -28,7 +29,6 @@ import {
   type PullRequestRecord,
   type PullRequestReview,
   pullRequestTextSources,
-  SCORE_CAPS,
   SCORE_WINDOW_DAYS,
   type ScoreEvent,
   selectUniqueVerifiedEvidence,
@@ -2101,9 +2101,8 @@ export function sameReferenceSet(
 }
 
 /**
- * Selects only outcomes that can still receive detail-dependent bonuses. Base
- * merged-PR score continues to use every scalar search outcome; deep GitHub
- * connections are bounded by the same newest-per-cycle cap as that base score.
+ * Selects outcomes eligible for detail-dependent bonuses. Base merge scoring
+ * remains complete and uncapped; this bounds only expensive GitHub hydration.
  */
 export function selectDetailedMergedPullRequestIds(
   candidates: ReadonlyArray<{
@@ -2135,7 +2134,7 @@ export function selectDetailedMergedPullRequestIds(
     const cycleId = outcome.mergedAt.slice(0, 7);
     const key = `${projectId}\u0000${outcome.author.id}\u0000${cycleId}`;
     const count = usage.get(key) ?? 0;
-    if (count >= SCORE_CAPS.mergedPullRequests) continue;
+    if (count >= DETAILED_MERGED_PULL_REQUESTS_PER_MONTH) continue;
     usage.set(key, count + 1);
     selected.add(outcome.id);
   }

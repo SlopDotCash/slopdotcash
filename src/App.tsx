@@ -54,7 +54,6 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
-import { isSolanaAddress } from "./lib/wallets";
 
 const SOURCE_REPOSITORY = "https://github.com/elizaOS/slopdotcash";
 const HUB_ORIGIN = "https://git.slop.cash";
@@ -330,12 +329,6 @@ function useSnapshot(): [DataState, () => void] {
   return [state, useCallback(() => setAttempt((value) => value + 1), [])];
 }
 
-function formatInteger(value: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
-    value,
-  );
-}
-
 function formatCompact(value: number): string {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 1,
@@ -456,22 +449,11 @@ function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
       </div>
     );
   }
+  if (!stale(state.snapshot)) return null;
   return (
-    <div
-      className={
-        stale(state.snapshot) ? "data-notice data-stale" : "data-notice"
-      }
-      role="status"
-    >
-      <span
-        className={
-          stale(state.snapshot) ? "status-dot stale-dot" : "status-dot"
-        }
-      />
-      {stale(state.snapshot)
-        ? "Snapshot stale"
-        : "GitHub ledger + reward records live"}{" "}
-      · updated {formatDate(state.snapshot.generatedAt)}
+    <div className="data-notice data-stale" role="status">
+      <span className="status-dot stale-dot" />
+      Data may be outdated · updated {formatDate(state.snapshot.generatedAt)}
     </div>
   );
 }
@@ -723,7 +705,7 @@ function GlobalLeaderboard({
                           <th scope="col">Rank</th>
                           <th scope="col">Contributor</th>
                           <th scope="col">Accepted score</th>
-                          <th scope="col">Relevant tokens</th>
+                          <th scope="col">Receipt-linked tokens</th>
                           <th scope="col">Current estimate</th>
                           <th scope="col">Weight bonus</th>
                         </tr>
@@ -755,7 +737,7 @@ function GlobalLeaderboard({
                             <td data-label="Accepted score">
                               <strong>{leader.score}</strong>
                             </td>
-                            <td data-label="Relevant tokens">
+                            <td data-label="Receipt-linked tokens">
                               {formatCompact(leader.usage.relevantTokens)}
                             </td>
                             <td data-label="Current estimate">
@@ -909,7 +891,7 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
   if (!repository) {
     throw new TypeError(`Project ${project.id} has no contribution repository`);
   }
-  const agentPrompt = `Read ${origin}/SKILL.md and follow it to contribute to ${repository}. Before installing anything or reading local usage, show me the exact version, files, permissions, and data that would leave my machine.`;
+  const agentPrompt = `Read ${origin}/SKILL.md and follow it to contribute to github.com/${repository}.`;
   const manualCommand = projectInstallCommand(project);
   const copyText = async (
     value: string,
@@ -934,18 +916,15 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
         <div>
           <h2>Copy this into your agent.</h2>
           <p>
-            One prompt handles secure discovery, shows the permission plan, and
-            starts the right project workflow.
+            One prompt handles the contribution, evidence, and optional payout
+            setup.
           </p>
         </div>
       </div>
       <div className="command-box agent-prompt-box">
-        <textarea
-          aria-label="Agent prompt"
-          readOnly
-          spellCheck={false}
-          value={agentPrompt}
-        />
+        <output aria-label="Agent prompt" className="agent-prompt-copy">
+          <code>{agentPrompt}</code>
+        </output>
         <button
           aria-label={
             copy === "prompt-copied"
@@ -958,16 +937,19 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
           type="button"
         >
           {copy === "prompt-copied" ? <Check /> : <Clipboard />}
-          {copy === "prompt-copied"
-            ? "Copied"
-            : copy === "error"
-              ? "Select text"
-              : "Copy"}
+          <span className="agent-prompt-copy-label">
+            {copy === "prompt-copied"
+              ? "Copied"
+              : copy === "error"
+                ? "Select text"
+                : "Copy"}
+          </span>
         </button>
       </div>
       <p className="install-note">
-        Works in Codex and Claude Code. Nothing is installed and no local usage
-        is read until the agent shows the plan and you approve it.
+        Works in Codex and Claude Code. If you choose payout setup, the skill
+        asks only for a public Solana address and waits before writing to
+        GitHub.
       </p>
       <details className="install-advanced">
         <summary>Advanced options</summary>
@@ -1015,94 +997,21 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
   );
 }
 
-function WalletPanel() {
-  const [address, setAddress] = useState("");
-  const [copy, setCopy] = useState<"copied" | "error" | "idle">("idle");
-  const valid = isSolanaAddress(address.trim());
-  const marker = valid
-    ? `<!-- gitarmy-wallet:v1 {"chain":"solana","address":"${address.trim()}"} -->`
-    : "Enter a valid Solana public address to generate your marker.";
-  const copyMarker = async () => {
-    if (!valid) return;
-    try {
-      await navigator.clipboard.writeText(marker);
-      setCopy("copied");
-    } catch {
-      // error-policy:J4 Clipboard denial remains visible and the marker stays selectable.
-      setCopy("error");
-    }
-  };
-  return (
-    <section className="wallet-panel" id="wallet">
-      <div>
-        <p className="eyebrow">Get paid on Solana</p>
-        <h2>Publish one wallet marker.</h2>
-        <p>
-          Add the generated comment to the source of your public GitHub profile
-          README. At cycle proposal time, Slop records the exact README commit
-          and address. You can change it later; a change restarts the 14-day
-          review for that allocation.
-        </p>
-        <p className="wallet-warning">
-          <CircleAlert aria-hidden="true" size={17} /> Public address only.
-          Never paste a seed phrase or private key.
-        </p>
-      </div>
-      <div className="wallet-generator">
-        <label htmlFor="solana-wallet">Solana public address</label>
-        <input
-          autoComplete="off"
-          id="solana-wallet"
-          onChange={(event) => {
-            setAddress(event.target.value);
-            setCopy("idle");
-          }}
-          placeholder="Your public Solana address"
-          spellCheck="false"
-          value={address}
-        />
-        <div
-          className={
-            valid ? "wallet-marker" : "wallet-marker wallet-marker-empty"
-          }
-        >
-          <code>{marker}</code>
-          <button
-            disabled={!valid}
-            onClick={() => void copyMarker()}
-            type="button"
-          >
-            {copy === "copied" ? <Check /> : <Clipboard />}{" "}
-            {copy === "copied"
-              ? "Copied"
-              : copy === "error"
-                ? "Select text"
-                : "Copy marker"}
-          </button>
-        </div>
-        <ol>
-          <li>
-            Create a public repository named exactly like your GitHub login.
-          </li>
-          <li>
-            Add the marker anywhere in its <code>README.md</code> source.
-          </li>
-          <li>Commit it before the reward proposal is generated.</li>
-        </ol>
-      </div>
-    </section>
-  );
-}
-
 function RewardValue({ leader }: { leader: ProjectContributor }) {
   return leader.projectedMinor !== null ? (
-    formatMicroUsdc(leader.projectedMinor)
+    formatMicroUsdc(leader.projectedDisplayMinor ?? leader.projectedMinor)
   ) : (
     <>{formatPercent(leader.projectedSharePartsPerMillion ?? 0)} share</>
   );
 }
 
-function ProjectLeaderboard({ view }: { view: ProjectView }) {
+function ProjectLeaderboard({
+  updatedAt,
+  view,
+}: {
+  updatedAt: string;
+  view: ProjectView;
+}) {
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
@@ -1110,10 +1019,7 @@ function ProjectLeaderboard({ view }: { view: ProjectView }) {
           <p className="eyebrow">Cycle {view.cycle.id}</p>
           <h2>Contribution leaderboard.</h2>
         </div>
-        <p>
-          Outcome score leads. Relevant signed compute adds a diminishing bonus
-          capped at 20%.
-        </p>
+        <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
       </div>
       {view.leaders.length === 0 ? (
         <EmptyState text="No accepted outcomes in this cycle yet." />
@@ -1128,7 +1034,7 @@ function ProjectLeaderboard({ view }: { view: ProjectView }) {
                 <th scope="col">Rank</th>
                 <th scope="col">Contributor</th>
                 <th scope="col">Score</th>
-                <th scope="col">Relevant tokens</th>
+                <th scope="col">Receipt-linked tokens</th>
                 <th scope="col">Projection</th>
                 <th scope="col">Weight bonus</th>
               </tr>
@@ -1207,7 +1113,7 @@ function ProjectStats({ view }: { view: ProjectView }) {
       </div>
       <div>
         <strong>{formatCompact(view.usage.relevantTokens)}</strong>
-        <span>relevant tokens</span>
+        <span>receipt-linked tokens</span>
       </div>
     </div>
   );
@@ -1288,8 +1194,12 @@ function ProjectPage({
       </section>
       <div className="shell">
         <InstallPanel project={project} />
-        {project.reward.kind === "monthly-pool" ? <WalletPanel /> : null}
-        {view ? <ProjectLeaderboard view={view} /> : null}
+        {view && state.status === "ready" ? (
+          <ProjectLeaderboard
+            updatedAt={state.snapshot.generatedAt}
+            view={view}
+          />
+        ) : null}
       </div>
     </main>
   );
@@ -1423,7 +1333,7 @@ function ProfilePage({
         </div>
         <div>
           <strong>{formatCompact(tokens)}</strong>
-          <span>current relevant tokens</span>
+          <span>current receipt-linked tokens</span>
         </div>
         <div>
           <strong>{formatMicroUsdc(projected.toString())}</strong>
@@ -1457,7 +1367,8 @@ function ProfilePage({
                     <span>
                       <strong>{leader.score} score</strong>
                       <small>
-                        {formatCompact(leader.usage.relevantTokens)} tokens
+                        {formatCompact(leader.usage.relevantTokens)}{" "}
+                        receipt-linked tokens
                       </small>
                     </span>
                     <span>
@@ -1813,27 +1724,12 @@ function CyclePage({
         </article>
       </div>
       {view ? (
-        <ProjectLeaderboard view={view} />
+        <ProjectLeaderboard
+          updatedAt={state.snapshot.generatedAt}
+          view={view}
+        />
       ) : record ? (
         <ArchivedCycleLeaderboard cycle={record} />
-      ) : null}
-      {view ? (
-        <section className="section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Public record</p>
-              <h2>Cycle evidence.</h2>
-            </div>
-            <p>
-              {view.ledger.length} score events ·{" "}
-              {formatInteger(view.usage.reportedTokens)} reported tokens ·{" "}
-              {formatInteger(view.usage.ambiguousTokens)} ambiguous
-            </p>
-          </div>
-          <EventList
-            events={view.ledger.map((event) => ({ event, project }))}
-          />
-        </section>
       ) : null}
       {record ? <CycleArtifacts cycle={record} /> : null}
     </main>

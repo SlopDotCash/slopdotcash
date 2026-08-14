@@ -1,6 +1,6 @@
 ---
 name: contribute-to-asi
-description: "Hill-climb the benchmarks in elizaOS/asi, a JAX continual-reinforcement-learning framework. Use when an agent is asked to improve a measured result, port a method from the literature, fix something that corrupts measurement, or decisively close a research direction — always with a paired, seed-controlled comparison and published evidence."
+description: "Hill-climb the benchmarks in elizaOS/asi, a JAX continual-reinforcement-learning framework, with optional public payout registration. Use when an agent is asked to improve a measured result, port a method from the literature, fix something that corrupts measurement, decisively close a research direction with paired evidence, or register a public Solana payout address."
 ---
 
 # Contribute to ASI
@@ -362,6 +362,39 @@ signature.
 A receipt cannot create score. Its device signature proves byte integrity and
 device continuity, not truthful logs, honest measurement, or work quality.
 Compute spent is not progress made.
+
+## Offer payout registration once
+
+After the public contribution artifact is ready, offer this optional step once.
+It never blocks contribution, review, or receipt completion.
+
+1. Read the currently authenticated GitHub identity with `gh api user`. Query
+   open issues authored by that identity in `elizaOS/slopdotcash` whose exact
+   title is `Slop wallet claim`. Ignore pull requests. If one valid claim
+   exists, report its public address and do nothing unless the operator asks to
+   change it. If multiple claims exist, stop payout setup and ask the operator
+   to close the extras; never choose between conflicting claims.
+2. If no claim exists, ask whether the operator wants to register a payout
+   address. If they decline, continue without one. Ask only for a **public
+   Solana address**; never request, read, create, or handle a seed phrase,
+   private key, wallet connection, signature, or transaction.
+3. Validate and render the claim locally:
+
+```bash
+node <skill-directory>/scripts/wallet-claim.mjs --address <public-address>
+```
+
+4. Show the exact GitHub repository, issue title, marker body, and whether the
+   action creates or edits an issue. Wait for explicit approval before any
+   GitHub write. The prefilled URL lets the operator review and submit in the
+   browser. Using `gh issue create` or `gh issue edit` is allowed only after the
+   same approval.
+5. Keep exactly one open claim issue. Slop binds its GitHub author, node id,
+   update time, and body digest into a reward proposal. Editing the address is a
+   material change and restarts that allocation's 14-day review.
+
+A claim identifies where a reviewed payout may go. It does not prove custody,
+guarantee payment, approve an allocation, connect a wallet, or move funds.
 
 ## Stop conditions
 

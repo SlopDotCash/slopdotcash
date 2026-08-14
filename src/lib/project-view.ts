@@ -51,6 +51,7 @@ export interface ProjectContributor {
   usage: ProjectUsageSummary;
   capUsage: CapUsageStatus;
   projectedMinor: string | null;
+  projectedDisplayMinor: string | null;
   projectedSharePartsPerMillion: number | null;
 }
 
@@ -167,7 +168,9 @@ export function formatCapUsageLine(capUsage: CapUsageStatus): string | null {
   const parts: string[] = [];
   if (capUsage.mergedPullRequests.used > 0) {
     parts.push(
-      `merges ${capUsage.mergedPullRequests.used}/${capUsage.mergedPullRequests.cap}`,
+      capUsage.mergedPullRequests.cap === null
+        ? `merges ${capUsage.mergedPullRequests.used} uncapped`
+        : `merges ${capUsage.mergedPullRequests.used}/${capUsage.mergedPullRequests.cap}`,
     );
   }
   if (capUsage.resolvedIssues.used > 0) {
@@ -198,7 +201,7 @@ export function formatCapUsageLine(capUsage: CapUsageStatus): string | null {
   if (parts.length === 0) {
     return null;
   }
-  return `${capUsage.month} caps · ${parts.join(" · ")}`;
+  return `${capUsage.month} scoring · ${parts.join(" · ")}`;
 }
 
 function cycleBounds(cycleId: string): { from: number; to: number } {
@@ -568,6 +571,7 @@ export function createProjectView(
       usage,
       capUsage: capUsageForEvents(cycleId, events),
       projectedMinor: null,
+      projectedDisplayMinor: null,
       projectedSharePartsPerMillion: null,
     };
   });
@@ -592,12 +596,17 @@ export function createProjectView(
 
   let reward: ProjectRewardProjection;
   if (project.reward.kind === "monthly-pool") {
-    const projected = allocateIntegerTotal(
-      BigInt(project.reward.monthlyCapMinor),
+    const monthlyCapMinor = BigInt(project.reward.monthlyCapMinor);
+    const projected = allocateIntegerTotal(monthlyCapMinor, leaders);
+    const projectedCents = allocateIntegerTotal(
+      monthlyCapMinor / 10_000n,
       leaders,
     );
     for (const entry of leaders) {
       entry.projectedMinor = (projected.get(entry.actor.id) ?? 0n).toString();
+      entry.projectedDisplayMinor = (
+        (projectedCents.get(entry.actor.id) ?? 0n) * 10_000n
+      ).toString();
     }
     reward = {
       kind: "monthly-pool",
