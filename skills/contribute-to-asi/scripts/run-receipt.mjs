@@ -40,6 +40,7 @@ const PROJECT = JSON.parse(
   readFileSync(join(skillDirectory, "project.json"), "utf8"),
 );
 const CCUSAGE_VERSION = "20.0.19";
+const CCUSAGE_VERSION_OUTPUT = `ccusage ${CCUSAGE_VERSION}`;
 const MAX_REPORT_BYTES = 32 * 1024 * 1024;
 const MAX_TRAJECTORY_BYTES = 100 * 1024 * 1024;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -395,7 +396,7 @@ function inspectCcusageRunner() {
         result.status === 0 &&
         !result.signal &&
         !result.error &&
-        result.stdout.trim() === CCUSAGE_VERSION
+        result.stdout.trim() === CCUSAGE_VERSION_OUTPUT
       ) {
         return {
           runner: runner.command,

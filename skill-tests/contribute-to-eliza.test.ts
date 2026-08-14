@@ -1842,7 +1842,7 @@ describe("run receipt CLI", () => {
         "fi",
         'if [ "$3" = "--version" ]; then',
         `  printf '%s\\n' "$*" >> ${quotedArgsLog}`,
-        "  echo 20.0.19",
+        "  echo ccusage 20.0.19",
         "  exit 0",
         "fi",
         `if [ -f ${quotedFailureFlag} ]; then`,
@@ -2514,7 +2514,7 @@ describe("run receipt CLI", () => {
 
       writeFileSync(
         join(shimDir, "bun"),
-        shimSource.replace("echo 20.0.19", "echo 120.0.19"),
+        shimSource.replace("echo ccusage 20.0.19", "echo ccusage 120.0.19"),
       );
       const npxShimSource = [
         "#!/bin/sh",
@@ -2524,7 +2524,7 @@ describe("run receipt CLI", () => {
         "fi",
         'if [ "$3" = "--version" ]; then',
         `  printf '%s\\n' "$*" >> ${quotedArgsLog}`,
-        "  echo 20.0.19",
+        "  echo ccusage 20.0.19",
         "  exit 0",
         "fi",
         "exit 7",
@@ -2555,7 +2555,7 @@ describe("run receipt CLI", () => {
 
       writeFileSync(
         join(shimDir, "npx"),
-        npxShimSource.replace("echo 20.0.19", "echo noisy-20.0.19"),
+        npxShimSource.replace("echo ccusage 20.0.19", "echo noisy-20.0.19"),
       );
       const wrongVersionDoctor = spawnSync(
         process.execPath,
