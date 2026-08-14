@@ -152,8 +152,8 @@ node <skill-directory>/scripts/run-receipt.mjs finish \
 ```
 
 Append the emitted footer unchanged to the final PR body, review, or issue
-comment. The v2 marker must remain the final line. Its ccusage totals can add a
-diminishing, capped evidence bonus only after work earns accepted score. The
+comment. The Slop marker must remain the final line. Its ccusage totals are
+diagnostic only and cannot add score or allocation weight. The
 device signature proves byte integrity and device continuity, not mathematical
 correctness, log truth, account ownership, actual subscription cost, external
 prize eligibility, or payout.

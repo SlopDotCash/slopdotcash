@@ -301,7 +301,7 @@ beforeAll(() => {
       {
         schemaVersion: "1",
         name: "contribute-to-eliza",
-        repository: "elizaOS/army",
+        repository: "elizaOS/slopdotcash",
         revision,
         revisionStatus: "committed",
         source: {
@@ -420,6 +420,8 @@ describe("contribution skill package", () => {
           project_id: project.id,
           project_url: `https://slop.cash/projects/${project.id}/`,
           repository: repository.id,
+          review_skill: project.reviewSkill.id,
+          review_skill_manifest: `https://slop.cash/projects/${project.id}/review-skill-manifest.json`,
           skill: project.skill.id,
           skill_source: project.skill.sourcePath,
         })),
@@ -498,7 +500,7 @@ describe("contribution skill package", () => {
     expect(archive.provenance).toMatchObject({
       schemaVersion: "1",
       name: "contribute-to-eliza",
-      repository: "elizaOS/army",
+      repository: "elizaOS/slopdotcash",
       revision: sourceStatus.length === 0 ? head : null,
       revisionStatus: sourceStatus.length === 0 ? "committed" : "working-tree",
       source: {
@@ -582,12 +584,12 @@ describe("contribution skill package", () => {
     expect(manifest).toMatchObject({
       schemaVersion: "1",
       name: "contribute-to-eliza",
-      repository: "elizaOS/army",
+      repository: "elizaOS/slopdotcash",
       archive: { sha256: sha256(archive) },
       source: {
         sha256: sha256(skill),
         path: "skills/contribute-to-eliza/SKILL.md",
-        url: `https://github.com/elizaOS/army/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
+        url: `https://github.com/elizaOS/slopdotcash/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
         publicUrl: "https://slop.cash/projects/eliza/skill.md",
       },
     });
@@ -680,7 +682,7 @@ describe("contribution skill package", () => {
       apiOrigin: "https://api.github.com",
       canonicalPath: "skills/contribute-to-eliza",
       rawOrigin: "https://raw.githubusercontent.com",
-      releaseCandidateLabel: "gitarmy-release-candidate",
+      releaseCandidateLabel: "slop-release-candidate",
     });
     expect(
       Number.isNaN(
@@ -705,16 +707,16 @@ describe("contribution skill package", () => {
     expect(codexGuide).toContain("https://api.github.com");
     expect(codexGuide).toContain("https://raw.githubusercontent.com");
     expect(codexGuide).toContain(
-      `OPERATION="\${GITARMY_SKILL_OPERATION:-install}"`,
+      `OPERATION="\${SLOP_SKILL_OPERATION:-install}"`,
     );
     expect(codexGuide).toContain(
-      `ROLLBACK_REVISION="\${GITARMY_SKILL_REVISION:-}"`,
+      `ROLLBACK_REVISION="\${SLOP_SKILL_REVISION:-}"`,
     );
     expect(codexGuide).toContain(
       "explicit rollback target must still pass mutable GitHub policy now",
     );
     expect(codexGuide).toContain(
-      "GITARMY_SKILL_OPERATION must be install or rollback",
+      "SLOP_SKILL_OPERATION must be install or rollback",
     );
     expect(codexGuide).toContain(
       "requested rollback revision is not retained locally",
@@ -830,6 +832,29 @@ describe("contribution skill package", () => {
       expect(projectClaudeGuide).toContain(
         `SKILLS_ROOT="\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills"`,
       );
+      const reviewManifest = parseJsonRecord(
+        readFileSync(join(projectRoot, "review-skill-manifest.json"), "utf8"),
+        `${project.id} review skill manifest`,
+      );
+      expect(reviewManifest).toMatchObject({
+        name: project.reviewSkill.id,
+        repository: "elizaOS/slopdotcash",
+        source: { path: `${project.reviewSkill.sourcePath}/SKILL.md` },
+        review: {
+          policy:
+            "Advisory review only. Maintainers decide acceptance, score, and every money-state transition.",
+        },
+      });
+      expect(
+        readFileSync(join(projectRoot, "review-codex.md"), "utf8"),
+      ).toContain(
+        `'${project.reviewSkill.id}' '${project.reviewSkill.sourcePath}'`,
+      );
+      expect(
+        readFileSync(
+          join(projectRoot, "downloads", `${project.reviewSkill.id}.skill`),
+        ).byteLength,
+      ).toBeGreaterThan(0);
     }
   });
 
@@ -843,6 +868,9 @@ describe("contribution skill package", () => {
     );
     const defaultRoot = mkdtempSync(
       join(tmpdir(), "eliza-skill-install-default-home-"),
+    );
+    const claudeRoot = mkdtempSync(
+      join(tmpdir(), "eliza-skill-install-claude-home-"),
     );
     const corruptPublic = join(invalidRoot, "public");
     const ambiguousPublic = join(ambiguousRoot, "public");
@@ -912,6 +940,39 @@ describe("contribution skill package", () => {
       });
       expect(preview.status, preview.stderr).toBe(0);
       expect(JSON.parse(preview.stdout)).toMatchObject({
+        repositoryId: "elizaOS/eliza",
+        automaticUploads: [],
+      });
+      const claudeCommand = createInstallCommand(
+        pathToFileURL(installerArtifactRoot).href.replace(/\/$/u, ""),
+        `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`,
+        { testAuthority },
+      );
+      const claudeInstall = runInstall(claudeCommand, claudeRoot);
+      expect(claudeInstall.status, claudeInstall.stderr).toBe(0);
+      const claudeInstalledRoot = join(
+        claudeRoot,
+        "home",
+        ".claude",
+        "skills",
+        "contribute-to-eliza",
+      );
+      expect(lstatSync(claudeInstalledRoot).isSymbolicLink()).toBe(true);
+      const claudePreview = spawnSync(
+        process.execPath,
+        [
+          join(claudeInstalledRoot, "scripts", "run-receipt.mjs"),
+          "preview",
+          "--repo-root",
+          previewRepoLink,
+          "--client",
+          "claude-code",
+          "--json",
+        ],
+        { encoding: "utf8", env: previewEnvironment },
+      );
+      expect(claudePreview.status, claudePreview.stderr).toBe(0);
+      expect(JSON.parse(claudePreview.stdout)).toMatchObject({
         repositoryId: "elizaOS/eliza",
         automaticUploads: [],
       });
@@ -1021,6 +1082,7 @@ describe("contribution skill package", () => {
       rmSync(invalidRoot, { force: true, recursive: true });
       rmSync(ambiguousRoot, { force: true, recursive: true });
       rmSync(defaultRoot, { force: true, recursive: true });
+      rmSync(claudeRoot, { force: true, recursive: true });
     }
   });
 
@@ -1168,7 +1230,7 @@ provenance = (
         {
             "schemaVersion": "1",
             "name": "contribute-to-eliza",
-            "repository": "elizaOS/army",
+            "repository": "elizaOS/slopdotcash",
             "revision": None,
             "revisionStatus": "working-tree",
             "source": {

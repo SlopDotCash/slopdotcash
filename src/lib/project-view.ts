@@ -1,7 +1,7 @@
 /**
  * Derives one project's cycle leaderboard, bounded compute evidence, and reward
- * projection from the canonical GitHub snapshot. Token receipts can strengthen
- * accepted work but can never create score or more than a 20% weight bonus.
+ * simulation from the canonical GitHub snapshot. Local usage receipts remain
+ * diagnostic evidence and never alter rank or simulated allocation.
  */
 
 import type {
@@ -22,8 +22,6 @@ import {
 } from "./projects.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 
-export const COMPUTE_BONUS_MAX_BASIS_POINTS = 2_000;
-export const COMPUTE_BONUS_HALF_SATURATION_TOKENS = 250_000;
 export const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
 const SHARE_PARTS_PER_MILLION = 1_000_000;
 
@@ -72,7 +70,7 @@ export type ProjectRewardProjection =
       capMinor: string;
       projectedPrincipalMinor: string;
       platformFeeMinor: string;
-      status: "live-estimate";
+      status: "simulation";
     }
   | {
       kind: "external-prize-share";
@@ -215,17 +213,6 @@ function cycleBounds(cycleId: string): { from: number; to: number } {
     from: Date.UTC(year, monthIndex, 1),
     to: Date.UTC(year, monthIndex + 1, 1),
   };
-}
-
-function computeBonusBasisPoints(creditedTokens: number): number {
-  if (!Number.isSafeInteger(creditedTokens) || creditedTokens <= 0) return 0;
-  return Math.min(
-    COMPUTE_BONUS_MAX_BASIS_POINTS,
-    Math.floor(
-      (COMPUTE_BONUS_MAX_BASIS_POINTS * creditedTokens) /
-        (creditedTokens + COMPUTE_BONUS_HALF_SATURATION_TOKENS),
-    ),
-  );
 }
 
 function emptyUsage(): ProjectUsageSummary {
@@ -542,7 +529,7 @@ export function createProjectView(
     const events = ledger.filter((event) => event.actor.id === actor.id);
     const usage = usageForActor(actor.id, events, runs);
     const score = events.reduce((total, event) => total + event.points, 0);
-    const computeBonus = computeBonusBasisPoints(usage.creditedTokens);
+    const computeBonus = 0;
     const points = {
       "merged-pull-request": 0,
       "resolved-issue": 0,
@@ -556,7 +543,7 @@ export function createProjectView(
       rank: 0,
       actor,
       score,
-      adjustedWeight: score * (10_000 + computeBonus),
+      adjustedWeight: score * 10_000,
       computeBonusBasisPoints: computeBonus,
       points,
       acceptedOutcomeCount: events.length,
@@ -621,7 +608,7 @@ export function createProjectView(
           BigInt(project.reward.feeBasisPoints)) /
         10_000n
       ).toString(),
-      status: "live-estimate",
+      status: "simulation",
     };
   } else {
     const shares = allocateIntegerTotal(

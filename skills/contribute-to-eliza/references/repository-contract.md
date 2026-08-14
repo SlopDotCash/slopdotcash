@@ -36,12 +36,16 @@ dependency issue publicly. Follow `SECURITY.md`.
 
 ## GitHub-native coordination
 
-- Open or reuse an issue for non-trivial work. Scope it with acceptance
-  criteria and an evidence plan.
+- Use an open issue carrying the exact repository label `mission-ready`, or an
+  explicit operator request. Other labels, Project membership, and text that
+  merely says `mission-ready` do not authorize work. Never apply, request, or
+  automate that label. Never create an issue automatically; a new issue
+  requires explicit approval after reproduction, duplicate search, mission
+  check, and an evidence plan.
 - The platform does not reserve work. Check assignees, labels, Project state,
   active reviews, linked PRs, and newest comments immediately before starting.
-- Avoid duplicated work and say what bounded outcome you are pursuing when
-  coordination is useful.
+- Keep one active contribution, avoid duplicated work, and say what bounded
+  outcome you are pursuing when coordination is useful.
 - Target `develop` from a `feat/`, `fix/`, `docs/`, or `chore/` branch. Never
   push feature or fix work directly to `develop`.
 - Rebase on `origin/develop` and rerun relevant verification before final proof.
@@ -105,13 +109,12 @@ comments, labels, reviews, or mutations.
 ## Attribution and payout evidence
 
 Start the bundled run-receipt script before work and finish it after proof. Use
-the emitted footer unchanged on the final score-bearing GitHub source. The v2
-marker carries the exact approved model, repository identity, skill revision,
+the emitted footer unchanged on the final score-bearing GitHub source. The Slop
+marker carries the declared approved model, repository identity, skill revision,
 bounded ccusage delta, optional trajectory digest, device public key, and
 signature.
 
-The public projection uses accepted outcome score with a diminishing token
-evidence bonus capped at 20%. A receipt cannot create score. A copied,
-conflicting, malformed, unsigned, out-of-window, wrong-project, wrong-model, or
-unlinked receipt is excluded from reward weight and remains reviewable as a
-risk signal.
+The public simulation uses accepted outcome score only. A receipt cannot create
+score or change allocation weight. A copied, conflicting, malformed, unsigned,
+out-of-window, wrong-project, wrong-model, or unlinked receipt remains
+reviewable as a risk signal.

@@ -165,6 +165,7 @@ function validateReward(value, field) {
       "kind",
       "monthlyCapDisplay",
       "monthlyCapMinor",
+      "paymentMode",
       "rewardStartAt",
       "unusedFunds",
     ],
@@ -178,19 +179,25 @@ function validateReward(value, field) {
     reward.committedMinor,
     `${field}.committedMinor`,
   );
+  if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") {
+    throw new TypeError(`${field}.paymentMode is invalid`);
+  }
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
   if (reward.cycle !== "calendar-month-utc" || reward.feeBasisPoints !== 100) {
     throw new TypeError(`${field} cycle or fee policy is invalid`);
   }
   if (reward.kind === "monthly-pool") {
+    const paymentsDisabled = reward.paymentMode === "disabled";
     if (
       hasExternal ||
       reward.currency !== "USDC" ||
       reward.chain !== "solana" ||
       reward.unusedFunds !== "rollover-without-cap-increase" ||
-      reward.fundingState !== "pledged" ||
-      committedMinor !== "0" ||
+      (paymentsDisabled
+        ? reward.fundingState !== "pledged" || committedMinor !== "0"
+        : reward.fundingState !== "committed" ||
+          BigInt(committedMinor) <= 0n) ||
       reward.monthlyCapDisplay !== formatMonthlyCapDisplay(monthlyCapMinor)
     ) {
       throw new TypeError(`${field} monthly pool policy is inconsistent`);
@@ -203,6 +210,7 @@ function validateReward(value, field) {
       reward.monthlyCapMinor !== "0" ||
       reward.monthlyCapDisplay !== "$0 platform pool" ||
       committedMinor !== "0" ||
+      reward.paymentMode !== "disabled" ||
       reward.unusedFunds !== "not-applicable" ||
       reward.fundingState !== "external-opportunity"
     ) {

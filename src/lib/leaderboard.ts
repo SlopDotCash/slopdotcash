@@ -637,7 +637,7 @@ const REVIEW_CLAIM_PATTERN = /^CLAIMING\s+REVIEW:\s*\S/i;
 const ATTRIBUTION_DECLARATION_PATTERN =
   /^(?:AI provider\/model\s*:|AI assistance\s*:\s*yes\b|Models?(?:\s+used)?\s*:|Model\(s\)\s+used\s*:|Client\s*\/\s*agent tooling\s*:|Contribution skill revision\s*:)/i;
 const ATTRIBUTION_MARKER_LINE_PATTERN =
-  /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:v[12]\b[^\r\n]*-->\s*$/i;
+  /^<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v[12]|slop-contribution-attribution:v1)\b[^\r\n]*-->\s*$/i;
 
 interface MutableLeaderboardEntry {
   actor: GitHubActor;
@@ -746,16 +746,16 @@ function attributionMarkerRecords(body: string): AttributionMarkerRecord[] {
     .map((record) => {
       const raw = record.raw.trim();
       const marker = raw.match(
-        /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:(v[12])\b([\s\S]*?)-->\s*$/i,
+        /^<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:(v[12])|(slop-contribution-attribution:v1))\b([\s\S]*?)-->\s*$/i,
       );
       if (!marker) return null;
       const leadingWhitespace =
         record.raw.length - record.raw.trimStart().length;
       return {
         end: record.start + leadingWhitespace + raw.length,
-        payload: marker[2].trim(),
+        payload: marker[3].trim(),
         start: record.start + leadingWhitespace,
-        version: marker[1].toLowerCase() as "v1" | "v2",
+        version: marker[2] ? "v2" : (marker[1].toLowerCase() as "v1" | "v2"),
       };
     })
     .filter((record): record is AttributionMarkerRecord => record !== null);
@@ -1632,7 +1632,7 @@ function methodology(): LeaderboardMethodology {
         points: "1 to 8",
         cap: `newest ${SCORE_CAPS.evaluatedContributions} maintainer-approved awards per contributor, project, and UTC calendar month`,
         qualification:
-          "A public, strictly validated award manifest was reviewed and merged into elizaOS/army for useful implementation, tests, review, diagnosis, or evidence that is not already rewarded as a merged outcome.",
+          "A public, strictly validated award manifest was reviewed and merged into elizaOS/slopdotcash for useful implementation, tests, review, diagnosis, or evidence that is not already rewarded as a merged outcome.",
       },
     ],
     evidenceWeights: { ...EVIDENCE_WEIGHTS },
@@ -4029,12 +4029,14 @@ function assertLedgerValue(
   );
   if (
     decisionUrl.hostname !== "github.com" ||
-    !/^\/elizaOS\/army\/pull\/[1-9]\d*$/iu.test(decisionUrl.pathname) ||
+    !/^\/elizaOS\/(?:slopdotcash|army)\/pull\/[1-9]\d*$/iu.test(
+      decisionUrl.pathname,
+    ) ||
     decisionUrl.search ||
     decisionUrl.hash
   ) {
     throw new Error(
-      `${path}.evaluation.decisionUrl must be an elizaOS/army pull request`,
+      `${path}.evaluation.decisionUrl must be an elizaOS/slopdotcash pull request`,
     );
   }
   assertString(evaluation.manifestSha256, `${path}.evaluation.manifestSha256`);

@@ -238,8 +238,10 @@ export function assertCommittedBuildManifest(contents, expectedRevision) {
   if (manifest.schemaVersion !== "1") {
     throw new TypeError("skill manifest.schemaVersion must be 1");
   }
-  if (manifest.repository !== "elizaOS/army") {
-    throw new TypeError("skill manifest.repository must be elizaOS/army");
+  if (manifest.repository !== "elizaOS/slopdotcash") {
+    throw new TypeError(
+      "skill manifest.repository must be elizaOS/slopdotcash",
+    );
   }
   if (manifest.revisionStatus !== "committed") {
     throw new TypeError("skill manifest.revisionStatus must be committed");

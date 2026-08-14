@@ -8,7 +8,11 @@ import { createHash } from "node:crypto";
 import { link, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findProject, type ProjectId } from "../src/lib/projects.mjs";
+import {
+  assertProjectPaymentsEnabled,
+  findProject,
+  type ProjectId,
+} from "../src/lib/projects.mjs";
 import {
   assertRewardAllocationManifest,
   assertRewardSettlementManifest,
@@ -230,6 +234,7 @@ export async function verifySettlement(
     write?: (path: string, value: unknown) => Promise<void>;
   } = {},
 ) {
+  assertProjectPaymentsEnabled(arguments_.projectId);
   const cycle = await (options.validate ?? validateCycleTransition)(
     arguments_.projectId,
     arguments_.cycleId,

@@ -33,6 +33,10 @@ describe("project proposal schema", () => {
       /inconsistent/u,
     );
 
+    const fakeEnable = structuredClone(eliza);
+    fakeEnable.reward.paymentMode = "enabled";
+    expect(() => assertProjectDefinition(fakeEnable)).toThrow(/inconsistent/u);
+
     const misleadingCap = structuredClone(eliza);
     misleadingCap.reward.monthlyCapDisplay = "$100,000,000";
     expect(() => assertProjectDefinition(misleadingCap)).toThrow(

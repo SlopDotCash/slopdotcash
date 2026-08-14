@@ -5,7 +5,7 @@
  */
 
 export const WALLET_MARKER_VERSION = "1" as const;
-export const WALLET_MARKER_PREFIX = "gitarmy-wallet:v1" as const;
+export const WALLET_MARKER_PREFIX = "slop-wallet:v1" as const;
 export const WALLET_CLAIM_REPOSITORY = "elizaOS/slopdotcash" as const;
 export const WALLET_CLAIM_TITLE = "Slop wallet claim" as const;
 
@@ -89,7 +89,8 @@ export function parsePublishedWallet(markdown: string): PublishedWallet | null {
   if (typeof markdown !== "string" || markdown.length > 1_000_000) {
     throw new TypeError("GitHub profile README is invalid or too large");
   }
-  const pattern = /^\s*<!--\s*gitarmy-wallet:v1\s+(\{[^\r\n]*\})\s*-->\s*$/u;
+  const pattern =
+    /^\s*<!--\s*(?:slop-wallet:v1|gitarmy-wallet:v1)\s+(\{[^\r\n]*\})\s*-->\s*$/u;
   const matches = withoutFencedCode(markdown)
     .map((line) => pattern.exec(line))
     .filter((match): match is RegExpExecArray => match !== null);

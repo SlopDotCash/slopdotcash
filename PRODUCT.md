@@ -87,9 +87,12 @@ types and deletes these statements in sequence:
 - MAKE MONEY ADVANCING SCIENCE.
 - MAKE MONEY BUILDING AGENTS.
 
+During public beta, a visible status line states that scoring and share
+simulations are live while payouts are disabled.
+
 Reduced-motion users see the complete first statement without the typing
-effect. The hero has no status badge, eyebrow, explanatory copy, or proof
-chips. It stays compact so funded work enters the page quickly. Each project
+effect. The hero has no decorative status badge, eyebrow, or proof chips. It
+stays compact so funded work enters the page quickly. Each project
 spans the content rail and shows its name, one canonical mission sentence, and
 its monthly bounty or clearly labeled external prize. The global leaderboard
 follows immediately.
@@ -163,8 +166,8 @@ The default global leaderboard ranks by cumulative accepted score, then stable
 identity ordering. It combines the rolling accepted-event ledger with immutable
 closed-cycle records; when both cover the same project month, the closed cycle
 replaces that ledger bucket so work is neither omitted nor counted twice.
-Project leaderboards rank by current cycle impact weight: accepted score plus a
-diminishing verified-compute bonus capped at 20%.
+Project leaderboards rank by current-cycle accepted score. Local compute
+receipts are diagnostic evidence and never change rank or allocation weight.
 
 Profiles preserve:
 

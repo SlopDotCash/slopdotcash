@@ -355,7 +355,7 @@ node <skill-directory>/scripts/run-receipt.mjs finish \
 ```
 
 Append the emitted footer unchanged to the final pull request body, review, or
-issue comment. The hidden v2 marker must remain the final line. Do not
+issue comment. The hidden Slop marker must remain the final line. Do not
 hand-edit token counts, identifiers, timestamps, digests, key material, or
 signature.
 

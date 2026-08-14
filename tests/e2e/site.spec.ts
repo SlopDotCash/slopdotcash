@@ -86,7 +86,12 @@ test("discovers both reward models and a score-ranked global ledger", async ({
       name: "MAKE MONEY SHIPPING SLOP.",
     }),
   ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Slop home" })).toHaveText(
+    "slop.cash",
+  );
   await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
+  await expect(page.getByRole("link", { name: "Protocol" })).toHaveCount(0);
+  await expect(page.getByText("© 2026 slop.cash.")).toBeVisible();
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
     "content",
     "https://slop.cash/og-shipping-slop.png",
@@ -134,26 +139,35 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   expect(deltaBox?.width).toBeGreaterThan((gridBox?.width ?? 0) - 2);
   expect(deltaBox?.y).toBeGreaterThan((elizaBox?.y ?? 0) + 1);
   const visibleHeroGap = await page.evaluate(() => {
-    const typewriter = document.querySelector(".hero-typewriter");
+    const heroBoundary = document.querySelector(".home-agent-prompt");
     const projectHeading = document.querySelector("#projects h2");
-    const textNode = typewriter?.firstChild;
-    if (!textNode || !projectHeading) return null;
-    const range = document.createRange();
-    range.selectNodeContents(textNode);
-    const textRects = Array.from(range.getClientRects());
-    const lastTextRect = textRects.at(-1);
-    if (!lastTextRect) return null;
+    if (!heroBoundary || !projectHeading) return null;
     return Math.round(
-      projectHeading.getBoundingClientRect().top - lastTextRect.bottom,
+      projectHeading.getBoundingClientRect().top -
+        heroBoundary.getBoundingClientRect().bottom,
     );
   });
   expect(visibleHeroGap).not.toBeNull();
-  expect(visibleHeroGap ?? 0).toBeGreaterThanOrEqual(16);
-  expect(visibleHeroGap ?? 0).toBeLessThanOrEqual(72);
+  expect(visibleHeroGap ?? 0).toBeGreaterThanOrEqual(12);
+  expect(visibleHeroGap ?? 0).toBeLessThanOrEqual(64);
+  await expect(page.getByText("Public beta.")).toHaveCount(0);
+  await expect(
+    page.getByText(/Rankings are live. Payouts are off/u),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Contribute to Eliza." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Paste this to your Claude or Codex agent."),
+  ).toBeVisible();
+  const homePrompt = page.getByRole("status", { name: "Agent prompt" });
+  await expect(homePrompt).toContainText(/\/SKILL\.md/u);
+  await expect(homePrompt).toContainText(
+    /contribute to github\.com\/elizaOS\/eliza/u,
+  );
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();
-  await expect(page.getByText(/This month is the default/u)).toBeVisible();
   await expect(page.getByRole("tab", { name: "This month" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -165,11 +179,21 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     page.getByRole("columnheader", { name: "Accepted score" }),
   ).toBeAttached();
   await expect(
-    page.getByRole("columnheader", { name: "Current estimate" }),
+    page.getByRole("columnheader", { name: "Simulated share" }),
   ).toBeAttached();
-  await expect(
-    page.getByText("How score and compute affect rewards"),
-  ).toBeVisible();
+  await page.getByText("How it works").click();
+  await expect(page.getByText(/Payouts are off during beta/u)).toBeVisible();
+  await expect(page.getByRole("link", { name: "View more" })).toHaveAttribute(
+    "href",
+    "/projects/eliza",
+  );
+  if ((page.viewportSize()?.width ?? 0) <= 680) {
+    await expect(page.locator(".hero-mobile-action")).toHaveText(
+      "SHIPPING SLOP.",
+    );
+    await expect(page.locator(".hero-mobile-action")).toBeVisible();
+    await expect(page.locator(".hero-typewriter")).toBeHidden();
+  }
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();
@@ -194,7 +218,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     expect(await rows.count()).toBeGreaterThan(0);
     const viewport = page.viewportSize();
     if (viewport && viewport.width <= 680) {
-      const projection = rows.first().locator("td").nth(4);
+      const projection = rows.first().locator("td").nth(3);
       await expect(projection).toBeVisible();
       const projectionBounds = await projection.boundingBox();
       expect(projectionBounds).not.toBeNull();
@@ -219,7 +243,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     page.getByRole("columnheader", { name: "Paid to date" }),
   ).toBeAttached();
   await expect(
-    page.getByRole("columnheader", { name: "Current estimate" }),
+    page.getByRole("columnheader", { name: "Simulated share" }),
   ).toHaveCount(0);
 });
 
@@ -229,9 +253,92 @@ test("starts Eliza with one prompt and no separate payout form", async ({
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  const homeLink = page.getByRole("link", { name: "Home", exact: true });
+  if ((page.viewportSize()?.width ?? 0) <= 680) {
+    await page.getByRole("button", { name: "Open navigation" }).click();
+    await expect(homeLink).toBeVisible();
+    await expect(homeLink).toHaveAttribute("href", "/");
+    await page.getByRole("button", { name: "Close navigation" }).click();
+  } else {
+    await expect(homeLink).toBeVisible();
+    await expect(homeLink).toHaveAttribute("href", "/");
+  }
   await expect(
     page.getByRole("heading", { name: "Make money building agents." }),
   ).toBeVisible();
+  await expect(page.locator(".project-headline-action")).toHaveText(
+    "building agents.",
+  );
+  await expect(
+    page.getByRole("link", { name: /Start in one command/u }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /View cycle/u })).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: /View in GitHub/u }),
+  ).toHaveAttribute("href", "https://github.com/elizaOS/eliza");
+  await expect(
+    page.getByRole("link", { name: /View in SlopHub/u }),
+  ).toHaveAttribute("href", "https://git.slop.cash/elizaOS/eliza");
+  await expect(page.getByText("1% platform fee · Solana")).toHaveCount(0);
+  const rewardStyle = await page.locator(".reward-card").evaluate((card) => {
+    const amount = card.querySelector<HTMLElement>(".reward-amount-monthly");
+    const actions = card.querySelector<HTMLElement>(":scope > div");
+    if (!amount || !actions) return null;
+    return {
+      amountFontSize: Number.parseFloat(getComputedStyle(amount).fontSize),
+      actionBorderTopWidth: getComputedStyle(actions).borderTopWidth,
+    };
+  });
+  expect(rewardStyle).not.toBeNull();
+  expect(rewardStyle?.amountFontSize ?? 0).toBeGreaterThanOrEqual(48);
+  expect(rewardStyle?.actionBorderTopWidth).toBe("0px");
+  const projectGaps = await page.evaluate(() => {
+    const breadcrumb = document.querySelector(".breadcrumb");
+    const heading = document.querySelector(".project-hero h1");
+    const hero = document.querySelector(".project-hero");
+    const install = document.querySelector(".install-panel");
+    if (!breadcrumb || !heading || !hero || !install) return null;
+    return {
+      breadcrumbToHeading: Math.round(
+        heading.getBoundingClientRect().top -
+          breadcrumb.getBoundingClientRect().bottom,
+      ),
+      heroToInstall: Math.round(
+        install.getBoundingClientRect().top -
+          hero.getBoundingClientRect().bottom,
+      ),
+    };
+  });
+  expect(projectGaps).not.toBeNull();
+  expect(projectGaps?.breadcrumbToHeading ?? 100).toBeLessThanOrEqual(48);
+  expect(projectGaps?.heroToInstall ?? 100).toBeLessThanOrEqual(64);
+  if ((page.viewportSize()?.width ?? 0) <= 900) {
+    const rewardLayout = await page.evaluate(() => {
+      const card = document.querySelector<HTMLElement>(".reward-card");
+      const shell = card?.closest<HTMLElement>(".shell");
+      const actions = Array.from(
+        card?.querySelectorAll<HTMLElement>(".reward-actions a") ?? [],
+      );
+      if (!card || !shell) return null;
+      const cardBounds = card.getBoundingClientRect();
+      const shellBounds = shell.getBoundingClientRect();
+      return {
+        centerOffset: Math.abs(
+          cardBounds.left +
+            cardBounds.width / 2 -
+            (shellBounds.left + shellBounds.width / 2),
+        ),
+        minimumActionHeight: Math.min(
+          ...actions.map((action) => action.getBoundingClientRect().height),
+        ),
+        textAlign: getComputedStyle(card).textAlign,
+      };
+    });
+    expect(rewardLayout).not.toBeNull();
+    expect(rewardLayout?.centerOffset ?? 100).toBeLessThanOrEqual(1);
+    expect(rewardLayout?.minimumActionHeight ?? 0).toBeGreaterThanOrEqual(44);
+    expect(rewardLayout?.textAlign).toBe("center");
+  }
   const prompt = page.getByRole("status", { name: "Agent prompt" });
   await expect(prompt).toContainText(/\/SKILL\.md/u);
   await expect(prompt).toContainText(
@@ -268,8 +375,11 @@ test("starts Eliza with one prompt and no separate payout form", async ({
     page.getByRole("link", { name: /Preview the complete workflow/u }),
   ).toHaveAttribute("href", /\/projects\/eliza\/mission\.md$/u);
   await expect(
-    page.getByText(/contribution, evidence, and optional payout setup/u),
-  ).toBeVisible();
+    page.getByText(/One prompt handles the contribution/u),
+  ).toHaveCount(0);
+  await expect(page.getByText("simulated monthly pool")).toHaveCount(0);
+  await expect(page.getByText("scored contributors")).toHaveCount(0);
+  await expect(page.locator(".project-stat-strip")).toHaveCount(0);
   await expect(page.getByLabel("Solana public address")).toHaveCount(0);
   await expect(page.getByText(/GitHub profile README/u)).toHaveCount(0);
   await expect(page.getByText(/Outcome score leads/u)).toHaveCount(0);
@@ -277,12 +387,12 @@ test("starts Eliza with one prompt and no separate payout form", async ({
     page.getByText(/GitHub ledger \+ reward records live/u),
   ).toHaveCount(0);
   await expect(page.getByText(/^Updated /u)).toBeVisible();
-  await expect(page.getByText(/receipt-linked tokens/u).first()).toBeVisible();
+  await expect(page.getByText(/receipt-linked tokens/u)).toHaveCount(0);
   const displayedProjectionCents = await page
     .locator(".project-leader-row")
     .evaluateAll((rows) =>
       rows.reduce((total, row) => {
-        const projection = row.querySelectorAll("td")[4]?.textContent ?? "";
+        const projection = row.querySelectorAll("td")[3]?.textContent ?? "";
         return (
           total + Math.round(Number(projection.replace(/[^0-9.-]/gu, "")) * 100)
         );
@@ -399,12 +509,14 @@ test("serves byte-consistent install and read-only artifacts for every project",
     bootstrapResponse,
     discoveryResponse,
     discoverySkillResponse,
+    identityResponse,
     projectDiscoveryResponse,
     llmsResponse,
   ] = await Promise.all([
     request.get("/SKILL.md"),
     request.get("/.well-known/agent-skills/index.json"),
     request.get("/.well-known/agent-skills/slop/SKILL.md"),
+    request.get("/protocol/identity-v1.json"),
     request.get("/.well-known/slop/projects.json"),
     request.get("/llms.txt"),
   ]);
@@ -412,6 +524,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
     bootstrapResponse,
     discoveryResponse,
     discoverySkillResponse,
+    identityResponse,
     projectDiscoveryResponse,
     llmsResponse,
   ]) {
@@ -428,6 +541,15 @@ test("serves byte-consistent install and read-only artifacts for every project",
   expect(discoverySkillResponse.headers()["content-type"]).toContain(
     "text/markdown",
   );
+  expect(identityResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(identityResponse.headers()["access-control-allow-origin"]).toBe("*");
+  expect(identityResponse.headers()["cache-control"]).toContain("max-age=300");
+  expect(await identityResponse.json()).toMatchObject({
+    identityVersion: "slop-identity-v1",
+    paymentMode: "disabled",
+  });
   expect(projectDiscoveryResponse.headers()["content-type"]).toContain(
     "application/json",
   );
@@ -464,6 +586,8 @@ test("serves byte-consistent install and read-only artifacts for every project",
         project_id: project.id,
         project_url: `https://slop.cash/projects/${project.id}/`,
         repository: repository.id,
+        review_skill: project.reviewSkill.id,
+        review_skill_manifest: `https://slop.cash/projects/${project.id}/review-skill-manifest.json`,
         skill: project.skill.id,
         skill_source: project.skill.sourcePath,
       })),

@@ -1,4 +1,4 @@
-# @elizaos/army
+# @elizaos/slopdotcash
 
 Standalone Vite site and Git-backed incentive protocol for Slop. The public
 authorities are `slop.cash` and `slop.tech`; `eliza.army` remains a
@@ -25,7 +25,7 @@ The public checksum is only a corruption check. The generated installer uses
 GitHub as an independent trust root: the revision must be current `develop`, a
 `develop` ancestor whose complete canonical skill tree is byte-identical to
 current `develop`, or an open, non-draft, same-repository PR head into `develop`
-with the maintainer-controlled `gitarmy-release-candidate` label. It
+with the maintainer-controlled `slop-release-candidate` label. It
 recursively
 requires the label event to follow the exact current-head commit event, rejects
 candidates behind or divergent from current `develop`, and compares the bounded
@@ -63,8 +63,8 @@ wrangler.toml         Cloudflare Pages Direct Upload contract
 ```
 
 Generated files under `public/brand/`, `public/downloads/`, `public/projects/`,
-and `public/data/cycles/` are produced by `prepare:site`. Do not edit them by
-hand.
+`public/protocol/`, and `public/data/cycles/` are produced by `prepare:site`.
+Do not edit them by hand.
 
 ## Commands
 
@@ -117,9 +117,9 @@ one complete transaction.
 - Permit unusual useful work only through a strict `evaluations/` manifest whose
   public Slop PR is the human decision. Never score a source already rewarded
   by the ordinary GitHub ledger.
-- Model and token disclosure are supporting provenance, not proof. Tokens can
-  add only a diminishing outcome-linked weight bonus capped at 20%; ambiguous
-  usage does not add weight.
+- Model and token disclosure are supporting provenance, not proof. Token
+  receipts are diagnostic only and never change score, rank, or simulated
+  share.
 - Every public snapshot records its repository registry with per-item
   repository attribution, the primary repository, window, rule version,
   generation time, source cutoff, and any staleness.
@@ -140,7 +140,7 @@ acting.
 ## Model attribution
 
 Contributions made through a project skill must carry the machine-readable
-`elizaos-contribution-attribution:v2` marker. It binds project, repository,
+`slop-contribution-attribution:v1` marker. It binds project, repository,
 run id, timestamps, exact provider/model/client, skill revision and digest,
 aggregate pinned-ccusage figures, optional local trajectory digest, and an
 Ed25519 device signature. Validate signatures and all joins at ingestion. A

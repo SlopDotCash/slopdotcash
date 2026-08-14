@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
  * Builds a stable, read-only inventory of open elizaOS issues and pull requests
- * for contribution selection. GitHub pagination stays behind one GET-only
- * adapter so callers and tests can verify that this script never mutates state.
+ * for contribution selection. REST pagination stays behind one GET-only
+ * adapter; GraphQL uses explicit read-only queries over GitHub's POST endpoint.
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const MODEL_DISCLOSURE_PREFIX = "AI provider/model:";
@@ -20,8 +21,10 @@ export const REQUIRED_EVIDENCE_ROWS = [
   "domain-artifacts",
 ];
 export const CLAIM_RECENCY_DAYS = 7;
+export const MISSION_READY_LABEL = "mission-ready";
 export const MAX_OPEN_ITEMS = 1_000;
 export const MAX_API_READS = 16;
+export const MAX_ACTIVITY_CONNECTION_ITEMS = 1_000;
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PLACEHOLDER_RE =
@@ -51,7 +54,7 @@ const CONTRIBUTION_CLAIM_RE = /^CLAIMING(?:\s+REVIEW|\s+LEVER)?:\s*\S/i;
 const AI_PROVENANCE_DECLARATION_RE =
   /^(?:AI provider\/model\s*:|AI assistance\s*:\s*yes\b|Models?(?:\s+used)?\s*:|Model\(s\)\s+used\s*:|Client\s*\/\s*agent tooling\s*:|Contribution skill revision\s*:)/i;
 const AI_PROVENANCE_MARKER_LINE_RE =
-  /^<!--\s*(?:elizaos-contribution|eliza-computer)-attribution:v1\b[^\r\n]*-->\s*$/i;
+  /^<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v1|slop-contribution-attribution:v1)\b[^\r\n]*-->\s*$/i;
 const HUMAN_ONLY_CLAIM_FOOTER_RE =
   /(?:^|\r?\n)\s*AI assistance:\s*no\s*[-\u2013\u2014]\s*human-only claim\s*\r?\n\s*Attribution status:\s*self-reported\s*$/i;
 const HUMAN_ONLY_PR_RE =
@@ -66,7 +69,8 @@ const SENSITIVE_LABEL_RE =
   /(?:^|[-_ ])(?:security|vulnerability|credential[-_ ]?leak|secret[-_ ]?leak|cve)(?:$|[-_ ])/i;
 const EPIC_TITLE_RE = /^\s*(?:\[[^\]]*\bepic\b[^\]]*\]|epic\s*:)/i;
 const EPIC_LABEL_RE = /^epic(?:\s+\d+)?$/i;
-const CONTRIBUTOR_READY_LABELS = new Set([
+const DEFAULT_CONTRIBUTOR_READY_LABELS = [
+  MISSION_READY_LABEL,
   "bug-confirmed",
   "demo-blocker",
   "good first issue",
@@ -79,7 +83,7 @@ const CONTRIBUTOR_READY_LABELS = new Set([
   "p2",
   "priority: high",
   "triage-reviewed",
-]);
+];
 const TRUSTED_CLAIM_ASSOCIATIONS = new Set(["COLLABORATOR", "MEMBER", "OWNER"]);
 const EVIDENCE_MARKER_RE = /<!--\s*evidence-row:([a-z0-9-]+)\s*-->/gi;
 const NA_WITH_REASON_RE =
@@ -297,6 +301,58 @@ function labelNames(item, context) {
   });
 }
 
+function eligibleIssueLabels(value, context) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 20) {
+    throw new TypeError(`${context} must be a non-empty array of labels`);
+  }
+  const labels = value.map((label, index) => {
+    if (typeof label !== "string") {
+      throw new TypeError(`${context}[${index}] must be a string`);
+    }
+    const normalized = label.trim().toLowerCase();
+    if (normalized.length === 0 || normalized.length > 50) {
+      throw new TypeError(`${context}[${index}] must be a bounded label`);
+    }
+    return normalized;
+  });
+  if (new Set(labels).size !== labels.length) {
+    throw new TypeError(`${context} must not contain duplicate labels`);
+  }
+  return labels;
+}
+
+/** Loads the project-owned discovery policy next to the installed skill. */
+export function readProjectSelectionPolicy(scriptUrl = import.meta.url) {
+  const projectPath = join(
+    dirname(dirname(fileURLToPath(scriptUrl))),
+    "project.json",
+  );
+  let project;
+  try {
+    project = JSON.parse(readFileSync(projectPath, "utf8"));
+  } catch (cause) {
+    throw new Error(
+      `Cannot read contributor selection policy: ${projectPath}`,
+      {
+        cause,
+      },
+    );
+  }
+  const record = asRecord(project, "skill project");
+  if (record.selection === undefined) {
+    return {
+      eligibleIssueLabels: [...DEFAULT_CONTRIBUTOR_READY_LABELS],
+    };
+  }
+  const selection = asRecord(record.selection, "skill project.selection");
+  return {
+    eligibleIssueLabels: eligibleIssueLabels(
+      selection.eligibleIssueLabels,
+      "skill project.selection.eligibleIssueLabels",
+    ),
+  };
+}
+
 function compareByNumber(left, right) {
   return left.number - right.number;
 }
@@ -365,7 +421,7 @@ export function readGhPages(endpoint, spawn = spawnSync) {
   return parsePaginatedJson(result.stdout, endpoint);
 }
 
-const ACTIVITY_CONNECTION_LIMIT = 100;
+const ACTIVITY_PAGE_SIZE = 100;
 const GRAPHQL_ACTOR_FIELDS = `
   login
   __typename
@@ -453,12 +509,85 @@ function graphqlConnection(record, field, context) {
     `${context}.${field}`,
   );
   const nodes = asArrayField(connection, "nodes", `${context}.${field}`);
-  if (totalCount > ACTIVITY_CONNECTION_LIMIT || nodes.length !== totalCount) {
+  if (totalCount > MAX_ACTIVITY_CONNECTION_ITEMS) {
     throw new RangeError(
-      `${context}.${field} exceeds the complete ${ACTIVITY_CONNECTION_LIMIT}-record activity bound`,
+      `${context}.${field} exceeds the complete ${MAX_ACTIVITY_CONNECTION_ITEMS}-record activity bound`,
     );
   }
-  return nodes;
+  const expectedPageSize = Math.min(totalCount, ACTIVITY_PAGE_SIZE);
+  if (nodes.length !== expectedPageSize) {
+    throw new RangeError(
+      `${context}.${field} returned ${nodes.length} of the expected ${expectedPageSize} initial activity records`,
+    );
+  }
+  return {
+    needsPagination: totalCount > ACTIVITY_PAGE_SIZE,
+    nodes,
+    totalCount,
+  };
+}
+
+function readGhActivityPage(endpoint, pageNumber, context, spawn) {
+  const separator = endpoint.includes("?") ? "&" : "?";
+  const pagedEndpoint = `${endpoint}${separator}page=${pageNumber}`;
+  const result = spawn(
+    "gh",
+    ["api", "--method", "GET", "--jq", ".[]", pagedEndpoint],
+    {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail =
+      typeof result.stderr === "string" && result.stderr.trim().length > 0
+        ? `: ${result.stderr.trim()}`
+        : "";
+    throw new Error(`gh api failed for ${context} page ${pageNumber}${detail}`);
+  }
+  const records = parsePaginatedJson(
+    result.stdout,
+    `${context} page ${pageNumber}`,
+  );
+  if (records.length > ACTIVITY_PAGE_SIZE) {
+    throw new RangeError(
+      `${context} page ${pageNumber} returned ${records.length} records, exceeding the ${ACTIVITY_PAGE_SIZE}-record page bound`,
+    );
+  }
+  return records;
+}
+
+function readOverflowActivity(endpoint, expectedCount, context, spawn) {
+  const records = [];
+  const maximumPages = Math.ceil(
+    MAX_ACTIVITY_CONNECTION_ITEMS / ACTIVITY_PAGE_SIZE,
+  );
+  for (let pageNumber = 1; pageNumber <= maximumPages + 1; pageNumber += 1) {
+    const page = readGhActivityPage(endpoint, pageNumber, context, spawn);
+    if (pageNumber > maximumPages) {
+      if (page.length > 0) {
+        throw new RangeError(
+          `${context} exceeds the complete ${MAX_ACTIVITY_CONNECTION_ITEMS}-record activity bound`,
+        );
+      }
+      break;
+    }
+    records.push(...page);
+    if (expectedCount !== null && records.length > expectedCount) {
+      throw new RangeError(
+        `${context} returned more than the ${expectedCount} records it reported`,
+      );
+    }
+    if (page.length < ACTIVITY_PAGE_SIZE) break;
+  }
+  if (expectedCount !== null && records.length !== expectedCount) {
+    throw new RangeError(
+      `${context} returned ${records.length} records after reporting ${expectedCount}`,
+    );
+  }
+  return records;
 }
 
 function graphqlAccount(value, context) {
@@ -517,6 +646,8 @@ function readGraphqlActivityNodes(repo, query, selector, spawn, context) {
     [
       "api",
       "graphql",
+      "--method",
+      "POST",
       "--paginate",
       "-f",
       `query=${query}`,
@@ -542,7 +673,25 @@ function readGraphqlActivityNodes(repo, query, selector, spawn, context) {
   return parsePaginatedJson(result.stdout, context);
 }
 
-/** Reads all open issue/PR activity in connection-sized batches, never N+1. */
+export function createGhCommandBudget(spawn = spawnSync) {
+  let count = 0;
+  return {
+    get count() {
+      return count;
+    },
+    run: (command, args, options) => {
+      if (count >= MAX_API_READS) {
+        throw new RangeError(
+          `Live discovery exceeds the ${MAX_API_READS}-command safety bound`,
+        );
+      }
+      count += 1;
+      return spawn(command, args, options);
+    },
+  };
+}
+
+/** Reads open activity in two batches plus bounded overflow pagination. */
 export function readGhOpenActivity(repo, spawn = spawnSync) {
   if (!REPOSITORY_RE.test(repo)) {
     throw new TypeError("Repository must use the owner/name form");
@@ -573,12 +722,19 @@ export function readGhOpenActivity(repo, spawn = spawnSync) {
     const number = asNumberField(node, "number", context);
     if (issues.has(number))
       throw new TypeError(`duplicate issue activity for #${number}`);
+    const comments = graphqlConnection(node, "comments", context);
     issues.set(
       number,
-      graphqlConnection(node, "comments", context).map(
-        (comment, commentIndex) =>
-          graphqlComment(comment, `${context}.comments[${commentIndex}]`),
-      ),
+      comments.needsPagination
+        ? readOverflowActivity(
+            issueCommentsEndpoint(repo, number),
+            comments.totalCount,
+            `${context}.comments`,
+            spawn,
+          )
+        : comments.nodes.map((comment, commentIndex) =>
+            graphqlComment(comment, `${context}.comments[${commentIndex}]`),
+          ),
     );
   }
   const pulls = new Map();
@@ -588,26 +744,69 @@ export function readGhOpenActivity(repo, spawn = spawnSync) {
     const number = asNumberField(node, "number", context);
     if (pulls.has(number))
       throw new TypeError(`duplicate pull activity for #${number}`);
-    const issueComments = graphqlConnection(node, "comments", context).map(
-      (comment, commentIndex) =>
-        graphqlComment(comment, `${context}.comments[${commentIndex}]`),
-    );
-    const reviews = graphqlConnection(node, "reviews", context).map(
-      (review, reviewIndex) =>
-        graphqlReview(review, `${context}.reviews[${reviewIndex}]`),
-    );
-    const inlineComments = graphqlConnection(
-      node,
-      "reviewThreads",
-      context,
-    ).flatMap((thread, threadIndex) => {
-      const threadContext = `${context}.reviewThreads[${threadIndex}]`;
-      const record = asRecord(thread, threadContext);
-      return graphqlConnection(record, "comments", threadContext).map(
-        (comment, commentIndex) =>
-          graphqlComment(comment, `${threadContext}.comments[${commentIndex}]`),
+    const commentConnection = graphqlConnection(node, "comments", context);
+    const issueComments = commentConnection.needsPagination
+      ? readOverflowActivity(
+          issueCommentsEndpoint(repo, number),
+          commentConnection.totalCount,
+          `${context}.comments`,
+          spawn,
+        )
+      : commentConnection.nodes.map((comment, commentIndex) =>
+          graphqlComment(comment, `${context}.comments[${commentIndex}]`),
+        );
+    const reviewConnection = graphqlConnection(node, "reviews", context);
+    const reviews = reviewConnection.needsPagination
+      ? readOverflowActivity(
+          pullReviewsEndpoint(repo, number),
+          reviewConnection.totalCount,
+          `${context}.reviews`,
+          spawn,
+        )
+      : reviewConnection.nodes.map((review, reviewIndex) =>
+          graphqlReview(review, `${context}.reviews[${reviewIndex}]`),
+        );
+    const threadConnection = graphqlConnection(node, "reviewThreads", context);
+    let inlineComments;
+    if (threadConnection.needsPagination) {
+      inlineComments = readOverflowActivity(
+        pullReviewCommentsEndpoint(repo, number),
+        null,
+        `${context}.review comments`,
+        spawn,
       );
-    });
+    } else {
+      let expectedInlineComments = 0;
+      let nestedPaginationNeeded = false;
+      const initialInlineComments = threadConnection.nodes.flatMap(
+        (thread, threadIndex) => {
+          const threadContext = `${context}.reviewThreads[${threadIndex}]`;
+          const record = asRecord(thread, threadContext);
+          const comments = graphqlConnection(record, "comments", threadContext);
+          expectedInlineComments += comments.totalCount;
+          if (expectedInlineComments > MAX_ACTIVITY_CONNECTION_ITEMS) {
+            throw new RangeError(
+              `${context}.review comments exceeds the complete ${MAX_ACTIVITY_CONNECTION_ITEMS}-record activity bound`,
+            );
+          }
+          nestedPaginationNeeded ||= comments.needsPagination;
+          return comments.nodes.map((comment, commentIndex) =>
+            graphqlComment(
+              comment,
+              `${threadContext}.comments[${commentIndex}]`,
+            ),
+          );
+        },
+      );
+      inlineComments = nestedPaginationNeeded
+        ? readOverflowActivity(
+            pullReviewCommentsEndpoint(repo, number),
+            expectedInlineComments,
+            `${context}.review comments`,
+            spawn,
+          )
+        : initialInlineComments;
+    }
     pulls.set(number, { issueComments, inlineComments, reviews });
   }
   return { issues, pulls };
@@ -1201,11 +1400,15 @@ export function collectLiveReport(
   now = new Date(),
   onProgress = () => {},
   openActivity = null,
+  projectEligibleIssueLabels = DEFAULT_CONTRIBUTOR_READY_LABELS,
 ) {
   if (!REPOSITORY_RE.test(repo)) {
     throw new TypeError("Repository must use the owner/name form");
   }
   const referenceTime = nowTime(now);
+  const candidateLabelSet = new Set(
+    eligibleIssueLabels(projectEligibleIssueLabels, "eligible issue labels"),
+  );
 
   const issueEndpoint = `repos/${repo}/issues?state=open&per_page=100&sort=created&direction=asc`;
   const pullEndpoint = `repos/${repo}/pulls?state=open&per_page=100&sort=created&direction=asc`;
@@ -1300,15 +1503,13 @@ export function collectLiveReport(
       labels.some((label) => EPIC_LABEL_RE.test(label.trim()));
     if (
       epic ||
-      !labels.some((label) =>
-        CONTRIBUTOR_READY_LABELS.has(label.trim().toLowerCase()),
-      )
+      !labels.some((label) => candidateLabelSet.has(label.trim().toLowerCase()))
     ) {
       untriagedIssues.push({
         ...summary,
         reason: epic
           ? "epic requires a bounded child issue"
-          : "missing maintainer contributor-ready label",
+          : `missing eligible maintainer label (${[...candidateLabelSet].sort().join(", ")})`,
       });
       continue;
     }
@@ -1441,6 +1642,9 @@ export function collectLiveReport(
 
   return {
     repository: repo,
+    selection: {
+      eligibleIssueLabels: [...candidateLabelSet].sort(),
+    },
     totals: {
       openIssues: issueItems.length,
       openPullRequests: pullItems.length,
@@ -1487,6 +1691,10 @@ function markdownItems(items) {
 }
 
 export function renderMarkdown(report) {
+  const eligibleLabels = eligibleIssueLabels(
+    report.selection?.eligibleIssueLabels,
+    "report.selection.eligibleIssueLabels",
+  );
   const lines = [
     `# elizaOS contribution report — ${report.repository}`,
     "",
@@ -1538,7 +1746,7 @@ export function renderMarkdown(report) {
   lines.push(gaps.length > 0 ? gaps.join("\n") : "_No audited gaps._");
   lines.push(
     "",
-    `_Read-only heuristic report: issue candidates require a maintainer-controlled contributor-ready label. Claim comments expire after ${CLAIM_RECENCY_DAYS} days and count only from repository owners, members, or collaborators unless durable repository state remains; active GitHub review requests persist until cleared. Verify live Project state and newest comments before claiming._`,
+    `_Read-only heuristic report: issue candidates require one configured maintainer-controlled repository label (${eligibleLabels.join(", ")}); titles, bodies, comments, Discussions, and other labels cannot substitute. Claim comments expire after ${CLAIM_RECENCY_DAYS} days and count only from repository owners, members, or collaborators unless durable repository state remains; active GitHub review requests persist until cleared. Verify live Project state and newest comments before claiming._`,
     "",
   );
   return lines.join("\n");
@@ -1588,18 +1796,12 @@ export function main(args = process.argv.slice(2)) {
     process.stdout.write(usage());
     return;
   }
-  let apiReads = 0;
+  const commandBudget = createGhCommandBudget();
   const boundedRead = (endpoint) => {
-    apiReads += 1;
-    if (apiReads > MAX_API_READS) {
-      throw new RangeError(
-        `Live discovery exceeds the ${MAX_API_READS}-request safety bound`,
-      );
-    }
-    return readGhPages(endpoint);
+    return readGhPages(endpoint, commandBudget.run);
   };
-  apiReads += 2;
-  const openActivity = readGhOpenActivity(options.repo);
+  const openActivity = readGhOpenActivity(options.repo, commandBudget.run);
+  const selectionPolicy = readProjectSelectionPolicy();
   const report = collectLiveReport(
     options.repo,
     boundedRead,
@@ -1607,11 +1809,12 @@ export function main(args = process.argv.slice(2)) {
     ({ phase, current, total }) => {
       if (current === 0 || current === total || current % 10 === 0) {
         process.stderr.write(
-          `[Slop] scanning ${phase}: ${current}/${total} (${apiReads} bounded GitHub reads)\n`,
+          `[Slop] scanning ${phase}: ${current}/${total} (${commandBudget.count} bounded GitHub commands)\n`,
         );
       }
     },
     openActivity,
+    selectionPolicy.eligibleIssueLabels,
   );
   process.stdout.write(
     options.json

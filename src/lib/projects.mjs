@@ -67,4 +67,18 @@ export function findProjectByRepositoryId(repositoryId) {
   return PROJECTS_BY_REPOSITORY.get(repositoryId.toLowerCase()) ?? null;
 }
 
+/** Refuses every money-state transition until a reviewed project enables it. */
+export function assertProjectPaymentsEnabled(projectId) {
+  const project = findProject(projectId);
+  if (
+    project?.reward.kind !== "monthly-pool" ||
+    project.reward.paymentMode !== "enabled" ||
+    project.reward.fundingState !== "committed" ||
+    BigInt(project.reward.committedMinor) <= 0n
+  ) {
+    throw new TypeError(`Payments are disabled for project ${projectId}`);
+  }
+  return project;
+}
+
 export { PROJECTS };

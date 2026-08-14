@@ -74,7 +74,7 @@ input:focus-visible {
 
 .header-inner {
   display: flex;
-  min-height: 72px;
+  min-height: 64px;
   align-items: center;
   justify-content: space-between;
 }
@@ -120,7 +120,7 @@ input:focus-visible {
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  padding-block: clamp(56px, 6vh, 72px) clamp(28px, 6.25vw, 90px);
+  padding-block: clamp(40px, 5vh, 56px) clamp(20px, 2vw, 32px);
 }
 
 .data-notice {
@@ -262,6 +262,10 @@ p {
   align-self: start;
 }
 
+.hero-mobile-action {
+  display: none;
+}
+
 .hero-typewriter-caret {
   display: inline-block;
   width: 0.055em;
@@ -284,13 +288,6 @@ p {
   color: #5f5a50;
   font-size: clamp(17px, 2vw, 22px);
   line-height: 1.55;
-}
-
-.hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px;
 }
 
 .button {
@@ -323,15 +320,6 @@ p {
   background: var(--orange-dark);
 }
 
-.text-button {
-  border-color: var(--line);
-  background: rgba(255, 253, 248, 0.65);
-}
-
-.text-button:hover {
-  border-color: rgba(23, 21, 16, 0.35);
-}
-
 .inverse-button {
   background: var(--white);
   color: var(--ink);
@@ -342,11 +330,11 @@ p {
 }
 
 .section {
-  padding-block: 108px;
+  padding-block: 72px;
 }
 
 .home-section-title {
-  margin: 0 0 30px;
+  margin: 0 0 22px;
   font-size: clamp(42px, 6vw, 76px);
   font-weight: 800;
   letter-spacing: -0.06em;
@@ -354,30 +342,19 @@ p {
 }
 
 .home-projects-section {
-  padding-block: 0 52px;
+  padding-block: 0 36px;
 }
 
 .home-leaderboard-section {
-  padding-block: 52px 80px;
+  padding-block: 36px 56px;
 }
 
 .home-leaderboard-heading {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
-  align-items: end;
-  gap: 48px;
-  margin-bottom: 24px;
+  margin-bottom: 18px;
 }
 
 .home-leaderboard-heading .home-section-title {
   margin: 0;
-}
-
-.home-leaderboard-heading > p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.65;
 }
 
 .leaderboard-mode-tabs {
@@ -543,8 +520,8 @@ p {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
   align-items: end;
-  gap: 48px;
-  margin-bottom: 42px;
+  gap: 32px;
+  margin-bottom: 28px;
 }
 
 .section-heading h2,
@@ -571,11 +548,11 @@ p {
 }
 
 .project-card {
-  min-height: 230px;
+  min-height: 190px;
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 52px;
-  padding: 34px;
+  gap: 32px;
+  padding: 28px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(255, 253, 248, 0.72);
@@ -615,7 +592,7 @@ p {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
-  gap: 56px;
+  gap: 40px;
 }
 
 .project-summary {
@@ -636,7 +613,6 @@ p {
 }
 
 .person-cell span,
-.project-stat-strip div,
 .profile-totals div {
   display: flex;
   min-width: 0;
@@ -692,10 +668,10 @@ small {
       4,
       minmax(100px, 0.6fr)
     );
-  min-height: 74px;
+  min-height: 66px;
   align-items: center;
-  gap: 18px;
-  padding: 14px 22px;
+  gap: 14px;
+  padding: 10px 18px;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
@@ -784,7 +760,7 @@ small {
 }
 
 .site-footer {
-  padding-block: 64px;
+  padding-block: 44px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: var(--ink);
   color: var(--white);
@@ -793,7 +769,7 @@ small {
 .footer-grid {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 42px;
+  gap: 28px;
 }
 
 .footer-wordmark {
@@ -806,6 +782,10 @@ small {
   font-size: 11px;
 }
 
+.footer-grid .footer-copyright {
+  margin-top: 6px;
+}
+
 .footer-links {
   display: flex;
   gap: 24px;
@@ -816,18 +796,18 @@ small {
 .footer-fine {
   grid-column: 1 / -1;
   max-width: 720px;
-  padding-top: 28px;
+  padding-top: 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   line-height: 1.6;
 }
 
 .route-main {
   min-height: 70vh;
-  padding-block: 56px 112px;
+  padding-block: 36px 72px;
 }
 
 .project-hero {
-  padding-block: 56px 0;
+  padding-block: 36px 48px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -835,7 +815,7 @@ small {
   display: flex;
   align-items: center;
   gap: 9px;
-  margin: 0 0 72px;
+  margin: 0 0 36px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
@@ -848,8 +828,8 @@ small {
 .project-hero-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.6fr);
-  align-items: end;
-  gap: 64px;
+  align-items: start;
+  gap: 40px;
 }
 
 .project-hero h1 {
@@ -857,8 +837,12 @@ small {
   font-size: clamp(54px, 7vw, 98px);
 }
 
+.project-headline-action {
+  color: var(--orange);
+}
+
 .reward-card {
-  padding: 28px;
+  padding: 24px;
   border-radius: var(--radius);
   background: var(--ink);
   color: var(--white);
@@ -873,12 +857,18 @@ small {
 
 .reward-card > strong {
   display: block;
-  margin: 20px 0 16px;
+  margin: 16px 0 12px;
   font-size: clamp(36px, 4vw, 54px);
   letter-spacing: -0.055em;
+  line-height: 0.95;
+}
+
+.reward-card > .reward-amount-monthly {
+  font-size: clamp(48px, 5vw, 68px);
 }
 
 .reward-card > p {
+  margin: 0;
   color: #aaa398;
   font-size: 12px;
   line-height: 1.65;
@@ -891,39 +881,43 @@ small {
 .reward-card > div {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-top: 28px;
-  padding-top: 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  gap: 12px;
+  margin-top: 18px;
 }
 
-.reward-card a {
+.reward-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.reward-actions a {
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: #ff9d73;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: var(--white);
   font-size: 11px;
   font-weight: 700;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
 }
 
-.project-stat-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  margin-top: 82px;
-  border-top: 1px solid var(--line);
+.reward-actions a:hover {
+  border-color: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.project-stat-strip div {
-  padding: 24px 18px 24px 0;
-}
-
-.project-stat-strip strong,
 .profile-totals strong {
   font-size: 24px;
   letter-spacing: -0.04em;
 }
 
-.project-stat-strip span,
 .profile-totals span {
   margin-top: 5px;
   color: var(--muted);
@@ -933,16 +927,39 @@ small {
   text-transform: uppercase;
 }
 
+.home-agent-prompt {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1.58fr);
+  align-items: center;
+  gap: 24px;
+  margin-block: 20px 36px;
+  padding: 20px;
+  border-radius: var(--radius);
+  background: var(--orange);
+}
+
+.home-agent-prompt-heading h2 {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 34px);
+  letter-spacing: -0.04em;
+}
+
+.home-agent-prompt-heading p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .install-panel {
-  margin-top: 96px;
-  padding: 40px;
+  margin-top: 56px;
+  padding: 32px;
   border-radius: var(--radius);
   background: var(--orange);
   color: var(--ink);
 }
 
 .install-heading {
-  margin-bottom: 28px;
+  margin-bottom: 20px;
 }
 
 .install-panel h2 {
@@ -1034,7 +1051,7 @@ small {
 
 .install-note {
   max-width: 760px;
-  margin: 18px 0 0;
+  margin: 14px 0 0;
   color: var(--ink);
   font-size: 11px;
   line-height: 1.6;
@@ -1042,8 +1059,8 @@ small {
 
 .install-advanced {
   max-width: 940px;
-  margin-top: 22px;
-  padding-top: 18px;
+  margin-top: 18px;
+  padding-top: 14px;
   border-top: 1px solid rgba(107, 25, 0, 0.22);
   color: var(--ink);
   font-size: 11px;
@@ -1090,7 +1107,12 @@ small {
 
 .project-leader-head,
 .project-leader-row {
-  grid-template-columns: 62px minmax(190px, 1.4fr) 0.5fr 0.75fr 0.8fr 0.7fr;
+  grid-template-columns: 62px minmax(190px, 1.4fr) 0.5fr 0.8fr;
+}
+
+.global-leader-head,
+.global-leader-row {
+  grid-template-columns: 72px minmax(220px, 1.5fr) 0.6fr 0.8fr;
 }
 
 .event-list,
@@ -1128,9 +1150,9 @@ small {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 18px;
-  min-height: 78px;
-  padding: 15px 20px;
+  gap: 14px;
+  min-height: 68px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1162,7 +1184,7 @@ small {
   display: flex;
   align-items: center;
   gap: 26px;
-  padding-block: 16px 54px;
+  padding-block: 8px 36px;
 }
 
 .profile-hero h1 {
@@ -1197,7 +1219,7 @@ small {
 }
 
 .profile-totals div {
-  padding-block: 24px;
+  padding-block: 18px;
 }
 
 .profile-projects > a {
@@ -1245,8 +1267,8 @@ small {
   display: grid;
   grid-template-columns: 1.4fr 0.6fr;
   align-items: end;
-  gap: 48px;
-  padding-block: 16px 64px;
+  gap: 32px;
+  padding-block: 8px 40px;
 }
 
 .cycle-hero h1 {
@@ -1293,8 +1315,8 @@ small {
 }
 
 .cycle-status-grid article {
-  min-height: 190px;
-  padding: 22px;
+  min-height: 156px;
+  padding: 18px;
   background: rgba(255, 253, 248, 0.8);
 }
 
@@ -1303,7 +1325,7 @@ small {
   width: 28px;
   height: 28px;
   place-items: center;
-  margin-bottom: 42px;
+  margin-bottom: 24px;
   border-radius: 50%;
   background: var(--ink);
   color: white;
@@ -1336,11 +1358,11 @@ small {
 
 .artifact-links a {
   display: flex;
-  min-height: 92px;
+  min-height: 76px;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 18px;
+  padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(255, 253, 248, 0.7);
@@ -1371,7 +1393,7 @@ small {
 
 .proposal-intro {
   max-width: 950px;
-  padding-bottom: 64px;
+  padding-bottom: 40px;
 }
 
 .proposal-intro h1 {
@@ -1479,19 +1501,19 @@ small {
 }
 
 .proposal-checklist {
-  padding-top: 110px;
+  padding-top: 64px;
 }
 
 .proposal-checklist > div {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 14px;
-  margin-top: 38px;
+  margin-top: 28px;
 }
 
 .proposal-checklist article {
-  min-height: 230px;
-  padding: 22px;
+  min-height: 190px;
+  padding: 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
@@ -1503,7 +1525,7 @@ small {
 }
 
 .proposal-checklist h3 {
-  margin: 60px 0 10px;
+  margin: 36px 0 10px;
   font-size: 16px;
 }
 
@@ -1517,9 +1539,9 @@ small {
   display: flex;
   align-items: end;
   justify-content: space-between;
-  gap: 40px;
-  margin: 70px 0 20px;
-  padding: 34px;
+  gap: 28px;
+  margin: 48px 0 16px;
+  padding: 28px;
   border-radius: var(--radius);
   background: var(--ink);
   color: var(--white);
@@ -1572,22 +1594,37 @@ small {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .project-leader-head > :nth-child(6),
-  .project-leader-row > :nth-child(6) {
-    display: none;
-  }
-
   .project-leader-head,
   .project-leader-row {
-    grid-template-columns: 55px minmax(170px, 1.4fr) 0.5fr 0.7fr 0.8fr;
+    grid-template-columns: 55px minmax(170px, 1.4fr) 0.5fr 0.8fr;
   }
 
   .project-hero-grid {
     align-items: start;
   }
 
+  .home-agent-prompt {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
   .reward-card {
     max-width: 520px;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .reward-card > p {
+    max-width: 44ch;
+    margin-inline: auto;
+  }
+
+  .reward-card small {
+    display: block;
+  }
+
+  .reward-actions a {
+    justify-content: center;
   }
 
   .proposal-grid {
@@ -1615,6 +1652,8 @@ small {
   }
 
   .menu-button {
+    width: 44px;
+    height: 44px;
     display: inline-grid;
     place-items: center;
   }
@@ -1650,39 +1689,61 @@ small {
 
   .hero {
     min-height: 0;
-    padding-block: 40px 20px;
+    padding-block: 26px 16px;
   }
 
-  .hero h1,
+  .hero h1 {
+    font-size: clamp(46px, 14.8vw, 64px);
+    letter-spacing: -0.04em;
+    line-height: 0.88;
+  }
+
+  .hero-switch {
+    min-height: 1.8em;
+    margin-top: 0.08em;
+    font-size: clamp(36px, 11.5vw, 52px);
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+  }
+
+  .hero-typewriter {
+    display: none;
+  }
+
+  .hero-mobile-action {
+    display: block;
+    grid-area: 1 / 1;
+  }
+
   .project-hero h1,
   .proposal-intro h1 {
     font-size: clamp(45px, 14vw, 68px);
+  }
+
+  .home-agent-prompt {
+    margin-block: 16px 28px;
+    padding: 18px;
   }
 
   .hero-copy {
     font-size: 16px;
   }
 
-  .hero-actions,
-  .hero-actions .button {
-    width: 100%;
-  }
-
   .section {
-    padding-block: 76px;
+    padding-block: 56px;
   }
 
   .home-projects-section {
-    padding-block: 0 42px;
+    padding-block: 0 28px;
   }
 
   .home-leaderboard-section {
-    padding-block: 42px 60px;
+    padding-block: 28px 44px;
   }
 
   .section-heading {
-    gap: 20px;
-    margin-bottom: 30px;
+    gap: 16px;
+    margin-bottom: 22px;
   }
 
   .data-freshness {
@@ -1691,8 +1752,8 @@ small {
 
   .home-leaderboard-heading {
     grid-template-columns: 1fr;
-    gap: 18px;
-    margin-bottom: 22px;
+    gap: 14px;
+    margin-bottom: 18px;
   }
 
   .leaderboard-mode-tabs {
@@ -1700,6 +1761,7 @@ small {
   }
 
   .leaderboard-mode-tabs button {
+    min-height: 44px;
     flex: 1;
   }
 
@@ -1731,12 +1793,20 @@ small {
 
   .project-card {
     min-height: 0;
-    gap: 42px;
-    padding: 22px;
+    gap: 20px;
+    padding: 18px;
+  }
+
+  .project-card-content {
+    gap: 20px;
   }
 
   .project-summary {
     font-size: 15px;
+  }
+
+  .project-bounty strong {
+    font-size: clamp(44px, 14vw, 58px);
   }
 
   .leader-table {
@@ -1772,8 +1842,8 @@ small {
     min-width: 0;
     min-height: 0;
     grid-template-columns: 42px minmax(0, 1fr);
-    gap: 11px 14px;
-    padding: 18px;
+    gap: 10px 12px;
+    padding: 14px;
     border: 1px solid var(--line);
     border-radius: var(--radius);
     background: rgba(255, 253, 248, 0.7);
@@ -1825,26 +1895,47 @@ small {
   }
 
   .breadcrumb {
-    margin-bottom: 48px;
+    margin-bottom: 24px;
   }
 
   .project-hero {
-    padding-top: 36px;
+    padding-block: 28px 36px;
   }
 
-  .project-stat-strip,
+  .reward-card {
+    width: 100%;
+  }
+
+  .reward-actions {
+    gap: 6px;
+  }
+
+  .reward-actions a {
+    gap: 6px;
+    padding-inline: 8px;
+    font-size: 10px;
+  }
+
+  .cycle-status-grid article {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .cycle-status-grid span {
+    margin-bottom: 12px;
+  }
+
   .profile-totals {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .project-stat-strip div,
   .profile-totals div {
     border-bottom: 1px solid var(--line);
   }
 
   .install-panel {
-    margin-top: 70px;
-    padding: 24px;
+    margin-top: 40px;
+    padding: 20px;
   }
 
   .command-box {

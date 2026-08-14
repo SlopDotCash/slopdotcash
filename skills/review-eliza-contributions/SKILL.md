@@ -56,7 +56,7 @@ copied work submitted after an earlier source, or deliberately noisy duplicate
 submissions may become a risk signal. A model finding never bans a contributor;
 it places the item on hold for a maintainer decision with linked evidence.
 
-Run receipts are supporting evidence only. Verify their terminal v2 marker,
+Run receipts are supporting evidence only. Verify their terminal Slop marker,
 device signature, project/repository identity, model, skill revision, time
 window, replay status, and relationship to an accepted outcome. Tokens cannot
 create score, excuse bad work, or override a security finding.
@@ -79,9 +79,9 @@ lines changed, commit count, comments, style-only churn, or unverifiable effort.
 ## Emit a bounded review record
 
 Return human-readable findings first, ordered by severity, with file and line
-references. End with one JSON object inside a fenced `gitarmy-review` block:
+references. End with one JSON object inside a fenced `slop-review` block:
 
-```gitarmy-review
+```slop-review
 {"schemaVersion":"1","projectId":"eliza","artifactUrl":"https://github.com/elizaOS/eliza/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 

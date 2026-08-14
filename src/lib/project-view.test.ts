@@ -40,7 +40,7 @@ function receipt(
     provider: "openai",
     model: "gpt-5.6-sol",
     client: "codex",
-    skillRevision: `elizaOS/army@${"a".repeat(40)}:skills/contribute-to-eliza`,
+    skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
     skillSha256: "b".repeat(64),
     usage: {
       source: "ccusage-session-v20",
@@ -187,7 +187,7 @@ describe("project views", () => {
     ]);
   });
 
-  it("counts project receipts publicly but only weights runs tied to accepted outcomes", () => {
+  it("reports receipt evidence without changing rank or simulated allocation", () => {
     const snapshot = snapshotFixture();
     const relevant = receipt();
     const ambiguous = receipt({
@@ -220,8 +220,8 @@ describe("project views", () => {
       relevantRunCount: 1,
       confidence: "verified-device",
     });
-    expect(view.leaders[0].computeBonusBasisPoints).toBe(1_333);
-    expect(view.leaders[0].adjustedWeight).toBe(271_992);
+    expect(view.leaders[0].computeBonusBasisPoints).toBe(0);
+    expect(view.leaders[0].adjustedWeight).toBe(240_000);
   });
 
   it("drops copied run receipts instead of crediting either identity", () => {
@@ -281,7 +281,7 @@ describe("project views", () => {
       runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAW",
       projectId: "delta-star",
       repositoryId: "lalalune/arklib",
-      skillRevision: `elizaOS/army@${"a".repeat(40)}:skills/contribute-to-delta-star`,
+      skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-delta-star`,
       deviceSignature: "g".repeat(86),
     });
     snapshot.attributions.push(

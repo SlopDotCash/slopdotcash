@@ -372,13 +372,13 @@ function stale(snapshot: LeaderboardSnapshot): boolean {
   return Date.now() - Date.parse(snapshot.generatedAt) > 8 * 60 * 60 * 1_000;
 }
 
-function Header() {
+function Header({ isHome }: { isHome: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <header className="site-header">
       <div className="shell header-inner">
         <Link ariaLabel="Slop home" className="wordmark" href="/">
-          SLOP
+          slop.cash
         </Link>
         <button
           aria-expanded={open}
@@ -390,6 +390,7 @@ function Header() {
           {open ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
         </button>
         <nav className={open ? "nav-links nav-links-open" : "nav-links"}>
+          {!isHome ? <Link href="/">Home</Link> : null}
           <Link href="/#projects">Projects</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
           <ExternalLinkAnchor href={HUB_ORIGIN}>Slop Git</ExternalLinkAnchor>
@@ -409,16 +410,16 @@ function Footer() {
       <div className="shell footer-grid">
         <div>
           <div className="wordmark footer-wordmark">{domain}</div>
-          <p>Accepted work. Public evidence. Digital-dollar rewards.</p>
+          <p>Accepted work. Public evidence. Cash rewards.</p>
+          <p className="footer-copyright">
+            © {new Date().getUTCFullYear()} slop.cash.
+          </p>
         </div>
         <div className="footer-links">
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
           </ExternalLinkAnchor>
           <ExternalLinkAnchor href={HUB_ORIGIN}>Slop Git</ExternalLinkAnchor>
-          <ExternalLinkAnchor href={`${SOURCE_REPOSITORY}/issues/9`}>
-            Protocol
-          </ExternalLinkAnchor>
         </div>
         <p className="footer-fine">
           Projections are estimates, not wages or guarantees. Project owners
@@ -505,6 +506,7 @@ function TypewriterHeroHeading() {
             {action.slice(0, characters)}
             <span className="hero-typewriter-caret" />
           </span>
+          <span className="hero-mobile-action">{action}</span>
         </span>
       </span>
     </h1>
@@ -573,9 +575,6 @@ function GlobalLeaderboard({
   );
   const selectedView =
     views.find((view) => view.project.id === selectedProjectId) ?? views[0];
-  const hasRelevantReceipts =
-    selectedView?.usage.relevantRunCount !== undefined &&
-    selectedView.usage.relevantRunCount > 0;
   const cycleMonth = selectedView
     ? formatCycleMonth(selectedView.cycle.id)
     : "Current month";
@@ -591,11 +590,6 @@ function GlobalLeaderboard({
     >
       <div className="home-leaderboard-heading">
         <h2 className="home-section-title">Leaderboard</h2>
-        <p>
-          This month is the default because every project runs its own reward
-          cycle. Choose one project to see the rank that determines its current
-          estimate. The all-time record is separate history.
-        </p>
       </div>
       <div
         aria-label="Leaderboard timeframe"
@@ -624,18 +618,10 @@ function GlobalLeaderboard({
         </button>
       </div>
       <details className="leaderboard-methodology">
-        <summary>How score and compute affect rewards</summary>
+        <summary>How it works</summary>
         <p>
-          Accepted outcomes—not commits, lines, tokens, or hours—earn score
-          under each project's published rules. With consent, an installed skill
-          measures a pinned ccusage interval and signs the aggregate receipt.
-          Only usage joined to accepted work can add a diminishing bonus of up
-          to 20% to that project's weight. Device signatures protect receipt
-          bytes; they do not prove provider billing or model identity. Estimates
-          can change until review and approval.{" "}
-          {hasRelevantReceipts
-            ? ""
-            : "No relevant signed receipts are counted for the selected project."}
+          Accepted contributions earn points. Current rankings show today's
+          estimated shares. Payouts are off during beta.
         </p>
       </details>
       {mode === "current" ? (
@@ -684,11 +670,9 @@ function GlobalLeaderboard({
                   </strong>
                   <span>{selectedRewardLabel}</span>
                 </div>
-                <p>
-                  {selectedView.reward.kind === "monthly-pool"
-                    ? "Rank and estimate use only this project's accepted work in the current UTC month."
-                    : "This is a provisional contribution share, not a Slop-funded dollar payout."}
-                </p>
+                {selectedView.reward.kind === "external-prize-share" ? (
+                  <p>Prize sponsor controls eligibility and payment.</p>
+                ) : null}
               </div>
               {selectedView.leaders.length === 0 ? (
                 <EmptyState text="No accepted outcomes in this project cycle yet." />
@@ -705,9 +689,7 @@ function GlobalLeaderboard({
                           <th scope="col">Rank</th>
                           <th scope="col">Contributor</th>
                           <th scope="col">Accepted score</th>
-                          <th scope="col">Receipt-linked tokens</th>
-                          <th scope="col">Current estimate</th>
-                          <th scope="col">Weight bonus</th>
+                          <th scope="col">Simulated share</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -737,20 +719,10 @@ function GlobalLeaderboard({
                             <td data-label="Accepted score">
                               <strong>{leader.score}</strong>
                             </td>
-                            <td data-label="Receipt-linked tokens">
-                              {formatCompact(leader.usage.relevantTokens)}
-                            </td>
-                            <td data-label="Current estimate">
+                            <td data-label="Simulated share">
                               <strong>
                                 <RewardValue leader={leader} />
                               </strong>
-                            </td>
-                            <td data-label="Weight bonus">
-                              +
-                              {(leader.computeBonusBasisPoints / 100).toFixed(
-                                2,
-                              )}
-                              %
                             </td>
                           </tr>
                         ))}
@@ -761,7 +733,7 @@ function GlobalLeaderboard({
                     className="leaderboard-project-link"
                     href={`/projects/${selectedView.project.slug}`}
                   >
-                    View the full {selectedView.project.name} cycle
+                    View more
                     <ArrowRight aria-hidden="true" />
                   </Link>
                 </>
@@ -846,6 +818,10 @@ function GlobalLeaderboard({
 
 function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   const views = state.status === "ready" ? state.views : [];
+  const eliza = findProject("eliza");
+  if (!eliza) {
+    throw new TypeError("The Eliza project is not registered");
+  }
   return (
     <main>
       <section className="hero shell">
@@ -853,6 +829,17 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
           <DataNotice state={state} retry={retry} />
         )}
         <TypewriterHeroHeading />
+      </section>
+
+      <section
+        aria-labelledby="home-agent-prompt-heading"
+        className="home-agent-prompt shell"
+      >
+        <div className="home-agent-prompt-heading">
+          <h2 id="home-agent-prompt-heading">Contribute to Eliza.</h2>
+          <p>Paste this to your Claude or Codex agent.</p>
+        </div>
+        <AgentPromptBox prompt={projectAgentPrompt(eliza)} />
       </section>
 
       <section className="section shell home-projects-section" id="projects">
@@ -874,6 +861,60 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   );
 }
 
+function projectAgentPrompt(project: ProjectDefinition): string {
+  const repository = project.repositories[0]?.id;
+  if (!repository) {
+    throw new TypeError(`Project ${project.id} has no contribution repository`);
+  }
+  const origin = window.location.origin.replace(/\/$/u, "");
+  return `Read ${origin}/SKILL.md and follow it to contribute to github.com/${repository}.`;
+}
+
+function AgentPromptBox({ prompt }: { prompt: string }) {
+  const [copy, setCopy] = useState<"copied" | "error" | "idle">("idle");
+  useEffect(() => {
+    if (copy !== "copied") return;
+    const timer = window.setTimeout(() => setCopy("idle"), 1_600);
+    return () => window.clearTimeout(timer);
+  }, [copy]);
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopy("copied");
+    } catch {
+      // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
+      setCopy("error");
+    }
+  };
+  return (
+    <div className="command-box agent-prompt-box">
+      <output aria-label="Agent prompt" className="agent-prompt-copy">
+        <code>{prompt}</code>
+      </output>
+      <button
+        aria-label={
+          copy === "copied"
+            ? "Copied agent prompt"
+            : copy === "error"
+              ? "Copy unavailable; select agent prompt"
+              : "Copy agent prompt"
+        }
+        onClick={() => void copyPrompt()}
+        type="button"
+      >
+        {copy === "copied" ? <Check /> : <Clipboard />}
+        <span className="agent-prompt-copy-label">
+          {copy === "copied"
+            ? "Copied"
+            : copy === "error"
+              ? "Select text"
+              : "Copy"}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 function projectInstallCommand(project: ProjectDefinition): string {
   const origin = `${window.location.origin.replace(/\/$/u, "")}/projects/${project.slug}`;
   return createInstallCommand(origin, `\${HOME}/.agents/skills`, {
@@ -883,30 +924,20 @@ function projectInstallCommand(project: ProjectDefinition): string {
 }
 
 function InstallPanel({ project }: { project: ProjectDefinition }) {
-  const [copy, setCopy] = useState<
-    "manual-copied" | "prompt-copied" | "error" | "idle"
-  >("idle");
+  const [copy, setCopy] = useState<"manual-copied" | "error" | "idle">("idle");
   const origin = window.location.origin.replace(/\/$/u, "");
-  const repository = project.repositories[0]?.id;
-  if (!repository) {
-    throw new TypeError(`Project ${project.id} has no contribution repository`);
-  }
-  const agentPrompt = `Read ${origin}/SKILL.md and follow it to contribute to github.com/${repository}.`;
   const manualCommand = projectInstallCommand(project);
-  const copyText = async (
-    value: string,
-    copiedState: "manual-copied" | "prompt-copied",
-  ) => {
+  const copyManualCommand = async () => {
     try {
-      await navigator.clipboard.writeText(value);
-      setCopy(copiedState);
+      await navigator.clipboard.writeText(manualCommand);
+      setCopy("manual-copied");
     } catch {
       // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
       setCopy("error");
     }
   };
   useEffect(() => {
-    if (copy !== "manual-copied" && copy !== "prompt-copied") return;
+    if (copy !== "manual-copied") return;
     const timer = window.setTimeout(() => setCopy("idle"), 1_600);
     return () => window.clearTimeout(timer);
   }, [copy]);
@@ -915,37 +946,9 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
       <div className="install-heading">
         <div>
           <h2>Copy this into your agent.</h2>
-          <p>
-            One prompt handles the contribution, evidence, and optional payout
-            setup.
-          </p>
         </div>
       </div>
-      <div className="command-box agent-prompt-box">
-        <output aria-label="Agent prompt" className="agent-prompt-copy">
-          <code>{agentPrompt}</code>
-        </output>
-        <button
-          aria-label={
-            copy === "prompt-copied"
-              ? "Copied agent prompt"
-              : copy === "error"
-                ? "Copy unavailable; select agent prompt"
-                : "Copy agent prompt"
-          }
-          onClick={() => void copyText(agentPrompt, "prompt-copied")}
-          type="button"
-        >
-          {copy === "prompt-copied" ? <Check /> : <Clipboard />}
-          <span className="agent-prompt-copy-label">
-            {copy === "prompt-copied"
-              ? "Copied"
-              : copy === "error"
-                ? "Select text"
-                : "Copy"}
-          </span>
-        </button>
-      </div>
+      <AgentPromptBox prompt={projectAgentPrompt(project)} />
       <p className="install-note">
         Works in Codex and Claude Code. If you choose payout setup, the skill
         asks only for a public Solana address and waits before writing to
@@ -973,7 +976,7 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
                   ? "Copy unavailable; select manual install command"
                   : "Copy manual install command"
             }
-            onClick={() => void copyText(manualCommand, "manual-copied")}
+            onClick={() => void copyManualCommand()}
             type="button"
           >
             {copy === "manual-copied" ? <Check /> : <Clipboard />}
@@ -990,6 +993,14 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
           target="_blank"
         >
           Preview the complete workflow
+          <ExternalLink aria-hidden="true" />
+        </a>
+        <a
+          href={`${origin}/projects/${project.slug}/review-codex.md`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Install the independent reviewer skill
           <ExternalLink aria-hidden="true" />
         </a>
       </details>
@@ -1015,10 +1026,7 @@ function ProjectLeaderboard({
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
-        <div>
-          <p className="eyebrow">Cycle {view.cycle.id}</p>
-          <h2>Contribution leaderboard.</h2>
-        </div>
+        <h2>{formatCycleMonth(view.cycle.id)} leaderboard.</h2>
         <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
       </div>
       {view.leaders.length === 0 ? (
@@ -1034,9 +1042,7 @@ function ProjectLeaderboard({
                 <th scope="col">Rank</th>
                 <th scope="col">Contributor</th>
                 <th scope="col">Score</th>
-                <th scope="col">Receipt-linked tokens</th>
-                <th scope="col">Projection</th>
-                <th scope="col">Weight bonus</th>
+                <th scope="col">Simulated share</th>
               </tr>
             </thead>
             <tbody>
@@ -1063,13 +1069,11 @@ function ProjectLeaderboard({
                   <td>
                     <strong>{leader.score}</strong>
                   </td>
-                  <td>{formatCompact(leader.usage.relevantTokens)}</td>
                   <td>
                     <strong>
                       <RewardValue leader={leader} />
                     </strong>
                   </td>
-                  <td>+{(leader.computeBonusBasisPoints / 100).toFixed(2)}%</td>
                 </tr>
               ))}
             </tbody>
@@ -1082,41 +1086,6 @@ function ProjectLeaderboard({
 
 function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
-}
-
-function ProjectStats({ view }: { view: ProjectView }) {
-  const totalScore = view.leaders.reduce(
-    (sum, leader) => sum + leader.score,
-    0,
-  );
-  const projected =
-    view.reward.kind === "monthly-pool"
-      ? formatMicroUsdc(view.reward.projectedPrincipalMinor)
-      : `${view.reward.advertisedAmountDisplay} external`;
-  return (
-    <div className="project-stat-strip">
-      <div>
-        <strong>{projected}</strong>
-        <span>
-          {view.reward.kind === "monthly-pool"
-            ? "cycle projection"
-            : "opportunity size"}
-        </span>
-      </div>
-      <div>
-        <strong>{view.leaders.length}</strong>
-        <span>scored contributors</span>
-      </div>
-      <div>
-        <strong>{totalScore}</strong>
-        <span>accepted score</span>
-      </div>
-      <div>
-        <strong>{formatCompact(view.usage.relevantTokens)}</strong>
-        <span>receipt-linked tokens</span>
-      </div>
-    </div>
-  );
 }
 
 function ProjectPage({
@@ -1132,6 +1101,14 @@ function ProjectPage({
     state.status === "ready"
       ? state.views.find((candidate) => candidate.project.id === project.id)
       : undefined;
+  const repository = project.repositories[0]?.id;
+  if (!repository) {
+    throw new TypeError(`Project ${project.id} has no contribution repository`);
+  }
+  const headlinePrefix = "Make money ";
+  const headlineAction = project.headline.startsWith(headlinePrefix)
+    ? project.headline.slice(headlinePrefix.length)
+    : null;
   return (
     <main>
       <section className="project-hero">
@@ -1144,20 +1121,19 @@ function ProjectPage({
           </p>
           <div className="project-hero-grid">
             <div>
-              <p className="eyebrow">{project.eyebrow}</p>
-              <h1>{project.headline}</h1>
+              <h1>
+                {headlineAction ? (
+                  <>
+                    Make money{" "}
+                    <span className="project-headline-action">
+                      {headlineAction}
+                    </span>
+                  </>
+                ) : (
+                  project.headline
+                )}
+              </h1>
               <p className="hero-copy">{project.description}</p>
-              <div className="hero-actions">
-                <a className="button primary-button" href="#start">
-                  Start in one command <ArrowRight aria-hidden="true" />
-                </a>
-                <ExternalLinkAnchor
-                  className="button text-button"
-                  href={project.links.repository}
-                >
-                  View repository
-                </ExternalLinkAnchor>
-              </div>
             </div>
             <aside className="reward-card">
               <span>
@@ -1165,31 +1141,39 @@ function ProjectPage({
                   ? "MONTHLY POOL"
                   : "EXTERNAL OPPORTUNITY"}
               </span>
-              <strong>
+              <strong
+                className={
+                  project.reward.kind === "monthly-pool"
+                    ? "reward-amount-monthly"
+                    : undefined
+                }
+              >
                 {project.reward.kind === "monthly-pool"
                   ? project.reward.monthlyCapDisplay
                   : project.reward.externalOpportunity?.advertisedAmountDisplay}
               </strong>
               <p>
                 {project.reward.kind === "monthly-pool"
-                  ? "Maximum principal allocated each UTC month. Unused funding rolls forward without raising the next cap."
+                  ? "Up to this amount is allocated each month. Unused funding rolls forward without raising the cap."
                   : "The platform publishes contribution percentages only. The prize sponsor controls eligibility and payment."}
               </p>
               <div>
-                <small>
-                  {project.reward.kind === "monthly-pool"
-                    ? "1% platform fee · Solana"
-                    : "No platform pool · no dollar projection"}
-                </small>
-                <Link
-                  href={`/cycles/${project.slug}/${view?.cycle.id ?? new Date().toISOString().slice(0, 7)}`}
-                >
-                  View cycle <ArrowRight aria-hidden="true" size={15} />
-                </Link>
+                {project.reward.kind === "external-prize-share" ? (
+                  <small>No platform pool · no dollar projection</small>
+                ) : null}
+                <div className="reward-actions">
+                  <ExternalLinkAnchor href={project.links.repository}>
+                    View in GitHub
+                    <ExternalLink aria-hidden="true" size={14} />
+                  </ExternalLinkAnchor>
+                  <ExternalLinkAnchor href={`${HUB_ORIGIN}/${repository}`}>
+                    View in SlopHub
+                    <ExternalLink aria-hidden="true" size={14} />
+                  </ExternalLinkAnchor>
+                </div>
               </div>
             </aside>
           </div>
-          {view ? <ProjectStats view={view} /> : null}
         </div>
       </section>
       <div className="shell">
@@ -1286,8 +1270,8 @@ function ProfilePage({
     )
     .slice(0, PROFILE_OPPORTUNITY_LIMIT);
   const score = globalLeader?.score ?? 0;
-  const tokens = matches.reduce(
-    (total, match) => total + match.leader.usage.relevantTokens,
+  const acceptedOutcomes = matches.reduce(
+    (total, match) => total + match.leader.acceptedOutcomeCount,
     0,
   );
   const projected = matches.reduce(
@@ -1332,12 +1316,12 @@ function ProfilePage({
           <span>recorded score</span>
         </div>
         <div>
-          <strong>{formatCompact(tokens)}</strong>
-          <span>current receipt-linked tokens</span>
+          <strong>{formatCompact(acceptedOutcomes)}</strong>
+          <span>current accepted outcomes</span>
         </div>
         <div>
           <strong>{formatMicroUsdc(projected.toString())}</strong>
-          <span>current projection</span>
+          <span>current simulated share</span>
         </div>
         <div>
           <strong>{formatMicroUsdc(paid.toString())}</strong>
@@ -1367,8 +1351,8 @@ function ProfilePage({
                     <span>
                       <strong>{leader.score} score</strong>
                       <small>
-                        {formatCompact(leader.usage.relevantTokens)}{" "}
-                        receipt-linked tokens
+                        {leader.acceptedOutcomeCount} accepted outcome
+                        {leader.acceptedOutcomeCount === 1 ? "" : "s"}
                       </small>
                     </span>
                     <span>
@@ -1817,6 +1801,7 @@ function ProjectProposalPage() {
         monthlyCapMinor: pool.minor,
         monthlyCapDisplay: pool.display,
         committedMinor: "0",
+        paymentMode: "disabled",
         feeBasisPoints: 100,
         unusedFunds: "rollover-without-cap-increase",
         fundingState: "pledged",
@@ -2083,7 +2068,7 @@ export function App() {
   } else content = <NotFound />;
   return (
     <>
-      <Header />
+      <Header isHome={route.kind === "home"} />
       {content}
       <Footer />
     </>

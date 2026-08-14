@@ -7,7 +7,11 @@
 import { link, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findProject, type ProjectId } from "../src/lib/projects.mjs";
+import {
+  assertProjectPaymentsEnabled,
+  findProject,
+  type ProjectId,
+} from "../src/lib/projects.mjs";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import { validateCycleTransition } from "./sync-cycle-index";
 
@@ -101,6 +105,7 @@ export async function finalizeRewardCycle(
     write?: (path: string, value: unknown) => Promise<void>;
   } = {},
 ) {
+  assertProjectPaymentsEnabled(arguments_.projectId);
   const expectedInput = resolve(
     CYCLES_ROOT,
     arguments_.projectId,

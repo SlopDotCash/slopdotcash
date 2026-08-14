@@ -65,7 +65,7 @@ sponsor controls eligibility and payment.
 
 Return findings first, ordered by severity, then one bounded record:
 
-```gitarmy-review
+```slop-review
 {"schemaVersion":"1","projectId":"delta-star","artifactUrl":"https://github.com/lalalune/ArkLib/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","usefulArtifacts":["specific theorem, refutation, or proof"],"commands":["exact locked command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 

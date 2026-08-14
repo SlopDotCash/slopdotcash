@@ -1,6 +1,6 @@
 /**
- * Verifies that each money-shaped command checks the canonical cycle state
- * before reading an input artifact, writing a successor, or reaching Solana.
+ * Verifies that disabled project payments stop every money-state command
+ * before reading an artifact, writing a successor, or reaching Solana.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -20,7 +20,7 @@ import {
 const NOW = "2026-08-20T00:00:00.000Z";
 
 describe("money-state command guards", () => {
-  it("approves only a fully verified review cycle", async () => {
+  it("refuses allocation approval while project payments are disabled", async () => {
     const validate = vi.fn(async () => ({ state: "payment-ready" }));
     const write = vi.fn(async () => undefined);
     const arguments_ = parseFinalizeArguments(
@@ -30,12 +30,12 @@ describe("money-state command guards", () => {
 
     await expect(
       finalizeRewardCycle(arguments_, { validate, write }),
-    ).rejects.toThrow("Only a fully verified review cycle");
-    expect(validate).toHaveBeenCalledWith("eliza", "2026-07");
+    ).rejects.toThrow("Payments are disabled for project eliza");
+    expect(validate).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("plans transfers only from payment-ready state", async () => {
+  it("refuses settlement planning while project payments are disabled", async () => {
     const validate = vi.fn(async () => ({ state: "review" }));
     const write = vi.fn(async () => undefined);
     const arguments_ = parseSettlementPlanArguments(
@@ -54,12 +54,12 @@ describe("money-state command guards", () => {
 
     await expect(
       prepareSettlementPlan(arguments_, { validate, write }),
-    ).rejects.toThrow("Only a verified approved allocation");
-    expect(validate).toHaveBeenCalledWith("eliza", "2026-07");
+    ).rejects.toThrow("Payments are disabled for project eliza");
+    expect(validate).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("allows pending transaction evidence only at the verifier boundary", async () => {
+  it("refuses chain verification while project payments are disabled", async () => {
     const validate = vi.fn(async () => ({ state: "payment-ready" }));
     const write = vi.fn(async () => undefined);
     const getTransaction = vi.fn(async () => ({}));
@@ -70,10 +70,8 @@ describe("money-state command guards", () => {
 
     await expect(
       verifySettlement(arguments_, { getTransaction, validate, write }),
-    ).rejects.toThrow("Only a verified execution plan");
-    expect(validate).toHaveBeenCalledWith("eliza", "2026-07", {
-      allowPendingTransactionEvidence: true,
-    });
+    ).rejects.toThrow("Payments are disabled for project eliza");
+    expect(validate).not.toHaveBeenCalled();
     expect(getTransaction).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
   });

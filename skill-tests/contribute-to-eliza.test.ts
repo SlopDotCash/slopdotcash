@@ -29,13 +29,17 @@ import {
   auditPrEvidence,
   CLAIM_RECENCY_DAYS,
   collectLiveReport,
+  createGhCommandBudget,
   isBotAccount,
+  MAX_ACTIVITY_CONNECTION_ITEMS,
+  MISSION_READY_LABEL,
   parseCliArguments,
   parseModelDisclosure,
   parsePaginatedJson,
   REQUIRED_EVIDENCE_ROWS,
   readGhOpenActivity,
   readGhPages,
+  readProjectSelectionPolicy,
   renderMarkdown,
 } from "../skills/contribute-to-eliza/scripts/live-report.mjs";
 import {
@@ -127,6 +131,18 @@ function evidenceBody() {
   return `${rows}\n\nAI provider/model: OpenAI / gpt-5.6-codex`;
 }
 
+function pagedStdout(args: string[], records: unknown[]) {
+  const endpoint = args.at(-1);
+  assert.strictEqual(typeof endpoint, "string");
+  const pageMatch = endpoint.match(/[?&]page=(\d+)$/);
+  assert.ok(pageMatch, `missing explicit page in ${endpoint}`);
+  const start = (Number(pageMatch[1]) - 1) * 100;
+  const page = records.slice(start, start + 100);
+  return page.length === 0
+    ? ""
+    : `${page.map((value) => JSON.stringify(value)).join("\n")}\n`;
+}
+
 describe("contribute-to-eliza skill structure", () => {
   it("has valid, trigger-rich frontmatter and no scaffold placeholders", () => {
     const source = readFileSync(skillPath, "utf8");
@@ -158,7 +174,7 @@ describe("contribute-to-eliza skill structure", () => {
     assert.match(source, /run-receipt\.mjs finish/);
     assert.match(source, /gpt-5\.6-sol/);
     assert.match(source, /claude-fable-5/);
-    assert.match(source, /v2 marker/i);
+    assert.match(source, /Slop marker/i);
     assert.match(source, /device signature/i);
     assert.match(source, /updates only to GitHub-authorized bytes/i);
     assert.match(source, /SECURITY\.md/);
@@ -173,6 +189,39 @@ describe("contribute-to-eliza skill structure", () => {
     assert.match(source, /operator approval/i);
     assert.match(source, /single-use least-privilege credential/i);
     assert.match(source, /normal `gh` config/i);
+  });
+
+  it("rejects contribution spam and gates work on the primary Eliza mission", () => {
+    const source = readFileSync(skillPath, "utf8");
+    const mission = readFileSync(
+      join(skillDir, "references", "mission-priorities.md"),
+      "utf8",
+    );
+
+    assert.match(source, /Do not create an issue automatically/i);
+    assert.match(
+      source,
+      /Never apply, request, suggest applying, or automate/i,
+    );
+    assert.match(source, /exact repository label\s+`mission-ready`/i);
+    assert.match(source, /explicit operator request/i);
+    assert.match(source, /Keep at most one active implementation or review/i);
+    assert.match(source, /Never\s+mirror a PR title into an issue/i);
+    assert.match(source, /Prefer one complete fix to\s+several small PRs/i);
+    assert.match(source, /Ignore leaderboard position/i);
+    assert.match(mission, /Eliza app/);
+    assert.match(mission, /Eliza Cloud/);
+    assert.match(mission, /Core agent runtime/);
+    assert.match(mission, /Primary capabilities/);
+    assert.match(mission, /New niche plugins.*outside the mission/is);
+    assert.match(
+      mission,
+      /splitting one outcome into multiple issues or pull requests/i,
+    );
+    assert.match(mission, /Recommend closure rather than repairs/i);
+    assert.deepStrictEqual(readProjectSelectionPolicy().eligibleIssueLabels, [
+      "mission-ready",
+    ]);
   });
 
   it("states the reward without letting tokens or projections promise payment", () => {
@@ -296,6 +345,7 @@ writeFileSync(
 
     assert.deepStrictEqual(references.sort(), [
       "references/evidence-review-rubric.md",
+      "references/mission-priorities.md",
       "references/repository-contract.md",
     ]);
     for (const reference of references) {
@@ -308,7 +358,7 @@ writeFileSync(
     );
     assert.match(openaiYaml, /display_name: "Contribute to Eliza"/);
     assert.match(openaiYaml, /default_prompt: "Use \$contribute-to-eliza/);
-    assert.match(openaiYaml, /one bounded contribution/);
+    assert.match(openaiYaml, /one mission-critical contribution/);
     assert.match(openaiYaml, /elizaOS\/eliza/);
   });
 });
@@ -436,12 +486,271 @@ describe("live report parsing", () => {
     assert.strictEqual(calls.length, 2);
     assert.ok(calls.every((args) => args.includes("graphql")));
     assert.ok(calls.every((args) => args.includes("--paginate")));
+    assert.ok(
+      calls.every((args) => args[args.indexOf("--method") + 1] === "POST"),
+    );
+    assert.ok(
+      calls.every((args) => {
+        const query = args.find((argument) => argument.startsWith("query="));
+        return query?.includes("query(") && !/\bmutation\b/i.test(query);
+      }),
+    );
     assert.strictEqual(activity.issues.get(1)?.[0].user.id, 42);
     assert.strictEqual(activity.pulls.get(2)?.reviews[0].commit_id, HEAD_SHA);
     assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 1);
   });
 
-  it("fails closed when nested GraphQL activity would be truncated", () => {
+  it("paginates overflowing issue activity through bounded GET-only REST", () => {
+    const actor = {
+      __typename: "User",
+      databaseId: 42,
+      id: "U_42",
+      login: "reviewer",
+    };
+    const graphqlComments = Array.from({ length: 100 }, (_, index) => ({
+      databaseId: index + 1,
+      url: `https://github.com/elizaOS/eliza/issues/1#issuecomment-${index + 1}`,
+      body: `Comment ${index + 1}`,
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: actor,
+    }));
+    const restComments = Array.from({ length: 351 }, (_, index) => ({
+      id: index + 1,
+      html_url: `https://github.com/elizaOS/eliza/issues/1#issuecomment-${index + 1}`,
+      body: `Comment ${index + 1}`,
+      created_at: "2026-01-18T12:00:00.000Z",
+      author_association: "MEMBER",
+      user: { id: 42, login: "reviewer", type: "User" },
+    }));
+    const calls: string[][] = [];
+    const commandBudget = createGhCommandBudget((_command, args) => {
+      calls.push(args);
+      if (args.includes("graphql")) {
+        return {
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".issues.")
+            ? `${JSON.stringify({
+                number: 1,
+                comments: { totalCount: 351, nodes: graphqlComments },
+              })}\n`
+            : "",
+        };
+      }
+      assert.ok(args.includes("--method"));
+      assert.strictEqual(args[args.indexOf("--method") + 1], "GET");
+      assert.ok(!args.includes("--paginate"));
+      assert.ok(
+        args
+          .at(-1)
+          ?.startsWith(
+            "repos/elizaOS/eliza/issues/1/comments?per_page=100&page=",
+          ),
+      );
+      return {
+        status: 0,
+        stderr: "",
+        stdout: pagedStdout(args, restComments),
+      };
+    });
+    const activity = readGhOpenActivity("elizaOS/eliza", commandBudget.run);
+
+    assert.strictEqual(calls.length, 6);
+    assert.strictEqual(commandBudget.count, 6);
+    assert.strictEqual(activity.issues.get(1)?.length, 351);
+    assert.strictEqual(activity.issues.get(1)?.at(-1)?.id, 351);
+  });
+
+  it("paginates every overflowing pull-request activity surface", () => {
+    const actor = {
+      __typename: "User",
+      databaseId: 42,
+      id: "U_42",
+      login: "reviewer",
+    };
+    const graphqlComment = (id: number) => ({
+      databaseId: id,
+      url: `https://github.com/elizaOS/eliza/pull/2#issuecomment-${id}`,
+      body: `Comment ${id}`,
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: actor,
+    });
+    const restComment = (id: number) => ({
+      id,
+      html_url: `https://github.com/elizaOS/eliza/pull/2#comment-${id}`,
+      body: `Comment ${id}`,
+      created_at: "2026-01-18T12:00:00.000Z",
+      author_association: "MEMBER",
+      user: { id: 42, login: "reviewer", type: "User" },
+    });
+    const graphqlReview = (id: number) => ({
+      databaseId: id,
+      url: `https://github.com/elizaOS/eliza/pull/2#pullrequestreview-${id}`,
+      body: `Review ${id}`,
+      submittedAt: "2026-01-18T12:00:00.000Z",
+      state: "COMMENTED",
+      commit: { oid: HEAD_SHA },
+      author: actor,
+    });
+    const restReview = (id: number) => ({
+      id,
+      html_url: `https://github.com/elizaOS/eliza/pull/2#pullrequestreview-${id}`,
+      body: `Review ${id}`,
+      submitted_at: "2026-01-18T12:00:00.000Z",
+      state: "COMMENTED",
+      commit_id: HEAD_SHA,
+      user: { id: 42, login: "reviewer", type: "User" },
+    });
+    const pullNode = {
+      number: 2,
+      comments: {
+        totalCount: 101,
+        nodes: Array.from({ length: 100 }, (_, index) =>
+          graphqlComment(index + 1),
+        ),
+      },
+      reviews: {
+        totalCount: 102,
+        nodes: Array.from({ length: 100 }, (_, index) =>
+          graphqlReview(index + 1),
+        ),
+      },
+      reviewThreads: {
+        totalCount: 101,
+        nodes: Array.from({ length: 100 }, (_, index) => ({
+          comments: {
+            totalCount: 1,
+            nodes: [graphqlComment(index + 1)],
+          },
+        })),
+      },
+    };
+    const calls: string[][] = [];
+    const activity = readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+      calls.push(args);
+      if (args.includes("graphql")) {
+        return {
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".pullRequests.")
+            ? `${JSON.stringify(pullNode)}\n`
+            : "",
+        };
+      }
+      const endpoint = args.at(-1) ?? "";
+      let records: Array<Record<string, unknown>>;
+      if (
+        endpoint.startsWith(
+          "repos/elizaOS/eliza/issues/2/comments?per_page=100&page=",
+        )
+      ) {
+        records = Array.from({ length: 101 }, (_, index) =>
+          restComment(index + 1),
+        );
+      } else if (
+        endpoint.startsWith(
+          "repos/elizaOS/eliza/pulls/2/reviews?per_page=100&page=",
+        )
+      ) {
+        records = Array.from({ length: 102 }, (_, index) =>
+          restReview(index + 1),
+        );
+      } else {
+        assert.ok(
+          endpoint.startsWith(
+            "repos/elizaOS/eliza/pulls/2/comments?per_page=100&page=",
+          ),
+        );
+        records = Array.from({ length: 151 }, (_, index) =>
+          restComment(index + 1),
+        );
+      }
+      return {
+        status: 0,
+        stderr: "",
+        stdout: pagedStdout(args, records),
+      };
+    });
+
+    assert.strictEqual(calls.length, 8);
+    assert.strictEqual(activity.pulls.get(2)?.issueComments.length, 101);
+    assert.strictEqual(activity.pulls.get(2)?.reviews.length, 102);
+    assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 151);
+  });
+
+  it("paginates a single overflowing review thread through flat REST", () => {
+    const actor = {
+      __typename: "User",
+      databaseId: 42,
+      id: "U_42",
+      login: "reviewer",
+    };
+    const graphqlComment = (id: number) => ({
+      databaseId: id,
+      url: `https://github.com/elizaOS/eliza/pull/2#discussion_r${id}`,
+      body: `Comment ${id}`,
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: actor,
+    });
+    const restComments = Array.from({ length: 101 }, (_, index) => ({
+      id: index + 1,
+      html_url: `https://github.com/elizaOS/eliza/pull/2#discussion_r${index + 1}`,
+      body: `Comment ${index + 1}`,
+      created_at: "2026-01-18T12:00:00.000Z",
+      author_association: "MEMBER",
+      user: { id: 42, login: "reviewer", type: "User" },
+    }));
+    const calls: string[][] = [];
+    const activity = readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+      calls.push(args);
+      if (args.includes("graphql")) {
+        return {
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".pullRequests.")
+            ? `${JSON.stringify({
+                number: 2,
+                comments: { totalCount: 0, nodes: [] },
+                reviews: { totalCount: 0, nodes: [] },
+                reviewThreads: {
+                  totalCount: 1,
+                  nodes: [
+                    {
+                      comments: {
+                        totalCount: 101,
+                        nodes: Array.from({ length: 100 }, (_, index) =>
+                          graphqlComment(index + 1),
+                        ),
+                      },
+                    },
+                  ],
+                },
+              })}\n`
+            : "",
+        };
+      }
+      assert.ok(
+        args
+          .at(-1)
+          ?.startsWith(
+            "repos/elizaOS/eliza/pulls/2/comments?per_page=100&page=",
+          ),
+      );
+      return {
+        status: 0,
+        stderr: "",
+        stdout: pagedStdout(args, restComments),
+      };
+    });
+
+    assert.strictEqual(calls.length, 4);
+    assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 101);
+  });
+
+  it("fails closed when nested GraphQL activity exceeds the bounded fallback", () => {
     assert.throws(
       () =>
         readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
@@ -450,12 +759,128 @@ describe("live report parsing", () => {
           stdout: args.at(-1)?.includes(".issues.")
             ? `${JSON.stringify({
                 number: 1,
-                comments: { totalCount: 101, nodes: [] },
+                comments: {
+                  totalCount: MAX_ACTIVITY_CONNECTION_ITEMS + 1,
+                  nodes: Array.from({ length: 100 }, () => ({})),
+                },
               })}\n`
             : "",
         })),
-      /exceeds the complete 100-record activity bound/,
+      /exceeds the complete 1000-record activity bound/,
     );
+  });
+
+  it("fails closed on an incomplete initial GraphQL activity page", () => {
+    assert.throws(
+      () =>
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
+          status: 0,
+          stderr: "",
+          stdout: args.at(-1)?.includes(".issues.")
+            ? `${JSON.stringify({
+                number: 1,
+                comments: {
+                  totalCount: 351,
+                  nodes: Array.from({ length: 99 }, () => ({})),
+                },
+              })}\n`
+            : "",
+        })),
+      /returned 99 of the expected 100 initial activity records/,
+    );
+  });
+
+  it("fails closed when paginated REST activity exceeds the bound", () => {
+    const restComments = Array.from(
+      { length: MAX_ACTIVITY_CONNECTION_ITEMS + 1 },
+      (_, index) => ({ id: index + 1 }),
+    );
+    const calls: string[][] = [];
+
+    assert.throws(
+      () =>
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => {
+          calls.push(args);
+          if (args.includes("graphql")) {
+            return {
+              status: 0,
+              stderr: "",
+              stdout: args.at(-1)?.includes(".pullRequests.")
+                ? `${JSON.stringify({
+                    number: 2,
+                    comments: { totalCount: 0, nodes: [] },
+                    reviews: { totalCount: 0, nodes: [] },
+                    reviewThreads: {
+                      totalCount: 101,
+                      nodes: Array.from({ length: 100 }, () => ({})),
+                    },
+                  })}\n`
+                : "",
+            };
+          }
+          return {
+            status: 0,
+            stderr: "",
+            stdout: pagedStdout(args, restComments),
+          };
+        }),
+      /exceeds the complete 1000-record activity bound/,
+    );
+    assert.strictEqual(calls.length, 13);
+    assert.match(calls.at(-1)?.at(-1) ?? "", /[?&]page=11$/);
+  });
+
+  it("fails closed when paginated REST activity disagrees with GraphQL", () => {
+    const graphqlComments = Array.from({ length: 100 }, (_, index) => ({
+      databaseId: index + 1,
+      url: `https://github.com/elizaOS/eliza/issues/1#issuecomment-${index + 1}`,
+      body: "",
+      createdAt: "2026-01-18T12:00:00.000Z",
+      authorAssociation: "MEMBER",
+      author: null,
+    }));
+    const restComments = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+    }));
+
+    assert.throws(
+      () =>
+        readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
+          status: 0,
+          stderr: "",
+          stdout: args.includes("graphql")
+            ? args.at(-1)?.includes(".issues.")
+              ? `${JSON.stringify({
+                  number: 1,
+                  comments: { totalCount: 101, nodes: graphqlComments },
+                })}\n`
+              : ""
+            : pagedStdout(args, restComments),
+        })),
+      /returned 100 records after reporting 101/,
+    );
+  });
+
+  it("rejects the seventeenth GitHub command before spawning it", () => {
+    let invocations = 0;
+    const commandBudget = createGhCommandBudget(() => {
+      invocations += 1;
+      return { status: 0, stderr: "", stdout: "" };
+    });
+    for (let index = 0; index < 16; index += 1) {
+      commandBudget.run("gh", ["api", "endpoint"], { encoding: "utf8" });
+    }
+    assert.strictEqual(commandBudget.count, 16);
+    assert.strictEqual(invocations, 16);
+    assert.throws(
+      () =>
+        commandBudget.run("gh", ["api", "endpoint"], {
+          encoding: "utf8",
+        }),
+      /exceeds the 16-command safety bound/,
+    );
+    assert.strictEqual(commandBudget.count, 16);
+    assert.strictEqual(invocations, 16);
   });
 
   it("accepts exact provider/model pairs and rejects placeholders", () => {
@@ -846,7 +1271,7 @@ describe("live report behavior", () => {
         title: "Bot issue",
         html_url: "https://github.com/elizaOS/eliza/issues/1",
         user: account("dependabot[bot]", "Bot"),
-        labels: [],
+        labels: [{ name: "good first issue" }],
         assignees: [],
         comments: 0,
       },
@@ -855,7 +1280,7 @@ describe("live report behavior", () => {
         title: "Claimed issue",
         html_url: "https://github.com/elizaOS/eliza/issues/2",
         user: account("human-one"),
-        labels: [{ name: "good first issue" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -864,7 +1289,7 @@ describe("live report behavior", () => {
         title: "Candidate issue",
         html_url: "https://github.com/elizaOS/eliza/issues/3",
         user: account("human-two"),
-        labels: [{ name: "good first issue" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -882,7 +1307,7 @@ describe("live report behavior", () => {
         title: "Lane-labeled claim",
         html_url: "https://github.com/elizaOS/eliza/issues/5",
         user: account("human-four"),
-        labels: [{ name: "good first issue" }, { name: "claimed:shaw-codex" }],
+        labels: [{ name: "mission-ready" }, { name: "claimed:shaw-codex" }],
         assignees: [],
         comments: 0,
       },
@@ -891,7 +1316,7 @@ describe("live report behavior", () => {
         title: "Blocked issue",
         html_url: "https://github.com/elizaOS/eliza/issues/6",
         user: account("human-five"),
-        labels: [{ name: "good first issue" }, { name: "status: blocked" }],
+        labels: [{ name: "mission-ready" }, { name: "status: blocked" }],
         assignees: [],
         comments: 0,
       },
@@ -906,7 +1331,7 @@ describe("live report behavior", () => {
       },
       {
         number: 8,
-        title: "Needs maintainer triage",
+        title: "mission-ready typed in title is still a proposal",
         html_url: "https://github.com/elizaOS/eliza/issues/8",
         user: account("human-six"),
         labels: [],
@@ -918,7 +1343,7 @@ describe("live report behavior", () => {
         title: "[Epic] Replace the whole contribution pipeline",
         html_url: "https://github.com/elizaOS/eliza/issues/9",
         user: account("human-seven"),
-        labels: [{ name: "triage-reviewed" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 0,
       },
@@ -928,7 +1353,7 @@ describe("live report behavior", () => {
         html_url: "https://github.com/elizaOS/eliza/issues/19",
         user: account("human-eight"),
         labels: [
-          { name: "triage-reviewed" },
+          { name: "mission-ready" },
           { name: "needs-human-verification" },
         ],
         assignees: [],
@@ -939,7 +1364,7 @@ describe("live report behavior", () => {
         title: "Replace the whole contribution pipeline",
         html_url: "https://github.com/elizaOS/eliza/issues/20",
         user: account("human-nine"),
-        labels: [{ name: "triage-reviewed" }, { name: "Epic 4" }],
+        labels: [{ name: "mission-ready" }, { name: "Epic 4" }],
         assignees: [],
         comments: 0,
       },
@@ -948,7 +1373,7 @@ describe("live report behavior", () => {
         title: "Proposal awaiting a decision",
         html_url: "https://github.com/elizaOS/eliza/issues/21",
         user: account("human-ten"),
-        labels: [{ name: "triage-reviewed" }, { name: "status/proposal" }],
+        labels: [{ name: "mission-ready" }, { name: "status/proposal" }],
         assignees: [],
         comments: 0,
       },
@@ -1072,6 +1497,9 @@ describe("live report behavior", () => {
         return response;
       },
       NOW,
+      () => {},
+      null,
+      [MISSION_READY_LABEL],
     );
 
     assert.deepStrictEqual(
@@ -1158,17 +1586,22 @@ describe("live report behavior", () => {
       renderMarkdown(report),
       /PR \[#14\].*lacks exact provider\/model/,
     );
+    assert.match(
+      renderMarkdown(report),
+      /require one configured maintainer-controlled repository label \(mission-ready\)/i,
+    );
   });
 
   it("expires comment claims after seven days but preserves durable issue state", () => {
     assert.strictEqual(CLAIM_RECENCY_DAYS, 7);
+    assert.strictEqual(MISSION_READY_LABEL, "mission-ready");
     const issues = [
       {
         number: 20,
         title: "Recent comment claim",
         html_url: "https://github.com/elizaOS/eliza/issues/20",
         user: account("author-20"),
-        labels: [{ name: "help wanted" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -1177,7 +1610,7 @@ describe("live report behavior", () => {
         title: "Expired comment claim",
         html_url: "https://github.com/elizaOS/eliza/issues/21",
         user: account("author-21"),
-        labels: [{ name: "help wanted" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -1186,7 +1619,7 @@ describe("live report behavior", () => {
         title: "Durably assigned",
         html_url: "https://github.com/elizaOS/eliza/issues/22",
         user: account("author-22"),
-        labels: [{ name: "help wanted" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [account("maintainer")],
         comments: 1,
       },
@@ -1195,7 +1628,10 @@ describe("live report behavior", () => {
         title: "Durably labeled",
         html_url: "https://github.com/elizaOS/eliza/issues/23",
         user: account("author-23"),
-        labels: [{ name: "help wanted" }, { name: "  status: in-progress  " }],
+        labels: [
+          { name: "mission-ready" },
+          { name: "  status: in-progress  " },
+        ],
         assignees: [],
         comments: 1,
       },
@@ -1204,7 +1640,7 @@ describe("live report behavior", () => {
         title: "Untrusted public claim",
         html_url: "https://github.com/elizaOS/eliza/issues/24",
         user: account("author-24"),
-        labels: [{ name: "help wanted" }],
+        labels: [{ name: "mission-ready" }],
         assignees: [],
         comments: 1,
       },
@@ -1789,7 +2225,7 @@ describe("run receipt CLI", () => {
           {
             schemaVersion: "1",
             name: "contribute-to-eliza",
-            repository: "elizaOS/army",
+            repository: "elizaOS/slopdotcash",
             revision: sourceRevision,
             revisionStatus: "committed",
             source: {
@@ -1810,11 +2246,11 @@ describe("run receipt CLI", () => {
         )}\n`,
       );
       writeFileSync(
-        join(installedSkillRoot, ".gitarmy-authorization.json"),
+        join(installedSkillRoot, ".slop-authorization.json"),
         `${JSON.stringify(
           {
             schemaVersion: "1",
-            repository: "elizaOS/army",
+            repository: "elizaOS/slopdotcash",
             revision: sourceRevision,
             authorization: {
               kind: "develop",
@@ -1842,7 +2278,7 @@ describe("run receipt CLI", () => {
         "fi",
         'if [ "$3" = "--version" ]; then',
         `  printf '%s\\n' "$*" >> ${quotedArgsLog}`,
-        "  echo 20.0.19",
+        "  echo ccusage 20.0.19",
         "  exit 0",
         "fi",
         `if [ -f ${quotedFailureFlag} ]; then`,
@@ -1965,7 +2401,7 @@ describe("run receipt CLI", () => {
         1,
       );
 
-      const stateRoot = join(environment.XDG_CONFIG_HOME, "gitarmy", "runs");
+      const stateRoot = join(environment.XDG_CONFIG_HOME, "slop", "runs");
       writeFileSync(
         fixturePayload,
         JSON.stringify({
@@ -2096,7 +2532,7 @@ describe("run receipt CLI", () => {
         ["provider", "evil"],
         [
           "skillRevision",
-          `elizaOS/army@${"b".repeat(40)}:skills/contribute-to-eliza`,
+          `elizaOS/slopdotcash@${"b".repeat(40)}:skills/contribute-to-eliza`,
         ],
         ["skillSha256", "b".repeat(64)],
       ]) {
@@ -2304,7 +2740,14 @@ describe("run receipt CLI", () => {
       const legacyFooter = [
         ...canonicalFooterLines.slice(1, 4),
         canonicalFooterLines[0],
-        ...canonicalFooterLines.slice(4),
+        ...canonicalFooterLines
+          .slice(4)
+          .map((line) =>
+            line.replace(
+              "slop-contribution-attribution:v1",
+              "elizaos-contribution-attribution:v2",
+            ),
+          ),
       ].join("\n");
       writeFileSync(
         completedPath,
@@ -2514,7 +2957,7 @@ describe("run receipt CLI", () => {
 
       writeFileSync(
         join(shimDir, "bun"),
-        shimSource.replace("echo 20.0.19", "echo 120.0.19"),
+        shimSource.replace("echo ccusage 20.0.19", "echo ccusage 120.0.19"),
       );
       const npxShimSource = [
         "#!/bin/sh",
@@ -2524,7 +2967,7 @@ describe("run receipt CLI", () => {
         "fi",
         'if [ "$3" = "--version" ]; then',
         `  printf '%s\\n' "$*" >> ${quotedArgsLog}`,
-        "  echo 20.0.19",
+        "  echo ccusage 20.0.19",
         "  exit 0",
         "fi",
         "exit 7",
@@ -2555,7 +2998,7 @@ describe("run receipt CLI", () => {
 
       writeFileSync(
         join(shimDir, "npx"),
-        npxShimSource.replace("echo 20.0.19", "echo noisy-20.0.19"),
+        npxShimSource.replace("echo ccusage 20.0.19", "echo noisy-20.0.19"),
       );
       const wrongVersionDoctor = spawnSync(
         process.execPath,

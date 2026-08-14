@@ -149,15 +149,37 @@ describe("discovery", () => {
     mockSnapshot();
     render(<App />);
 
+    expect(screen.getByRole("link", { name: "Slop home" })).toHaveTextContent(
+      "slop.cash",
+    );
+    expect(
+      screen.queryByRole("link", { name: /^Home$/u }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Protocol" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("© 2026 slop.cash.")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Public beta.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Rankings are live. Payouts are off/u),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Contribute to Eliza." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Paste this to your Claude or Codex agent."),
+    ).toBeInTheDocument();
+    const homePrompt = screen.getByLabelText("Agent prompt");
+    expect(homePrompt).toHaveTextContent(`${window.location.origin}/SKILL.md`);
+    expect(homePrompt).toHaveTextContent(
+      "contribute to github.com/elizaOS/eliza",
+    );
     expect(
       await screen.findByRole("heading", { name: "Leaderboard" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/This month is the default/u)).toHaveTextContent(
-      /all-time record is separate history/u,
-    );
     expect(screen.getByRole("tab", { name: "This month" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -176,7 +198,7 @@ describe("discovery", () => {
     ).toBeInTheDocument();
     expect(
       within(leaderboard).getByRole("columnheader", {
-        name: "Current estimate",
+        name: "Simulated share",
       }),
     ).toBeInTheDocument();
     expect(
@@ -184,12 +206,14 @@ describe("discovery", () => {
         name: "Paid to date",
       }),
     ).not.toBeInTheDocument();
+    expect(screen.getByText("How it works")).toBeInTheDocument();
     expect(
-      screen.getByText("How score and compute affect rewards"),
+      screen.getByText(/Payouts are off during beta/u),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/No relevant signed receipts are counted/u),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View more" })).toHaveAttribute(
+      "href",
+      "/projects/eliza",
+    );
     expect(
       screen.getByRole("heading", { name: "Projects" }),
     ).toBeInTheDocument();
@@ -225,7 +249,7 @@ describe("discovery", () => {
     ).toBeInTheDocument();
     expect(
       within(record).queryByRole("columnheader", {
-        name: "Current estimate",
+        name: "Simulated share",
       }),
     ).not.toBeInTheDocument();
     expect(
@@ -395,9 +419,42 @@ describe("project routes", () => {
         name: "Make money building agents.",
       }),
     ).toBeInTheDocument();
+    expect(screen.getByText("building agents.")).toHaveClass(
+      "project-headline-action",
+    );
+    expect(screen.getByRole("link", { name: /^Home$/u })).toHaveAttribute(
+      "href",
+      "/",
+    );
+    expect(
+      screen.queryByRole("link", { name: /Start in one command/u }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /View cycle/u }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /View in GitHub/u }),
+    ).toHaveAttribute("href", "https://github.com/elizaOS/eliza");
+    expect(
+      screen.getByRole("link", { name: /View in SlopHub/u }),
+    ).toHaveAttribute("href", "https://git.slop.cash/elizaOS/eliza");
+    expect(
+      screen.queryByText("1% platform fee · Solana"),
+    ).not.toBeInTheDocument();
     expect(
       screen.getAllByText("$10,000", { exact: true }).length,
     ).toBeGreaterThan(0);
+    expect(
+      screen
+        .getByText("MONTHLY POOL")
+        .closest("aside")
+        ?.querySelector(".reward-amount-monthly"),
+    ).toHaveTextContent("$10,000");
+    expect(
+      screen.queryByText("simulated monthly pool"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("scored contributors")).not.toBeInTheDocument();
+    expect(screen.queryByText("accepted outcomes")).not.toBeInTheDocument();
     expect(screen.getAllByText("24").length).toBeGreaterThan(0);
     const prompt = screen.getByLabelText("Agent prompt");
     expect(prompt).toHaveTextContent(`${window.location.origin}/SKILL.md`);
@@ -409,8 +466,8 @@ describe("project routes", () => {
       screen.getByText(/Works in Codex and Claude Code/u),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/contribution, evidence, and optional payout setup/u),
-    ).toBeInTheDocument();
+      screen.queryByText(/One prompt handles the contribution/u),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(/asks only for a public Solana address/u),
     ).toBeInTheDocument();
@@ -426,8 +483,8 @@ describe("project routes", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText(/^Updated /u)).toBeInTheDocument();
     expect(
-      screen.getAllByText(/receipt-linked tokens/u).length,
-    ).toBeGreaterThan(0);
+      screen.queryByText(/receipt-linked tokens/u),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Manual install command")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Copy agent prompt" }));
     await waitFor(() =>
@@ -660,7 +717,7 @@ describe("public records", () => {
     expect(screen.getByText("14-day review")).toBeInTheDocument();
     expect(screen.getByText("Settlement")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Contribution leaderboard." }),
+      screen.getByRole("heading", { name: "July 2026 leaderboard." }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Cycle evidence.")).not.toBeInTheDocument();
   });

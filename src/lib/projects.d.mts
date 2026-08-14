@@ -19,6 +19,7 @@ export interface ProjectRewardPolicy {
   readonly monthlyCapMinor: string;
   readonly monthlyCapDisplay: string;
   readonly committedMinor: string;
+  readonly paymentMode: "disabled" | "enabled";
   readonly feeBasisPoints: 100;
   readonly unusedFunds: "not-applicable" | "rollover-without-cap-increase";
   readonly fundingState: "committed" | "external-opportunity" | "pledged";
@@ -69,3 +70,7 @@ export declare function findProject(value: string): ProjectDefinition | null;
 export declare function findProjectByRepositoryId(
   repositoryId: string,
 ): ProjectDefinition | null;
+
+export declare function assertProjectPaymentsEnabled(
+  projectId: ProjectId,
+): ProjectDefinition;

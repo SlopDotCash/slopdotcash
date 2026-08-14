@@ -85,8 +85,8 @@ export function createInstallCommand(
   return `(
   set -eu
   SKILLS_ROOT="${skillsRoot}"
-  OPERATION="\${GITARMY_SKILL_OPERATION:-install}"
-  ROLLBACK_REVISION="\${GITARMY_SKILL_REVISION:-}"
+  OPERATION="\${SLOP_SKILL_OPERATION:-install}"
+  ROLLBACK_REVISION="\${SLOP_SKILL_REVISION:-}"
   if ! command -v python3 >/dev/null 2>&1; then
     printf '%s\\n' "python3 is required for authenticated skill installation." >&2
     exit 1
@@ -114,23 +114,16 @@ import zlib
 from pathlib import PurePosixPath
 
 artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path = sys.argv[1:]
-repository = "elizaOS/army"
-# The GitHub repository was renamed to elizaOS/slopdotcash. GitHub reports the
-# current name in every API payload, so authority checks must compare against
-# it. The repository constant above stays on the historical protocol identity
-# that PROVENANCE.json and the authorization receipt are written with, until
-# the slop-identity-v1 activation record in PROTOCOL-MIGRATION.md lands.
-# Pinning the legacy name here would also trust whatever repository later
-# occupies it.
+repository = "elizaOS/slopdotcash"
 github_repository = "elizaOS/slopdotcash"
 source_path = f"{skill_repository_path}/SKILL.md"
-release_label = "gitarmy-release-candidate"
+release_label = "slop-release-candidate"
 target_path = os.path.join(skills_root, skill_name)
 versions_name = f".{skill_name}-versions"
 versions_root = os.path.join(skills_root, versions_name)
 lock_path = os.path.join(skills_root, f".{skill_name}.lock")
 provenance_name = "PROVENANCE.json"
-authorization_receipt_name = ".gitarmy-authorization.json"
+authorization_receipt_name = ".slop-authorization.json"
 skill_prefix = f"{skill_name}/"
 max_archive_bytes = 10_485_760
 max_archive_entries = 33
@@ -186,7 +179,7 @@ def fetch_bytes(url, limit, expected_origin):
         url,
         headers={
             "Accept": "application/vnd.github+json",
-            "User-Agent": "gitarmy-skill-installer/1",
+            "User-Agent": "slop-skill-installer/1",
             "X-GitHub-Api-Version": "2022-11-28",
         },
         method="GET",
@@ -1019,9 +1012,9 @@ def acquire_lock():
 
 def main():
     if operation not in ("install", "rollback"):
-        raise ValueError("GITARMY_SKILL_OPERATION must be install or rollback")
+        raise ValueError("SLOP_SKILL_OPERATION must be install or rollback")
     if operation == "install" and rollback_revision:
-        raise ValueError("GITARMY_SKILL_REVISION is valid only for an explicit rollback")
+        raise ValueError("SLOP_SKILL_REVISION is valid only for an explicit rollback")
     os.makedirs(skills_root, mode=0o755, exist_ok=True)
     if os.path.lexists(versions_root):
         metadata = os.lstat(versions_root)
