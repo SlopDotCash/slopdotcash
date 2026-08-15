@@ -1,6 +1,12 @@
 {
   "version": 1,
-  "include": ["/", "/projects/*", "/contributors/*", "/cycles/*"],
+  "include": [
+    "/",
+    "/api/v1/*",
+    "/projects/*",
+    "/contributors/*",
+    "/cycles/*"
+  ],
   "exclude": [
     "/projects/*/*.md",
     "/projects/*/*.json",
