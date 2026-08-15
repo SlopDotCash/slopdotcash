@@ -58,7 +58,8 @@ describe("Slop fundraising deck", () => {
 
     window.history.replaceState({}, "", "/deck#8");
     rerender(<Deck key="economics" />);
-    expect(screen.getByText("Planned 3% payout fee")).toBeInTheDocument();
+    expect(screen.getByText("Planned 1% payout fee")).toBeInTheDocument();
+    expect(screen.getAllByText("⅓", { selector: "strong" })).toHaveLength(3);
     expect(screen.getByText("$SLOP buybacks")).toBeInTheDocument();
     expect(screen.getAllByText("$5M", { selector: "strong" })).toHaveLength(2);
 
