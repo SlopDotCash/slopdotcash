@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/a11y/noNoninteractiveTabindex: Narrow slides can scroll and must remain keyboard-accessible. */
 import {
   ArrowLeft,
   ArrowRight,
