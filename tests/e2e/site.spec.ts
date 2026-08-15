@@ -67,7 +67,13 @@ async function loadCycles(request: APIRequestContext): Promise<CycleIndex> {
   return value;
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
+  if (
+    testInfo.title.includes("fundraising slide") ||
+    testInfo.title.includes("byte-consistent install")
+  ) {
+    return;
+  }
   await page.goto("/", { waitUntil: "networkidle" });
 });
 
@@ -780,16 +786,21 @@ test("presents every fundraising slide without viewport or accessibility failure
 }) => {
   await page.goto("/deck#1", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("heading", { exact: true, name: "Grow open source." }),
+    page.getByRole("heading", {
+      exact: true,
+      name: "Fund progress. Own the upside.",
+    }),
   ).toBeVisible();
-  await expect(page).toHaveTitle("Slop — fund the flywheel");
+  await expect(page).toHaveTitle("Slop — fund progress, own the upside");
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
     "content",
-    "https://deck.slop.cash/og-deck.png",
+    "https://deck.slop.cash/og-deck-v2.png",
   );
 
-  for (let slide = 1; slide <= 8; slide += 1) {
-    await expect(page.getByText(`${slide} / 8`, { exact: true })).toBeVisible();
+  for (let slide = 1; slide <= 10; slide += 1) {
+    await expect(
+      page.getByText(`${slide} / 10`, { exact: true }),
+    ).toBeVisible();
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,
     );
@@ -804,12 +815,12 @@ test("presents every fundraising slide without viewport or accessibility failure
       results.violations,
       `deck slide ${slide} accessibility violations`,
     ).toEqual([]);
-    if (slide < 8) {
+    if (slide < 10) {
       await page.getByRole("button", { name: "Next slide" }).click();
     }
   }
 
   await expect(page.getByRole("button", { name: "Next slide" })).toBeDisabled();
   await page.keyboard.press("Home");
-  await expect(page.getByText("1 / 8", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 / 10", { exact: true })).toBeVisible();
 });

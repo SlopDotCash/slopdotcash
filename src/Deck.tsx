@@ -1,12 +1,11 @@
 import {
   ArrowLeft,
   ArrowRight,
-  BadgeDollarSign,
-  BriefcaseBusiness,
   Check,
-  Handshake,
-  Layers3,
-  Sparkles,
+  Cpu,
+  GitBranch,
+  Megaphone,
+  Users,
 } from "lucide-react";
 import {
   type CSSProperties,
@@ -18,7 +17,7 @@ import {
 } from "react";
 import "./deck.css";
 
-const SLIDE_COUNT = 8;
+const SLIDE_COUNT = 10;
 
 function initialSlide(): number {
   const parsed = Number.parseInt(window.location.hash.slice(1), 10);
@@ -29,18 +28,18 @@ function initialSlide(): number {
 
 function Meta() {
   useEffect(() => {
-    document.title = "Slop — fund the flywheel";
+    document.title = "Slop — fund progress, own the upside";
     const values: Record<string, string> = {
       'meta[name="description"]':
-        "Slop turns capital into incentives for useful open-source work.",
-      'meta[property="og:title"]': "Fund useful work. Grow open source.",
+        "Slop turns capital and compute into verified open-source progress.",
+      'meta[property="og:title"]': "Fund progress. Own the upside.",
       'meta[property="og:description"]':
-        "The fundraising deck for slop.cash — the incentive network for agent work.",
-      'meta[property="og:image"]': "https://deck.slop.cash/og-deck.png",
-      'meta[name="twitter:title"]': "Fund useful work. Grow open source.",
+        "The fundraising deck for slop.cash — the incentive network for open progress.",
+      'meta[property="og:image"]': "https://deck.slop.cash/og-deck-v2.png",
+      'meta[name="twitter:title"]': "Fund progress. Own the upside.",
       'meta[name="twitter:description"]':
-        "The fundraising deck for slop.cash — the incentive network for agent work.",
-      'meta[name="twitter:image"]': "https://deck.slop.cash/og-deck.png",
+        "The fundraising deck for slop.cash — the incentive network for open progress.",
+      'meta[name="twitter:image"]': "https://deck.slop.cash/og-deck-v2.png",
     };
     for (const [selector, content] of Object.entries(values)) {
       document
@@ -81,106 +80,138 @@ function Frame({
 
 function Cover() {
   return (
-    <Frame index={0} label="Fund the flywheel" className="deck-cover">
+    <Frame
+      index={0}
+      label="Fund progress and own the upside"
+      className="deck-cover"
+    >
       <div className="deck-cover-copy">
-        <p className="deck-eyebrow">Fund useful work.</p>
-        <h1>Grow open source.</h1>
-        <p className="deck-lede">
-          Slop turns capital into incentives for agents and people who ship.
+        <h1 aria-label="Fund progress. Own the upside.">
+          Fund progress.
+          <br />
+          <em>Own the upside.</em>
+        </h1>
+        <p>
+          Slop is the incentive network that turns capital and compute into
+          verified open work.
         </p>
       </div>
-      <div className="deck-orbit" aria-hidden="true">
-        <span>fund</span>
-        <span>ship</span>
-        <span>verify</span>
-        <span>reward</span>
+      <div className="deck-cover-network" aria-hidden="true">
+        {["capital", "compute", "people", "agents", "progress"].map(
+          (item, index) => (
+            <span key={item} style={{ "--i": index } as CSSProperties}>
+              {item}
+            </span>
+          ),
+        )}
+        <strong>S</strong>
       </div>
     </Frame>
   );
 }
 
-function WhatIsSlop() {
+const team = [
+  ["Shaw", "CEO"],
+  ["Nubs", "CTO"],
+  ["Shadow", "Head of partnerships"],
+  ["Sayo", "Founding engineer"],
+  ["Stan", "Founding engineer"],
+];
+
+function Team() {
   return (
-    <Frame index={1} label="What Slop is" className="deck-statement">
+    <Frame index={1} label="The team behind Slop" className="deck-team">
       <div>
-        <p className="deck-eyebrow">What is Slop?</p>
-        <h2>The incentive network for useful open-source work.</h2>
+        <h2>We know how to make open source move.</h2>
+        <p className="deck-supporting">
+          The team behind elizaOS is building the incentive layer for what comes
+          next.
+        </p>
       </div>
-      <div className="deck-pipeline">
-        {[
-          ["01", "Fund", "Projects publish real incentives."],
-          ["02", "Ship", "Agents and people do the work."],
-          ["03", "Verify", "Maintainers accept outcomes."],
-          ["04", "Reward", "Contributors build a record."],
-        ].map(([number, title, copy]) => (
-          <article key={title}>
-            <span>{number}</span>
-            <h3>{title}</h3>
-            <p>{copy}</p>
-          </article>
-        ))}
+      <div className="deck-team-proof">
+        <div className="deck-team-stats">
+          <p>
+            <strong>19K</strong>
+            <span>stars</span>
+          </p>
+          <p>
+            <strong>5.6K</strong>
+            <span>forks</span>
+          </p>
+          <p>
+            <strong>671</strong>
+            <span>contributors</span>
+          </p>
+        </div>
+        <div className="deck-team-list">
+          {team.map(([name, role], index) => (
+            <article key={name}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{name}</strong>
+              <small>{role}</small>
+            </article>
+          ))}
+        </div>
       </div>
     </Frame>
   );
 }
 
-function MissingMarket() {
+function Mission() {
   return (
-    <Frame index={2} label="The missing market" className="deck-market">
-      <div>
-        <p className="deck-eyebrow">The gap</p>
-        <h2>Work is everywhere. Incentives are not.</h2>
+    <Frame
+      index={2}
+      label="Progress should belong to everyone"
+      className="deck-mission"
+    >
+      <div className="deck-mission-ring" aria-hidden="true">
+        <span>everyone</span>
       </div>
-      <div className="deck-bridge" aria-hidden="true">
+      <div className="deck-mission-copy">
+        <h2>Progress should belong to everyone.</h2>
+        <p>
+          Use decentralized compute to accelerate humanity—without concentrating
+          the value in a handful of companies.
+        </p>
         <div>
-          <span>OPEN SOURCE</span>
-          <b>needs help</b>
-        </div>
-        <i>
-          <ArrowRight />
-        </i>
-        <strong>SLOP</strong>
-        <i>
-          <ArrowRight />
-        </i>
-        <div>
-          <span>AGENTS</span>
-          <b>can ship</b>
+          <span>Open work</span>
+          <span>Shared upside</span>
+          <span>Collective ownership</span>
         </div>
       </div>
-      <p className="deck-bottom-note">
-        Slop makes the connection legible, verifiable, and worth repeating.
-      </p>
     </Frame>
   );
 }
 
 function Flywheel() {
+  const stages = [
+    "Capital + compute",
+    "Incentives",
+    "People + agents",
+    "Verified results",
+    "Shared value",
+  ];
   return (
-    <Frame index={3} label="The flywheel" className="deck-flywheel-slide">
+    <Frame
+      index={3}
+      label="Capital in and breakthroughs out"
+      className="deck-flywheel-slide"
+    >
       <div className="deck-flywheel-copy">
-        <p className="deck-eyebrow">Where the money goes</p>
-        <h2>Into the flywheel.</h2>
+        <h2>
+          Capital in.
+          <br />
+          <em>Breakthroughs out.</em>
+        </h2>
         <p>
-          Capital creates incentives. Useful work creates demand. Demand funds
-          more work.
+          Projects publish valuable work. People and agents compete to solve it.
+          Maintainers verify the result. Contributors get paid.
         </p>
       </div>
-      <div
-        className="deck-flywheel"
-        role="img"
-        aria-label="Capital, incentives, useful work, stronger projects, demand, revenue"
-      >
-        {[
-          "Capital",
-          "Incentives",
-          "Useful work",
-          "Stronger projects",
-          "Demand",
-          "Revenue",
-        ].map((item, index) => (
-          <span key={item} style={{ "--i": index } as CSSProperties}>
-            {item}
+      <div className="deck-flywheel" role="img" aria-label={stages.join(", ")}>
+        {stages.map((stage, index) => (
+          <span key={stage} style={{ "--i": index } as CSSProperties}>
+            {stage}
           </span>
         ))}
         <strong>↻</strong>
@@ -189,62 +220,81 @@ function Flywheel() {
   );
 }
 
-function Allocation() {
+function GoToMarket() {
+  const channels = [
+    {
+      icon: <Users aria-hidden="true" />,
+      title: "Start with trust.",
+      copy: "Help well-known builders with specific work in their open-source repos.",
+    },
+    {
+      icon: <Cpu aria-hidden="true" />,
+      title: "Turn compute into sponsorship.",
+      copy: "Providers allocate resources. Projects give them visible proof of impact.",
+    },
+    {
+      icon: <Megaphone aria-hidden="true" />,
+      title: "Make useful work the ad.",
+      copy: "Sponsors fund public challenges that earn attention by creating value.",
+    },
+  ];
   return (
-    <Frame index={4} label="Use of funds" className="deck-allocation">
+    <Frame
+      index={4}
+      label="Go to market through trusted open source"
+      className="deck-gtm"
+    >
       <div>
-        <p className="deck-eyebrow">Use of funds</p>
-        <h2>Most goes to the people doing the work.</h2>
+        <h2>Start with people the world already trusts.</h2>
       </div>
-      <div className="deck-funds">
-        <div className="deck-funds-incentives">
-          <span>Most</span>
-          <strong>Incentives</strong>
-          <p>Bounties, rewards, and programs that make useful work happen.</p>
-        </div>
-        <div className="deck-funds-team">
-          <span>Small share</span>
-          <strong>Team</strong>
-          <p>Keep the network running.</p>
-        </div>
+      <div className="deck-gtm-grid">
+        {channels.map(({ icon, title, copy }, index) => (
+          <article key={title}>
+            <span>0{index + 1}</span>
+            {icon}
+            <h3>{title}</h3>
+            <p>{copy}</p>
+          </article>
+        ))}
       </div>
+      <p className="deck-gtm-loop">
+        Every accepted result becomes the proof that wins the next project.
+      </p>
     </Frame>
   );
 }
 
-function Revenue() {
-  const models = [
-    {
-      icon: <BadgeDollarSign />,
-      title: "Fees",
-      copy: "A small share when value moves.",
-    },
-    {
-      icon: <Handshake />,
-      title: "Collaborations",
-      copy: "Programs built with aligned projects.",
-    },
-    {
-      icon: <Layers3 />,
-      title: "Features",
-      copy: "Paid tools for teams and contributors.",
-    },
-    {
-      icon: <Sparkles />,
-      title: "Sponsors",
-      copy: "Brands funding visible, useful work.",
-    },
+function Ownership() {
+  const modes = [
+    [
+      "Project-owned",
+      "The creator sets assignment or license terms before work starts.",
+    ],
+    [
+      "Collectively owned",
+      "Proximity Prize results enter the commons; the prize is shared by contribution.",
+    ],
+    ["DAO-owned", "ASI work becomes intellectual property of the DAO."],
   ];
   return (
-    <Frame index={5} label="How Slop makes money" className="deck-revenue">
+    <Frame
+      index={5}
+      label="Ownership follows published project rules"
+      className="deck-ownership"
+    >
       <div>
-        <p className="deck-eyebrow">The business</p>
-        <h2>Revenue follows value.</h2>
+        <h2>The ownership rules are clear before the work begins.</h2>
+        <p className="deck-supporting">
+          One network. Different ways to own the result.
+        </p>
       </div>
-      <div className="deck-revenue-grid">
-        {models.map(({ icon, title, copy }) => (
+      <div className="deck-ownership-modes">
+        {modes.map(([title, copy], index) => (
           <article key={title}>
-            {icon}
+            <i aria-hidden="true">
+              {index === 0 ? "●" : index === 1 ? "◉" : "◎"}
+            </i>
+            <span>{String(index + 1).padStart(2, "0")}</span>
             <h3>{title}</h3>
             <p>{copy}</p>
           </article>
@@ -254,55 +304,194 @@ function Revenue() {
   );
 }
 
-function WhySlop() {
+function Competition() {
+  const competitors = [
+    ["Gitcoin", "Grant rounds"],
+    ["OnlyDust", "Fellowships + grants"],
+    ["Algora", "Bounties + hiring"],
+    ["Drips", "Funding flows"],
+  ];
   return (
-    <Frame index={6} label="Why Slop wins" className="deck-proof">
-      <div className="deck-proof-copy">
-        <p className="deck-eyebrow">Why Slop</p>
-        <h2>Built for trust, not activity theater.</h2>
+    <Frame
+      index={6}
+      label="Slop in the open-source funding market"
+      className="deck-competition"
+    >
+      <div>
+        <h2>
+          Funding is crowded.
+          <br />
+          <em>Verified, agent-native work is not.</em>
+        </h2>
       </div>
-      <div className="deck-proof-list">
-        {[
-          "Accepted outcomes, not busywork",
-          "Public rules and auditable records",
-          "Any agent, model, or human can participate",
-          "Humans decide what deserves reward",
-        ].map((item) => (
-          <p key={item}>
-            <Check aria-hidden="true" />
-            {item}
-          </p>
-        ))}
+      <div className="deck-competition-map">
+        <div className="deck-competitor-row">
+          {competitors.map(([name, focus]) => (
+            <article key={name}>
+              <strong>{name}</strong>
+              <span>{focus}</span>
+            </article>
+          ))}
+        </div>
+        <div className="deck-slop-position">
+          <strong>SLOP</strong>
+          <p>Outcome-level verification</p>
+          <p>People + agents</p>
+          <p>Compute sponsorships</p>
+          <p>Explicit ownership modes</p>
+        </div>
       </div>
     </Frame>
   );
 }
 
-function Ask() {
+function Economics() {
+  const projections = [
+    ["12 mo", "50", "$5M", "$0.5M"],
+    ["24 mo", "200", "$25M", "$2M"],
+    ["36 mo", "500", "$75M", "$5M"],
+  ];
   return (
-    <Frame index={7} label="Fund the flywheel" className="deck-ask">
-      <div className="deck-ask-mark" aria-hidden="true">
-        <BriefcaseBusiness />
+    <Frame
+      index={7}
+      label="Revenue and token economics"
+      className="deck-economics"
+    >
+      <div className="deck-economics-top">
+        <div>
+          <h2>Every payout makes the network stronger.</h2>
+          <div className="deck-revenue-chips">
+            <span>Planned 3% payout fee</span>
+            <span>Collaborations</span>
+            <span>Features</span>
+            <span>Sponsors</span>
+          </div>
+        </div>
+        <div className="deck-fee-example">
+          <strong>$100</strong>
+          <span>payout</span>
+          <b>→</b>
+          <strong>$3</strong>
+          <span>fee</span>
+        </div>
+        <div className="deck-token-split">
+          <article>
+            <strong>$1</strong>
+            <span>$SLOP buybacks</span>
+          </article>
+          <article>
+            <strong>$1</strong>
+            <span>team</span>
+          </article>
+          <article>
+            <strong>$1</strong>
+            <span>new incentives</span>
+          </article>
+        </div>
       </div>
-      <p className="deck-eyebrow">The ask</p>
-      <h2>Fund the flywheel.</h2>
-      <p>More incentives. More useful work. Stronger open source.</p>
-      <a href="https://slop.cash" target="_blank" rel="noreferrer">
-        See the network <ArrowRight aria-hidden="true" />
-      </a>
+      <div className="deck-projections">
+        <div className="deck-projection-labels">
+          <span>Projects</span>
+          <span>Annual payouts</span>
+          <span>Projected revenue</span>
+        </div>
+        {projections.map(([period, projects, payouts, revenue]) => (
+          <article key={period}>
+            <span>{period}</span>
+            <strong>{projects}</strong>
+            <strong>{payouts}</strong>
+            <strong>{revenue}</strong>
+          </article>
+        ))}
+        <small>
+          Illustrative operating model including sponsorship, collaboration, and
+          feature revenue—not historical results. $SLOP design is proposed and
+          subject to final legal review.
+        </small>
+      </div>
+    </Frame>
+  );
+}
+
+function Raise() {
+  const allocation = [
+    ["75%", "$375K", "Bounties + incentives"],
+    ["10%", "$50K", "Core team"],
+    ["10%", "$50K", "Partnership launches"],
+    ["5%", "$25K", "Protocol, legal + security"],
+  ];
+  return (
+    <Frame index={8} label="A 500 thousand dollar raise" className="deck-raise">
+      <div className="deck-raise-heading">
+        <h2>
+          <em>$500K</em> turns the flywheel for 18 months.
+        </h2>
+        <p>Every dollar exists to create more useful work.</p>
+      </div>
+      <div className="deck-allocation-bar">
+        {allocation.map(([percent, amount, label], index) => (
+          <article
+            key={label}
+            style={
+              {
+                "--weight": index === 0 ? 7.5 : index === 3 ? 0.5 : 1,
+              } as CSSProperties
+            }
+          >
+            <span>{percent}</span>
+            <strong>{amount}</strong>
+            <p>{label}</p>
+          </article>
+        ))}
+      </div>
+      <div className="deck-raise-targets">
+        <p>
+          <Check aria-hidden="true" />
+          50 funded projects
+        </p>
+        <p>
+          <Check aria-hidden="true" />
+          $5M annual payout volume
+        </p>
+        <p>
+          <Check aria-hidden="true" />A repeatable sponsor engine
+        </p>
+      </div>
+    </Frame>
+  );
+}
+
+function Close() {
+  return (
+    <Frame index={9} label="We own the results together" className="deck-close">
+      <div className="deck-close-mark" aria-hidden="true">
+        <GitBranch />
+      </div>
+      <h2>
+        We own the results <em>together.</em>
+      </h2>
+      <p>Fund the people, agents, and compute accelerating open progress.</p>
+      <div className="deck-close-links">
+        <a href="https://slop.cash" target="_blank" rel="noreferrer">
+          slop.cash <ArrowRight aria-hidden="true" />
+        </a>
+        <a href="mailto:shaw@elizalabs.ai">shaw@elizalabs.ai</a>
+      </div>
     </Frame>
   );
 }
 
 const slides = [
   <Cover key="cover" />,
-  <WhatIsSlop key="what" />,
-  <MissingMarket key="market" />,
+  <Team key="team" />,
+  <Mission key="mission" />,
   <Flywheel key="flywheel" />,
-  <Allocation key="allocation" />,
-  <Revenue key="revenue" />,
-  <WhySlop key="proof" />,
-  <Ask key="ask" />,
+  <GoToMarket key="gtm" />,
+  <Ownership key="ownership" />,
+  <Competition key="competition" />,
+  <Economics key="economics" />,
+  <Raise key="raise" />,
+  <Close key="close" />,
 ];
 
 export function Deck() {
