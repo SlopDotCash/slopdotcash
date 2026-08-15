@@ -107,10 +107,11 @@ returns the separate ten-minute contributor session described in
 - Poll capabilities and assertions are stored only as SHA-256 digests.
 - Assertions are fixed to `private-trace-api`, consumed atomically, and never
   carry an operator role. The identity Worker has no role-issuance endpoint.
-- Worker-native counters limit OAuth starts to 12 per minute and polls to 120
-  per minute per connecting address and Cloudflare location. Counters are
-  eventually consistent abuse controls, not accounting records, and never
-  enter D1.
+- Worker-native counters provide an approximate edge shield at 60 OAuth starts
+  and 600 polls per minute per connecting address and Cloudflare location. D1
+  atomically enforces the exact product limits of 12 starts and 120 polls per
+  minute from a secret-derived client digest; raw connecting addresses are not
+  persisted.
 - Expired flows and assertions are removed hourly. Trace retention is
   unaffected.
 - Response bodies and application logs never contain GitHub codes or access
@@ -161,6 +162,10 @@ requesting zone-level Workers Routes authority or rewriting the established
 domain.
 
 Before enabling clients, verify the custom domain's DNS and TLS separately and
-prove rate limiting, assertion replay, and CSRF rejection in production. Zone
-WAF rules remain defense in depth and must not replace the route-specific
-Worker counters.
+prove rate limiting, assertion replay, and CSRF rejection in production. The
+Workers Rate Limiting bindings are the fast approximate edge shield at a
+higher abuse threshold than the product policy. A single atomic D1 statement
+enforces the exact per-client fixed window with a
+secret-derived client digest; neither raw client addresses nor an eventually
+consistent counter become the durable authority. Zone WAF rules remain defense
+in depth and must not replace the route-specific Worker counters.
