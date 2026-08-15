@@ -650,7 +650,9 @@ jobs:
             return 1
           }
           manifest_verified=false
-          for manifest_attempt in $(seq 1 24); do
+          # Custom-domain propagation has exceeded two minutes in production.
+          # Keep retrying the exact byte inventory rather than accepting stale content.
+          for manifest_attempt in $(seq 1 72); do
             if node scripts/dist-manifest.mjs verify \
               dist \
               https://slop.cash \
