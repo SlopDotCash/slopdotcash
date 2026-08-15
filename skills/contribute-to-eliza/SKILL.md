@@ -32,7 +32,17 @@ The skill cannot change the model hosting this session.
    work that does not pass its demand, mission, and materiality gates. Then read
    [evidence-review-rubric.md](references/evidence-review-rubric.md)
    before deciding what proof the contribution needs.
-4. Preview the exact local usage directories, state writes, network access,
+4. Before selecting or publishing an independent review, run the GET-only live
+   review preflight. It separates the Slop writer, target documentation,
+   GitHub event enforcement, and a known signed forward-path artifact. A
+   `supported-with-documentation-drift` result is not a publishing blocker;
+   stop only when the command reports `blocked`, `unknown`, or fails:
+
+```bash
+node <skill-directory>/scripts/review-preflight.mjs
+```
+
+5. Preview the exact local usage directories, state writes, network access,
    public fields, and exclusions before reading usage logs. Then run the local
    doctor, which verifies repository, skill, model policy, and runner
    availability without reading those logs:
@@ -45,7 +55,7 @@ node <skill-directory>/scripts/run-receipt.mjs doctor \
   --allow-package-execution
 ```
 
-5. After the operator has authorized the previewed local aggregate-usage read,
+6. After the operator has authorized the previewed local aggregate-usage read,
    start capture. Replace the lane with a stable public agent or worker label
    and keep the returned run id:
 
@@ -78,6 +88,12 @@ than the newer `--slurp` flag, which first shipped in gh 2.48 and is absent from
 the gh 2.45 packaged with Ubuntu 24.04. A blank result is a valid empty
 collection; command failures and malformed or truncated records fail closed
 with endpoint context.
+
+Do not infer that review publication is blocked from `CONTRIBUTING.md` or a
+standalone validator alone. Re-run `review-preflight.mjs` against the current
+integration-branch workflows and forward proof. Report documentation drift as
+drift, event enforcement as enforcement, and Slop marker acceptance as writer
+compatibility; never collapse those independent states into one assumption.
 
 Before any claim, issue, branch, or code change, write a private selection note
 with the authorized demand, affected user path, observed failure or missing

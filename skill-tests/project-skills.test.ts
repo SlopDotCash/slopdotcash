@@ -68,6 +68,8 @@ describe("project skill contracts", () => {
       "utf8",
     );
     assert.match(eliza, /elizaOS\/eliza/u);
+    assert.match(eliza, /review-preflight\.mjs/u);
+    assert.match(eliza, /supported-with-documentation-drift/u);
     assert.doesNotMatch(eliza, /lalalune\/ArkLib/u);
     assert.match(delta, /lalalune\/ArkLib/u);
     assert.match(delta, /sorry.*admit.*axiom/is);
@@ -233,6 +235,21 @@ describe("project skill contracts", () => {
           reportResult.stdout,
           /^Usage: node scripts\/live-report\.mjs/m,
         );
+        if (project.id === "eliza") {
+          const preflightResult = spawnSync(
+            process.execPath,
+            [
+              join(installedSkill, "scripts", "review-preflight.mjs"),
+              "--unsupported",
+            ],
+            { encoding: "utf8" },
+          );
+          assert.notStrictEqual(preflightResult.status, 0);
+          assert.match(
+            preflightResult.stderr,
+            /Usage: node scripts\/review-preflight\.mjs/u,
+          );
+        }
       }
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
