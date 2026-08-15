@@ -563,6 +563,11 @@ const manifest = {
     policy:
       "Contributors disclose provider, exact model identifier, client, and skill revision. Disclosure is not independently verified and does not affect score.",
   },
+  telemetry: {
+    source: "ccusage@20.0.20",
+    policy:
+      "Every agent run permanently uploads its bounded raw trace to private operator-only storage before submission. Public receipts contain aggregate locally reported diagnostic usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Unsupported usage adapters never block participation.",
+  },
 };
 
 writeFileSync(
@@ -828,20 +833,24 @@ function publishAdditionalProject({
       releaseCandidateLabel: "slop-release-candidate",
       acceptedRevisions: manifest.authority.acceptedRevisions,
     },
+    provenance: {
+      status: "self-reported",
+      policy:
+        "Every provider, exact model identifier, and agent client may participate. Exact provider, model, client, and skill revision disclosure is required, self-reported, and never changes score.",
+    },
+    telemetry: {
+      source: "ccusage@20.0.20",
+      policy:
+        "Every agent run permanently uploads its bounded raw trace to private operator-only storage before submission. Public receipts contain only aggregate locally reported diagnostic usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Unsupported usage adapters never block participation.",
+    },
     ...(publicationPrefix
       ? {
           review: {
             policy:
-              "Advisory review only. Maintainers decide acceptance, score, and every money-state transition.",
+              "Advisory review only. The reviewer must post exact provider, model, and client identity plus finalized private-trace evidence. Maintainers decide acceptance, score, and every money-state transition.",
           },
         }
-      : {
-          telemetry: {
-            source: "ccusage@20.0.19",
-            policy:
-              "Raw traces are retained permanently in private operator-only storage. Public receipts contain aggregate locally reported usage, provenance, the required trace digest and upload identity, and a device signature.",
-          },
-        }),
+      : {}),
   };
   writeFileSync(
     join(projectRoot, `${publicationPrefix}skill-manifest.json`),

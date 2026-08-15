@@ -62,17 +62,17 @@ describe("project run receipt", () => {
 
   it("accepts any concrete declared provider, model, and client", () => {
     const marker = runReceiptMarker(receipt);
-    marker.provider = "xai";
-    marker.model = "grok-4";
-    marker.client = "grok-build";
+    marker.provider = "x-ai/hosted+edge";
+    marker.model = "accounts/x/models/grok-4.5+reasoning";
+    marker.client = "grok-build+acp";
     expect(assertRunReceiptMarker(marker)).toMatchObject({
-      provider: "xai",
-      model: "grok-4",
-      client: "grok-build",
+      provider: "x-ai/hosted+edge",
+      model: "accounts/x/models/grok-4.5+reasoning",
+      client: "grok-build+acp",
     });
 
     marker.model = "N/A";
-    expect(() => assertRunReceiptMarker(marker)).toThrow(/concrete/u);
+    expect(() => assertRunReceiptMarker(marker)).toThrow(/non-placeholder/u);
   });
 
   it("allows unsupported clients to report diagnostic usage as unavailable", () => {

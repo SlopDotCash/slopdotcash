@@ -139,6 +139,7 @@ describe("project skill contracts", () => {
       assert.deepStrictEqual(skillProject.usageAdapters, {
         codex: "codex",
         "claude-code": "claude",
+        "grok-build": "grok",
       });
       assert.deepStrictEqual(project.modelPolicy, {
         mode: "open-declared",
@@ -272,6 +273,11 @@ describe("project skill contracts", () => {
       assert.match(source, /never bans|never\n+bans/is);
       assert.match(source, /accept.*partial.*reject.*hold/is);
       assert.match(source, /slop-review/u);
+      assert.match(source, /"provider":"EXACT_PROVIDER"/u);
+      assert.match(source, /"model":"EXACT_MODEL_ID"/u);
+      assert.match(source, /"client":"EXACT_CLIENT"/u);
+      assert.match(source, /"traceSha256":"LOWERCASE_TRACE_SHA256"/u);
+      assert.match(source, /If private trace upload and finalization fail/u);
       assert.doesNotMatch(source, /private key|seed phrase/is);
     }
   });

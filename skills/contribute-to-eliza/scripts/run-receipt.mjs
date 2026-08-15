@@ -37,7 +37,7 @@ const skillDirectory = resolve(scriptDirectory, "..");
 const PROJECT = JSON.parse(
   readFileSync(join(skillDirectory, "project.json"), "utf8"),
 );
-const CCUSAGE_VERSION = "20.0.19";
+const CCUSAGE_VERSION = "20.0.20";
 const CCUSAGE_VERSION_OUTPUT = `ccusage ${CCUSAGE_VERSION}`;
 const MAX_REPORT_BYTES = 32 * 1024 * 1024;
 const MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024;
@@ -45,6 +45,32 @@ const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const SHA_PATTERN = /^[0-9a-f]{64}$/u;
 const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._:/+-]*$/iu;
+const COMMON_PLACEHOLDERS = new Set([
+  "na",
+  "none",
+  "null",
+  "other",
+  "placeholder",
+  "tbd",
+  "todo",
+  "unknown",
+  "unspecified",
+]);
+const FIELD_PLACEHOLDERS = {
+  client: new Set(["agent", "app", "cli", "client"]),
+  model: new Set([
+    "ai",
+    "claude",
+    "gemini",
+    "gpt",
+    "grok",
+    "llama",
+    "llm",
+    "model",
+  ]),
+  provider: new Set(["ai", "model", "provider"]),
+  version: new Set(["current", "latest", "version"]),
+};
 const MAX_STATE_BYTES = MAX_REPORT_BYTES + 1024 * 1024;
 const AUTHORIZATION_RECEIPT = ".slop-authorization.json";
 const TRACE_AUTHORITY = "https://api.slop.cash";
@@ -142,6 +168,18 @@ function declaredIdentifier(value, field, maxLength = 128) {
     !IDENTIFIER_PATTERN.test(value)
   ) {
     fail(`${field} must be a concrete identifier`);
+  }
+  return value;
+}
+
+function declaredIdentity(value, field, kind, maxLength = 128) {
+  declaredIdentifier(value, field, maxLength);
+  const normalized = value.toLowerCase().replaceAll(/[^a-z0-9]/gu, "");
+  if (
+    COMMON_PLACEHOLDERS.has(normalized) ||
+    FIELD_PLACEHOLDERS[kind].has(normalized)
+  ) {
+    fail(`${field} must be an exact non-placeholder identifier`);
   }
   return value;
 }
@@ -345,6 +383,7 @@ function executionEnvironment() {
     "HOME",
     "CODEX_HOME",
     "CLAUDE_CONFIG_DIR",
+    "GROK_HOME",
     "XDG_CONFIG_HOME",
     "TMPDIR",
     "TMP",
@@ -478,6 +517,12 @@ function usageInputPaths(client) {
       ? resolve(process.env.CODEX_HOME)
       : join(home, ".codex");
     return [join(root, "sessions"), join(root, "archived_sessions")];
+  }
+  if (client === "grok-build") {
+    const root = process.env.GROK_HOME
+      ? resolve(process.env.GROK_HOME)
+      : join(home, ".grok");
+    return [join(root, "sessions")];
   }
   if (client !== "claude-code") return [];
   const roots = new Set([
@@ -666,9 +711,16 @@ function validateActiveRecord(value) {
     value.repositoryId !== PROJECT.repositoryId ||
     !RUN_ID_PATTERN.test(value.runId ?? "") ||
     !SHA_PATTERN.test(value.repositoryRootHash ?? "") ||
-    !IDENTIFIER_PATTERN.test(value.client ?? "") ||
-    !IDENTIFIER_PATTERN.test(value.provider ?? "") ||
-    !IDENTIFIER_PATTERN.test(value.model ?? "") ||
+    (() => {
+      try {
+        declaredIdentity(value.client, "client", "client", 64);
+        declaredIdentity(value.provider, "provider", "provider", 64);
+        declaredIdentity(value.model, "model", "model");
+        return false;
+      } catch {
+        return true;
+      }
+    })() ||
     !/^[A-Za-z0-9][A-Za-z0-9-]{1,48}$/u.test(value.lane ?? "") ||
     canonicalIso(value.startedAt) !== value.startedAt ||
     !/^[0-9a-f]{40}$/u.test(value.revision ?? "") ||
@@ -1514,9 +1566,16 @@ function validateCompletedRecord(value) {
     receipt.projectId !== PROJECT.projectId ||
     receipt.repositoryId !== PROJECT.repositoryId ||
     !RUN_ID_PATTERN.test(receipt.runId ?? "") ||
-    !IDENTIFIER_PATTERN.test(receipt.client ?? "") ||
-    !IDENTIFIER_PATTERN.test(receipt.provider ?? "") ||
-    !IDENTIFIER_PATTERN.test(receipt.model ?? "") ||
+    (() => {
+      try {
+        declaredIdentity(receipt.client, "client", "client", 64);
+        declaredIdentity(receipt.provider, "provider", "provider", 64);
+        declaredIdentity(receipt.model, "model", "model");
+        return false;
+      } catch {
+        return true;
+      }
+    })() ||
     !new RegExp(
       `^elizaOS/(?:slopdotcash|army)@[0-9a-f]{40}:${PROJECT.skillSourcePath.replaceAll("/", "\\/")}$`,
       "u",
@@ -1748,11 +1807,11 @@ function parseArguments(args) {
     options.action,
   );
   if (needsClient) {
-    declaredIdentifier(options.client, "--client", 64);
+    declaredIdentity(options.client, "--client", "client", 64);
   }
   if (["doctor", "finish", "start"].includes(options.action)) {
-    declaredIdentifier(options.provider, "--provider", 64);
-    declaredIdentifier(options.model, "--model");
+    declaredIdentity(options.provider, "--provider", "provider", 64);
+    declaredIdentity(options.model, "--model", "model");
   }
   if (["finish", "start"].includes(options.action)) {
     if (
@@ -1778,7 +1837,7 @@ function parseArguments(args) {
     fail("trace requires --run and --trajectory");
   }
   if (options.action === "trace") {
-    declaredIdentifier(options.clientVersion, "--client-version", 128);
+    declaredIdentity(options.clientVersion, "--client-version", "version", 128);
   }
   if (
     options.action === "finish" &&

@@ -308,9 +308,9 @@ describe("model attribution", () => {
     const source = textSource(
       "COMMENT_1",
       machineAttribution(
-        "OpenAI",
-        "gpt-5.6-sol",
-        "codex-desktop",
+        "x-ai/hosted+edge",
+        "accounts/x/models/grok-4.5+reasoning",
+        "grok-build+acp",
         "elizaOS/army@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:skills/contribute-to-eliza",
       ),
     );
@@ -320,10 +320,10 @@ describe("model attribution", () => {
     expect(result.invalidMarkers).toEqual([]);
     expect(result.declarations).toHaveLength(1);
     expect(result.declarations[0]).toMatchObject({
-      provider: "openai",
-      model: "gpt-5.6-sol",
-      identifier: "openai/gpt-5.6-sol",
-      client: "codex-desktop",
+      provider: "x-ai/hosted+edge",
+      model: "accounts/x/models/grok-4.5+reasoning",
+      identifier: "x-ai/hosted+edge/accounts/x/models/grok-4.5+reasoning",
+      client: "grok-build+acp",
       skillRevision:
         "elizaOS/army@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:skills/contribute-to-eliza",
       format: "machine-marker",
@@ -578,7 +578,7 @@ describe("model attribution", () => {
     expect(result.invalidMarkers).toEqual([
       expect.objectContaining({
         sourceId: "COMMENT_PLACEHOLDER_MARKER",
-        reason: "provider must be a concrete lowercase provider slug",
+        reason: "provider must be an exact provider identifier",
       }),
       expect.objectContaining({
         sourceId: "COMMENT_EXTRA_MARKER_FIELD",
@@ -595,11 +595,11 @@ describe("model attribution", () => {
       }),
       expect.objectContaining({
         sourceId: "COMMENT_GENERIC_PROVIDER",
-        reason: "provider must be a concrete lowercase provider slug",
+        reason: "provider must be an exact provider identifier",
       }),
       expect.objectContaining({
         sourceId: "COMMENT_NO_PROVIDER",
-        reason: "provider must be a concrete lowercase provider slug",
+        reason: "provider must be an exact provider identifier",
       }),
       expect.objectContaining({
         sourceId: "COMMENT_NO_MODEL",

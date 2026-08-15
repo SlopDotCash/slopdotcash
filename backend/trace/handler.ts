@@ -10,6 +10,10 @@ import {
   type WalletClaim,
 } from "./contracts";
 import {
+  isExactClientIdentifier,
+  isExactClientVersion,
+  isExactModelIdentifier,
+  isExactProviderIdentifier,
   normalizedContentType,
   readJsonObject,
   readTraceBody,
@@ -420,10 +424,10 @@ async function createRun(
       "projectPolicyRevision",
       validGitSha,
     ),
-    provider: requiredString(body, "provider"),
-    model: requiredString(body, "model"),
-    client: requiredString(body, "client"),
-    clientVersion: requiredString(body, "clientVersion"),
+    provider: requiredString(body, "provider", isExactProviderIdentifier),
+    model: requiredString(body, "model", isExactModelIdentifier),
+    client: requiredString(body, "client", isExactClientIdentifier),
+    clientVersion: requiredString(body, "clientVersion", isExactClientVersion),
     idempotencyKey: idempotencyKey(request),
     createdAt: now,
   });

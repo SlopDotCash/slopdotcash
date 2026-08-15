@@ -4,12 +4,6 @@ export type ProjectId = string;
 export type ProjectStatus = "active" | "paused";
 export type RewardKind = "monthly-pool" | "external-prize-share";
 
-export interface ApprovedModel {
-  readonly client: "claude-code" | "codex";
-  readonly provider: "anthropic" | "openai";
-  readonly model: string;
-}
-
 export interface ProjectRewardPolicy {
   readonly kind: RewardKind;
   readonly currency: "USDC" | null;

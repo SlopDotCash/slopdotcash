@@ -142,18 +142,19 @@ acting.
 Contributions made through a project skill must carry the machine-readable
 `slop-contribution-attribution:v1` marker. It binds project, repository,
 run id, timestamps, exact provider/model/client, skill revision and digest,
-aggregate pinned-ccusage figures, optional local trajectory digest, and an
-Ed25519 device signature. Validate signatures and all joins at ingestion. A
-device signature proves byte continuity, not provider billing truth. Never
+aggregate pinned-ccusage figures, required private trace digest and immutable
+upload identity, and an Ed25519 device signature. Validate signatures and all
+joins at ingestion. A device signature proves byte continuity, not provider
+billing truth. Never
 publish chain-of-thought, secrets, raw prompts/responses, source files, private
 trajectories, credentials, or session identifiers. A human-only contribution
 must say so explicitly.
 
 Any provider, model, and agent client may participate when their exact
-self-reported identity is posted. Model or client allowlists must not gate
-eligibility, scoring, review, or payment. Supported usage adapters may add
-diagnostic token provenance; unavailable usage never blocks a contribution and
-tokens never change its score or payout.
+self-reported identity is posted. Fixed provider, model, or agent-client lists
+must not gate eligibility, scoring, review, or payment. Supported usage
+adapters may add diagnostic token provenance; unavailable usage never blocks a
+contribution and tokens never change its score or payout.
 
 Every agent run must upload its raw trace before a contribution is submitted.
 Trace objects are permanent, private platform records: store immutable bytes in
@@ -163,6 +164,12 @@ Slop operators may retrieve a trace through short-lived, audited authorization.
 The contributor upload path is write-only, bounded, authenticated, checksum
 verified, and fail-closed. Public artifacts may contain only the trace digest
 and safe metadata, never the trace body.
+
+Project reviewer skills follow the same rule: measure the review through the
+project contributor receipt CLI, include exact provider/model/client and trace
+identity in the machine review record, and place that record before the
+terminal signed attribution footer. A review is not posted if trace
+finalization fails.
 
 ## Reward and settlement contract
 
