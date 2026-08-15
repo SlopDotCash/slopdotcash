@@ -83,7 +83,10 @@ describe("slop.cash deployment contract", () => {
       "./node_modules/.bin/wrangler d1 execute slop-private \\",
     );
     expect(deployJob).toContain('--tag="$GITHUB_SHA"');
-    expect(deployJob).toContain('--version-tag="$GITHUB_SHA@100%"');
+    expect(deployJob).toContain('--version-id="$identity_version_id"');
+    expect(deployJob).toContain("--percentage=100");
+    expect(deployJob).not.toContain('--version-tag="$GITHUB_SHA@100%"');
+    expect(deployJob).toContain("Worker Version ID:");
     expect(deployJob).toContain('--message="slop.cash release $GITHUB_SHA"');
     expect(deployJob).toContain("wrangler versions list \\");
     expect(deployJob).toContain("wrangler deployments status \\");
@@ -215,10 +218,13 @@ describe("slop.cash deployment contract", () => {
       `"https://slop.cash${"$"}{remote_path}?verify=`,
     );
     expect(verificationStep).toContain("node scripts/dist-manifest.mjs verify");
+    expect(verificationStep).toContain("for manifest_attempt in 1 2 3; do");
+    expect(verificationStep).toContain(
+      '"$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$manifest_attempt"',
+    );
     expect(verificationStep.match(/verify_download \//g)).toHaveLength(1);
     expect(verificationStep).toContain('while [ "$attempt" -le 3 ]');
     expect(verificationStep).toContain("https://slop.cash \\");
-    expect(verificationStep).toContain('"$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"');
   });
 
   it("serves HTTPS policy and immutable hashed assets", () => {
