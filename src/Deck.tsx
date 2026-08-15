@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/a11y/noNoninteractiveTabindex: Narrow slides can scroll and must remain keyboard-accessible. */
 import {
   ArrowLeft,
   ArrowRight,
@@ -68,6 +69,7 @@ function Frame({
     <section
       className={`deck-slide ${className}`}
       aria-label={`${index + 1} of ${SLIDE_COUNT}: ${label}`}
+      tabIndex={0}
     >
       <div className="deck-kicker">
         <img src="/slop-mark.svg" alt="" />
