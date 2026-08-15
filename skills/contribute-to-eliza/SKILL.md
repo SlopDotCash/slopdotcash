@@ -9,13 +9,9 @@ Produce one reviewable outcome in `elizaOS/eliza`. Accepted work shares a
 projected $10,000 monthly digital-dollar pool; maintainers review allocations,
 the projection is not a payment promise, and token volume alone never earns.
 
-Use only the approved frontier model for the active client:
-
-- Codex: `openai/gpt-5.6-sol`
-- Claude Code: `anthropic/claude-fable-5`
-
-If the exact runtime model does not match, stop before starting a measured run.
-The skill cannot change the model hosting this session.
+Any model and agent client may contribute, including Grok and Kimi. Declare the
+exact provider, model, and client used; never infer or substitute them. Model
+choice and token volume are diagnostic only and never change score or payout.
 
 ## Start every run
 
@@ -28,6 +24,12 @@ The skill cannot change the model hosting this session.
    `CLAUDE.md`,
    `CONTRIBUTING.md`, `SECURITY.md`, the relevant package guide, and
    [repository-contract.md](references/repository-contract.md).
+   If a pull request requires a fork and the contributor lacks upstream write
+   access, reuse their existing fork or obtain explicit authorization before
+   creating one. Do not fork when an upstream branch is authorized. A
+   contributor may manually star `elizaOS/eliza` and `elizaOS/slopdotcash` if
+   they genuinely want to support them; stars are optional, never automated,
+   never verified, and never scored or paid.
 3. Read [mission-priorities.md](references/mission-priorities.md) and reject
    work that does not pass its demand, mission, and materiality gates. Then read
    [evidence-review-rubric.md](references/evidence-review-rubric.md)
@@ -44,14 +46,14 @@ node <skill-directory>/scripts/review-preflight.mjs
 
 5. Preview the exact local usage directories, state writes, network access,
    public fields, and exclusions before reading usage logs. Then run the local
-   doctor, which verifies repository, skill, model policy, and runner
+   doctor, which verifies repository, skill, declared identity, and runner
    availability without reading those logs:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs preview \
   --repo-root "$PWD" --client codex
 node <skill-directory>/scripts/run-receipt.mjs doctor \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol \
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol \
   --allow-package-execution
 ```
 
@@ -61,17 +63,16 @@ node <skill-directory>/scripts/run-receipt.mjs doctor \
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs start \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol --lane <lane> \
   --allow-package-execution --allow-local-usage
 ```
 
-For Claude Code use `--client claude-code --model claude-fable-5` in doctor and
-start, and `--client claude-code` in preview. The script uses transient, exact-
-pinned `ccusage@20.0.19` through Bun or npx; each resolving command requires
-package-execution consent, while only start and finish read usage logs. It does not
-install a global package or upload raw local logs. It records a non-secret baseline in the
-user's configuration directory and creates a local Ed25519 device key only
-when the run finishes.
+For Claude Code declare `--client claude-code --provider anthropic --model
+<exact-model>`. For Grok, Kimi, or another client, use its concrete identifiers.
+Codex and Claude Code have pinned `ccusage@20.0.19` adapters; unsupported
+clients continue with usage marked unavailable and omit
+`--allow-package-execution`. The receipt records a non-secret baseline and
+creates a local Ed25519 device key only when the run finishes.
 
 ## Choose one mission-critical outcome
 
@@ -194,13 +195,26 @@ project evaluator can award it partial credit.
 
 ## Finish the measured run
 
-After all work and proof, finish the same run. Optionally hash a local
-trajectory file without publishing its contents:
+After all work and proof, export the full trace as UTF-8 text or NDJSON. Exclude
+credentials, private keys, wallet seeds, and prohibited source-file bodies,
+but do not omit ordinary run events. Finish only after its permanent private
+upload to `https://api.slop.cash` succeeds. The raw trace is accessible only to
+designated Slop operators; GitHub receives only its SHA-256 digest. If export,
+upload, or finalization fails, stop and do not submit the contribution.
+
+```bash
+node <skill-directory>/scripts/run-receipt.mjs trace \
+  --repo-root "$PWD" --run <run-id> --trajectory <path> \
+  --client-version <exact-client-version> --json
+```
+
+Use the finalized server run and object id returned by that command:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs finish \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
-  --run <run-id> --allow-package-execution [--trajectory <path>]
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol --lane <lane> \
+  --run <run-id> --allow-package-execution --trajectory <path> \
+  --trace-server-run <server-run-id> --trace-object-id sha256:<digest>
 ```
 
 The command prints the exact footer. Append it unchanged to the final PR body,
@@ -209,7 +223,7 @@ must be the final line. Do not hand-edit token counts, identifiers, timestamps,
 digests, key material, or signature. Re-running `finish` is idempotent.
 
 The receipt publishes aggregate tokens, estimated API-equivalent cost, client,
-model, repository, skill revision, run times, optional trajectory hash, and a
+model, repository, skill revision, run times, required trajectory hash, and a
 public device key. It never contains a private key. Its signature proves byte
 integrity and device continuity, not truthful logs, account ownership, actual
 subscription spend, or work quality. Codex-wide deltas are conservatively
@@ -253,8 +267,9 @@ guarantee payment, approve an allocation, connect a wallet, or move funds.
 
 ## Stop conditions
 
-Stop and report the concrete blocker if the model is not approved, skill
-provenance is dirty or mismatched, target origin is wrong, security routing is
+Stop and report the concrete blocker if provider, model, or client disclosure
+is missing or non-concrete, skill provenance is dirty or mismatched, target
+origin is wrong, security routing is
 required, scope conflicts with repository instructions, a required live system
 cannot be reached, authorization is absent, or evidence contradicts the
 claimed outcome. Never weaken a safety or proof boundary to obtain score.

@@ -55,4 +55,19 @@ describe("project proposal schema", () => {
       /duplicate repositories/u,
     );
   });
+
+  it("requires disclosure without restricting the declared model", () => {
+    expect(assertProjectDefinition(eliza).modelPolicy).toEqual({
+      mode: "open-declared",
+      disclosureRequired: true,
+    });
+    const gated = structuredClone(eliza);
+    gated.modelPolicy = {
+      mode: "frontier-only",
+      approved: [{ client: "codex", provider: "openai", model: "example" }],
+    } as never;
+    expect(() => assertProjectDefinition(gated)).toThrow(
+      /unexpected|declared model/u,
+    );
+  });
 });

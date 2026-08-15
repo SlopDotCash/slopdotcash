@@ -1186,18 +1186,21 @@ export function assertRewardSettlementManifest(
   };
 }
 
-/** Identifies whether a model is eligible for a project compute adjustment. */
+/** Confirms that a registered project received concrete model disclosure. */
 export function isApprovedProjectModel(
   projectId: ProjectId,
   input: { client: string; model: string; provider: string },
 ): boolean {
   const project = findProject(projectId);
-  return (
-    project?.modelPolicy.approved.some(
-      (model) =>
-        model.client === input.client &&
-        model.provider === input.provider &&
-        model.model === input.model,
-    ) ?? false
+  const concrete = (value: string, maxLength: number) =>
+    value.length > 0 &&
+    value.length <= maxLength &&
+    /^[a-z0-9][a-z0-9._:/+-]*$/iu.test(value);
+  return Boolean(
+    project?.modelPolicy.mode === "open-declared" &&
+      project.modelPolicy.disclosureRequired &&
+      concrete(input.client, 64) &&
+      concrete(input.provider, 64) &&
+      concrete(input.model, 128),
   );
 }

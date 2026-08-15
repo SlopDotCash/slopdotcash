@@ -110,8 +110,9 @@ comments, labels, reviews, or mutations.
 
 Start the bundled run-receipt script before work and finish it after proof. Use
 the emitted footer unchanged on the final score-bearing GitHub source. The Slop
-marker carries the declared approved model, repository identity, skill revision,
-bounded ccusage delta, optional trajectory digest, device public key, and
+marker carries the declared provider, model, and client, repository identity,
+skill revision, diagnostic ccusage delta, required private-trace upload identity
+and digest, device public key, and
 signature.
 
 The public simulation uses accepted outcome score only. A receipt cannot create

@@ -10,13 +10,9 @@ proximity-gap programme. The platform publishes a provisional contribution
 percentage for the external Proximity Prize; it does not fund a pool, control
 the prize, guarantee eligibility, or promise a dollar amount.
 
-Use only the approved frontier model for the active client:
-
-- Codex: `openai/gpt-5.6-sol`
-- Claude Code: `anthropic/claude-fable-5`
-
-If the runtime model differs, stop before starting a measured run. This skill
-cannot change the model hosting the session.
+Any model and agent client may contribute, including Grok and Kimi. Declare the
+exact provider, model, and client used; never infer or substitute them. Model
+choice and token volume are diagnostic only and never change score or share.
 
 ## Start every run
 
@@ -28,18 +24,24 @@ cannot change the model hosting the session.
 2. Read ArkLib's `AGENTS.md`, `CONTRIBUTING.md`, the nearest `AGENTS.md` or
    `CLAUDE.md`, the live Delta Star frontier documents named by those guides,
    and [repository-contract.md](references/repository-contract.md).
+   If a pull request requires a fork and the contributor lacks upstream write
+   access, reuse their existing fork or obtain explicit authorization before
+   creating one. Do not fork when an upstream branch is authorized. A
+   contributor may manually star `lalalune/ArkLib` and
+   `elizaOS/slopdotcash` if they genuinely want to support them; stars are
+   optional, never automated, never verified, and never scored or paid.
 3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)
    before choosing a proof or validation strategy.
 4. From the ArkLib root, preview the exact local usage directories, state
    writes, network access, public fields, and exclusions. Then run the local
-   doctor, which verifies repository, skill, model policy, and runner
+   doctor, which verifies repository, skill, declared identity, and runner
    availability without reading usage logs:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs preview \
   --repo-root "$PWD" --client codex
 node <skill-directory>/scripts/run-receipt.mjs doctor \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol \
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol \
   --allow-package-execution
 ```
 
@@ -48,15 +50,15 @@ node <skill-directory>/scripts/run-receipt.mjs doctor \
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs start \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol --lane <lane> \
   --allow-package-execution --allow-local-usage
 ```
 
-For Claude Code use `--client claude-code --model claude-fable-5` in doctor and
-start, and `--client claude-code` in preview. Capture uses transient, exact-
-pinned `ccusage@20.0.19`; each resolving command requires package-execution
-consent, while only start and finish read usage logs. No global package is installed and no
-raw prompt, response, path, or session identifier is uploaded.
+For Claude Code declare `--client claude-code --provider anthropic --model
+<exact-model>`. For Grok, Kimi, or another client, use its concrete identifiers.
+Codex and Claude Code have pinned `ccusage@20.0.19` adapters; unsupported
+clients continue with usage marked unavailable and omit
+`--allow-package-execution`.
 
 Build the bounded, read-only live inventory before selecting work:
 
@@ -142,13 +144,26 @@ proof is blocked.
 
 ## Finish the measured run
 
-After verification, finish with the same run id. Optionally hash a local
-trajectory without publishing its contents:
+After verification, export the full trace as UTF-8 text or NDJSON. Exclude
+credentials, private keys, wallet seeds, and prohibited source-file bodies,
+but do not omit ordinary run events. Finish only after its permanent private
+upload to `https://api.slop.cash` succeeds. The raw trace is accessible only to
+designated Slop operators; GitHub receives only its SHA-256 digest. If export,
+upload, or finalization fails, stop and do not submit the contribution.
+
+```bash
+node <skill-directory>/scripts/run-receipt.mjs trace \
+  --repo-root "$PWD" --run <run-id> --trajectory <path> \
+  --client-version <exact-client-version> --json
+```
+
+Use the finalized server run and object id returned by that command:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs finish \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
-  --run <run-id> --allow-package-execution [--trajectory <path>]
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol --lane <lane> \
+  --run <run-id> --allow-package-execution --trajectory <path> \
+  --trace-server-run <server-run-id> --trace-object-id sha256:<digest>
 ```
 
 Append the emitted footer unchanged to the final PR body, review, or issue
@@ -163,8 +178,9 @@ mathematical work.
 
 ## Stop conditions
 
-Stop and report the blocker when the model is not approved, provenance is
-dirty, target origin is wrong, the live frontier contradicts the proposed lane,
+Stop and report the blocker when provider, model, or client disclosure is
+missing or non-concrete, provenance is dirty, target origin is wrong, the live
+frontier contradicts the proposed lane,
 the theorem statement is uncertain, a new axiom or stronger assumption would
 be required, untrusted execution cannot be isolated, security routing is
 needed, or evidence contradicts the claim. Honest refutation and narrowing are

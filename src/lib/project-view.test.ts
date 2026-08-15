@@ -54,6 +54,7 @@ function receipt(
       sessionCount: 1,
     },
     trajectorySha256: "c".repeat(64),
+    traceUpload: null,
     signatureAlgorithm: "ed25519",
     devicePublicKey: "d".repeat(43),
     deviceKeyId: "e".repeat(64),

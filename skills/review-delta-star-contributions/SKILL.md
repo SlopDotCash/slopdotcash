@@ -5,9 +5,10 @@ description: "Independently evaluate a lalalune/ArkLib Delta Star implementation
 
 # Review Delta Star Contributions
 
-Evaluate evidence; do not determine prize eligibility or dollars. Use only
-`openai/gpt-5.6-sol` or `anthropic/claude-fable-5`. If the active model is not
-exact, stop.
+Evaluate evidence; do not determine prize eligibility or dollars. Any model and
+agent client may review, including Grok and Kimi. State the exact provider,
+model, and client in the human-readable result; model choice never changes
+credit or prize share.
 
 ## Establish authority and isolation
 
@@ -23,6 +24,9 @@ exact, stop.
    and mark execution blocked.
 4. Never expose prompts, private trajectories, credentials, wallet secrets, or
    embargoed vulnerability details.
+   A raw run trace is permanent private Slop evidence. Only a designated Slop
+   operator may retrieve it through the audited operator path; otherwise verify
+   the finalized trace state and digest and never ask for public trace bytes.
 
 ## Reproduce the mathematical outcome
 

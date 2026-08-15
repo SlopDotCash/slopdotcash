@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * Captures a bounded ccusage session delta and emits a device-signed project
- * receipt for a GitHub contribution footer. Raw sessions, paths, prompts, and
- * responses stay local; only totals, hashes, provenance, and the public key
- * appear in the receipt.
+ * Captures a bounded ccusage session delta, permanently uploads a bounded raw
+ * trace to private Slop storage, and emits a device-signed GitHub footer. Only
+ * totals, hashes, provenance, and immutable upload evidence are public.
  */
 
 import { spawnSync } from "node:child_process";
@@ -27,11 +26,10 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -42,33 +40,40 @@ const PROJECT = JSON.parse(
 const CCUSAGE_VERSION = "20.0.19";
 const CCUSAGE_VERSION_OUTPUT = `ccusage ${CCUSAGE_VERSION}`;
 const MAX_REPORT_BYTES = 32 * 1024 * 1024;
-const MAX_TRAJECTORY_BYTES = 100 * 1024 * 1024;
+const MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const SHA_PATTERN = /^[0-9a-f]{64}$/u;
+const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._:/+-]*$/iu;
 const MAX_STATE_BYTES = MAX_REPORT_BYTES + 1024 * 1024;
 const AUTHORIZATION_RECEIPT = ".slop-authorization.json";
+const TRACE_AUTHORITY = "https://api.slop.cash";
 
 const HELP = `Usage: node scripts/run-receipt.mjs <command> [options]
 
 Commands:
   preview  Show local reads, writes, network access, and public receipt fields
-  doctor   Verify repository, skill provenance, model policy, and local runners
+  doctor   Verify repository, skill provenance, declarations, and local runners
   status   List this project's local active and completed measured runs
   start    Capture a local ccusage baseline after explicit usage consent
+  trace    Permanently upload this run's private trace and finalize it
   finish   Close a measured run and print its device-signed GitHub footer
 
 Common options:
   --repo-root <path>  Target Git repository root (default: current directory)
-  --client <name>     codex or claude-code
-  --model <id>        Exact model required by the project policy
+  --client <name>     Declared agent/client identifier
+  --provider <name>   Declared model provider identifier
+  --model <id>        Declared exact model identifier
+  --client-version <version>  Exact declared agent/client version
   --json              Emit machine-readable JSON
 
 Start and finish also require --lane <public-lane>. Start requires
 --allow-local-usage after preview. Finish requires --run <run-id> and accepts
-an optional --trajectory <path> whose contents stay local.
-Doctor, start, and finish require --allow-package-execution after preview
-because package-manager resolution may fetch code and write caches.
+a required --trajectory <path>, --trace-server-run <id>, and
+--trace-object-id sha256:<digest> returned by the finalized private Slop trace
+upload. Publish only this upload evidence and digest. Supported usage adapters
+also require --allow-package-execution after preview because package-manager
+resolution may fetch code and write caches.
 `;
 
 function fail(message) {
@@ -127,6 +132,19 @@ function stringField(record, names) {
   return null;
 }
 
+function declaredIdentifier(value, field, maxLength = 128) {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > maxLength ||
+    /^n\/a$/iu.test(value) ||
+    !IDENTIFIER_PATTERN.test(value)
+  ) {
+    fail(`${field} must be a concrete identifier`);
+  }
+  return value;
+}
+
 function normalizePath(value) {
   return resolve(value).replaceAll("\\", "/").replace(/\/$/u, "");
 }
@@ -156,6 +174,7 @@ export function normalizeSessionReport(payload, repositoryRoot) {
       "projectPath",
       "project_path",
       "cwd",
+      "directory",
       "workingDirectory",
       "path",
     ]);
@@ -231,7 +250,7 @@ export function normalizeSessionReport(payload, repositoryRoot) {
 }
 
 /** Calculates only monotonic session deltas; counter regressions fail closed. */
-export function usageDelta(before, after, client) {
+export function usageDelta(before, after, _client) {
   if (before === null || after === null) return unavailableUsage();
   const totals = {
     cacheCreationTokens: 0,
@@ -271,10 +290,7 @@ export function usageDelta(before, after, client) {
   }
   return {
     source: "ccusage-session-v20",
-    confidence:
-      client === "claude-code" && everyChangedSessionMatched
-        ? "exact"
-        : "bounded",
+    confidence: everyChangedSessionMatched ? "exact" : "bounded",
     inputTokens: totals.inputTokens,
     outputTokens: totals.outputTokens,
     cacheCreationTokens: totals.cacheCreationTokens,
@@ -285,9 +301,9 @@ export function usageDelta(before, after, client) {
   };
 }
 
-function unavailableUsage() {
+function unavailableUsage(source = "ccusage-session-v20") {
   return {
-    source: "ccusage-session-v20",
+    source,
     confidence: "unavailable",
     inputTokens: 0,
     outputTokens: 0,
@@ -414,12 +430,13 @@ function inspectCcusageRunner() {
 }
 
 function collectUsage(client, repositoryRoot) {
-  const model = PROJECT.models[client];
+  const ccusageSource = PROJECT.usageAdapters[client];
+  if (!ccusageSource) return null;
   return withPackageExecution((executionRoot) => {
     for (const runner of ccusageRunners(executionRoot)) {
       const args = [
         ...runner.prefix,
-        model.ccusageSource,
+        ccusageSource,
         "session",
         "--json",
         "--mode",
@@ -461,6 +478,7 @@ function usageInputPaths(client) {
       : join(home, ".codex");
     return [join(root, "sessions"), join(root, "archived_sessions")];
   }
+  if (client !== "claude-code") return [];
   const roots = new Set([
     join(home, ".config", "claude", "projects"),
     join(home, ".claude", "projects"),
@@ -619,7 +637,6 @@ function validateSessionBaseline(value) {
 }
 
 function validateActiveRecord(value) {
-  const approvedModel = PROJECT.models[value?.client];
   const expectedKeys = [
     "baseline",
     "client",
@@ -648,9 +665,9 @@ function validateActiveRecord(value) {
     value.repositoryId !== PROJECT.repositoryId ||
     !RUN_ID_PATTERN.test(value.runId ?? "") ||
     !SHA_PATTERN.test(value.repositoryRootHash ?? "") ||
-    !approvedModel ||
-    value.provider !== approvedModel.provider ||
-    value.model !== approvedModel.model ||
+    !IDENTIFIER_PATTERN.test(value.client ?? "") ||
+    !IDENTIFIER_PATTERN.test(value.provider ?? "") ||
+    !IDENTIFIER_PATTERN.test(value.model ?? "") ||
     !/^[A-Za-z0-9][A-Za-z0-9-]{1,48}$/u.test(value.lane ?? "") ||
     canonicalIso(value.startedAt) !== value.startedAt ||
     !/^[0-9a-f]{40}$/u.test(value.revision ?? "") ||
@@ -940,44 +957,320 @@ function listRegularFiles(root, prefix = "") {
 function trajectoryDigest(path) {
   if (path === null) return null;
   const absolute = resolve(path);
-  const metadata = statSync(absolute);
-  if (!metadata.isFile() || metadata.size > MAX_TRAJECTORY_BYTES) {
-    fail("trajectory must be a regular file no larger than 100 MiB");
+  const metadata = lstatSync(absolute);
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    metadata.size === 0 ||
+    metadata.size > MAX_TRAJECTORY_BYTES
+  ) {
+    fail("trajectory must be a non-empty regular file no larger than 8 MiB");
   }
-  return sha256(readFileSync(absolute));
+  const contents = readFileSync(absolute);
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(contents);
+  } catch {
+    fail("trajectory must contain valid UTF-8 text or NDJSON");
+  }
+  return sha256(contents);
+}
+
+function traceUploadEvidence(serverRunId, objectId, trajectorySha256) {
+  if (
+    typeof serverRunId !== "string" ||
+    serverRunId.length > 160 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(serverRunId)
+  ) {
+    fail("--trace-server-run must be the finalized Slop server run id");
+  }
+  if (objectId !== `sha256:${trajectorySha256}`) {
+    fail("--trace-object-id must match the uploaded trajectory SHA-256");
+  }
+  return {
+    authority: TRACE_AUTHORITY,
+    serverRunId,
+    objectId,
+    sha256: trajectorySha256,
+  };
+}
+
+function exactObject(value, keys, field) {
+  if (!hasExactKeys(value, keys)) fail(`${field} returned an invalid schema`);
+  return value;
+}
+
+async function jsonRequest(fetchImpl, url, options, keys, field) {
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      ...options,
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    fail(`${field} request failed`);
+  }
+  if (!response?.ok) fail(`${field} request returned HTTP ${response?.status}`);
+  const source = await response.text();
+  if (Buffer.byteLength(source) > 64 * 1024) {
+    fail(`${field} response exceeded its bound`);
+  }
+  let value;
+  try {
+    value = JSON.parse(source);
+  } catch {
+    fail(`${field} response was not JSON`);
+  }
+  return exactObject(value, keys, field);
+}
+
+function slopIdentityAssertion() {
+  fail(
+    "private trace upload requires a one-time Slop identity assertion; complete the GitHub App browser/device session first",
+  );
+}
+
+function privateTraceFile(path) {
+  const sha = trajectoryDigest(path);
+  const contents = readFileSync(resolve(path));
+  return {
+    contents,
+    sha256: sha,
+    sizeBytes: contents.length,
+    contentType:
+      extname(path).toLowerCase() === ".ndjson"
+        ? "application/x-ndjson"
+        : "text/plain",
+  };
+}
+
+export async function uploadPrivateTrace(
+  state,
+  trajectoryPath,
+  clientVersion,
+  {
+    fetchImpl = globalThis.fetch,
+    assertionProvider = slopIdentityAssertion,
+  } = {},
+) {
+  declaredIdentifier(clientVersion, "--client-version", 128);
+  if (typeof fetchImpl !== "function")
+    fail("private trace transport is unavailable");
+  const trace = privateTraceFile(trajectoryPath);
+  const identityAssertion = assertionProvider();
+  if (
+    typeof identityAssertion !== "string" ||
+    identityAssertion.length < 20 ||
+    identityAssertion.length > 4096 ||
+    /\s/u.test(identityAssertion)
+  ) {
+    fail("Slop identity assertion is invalid");
+  }
+  const auth = await jsonRequest(
+    fetchImpl,
+    `${TRACE_AUTHORITY}/api/v1/auth/session`,
+    {
+      method: "POST",
+      headers: { "X-Slop-Identity-Assertion": identityAssertion },
+    },
+    ["expiresAt", "token", "tokenType"],
+    "trace authentication",
+  );
+  if (
+    auth.tokenType !== "Bearer" ||
+    typeof auth.token !== "string" ||
+    auth.token.length < 20 ||
+    auth.token.length > 4096 ||
+    canonicalIso(auth.expiresAt) !== auth.expiresAt
+  ) {
+    fail("trace authentication returned invalid credentials");
+  }
+  const authorization = `Bearer ${auth.token}`;
+  const jsonHeaders = {
+    Authorization: authorization,
+    "Content-Type": "application/json",
+  };
+  const createBody = {
+    clientRunId: state.runId,
+    projectId: state.projectId,
+    repository: state.repositoryId,
+    projectPolicyRevision: state.revision,
+    provider: state.provider,
+    model: state.model,
+    client: state.client,
+    clientVersion,
+  };
+  const created = await jsonRequest(
+    fetchImpl,
+    `${TRACE_AUTHORITY}/api/v1/runs`,
+    {
+      method: "POST",
+      headers: {
+        ...jsonHeaders,
+        "Idempotency-Key": sha256(`create:${JSON.stringify(createBody)}`),
+      },
+      body: JSON.stringify(createBody),
+    },
+    ["clientRunId", "serverRunId", "state"],
+    "trace run creation",
+  );
+  if (
+    created.clientRunId !== state.runId ||
+    created.state !== "awaiting_trace" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(created.serverRunId ?? "")
+  ) {
+    fail("trace run creation returned mismatched identity");
+  }
+  const serverPath = encodeURIComponent(created.serverRunId);
+  const intentBody = {
+    sha256: trace.sha256,
+    sizeBytes: trace.sizeBytes,
+    contentType: trace.contentType,
+  };
+  const intent = await jsonRequest(
+    fetchImpl,
+    `${TRACE_AUTHORITY}/api/v1/runs/${serverPath}/trace-intents`,
+    {
+      method: "POST",
+      headers: {
+        ...jsonHeaders,
+        "Idempotency-Key": sha256(
+          `intent:${created.serverRunId}:${trace.sha256}`,
+        ),
+      },
+      body: JSON.stringify(intentBody),
+    },
+    [
+      "contentType",
+      "expiresAt",
+      "serverRunId",
+      "sha256",
+      "sizeBytes",
+      "uploadUrl",
+    ],
+    "trace upload intent",
+  );
+  let uploadUrl;
+  try {
+    uploadUrl = new URL(intent.uploadUrl);
+  } catch {
+    fail("trace upload intent returned an invalid URL");
+  }
+  if (
+    intent.serverRunId !== created.serverRunId ||
+    intent.sha256 !== trace.sha256 ||
+    intent.sizeBytes !== trace.sizeBytes ||
+    intent.contentType !== trace.contentType ||
+    uploadUrl.origin !== TRACE_AUTHORITY ||
+    uploadUrl.username ||
+    uploadUrl.password ||
+    uploadUrl.hash
+  ) {
+    fail("trace upload intent returned mismatched fields");
+  }
+  const uploaded = await jsonRequest(
+    fetchImpl,
+    uploadUrl.href,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": trace.contentType,
+        Digest: `sha-256=${trace.sha256}`,
+      },
+      body: trace.contents,
+    },
+    [
+      "clientRunId",
+      "serverRunId",
+      "sizeBytes",
+      "state",
+      "traceObjectId",
+      "traceSha256",
+    ],
+    "trace upload",
+  );
+  if (
+    uploaded.clientRunId !== state.runId ||
+    uploaded.serverRunId !== created.serverRunId ||
+    uploaded.sizeBytes !== trace.sizeBytes ||
+    uploaded.state !== "trace_uploaded" ||
+    uploaded.traceSha256 !== trace.sha256 ||
+    uploaded.traceObjectId !== `sha256:${trace.sha256}`
+  ) {
+    fail("trace upload returned mismatched evidence");
+  }
+  const finalized = await jsonRequest(
+    fetchImpl,
+    `${TRACE_AUTHORITY}/api/v1/runs/${serverPath}/finalize`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: authorization,
+        "Idempotency-Key": sha256(
+          `finalize:${created.serverRunId}:${trace.sha256}`,
+        ),
+      },
+    },
+    ["clientRunId", "serverRunId", "state", "traceObjectId", "traceSha256"],
+    "trace finalization",
+  );
+  if (
+    finalized.clientRunId !== state.runId ||
+    finalized.serverRunId !== created.serverRunId ||
+    finalized.state !== "finalized" ||
+    finalized.traceSha256 !== trace.sha256 ||
+    finalized.traceObjectId !== `sha256:${trace.sha256}`
+  ) {
+    fail("trace finalization returned mismatched evidence");
+  }
+  return traceUploadEvidence(
+    finalized.serverRunId,
+    finalized.traceObjectId,
+    finalized.traceSha256,
+  );
 }
 
 export function marker(receipt) {
+  const run = {
+    schema_version: "1",
+    run_id: receipt.runId,
+    project: receipt.projectId,
+    repository: receipt.repositoryId,
+    started_at: receipt.startedAt,
+    completed_at: receipt.completedAt,
+    skill_sha256: receipt.skillSha256,
+    usage: {
+      source: receipt.usage.source,
+      confidence: receipt.usage.confidence,
+      input_tokens: receipt.usage.inputTokens,
+      output_tokens: receipt.usage.outputTokens,
+      cache_creation_tokens: receipt.usage.cacheCreationTokens,
+      cache_read_tokens: receipt.usage.cacheReadTokens,
+      total_tokens: receipt.usage.totalTokens,
+      cost_micro_usd: receipt.usage.costMicroUsd,
+      session_count: receipt.usage.sessionCount,
+    },
+    trajectory_sha256: receipt.trajectorySha256,
+    ...(receipt.traceUpload
+      ? {
+          trace_upload: {
+            authority: receipt.traceUpload.authority,
+            server_run_id: receipt.traceUpload.serverRunId,
+            object_id: receipt.traceUpload.objectId,
+            sha256: receipt.traceUpload.sha256,
+          },
+        }
+      : {}),
+    signature_algorithm: "ed25519",
+    device_public_key: receipt.devicePublicKey,
+    device_key_id: receipt.deviceKeyId,
+    device_signature: receipt.deviceSignature,
+  };
   return {
     provider: receipt.provider,
     model: receipt.model,
     client: receipt.client,
     skill_revision: receipt.skillRevision,
-    run: {
-      schema_version: "1",
-      run_id: receipt.runId,
-      project: receipt.projectId,
-      repository: receipt.repositoryId,
-      started_at: receipt.startedAt,
-      completed_at: receipt.completedAt,
-      skill_sha256: receipt.skillSha256,
-      usage: {
-        source: receipt.usage.source,
-        confidence: receipt.usage.confidence,
-        input_tokens: receipt.usage.inputTokens,
-        output_tokens: receipt.usage.outputTokens,
-        cache_creation_tokens: receipt.usage.cacheCreationTokens,
-        cache_read_tokens: receipt.usage.cacheReadTokens,
-        total_tokens: receipt.usage.totalTokens,
-        cost_micro_usd: receipt.usage.costMicroUsd,
-        session_count: receipt.usage.sessionCount,
-      },
-      trajectory_sha256: receipt.trajectorySha256,
-      signature_algorithm: "ed25519",
-      device_public_key: receipt.devicePublicKey,
-      device_key_id: receipt.deviceKeyId,
-      device_signature: receipt.deviceSignature,
-    },
+    run,
   };
 }
 
@@ -1046,7 +1339,6 @@ function completedLane(value, receipt) {
 
 function validateCompletedRecord(value) {
   const receipt = value?.receipt;
-  const approvedModel = PROJECT.models[receipt?.client];
   const wrapperIsCurrent = hasExactKeys(value, [
     "footer",
     "lane",
@@ -1071,6 +1363,7 @@ function validateCompletedRecord(value) {
     "skillSha256",
     "startedAt",
     "trajectorySha256",
+    ...(Object.hasOwn(receipt ?? {}, "traceUpload") ? ["traceUpload"] : []),
     "usage",
   ];
   const usageKeys = [
@@ -1085,6 +1378,7 @@ function validateCompletedRecord(value) {
     "totalTokens",
   ];
   const usage = receipt?.usage;
+  const traceUpload = receipt?.traceUpload;
   const numericUsageKeys = [
     "cacheCreationTokens",
     "cacheReadTokens",
@@ -1102,9 +1396,9 @@ function validateCompletedRecord(value) {
     receipt.projectId !== PROJECT.projectId ||
     receipt.repositoryId !== PROJECT.repositoryId ||
     !RUN_ID_PATTERN.test(receipt.runId ?? "") ||
-    !approvedModel ||
-    receipt.provider !== approvedModel.provider ||
-    receipt.model !== approvedModel.model ||
+    !IDENTIFIER_PATTERN.test(receipt.client ?? "") ||
+    !IDENTIFIER_PATTERN.test(receipt.provider ?? "") ||
+    !IDENTIFIER_PATTERN.test(receipt.model ?? "") ||
     !new RegExp(
       `^elizaOS/(?:slopdotcash|army)@[0-9a-f]{40}:${PROJECT.skillSourcePath.replaceAll("/", "\\/")}$`,
       "u",
@@ -1116,7 +1410,7 @@ function validateCompletedRecord(value) {
     receipt.signatureAlgorithm !== "ed25519" ||
     (receipt.trajectorySha256 !== null &&
       !SHA_PATTERN.test(receipt.trajectorySha256 ?? "")) ||
-    usage.source !== "ccusage-session-v20" ||
+    !["ccusage-session-v20", "none"].includes(usage.source) ||
     !["bounded", "exact", "unavailable"].includes(usage.confidence) ||
     numericUsageKeys.some(
       (key) => !Number.isSafeInteger(usage[key]) || usage[key] < 0,
@@ -1127,7 +1421,20 @@ function validateCompletedRecord(value) {
     !/^[A-Za-z0-9_-]+$/u.test(receipt.devicePublicKey) ||
     !SHA_PATTERN.test(receipt.deviceKeyId ?? "") ||
     typeof receipt.deviceSignature !== "string" ||
-    !/^[A-Za-z0-9_-]+$/u.test(receipt.deviceSignature)
+    !/^[A-Za-z0-9_-]+$/u.test(receipt.deviceSignature) ||
+    (traceUpload !== undefined &&
+      (!hasExactKeys(traceUpload, [
+        "authority",
+        "objectId",
+        "serverRunId",
+        "sha256",
+      ]) ||
+        traceUpload.authority !== TRACE_AUTHORITY ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(
+          traceUpload.serverRunId ?? "",
+        ) ||
+        traceUpload.objectId !== `sha256:${receipt.trajectorySha256}` ||
+        traceUpload.sha256 !== receipt.trajectorySha256))
   ) {
     fail("completed run state has an invalid identity");
   }
@@ -1186,7 +1493,10 @@ function validateCompletedState(value, options, repositoryRoot) {
       completed.repositoryRootHash !== sha256(repositoryRoot)) ||
     receipt.runId !== options.runId ||
     receipt.client !== options.client ||
-    receipt.model !== options.model
+    receipt.provider !== options.provider ||
+    receipt.model !== options.model ||
+    receipt.traceUpload?.serverRunId !== options.traceServerRun ||
+    receipt.traceUpload?.objectId !== options.traceObjectId
   ) {
     fail(
       "completed run state does not match this project, repository, model, or lane",
@@ -1205,11 +1515,15 @@ function parseArguments(args) {
     allowLocalUsage: false,
     allowPackageExecution: false,
     client: null,
+    clientVersion: null,
     json: false,
     lane: null,
     model: null,
+    provider: null,
     repoRoot: process.cwd(),
     runId: null,
+    traceObjectId: null,
+    traceServerRun: null,
     trajectory: null,
   };
   for (let index = 1; index < args.length; index += 1) {
@@ -1224,10 +1538,14 @@ function parseArguments(args) {
     } else if (
       [
         "--client",
+        "--client-version",
         "--lane",
         "--model",
+        "--provider",
         "--repo-root",
         "--run",
+        "--trace-object-id",
+        "--trace-server-run",
         "--trajectory",
       ].includes(argument)
     ) {
@@ -1235,19 +1553,29 @@ function parseArguments(args) {
       if (!value) fail(`${argument} requires a value`);
       index += 1;
       if (argument === "--client") options.client = value;
+      if (argument === "--client-version") options.clientVersion = value;
       if (argument === "--lane") options.lane = value;
       if (argument === "--model") options.model = value;
+      if (argument === "--provider") options.provider = value;
       if (argument === "--repo-root") options.repoRoot = value;
       if (argument === "--run") options.runId = value;
+      if (argument === "--trace-object-id") options.traceObjectId = value;
+      if (argument === "--trace-server-run") options.traceServerRun = value;
       if (argument === "--trajectory") options.trajectory = value;
     } else fail(`unknown argument: ${argument}`);
   }
   if (
-    !["doctor", "finish", "help", "preview", "start", "status"].includes(
-      options.action,
-    )
+    ![
+      "doctor",
+      "finish",
+      "help",
+      "preview",
+      "start",
+      "status",
+      "trace",
+    ].includes(options.action)
   ) {
-    fail("command must be preview, doctor, status, start, or finish");
+    fail("command must be preview, doctor, status, start, trace, or finish");
   }
   const allowedArguments = {
     doctor: new Set([
@@ -1255,6 +1583,7 @@ function parseArguments(args) {
       "--client",
       "--json",
       "--model",
+      "--provider",
       "--repo-root",
     ]),
     finish: new Set([
@@ -1263,8 +1592,11 @@ function parseArguments(args) {
       "--json",
       "--lane",
       "--model",
+      "--provider",
       "--repo-root",
       "--run",
+      "--trace-object-id",
+      "--trace-server-run",
       "--trajectory",
     ]),
     help: new Set(),
@@ -1276,9 +1608,17 @@ function parseArguments(args) {
       "--json",
       "--lane",
       "--model",
+      "--provider",
       "--repo-root",
     ]),
     status: new Set(["--json"]),
+    trace: new Set([
+      "--client-version",
+      "--json",
+      "--repo-root",
+      "--run",
+      "--trajectory",
+    ]),
   }[options.action];
   const inapplicable = [...provided].filter(
     (argument) => !allowedArguments.has(argument),
@@ -1289,14 +1629,12 @@ function parseArguments(args) {
   const needsClient = ["doctor", "finish", "preview", "start"].includes(
     options.action,
   );
-  if (needsClient && !PROJECT.models[options.client]) {
-    fail("--client must be codex or claude-code");
+  if (needsClient) {
+    declaredIdentifier(options.client, "--client", 64);
   }
   if (["doctor", "finish", "start"].includes(options.action)) {
-    const approved = PROJECT.models[options.client];
-    if (options.model !== approved.model) {
-      fail(`--model must be the approved frontier model ${approved.model}`);
-    }
+    declaredIdentifier(options.provider, "--provider", 64);
+    declaredIdentifier(options.model, "--model");
   }
   if (["finish", "start"].includes(options.action)) {
     if (
@@ -1312,6 +1650,26 @@ function parseArguments(args) {
   ) {
     fail("finish requires --run with the id returned by start");
   }
+  if (options.action === "finish" && options.trajectory === null) {
+    fail("finish requires --trajectory; every run must retain a private trace");
+  }
+  if (
+    options.action === "trace" &&
+    (!RUN_ID_PATTERN.test(options.runId ?? "") || options.trajectory === null)
+  ) {
+    fail("trace requires --run and --trajectory");
+  }
+  if (options.action === "trace") {
+    declaredIdentifier(options.clientVersion, "--client-version", 128);
+  }
+  if (
+    options.action === "finish" &&
+    (options.traceServerRun === null || options.traceObjectId === null)
+  ) {
+    fail(
+      "finish requires finalized --trace-server-run and --trace-object-id evidence",
+    );
+  }
   if (options.action === "start" && !options.allowLocalUsage) {
     fail(
       "start requires --allow-local-usage after reviewing the preview output",
@@ -1322,6 +1680,7 @@ function parseArguments(args) {
   }
   if (
     ["doctor", "finish", "start"].includes(options.action) &&
+    PROJECT.usageAdapters[options.client] &&
     !options.allowPackageExecution
   ) {
     fail(
@@ -1329,11 +1688,12 @@ function parseArguments(args) {
     );
   }
   if (
-    !["doctor", "finish", "start"].includes(options.action) &&
+    (!["doctor", "finish", "start"].includes(options.action) ||
+      !PROJECT.usageAdapters[options.client]) &&
     options.allowPackageExecution
   ) {
     fail(
-      "--allow-package-execution is valid only with doctor, start, or finish",
+      "--allow-package-execution is valid only for a supported usage adapter",
     );
   }
   return options;
@@ -1349,14 +1709,15 @@ function previewRun(options) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
   const stateRoot = configurationRoot();
-  const model = PROJECT.models[options.client];
+  const usageAdapter = PROJECT.usageAdapters[options.client] ?? null;
   const result = {
     projectId: PROJECT.projectId,
     repositoryId: PROJECT.repositoryId,
     repositoryRoot,
     client: options.client,
-    approvedModel: model.model,
-    modelEvidence: "declared-local-not-provider-attested",
+    modelPolicy: "open-declared",
+    modelEvidence: "must-be-declared-local-not-provider-attested",
+    usageAdapter,
     skillRevision: provenance.skillRevision,
     skillSha256: provenance.skillSha256,
     localReads: usageInputPaths(options.client),
@@ -1370,6 +1731,7 @@ function previewRun(options) {
     ],
     network: [
       `Resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
+      `Authenticate with GitHub and permanently upload the bounded trace through ${TRACE_AUTHORITY}`,
     ],
     automaticUploads: [],
     publicReceiptFields: [
@@ -1379,11 +1741,11 @@ function previewRun(options) {
       "skill revision and SHA-256",
       "aggregate input/output/cache/total tokens and API-equivalent estimated cost",
       "session count and confidence",
-      "optional local trajectory SHA-256",
+      "required private trajectory SHA-256",
+      "private trace authority, server run id, and immutable object id",
       "public Ed25519 device key and signature",
     ],
     excluded: [
-      "prompts and responses",
       "source files and diffs",
       "transcript and session identifiers",
       "credentials, environment values, private keys, and wallet secrets",
@@ -1402,7 +1764,7 @@ function previewRun(options) {
       ...result,
       message: [
         `Slop receipt preview for ${result.repositoryId}.`,
-        `Local usage reads: ${result.localReads.join(", ")}`,
+        `Local usage reads: ${result.localReads.join(", ") || "none; this client has no usage adapter"}`,
         `Local state: ${stateRoot}`,
         "Automatic uploads: none.",
         `Doctor only after consent with ${result.packageExecutionConsentFlag}.`,
@@ -1416,19 +1778,24 @@ function previewRun(options) {
 function doctorRun(options) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
-  const probe = inspectCcusageRunner();
+  const usageAdapter = PROJECT.usageAdapters[options.client] ?? null;
+  const probe = usageAdapter
+    ? inspectCcusageRunner()
+    : { runner: null, status: "unsupported", version: null };
   const result = {
-    ok: probe.status === "available",
+    ok: probe.status === "available" || probe.status === "unsupported",
     projectId: PROJECT.projectId,
     repositoryId: PROJECT.repositoryId,
     repositoryRoot,
     client: options.client,
-    approvedModel: PROJECT.models[options.client].model,
+    provider: options.provider,
+    model: options.model,
+    modelPolicy: "open-declared",
     modelEvidence: "declared-local-not-provider-attested",
     skillRevision: provenance.skillRevision,
     skillSha256: provenance.skillSha256,
     ccusage: {
-      expectedVersion: CCUSAGE_VERSION,
+      expectedVersion: usageAdapter ? CCUSAGE_VERSION : null,
       version: probe.version,
       runner: probe.runner,
       status: probe.status,
@@ -1439,7 +1806,7 @@ function doctorRun(options) {
     {
       ...result,
       message: result.ok
-        ? `Slop receipt doctor passed for ${result.repositoryId}; no usage logs were read.`
+        ? `Slop receipt doctor passed for ${result.repositoryId}; no usage logs were read${usageAdapter ? "." : "; this client has no usage adapter, so usage will be unavailable."}`
         : `Slop receipt doctor failed: exact ccusage@${CCUSAGE_VERSION} could not be executed.`,
     },
     options.json,
@@ -1478,7 +1845,7 @@ function statusRun(options) {
 function startRun(options) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
-  const model = PROJECT.models[options.client];
+  const usageAdapter = PROJECT.usageAdapters[options.client] ?? null;
   const runId = createRunId();
   const state = validateActiveRecord({
     schemaVersion: "1",
@@ -1487,8 +1854,8 @@ function startRun(options) {
     repositoryId: PROJECT.repositoryId,
     repositoryRootHash: sha256(repositoryRoot),
     client: options.client,
-    provider: model.provider,
-    model: model.model,
+    provider: options.provider,
+    model: options.model,
     lane: options.lane,
     startedAt: canonicalIso(),
     baseline: collectUsage(options.client, repositoryRoot),
@@ -1500,7 +1867,44 @@ function startRun(options) {
     {
       runId,
       message: `Project run started. Keep this id: ${runId}`,
-      usageStatus: state.baseline === null ? "unavailable" : "capturing",
+      usageStatus:
+        usageAdapter === null
+          ? "unsupported"
+          : state.baseline === null
+            ? "unavailable"
+            : "capturing",
+    },
+    options.json,
+  );
+}
+
+async function traceRun(options) {
+  const provenance = resolveSkillProvenance();
+  const repositoryRoot = requireRepository(options.repoRoot);
+  const activePath = join(runDirectories().active, `${options.runId}.json`);
+  if (!existsSync(activePath)) fail("active run state was not found");
+  const state = validateActiveRecord(readStateFile(activePath));
+  if (
+    state.repositoryRootHash !== sha256(repositoryRoot) ||
+    state.revision !== provenance.revision ||
+    state.skillRevision !== provenance.skillRevision ||
+    state.skillSha256 !== provenance.skillSha256
+  ) {
+    fail("run state does not match this repository or skill revision");
+  }
+  const evidence = await uploadPrivateTrace(
+    state,
+    options.trajectory,
+    options.clientVersion,
+  );
+  renderResult(
+    {
+      ...evidence,
+      message: [
+        "Private trace uploaded and finalized.",
+        `--trace-server-run ${evidence.serverRunId}`,
+        `--trace-object-id ${evidence.objectId}`,
+      ].join("\n"),
     },
     options.json,
   );
@@ -1564,6 +1968,7 @@ function finishRun(options) {
     state.projectId !== PROJECT.projectId ||
     state.repositoryId !== PROJECT.repositoryId ||
     state.client !== options.client ||
+    state.provider !== options.provider ||
     state.model !== options.model ||
     state.lane !== options.lane ||
     state.repositoryRootHash !== sha256(repositoryRoot) ||
@@ -1577,12 +1982,15 @@ function finishRun(options) {
   if (Date.parse(completedAt) + CLOCK_SKEW_MS < Date.parse(state.startedAt)) {
     fail("system clock moved backward during the run");
   }
-  const usage = usageDelta(
-    state.baseline,
-    collectUsage(options.client, repositoryRoot),
-    options.client,
-  );
+  const usage = PROJECT.usageAdapters[options.client]
+    ? usageDelta(
+        state.baseline,
+        collectUsage(options.client, repositoryRoot),
+        options.client,
+      )
+    : unavailableUsage("none");
   const key = deviceKey();
+  const trajectorySha256 = trajectoryDigest(options.trajectory);
   const receipt = {
     schemaVersion: "1",
     runId: state.runId,
@@ -1596,7 +2004,12 @@ function finishRun(options) {
     skillRevision: state.skillRevision,
     skillSha256: state.skillSha256,
     usage,
-    trajectorySha256: trajectoryDigest(options.trajectory),
+    trajectorySha256,
+    traceUpload: traceUploadEvidence(
+      options.traceServerRun,
+      options.traceObjectId,
+      trajectorySha256,
+    ),
     signatureAlgorithm: "ed25519",
     devicePublicKey: key.publicKey,
     deviceKeyId: key.keyId,
@@ -1639,13 +2052,14 @@ function finishRun(options) {
   );
 }
 
-export function main(args = process.argv.slice(2)) {
+export async function main(args = process.argv.slice(2)) {
   const options = parseArguments(args);
   if (options.action === "help") process.stdout.write(HELP);
   else if (options.action === "preview") previewRun(options);
   else if (options.action === "doctor") doctorRun(options);
   else if (options.action === "status") statusRun(options);
   else if (options.action === "start") startRun(options);
+  else if (options.action === "trace") await traceRun(options);
   else finishRun(options);
 }
 
@@ -1656,7 +2070,7 @@ const invokedDirectly =
     realpathSync(process.argv[1]);
 if (invokedDirectly) {
   try {
-    main();
+    await main();
   } catch (error) {
     // error-policy:J1 The CLI boundary returns a non-zero result without a fake receipt.
     process.stderr.write(

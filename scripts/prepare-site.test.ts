@@ -403,7 +403,7 @@ describe("contribution skill package", () => {
     const llms = readFileSync(join(publicRoot, "llms.txt"), "utf8");
     expect(llms).toContain(`SHA-256: ${digest}`);
     expect(llms).toContain("never authorizes wallet creation");
-    expect(source.toString()).toContain("No CLI upload");
+    expect(source.toString()).toContain("mandatory permanent raw-trace upload");
     expect(source.toString()).toContain("--allow-local-usage");
 
     const projectDiscovery = parseJsonRecord(
@@ -564,6 +564,7 @@ describe("contribution skill package", () => {
       join(publicRoot, "claude-code.md"),
       "utf8",
     );
+    const manualGuide = readFileSync(join(publicRoot, "manual.md"), "utf8");
     const mission = readFileSync(join(publicRoot, "mission.md"), "utf8");
     const head = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: repositoryRoot,
@@ -653,10 +654,28 @@ describe("contribution skill package", () => {
           ],
         },
       },
+      manual: {
+        publicUrl: "https://slop.cash/manual.md",
+        sha256: sha256(manualGuide),
+        renderer: {
+          ...expectedRenderer,
+          arguments: [
+            "--artifact-origin",
+            "https://slop.cash/projects/eliza",
+            "--client",
+            "manual",
+            "--skill",
+            "contribute-to-eliza",
+            "--source",
+            "skills/contribute-to-eliza",
+          ],
+        },
+      },
     });
     for (const [client, guide] of [
       ["codex", codexGuide],
       ["claude-code", claudeGuide],
+      ["manual", manualGuide],
     ] as const) {
       expect(
         execFileSync(

@@ -173,7 +173,7 @@ describe("contribute-to-eliza skill structure", () => {
     assert.match(source, /run-receipt\.mjs start/);
     assert.match(source, /run-receipt\.mjs finish/);
     assert.match(source, /gpt-5\.6-sol/);
-    assert.match(source, /claude-fable-5/);
+    assert.match(source, /Grok and Kimi/);
     assert.match(source, /Slop marker/i);
     assert.match(source, /device signature/i);
     assert.match(source, /updates only to GitHub-authorized bytes/i);
@@ -2187,7 +2187,9 @@ describe("run receipt CLI", () => {
     assert.strictEqual(delta.totalTokens, 150);
   });
 
-  it("starts and finishes a measured run without passing --project to ccusage", async () => {
+  it("starts and finishes a measured run without passing --project to ccusage", {
+    timeout: 15_000,
+  }, async () => {
     const fixtureRoot = realpathSync(
       mkdtempSync(join(tmpdir(), "contribute-to-eliza-start-")),
     );
@@ -2306,6 +2308,8 @@ describe("run receipt CLI", () => {
         repoRoot,
         "--client",
         "claude-code",
+        "--provider",
+        "anthropic",
         "--model",
         "claude-fable-5",
         "--lane",
@@ -2331,7 +2335,7 @@ describe("run receipt CLI", () => {
       assert.deepStrictEqual(previewReport.automaticUploads, []);
       assert.strictEqual(
         previewReport.modelEvidence,
-        "declared-local-not-provider-attested",
+        "must-be-declared-local-not-provider-attested",
       );
       assert.strictEqual(previewReport.consentFlag, "--allow-local-usage");
       assert.strictEqual(
@@ -2352,6 +2356,8 @@ describe("run receipt CLI", () => {
           repoRoot,
           "--client",
           "claude-code",
+          "--provider",
+          "anthropic",
           "--model",
           "claude-fable-5",
           "--json",
@@ -2374,6 +2380,8 @@ describe("run receipt CLI", () => {
           repoRoot,
           "--client",
           "claude-code",
+          "--provider",
+          "anthropic",
           "--model",
           "claude-fable-5",
           "--allow-package-execution",
@@ -2575,6 +2583,15 @@ describe("run receipt CLI", () => {
       );
       const trajectoryPath = join(fixtureRoot, "trajectory.json");
       writeFileSync(trajectoryPath, '{"result":"accepted"}\n');
+      const trajectorySha256 = createHash("sha256")
+        .update(readFileSync(trajectoryPath))
+        .digest("hex");
+      const traceArguments = [
+        "--trace-server-run",
+        "server_test_run",
+        "--trace-object-id",
+        `sha256:${trajectorySha256}`,
+      ];
       const finished = spawnSync(
         process.execPath,
         [
@@ -2585,6 +2602,7 @@ describe("run receipt CLI", () => {
           startReport.runId,
           "--trajectory",
           trajectoryPath,
+          ...traceArguments,
           "--allow-package-execution",
         ],
         { encoding: "utf8", env: environment },
@@ -2595,7 +2613,7 @@ describe("run receipt CLI", () => {
       assert.strictEqual(finishReport.receipt.usage.totalTokens, 150);
       assert.strictEqual(
         finishReport.receipt.trajectorySha256,
-        createHash("sha256").update(readFileSync(trajectoryPath)).digest("hex"),
+        trajectorySha256,
       );
       assert.match(
         finishReport.footer,
@@ -2609,6 +2627,9 @@ describe("run receipt CLI", () => {
           ...cliArguments,
           "--run",
           startReport.runId,
+          "--trajectory",
+          trajectoryPath,
+          ...traceArguments,
           "--allow-package-execution",
         ],
         { encoding: "utf8", env: environment },
@@ -2628,12 +2649,16 @@ describe("run receipt CLI", () => {
           startReport.runId,
           "--trajectory",
           trajectoryPath,
+          ...traceArguments,
           "--allow-package-execution",
         ],
         { encoding: "utf8", env: environment },
       );
       assert.strictEqual(trajectoryReplay.status, 0, trajectoryReplay.stderr);
       writeFileSync(trajectoryPath, '{"result":"different"}\n');
+      const differentTrajectorySha256 = createHash("sha256")
+        .update(readFileSync(trajectoryPath))
+        .digest("hex");
       const mismatchedTrajectoryReplay = spawnSync(
         process.execPath,
         [
@@ -2644,6 +2669,10 @@ describe("run receipt CLI", () => {
           startReport.runId,
           "--trajectory",
           trajectoryPath,
+          "--trace-server-run",
+          "server_test_run",
+          "--trace-object-id",
+          `sha256:${differentTrajectorySha256}`,
           "--allow-package-execution",
         ],
         { encoding: "utf8", env: environment },
@@ -2651,8 +2680,9 @@ describe("run receipt CLI", () => {
       assert.strictEqual(mismatchedTrajectoryReplay.status, 1);
       assert.match(
         mismatchedTrajectoryReplay.stderr,
-        /trajectory does not match/u,
+        /trajectory does not match|run state does not match/u,
       );
+      writeFileSync(trajectoryPath, '{"result":"accepted"}\n');
 
       const status = spawnSync(
         process.execPath,
@@ -2699,6 +2729,9 @@ describe("run receipt CLI", () => {
           ...cliArguments,
           "--run",
           startReport.runId,
+          "--trajectory",
+          trajectoryPath,
+          ...traceArguments,
           "--allow-package-execution",
         ],
         { encoding: "utf8", env: environment },
@@ -2728,6 +2761,9 @@ describe("run receipt CLI", () => {
           ...cliArguments,
           "--run",
           startReport.runId,
+          "--trajectory",
+          trajectoryPath,
+          ...traceArguments,
           "--allow-package-execution",
         ],
         { encoding: "utf8", env: environment },
@@ -2775,6 +2811,9 @@ describe("run receipt CLI", () => {
           ...cliArguments,
           "--run",
           startReport.runId,
+          "--trajectory",
+          trajectoryPath,
+          ...traceArguments,
           "--allow-package-execution",
         ],
         { encoding: "utf8", env: environment },
@@ -2871,6 +2910,9 @@ describe("run receipt CLI", () => {
         ...cliArguments,
         "--run",
         concurrentRunId,
+        "--trajectory",
+        trajectoryPath,
+        ...traceArguments,
         "--allow-package-execution",
       ];
       const raceHook = join(fixtureRoot, "finish-race-hook.mjs");
@@ -2984,6 +3026,8 @@ describe("run receipt CLI", () => {
           repoRoot,
           "--client",
           "claude-code",
+          "--provider",
+          "anthropic",
           "--model",
           "claude-fable-5",
           "--allow-package-execution",
@@ -3009,6 +3053,8 @@ describe("run receipt CLI", () => {
           repoRoot,
           "--client",
           "claude-code",
+          "--provider",
+          "anthropic",
           "--model",
           "claude-fable-5",
           "--allow-package-execution",

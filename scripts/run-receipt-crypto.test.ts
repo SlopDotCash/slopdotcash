@@ -35,6 +35,7 @@ function signedReceipt(): ProjectRunReceipt {
       sessionCount: 1,
     },
     trajectorySha256: null,
+    traceUpload: null,
     signatureAlgorithm: "ed25519",
     devicePublicKey: publicKeyDer.toString("base64url"),
     deviceKeyId: deviceKeyId(publicKeyDer),

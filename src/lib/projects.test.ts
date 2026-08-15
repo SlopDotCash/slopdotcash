@@ -46,16 +46,12 @@ describe("project registry", () => {
     expect(findProjectByRepositoryId("unknown/repository")).toBeNull();
   });
 
-  it("pins the approved frontier models by exact identifier", () => {
+  it("allows every model while requiring a concrete disclosure", () => {
     for (const project of PROJECTS) {
-      expect(project.modelPolicy.approved).toEqual([
-        { client: "codex", provider: "openai", model: "gpt-5.6-sol" },
-        {
-          client: "claude-code",
-          provider: "anthropic",
-          model: "claude-fable-5",
-        },
-      ]);
+      expect(project.modelPolicy).toEqual({
+        mode: "open-declared",
+        disclosureRequired: true,
+      });
     }
   });
 });

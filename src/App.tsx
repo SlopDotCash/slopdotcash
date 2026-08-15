@@ -2139,7 +2139,7 @@ function ProjectProposalPage() {
         fundingState: "pledged",
       },
       modelPolicy: {
-        mode: "open",
+        mode: "open-declared",
         disclosureRequired: true,
       },
       links: {

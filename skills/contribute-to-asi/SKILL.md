@@ -14,12 +14,9 @@ was not.
 Accepted work shares a projected $5,000 monthly digital-dollar pool;
 maintainers review allocations and the projection is not a payment promise.
 
-Use only the approved frontier model for the active client:
-
-- Codex: `openai/gpt-5.6-sol`
-- Claude Code: `anthropic/claude-fable-5`
-
-If the exact runtime model does not match, stop before starting a measured run.
+Any model and agent client may contribute, including Grok and Kimi. Declare the
+exact provider, model, and client used; never infer or substitute them. Model
+choice and token volume are diagnostic only and never change score or payout.
 
 ## Start every run
 
@@ -31,18 +28,24 @@ If the exact runtime model does not match, stop before starting a measured run.
 2. Read the repository root `CLAUDE.md`/`AGENTS.md`, `RESEARCH_STATUS.md`,
    `NEGATIVE_RESULTS_LEDGER.md`, the runbook for the lane you touch, and
    [repository-contract.md](references/repository-contract.md).
+   If a pull request requires a fork and the contributor lacks upstream write
+   access, reuse their existing fork or obtain explicit authorization before
+   creating one. Do not fork when an upstream branch is authorized. A
+   contributor may manually star `elizaOS/asi` and `elizaOS/slopdotcash` if
+   they genuinely want to support them; stars are optional, never automated,
+   never verified, and never scored or paid.
 3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)
    before deciding what proof the contribution needs.
 4. Preview the exact local usage directories, state writes, network access,
    public fields, and exclusions before reading usage logs. Then run the local
-   doctor, which verifies repository, skill, model policy, and runner
+   doctor, which verifies repository, skill, declared identity, and runner
    availability without reading those logs:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs preview \
   --repo-root "$PWD" --client codex
 node <skill-directory>/scripts/run-receipt.mjs doctor \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol \
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol \
   --allow-package-execution
 ```
 
@@ -52,16 +55,16 @@ node <skill-directory>/scripts/run-receipt.mjs doctor \
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs start \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol --lane <lane> \
   --allow-package-execution --allow-local-usage
 ```
 
-For Claude Code use `--client claude-code --model claude-fable-5` in doctor and
-start, and `--client claude-code` in preview. The script uses transient, exact-
-pinned `ccusage@20.0.19`; each resolving command requires package-execution
-consent, while only start and finish read usage logs. It does not install a global package or
-upload raw local logs, and it creates a local Ed25519 device key only when the run
-finishes.
+For Claude Code declare `--client claude-code --provider anthropic --model
+<exact-model>`. For Grok, Kimi, or another client, use its concrete identifiers.
+Codex and Claude Code have pinned `ccusage@20.0.19` adapters; unsupported
+clients continue with usage marked unavailable and omit
+`--allow-package-execution`. The receipt creates a local Ed25519 device key only
+when the run finishes.
 
 6. Build the bounded, read-only inventory of live work before choosing:
 
@@ -345,13 +348,26 @@ unmerged change as accepted.
 
 ## Finish the measured run
 
-After all work and proof, finish the same run. Optionally hash a local
-trajectory file without publishing its contents:
+After all work and proof, export the full trace as UTF-8 text or NDJSON. Exclude
+credentials, private keys, wallet seeds, and prohibited source-file bodies,
+but do not omit ordinary run events. Finish only after its permanent private
+upload to `https://api.slop.cash` succeeds. The raw trace is accessible only to
+designated Slop operators; GitHub receives only its SHA-256 digest. If export,
+upload, or finalization fails, stop and do not submit the contribution.
+
+```bash
+node <skill-directory>/scripts/run-receipt.mjs trace \
+  --repo-root "$PWD" --run <run-id> --trajectory <path> \
+  --client-version <exact-client-version> --json
+```
+
+Use the finalized server run and object id returned by that command:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs finish \
-  --repo-root "$PWD" --client codex --model gpt-5.6-sol --lane <lane> \
-  --run <run-id> --allow-package-execution [--trajectory <path>]
+  --repo-root "$PWD" --client codex --provider openai --model gpt-5.6-sol --lane <lane> \
+  --run <run-id> --allow-package-execution --trajectory <path> \
+  --trace-server-run <server-run-id> --trace-object-id sha256:<digest>
 ```
 
 Append the emitted footer unchanged to the final pull request body, review, or
@@ -398,8 +414,9 @@ guarantee payment, approve an allocation, connect a wallet, or move funds.
 
 ## Stop conditions
 
-Stop and report the concrete blocker if the model is not approved, skill
-provenance is dirty or mismatched, the target origin is wrong, a lane's
+Stop and report the concrete blocker if provider, model, or client disclosure
+is missing or non-concrete, skill provenance is dirty or mismatched, the target
+origin is wrong, a lane's
 evidence rules would be violated, seeds or thresholds would have to be reused
 or retuned to claim a win, untrusted execution cannot be isolated, or the
 measurement contradicts the claim. Report the losing number instead of

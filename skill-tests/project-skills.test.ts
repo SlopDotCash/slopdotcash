@@ -18,6 +18,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -27,6 +28,7 @@ import {
   footer,
   normalizeSessionReport,
   signingPayload,
+  uploadPrivateTrace,
   usageDelta,
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
 import { assessModelAttribution } from "../src/lib/leaderboard";
@@ -40,19 +42,24 @@ const projectPackages = PROJECTS.map((project) => ({
 }));
 
 describe("project skill contracts", () => {
-  it("keeps every registered contributor package focused, complete, and frontier-model explicit", () => {
+  it("keeps every registered contributor package focused and open to declared models", () => {
     for (const { project, contributorRoot } of projectPackages) {
       const source = readFileSync(join(contributorRoot, "SKILL.md"), "utf8");
       const name = project.skill.id;
       assert.match(source, new RegExp(`^name: ${name}$`, "m"));
       assert.doesNotMatch(source, /\[TODO[:\]]/u);
-      assert.match(source, /gpt-5\.6-sol/u);
-      assert.match(source, /claude-fable-5/u);
+      assert.match(source, /Any model and agent client may contribute/u);
+      assert.match(source, /Grok and Kimi/u);
       assert.match(source, /run-receipt\.mjs start/u);
       assert.match(source, /run-receipt\.mjs finish/u);
       assert.match(source, /run-receipt\.mjs preview/u);
       assert.match(source, /run-receipt\.mjs doctor/u);
       assert.match(source, /--allow-local-usage/u);
+      assert.match(source, /--trajectory <path>/u);
+      assert.match(source, /permanent\s+private\s+upload/u);
+      assert.match(source, /elizaOS\/slopdotcash/u);
+      assert.match(source, /stars are\s+optional/u);
+      assert.match(source, /explicit authorization before\s+creating one/is);
       assert.match(source, /live-report\.mjs --repo/u);
       assert.match(source, /token.*never earns|receipt cannot create score/is);
       assert.match(source, /untrusted/u);
@@ -121,14 +128,14 @@ describe("project skill contracts", () => {
         skillProject.skillSourcePath,
         project.skill.sourcePath,
       );
-      assert.deepStrictEqual(
-        Object.entries(skillProject.models).map(([client, policy]) => ({
-          client,
-          provider: policy.provider,
-          model: policy.model,
-        })),
-        project.modelPolicy.approved,
-      );
+      assert.deepStrictEqual(skillProject.usageAdapters, {
+        codex: "codex",
+        "claude-code": "claude",
+      });
+      assert.deepStrictEqual(project.modelPolicy, {
+        mode: "open-declared",
+        disclosureRequired: true,
+      });
     }
     assert.match(receiptSource, /isSymbolicLink\(\)/u);
     assert.match(
@@ -193,8 +200,9 @@ describe("project skill contracts", () => {
       const name = project.reviewSkill.id;
       const source = readFileSync(join(reviewerRoot, "SKILL.md"), "utf8");
       assert.match(source, new RegExp(`^name: ${name}$`, "m"));
-      assert.match(source, /gpt-5\.6-sol/u);
-      assert.match(source, /claude-fable-5/u);
+      assert.match(source, /Any model and\s+agent client may review/u);
+      assert.match(source, /Grok and Kimi/u);
+      assert.match(source, /exact\s+provider,\s+model, and client/u);
       assert.match(source, /hostile data/u);
       assert.match(source, /identical or near-identical/u);
       assert.match(source, /Do not penalize.*self-closed/is);
@@ -349,7 +357,7 @@ describe("project run usage", () => {
     }
   });
 
-  it("uses monotonic deltas and keeps pathless or Codex attribution bounded", () => {
+  it("uses monotonic deltas and keeps pathless attribution bounded", () => {
     const after = normalizeSessionReport(
       {
         sessions: [
@@ -383,7 +391,7 @@ describe("project run usage", () => {
     );
   });
 
-  it("treats same-named paths as bounded and only exact Claude paths as exact", () => {
+  it("treats same-named paths as bounded and exact roots as exact", () => {
     const reports = (projectPath: string, totalTokens: number) =>
       normalizeSessionReport(
         { sessions: [{ sessionId: "one", projectPath, totalTokens }] },
@@ -405,6 +413,26 @@ describe("project run usage", () => {
       ).confidence,
       "exact",
     );
+    const codexBefore = normalizeSessionReport(
+      {
+        sessions: [
+          { sessionId: "codex", directory: repositoryRoot, totalTokens: 10 },
+        ],
+      },
+      repositoryRoot,
+    );
+    const codexAfter = normalizeSessionReport(
+      {
+        sessions: [
+          { sessionId: "codex", directory: repositoryRoot, totalTokens: 20 },
+        ],
+      },
+      repositoryRoot,
+    );
+    assert.strictEqual(
+      usageDelta(codexBefore, codexAfter, "codex").confidence,
+      "exact",
+    );
   });
 
   it("fails closed when local counters regress", () => {
@@ -422,6 +450,97 @@ describe("project run usage", () => {
       costMicroUsd: "0",
       sessionCount: 0,
     });
+  });
+
+  it("uploads and finalizes a bounded private trace without exposing identity credentials", async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-trace-upload-"));
+    try {
+      const trajectory = join(fixtureRoot, "trace.ndjson");
+      const contents = '{"event":"complete"}\n';
+      writeFileSync(trajectory, contents);
+      const digest = createHash("sha256").update(contents).digest("hex");
+      const serverRunId = "srv_test";
+      const calls: Array<{ url: string; options: RequestInit }> = [];
+      const responses = [
+        {
+          token: "s".repeat(32),
+          tokenType: "Bearer",
+          expiresAt: "2030-01-01T00:00:00.000Z",
+        },
+        {
+          serverRunId,
+          clientRunId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          state: "awaiting_trace",
+        },
+        {
+          serverRunId,
+          uploadUrl: "https://api.slop.cash/api/v1/trace-capabilities/test",
+          expiresAt: "2030-01-01T00:00:00.000Z",
+          sha256: digest,
+          sizeBytes: Buffer.byteLength(contents),
+          contentType: "application/x-ndjson",
+        },
+        {
+          serverRunId,
+          clientRunId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          traceObjectId: `sha256:${digest}`,
+          traceSha256: digest,
+          sizeBytes: Buffer.byteLength(contents),
+          state: "trace_uploaded",
+        },
+        {
+          serverRunId,
+          clientRunId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          traceObjectId: `sha256:${digest}`,
+          traceSha256: digest,
+          state: "finalized",
+        },
+      ];
+      const evidence = await uploadPrivateTrace(
+        {
+          runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          projectId: "eliza",
+          repositoryId: "elizaOS/eliza",
+          revision: "a".repeat(40),
+          provider: "moonshot",
+          model: "kimi-k2",
+          client: "kimi-cli",
+        },
+        trajectory,
+        "1.2.3",
+        {
+          assertionProvider: () => "i".repeat(32),
+          fetchImpl: async (url, options = {}) => {
+            calls.push({ url: String(url), options });
+            return new Response(JSON.stringify(responses.shift()), {
+              status: 200,
+            });
+          },
+        },
+      );
+      assert.deepStrictEqual(evidence, {
+        authority: "https://api.slop.cash",
+        serverRunId,
+        objectId: `sha256:${digest}`,
+        sha256: digest,
+      });
+      assert.strictEqual(calls.length, 5);
+      assert.strictEqual(
+        calls[0].url,
+        "https://api.slop.cash/api/v1/auth/session",
+      );
+      assert.strictEqual(
+        (calls[0].options.headers as Record<string, string>)[
+          "X-Slop-Identity-Assertion"
+        ],
+        "i".repeat(32),
+      );
+      assert.ok(
+        calls.every(({ options }) => !JSON.stringify(options).includes("gho_")),
+      );
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
   });
 
   it("serializes one terminal Slop marker without private material", () => {
@@ -453,7 +572,7 @@ describe("project run usage", () => {
         costMicroUsd: "42",
         sessionCount: 1,
       },
-      trajectorySha256: null,
+      trajectorySha256: "c".repeat(64),
       signatureAlgorithm: "ed25519",
       devicePublicKey: Buffer.from(publicDer).toString("base64url"),
       deviceKeyId: createHash("sha256").update(publicDer).digest("hex"),
