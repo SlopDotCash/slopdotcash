@@ -420,12 +420,28 @@ export async function handleIdentityRequest(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error = caught as ApiError;
-    const status = error.status ?? 500;
-    if (status === 500) console.error("slop identity request failed");
+    const error =
+      typeof caught === "object" && caught !== null
+        ? (caught as Partial<ApiError>)
+        : {};
+    const status =
+      Number.isSafeInteger(error.status) &&
+      Number(error.status) >= 400 &&
+      Number(error.status) <= 599
+        ? Number(error.status)
+        : 500;
+    const code =
+      typeof error.code === "string" &&
+      /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
+        ? error.code
+        : "internal_error";
+    if (status >= 500) console.error("slop identity request failed");
     return json(status, {
-      error: error.code ?? "internal_error",
-      message: status === 500 ? "Internal error" : error.message,
+      error: code,
+      message:
+        status >= 500 || typeof error.message !== "string"
+          ? "Internal error"
+          : error.message,
     });
   }
 }

@@ -123,8 +123,9 @@ Create a GitHub App owned by the designated Slop operator organization:
 - Webhooks: disabled for this App
 - Repository permissions: none
 - Organization permissions: none
-- Account permissions: read-only metadata needed for the authenticated `/user`
-  identity lookup
+- Account permissions: none. The authenticated `/user` identity lookup uses
+  the user access token's intrinsic identity without requesting extra account
+  data.
 
 Use a dedicated App. Do not reuse an App that has repository, workflow, or
 administration permissions.
@@ -136,8 +137,10 @@ its actual `database_id` to the `IDENTITY_DB` entry in `wrangler.toml`, then:
 bunx wrangler d1 migrations apply slop-private --remote --config workers/identity/wrangler.toml
 bunx wrangler secret put GITHUB_APP_CLIENT_ID --config workers/identity/wrangler.toml
 bunx wrangler secret put GITHUB_APP_CLIENT_SECRET --config workers/identity/wrangler.toml
-bunx wrangler secret put IDENTITY_STATE_KEY --config workers/identity/wrangler.toml
-bunx wrangler secret put IDENTITY_ASSERTION_KEY --config workers/identity/wrangler.toml
+node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))' \
+  | bunx wrangler secret put IDENTITY_STATE_KEY --config workers/identity/wrangler.toml
+node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))' \
+  | bunx wrangler secret put IDENTITY_ASSERTION_KEY --config workers/identity/wrangler.toml
 bunx wrangler deploy --config workers/identity/wrangler.toml
 ```
 
