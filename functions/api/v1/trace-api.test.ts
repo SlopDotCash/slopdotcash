@@ -445,6 +445,34 @@ describe("private trace API", () => {
     expect(denied.status).toBe(403);
   });
 
+  it("grants operator access only to an asserted actor in the configured set", async () => {
+    const deps = dependencies();
+    deps.operatorGithubIds = new Set(["42"]);
+    const response = await handleTraceApi(
+      new Request("https://api.slop.cash/api/v1/auth/session", {
+        method: "POST",
+        headers: {
+          "x-slop-identity-assertion": "valid_slop_identity_assertion_value",
+        },
+      }),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { token: string };
+    const granted = await handleTraceApi(
+      request(
+        `operator/traces/${"a".repeat(64)}/grant`,
+        "POST",
+        body.token,
+        JSON.stringify({ reason: "support investigation" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(granted.status).toBe(404);
+    expect(await granted.json()).toMatchObject({ error: "not_found" });
+  });
+
   it("requires a valid trace before finalization and is write-only for contributors", async () => {
     const store = new MemoryPersistence();
     const deps = dependencies(store);
