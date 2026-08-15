@@ -20,7 +20,11 @@ const CONFIG = JSON.parse(
 const SHA_RE = /^[0-9a-f]{40}$/u;
 const MAX_API_BYTES = 16 * 1024 * 1024;
 const MAX_WORKFLOWS = 128;
+const MAX_AUTOMATION_FILES = 256;
+const MAX_DIRECTORY_ENTRIES = 128;
 const MAX_WORKFLOW_BYTES = 1024 * 1024;
+const WORKFLOW_PATH_RE = /^\.github\/workflows\/[^/]+\.ya?ml$/u;
+const ACTION_MANIFEST_RE = /(?:^|\/)action\.ya?ml$/u;
 
 function fail(message) {
   throw new TypeError(message);
@@ -133,13 +137,84 @@ function validProofReview(review, config) {
   );
 }
 
-function workflowEnforcesReviewAttribution(source, config) {
-  if (typeof source !== "string") fail("workflow source must be text");
+function sourceRunsValidator(source, config) {
   return (
-    /\bpull_request_review\b/u.test(source) &&
-    (source.includes(config.validatorPath) ||
-      source.includes(config.validatorPath.split("/").at(-1)))
+    source.includes(config.validatorPath) ||
+    source.includes(config.validatorPath.split("/").at(-1))
   );
+}
+
+function localUsesTargets(source) {
+  if (typeof source !== "string") fail("automation source must be text");
+  const targets = [];
+  const pattern =
+    /^\s*(?:-\s*)?uses\s*:\s*["']?(\.\/[^"'#\s]+)["']?\s*(?:#.*)?$/gmu;
+  for (const match of source.matchAll(pattern)) {
+    const target = match[1].replace(/\/+$/u, "").slice(2);
+    targets.push(canonicalRepositoryPath(target, "local uses target"));
+  }
+  return targets;
+}
+
+function automationIndex(files) {
+  if (!Array.isArray(files) || files.length > MAX_AUTOMATION_FILES) {
+    fail("automation inventory is missing or unbounded");
+  }
+  const indexed = new Map();
+  for (const [index, file] of files.entries()) {
+    const item = record(file, `automationFiles[${index}]`);
+    exactKeys(item, ["path", "source"], `automationFiles[${index}]`);
+    const path = canonicalRepositoryPath(
+      item.path,
+      `automationFiles[${index}].path`,
+    );
+    if (
+      (!WORKFLOW_PATH_RE.test(path) && !ACTION_MANIFEST_RE.test(path)) ||
+      typeof item.source !== "string" ||
+      Buffer.byteLength(item.source) > MAX_WORKFLOW_BYTES ||
+      indexed.has(path)
+    ) {
+      fail(`automationFiles[${index}] is invalid`);
+    }
+    indexed.set(path, item.source);
+  }
+  return indexed;
+}
+
+function resolveLocalTarget(target, indexed) {
+  if (WORKFLOW_PATH_RE.test(target)) {
+    if (!indexed.has(target))
+      fail(`local automation target is missing: ${target}`);
+    return target;
+  }
+  const candidates = [`${target}/action.yml`, `${target}/action.yaml`].filter(
+    (path) => indexed.has(path),
+  );
+  if (candidates.length !== 1) {
+    fail(`local automation target is missing or ambiguous: ${target}`);
+  }
+  return candidates[0];
+}
+
+function reachableReviewPolicy(rootPath, indexed, config) {
+  const pending = [rootPath];
+  const visited = new Set();
+  let runsValidator = false;
+  let acceptsWriter = false;
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (visited.has(path)) continue;
+    visited.add(path);
+    const source = indexed.get(path);
+    if (typeof source !== "string")
+      fail(`automation source is missing: ${path}`);
+    runsValidator ||= sourceRunsValidator(source, config);
+    acceptsWriter ||= source.includes(config.writerMarker);
+    for (const target of localUsesTargets(source)) {
+      pending.push(resolveLocalTarget(target, indexed));
+    }
+  }
+  return { acceptsWriter, runsValidator };
 }
 
 /** Classifies the exact review path without turning documentation drift into a block. */
@@ -148,7 +223,7 @@ export function assessReviewCompatibility(input, configuration = CONFIG) {
   const value = record(input, "review compatibility input");
   exactKeys(
     value,
-    ["branchSha", "policy", "proofReview", "validator", "workflows"],
+    ["automationFiles", "branchSha", "policy", "proofReview", "validator"],
     "review compatibility input",
   );
   if (!SHA_RE.test(value.branchSha))
@@ -156,35 +231,20 @@ export function assessReviewCompatibility(input, configuration = CONFIG) {
   if (typeof value.policy !== "string" || typeof value.validator !== "string") {
     fail("policy and validator sources must be text");
   }
-  if (
-    !Array.isArray(value.workflows) ||
-    value.workflows.length > MAX_WORKFLOWS
-  ) {
+  const indexed = automationIndex(value.automationFiles);
+  const workflows = [...indexed]
+    .filter(([path]) => WORKFLOW_PATH_RE.test(path))
+    .map(([path, source]) => ({ path, source }));
+  if (workflows.length === 0 || workflows.length > MAX_WORKFLOWS) {
     fail("workflow inventory is missing or unbounded");
   }
-  const enforcingWorkflows = value.workflows
-    .map((workflow, index) => {
-      const item = record(workflow, `workflows[${index}]`);
-      exactKeys(item, ["path", "source"], `workflows[${index}]`);
-      const path = canonicalRepositoryPath(
-        item.path,
-        `workflows[${index}].path`,
-      );
-      if (
-        !path.startsWith(".github/workflows/") ||
-        !/\.ya?ml$/u.test(path) ||
-        typeof item.source !== "string" ||
-        Buffer.byteLength(item.source) > MAX_WORKFLOW_BYTES
-      ) {
-        fail(`workflows[${index}] is invalid`);
-      }
-      return { path, source: item.source };
-    })
-    .filter((workflow) =>
-      workflowEnforcesReviewAttribution(workflow.source, config),
-    );
+  const enforcingWorkflows = workflows.flatMap(({ path, source }) => {
+    if (!/\bpull_request_review\b/u.test(source)) return [];
+    const policy = reachableReviewPolicy(path, indexed, config);
+    return policy.runsValidator ? [{ path, ...policy }] : [];
+  });
   const incompatibleWorkflows = enforcingWorkflows.filter(
-    ({ source }) => !source.includes(config.writerMarker),
+    ({ acceptsWriter }) => !acceptsWriter,
   );
   const proofValid = validProofReview(value.proofReview, config);
   const policyMentionsWriter = value.policy.includes(config.writerMarker);
@@ -262,6 +322,26 @@ function ghText(endpoint) {
   ]);
 }
 
+function boundedDirectory(endpoint, field) {
+  const entries = ghJson(endpoint);
+  if (!Array.isArray(entries) || entries.length > MAX_DIRECTORY_ENTRIES) {
+    fail(`${field} is missing or unbounded`);
+  }
+  return entries;
+}
+
+function validateContentFile(entry, path, field) {
+  if (
+    entry?.type !== "file" ||
+    entry.path !== path ||
+    !Number.isSafeInteger(entry.size) ||
+    entry.size < 0 ||
+    entry.size > MAX_WORKFLOW_BYTES
+  ) {
+    fail(`${field} is invalid`);
+  }
+}
+
 export function readLiveReviewCompatibility(configuration = CONFIG) {
   const config = validateConfiguration(configuration);
   const ref = ghJson(
@@ -269,18 +349,16 @@ export function readLiveReviewCompatibility(configuration = CONFIG) {
   );
   const branchSha = ref?.object?.sha;
   if (!SHA_RE.test(branchSha ?? "")) fail("integration branch has no full SHA");
-  const tree = ghJson(
-    `repos/${config.repositoryId}/git/trees/${branchSha}?recursive=1`,
-  );
-  if (tree?.truncated || !Array.isArray(tree?.tree)) {
-    fail("target repository workflow tree is missing or truncated");
-  }
-  const workflowEntries = tree.tree.filter(
+  const atRef = (path) =>
+    `repos/${config.repositoryId}/contents/${canonicalRepositoryPath(path, "GitHub content path")}?ref=${branchSha}`;
+  const workflowEntries = boundedDirectory(
+    atRef(".github/workflows"),
+    "target repository workflow directory",
+  ).filter(
     (entry) =>
-      entry?.type === "blob" &&
+      entry?.type === "file" &&
       typeof entry.path === "string" &&
-      entry.path.startsWith(".github/workflows/") &&
-      /\.ya?ml$/u.test(entry.path),
+      WORKFLOW_PATH_RE.test(entry.path),
   );
   if (
     workflowEntries.length === 0 ||
@@ -294,20 +372,67 @@ export function readLiveReviewCompatibility(configuration = CONFIG) {
   ) {
     fail("target repository workflow inventory is missing or unbounded");
   }
-  const atRef = (path) =>
-    `repos/${config.repositoryId}/contents/${canonicalRepositoryPath(path, "GitHub content path")}?ref=${branchSha}`;
+  const automationFiles = workflowEntries.map((entry) => ({
+    path: entry.path,
+    source: ghText(atRef(entry.path)),
+  }));
+  const indexed = new Map(automationFiles.map((file) => [file.path, file]));
+  const pending = automationFiles
+    .filter(({ source }) => /\bpull_request_review\b/u.test(source))
+    .flatMap(({ source }) => localUsesTargets(source));
+  const visitedTargets = new Set();
+  while (pending.length > 0) {
+    const target = pending.pop();
+    if (visitedTargets.has(target)) continue;
+    visitedTargets.add(target);
+    if (WORKFLOW_PATH_RE.test(target)) {
+      const workflow = indexed.get(target);
+      if (!workflow) {
+        fail(`referenced workflow is missing from its directory: ${target}`);
+      }
+      pending.push(...localUsesTargets(workflow.source));
+      continue;
+    }
+    const manifests = boundedDirectory(
+      atRef(target),
+      `local action directory ${target}`,
+    ).filter(
+      (entry) =>
+        entry?.type === "file" &&
+        typeof entry.path === "string" &&
+        [`${target}/action.yml`, `${target}/action.yaml`].includes(entry.path),
+    );
+    if (manifests.length !== 1) {
+      fail(`local action manifest is missing or ambiguous: ${target}`);
+    }
+    const [manifest] = manifests;
+    validateContentFile(
+      manifest,
+      manifest.path,
+      `local action manifest ${manifest.path}`,
+    );
+    if (!indexed.has(manifest.path)) {
+      const file = {
+        path: manifest.path,
+        source: ghText(atRef(manifest.path)),
+      };
+      indexed.set(file.path, file);
+      automationFiles.push(file);
+      if (automationFiles.length > MAX_AUTOMATION_FILES) {
+        fail("automation inventory is missing or unbounded");
+      }
+      pending.push(...localUsesTargets(file.source));
+    }
+  }
   return assessReviewCompatibility(
     {
+      automationFiles,
       branchSha,
       policy: ghText(atRef(config.policyDocument)),
       proofReview: ghJson(
         `repos/${config.repositoryId}/pulls/${config.forwardProof.pullRequest}/reviews/${config.forwardProof.reviewId}`,
       ),
       validator: ghText(atRef(config.validatorPath)),
-      workflows: workflowEntries.map((entry) => ({
-        path: entry.path,
-        source: ghText(atRef(entry.path)),
-      })),
     },
     config,
   );
