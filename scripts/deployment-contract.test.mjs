@@ -59,8 +59,22 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler secret list \\\n            --config workers/identity/wrangler.toml",
     );
+    expect(deployJob).toContain(
+      "./node_modules/.bin/wrangler pages secret list \\\n            --project-name eliza-computer",
+    );
+    expect(deployJob).toContain(
+      "./node_modules/.bin/wrangler d1 migrations apply slop-private \\",
+    );
+    expect(deployJob).toContain(
+      "./node_modules/.bin/wrangler d1 execute slop-private \\",
+    );
+    expect(deployJob).toContain('--tag="$GITHUB_SHA"');
+    expect(deployJob).toContain('--message="slop.cash release $GITHUB_SHA"');
+    expect(deployJob).toContain("wrangler versions list \\");
+    expect(deployJob).toContain("wrangler deployments status \\");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/start");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/callback");
+    expect(deployJob).toContain("https://api.slop.cash/api/v1/runs?verify=");
     expect(deployJob.indexOf("wrangler deploy \\")).toBeLessThan(
       deployJob.indexOf("wrangler pages deploy \\"),
     );
@@ -75,18 +89,18 @@ describe("slop.cash deployment contract", () => {
       deployJob.match(
         /git -C "\$GITHUB_WORKSPACE" ls-remote --exit-code --refs/g,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       deployJob.match(
         /git -C "\$GITHUB_WORKSPACE" diff --quiet "\$GITHUB_SHA" "\$live_develop"/g,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(deployJob).toContain(
       "changed a slop.cash release input immediately before deployment",
     );
     expect(
       deployJob.match(/diff --quiet "\$GITHUB_SHA" "\$live_develop" -- \./g),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(deployJob).toContain("https://github.com/elizaOS/slopdotcash.git");
     expect(wranglerConfiguration).toContain(
       'pages_build_output_dir = "./dist"',
@@ -189,7 +203,15 @@ describe("slop.cash deployment contract", () => {
     );
     expect(wranglerConfiguration).toContain('binding = "SLOP_IDENTITY"');
     expect(wranglerConfiguration).toContain('service = "slop-identity"');
-    expect(wranglerConfiguration).not.toContain("[env.preview");
+    expect(wranglerConfiguration).toContain(
+      "[env.preview]\nd1_databases = []\nr2_buckets = []\nservices = []\n\n[env.preview.vars]",
+    );
+    const previewConfiguration = wranglerConfiguration.slice(
+      wranglerConfiguration.indexOf("[env.preview.vars]"),
+    );
+    expect(previewConfiguration).not.toContain('binding = "SLOP_DB"');
+    expect(previewConfiguration).not.toContain('binding = "PRIVATE_TRACES"');
+    expect(previewConfiguration).not.toContain('binding = "SLOP_IDENTITY"');
 
     expect(identityWranglerConfiguration).toContain('name = "slop-identity"');
     expect(identityWranglerConfiguration).toContain("workers_dev = false");
