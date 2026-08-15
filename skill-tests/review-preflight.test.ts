@@ -1,6 +1,7 @@
 /** Tests the Eliza review compatibility classifier with deterministic live-path fixtures. */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { assessReviewCompatibility } from "../skills/contribute-to-eliza/scripts/review-preflight.mjs";
 
@@ -37,7 +38,7 @@ function fixture() {
       body: `Verified review\n<!-- slop-contribution-attribution:v1 ${JSON.stringify(marker)} -->`,
     },
     validator: "const marker = 'eliza-computer-attribution:v1';",
-    workflows: [
+    automationFiles: [
       {
         path: ".github/workflows/pr.yaml",
         source:
@@ -63,7 +64,7 @@ describe("Eliza review compatibility preflight", () => {
 
   it("blocks when a review-event workflow invokes the incompatible validator", () => {
     const input = fixture();
-    input.workflows.push({
+    input.automationFiles.push({
       path: ".github/workflows/review-policy.yml",
       source:
         "on:\n  pull_request_review:\nsteps:\n  - run: node scripts/check-agent-comment-attribution.mjs",
@@ -82,7 +83,7 @@ describe("Eliza review compatibility preflight", () => {
     input.validator += "\nconst slop = 'slop-contribution-attribution:v1';";
     input.policy +=
       "\nSigned reviews may end with slop-contribution-attribution:v1.";
-    input.workflows.push({
+    input.automationFiles.push({
       path: ".github/workflows/review-policy.yml",
       source:
         "on:\n  pull_request_review:\nsteps:\n  - run: node scripts/check-agent-comment-attribution.mjs\n# slop-contribution-attribution:v1",
@@ -92,6 +93,75 @@ describe("Eliza review compatibility preflight", () => {
     assert.equal(result.safeToPublish, true);
     assert.equal(result.documentation, "aligned");
     assert.equal(result.enforcement, "compatible");
+  });
+
+  it("traces review enforcement through reusable workflows and composite actions", () => {
+    const input = fixture();
+    input.automationFiles.push(
+      {
+        path: ".github/workflows/review-policy.yml",
+        source:
+          "on:\n  pull_request_review:\njobs:\n  policy:\n    uses: ./.github/workflows/reusable-policy.yml",
+      },
+      {
+        path: ".github/workflows/reusable-policy.yml",
+        source:
+          "on:\n  workflow_call:\njobs:\n  policy:\n    steps:\n      - uses: ./.github/actions/review-policy",
+      },
+      {
+        path: ".github/actions/review-policy/action.yml",
+        source:
+          "runs:\n  using: composite\n  steps:\n    - run: node scripts/check-agent-comment-attribution.mjs\n      shell: bash",
+      },
+    );
+    const result = assessReviewCompatibility(input);
+    assert.equal(result.status, "blocked");
+    assert.equal(result.safeToPublish, false);
+    assert.equal(result.enforcement, "incompatible");
+    assert.deepEqual(result.enforcingWorkflows, [
+      ".github/workflows/review-policy.yml",
+    ]);
+  });
+
+  it("accepts Slop-aware enforcement reached through local automation", () => {
+    const input = fixture();
+    input.validator += "\nconst slop = 'slop-contribution-attribution:v1';";
+    input.policy +=
+      "\nSigned reviews may end with slop-contribution-attribution:v1.";
+    input.automationFiles.push(
+      {
+        path: ".github/workflows/review-policy.yml",
+        source:
+          "on:\n  pull_request_review:\njobs:\n  policy:\n    uses: ./.github/workflows/reusable-policy.yml",
+      },
+      {
+        path: ".github/workflows/reusable-policy.yml",
+        source:
+          "on:\n  workflow_call:\njobs:\n  policy:\n    steps:\n      - uses: ./.github/actions/review-policy",
+      },
+      {
+        path: ".github/actions/review-policy/action.yaml",
+        source:
+          "runs:\n  using: composite\n  steps:\n    - run: node scripts/check-agent-comment-attribution.mjs\n      shell: bash\n# slop-contribution-attribution:v1",
+      },
+    );
+    const result = assessReviewCompatibility(input);
+    assert.equal(result.status, "supported");
+    assert.equal(result.safeToPublish, true);
+    assert.equal(result.enforcement, "compatible");
+  });
+
+  it("fails closed when a review workflow references missing local automation", () => {
+    const input = fixture();
+    input.automationFiles.push({
+      path: ".github/workflows/review-policy.yml",
+      source:
+        "on:\n  pull_request_review:\njobs:\n  policy:\n    uses: ./.github/workflows/missing.yml",
+    });
+    assert.throws(
+      () => assessReviewCompatibility(input),
+      /local automation target is missing/u,
+    );
   });
 
   it("fails closed when the known proof loses its terminal marker", () => {
@@ -105,13 +175,25 @@ describe("Eliza review compatibility preflight", () => {
 
   it("rejects unbounded or malformed workflow inventories", () => {
     const input = fixture();
-    input.workflows = Array.from({ length: 129 }, (_, index) => ({
+    input.automationFiles = Array.from({ length: 257 }, (_, index) => ({
       path: `.github/workflows/${index}.yml`,
       source: "on: pull_request",
     }));
     assert.throws(
       () => assessReviewCompatibility(input),
-      /workflow inventory is missing or unbounded/u,
+      /automation inventory is missing or unbounded/u,
     );
+  });
+
+  it("uses scoped Contents API inventory instead of a recursive repository tree", () => {
+    const source = readFileSync(
+      new URL(
+        "../skills/contribute-to-eliza/scripts/review-preflight.mjs",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    assert.doesNotMatch(source, /recursive=1/u);
+    assert.match(source, /contents\/\$\{canonicalRepositoryPath/u);
   });
 });
