@@ -27,7 +27,7 @@
     "audit:dependencies": "bun audit --production",
     "typecheck": "tsc -b",
     "test": "vitest run && bun test skill-tests/*.test.ts",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "test:e2e:record": "node scripts/record-evidence.mjs --local",
     "test:e2e:record:production": "node scripts/record-evidence.mjs --production",
     "lint": "bunx @biomejs/biome check --write --unsafe .",
