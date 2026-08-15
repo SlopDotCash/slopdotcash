@@ -18,12 +18,6 @@ import {
 import "./deck.css";
 
 const SLIDE_COUNT = 10;
-const COVER_ACTIONS = [
-  "SHIPPING SLOP.",
-  "BUILDING THE FUTURE.",
-  "SOLVING HARD PROBLEMS.",
-] as const;
-
 function initialSlide(): number {
   const parsed = Number.parseInt(window.location.hash.slice(1), 10);
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= SLIDE_COUNT
@@ -87,18 +81,6 @@ function Frame({
 }
 
 function Cover() {
-  const [actionIndex, setActionIndex] = useState(0);
-
-  useEffect(() => {
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-    const interval = window.setInterval(() => {
-      setActionIndex((current) => (current + 1) % COVER_ACTIONS.length);
-    }, 2800);
-    return () => window.clearInterval(interval);
-  }, []);
-
-  const action = COVER_ACTIONS[actionIndex];
-
   return (
     <Frame
       index={0}
@@ -106,11 +88,9 @@ function Cover() {
       className="deck-cover"
     >
       <div className="deck-cover-copy">
-        <h1 aria-label={`MAKE MONEY ${action}`}>
+        <h1 aria-label="MAKE MONEY SHIPPING SLOP.">
           <span className="deck-cover-prefix">MAKE MONEY</span>
-          <em className="deck-cover-action" key={action}>
-            {action}
-          </em>
+          <em className="deck-cover-action">SHIPPING SLOP.</em>
         </h1>
         <p>
           <strong className="deck-cover-brand">Slop.cash</strong> is the
