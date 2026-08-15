@@ -288,7 +288,7 @@ p {
 }
 
 .home-leaderboard-section {
-  padding-block: 36px 56px;
+  padding-block: 36px 96px;
 }
 
 .home-leaderboard-heading {
@@ -1954,7 +1954,7 @@ small {
   }
 
   .home-leaderboard-section {
-    padding-block: 28px 44px;
+    padding-block: 28px 72px;
   }
 
   .section-heading {
