@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1",
+  "artifact": "pull-request-review",
+  "repositoryId": "elizaOS/eliza",
+  "integrationBranch": "develop",
+  "writerMarker": "slop-contribution-attribution:v1",
+  "legacyMarker": "eliza-computer-attribution:v1",
+  "policyDocument": "CONTRIBUTING.md",
+  "validatorPath": "scripts/check-agent-comment-attribution.mjs",
+  "forwardProof": {
+    "pullRequest": 19560,
+    "reviewId": 4936838769,
+    "commitId": "65455082b87f12ddf5ea4a40e4e8734dbae9e961",
+    "url": "https://github.com/elizaOS/eliza/pull/19560#pullrequestreview-4936838769"
+  }
+}
