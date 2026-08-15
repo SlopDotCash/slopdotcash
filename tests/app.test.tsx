@@ -152,6 +152,20 @@ describe("discovery", () => {
     expect(screen.getByRole("link", { name: "Slop home" })).toHaveTextContent(
       "slop.cash",
     );
+    const header = screen.getByRole("banner");
+    expect(
+      within(header).queryByRole("link", { name: "Slop Git" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(header).queryByRole("link", { name: "Source" }),
+    ).not.toBeInTheDocument();
+    const footer = screen.getByRole("contentinfo");
+    expect(
+      within(footer).getByRole("link", { name: "GitHub" }),
+    ).toHaveAttribute("href", "https://github.com/elizaOS/slopdotcash");
+    expect(
+      within(footer).getByRole("link", { name: "Slop Git" }),
+    ).toHaveAttribute("href", "https://git.slop.cash");
     expect(
       screen.queryByRole("link", { name: /^Home$/u }),
     ).not.toBeInTheDocument();

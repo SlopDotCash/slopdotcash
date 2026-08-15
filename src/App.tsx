@@ -394,10 +394,6 @@ function Header({ isHome }: { isHome: boolean }) {
           <Link href="/#projects">Projects</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
           <Link href="/projects/new">Add project</Link>
-          <ExternalLinkAnchor href={HUB_ORIGIN}>Slop Git</ExternalLinkAnchor>
-          <ExternalLinkAnchor className="nav-source" href={SOURCE_REPOSITORY}>
-            Source <ExternalLink aria-hidden="true" size={14} />
-          </ExternalLinkAnchor>
         </nav>
       </div>
     </header>
