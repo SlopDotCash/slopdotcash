@@ -5,5 +5,16 @@ compatibility_date = "2026-07-30"
 [vars]
 PUBLIC_SITE_URL = "https://slop.cash"
 
-[env.preview.vars]
-PUBLIC_SITE_URL = "https://slop.cash"
+[[d1_databases]]
+binding = "SLOP_DB"
+database_name = "slop-private"
+database_id = "1b453124-2709-45af-8389-151a8105c461"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "PRIVATE_TRACES"
+bucket_name = "slop-private-traces"
+
+[[services]]
+binding = "SLOP_IDENTITY"
+service = "slop-identity"

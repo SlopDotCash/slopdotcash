@@ -10,6 +10,7 @@ routes = [
 [[d1_databases]]
 binding = "IDENTITY_DB"
 database_name = "slop-private"
+database_id = "1b453124-2709-45af-8389-151a8105c461"
 migrations_dir = "../../migrations"
 
 [triggers]
