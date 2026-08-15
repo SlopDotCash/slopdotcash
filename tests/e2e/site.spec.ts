@@ -781,3 +781,42 @@ test("keeps primary routes accessible and inside the viewport", async ({
     expect(overflow, `${path} horizontal page overflow`).toBeLessThanOrEqual(1);
   }
 });
+
+test("presents every fundraising slide without viewport or accessibility failures", async ({
+  page,
+}) => {
+  await page.goto("/deck#1", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { exact: true, name: "Grow open source." }),
+  ).toBeVisible();
+  await expect(page).toHaveTitle("Slop — fund the flywheel");
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+    "content",
+    "https://deck.slop.cash/og-deck.png",
+  );
+
+  for (let slide = 1; slide <= 8; slide += 1) {
+    await expect(page.getByText(`${slide} / 8`, { exact: true })).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    );
+    expect(
+      overflow,
+      `deck slide ${slide} horizontal overflow`,
+    ).toBeLessThanOrEqual(1);
+    const results = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(
+      results.violations,
+      `deck slide ${slide} accessibility violations`,
+    ).toEqual([]);
+    if (slide < 8) {
+      await page.getByRole("button", { name: "Next slide" }).click();
+    }
+  }
+
+  await expect(page.getByRole("button", { name: "Next slide" })).toBeDisabled();
+  await page.keyboard.press("Home");
+  await expect(page.getByText("1 / 8", { exact: true })).toBeVisible();
+});
