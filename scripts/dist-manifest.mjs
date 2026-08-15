@@ -308,9 +308,15 @@ function remoteUrl(origin, path, verificationToken, attempt) {
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
-  // Pages canonically serves the entry document at the apex and redirects
-  // /index.html, so its bytes must be checked at the public route.
-  const publicPath = path === "index.html" ? "/" : `/${encodedPath}`;
+  // Pages canonically serves HTML documents with clean URLs. Verify the exact
+  // bytes at the public route instead of treating the expected redirect from
+  // the source filename as a deployment mismatch.
+  const publicPath =
+    path === "index.html"
+      ? "/"
+      : path === "404.html"
+        ? "/404"
+        : `/${encodedPath}`;
   const url = new URL(publicPath, origin);
   url.searchParams.set("verify", `${verificationToken}-${attempt}`);
   return url;
