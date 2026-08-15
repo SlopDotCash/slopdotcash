@@ -385,14 +385,26 @@ jobs:
           # Upload and promote a version without rewriting the existing custom
           # domain or cron configuration. The production token intentionally
           # has no zone-level Workers Routes permission.
+          identity_upload="$RUNNER_TEMP/slop-identity-upload.log"
           ./node_modules/.bin/wrangler versions upload \
             --config workers/identity/wrangler.toml \
             --minify \
             --tag="$GITHUB_SHA" \
-            --message="slop.cash release $GITHUB_SHA"
+            --message="slop.cash release $GITHUB_SHA" 2>&1 | tee "$identity_upload"
+          identity_version_id="$(node - "$identity_upload" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const contents = readFileSync(process.argv[2], "utf8");
+          const matches = [...contents.matchAll(/^Worker Version ID:\s*([0-9a-f-]+)\s*$/gmu)];
+          if (matches.length !== 1 || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(matches[0][1])) {
+            throw new TypeError("identity upload did not return exactly one Worker version id");
+          }
+          process.stdout.write(matches[0][1]);
+          NODE
+          )"
           ./node_modules/.bin/wrangler versions deploy \
             --name slop-identity \
-            --version-tag="$GITHUB_SHA@100%" \
+            --version-id="$identity_version_id" \
+            --percentage=100 \
             --message="slop.cash release $GITHUB_SHA" \
             --yes
 
@@ -637,10 +649,22 @@ jobs:
             echo "::error::Published $artifact did not match the verified build."
             return 1
           }
-          node scripts/dist-manifest.mjs verify \
-            dist \
-            https://slop.cash \
-            "$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
+          manifest_verified=false
+          for manifest_attempt in 1 2 3; do
+            if node scripts/dist-manifest.mjs verify \
+              dist \
+              https://slop.cash \
+              "$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$manifest_attempt"; then
+              manifest_verified=true
+              break
+            fi
+            echo "::warning::Deployment manifest verification attempt $manifest_attempt did not match the verified build."
+            sleep 5
+          done
+          if [ "$manifest_verified" != true ]; then
+            echo "::error::Published deployment manifest did not match the verified build."
+            exit 1
+          fi
           # The inventory checks /index.html; this additional request proves the
           # public root route resolves to those same tested bytes.
           verify_download / dist/index.html index.html
