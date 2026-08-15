@@ -366,6 +366,25 @@ describe("slop identity worker", () => {
     expect(store.flows.size).toBe(0);
   });
 
+  it("normalizes non-Error failures without dropping the response boundary", async () => {
+    const { deps, store } = dependencies();
+    deps.now = () => {
+      throw null;
+    };
+    const response = await handleIdentityRequest(
+      jsonRequest("identity.slop.cash", "/v1/oauth/start", {
+        audience: IDENTITY_AUDIENCE,
+      }),
+      deps,
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "internal_error",
+      message: "Internal error",
+    });
+    expect(store.flows.size).toBe(0);
+  });
+
   it("keeps assertion consumption internal and strictly fixes the callback", async () => {
     const { deps } = dependencies();
     const publicConsume = await handleIdentityRequest(
