@@ -349,6 +349,23 @@ describe("slop identity worker", () => {
     expect(resolved).toHaveLength(1);
   });
 
+  it("fails closed before persistence when the encryption secret is malformed", async () => {
+    const { deps, store } = dependencies();
+    deps.stateEncryptionSecret = "not-base64url";
+    const response = await handleIdentityRequest(
+      jsonRequest("identity.slop.cash", "/v1/oauth/start", {
+        audience: IDENTITY_AUDIENCE,
+      }),
+      deps,
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "internal_error",
+      message: "Internal error",
+    });
+    expect(store.flows.size).toBe(0);
+  });
+
   it("keeps assertion consumption internal and strictly fixes the callback", async () => {
     const { deps } = dependencies();
     const publicConsume = await handleIdentityRequest(

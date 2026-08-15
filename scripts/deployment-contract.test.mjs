@@ -25,6 +25,10 @@ const identityWranglerConfiguration = readFileSync(
   join(packageRoot, "workers", "identity", "wrangler.toml"),
   "utf8",
 );
+const identityDeploymentGuide = readFileSync(
+  join(packageRoot, "workers", "identity", "README.md"),
+  "utf8",
+);
 const pagesHeaders = readFileSync(
   join(packageRoot, "public", "_headers"),
   "utf8",
@@ -196,5 +200,11 @@ describe("slop.cash deployment contract", () => {
     expect(identityWranglerConfiguration).toContain(
       'database_id = "1b453124-2709-45af-8389-151a8105c461"',
     );
+    expect(identityDeploymentGuide).toContain("- Account permissions: none.");
+    expect(
+      identityDeploymentGuide.match(
+        /randomBytes\(32\)\.toString\("base64url"\)/gu,
+      ),
+    ).toHaveLength(2);
   });
 });
