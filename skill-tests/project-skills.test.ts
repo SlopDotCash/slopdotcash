@@ -28,6 +28,7 @@ import {
   footer,
   normalizeSessionReport,
   signingPayload,
+  slopIdentityAssertion,
   uploadPrivateTrace,
   usageDelta,
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
@@ -541,6 +542,69 @@ describe("project run usage", () => {
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }
+  });
+
+  it("completes the one-time browser identity bridge without exposing its capabilities", async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+    const responses = [
+      new Response(
+        JSON.stringify({
+          flowId: `flow_${"f".repeat(32)}`,
+          authorizationUrl: `https://identity.slop.cash/v1/oauth/authorize?flow=${"f".repeat(32)}`,
+          pollCapability: "p".repeat(48),
+          expiresAt: "2030-01-01T00:05:00.000Z",
+          pollAfterSeconds: 2,
+        }),
+        { status: 201 },
+      ),
+      new Response(
+        JSON.stringify({ status: "pending", retryAfterSeconds: 2 }),
+        { status: 202 },
+      ),
+      new Response(
+        JSON.stringify({
+          status: "complete",
+          assertion: `slop_assert_v1_${"a".repeat(48)}`,
+          assertionType: "SlopIdentity",
+          expiresAt: "2030-01-01T00:01:30.000Z",
+        }),
+        { status: 200 },
+      ),
+    ];
+    const delays: number[] = [];
+    const originalWrite = process.stderr.write;
+    let displayed = "";
+    process.stderr.write = ((value: string | Uint8Array) => {
+      displayed += String(value);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const assertion = await slopIdentityAssertion(
+        async (url, options = {}) => {
+          requests.push({
+            url: String(url),
+            body: typeof options.body === "string" ? options.body : "",
+          });
+          const response = responses.shift();
+          assert.ok(response);
+          return response;
+        },
+        async (milliseconds) => {
+          delays.push(milliseconds);
+        },
+      );
+      assert.strictEqual(assertion, `slop_assert_v1_${"a".repeat(48)}`);
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    assert.deepStrictEqual(delays, [2_000, 2_000]);
+    assert.strictEqual(requests.length, 3);
+    assert.match(
+      displayed,
+      /https:\/\/identity\.slop\.cash\/v1\/oauth\/authorize/u,
+    );
+    assert.ok(!displayed.includes("p".repeat(48)));
+    assert.ok(!displayed.includes("slop_assert_v1_"));
   });
 
   it("serializes one terminal Slop marker without private material", () => {

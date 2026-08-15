@@ -48,6 +48,7 @@ const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._:/+-]*$/iu;
 const MAX_STATE_BYTES = MAX_REPORT_BYTES + 1024 * 1024;
 const AUTHORIZATION_RECEIPT = ".slop-authorization.json";
 const TRACE_AUTHORITY = "https://api.slop.cash";
+const IDENTITY_AUTHORITY = "https://identity.slop.cash";
 
 const HELP = `Usage: node scripts/run-receipt.mjs <command> [options]
 
@@ -1023,10 +1024,127 @@ async function jsonRequest(fetchImpl, url, options, keys, field) {
   return exactObject(value, keys, field);
 }
 
-function slopIdentityAssertion() {
-  fail(
-    "private trace upload requires a one-time Slop identity assertion; complete the GitHub App browser/device session first",
+export async function slopIdentityAssertion(
+  fetchImpl = globalThis.fetch,
+  delayImpl = (milliseconds) =>
+    new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
+) {
+  if (typeof fetchImpl !== "function")
+    fail("Slop identity transport is unavailable");
+  const started = await jsonRequest(
+    fetchImpl,
+    `${IDENTITY_AUTHORITY}/v1/oauth/start`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audience: "private-trace-api" }),
+    },
+    [
+      "authorizationUrl",
+      "expiresAt",
+      "flowId",
+      "pollAfterSeconds",
+      "pollCapability",
+    ],
+    "Slop identity start",
   );
+  let authorizationUrl;
+  try {
+    authorizationUrl = new URL(started.authorizationUrl);
+  } catch {
+    fail("Slop identity start returned an invalid authorization URL");
+  }
+  if (
+    authorizationUrl.origin !== IDENTITY_AUTHORITY ||
+    authorizationUrl.pathname !== "/v1/oauth/authorize" ||
+    authorizationUrl.username ||
+    authorizationUrl.password ||
+    authorizationUrl.hash ||
+    typeof started.flowId !== "string" ||
+    !/^flow_[A-Za-z0-9_-]{20,160}$/u.test(started.flowId) ||
+    typeof started.pollCapability !== "string" ||
+    !/^[A-Za-z0-9_-]{32,256}$/u.test(started.pollCapability) ||
+    !Number.isSafeInteger(started.pollAfterSeconds) ||
+    started.pollAfterSeconds < 1 ||
+    started.pollAfterSeconds > 10 ||
+    canonicalIso(started.expiresAt) !== started.expiresAt
+  ) {
+    fail("Slop identity start returned invalid fields");
+  }
+
+  process.stderr.write(
+    `Authorize this contribution with GitHub:\n${authorizationUrl.href}\n`,
+  );
+  const expiresAt = Date.parse(started.expiresAt);
+  let retryAfterSeconds = started.pollAfterSeconds;
+  while (Date.now() < expiresAt) {
+    await delayImpl(retryAfterSeconds * 1000);
+    let response;
+    try {
+      response = await fetchImpl(`${IDENTITY_AUTHORITY}/v1/oauth/poll`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flowId: started.flowId,
+          pollCapability: started.pollCapability,
+          audience: "private-trace-api",
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      fail("Slop identity poll request failed");
+    }
+    if (!response.ok) {
+      fail(`Slop identity poll returned HTTP ${response.status}`);
+    }
+    const source = await response.text();
+    if (Buffer.byteLength(source) > 64 * 1024) {
+      fail("Slop identity poll response exceeded its bound");
+    }
+    let result;
+    try {
+      result = JSON.parse(source);
+    } catch {
+      fail("Slop identity poll response was not JSON");
+    }
+    if (response.status === 202) {
+      result = exactObject(
+        result,
+        ["retryAfterSeconds", "status"],
+        "Slop identity pending response",
+      );
+      if (
+        result.status !== "pending" ||
+        !Number.isSafeInteger(result.retryAfterSeconds) ||
+        result.retryAfterSeconds < started.pollAfterSeconds ||
+        result.retryAfterSeconds > 10
+      ) {
+        fail("Slop identity pending response was invalid");
+      }
+      retryAfterSeconds = result.retryAfterSeconds;
+      continue;
+    }
+    if (response.status !== 200) {
+      fail("Slop identity poll returned an invalid success status");
+    }
+    result = exactObject(
+      result,
+      ["assertion", "assertionType", "expiresAt", "status"],
+      "Slop identity completion response",
+    );
+    if (
+      result.status !== "complete" ||
+      result.assertionType !== "SlopIdentity" ||
+      typeof result.assertion !== "string" ||
+      !/^slop_assert_v1_[A-Za-z0-9_-]{20,512}$/u.test(result.assertion) ||
+      canonicalIso(result.expiresAt) !== result.expiresAt ||
+      Date.parse(result.expiresAt) <= Date.now()
+    ) {
+      fail("Slop identity completion response was invalid");
+    }
+    return result.assertion;
+  }
+  fail("Slop identity authorization expired");
 }
 
 function privateTraceFile(path) {
@@ -1056,7 +1174,7 @@ export async function uploadPrivateTrace(
   if (typeof fetchImpl !== "function")
     fail("private trace transport is unavailable");
   const trace = privateTraceFile(trajectoryPath);
-  const identityAssertion = assertionProvider();
+  const identityAssertion = await assertionProvider(fetchImpl);
   if (
     typeof identityAssertion !== "string" ||
     identityAssertion.length < 20 ||

@@ -208,6 +208,10 @@ node <skill-directory>/scripts/run-receipt.mjs trace \
   --client-version <exact-client-version> --json
 ```
 
+The command prints a safe Slop GitHub authorization URL and waits for the user
+to approve it. It keeps the poll capability, identity assertion, and Slop
+session only in memory and never exposes a GitHub token.
+
 Use the finalized server run and object id returned by that command:
 
 ```bash

@@ -491,7 +491,7 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
     '"monthlyCapMinor": "2500000000"',
   );
   await expect(page.locator(".manifest-preview")).toContainText(
-    '"mode": "open"',
+    '"mode": "open-declared"',
   );
   await expect(
     page.getByRole("button", { name: "Copy agent brief" }),
@@ -582,7 +582,9 @@ test("serves byte-consistent install and read-only artifacts for every project",
   });
   expect(await discoverySkillResponse.body()).toEqual(bootstrap);
   expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
-  expect(bootstrap.toString()).toContain("No CLI upload");
+  expect(bootstrap.toString()).toContain(
+    "mandatory permanent raw-trace upload",
+  );
   expect(await projectDiscoveryResponse.json()).toEqual({
     schemaVersion: "1",
     projects: PROJECTS.flatMap((project) =>
