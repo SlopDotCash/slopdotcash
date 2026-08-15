@@ -193,13 +193,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     "href",
     "/projects/eliza",
   );
-  if ((page.viewportSize()?.width ?? 0) <= 680) {
-    await expect(page.locator(".hero-mobile-action")).toHaveText(
-      "SHIPPING SLOP.",
-    );
-    await expect(page.locator(".hero-mobile-action")).toBeVisible();
-    await expect(page.locator(".hero-typewriter")).toBeHidden();
-  }
+  await expect(page.locator(".hero-action")).toHaveText("SHIPPING SLOP.");
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();
@@ -712,21 +706,14 @@ test("keeps primary routes accessible and inside the viewport", async ({
     ...PROJECTS.map((project) => `/projects/${project.id}`),
     "/projects/new",
   ]) {
-    if (path === "/") {
-      await page.emulateMedia({ reducedMotion: "no-preference" });
-    }
     await page.goto(path, { waitUntil: "networkidle" });
     if (path === "/") {
       await expect(
         page.getByRole("heading", {
           exact: true,
-          name: "MAKE MONEY DISCOVERING DRUGS.",
+          name: "MAKE MONEY SHIPPING SLOP.",
         }),
-      ).toBeVisible({ timeout: 8_000 });
-      await expect(page.locator(".hero-typewriter")).toHaveText(
-        "DISCOVERING DRUGS.",
-        { timeout: 8_000 },
-      );
+      ).toBeVisible();
     }
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])

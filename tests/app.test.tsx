@@ -280,67 +280,6 @@ describe("discovery", () => {
     expect(window.location.hash).toBe("#leaderboard");
   });
 
-  it("rotates the money-forward statement when motion is allowed", () => {
-    vi.useFakeTimers();
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: vi.fn().mockReturnValue({
-        matches: false,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }),
-    });
-    mockSnapshot();
-    render(<App />);
-
-    expect(
-      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
-    ).toBeInTheDocument();
-    const visibleAction = () =>
-      document.querySelector(".hero-typewriter")?.textContent ?? "";
-    expect(visibleAction()).toBe("SHIPPING SLOP.");
-    act(() => vi.advanceTimersToNextTimer());
-    act(() => vi.advanceTimersToNextTimer());
-    expect(visibleAction()).toBe("SHIPPING SLOP");
-
-    for (const action of [
-      "PROVING MATH.",
-      "DISCOVERING DRUGS.",
-      "HARDENING THE WEB.",
-      "FIXING BUGS.",
-      "SECURING THE INTERNET.",
-      "SOLVING MATH.",
-      "ADVANCING SCIENCE.",
-      "BUILDING AGENTS.",
-    ]) {
-      let attempts = 0;
-      while (
-        (screen.queryByRole("heading", { name: `MAKE MONEY ${action}` }) ===
-          null ||
-          visibleAction() !== action) &&
-        attempts < 100
-      ) {
-        act(() => vi.advanceTimersToNextTimer());
-        attempts += 1;
-      }
-      expect(
-        screen.getByRole("heading", { name: `MAKE MONEY ${action}` }),
-      ).toBeInTheDocument();
-      expect(visibleAction()).toBe(action);
-    }
-  }, 8_000);
-
-  it("keeps the first hero statement fixed when reduced motion is requested", () => {
-    vi.useFakeTimers();
-    mockSnapshot();
-    render(<App />);
-
-    act(() => vi.advanceTimersByTime(28_000));
-    expect(
-      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
-    ).toBeInTheDocument();
-  });
-
   it("renders malformed public data as an error and retries explicitly", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -861,8 +800,8 @@ describe("project proposals", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /continue on github/i }),
-    ).toBeDisabled();
+      screen.queryByRole("link", { name: /continue on github/i }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -881,13 +820,13 @@ describe("project owner workspace", () => {
       await screen.findByRole("heading", { name: "Run Eliza." }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Sign payout unavailable" }),
-    ).toBeDisabled();
+      screen.getByText(/Sign the exact mainnet USDC transfers/u),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /View unsigned plan/u }),
     ).toHaveAttribute("href", expect.stringContaining("execution-plan.json"));
     expect(
-      screen.getByText(/remains unpaid until finalized USDC deltas/u),
+      screen.getByText(/paid only after finalized USDC deltas/u),
     ).toBeInTheDocument();
     const amount = screen.getByLabelText("archive-only amount in USDC");
     const total = screen.getByLabelText("Total payout, USDC");

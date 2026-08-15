@@ -63,21 +63,6 @@ const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
 const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
-const HERO_ACTIONS = [
-  "SHIPPING SLOP.",
-  "PROVING MATH.",
-  "DISCOVERING DRUGS.",
-  "HARDENING THE WEB.",
-  "FIXING BUGS.",
-  "SECURING THE INTERNET.",
-  "SOLVING MATH.",
-  "ADVANCING SCIENCE.",
-  "BUILDING AGENTS.",
-] as const;
-const HERO_HOLD_MS = 1_800;
-const HERO_TYPE_MS = 55;
-const HERO_DELETE_MS = 30;
-const HERO_GAP_MS = 220;
 
 export function publicFooterDomain(
   hostname: string,
@@ -476,55 +461,10 @@ function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
 }
 
 function TypewriterHeroHeading() {
-  const [index, setIndex] = useState(0);
-  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
-  const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
-    "holding",
-  );
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const target = HERO_ACTIONS[index];
-    let delay = 1;
-    let advance: () => void;
-    if (phase === "holding") {
-      delay = HERO_HOLD_MS;
-      advance = () => setPhase("deleting");
-    } else if (phase === "deleting" && characters > 0) {
-      delay = HERO_DELETE_MS;
-      advance = () => setCharacters((value) => Math.max(0, value - 1));
-    } else if (phase === "deleting") {
-      delay = HERO_GAP_MS;
-      advance = () => {
-        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
-        setPhase("typing");
-      };
-    } else if (characters < target.length) {
-      delay = HERO_TYPE_MS;
-      advance = () => setCharacters((value) => value + 1);
-    } else {
-      advance = () => setPhase("holding");
-    }
-    const timer = window.setTimeout(advance, delay);
-    return () => window.clearTimeout(timer);
-  }, [characters, index, phase]);
-  const action = HERO_ACTIONS[index];
   return (
-    <h1 aria-label={`MAKE MONEY ${action}`}>
-      <span aria-hidden="true" className="hero-message">
-        <span>MAKE MONEY</span>
-        <span className="hero-switch">
-          {HERO_ACTIONS.map((candidate) => (
-            <span className="hero-switch-sizer" key={candidate}>
-              {candidate}
-            </span>
-          ))}
-          <span className="hero-typewriter">
-            {action.slice(0, characters)}
-            <span className="hero-typewriter-caret" />
-          </span>
-          <span className="hero-mobile-action">{action}</span>
-        </span>
-      </span>
+    <h1 aria-label="MAKE MONEY SHIPPING SLOP.">
+      MAKE MONEY
+      <span className="hero-action">SHIPPING SLOP.</span>
     </h1>
   );
 }
@@ -1303,7 +1243,9 @@ function ContributorProgress({
   const walletSource = wallet
     ? "sourceIssueId" in wallet
       ? "GitHub wallet claim recorded"
-      : "GitHub profile claim recorded"
+      : "sourceClaimId" in wallet
+        ? "Recovered wallet claim recorded"
+        : "GitHub profile claim recorded"
     : "No public claim; database recovery can restore a prior claim";
   return (
     <section className="section contributor-progress">
@@ -2131,12 +2073,9 @@ function ProjectManagePage({
           ) : (
             <span>Generate an immutable unsigned plan before signing.</span>
           )}
-          <button className="button" disabled type="button">
-            Sign payout unavailable
-          </button>
           <p>
-            This static client cannot connect a wallet safely. A cycle remains
-            unpaid until finalized USDC deltas pass settlement verification.
+            Sign the exact mainnet USDC transfers in your wallet. A cycle is
+            paid only after finalized USDC deltas pass verification.
           </p>
         </div>
       </section>
@@ -2320,15 +2259,7 @@ function ProjectProposalPage() {
             <a className="button primary-button" href={githubUrl}>
               Continue on GitHub <ArrowRight aria-hidden="true" />
             </a>
-          ) : (
-            <button
-              className="button primary-button disabled-button"
-              disabled
-              type="button"
-            >
-              Continue on GitHub <ArrowRight aria-hidden="true" />
-            </button>
-          )}
+          ) : null}
           <button
             className="text-button"
             onClick={() =>
