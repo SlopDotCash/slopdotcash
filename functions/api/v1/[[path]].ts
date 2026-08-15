@@ -9,7 +9,7 @@ type Env = {
   SLOP_DB: D1Database;
   PRIVATE_TRACES: R2Bucket;
   TRACE_AUTH_SECRET: string;
-  OPERATOR_GITHUB_IDS: string;
+  OPERATOR_GITHUB_IDS?: string;
   SLOP_IDENTITY: { fetch(request: Request): Promise<Response> };
 };
 
@@ -56,7 +56,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     ),
     authSecret: context.env.TRACE_AUTH_SECRET,
     operatorGithubIds: new Set(
-      context.env.OPERATOR_GITHUB_IDS.split(",")
+      (context.env.OPERATOR_GITHUB_IDS ?? "")
+        .split(",")
         .map((value) => value.trim())
         .filter((value) => /^\d+$/u.test(value)),
     ),

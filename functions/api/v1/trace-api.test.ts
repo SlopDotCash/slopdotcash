@@ -18,6 +18,7 @@ import {
   type TraceApiDependencies,
 } from "../../../backend/trace/handler";
 import { sha256Hex } from "../../../backend/trace/validation";
+import { onRequest as onPagesRequest } from "./[[path]]";
 
 const SECRET = "test-only-trace-auth-secret-at-least-32-bytes";
 const NOW = new Date("2026-08-15T12:00:00.000Z");
@@ -373,6 +374,26 @@ async function uploadTrace(
 }
 
 describe("private trace API", () => {
+  it("fails closed instead of throwing when the operator list is absent", async () => {
+    const response = await onPagesRequest({
+      request: new Request("https://api.slop.cash/api/v1/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+      env: {
+        SLOP_DB: {} as never,
+        PRIVATE_TRACES: {} as never,
+        TRACE_AUTH_SECRET: SECRET,
+        SLOP_IDENTITY: {
+          fetch: async () => new Response(null, { status: 401 }),
+        },
+      },
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ error: "unauthorized" });
+  });
+
   it("exchanges a limited identity assertion without granting operator access", async () => {
     const deps = dependencies();
     const response = await handleTraceApi(

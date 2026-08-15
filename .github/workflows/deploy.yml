@@ -326,9 +326,96 @@ jobs:
             throw new TypeError("identity Worker secret inventory is incomplete or contains unexpected entries");
           }
           NODE
+
+          pages_secrets="$RUNNER_TEMP/slop-pages-secrets.txt"
+          ./node_modules/.bin/wrangler pages secret list \
+            --project-name eliza-computer > "$pages_secrets"
+          node - "$pages_secrets" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const contents = readFileSync(process.argv[2], "utf8");
+          const expected = ["OPERATOR_GITHUB_IDS", "TRACE_AUTH_SECRET"];
+          const actual = [...contents.matchAll(/^\s*-\s+([A-Z][A-Z0-9_]*):\s+Value Encrypted\s*$/gmu)]
+            .map((match) => match[1])
+            .sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new TypeError("Pages secret inventory is incomplete or contains unexpected entries");
+          }
+          NODE
+
+          ./node_modules/.bin/wrangler d1 migrations apply slop-private \
+            --remote \
+            --config workers/identity/wrangler.toml
+          schema_response="$RUNNER_TEMP/slop-private-schema.json"
+          ./node_modules/.bin/wrangler d1 execute slop-private \
+            --remote \
+            --json \
+            --config workers/identity/wrangler.toml \
+            --command "SELECT type, name FROM sqlite_schema WHERE name IN ('identity_assertions','identity_oauth_flows','private_audit_events','run_progress_events','trace_objects','trace_read_grants','trace_runs','trace_upload_intents','trace_uploads','wallet_claims','wallet_claims_no_delete','wallet_claims_no_update') ORDER BY type, name" \
+            > "$schema_response"
+          node - "$schema_response" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expected = [
+            "table:identity_assertions",
+            "table:identity_oauth_flows",
+            "table:private_audit_events",
+            "table:run_progress_events",
+            "table:trace_objects",
+            "table:trace_read_grants",
+            "table:trace_runs",
+            "table:trace_upload_intents",
+            "table:trace_uploads",
+            "table:wallet_claims",
+            "trigger:wallet_claims_no_delete",
+            "trigger:wallet_claims_no_update",
+          ];
+          if (!Array.isArray(value) || value.length !== 1 || value[0]?.success !== true) {
+            throw new TypeError("private D1 schema query failed");
+          }
+          const actual = (value[0].results ?? [])
+            .map((entry) => `${entry?.type}:${entry?.name}`)
+            .sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new TypeError("private D1 schema is incomplete or unexpected");
+          }
+          NODE
+
           ./node_modules/.bin/wrangler deploy \
             --config workers/identity/wrangler.toml \
-            --minify
+            --minify \
+            --tag="$GITHUB_SHA" \
+            --message="slop.cash release $GITHUB_SHA"
+
+          identity_versions="$RUNNER_TEMP/slop-identity-versions.json"
+          identity_deployment="$RUNNER_TEMP/slop-identity-deployment.json"
+          ./node_modules/.bin/wrangler versions list \
+            --name slop-identity \
+            --json > "$identity_versions"
+          ./node_modules/.bin/wrangler deployments status \
+            --name slop-identity \
+            --json > "$identity_deployment"
+          node - "$identity_versions" "$identity_deployment" "$GITHUB_SHA" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const versions = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const deployment = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const sha = process.argv[4];
+          if (!Array.isArray(deployment?.versions) || deployment.versions.length !== 1) {
+            throw new TypeError("identity Worker deployment must contain exactly one version");
+          }
+          const active = deployment.versions[0];
+          if (active?.percentage !== 100 || typeof active?.version_id !== "string") {
+            throw new TypeError("identity Worker deployment is not pinned 100% to one version");
+          }
+          const version = Array.isArray(versions)
+            ? versions.find((candidate) => candidate?.id === active.version_id)
+            : undefined;
+          if (
+            version?.annotations?.["workers/tag"] !== sha ||
+            version?.annotations?.["workers/message"] !== `slop.cash release ${sha}`
+          ) {
+            throw new TypeError("identity Worker deployment is not bound to the tested commit");
+          }
+          NODE
 
           identity_response="$RUNNER_TEMP/slop-identity-start.json"
           identity_status="$(
@@ -393,10 +480,27 @@ jobs:
           if (location.searchParams.get("code_challenge_method") !== "S256") {
             throw new TypeError("identity authorization did not require PKCE S256");
           }
-          if (!/^Iv[0-9A-Za-z]{18}$/u.test(location.searchParams.get("client_id") ?? "")) {
+          const clientId = location.searchParams.get("client_id") ?? "";
+          if (clientId.length === 0 || clientId.length > 128 || !/^[A-Za-z0-9._-]+$/u.test(clientId)) {
             throw new TypeError("identity authorization omitted the GitHub App client id");
           }
           NODE
+
+          live_develop="$(
+            git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
+              https://github.com/elizaOS/slopdotcash.git refs/heads/develop |
+              awk 'NR == 1 { print $1 }'
+          )"
+          if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub did not return a valid live develop SHA immediately before the Pages deployment."
+            exit 1
+          fi
+          git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
+            "$live_develop:refs/remotes/origin/slop-live-develop"
+          if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
+            echo "::error::Live develop changed a slop.cash release input immediately before the Pages deployment."
+            exit 1
+          fi
 
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"
           for attempt in 1 2 3; do
@@ -467,6 +571,33 @@ jobs:
           done
           echo "::error::Cloudflare did not report a new, successful, clean production deployment for commit $GITHUB_SHA."
           exit 1
+
+      - name: Verify private trace API fail-closed boundary
+        run: |
+          set -euo pipefail
+          response="$RUNNER_TEMP/slop-private-api-response.json"
+          status="$(
+            curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --output "$response" \
+              --write-out "%{http_code}" \
+              --header "Cache-Control: no-cache" \
+              --header "Content-Type: application/json" \
+              --data '{}' \
+              "https://api.slop.cash/api/v1/runs?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
+          )"
+          if [ "$status" != "401" ]; then
+            echo "::error::Private trace API returned HTTP $status without authentication; expected 401."
+            exit 1
+          fi
+          node - "$response" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (value?.error !== "unauthorized") {
+            throw new TypeError("private trace API returned an unexpected unauthenticated response");
+          }
+          NODE
 
       - name: Verify published skill and leaderboard
         run: |
