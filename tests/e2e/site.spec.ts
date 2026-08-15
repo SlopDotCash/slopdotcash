@@ -586,6 +586,14 @@ test("serves byte-consistent install and read-only artifacts for every project",
   ]) {
     expect(response.status()).toBe(200);
   }
+  const [missingDiscovery, missingProjectArtifact] = await Promise.all([
+    request.get("/.well-known/slop/missing.json"),
+    request.get("/projects/not-a-project/skill-manifest.json"),
+  ]);
+  for (const response of [missingDiscovery, missingProjectArtifact]) {
+    expect(response.status()).toBe(404);
+    expect(await response.text()).not.toContain('<div id="root"></div>');
+  }
   expect(bootstrapResponse.headers()["content-type"]).toContain(
     "text/markdown",
   );

@@ -451,6 +451,11 @@ describe("contribution skill package", () => {
       "/projects/:project/downloads/:archive\n  Content-Type: application/octet-stream",
     );
     expect(redirects).toContain("/skill.md /projects/eliza/skill.md 301");
+    expect(redirects).toContain("/projects/:project / 200");
+    expect(redirects).toContain("/cycles/:project/:cycle / 200");
+    expect(readFileSync(join(publicRoot, "404.html"), "utf8")).toContain(
+      "The requested Slop page or artifact does not exist.",
+    );
     expect(readFileSync(join(publicRoot, "SKILL.md"), "utf8")).toContain(
       "name: slop",
     );
