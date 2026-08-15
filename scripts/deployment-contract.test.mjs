@@ -37,6 +37,10 @@ const playwrightConfiguration = readFileSync(
   join(packageRoot, "playwright.config.ts"),
   "utf8",
 );
+const e2eRunner = readFileSync(
+  join(packageRoot, "scripts", "run-e2e.mjs"),
+  "utf8",
+);
 const qualityJob = workflow.slice(
   workflow.indexOf("\n  quality:"),
   workflow.indexOf("\n  deploy:"),
@@ -120,6 +124,20 @@ describe("slop.cash deployment contract", () => {
       "node scripts/dist-manifest.mjs create dist",
     );
     expect(playwrightConfiguration).toContain("workers: 1");
+    expect(packageManifest.scripts["test:e2e"]).toBe(
+      "node scripts/run-e2e.mjs",
+    );
+    expect(playwrightConfiguration).toContain(
+      'process.env.SLOP_E2E_PREBUILT === "1"',
+    );
+    for (const project of [
+      "wide-desktop-chromium",
+      "desktop-chromium",
+      "tablet-chromium",
+      "narrow-mobile-chromium",
+    ]) {
+      expect(e2eRunner).toContain(`"${project}"`);
+    }
     expect(qualityJob).toContain("run: bun run test:e2e");
   });
 
