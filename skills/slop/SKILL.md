@@ -16,6 +16,12 @@ This workflow requires Git, GitHub CLI, Python 3, Node 24, and HTTPS access to
 slop.cash, api.slop.cash, and GitHub. Any model and agent client may join,
 including Grok and Kimi.
 
+Before any repository or installer action, require both
+`gh auth status --hostname github.com` and `gh api user --jq '.login'` to
+succeed. Show the returned login and stop if it is absent, unexpected, or not
+the contributor the operator intends to use. Ask the operator to complete
+GitHub sign-in; never enter, request, retain, or expose their credential.
+
 ## Identify the project
 
 1. Determine and retain the exact provider, model, and agent/client identifiers.
@@ -120,6 +126,7 @@ Device signatures prove byte continuity, not provider billing, model execution,
 skill adherence, hours worked, or contribution quality. Accepted outcomes and
 independent review—not token volume or installing this skill—determine merit.
 
+Read the authenticated user's upstream permission before choosing a push path.
 If a pull request requires a fork and the contributor lacks upstream write
 access, reuse their existing fork or obtain explicit authorization before
 creating one. Do not fork when an upstream branch is authorized. They may
