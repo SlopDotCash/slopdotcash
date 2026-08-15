@@ -92,6 +92,13 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain("wrangler deployments status \\");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/start");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/callback");
+    expect(deployJob).toContain("https://api.github.com/apps/slop-identity");
+    expect(deployJob).toContain(
+      "The Slop Identity GitHub App is not publicly discoverable",
+    );
+    expect(deployJob).toContain('value?.owner?.login !== "elizaOS"');
+    expect(deployJob).toContain('JSON.stringify(value?.permissions) !== "{}"');
+    expect(deployJob).toContain('JSON.stringify(value?.events) !== "[]"');
     expect(deployJob).toContain("https://api.slop.cash/api/v1/runs?verify=");
     expect(deployJob).toContain("timeout-minutes: 30");
     expect(deployJob).toContain("- name: Ensure deck Pages custom domain");
