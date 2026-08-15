@@ -162,6 +162,31 @@ function capUsageForEvents(
   return usage;
 }
 
+function opportunityPointsWithinCap(
+  opportunity: ScoreOpportunity,
+  usage: CapUsageStatus,
+): number {
+  if (opportunity.category === "evidence") {
+    return Math.min(
+      opportunity.potentialPoints,
+      Math.max(0, SCORE_CAPS.evidencePoints - usage.evidencePoints.used),
+    );
+  }
+  if (
+    opportunity.category === "material-test-change" &&
+    usage.materialTestChanges.used >= SCORE_CAPS.materialTestChanges
+  ) {
+    return 0;
+  }
+  if (
+    opportunity.category === "substantive-review" &&
+    usage.substantiveReviews.used >= SCORE_CAPS.substantiveReviews
+  ) {
+    return 0;
+  }
+  return opportunity.potentialPoints;
+}
+
 export function formatCapUsageLine(capUsage: CapUsageStatus): string | null {
   const parts: string[] = [];
   if (capUsage.mergedPullRequests.used > 0) {
@@ -574,6 +599,17 @@ export function createProjectView(
 
   const opportunities = snapshot.opportunities
     .filter((opportunity) => repositoryIds.has(opportunity.repository))
+    .map((opportunity) => {
+      const usage = capUsageForEvents(
+        cycleId,
+        ledger.filter((event) => event.actor.id === opportunity.actor.id),
+      );
+      const potentialPoints = opportunityPointsWithinCap(opportunity, usage);
+      return potentialPoints > 0 ? { ...opportunity, potentialPoints } : null;
+    })
+    .filter(
+      (opportunity): opportunity is ScoreOpportunity => opportunity !== null,
+    )
     .sort(
       (left, right) =>
         Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||

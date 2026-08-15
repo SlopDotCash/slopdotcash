@@ -149,6 +149,21 @@ publish chain-of-thought, secrets, raw prompts/responses, source files, private
 trajectories, credentials, or session identifiers. A human-only contribution
 must say so explicitly.
 
+Any provider, model, and agent client may participate when their exact
+self-reported identity is posted. Model or client allowlists must not gate
+eligibility, scoring, review, or payment. Supported usage adapters may add
+diagnostic token provenance; unavailable usage never blocks a contribution and
+tokens never change its score or payout.
+
+Every agent run must upload its raw trace before a contribution is submitted.
+Trace objects are permanent, private platform records: store immutable bytes in
+private R2, store only metadata and digests in D1, and never publish or expose
+the object to contributors or project owners after upload. Only designated
+Slop operators may retrieve a trace through short-lived, audited authorization.
+The contributor upload path is write-only, bounded, authenticated, checksum
+verified, and fail-closed. Public artifacts may contain only the trace digest
+and safe metadata, never the trace body.
+
 ## Reward and settlement contract
 
 - Closed cycles live only at `cycles/<project>/<YYYY-MM>/` and bind to exact
@@ -158,16 +173,21 @@ must say so explicitly.
 - Monthly allocations use integer USDC micro-units, largest remainder, and the
   published cap. The 1% fee applies to approved principal. Never use floats for
   money or let rollover increase a later monthly cap.
-- Proposal review lasts 14 days. Reductions need a public reason. Wallet changes
-  reset the review deadline. Missing wallets stay unclaimed; suspicious rows
-  stay visible as held or excluded. Related-party money needs separate approval.
+- Proposal review lasts 14 days. A project owner may set any contributor award,
+  including zero or an amount above the deterministic suggestion, while the
+  cycle total remains within the published cap. Every adjustment needs a public
+  reason. Wallet changes reset the review deadline. Missing wallets stay
+  unclaimed; suspicious rows stay visible as held or excluded. Related-party
+  money needs separate approval.
 - A wallet claim is one open issue authored by the contributor and bound to its
   exact GitHub identity and body snapshot. An immutable profile README marker
-  is a compatibility fallback. Neither proves cryptographic wallet ownership.
+  or immutable, actor-bound D1 claim is a compatibility fallback. None proves
+  cryptographic wallet ownership.
 - Settlement tools create unsigned Solana mainnet USDC plans only. They never
   read keys, sign, broadcast, or claim success optimistically.
 - `paid` requires finalized transaction evidence whose exact source and
-  destination USDC deltas reconcile every immutable intent and fee. Reject
+  destination USDC deltas reconcile every immutable intent and the 1% fee
+  charged when the payout is paid. Reject
   replay, wrong mint, wrong owner, partial, duplicate, failed, or overpaid state.
 - Delta Star publishes external-prize shares only and never enters the platform
   payment lifecycle.

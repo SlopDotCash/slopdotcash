@@ -434,11 +434,11 @@ export function snapshotFixture(): LeaderboardSnapshot {
       ],
       pullRequests: [
         {
-          id: "PR_fixture",
+          id: "PR_open_fixture",
           kind: "pull-request",
-          number: 17327,
-          title: "Ship the public contribution ledger",
-          url: "https://github.com/elizaOS/eliza/pull/17327",
+          number: 17340,
+          title: "Finish the open contribution checklist",
+          url: "https://github.com/elizaOS/eliza/pull/17340",
           repository: "elizaOS/eliza",
           author: leaderActor,
           createdAt: generatedAt,

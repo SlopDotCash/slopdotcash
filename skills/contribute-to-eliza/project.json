@@ -8,16 +8,8 @@
   "selection": {
     "eligibleIssueLabels": ["mission-ready"]
   },
-  "models": {
-    "codex": {
-      "provider": "openai",
-      "model": "gpt-5.6-sol",
-      "ccusageSource": "codex"
-    },
-    "claude-code": {
-      "provider": "anthropic",
-      "model": "claude-fable-5",
-      "ccusageSource": "claude"
-    }
+  "usageAdapters": {
+    "codex": "codex",
+    "claude-code": "claude"
   }
 }

@@ -54,6 +54,7 @@ function receipt(
       sessionCount: 1,
     },
     trajectorySha256: "c".repeat(64),
+    traceUpload: null,
     signatureAlgorithm: "ed25519",
     devicePublicKey: "d".repeat(43),
     deviceKeyId: "e".repeat(64),
@@ -185,6 +186,32 @@ describe("project views", () => {
     expect(delta.opportunities.map((row) => row.source.id)).toEqual([
       "PR_arklib_open",
     ]);
+  });
+
+  it("does not advertise points after the contributor has filled that cap", () => {
+    const snapshot = snapshotFixture();
+    const evidenceTemplate = snapshot.ledger.find(
+      (event) => event.category === "evidence",
+    );
+    if (!evidenceTemplate) throw new Error("fixture needs an evidence event");
+    snapshot.ledger.push(
+      ...Array.from({ length: 9 }, (_, index) => ({
+        ...evidenceTemplate,
+        id: `PR_cap_${index}:evidence`,
+        points: 3,
+        occurredAt: `2026-07-${String(10 + index).padStart(2, "0")}T12:00:00.000Z`,
+        source: {
+          ...evidenceTemplate.source,
+          id: `PR_cap_${index}`,
+          number: 18000 + index,
+          url: `https://github.com/elizaOS/eliza/pull/${18000 + index}`,
+        },
+      })),
+    );
+
+    expect(
+      createProjectView(snapshot, "eliza", "2026-07").opportunities,
+    ).toEqual([]);
   });
 
   it("reports receipt evidence without changing rank or simulated allocation", () => {

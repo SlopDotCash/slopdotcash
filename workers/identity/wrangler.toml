@@ -1,0 +1,16 @@
+name = "slop-identity"
+main = "index.ts"
+compatibility_date = "2026-07-30"
+workers_dev = false
+
+routes = [
+  { pattern = "identity.slop.cash", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "IDENTITY_DB"
+database_name = "slop-private"
+migrations_dir = "../../migrations"
+
+[triggers]
+crons = ["17 * * * *"]

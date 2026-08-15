@@ -57,8 +57,8 @@ export interface ProjectDefinition {
   };
   readonly reward: ProjectRewardPolicy;
   readonly modelPolicy: {
-    readonly mode: "frontier-only";
-    readonly approved: readonly ApprovedModel[];
+    readonly mode: "open-declared";
+    readonly disclosureRequired: true;
   };
   readonly links: Readonly<Record<string, string>>;
 }

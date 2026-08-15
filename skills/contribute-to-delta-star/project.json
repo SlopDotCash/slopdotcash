@@ -5,16 +5,8 @@
   "skillName": "contribute-to-delta-star",
   "skillSourcePath": "skills/contribute-to-delta-star",
   "publicOrigin": "https://slop.cash/projects/delta-star",
-  "models": {
-    "codex": {
-      "provider": "openai",
-      "model": "gpt-5.6-sol",
-      "ccusageSource": "codex"
-    },
-    "claude-code": {
-      "provider": "anthropic",
-      "model": "claude-fable-5",
-      "ccusageSource": "claude"
-    }
+  "usageAdapters": {
+    "codex": "codex",
+    "claude-code": "claude"
   }
 }

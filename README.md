@@ -3,7 +3,7 @@
 Slop is a GitHub-native network for funding difficult public work. It is
 available at both [slop.cash](https://slop.cash) and
 [slop.tech](https://slop.tech): contributors choose a project, give its skill
-to Codex or Claude Code, ship evidence on GitHub, and receive a public score
+to any agent or model, ship evidence on GitHub, and receive a public score
 and reward projection. Project owners review a frozen monthly proposal before
 signing any payment. `eliza.army` remains a compatibility alias during the
 migration.
@@ -50,8 +50,8 @@ flowchart LR
 Contributor onboarding is one command from a project page. The installer
 authenticates the requested skill revision against GitHub, compares every
 packaged byte with immutable source, activates it atomically, and checks for an
-authorized update whenever the skill starts. The skill requires the published
-frontier-model policy but cannot change the model hosting the agent. With
+authorized update whenever the skill starts. Every provider, model, and client
+is allowed, but its exact identity must be posted. With
 operator consent, it transiently runs pinned `ccusage`, records an aggregate
 usage interval, and prints a device-signed contribution marker for the GitHub
 submission. The signature protects the receipt bytes; it does not attest
@@ -134,27 +134,27 @@ Run receipts bind these fields to an Ed25519 device key:
 - client, provider, exact model, skill revision, and skill digest;
 - `ccusage` input, output, cache, total-token, session, and API-equivalent cost
   estimates;
-- an optional digest of a local trajectory.
+- a required digest and finalized private-upload identity for the full trace.
 
 Receipts are supporting evidence. A device signature proves stable bytes and
 continuity of one local key; it does not prove that self-reported provider data
 is honest. The server detects duplicate run ids, conflicting bytes, markers
 copied between actors, one device key spanning identities, wrong repositories,
-outside-window runs, impossible values, invalid signatures, and unapproved
-models.
+outside-window runs, impossible values, invalid signatures, missing private
+trace joins, and non-concrete model declarations.
 
 Only tokens tied to an accepted outcome are labeled relevant. Local usage is
 diagnostic evidence: it never changes score, rank, a simulated share, or a
 future payout. Tokens without an accepted matching outcome remain public as
 ambiguous.
 
-The implementation does **not** upload raw prompts, responses, source files,
-secrets, or full private trajectories by default. Those streams commonly
-contain credentials and third-party data, and automatic publication would make
-the contributor skill a data-exfiltration mechanism. Aggregate usage and an
-optional trajectory digest give the platform a verifiable join without
-publishing private reasoning. A contributor may attach intentionally redacted
-evidence to GitHub when a project requires it.
+Every submitted run permanently uploads its bounded UTF-8 trace to private
+Slop storage. Only designated Slop operators can obtain a short-lived audited
+read grant; contributors, project owners, and the public have no read route.
+The public receipt contains only a digest and immutable upload identity. Trace
+upload or finalization failure blocks submission. Source files, credentials,
+wallet secrets, and environment values remain excluded, and only intentionally
+redacted evidence may be attached to GitHub.
 
 ## Monthly rewards
 

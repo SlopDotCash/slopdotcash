@@ -20,7 +20,7 @@ project in the network, not the umbrella name or routing model.
 
 ## Primary audience
 
-The landing page is for contributors operating Codex or Claude Code. They may
+The landing page is for contributors using any agent or model. They may
 be established maintainers, first-time open-source contributors, researchers,
 or people running agents at scale, but v1 profiles represent individual GitHub
 actors only.
@@ -102,16 +102,18 @@ follows immediately.
 The project page exposes one authenticated install/update command and a
 read-only mission alternative. There are no platform claims on issues. The
 skill inspects live GitHub, selects a bounded useful lane, follows repository
-instructions, uses the project’s exact frontier-model allowlist, runs tests,
+instructions, posts the exact declared provider/model/client, runs tests,
 and prepares evidence.
 
 ### Attribute compute
 
 The skill runs pinned `ccusage` reporting and emits a device-signed receipt.
 Public data includes aggregate tokens, API-equivalent estimated cost, model,
-client, revision, project, repository, timestamps, and optional trajectory
-digest. Relevant usage must join to an accepted result. Ambiguous usage remains
-visible but does not increase reward weight.
+client, revision, project, repository, timestamps, and a required private-trace
+upload digest. The full trace is retained permanently and is readable only by
+designated Slop operators. Relevant usage must join to an accepted result.
+Ambiguous or unavailable usage remains visible but never changes score, rank,
+share, or payout.
 
 ### Submit and review
 
@@ -189,7 +191,7 @@ receipts, evaluator output, browser data, and payment records.
 
 Fail closed on malformed data, duplicate identities, replayed receipts,
 conflicting bytes, impossible token values, copied markers, device keys shared
-across identities, wrong repositories, unapproved models, duplicate source
+across identities, wrong repositories, missing or non-concrete model disclosure, duplicate source
 awards, cap overflow, silent reductions, wallet/address drift, early approval,
 wrong token mint, mismatched balance deltas, or non-finalized settlement.
 

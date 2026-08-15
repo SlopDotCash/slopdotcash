@@ -33,6 +33,12 @@ const receipt: ProjectRunReceipt = {
     sessionCount: 1,
   },
   trajectorySha256: "c".repeat(64),
+  traceUpload: {
+    authority: "https://api.slop.cash",
+    serverRunId: "srv_test",
+    objectId: `sha256:${"c".repeat(64)}`,
+    sha256: "c".repeat(64),
+  },
   signatureAlgorithm: "ed25519",
   devicePublicKey: "A".repeat(44),
   deviceKeyId: "d".repeat(64),
@@ -54,10 +60,48 @@ describe("project run receipt", () => {
     );
   });
 
-  it("rejects models outside the frozen frontier policy", () => {
+  it("accepts any concrete declared provider, model, and client", () => {
     const marker = runReceiptMarker(receipt);
-    marker.model = "gpt-4";
-    expect(() => assertRunReceiptMarker(marker)).toThrow(/not approved/u);
+    marker.provider = "xai";
+    marker.model = "grok-4";
+    marker.client = "grok-build";
+    expect(assertRunReceiptMarker(marker)).toMatchObject({
+      provider: "xai",
+      model: "grok-4",
+      client: "grok-build",
+    });
+
+    marker.model = "N/A";
+    expect(() => assertRunReceiptMarker(marker)).toThrow(/concrete/u);
+  });
+
+  it("allows unsupported clients to report diagnostic usage as unavailable", () => {
+    const marker = runReceiptMarker(receipt);
+    marker.client = "kimi-cli";
+    marker.provider = "moonshot";
+    marker.model = "kimi-k2";
+    marker.run.usage = {
+      source: "none",
+      confidence: "unavailable",
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 0,
+      cost_micro_usd: "0",
+      session_count: 0,
+    };
+    expect(assertRunReceiptMarker(marker).usage).toEqual({
+      source: "none",
+      confidence: "unavailable",
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      totalTokens: 0,
+      costMicroUsd: "0",
+      sessionCount: 0,
+    });
   });
 
   it("requires unavailable usage to be exactly zero", () => {

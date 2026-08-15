@@ -2526,8 +2526,9 @@ function collectOpenPullRequestOpportunities(
         continue;
       }
       seenReviewers.add(review.author.id);
-      if (!review.submittedAt) {
-        continue;
+      const submittedAt = review.submittedAt;
+      if (submittedAt === null) {
+        throw new TypeError("expandable review lost its submission timestamp");
       }
       opportunities.push({
         id: `${pullRequest.id}:opportunity:expand-review:${review.author.id}`,
@@ -2535,7 +2536,7 @@ function collectOpenPullRequestOpportunities(
         kind: "expand-review",
         category: "substantive-review",
         potentialPoints: 3,
-        occurredAt: review.submittedAt,
+        occurredAt: submittedAt,
         repository,
         source: {
           id: review.id,
@@ -4112,7 +4113,23 @@ function assertOpportunityValue(
   assertIsoTimestamp(opportunity.occurredAt, `${path}.occurredAt`);
   assertString(opportunity.reason, `${path}.reason`);
   assertString(opportunity.hint, `${path}.hint`);
-  if (opportunity.hint.length < 12) {
+  if (
+    opportunity.reason.length > 1000 ||
+    opportunity.hint.length > 256 ||
+    !(
+      (kind === "near-material-test" &&
+        opportunity.hint.startsWith("Add recognized test coverage")) ||
+      (kind === "missing-evidence" &&
+        opportunity.hint ===
+          "Add verified screenshot, video, or log evidence before merge.") ||
+      (kind === "partial-evidence" &&
+        opportunity.hint ===
+          "Finish verified evidence categories before merge.") ||
+      (kind === "expand-review" &&
+        opportunity.hint ===
+          "Add at least 20 characters of review rationale or an inline comment before merge.")
+    )
+  ) {
     throw new Error(`${path}.hint must be an actionable next step`);
   }
   assertEnum(
@@ -4129,6 +4146,9 @@ function assertOpportunityValue(
   );
   assertPositiveInteger(source.number, `${path}.source.number`);
   assertString(source.title, `${path}.source.title`);
+  if (source.title.length > 256) {
+    throw new Error(`${path}.source.title is too long`);
+  }
   assertRepositoryUrl(
     source.url,
     `${path}.source.url`,
@@ -4625,6 +4645,24 @@ export function assertLeaderboardSnapshot(
     );
     return item;
   });
+  const openPullRequestIds = new Set(
+    validatedPullRequests.map((pullRequest) => pullRequest.id),
+  );
+  for (const opportunity of validatedOpportunities) {
+    const pullRequestId =
+      opportunity.source.kind === "pull-request"
+        ? opportunity.source.id
+        : validatedPullRequests.find(
+            (pullRequest) =>
+              pullRequest.repository === opportunity.repository &&
+              pullRequest.number === opportunity.source.number,
+          )?.id;
+    if (!pullRequestId || !openPullRequestIds.has(pullRequestId)) {
+      throw new Error(
+        `snapshot opportunity ${opportunity.id} has no corresponding open pull request`,
+      );
+    }
+  }
   for (const [name, queue] of [
     ["issues", validatedIssues],
     ["pullRequests", validatedPullRequests],

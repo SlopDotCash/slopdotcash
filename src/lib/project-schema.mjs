@@ -20,10 +20,6 @@ const PROJECT_KEYS = [
   "slug",
   "status",
 ];
-const FRONTIER_MODELS = [
-  { client: "codex", provider: "openai", model: "gpt-5.6-sol" },
-  { client: "claude-code", provider: "anthropic", model: "claude-fable-5" },
-];
 export const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
 
 /** Formats cent-precise USDC minor units without floating-point conversion. */
@@ -288,13 +284,13 @@ export function assertProjectDefinition(value) {
   );
   validateReward(project.reward, "project.reward");
   const modelPolicy = record(project.modelPolicy, "project.modelPolicy");
-  exactKeys(modelPolicy, ["approved", "mode"], "project.modelPolicy");
+  exactKeys(modelPolicy, ["disclosureRequired", "mode"], "project.modelPolicy");
   if (
-    modelPolicy.mode !== "frontier-only" ||
-    JSON.stringify(modelPolicy.approved) !== JSON.stringify(FRONTIER_MODELS)
+    modelPolicy.mode !== "open-declared" ||
+    modelPolicy.disclosureRequired !== true
   ) {
     throw new TypeError(
-      "project.modelPolicy must use the current exact frontier set",
+      "project.modelPolicy must allow every declared model and require disclosure",
     );
   }
   const links = record(project.links, "project.links");

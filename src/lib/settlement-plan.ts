@@ -47,6 +47,47 @@ export interface SettlementExecutionPlan {
   };
 }
 
+function decimalTokenAmount(amountMinor: string): string {
+  const canonical = minor(amountMinor, "payment request amountMinor");
+  const padded = canonical.padStart(USDC_DECIMALS + 1, "0");
+  const whole = padded.slice(0, -USDC_DECIMALS);
+  const fraction = padded.slice(-USDC_DECIMALS);
+  return `${whole}.${fraction}`;
+}
+
+/**
+ * Creates a standard non-custodial Solana Pay request for one immutable plan
+ * transfer. A wallet still shows and signs the ordinary USDC transfer, and the
+ * cycle remains unpaid until finalized deltas are independently verified.
+ */
+export function createSolanaPayTransferRequest(
+  plan: SettlementExecutionPlan,
+  transfer: SettlementPlanTransfer,
+): string {
+  if (
+    plan.cluster !== "mainnet-beta" ||
+    plan.token.mint !== SOLANA_MAINNET_USDC_MINT ||
+    plan.token.decimals !== USDC_DECIMALS ||
+    !plan.transfers.some(
+      (candidate) =>
+        candidate.paymentId === transfer.paymentId &&
+        candidate.recipientOwner === transfer.recipientOwner &&
+        candidate.amountMinor === transfer.amountMinor,
+    )
+  ) {
+    throw new TypeError("Payment request transfer is not in the mainnet plan");
+  }
+  const recipient = address(transfer.recipientOwner, "recipientOwner");
+  const query = new URLSearchParams({
+    amount: decimalTokenAmount(transfer.amountMinor),
+    "spl-token": SOLANA_MAINNET_USDC_MINT,
+    label: "Slop",
+    message: `${plan.projectId} ${plan.cycleId} payout`,
+    memo: transfer.paymentId,
+  });
+  return `solana:${recipient}?${query.toString()}`;
+}
+
 function exactUtc(value: string): string {
   if (
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||

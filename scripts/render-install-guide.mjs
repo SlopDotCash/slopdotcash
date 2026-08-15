@@ -7,7 +7,7 @@
 
 import { createInstallCommand } from "../src/lib/install-command.ts";
 
-const CLIENTS = new Set(["claude-code", "codex"]);
+const CLIENTS = new Set(["claude-code", "codex", "manual"]);
 const ORIGIN_PATTERN = /^https:\/\/slop\.cash\/projects\/[a-z0-9-]+$/u;
 const SKILL_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 
@@ -21,7 +21,9 @@ export function renderInstallGuide({
   skillName,
   skillRepositoryPath,
 }) {
-  if (!CLIENTS.has(client)) fail("client must be codex or claude-code");
+  if (!CLIENTS.has(client)) {
+    fail("client must be codex, claude-code, or manual");
+  }
   if (!SKILL_PATTERN.test(skillName)) fail("skill name is invalid");
   if (skillRepositoryPath !== `skills/${skillName}`) {
     fail("skill source path must match its name");
@@ -33,7 +35,12 @@ export function renderInstallGuide({
   const skillsRoot = isClaude
     ? `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`
     : `\${HOME}/.agents/skills`;
-  return `# Install ${skillName} for ${isClaude ? "Claude Code" : "Codex"}
+  const clientName = isClaude
+    ? "Claude Code"
+    : client === "codex"
+      ? "Codex"
+      : "any agent";
+  return `# Install ${skillName} for ${clientName}
 
 Install or update the complete skill archive. The authenticated installer
 accepts the current \`develop\` revision, a byte-identical authorized ancestor,
@@ -67,7 +74,7 @@ function parseArguments(args) {
       values.has(name)
     ) {
       fail(
-        "usage: render-install-guide.mjs --artifact-origin <url> --client <codex|claude-code> --skill <name> --source <skills/name>",
+        "usage: render-install-guide.mjs --artifact-origin <url> --client <codex|claude-code|manual> --skill <name> --source <skills/name>",
       );
     }
     values.set(name, value);

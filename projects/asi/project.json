@@ -40,19 +40,8 @@
     "fundingState": "pledged"
   },
   "modelPolicy": {
-    "mode": "frontier-only",
-    "approved": [
-      {
-        "client": "codex",
-        "provider": "openai",
-        "model": "gpt-5.6-sol"
-      },
-      {
-        "client": "claude-code",
-        "provider": "anthropic",
-        "model": "claude-fable-5"
-      }
-    ]
+    "mode": "open-declared",
+    "disclosureRequired": true
   },
   "links": {
     "repository": "https://github.com/elizaOS/asi",

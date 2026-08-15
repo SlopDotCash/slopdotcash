@@ -104,6 +104,20 @@ describe("public cycle index", () => {
     );
   });
 
+  it("accepts an immutable actor-bound database wallet fallback", () => {
+    const claimed = entry();
+    claimed.contributors[0].wallet = {
+      address: "11111111111111111111111111111111",
+      chain: "solana",
+      observedAt: "2026-08-02T00:00:00.000Z",
+      sourceActorId: "U_fixture",
+      sourceClaimId: "wc_fixture_01",
+      sourceRecordSha256: "c".repeat(64),
+      sourceUrl: "https://api.slop.cash/api/v1/wallet-claims/wc_fixture_01",
+    };
+    expect(() => assertCycleIndex(index([claimed]))).not.toThrow();
+  });
+
   it("requires lifecycle files before claiming payment readiness or payment", () => {
     expect(() =>
       assertCycleIndex(index([entry({ state: "payment-ready" })])),

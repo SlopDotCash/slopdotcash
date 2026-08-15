@@ -34,9 +34,20 @@ export interface CycleGithubIssueWalletProof {
   sourceUrl: string;
 }
 
+export interface CycleSlopDatabaseWalletProof {
+  address: string;
+  chain: "solana";
+  observedAt: string;
+  sourceActorId: string;
+  sourceClaimId: string;
+  sourceRecordSha256: string;
+  sourceUrl: string;
+}
+
 export type CycleWalletProof =
   | CycleProfileReadmeWalletProof
-  | CycleGithubIssueWalletProof;
+  | CycleGithubIssueWalletProof
+  | CycleSlopDatabaseWalletProof;
 
 export type CycleIndexState =
   | "closed-no-awards"
@@ -221,6 +232,58 @@ function contributorWallet(
       chain: "solana",
       observedAt: iso(wallet.observedAt, `${field}.observedAt`),
       sourceCommit,
+      sourceUrl,
+    };
+  }
+  if ("sourceClaimId" in wallet) {
+    exact(
+      wallet,
+      [
+        "address",
+        "chain",
+        "observedAt",
+        "sourceActorId",
+        "sourceClaimId",
+        "sourceRecordSha256",
+        "sourceUrl",
+      ],
+      field,
+    );
+    const sourceActorId = text(wallet.sourceActorId, `${field}.sourceActorId`);
+    if (sourceActorId !== actorId) {
+      throw new TypeError(
+        `${field}.sourceActorId does not match the contributor`,
+      );
+    }
+    const sourceClaimId = text(
+      wallet.sourceClaimId,
+      `${field}.sourceClaimId`,
+      /^[A-Za-z0-9_-]+$/u,
+    );
+    const sourceRecordSha256 = text(
+      wallet.sourceRecordSha256,
+      `${field}.sourceRecordSha256`,
+      /^[0-9a-f]{64}$/u,
+    );
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "api.slop.cash" ||
+      parsed.pathname !== `/api/v1/wallet-claims/${sourceClaimId}` ||
+      parsed.search ||
+      parsed.hash ||
+      parsed.username ||
+      parsed.password ||
+      parsed.port
+    ) {
+      throw new TypeError(`${field}.sourceUrl is not a Slop wallet claim`);
+    }
+    return {
+      address,
+      chain: "solana",
+      observedAt: iso(wallet.observedAt, `${field}.observedAt`),
+      sourceActorId,
+      sourceClaimId,
+      sourceRecordSha256,
       sourceUrl,
     };
   }
@@ -472,10 +535,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       contributor.paidMinor,
       `${contributorField}.paidMinor`,
     );
-    if (
-      BigInt(approvedMinor) > BigInt(suggestedMinor) ||
-      BigInt(paidMinor) > BigInt(approvedMinor)
-    ) {
+    if (BigInt(paidMinor) > BigInt(approvedMinor)) {
       throw new TypeError(`${contributorField} money totals do not reconcile`);
     }
     return {

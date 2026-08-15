@@ -462,6 +462,11 @@ const claudeBootstrap = renderInstallGuide({
 });
 writeFileSync(join(publicRoot, "claude.md"), claudeBootstrap);
 writeFileSync(join(publicRoot, "claude-code.md"), claudeBootstrap);
+const manualBootstrap = renderInstallGuide({
+  ...primaryGuideOptions,
+  client: "manual",
+});
+writeFileSync(join(publicRoot, "manual.md"), manualBootstrap);
 writeFileSync(
   join(downloadsRoot, `${archiveName}.sha256`),
   `${archiveDigest}  ${archiveName}\n`,
@@ -533,6 +538,14 @@ const manifest = {
       skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
       source: claudeBootstrap,
     }),
+    manual: guideRecord({
+      artifactOrigin: primaryGuideOptions.artifactOrigin,
+      client: "manual",
+      publicUrl: `${publicSiteOrigin}/manual.md`,
+      skillName: primaryGuideOptions.skillName,
+      skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
+      source: manualBootstrap,
+    }),
   },
   authority: {
     apiOrigin: "https://api.github.com",
@@ -573,6 +586,8 @@ function publishPrimaryProjectAlias() {
   const claudeGuide = claudeBootstrap;
   writeFileSync(join(projectRoot, "claude.md"), claudeGuide);
   writeFileSync(join(projectRoot, "claude-code.md"), claudeGuide);
+  const manualGuide = manualBootstrap;
+  writeFileSync(join(projectRoot, "manual.md"), manualGuide);
   const projectManifest = structuredClone(manifest);
   projectManifest.source.publicUrl = `${publicSiteOrigin}/projects/eliza/skill.md`;
   projectManifest.archive.url = `${publicSiteOrigin}/projects/eliza/downloads/${archiveName}`;
@@ -593,6 +608,14 @@ function publishPrimaryProjectAlias() {
       skillName: primaryGuideOptions.skillName,
       skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
       source: claudeGuide,
+    }),
+    manual: guideRecord({
+      artifactOrigin: primaryGuideOptions.artifactOrigin,
+      client: "manual",
+      publicUrl: `${publicSiteOrigin}/projects/eliza/manual.md`,
+      skillName: primaryGuideOptions.skillName,
+      skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
+      source: manualGuide,
     }),
   };
   writeFileSync(
@@ -740,6 +763,16 @@ function publishAdditionalProject({
     join(projectRoot, `${publicationPrefix}claude-code.md`),
     claudeGuide,
   );
+  const manualGuide = renderInstallGuide({
+    artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
+    client: "manual",
+    skillName: name,
+    skillRepositoryPath,
+  });
+  writeFileSync(
+    join(projectRoot, `${publicationPrefix}manual.md`),
+    manualGuide,
+  );
   writeFileSync(
     join(projectDownloads, `${archiveName}.sha256`),
     `${archiveDigest}  ${archiveName}\n`,
@@ -779,6 +812,14 @@ function publishAdditionalProject({
         skillRepositoryPath,
         source: claudeGuide,
       }),
+      manual: guideRecord({
+        artifactOrigin: `${publicSiteOrigin}/projects/${id}`,
+        client: "manual",
+        publicUrl: `${publicSiteOrigin}/projects/${id}/${publicationPrefix}manual.md`,
+        skillName: name,
+        skillRepositoryPath,
+        source: manualGuide,
+      }),
     },
     authority: {
       apiOrigin: "https://api.github.com",
@@ -798,7 +839,7 @@ function publishAdditionalProject({
           telemetry: {
             source: "ccusage@20.0.19",
             policy:
-              "Raw sessions stay local. Public receipts contain aggregate locally reported usage, provenance, optional trajectory digest, and a device signature.",
+              "Raw traces are retained permanently in private operator-only storage. Public receipts contain aggregate locally reported usage, provenance, the required trace digest and upload identity, and a device signature.",
           },
         }),
   };

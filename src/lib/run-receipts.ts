@@ -24,7 +24,7 @@ const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
 export type UsageConfidence = "bounded" | "exact" | "unavailable";
 
 export interface ProjectRunUsage {
-  source: "ccusage-session-v20";
+  source: "ccusage-session-v20" | "none";
   confidence: UsageConfidence;
   inputTokens: number;
   outputTokens: number;
@@ -44,11 +44,17 @@ export interface ProjectRunReceipt {
   completedAt: string;
   provider: string;
   model: string;
-  client: "claude-code" | "codex";
+  client: string;
   skillRevision: string;
   skillSha256: string;
   usage: ProjectRunUsage;
   trajectorySha256: string | null;
+  traceUpload: {
+    authority: "https://api.slop.cash";
+    serverRunId: string;
+    objectId: string;
+    sha256: string;
+  } | null;
   signatureAlgorithm: "ed25519";
   devicePublicKey: string;
   deviceKeyId: string;
@@ -80,6 +86,12 @@ export interface RunReceiptMarker {
       session_count: number;
     };
     trajectory_sha256: string | null;
+    trace_upload?: {
+      authority: "https://api.slop.cash";
+      server_run_id: string;
+      object_id: string;
+      sha256: string;
+    };
     signature_algorithm: "ed25519";
     device_public_key: string;
     device_key_id: string;
@@ -90,6 +102,7 @@ export interface RunReceiptMarker {
 /** Validates the camel-case receipt shape published in leaderboard snapshots. */
 export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
   if (!isRecord(value)) throw new TypeError("run receipt must be an object");
+  const hasTraceUpload = Object.hasOwn(value, "traceUpload");
   exactKeys(
     value,
     [
@@ -109,6 +122,7 @@ export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
       "skillSha256",
       "startedAt",
       "trajectorySha256",
+      ...(hasTraceUpload ? ["traceUpload"] : []),
       "usage",
     ],
     "run receipt",
@@ -155,6 +169,16 @@ export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
         session_count: value.usage.sessionCount,
       },
       trajectory_sha256: value.trajectorySha256,
+      ...(hasTraceUpload && isRecord(value.traceUpload)
+        ? {
+            trace_upload: {
+              authority: value.traceUpload.authority,
+              server_run_id: value.traceUpload.serverRunId,
+              object_id: value.traceUpload.objectId,
+              sha256: value.traceUpload.sha256,
+            },
+          }
+        : {}),
       signature_algorithm: value.signatureAlgorithm,
       device_public_key: value.devicePublicKey,
       device_key_id: value.deviceKeyId,
@@ -202,6 +226,7 @@ function identifier(value: unknown, path: string, maxLength = 128): string {
     typeof value !== "string" ||
     value.length < 1 ||
     value.length > maxLength ||
+    /^n\/a$/iu.test(value) ||
     !/^[a-z0-9][a-z0-9._:/+-]*$/iu.test(value)
   ) {
     throw new TypeError(`${path} must be a concrete identifier`);
@@ -254,6 +279,7 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
   );
   if (!isRecord(value.run))
     throw new TypeError("run marker.run must be an object");
+  const hasTraceUpload = Object.hasOwn(value.run, "trace_upload");
   exactKeys(
     value.run,
     [
@@ -269,6 +295,7 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
       "skill_sha256",
       "started_at",
       "trajectory_sha256",
+      ...(hasTraceUpload ? ["trace_upload"] : []),
       "usage",
     ],
     "run marker.run",
@@ -321,21 +348,9 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
   if (Date.parse(completedAt) < Date.parse(startedAt)) {
     throw new TypeError("run marker completed_at precedes started_at");
   }
-  const client = value.client;
-  if (client !== "claude-code" && client !== "codex") {
-    throw new TypeError("run marker client is unsupported");
-  }
+  const client = identifier(value.client, "run marker.client", 64);
   const provider = identifier(value.provider, "run marker.provider", 64);
   const model = identifier(value.model, "run marker.model");
-  const approvedModel = project.modelPolicy.approved.some(
-    (entry) =>
-      entry.client === client &&
-      entry.provider === provider &&
-      entry.model === model,
-  );
-  if (!approvedModel) {
-    throw new TypeError("run marker model is not approved for this project");
-  }
   if (
     typeof value.skill_revision !== "string" ||
     !FULL_SKILL_REVISION_PATTERN.test(value.skill_revision) ||
@@ -343,7 +358,10 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
   ) {
     throw new TypeError("run marker skill_revision is not the project skill");
   }
-  if (value.run.usage.source !== "ccusage-session-v20") {
+  if (
+    value.run.usage.source !== "ccusage-session-v20" &&
+    value.run.usage.source !== "none"
+  ) {
     throw new TypeError("run marker usage source is unsupported");
   }
   const confidence = value.run.usage.confidence;
@@ -357,9 +375,8 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
   if (value.run.signature_algorithm !== "ed25519") {
     throw new TypeError("run marker signature algorithm is unsupported");
   }
-
   const usage: ProjectRunUsage = {
-    source: "ccusage-session-v20",
+    source: value.run.usage.source,
     confidence: confidence as UsageConfidence,
     inputTokens: nonNegativeInteger(
       value.run.usage.input_tokens,
@@ -402,8 +419,53 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
     ) {
       throw new TypeError("unavailable usage must contain zero values");
     }
-  } else if (usage.totalTokens === 0 || usage.sessionCount === 0) {
+  } else if (
+    usage.source !== "ccusage-session-v20" ||
+    usage.totalTokens === 0 ||
+    usage.sessionCount === 0
+  ) {
     throw new TypeError("available usage must contain tokens and sessions");
+  }
+  if (usage.source === "none" && usage.confidence !== "unavailable") {
+    throw new TypeError("usage without an adapter must be unavailable");
+  }
+
+  const trajectorySha256 = optionalDigest(
+    value.run.trajectory_sha256,
+    "run marker.trajectory_sha256",
+  );
+  let traceUpload: ProjectRunReceipt["traceUpload"] = null;
+  if (hasTraceUpload) {
+    if (!isRecord(value.run.trace_upload)) {
+      throw new TypeError("run marker.trace_upload must be an object");
+    }
+    exactKeys(
+      value.run.trace_upload,
+      ["authority", "object_id", "server_run_id", "sha256"],
+      "run marker.trace_upload",
+    );
+    const sha256 = digest(
+      value.run.trace_upload.sha256,
+      "run marker.trace_upload.sha256",
+    );
+    const serverRunId = identifier(
+      value.run.trace_upload.server_run_id,
+      "run marker.trace_upload.server_run_id",
+      160,
+    );
+    if (
+      value.run.trace_upload.authority !== "https://api.slop.cash" ||
+      value.run.trace_upload.object_id !== `sha256:${sha256}` ||
+      trajectorySha256 !== sha256
+    ) {
+      throw new TypeError("run marker trace upload evidence does not match");
+    }
+    traceUpload = {
+      authority: "https://api.slop.cash",
+      serverRunId,
+      objectId: value.run.trace_upload.object_id,
+      sha256,
+    };
   }
 
   return {
@@ -419,10 +481,8 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
     skillRevision: value.skill_revision,
     skillSha256: digest(value.run.skill_sha256, "run marker.skill_sha256"),
     usage,
-    trajectorySha256: optionalDigest(
-      value.run.trajectory_sha256,
-      "run marker.trajectory_sha256",
-    ),
+    trajectorySha256,
+    traceUpload,
     signatureAlgorithm: "ed25519",
     devicePublicKey: base64url(
       value.run.device_public_key,
@@ -467,6 +527,16 @@ export function runReceiptMarker(receipt: ProjectRunReceipt): RunReceiptMarker {
         session_count: receipt.usage.sessionCount,
       },
       trajectory_sha256: receipt.trajectorySha256,
+      ...(receipt.traceUpload
+        ? {
+            trace_upload: {
+              authority: receipt.traceUpload.authority,
+              server_run_id: receipt.traceUpload.serverRunId,
+              object_id: receipt.traceUpload.objectId,
+              sha256: receipt.traceUpload.sha256,
+            },
+          }
+        : {}),
       signature_algorithm: receipt.signatureAlgorithm,
       device_public_key: receipt.devicePublicKey,
       device_key_id: receipt.deviceKeyId,

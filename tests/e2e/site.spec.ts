@@ -158,7 +158,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     page.getByRole("heading", { name: "Contribute to Eliza." }),
   ).toBeVisible();
   await expect(
-    page.getByText("Paste this to your Claude or Codex agent."),
+    page.getByText("Paste this into any coding agent."),
   ).toBeVisible();
   const homePrompt = page.getByRole("status", { name: "Agent prompt" });
   await expect(homePrompt).toContainText(/\/SKILL\.md/u);
@@ -193,13 +193,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     "href",
     "/projects/eliza",
   );
-  if ((page.viewportSize()?.width ?? 0) <= 680) {
-    await expect(page.locator(".hero-mobile-action")).toHaveText(
-      "SHIPPING SLOP.",
-    );
-    await expect(page.locator(".hero-mobile-action")).toBeVisible();
-    await expect(page.locator(".hero-typewriter")).toBeHidden();
-  }
+  await expect(page.locator(".hero-action")).toHaveText("SHIPPING SLOP.");
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();
@@ -457,7 +451,7 @@ test("renders contributor and cycle records from validated public data", async (
       }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Public cycle files." }),
+      page.getByRole("heading", { name: "Public files" }),
     ).toBeVisible();
   } else {
     const view = createProjectView(snapshot, "eliza");
@@ -467,10 +461,36 @@ test("renders contributor and cycle records from validated public data", async (
     await expect(
       page.getByRole("heading", { name: `Eliza · ${view.cycle.id}` }),
     ).toBeVisible();
-    await expect(page.getByText("14-day review")).toBeVisible();
+    await expect(page.getByText("Review")).toBeVisible();
     await expect(page.getByText("Cycle evidence.")).toHaveCount(0);
     await expect(page.getByText(/score events ·/u)).toHaveCount(0);
   }
+});
+
+test("keeps a large payout editor searchable and bounded", async ({
+  page,
+  request,
+}) => {
+  const snapshot = await loadSnapshot(request);
+  const leaders = createProjectView(snapshot, "eliza").leaders;
+  if (leaders.length <= 10) {
+    test.skip(true, "The live Eliza ledger has ten or fewer contributors.");
+    return;
+  }
+  const target = leaders.at(-1);
+  if (!target) return;
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("searchbox", { name: "Find contributor" }),
+  ).toBeVisible();
+  await expect(page.locator(".allocation-rows fieldset")).toHaveCount(10);
+  await page
+    .getByRole("searchbox", { name: "Find contributor" })
+    .fill(target.actor.login);
+  await expect(
+    page.getByRole("group", { name: target.actor.login }),
+  ).toBeVisible();
+  await expect(page.locator(".allocation-rows fieldset")).toHaveCount(1);
 });
 
 test("creates a valid GitHub-native project handoff", async ({ page }) => {
@@ -482,6 +502,10 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
   await page
     .getByLabel("Money-forward headline")
     .fill("Make money proving proteins fold.");
+  await page.getByLabel("Goal").fill("Make protein research reproducible.");
+  await page
+    .getByLabel("Acceptance criteria")
+    .fill("Accepted pull requests with verified tests.");
   await page.getByLabel("Maximum monthly pool, digital dollars").fill("2500");
 
   const handoff = page.getByRole("link", { name: /Continue on GitHub/u });
@@ -492,9 +516,9 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
   await expect(page.locator(".manifest-preview")).toContainText(
     '"monthlyCapMinor": "2500000000"',
   );
-  await expect(
-    page.getByText(/New projects pass automated safety checks/u),
-  ).toBeVisible();
+  await expect(page.locator(".manifest-preview")).toContainText(
+    '"mode": "open-declared"',
+  );
   await expect(
     page.getByRole("button", { name: "Copy agent brief" }),
   ).toBeVisible();
@@ -584,7 +608,9 @@ test("serves byte-consistent install and read-only artifacts for every project",
   });
   expect(await discoverySkillResponse.body()).toEqual(bootstrap);
   expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
-  expect(bootstrap.toString()).toContain("No CLI upload");
+  expect(bootstrap.toString()).toContain(
+    "mandatory permanent raw-trace upload",
+  );
   expect(await projectDiscoveryResponse.json()).toEqual({
     schemaVersion: "1",
     projects: PROJECTS.flatMap((project) =>
@@ -708,21 +734,14 @@ test("keeps primary routes accessible and inside the viewport", async ({
     ...PROJECTS.map((project) => `/projects/${project.id}`),
     "/projects/new",
   ]) {
-    if (path === "/") {
-      await page.emulateMedia({ reducedMotion: "no-preference" });
-    }
     await page.goto(path, { waitUntil: "networkidle" });
     if (path === "/") {
       await expect(
         page.getByRole("heading", {
           exact: true,
-          name: "MAKE MONEY DISCOVERING DRUGS.",
+          name: "MAKE MONEY SHIPPING SLOP.",
         }),
-      ).toBeVisible({ timeout: 8_000 });
-      await expect(page.locator(".hero-typewriter")).toHaveText(
-        "DISCOVERING DRUGS.",
-        { timeout: 8_000 },
-      );
+      ).toBeVisible();
     }
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])

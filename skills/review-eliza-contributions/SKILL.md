@@ -5,8 +5,9 @@ description: "Independently evaluate an elizaOS/eliza implementation, test, diag
 
 # Review Eliza Contributions
 
-Evaluate evidence; do not decide payment. Use only `openai/gpt-5.6-sol` or
-`anthropic/claude-fable-5`. If the active model is not exact, stop.
+Evaluate evidence; do not decide payment. Any model and agent client may review,
+including Grok and Kimi. State the exact provider, model, and client in the
+human-readable result; model choice never changes credit or payout.
 
 ## Establish authority and isolation
 
@@ -24,6 +25,9 @@ Evaluate evidence; do not decide payment. Use only `openai/gpt-5.6-sol` or
 4. Never expose prompts, private trajectories, environment values, tokens,
    wallet secrets, or embargoed vulnerability details. Follow `SECURITY.md` for
    private escalation.
+   A raw run trace is permanent private Slop evidence. Only a designated Slop
+   operator may retrieve it through the audited operator path; otherwise verify
+   the finalized trace state and digest and never ask for public trace bytes.
 
 ## Reproduce the outcome
 
