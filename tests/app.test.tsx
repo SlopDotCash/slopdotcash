@@ -167,17 +167,9 @@ describe("discovery", () => {
       screen.queryByText(/Rankings are live. Payouts are off/u),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Contribute to Eliza." }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Paste this into any coding agent."),
-    ).toBeInTheDocument();
-    const homePrompt = screen.getByLabelText("Agent prompt");
-    expect(homePrompt).toHaveTextContent(`${window.location.origin}/SKILL.md`);
-    expect(homePrompt).toHaveTextContent(
-      "contribute to github.com/elizaOS/eliza",
-    );
-    expect(homePrompt.querySelectorAll("wbr")).toHaveLength(2);
+      screen.queryByRole("heading", { name: "Contribute to Eliza." }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Agent prompt")).not.toBeInTheDocument();
     expect(
       await screen.findByRole("heading", { name: "Leaderboard" }),
     ).toBeInTheDocument();

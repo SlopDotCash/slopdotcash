@@ -138,39 +138,16 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   expect(elizaBox?.width).toBeGreaterThan((gridBox?.width ?? 0) - 2);
   expect(deltaBox?.width).toBeGreaterThan((gridBox?.width ?? 0) - 2);
   expect(deltaBox?.y).toBeGreaterThan((elizaBox?.y ?? 0) + 1);
-  const visibleHeroGap = await page.evaluate(() => {
-    const heroBoundary = document.querySelector(".home-agent-prompt");
-    const projectHeading = document.querySelector("#projects h2");
-    if (!heroBoundary || !projectHeading) return null;
-    return Math.round(
-      projectHeading.getBoundingClientRect().top -
-        heroBoundary.getBoundingClientRect().bottom,
-    );
-  });
-  expect(visibleHeroGap).not.toBeNull();
-  expect(visibleHeroGap ?? 0).toBeGreaterThanOrEqual(12);
-  expect(visibleHeroGap ?? 0).toBeLessThanOrEqual(64);
   await expect(page.getByText("Public beta.")).toHaveCount(0);
   await expect(
     page.getByText(/Rankings are live. Payouts are off/u),
   ).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Contribute to Eliza." }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Paste this into any coding agent."),
-  ).toBeVisible();
-  const homePrompt = page.getByRole("status", { name: "Agent prompt" });
-  await expect(homePrompt).toContainText(/\/SKILL\.md/u);
-  await expect(homePrompt).toContainText(
-    /contribute to github\.com\/elizaOS\/eliza/u,
+  ).toHaveCount(0);
+  await expect(page.getByRole("status", { name: "Agent prompt" })).toHaveCount(
+    0,
   );
-  await expect(homePrompt.locator("wbr")).toHaveCount(2);
-  expect(
-    await homePrompt.evaluate(
-      (element) => element.scrollWidth <= element.clientWidth,
-    ),
-  ).toBe(true);
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();

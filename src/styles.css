@@ -866,29 +866,6 @@ small {
   text-transform: uppercase;
 }
 
-.home-agent-prompt {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1.58fr);
-  align-items: center;
-  gap: 24px;
-  margin-block: 20px 36px;
-  padding: 20px;
-  border-radius: var(--radius);
-  background: var(--orange);
-}
-
-.home-agent-prompt-heading h2 {
-  margin: 0;
-  font-size: clamp(24px, 3vw, 34px);
-  letter-spacing: -0.04em;
-}
-
-.home-agent-prompt-heading p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .install-panel {
   margin-top: 56px;
   padding: 32px;
@@ -1855,11 +1832,6 @@ small {
     align-items: start;
   }
 
-  .home-agent-prompt {
-    grid-template-columns: 1fr;
-    gap: 18px;
-  }
-
   .reward-card {
     max-width: 520px;
     margin-inline: auto;
@@ -1967,11 +1939,6 @@ small {
   .project-hero h1,
   .proposal-intro h1 {
     font-size: clamp(45px, 14vw, 68px);
-  }
-
-  .home-agent-prompt {
-    margin-block: 16px 28px;
-    padding: 18px;
   }
 
   .hero-copy {
