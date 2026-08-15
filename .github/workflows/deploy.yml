@@ -350,12 +350,14 @@ jobs:
             --remote \
             --json \
             --config workers/identity/wrangler.toml \
-            --command "SELECT type, name FROM sqlite_schema WHERE name IN ('identity_assertions','identity_oauth_flows','private_audit_events','run_progress_events','trace_objects','trace_read_grants','trace_runs','trace_upload_intents','trace_uploads','wallet_claims','wallet_claims_no_delete','wallet_claims_no_update') ORDER BY type, name" \
+            --command "SELECT type, name FROM sqlite_schema WHERE name IN ('identity_assertions','identity_oauth_flows','private_audit_events','run_progress_events','trace_objects','trace_read_grants','trace_runs','trace_upload_intents','trace_uploads','wallet_claims','wallet_claims_no_delete','wallet_claims_no_update','wallet_claims_one_root_per_actor','wallet_claims_one_successor') ORDER BY type, name" \
             > "$schema_response"
           node - "$schema_response" <<'NODE'
           const { readFileSync } = require("node:fs");
           const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const expected = [
+            "index:wallet_claims_one_root_per_actor",
+            "index:wallet_claims_one_successor",
             "table:identity_assertions",
             "table:identity_oauth_flows",
             "table:private_audit_events",
@@ -380,11 +382,19 @@ jobs:
           }
           NODE
 
-          ./node_modules/.bin/wrangler deploy \
+          # Upload and promote a version without rewriting the existing custom
+          # domain or cron configuration. The production token intentionally
+          # has no zone-level Workers Routes permission.
+          ./node_modules/.bin/wrangler versions upload \
             --config workers/identity/wrangler.toml \
             --minify \
             --tag="$GITHUB_SHA" \
             --message="slop.cash release $GITHUB_SHA"
+          ./node_modules/.bin/wrangler versions deploy \
+            --name slop-identity \
+            --version-tag="$GITHUB_SHA@100%" \
+            --message="slop.cash release $GITHUB_SHA" \
+            --yes
 
           identity_versions="$RUNNER_TEMP/slop-identity-versions.json"
           identity_deployment="$RUNNER_TEMP/slop-identity-deployment.json"

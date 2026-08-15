@@ -1,3 +1,4 @@
+import { isSolanaAddress } from "../../src/lib/wallets";
 import { signApiToken, verifyApiToken } from "./auth";
 import {
   type AuthenticatedActor,
@@ -142,8 +143,114 @@ async function readPublicWalletClaim(
   const claim = await deps.persistence.getWalletClaim(claimId);
   if (claim === null) fail(404, "not_found", "Wallet claim not found");
   const response = json(200, publicWalletClaim(claim));
-  response.headers.set("cache-control", "public, max-age=300, immutable");
+  response.headers.set("cache-control", "public, max-age=31536000, immutable");
   return response;
+}
+
+async function readCurrentWalletClaim(
+  deps: TraceApiDependencies,
+  githubId: string,
+): Promise<Response> {
+  if (!/^\d+$/u.test(githubId))
+    fail(400, "invalid_request", "Invalid GitHub actor id");
+  const claim = await deps.persistence.getCurrentWalletClaim(githubId);
+  if (claim === null) fail(404, "not_found", "Wallet claim not found");
+  const response = json(200, publicWalletClaim(claim));
+  response.headers.set("cache-control", "public, max-age=60, must-revalidate");
+  return response;
+}
+
+async function createContributorWalletClaim(
+  request: Request,
+  actor: AuthenticatedActor,
+  deps: TraceApiDependencies,
+): Promise<Response> {
+  assertWriter(actor);
+  const body = await readJsonObject(request);
+  const walletAddress = body.address;
+  if (!isSolanaAddress(walletAddress)) {
+    fail(400, "invalid_request", "Invalid Solana address");
+  }
+  const requestedPredecessor = optionalString(
+    body,
+    "supersedesClaimId",
+    validIdentifier,
+  );
+  const current = await deps.persistence.getCurrentWalletClaim(actor.githubId);
+  if (
+    (current === null && requestedPredecessor !== null) ||
+    (current !== null && requestedPredecessor !== current.id)
+  ) {
+    fail(
+      409,
+      "stale_wallet_claim",
+      "Wallet claim changed; reload the current claim before submitting",
+    );
+  }
+  if (current?.walletAddress === walletAddress) {
+    return json(200, publicWalletClaim(current));
+  }
+
+  const observedAt = deps.now().toISOString();
+  const declaration = JSON.stringify({
+    schemaVersion: 1,
+    githubActorId: actor.githubId,
+    address: walletAddress,
+    supersedesClaimId: requestedPredecessor,
+  });
+  const sourceBodySha256 = await sha256Hex(
+    new TextEncoder().encode(declaration),
+  );
+  const canonicalRecord = JSON.stringify({
+    schemaVersion: 1,
+    githubActorId: actor.githubId,
+    githubLogin: actor.githubLogin,
+    address: walletAddress,
+    source: "d1_registry",
+    issueRepository: null,
+    issueNumber: null,
+    sourceBodySha256,
+    observedAt,
+    supersedesClaimId: requestedPredecessor,
+  });
+  const claim: WalletClaim = {
+    id: deps.randomId(),
+    githubId: actor.githubId,
+    githubLogin: actor.githubLogin,
+    walletAddress,
+    source: "d1_registry",
+    issueRepository: null,
+    issueNumber: null,
+    sourceBodySha256,
+    observedAt,
+    recordSha256: await sha256Hex(new TextEncoder().encode(canonicalRecord)),
+    supersedesClaimId: requestedPredecessor,
+    createdAt: observedAt,
+  };
+  const result = await deps.persistence.createWalletClaim(claim);
+  if (result.status === "conflict") {
+    fail(
+      409,
+      "stale_wallet_claim",
+      "Wallet claim changed; reload the current claim before submitting",
+    );
+  }
+  await deps.persistence.writeAudit({
+    id: deps.randomId(),
+    actorGithubId: actor.githubId,
+    action: "wallet_claim.created",
+    target: `wallet-claim:${result.value.id}`,
+    requestId: deps.randomId(),
+    createdAt: observedAt,
+    details: {
+      recordDigest: result.value.recordSha256,
+      supersedesClaimId: result.value.supersedesClaimId,
+    },
+  });
+  return json(
+    result.status === "created" ? 201 : 200,
+    publicWalletClaim(result.value),
+  );
 }
 
 async function createFallbackWalletClaim(
@@ -165,10 +272,7 @@ async function createFallbackWalletClaim(
   ) {
     fail(400, "invalid_request", "Invalid githubLogin");
   }
-  if (
-    typeof walletAddress !== "string" ||
-    !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(walletAddress)
-  ) {
+  if (typeof walletAddress !== "string" || !isSolanaAddress(walletAddress)) {
     fail(400, "invalid_request", "Invalid Solana address");
   }
   const observedAt = requiredString(body, "observedAt", validIsoTimestamp);
@@ -182,14 +286,39 @@ async function createFallbackWalletClaim(
     "supersedesClaimId",
     validIdentifier,
   );
+  if (
+    body.source !== undefined &&
+    body.source !== "github_issue" &&
+    body.source !== "d1_registry"
+  ) {
+    fail(400, "invalid_request", "Invalid wallet claim source");
+  }
+  const source =
+    body.source === "github_issue" ? "github_issue" : "d1_registry";
+  const issueRepository =
+    source === "github_issue" && body.issueRepository === "elizaOS/slopdotcash"
+      ? body.issueRepository
+      : null;
+  const issueNumber =
+    source === "github_issue" &&
+    Number.isSafeInteger(body.issueNumber) &&
+    Number(body.issueNumber) > 0
+      ? Number(body.issueNumber)
+      : null;
+  if (
+    source === "github_issue" &&
+    (issueRepository === null || issueNumber === null)
+  ) {
+    fail(400, "invalid_request", "Invalid GitHub issue source");
+  }
   const canonicalRecord = JSON.stringify({
     schemaVersion: 1,
     githubActorId: githubId,
     githubLogin,
     address: walletAddress,
-    source: "d1_fallback",
-    issueRepository: null,
-    issueNumber: null,
+    source,
+    issueRepository,
+    issueNumber,
     sourceBodySha256,
     observedAt,
     supersedesClaimId,
@@ -199,9 +328,9 @@ async function createFallbackWalletClaim(
     githubId,
     githubLogin,
     walletAddress,
-    source: "d1_fallback",
-    issueRepository: null,
-    issueNumber: null,
+    source,
+    issueRepository,
+    issueNumber,
     sourceBodySha256,
     observedAt,
     recordSha256: await sha256Hex(new TextEncoder().encode(canonicalRecord)),
@@ -214,7 +343,10 @@ async function createFallbackWalletClaim(
   await deps.persistence.writeAudit({
     id: deps.randomId(),
     actorGithubId: actor.githubId,
-    action: "wallet_claim.fallback_created",
+    action:
+      source === "github_issue"
+        ? "wallet_claim.historical_issue_migrated"
+        : "wallet_claim.operator_recovery_created",
     target: `wallet-claim:${result.value.id}`,
     requestId: deps.randomId(),
     createdAt: deps.now().toISOString(),
@@ -681,8 +813,18 @@ export async function handleTraceApi(
   try {
     if (
       request.method === "GET" &&
+      parts.length === 4 &&
+      parts[0] === "wallet-claims" &&
+      parts[1] === "actors" &&
+      parts[3] === "current"
+    ) {
+      return await readCurrentWalletClaim(deps, parts[2]);
+    }
+    if (
+      request.method === "GET" &&
       parts.length === 2 &&
-      parts[0] === "wallet-claims"
+      parts[0] === "wallet-claims" &&
+      parts[1] !== "current"
     ) {
       return await readPublicWalletClaim(deps, parts[1]);
     }
@@ -708,6 +850,26 @@ export async function handleTraceApi(
       nowSeconds: Math.floor(deps.now().getTime() / 1000),
     });
     if (actor === null) fail(401, "unauthorized", "Authentication failed");
+
+    if (
+      request.method === "GET" &&
+      parts.length === 2 &&
+      parts[0] === "wallet-claims" &&
+      parts[1] === "current"
+    ) {
+      const current = await deps.persistence.getCurrentWalletClaim(
+        actor.githubId,
+      );
+      if (current === null) fail(404, "not_found", "Wallet claim not found");
+      return json(200, publicWalletClaim(current));
+    }
+    if (
+      request.method === "POST" &&
+      parts.length === 1 &&
+      parts[0] === "wallet-claims"
+    ) {
+      return await createContributorWalletClaim(request, actor, deps);
+    }
 
     if (
       request.method === "POST" &&

@@ -126,13 +126,14 @@ award PR.
 
 ### Get paid
 
-After a contribution, the same skill optionally registers a Solana public
-address in one open `Slop wallet claim` issue authored by the contributor in
-`elizaOS/slopdotcash`. At month close, the platform binds the issue author,
-node id, update time, and body digest into a 14-day proposal. Immutable GitHub
-profile README markers remain a compatibility fallback. After approval, the
-creator signs the exact transfer plan externally. Only finalized, reconciled
-USDC balance changes become “paid.”
+After a contribution, the same skill can optionally register a Solana public
+address through one-time GitHub OAuth. Slop stores an actor-bound, append-only
+claim in D1 and publishes only its safe metadata and digest. Address changes
+append a superseding record and restart the 14-day review; they never overwrite
+history. Historical GitHub issue claims and immutable profile README markers
+are migration-only compatibility inputs, not the live registry. After
+approval, the creator signs the exact transfer plan externally. Only finalized,
+reconciled USDC balance changes become “paid.”
 
 ## Creator journey
 

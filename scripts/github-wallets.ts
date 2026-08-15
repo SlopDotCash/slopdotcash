@@ -4,15 +4,11 @@
  * are bounded and every source is rebound to the exact GitHub actor.
  */
 
-import { createHash } from "node:crypto";
 import type { WalletProof } from "../src/lib/rewards";
-import {
-  parsePublishedWallet,
-  WALLET_CLAIM_REPOSITORY,
-  WALLET_CLAIM_TITLE,
-} from "../src/lib/wallets";
+import { isSolanaAddress, parsePublishedWallet } from "../src/lib/wallets";
 
 const API_ORIGIN = "https://api.github.com";
+const WALLET_AUTHORITY = "https://api.slop.cash";
 const MAX_API_RESPONSE_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_API_ATTEMPTS = 4;
@@ -159,6 +155,64 @@ async function apiJson(
   throw new Error("GitHub wallet lookup exhausted its retry boundary");
 }
 
+async function registryJson(
+  path: string,
+  fetchImpl: FetchLike,
+): Promise<unknown | null> {
+  for (let attempt = 1; attempt <= MAX_API_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      let response: Response;
+      try {
+        response = await fetchImpl(`${WALLET_AUTHORITY}${path}`, {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "slop-wallet-observer/1",
+          },
+          redirect: "error",
+          signal: controller.signal,
+        });
+      } catch (error) {
+        const retryable =
+          controller.signal.aborted || transientNetworkError(error);
+        if (retryable && attempt < MAX_API_ATTEMPTS) {
+          await retryDelay(attempt);
+          continue;
+        }
+        throw new Error(
+          `Slop wallet registry network failed (${attempt}/${MAX_API_ATTEMPTS})`,
+          { cause: error },
+        );
+      }
+      if (
+        [502, 503, 504].includes(response.status) &&
+        attempt < MAX_API_ATTEMPTS
+      ) {
+        await retryDelay(attempt);
+        continue;
+      }
+      if (response.status === 404) return null;
+      if (!response.ok) {
+        throw new Error(
+          `Slop wallet registry failed with HTTP ${response.status}`,
+        );
+      }
+      const body = await boundedApiBody(response);
+      try {
+        return JSON.parse(body);
+      } catch (error) {
+        throw new Error("Slop wallet registry returned invalid JSON", {
+          cause: error,
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error("Slop wallet registry exhausted its retry boundary");
+}
+
 function object(value: unknown, context: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`${context} is not an object`);
@@ -166,97 +220,90 @@ function object(value: unknown, context: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-async function fetchIssueWallet(
+async function fetchRegistryWallet(
+  githubNumericId: string,
+  sourceActorId: string,
   login: string,
   observedAt: string,
-  token: string | undefined,
   fetchImpl: FetchLike,
 ): Promise<WalletProof | null> {
-  const response = await apiJson(
-    `/repos/${WALLET_CLAIM_REPOSITORY}/issues?state=open&creator=${encodeURIComponent(login)}&sort=updated&direction=desc&per_page=100`,
-    token,
+  const response = await registryJson(
+    `/api/v1/wallet-claims/actors/${githubNumericId}/current`,
     fetchImpl,
   );
   if (response === null) return null;
-  if (!Array.isArray(response)) {
-    throw new TypeError("GitHub wallet claim lookup is not an array");
-  }
-  if (response.length === 100) {
-    throw new RangeError("GitHub wallet claim lookup reached its issue bound");
-  }
-  const claims = response.filter((value) => {
-    const issue = object(value, "GitHub wallet claim issue");
-    return issue.title === WALLET_CLAIM_TITLE && !("pull_request" in issue);
-  });
-  if (claims.length === 0) return null;
-  if (claims.length !== 1) {
-    throw new TypeError("GitHub account has multiple open wallet claim issues");
-  }
-  const issue = object(claims[0], "GitHub wallet claim issue");
-  const actor = object(issue.user, "GitHub wallet claim author");
+  const claim = object(response, "Slop wallet registry claim");
   if (
-    typeof actor.login !== "string" ||
-    actor.login.toLowerCase() !== login.toLowerCase() ||
-    typeof actor.node_id !== "string" ||
-    !/^[A-Za-z0-9_=-]+$/u.test(actor.node_id)
+    claim.schemaVersion !== 1 ||
+    typeof claim.claimId !== "string" ||
+    !/^[A-Za-z0-9_-]+$/u.test(claim.claimId) ||
+    claim.githubActorId !== githubNumericId ||
+    typeof claim.githubLogin !== "string" ||
+    claim.githubLogin.toLowerCase() !== login.toLowerCase() ||
+    !isSolanaAddress(claim.address) ||
+    !["d1_registry", "github_issue", "profile_readme"].includes(
+      String(claim.source),
+    ) ||
+    typeof claim.sourceBodySha256 !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(claim.sourceBodySha256) ||
+    typeof claim.observedAt !== "string" ||
+    !Number.isFinite(Date.parse(claim.observedAt)) ||
+    Date.parse(claim.observedAt) > Date.parse(observedAt) ||
+    typeof claim.recordDigest !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(claim.recordDigest)
   ) {
-    throw new TypeError(
-      "GitHub wallet claim author does not match the contributor",
-    );
-  }
-  if (typeof issue.body !== "string" || issue.body.length > 1_000_000) {
-    throw new TypeError("GitHub wallet claim body is invalid or too large");
-  }
-  const published = parsePublishedWallet(issue.body);
-  if (!published) {
-    throw new TypeError("GitHub wallet claim issue has no wallet marker");
-  }
-  if (
-    !Number.isSafeInteger(issue.number) ||
-    (issue.number as number) < 1 ||
-    typeof issue.node_id !== "string" ||
-    !/^[A-Za-z0-9_=-]+$/u.test(issue.node_id) ||
-    typeof issue.updated_at !== "string" ||
-    !Number.isFinite(Date.parse(issue.updated_at))
-  ) {
-    throw new TypeError("GitHub wallet claim identity is invalid");
-  }
-  const sourceIssueNumber = issue.number as number;
-  const sourceUrl = `https://github.com/${WALLET_CLAIM_REPOSITORY}/issues/${sourceIssueNumber}`;
-  if (issue.html_url !== sourceUrl) {
-    throw new TypeError("GitHub wallet claim URL is not canonical");
+    throw new TypeError("Slop wallet registry claim is invalid");
   }
   return {
-    address: published.address,
+    address: claim.address,
     chain: "solana",
     observedAt,
-    sourceActorId: actor.node_id,
-    sourceBodySha256: createHash("sha256").update(issue.body).digest("hex"),
-    sourceIssueId: issue.node_id,
-    sourceIssueNumber,
-    sourceUpdatedAt: issue.updated_at,
-    sourceUrl,
+    sourceActorId,
+    sourceClaimId: claim.claimId,
+    sourceRecordSha256: claim.recordDigest,
+    sourceUrl: `${WALLET_AUTHORITY}/api/v1/wallet-claims/${claim.claimId}`,
   };
 }
 
-/** Returns public wallet attribution, preferring one canonical open claim. */
+/** Returns an actor-bound D1 claim, with immutable profile bytes as fallback. */
 export async function fetchPublishedGithubWallet(
+  actorIdInput: string,
   loginInput: string,
   observedAt: string,
   options: { fetch?: FetchLike; token?: string } = {},
 ): Promise<WalletProof | null> {
+  if (!/^[A-Za-z0-9_=-]{4,128}$/u.test(actorIdInput)) {
+    throw new TypeError("GitHub actor id is invalid");
+  }
   const login = githubLogin(loginInput);
   if (!Number.isFinite(Date.parse(observedAt))) {
     throw new TypeError("Wallet observation time is invalid");
   }
   const fetchImpl = options.fetch ?? fetch;
-  const issueWallet = await fetchIssueWallet(
-    login,
-    observedAt,
+  const identityResponse = await apiJson(
+    `/users/${encodeURIComponent(login)}`,
     options.token,
     fetchImpl,
   );
-  if (issueWallet) return issueWallet;
+  if (identityResponse === null) return null;
+  const identity = object(identityResponse, "GitHub wallet actor identity");
+  if (
+    !Number.isSafeInteger(identity.id) ||
+    Number(identity.id) < 1 ||
+    identity.node_id !== actorIdInput ||
+    typeof identity.login !== "string" ||
+    identity.login.toLowerCase() !== login.toLowerCase()
+  ) {
+    throw new TypeError("GitHub wallet actor identity changed");
+  }
+  const registryWallet = await fetchRegistryWallet(
+    String(identity.id),
+    actorIdInput,
+    login,
+    observedAt,
+    fetchImpl,
+  );
+  if (registryWallet) return registryWallet;
   const repository = `${login}/${login}`;
   const readmeResponse = await apiJson(
     `/repos/${encodeURIComponent(login)}/${encodeURIComponent(login)}/readme`,

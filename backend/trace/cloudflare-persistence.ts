@@ -646,4 +646,21 @@ export class CloudflareTracePersistence implements TracePersistence {
       .first<WalletClaimRow>();
     return row === null ? null : mapWalletClaim(row);
   }
+
+  async getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT claim.* FROM wallet_claims AS claim
+         WHERE claim.github_user_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM wallet_claims AS successor
+             WHERE successor.supersedes_claim_id = claim.id
+           )
+         ORDER BY claim.observed_at DESC, claim.created_at DESC
+         LIMIT 1`,
+      )
+      .bind(githubId)
+      .first<WalletClaimRow>();
+    return row === null ? null : mapWalletClaim(row);
+  }
 }

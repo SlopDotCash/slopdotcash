@@ -246,30 +246,32 @@ The device signature is evidence integrity, not an oracle of truth.
 After the public contribution artifact is ready, offer this optional step once.
 It never blocks contribution, review, or receipt completion.
 
-1. Read the currently authenticated GitHub identity with `gh api user`. Query
-   open issues authored by that identity in `elizaOS/slopdotcash` whose exact
-   title is `Slop wallet claim`. Ignore pull requests. If one valid claim
-   exists, report its public address and do nothing unless the operator asks to
-   change it. If multiple claims exist, stop payout setup and ask the operator
-   to close the extras; never choose between conflicting claims.
-2. If no claim exists, ask whether the operator wants to register a payout
-   address. If they decline, continue without one. Ask only for a **public
-   Solana address**; never request, read, create, or handle a seed phrase,
-   private key, wallet connection, signature, or transaction.
-3. Validate and render the claim locally:
+1. Ask whether the operator wants to register a payout address. If they
+   decline, continue without one. Ask only for a **public Solana address**;
+   never request, read, create, or handle a seed phrase, private key, wallet
+   connection, signature, or transaction.
+2. Validate and render the no-write plan locally:
 
 ```bash
 node <skill-directory>/scripts/wallet-claim.mjs --address <public-address>
 ```
 
-4. Show the exact GitHub repository, issue title, marker body, and whether the
-   action creates or edits an issue. Wait for explicit approval before any
-   GitHub write. The prefilled URL lets the operator review and submit in the
-   browser. Using `gh issue create` or `gh issue edit` is allowed only after the
-   same approval.
-5. Keep exactly one open claim issue. Slop binds its GitHub author, node id,
-   update time, and body digest into a reward proposal. Editing the address is a
-   material change and restarts that allocation's 14-day review.
+3. Show the exact public address, fixed Slop API authority, one-time GitHub OAuth
+   authentication, append-only D1 storage, and the fact that the plan performs
+   no write. Wait for explicit approval before registration.
+4. After approval, register through the authenticated Slop authority:
+
+```bash
+node <skill-directory>/scripts/wallet-claim.mjs register --address <public-address>
+```
+
+   Show the printed `identity.slop.cash` authorization URL to the operator and
+   wait for completion. The script keeps the OAuth capability, assertion, and
+   Slop bearer token only in process memory. It prints the immutable claim ID,
+   record digest, and public metadata URL—never a credential.
+5. An address change appends a new claim linked to the current claim; it never
+   edits or deletes history. The change is material and restarts that
+   allocation's 14-day review.
 
 A claim identifies where a reviewed payout may go. It does not prove custody,
 guarantee payment, approve an allocation, connect a wallet, or move funds.

@@ -413,7 +413,7 @@ describe("project routes", () => {
       screen.queryByText(/One prompt handles the contribution/u),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Payout setup uses a GitHub wallet claim/u),
+      screen.getByText(/Payout setup uses an authenticated/u),
     ).toBeInTheDocument();
     expect(
       screen.queryByLabelText("Solana public address"),
@@ -675,7 +675,7 @@ describe("public records", () => {
     render(<App />);
 
     const wallet = await screen.findByRole("link", {
-      name: /Wallet · 11111111111111111111111111111111/i,
+      name: /Payout wallet · 11111111111111111111111111111111/i,
     });
     expect(wallet).toHaveAttribute("href", expect.stringContaining("/blob/"));
   });
