@@ -1062,7 +1062,7 @@ function ProjectPaymentHistory({
     <section className="section payment-history">
       <div className="simple-heading">
         <h2>Payment history</h2>
-        <Link href={`/projects/${project.slug}/manage`}>Manage project</Link>
+        <Link href={`/projects/${project.slug}/manage`}>Draft an update</Link>
       </div>
       <p className="money-summary">
         <strong>{formatMicroUsdc(paid.toString())} paid</strong>
@@ -1773,7 +1773,7 @@ interface AllocationDraftRow {
   reason: string;
 }
 
-function ProjectManagePage({
+export function ProjectManagePage({
   project,
   state,
 }: {
@@ -1838,6 +1838,9 @@ function ProjectManagePage({
     changedRowsHaveReasons;
   const feeMinor = feeForPrincipal(parsedTotal ?? "0", 100);
   const cycleId = latestRecord?.cycleId ?? view?.cycle.id ?? "next-cycle";
+  const payoutDraftingEnabled =
+    project.reward.kind === "monthly-pool" &&
+    project.reward.paymentMode === "enabled";
   const allocationDraft = JSON.stringify(
     {
       projectId: project.id,
@@ -1864,17 +1867,19 @@ function ProjectManagePage({
     <main className="shell route-main manage-page">
       <p className="breadcrumb">
         <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-        <span>/</span>Manage
+        <span>/</span>Draft update
       </p>
       <div className="manage-intro">
-        <h1>Run {project.name}.</h1>
+        <h1>Propose changes to {project.name}.</h1>
         <p>
-          Draft changes here. GitHub review remains the publishing boundary.
+          This public tool does not save or publish changes. Copy a proposal and
+          open a reviewed GitHub pull request; the repository remains the source
+          of truth.
         </p>
       </div>
 
       <section className="owner-section">
-        <h2>Project</h2>
+        <h2>Project brief</h2>
         <div className="owner-form">
           <label>
             Headline
@@ -1902,133 +1907,168 @@ function ProjectManagePage({
             onClick={() => void copy("project", projectBrief)}
             type="button"
           >
-            {copied === "project" ? "Copied" : "Copy project update"}
+            {copied === "project" ? "Copied" : "Copy GitHub brief"}
           </button>
         </div>
       </section>
 
-      <section className="owner-section allocation-editor">
-        <h2>{cycleId} payout</h2>
-        <p>
-          Set any nonnegative amount, including zero. Changed amounts need a
-          public reason. The 1% fee is charged only when principal is paid.
-        </p>
-        <label className="total-field">
-          Total payout, USDC
-          <input
-            inputMode="decimal"
-            min="0"
-            step="0.000001"
-            type="number"
-            value={total}
-            onChange={(event) => setTotal(event.target.value)}
-          />
-        </label>
-        {rows.length > 20 ? (
-          <label className="allocation-search">
-            Find contributor
-            <input
-              onChange={(event) => setAllocationQuery(event.target.value)}
-              placeholder="GitHub login"
-              type="search"
-              value={allocationQuery}
-            />
-          </label>
-        ) : null}
-        {rows.length === 0 ? (
-          <EmptyState text="No contributors are available for this cycle." />
-        ) : visibleRows.length === 0 ? (
-          <EmptyState text="No contributor matches that login." />
-        ) : (
-          <div className="allocation-rows">
-            {visibleRows.map((row) => (
-              <fieldset key={row.login}>
-                <legend>{row.login}</legend>
-                <label>
-                  Amount, USDC
+      {payoutDraftingEnabled ? (
+        <section className="owner-section allocation-editor">
+          <h2>{cycleId} allocation</h2>
+          <div className="owner-section-body">
+            <p>
+              Draft only. This page cannot save, approve, sign, or send USDC.
+              Changed amounts need a public reason; the 1% fee applies only if a
+              reviewed cycle is later paid.
+            </p>
+            <label className="total-field">
+              Draft total, USDC
+              <input
+                inputMode="decimal"
+                min="0"
+                step="0.000001"
+                type="number"
+                value={total}
+                onChange={(event) => setTotal(event.target.value)}
+              />
+            </label>
+            <details className="allocation-details">
+              <summary>
+                Edit {rows.length} contributor allocation
+                {rows.length === 1 ? "" : "s"}
+              </summary>
+              {rows.length > 20 ? (
+                <label className="allocation-search">
+                  Find contributor
                   <input
-                    aria-label={`${row.login} amount in USDC`}
-                    inputMode="decimal"
-                    min="0"
-                    step="0.000001"
-                    type="number"
-                    value={row.amount}
-                    onChange={(event) =>
-                      setRows((current) =>
-                        current.map((candidate) =>
-                          candidate.login === row.login
-                            ? { ...candidate, amount: event.target.value }
-                            : candidate,
-                        ),
-                      )
-                    }
+                    onChange={(event) => setAllocationQuery(event.target.value)}
+                    placeholder="GitHub login"
+                    type="search"
+                    value={allocationQuery}
                   />
                 </label>
-                <label>
-                  Reason
-                  <input
-                    aria-label={`${row.login} reason`}
-                    value={row.reason}
-                    onChange={(event) =>
-                      setRows((current) =>
-                        current.map((candidate) =>
-                          candidate.login === row.login
-                            ? { ...candidate, reason: event.target.value }
-                            : candidate,
-                        ),
-                      )
-                    }
-                  />
-                </label>
-              </fieldset>
-            ))}
+              ) : null}
+              {rows.length === 0 ? (
+                <EmptyState text="No contributors are available for this cycle." />
+              ) : visibleRows.length === 0 ? (
+                <EmptyState text="No contributor matches that login." />
+              ) : (
+                <div className="allocation-rows">
+                  {visibleRows.map((row) => (
+                    <fieldset key={row.login}>
+                      <legend>{row.login}</legend>
+                      <label>
+                        Amount, USDC
+                        <input
+                          aria-label={`${row.login} amount in USDC`}
+                          inputMode="decimal"
+                          min="0"
+                          step="0.000001"
+                          type="number"
+                          value={row.amount}
+                          onChange={(event) =>
+                            setRows((current) =>
+                              current.map((candidate) =>
+                                candidate.login === row.login
+                                  ? {
+                                      ...candidate,
+                                      amount: event.target.value,
+                                    }
+                                  : candidate,
+                              ),
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Reason
+                        <input
+                          aria-label={`${row.login} reason`}
+                          value={row.reason}
+                          onChange={(event) =>
+                            setRows((current) =>
+                              current.map((candidate) =>
+                                candidate.login === row.login
+                                  ? {
+                                      ...candidate,
+                                      reason: event.target.value,
+                                    }
+                                  : candidate,
+                              ),
+                            )
+                          }
+                        />
+                      </label>
+                    </fieldset>
+                  ))}
+                </div>
+              )}
+              {matchingRows.length > visibleRows.length ? (
+                <p className="allocation-count">
+                  Showing the first 10 contributors. Search by GitHub login to
+                  edit another.
+                </p>
+              ) : null}
+            </details>
+            <div className="payout-totals" aria-live="polite">
+              <span>{formatMicroUsdc(allocated.toString())} allocated</span>
+              <span>{formatMicroUsdc(feeMinor)} fee</span>
+              <strong>
+                {formatMicroUsdc(
+                  (BigInt(parsedTotal ?? "0") + BigInt(feeMinor)).toString(),
+                )}{" "}
+                total debit
+              </strong>
+            </div>
+            {!validAllocation && rows.length > 0 ? (
+              <p className="form-error" role="alert">
+                Allocations must equal the total. Add a reason for every changed
+                amount.
+              </p>
+            ) : null}
+            <button
+              className="button primary-button"
+              disabled={!validAllocation || rows.length === 0}
+              onClick={() => void copy("allocation", allocationDraft)}
+              type="button"
+            >
+              {copied === "allocation"
+                ? "Allocation copied"
+                : "Copy unsigned allocation"}
+            </button>
+            <div className="payout-action">
+              {latestRecord?.files.executionPlan ? (
+                <ExternalLinkAnchor href={latestRecord.files.executionPlan.url}>
+                  View unsigned plan{" "}
+                  <ExternalLink aria-hidden="true" size={14} />
+                </ExternalLinkAnchor>
+              ) : (
+                <span>No reviewed execution plan exists for this cycle.</span>
+              )}
+              <p>
+                Settlement happens outside this page and counts as paid only
+                after finalized USDC balance changes pass verification.
+              </p>
+            </div>
           </div>
-        )}
-        {matchingRows.length > visibleRows.length ? (
-          <p className="allocation-count">
-            Showing 10 contributors. Search by GitHub login to edit another.
-          </p>
-        ) : null}
-        <div className="payout-totals" aria-live="polite">
-          <span>{formatMicroUsdc(allocated.toString())} allocated</span>
-          <span>{formatMicroUsdc(feeMinor)} fee</span>
-          <strong>
-            {formatMicroUsdc(
-              (BigInt(parsedTotal ?? "0") + BigInt(feeMinor)).toString(),
-            )}{" "}
-            total debit
-          </strong>
-        </div>
-        {!validAllocation && rows.length > 0 ? (
-          <p className="form-error" role="alert">
-            Allocations must equal the total. Add a reason for every changed
-            amount.
-          </p>
-        ) : null}
-        <button
-          className="button primary-button"
-          disabled={!validAllocation || rows.length === 0}
-          onClick={() => void copy("allocation", allocationDraft)}
-          type="button"
-        >
-          {copied === "allocation"
-            ? "Allocation copied"
-            : "Copy allocation draft"}
-        </button>
-        <div className="payout-action">
-          {latestRecord?.files.executionPlan ? (
-            <ExternalLinkAnchor href={latestRecord.files.executionPlan.url}>
-              View unsigned plan <ExternalLink aria-hidden="true" size={14} />
-            </ExternalLinkAnchor>
-          ) : (
-            <span>Generate an immutable unsigned plan before signing.</span>
-          )}
-          <p>
-            Sign the exact mainnet USDC transfers in your wallet. A cycle is
-            paid only after finalized USDC deltas pass verification.
-          </p>
-        </div>
-      </section>
+        </section>
+      ) : (
+        <section className="owner-section">
+          <h2>Payouts</h2>
+          <div className="owner-section-body payout-status">
+            <strong>
+              {project.reward.kind === "external-prize-share"
+                ? "External award"
+                : "Payouts disabled"}
+            </strong>
+            <p>
+              {project.reward.kind === "external-prize-share"
+                ? "This project publishes contribution shares only. Slop cannot draft, approve, sign, or pay the external award."
+                : "Slop cannot draft, approve, sign, or pay allocations while the public project manifest keeps payouts disabled."}
+            </p>
+          </div>
+        </section>
+      )}
     </main>
   );
 }

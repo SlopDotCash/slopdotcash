@@ -486,30 +486,22 @@ test("renders contributor and cycle records from validated public data", async (
   }
 });
 
-test("keeps a large payout editor searchable and bounded", async ({
+test("makes the public project draft boundary unmistakable", async ({
   page,
-  request,
 }) => {
-  const snapshot = await loadSnapshot(request);
-  const leaders = createProjectView(snapshot, "eliza").leaders;
-  if (leaders.length <= 10) {
-    test.skip(true, "The live Eliza ledger has ten or fewer contributors.");
-    return;
-  }
-  const target = leaders.at(-1);
-  if (!target) return;
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("searchbox", { name: "Find contributor" }),
+    page.getByRole("heading", { name: "Propose changes to Eliza." }),
   ).toBeVisible();
-  await expect(page.locator(".allocation-rows fieldset")).toHaveCount(10);
-  await page
-    .getByRole("searchbox", { name: "Find contributor" })
-    .fill(target.actor.login);
   await expect(
-    page.getByRole("group", { name: target.actor.login }),
+    page.getByText(/does not save or publish changes/u),
   ).toBeVisible();
-  await expect(page.locator(".allocation-rows fieldset")).toHaveCount(1);
+  await expect(
+    page.getByText("Payouts disabled", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Draft total, USDC")).toHaveCount(0);
+  await expect(page.locator(".allocation-rows")).toHaveCount(0);
+  await expect(page.getByText(/mainnet USDC transfers/u)).toHaveCount(0);
 });
 
 test("creates a valid GitHub-native project handoff", async ({ page }) => {
@@ -760,6 +752,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
   for (const path of [
     "/",
     ...PROJECTS.map((project) => `/projects/${project.id}`),
+    "/projects/eliza/manage",
     "/projects/new",
   ]) {
     await page.goto(path, { waitUntil: "networkidle" });
