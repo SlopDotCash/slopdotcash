@@ -212,6 +212,18 @@ test("discovers both reward models and a score-ranked global ledger", async ({
       ).toBe(true);
     }
   }
+  const leaderboardBottomSpace = await page.evaluate(() => {
+    const panel = document.querySelector("#leaderboard-current-panel");
+    const footer = document.querySelector(".site-footer");
+    if (!panel || !footer) return null;
+    return Math.round(
+      footer.getBoundingClientRect().top - panel.getBoundingClientRect().bottom,
+    );
+  });
+  expect(leaderboardBottomSpace).not.toBeNull();
+  expect(leaderboardBottomSpace ?? 0).toBeGreaterThanOrEqual(
+    (page.viewportSize()?.width ?? 0) <= 680 ? 64 : 80,
+  );
   await page.getByRole("tab", { name: "All-time record" }).click();
   await expect(
     page.getByRole("table", { name: "All-time accepted-work record" }),
