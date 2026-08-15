@@ -1660,7 +1660,7 @@ describe("current-head review selection", () => {
       { id: "elizaOS/eliza", repositoryId: "REPOSITORY_ELIZA" },
       { id: "elizaOS/asi", repositoryId: "REPOSITORY_ASI" },
       {
-        id: "elizaos/proximityprize",
+        id: "elizaOS/proximityprize",
         repositoryId: "REPOSITORY_PROXIMITY_PRIZE",
       },
     ]);

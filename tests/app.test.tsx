@@ -494,7 +494,9 @@ describe("public records", () => {
     const totals = document.querySelector(".profile-totals");
     expect(totals).not.toBeNull();
     expect(totals).toHaveTextContent("34recorded score");
-    expect(screen.getByText("Harden the ark manifest loader")).toBeVisible();
+    expect(
+      screen.getByText("Harden the proximity manifest loader"),
+    ).toBeVisible();
   });
 
   it("shows a contributor's cross-project score, tokens, projections, and evidence", async () => {

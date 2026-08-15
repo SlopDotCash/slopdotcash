@@ -143,19 +143,19 @@ describe("project views", () => {
         hint: "Add verified screenshot, video, or log evidence before merge.",
       },
       {
-        id: "PR_arklib_open:opportunity:partial-evidence",
+        id: "PR_proximityprize_open:opportunity:partial-evidence",
         actor: snapshot.leaders[0].actor,
         kind: "partial-evidence",
         category: "evidence",
         potentialPoints: 4,
         occurredAt: "2026-07-29T12:00:00.000Z",
-        repository: "elizaos/proximityprize",
+        repository: "elizaOS/proximityprize",
         source: {
-          id: "PR_arklib_open",
+          id: "PR_proximityprize_open",
           kind: "pull-request",
           number: 99,
-          title: "Ark open checklist",
-          url: "https://github.com/elizaos/proximityprize/pull/99",
+          title: "Proximity Prize open checklist",
+          url: "https://github.com/elizaOS/proximityprize/pull/99",
         },
         reason:
           "Open pull request evidence is partial with 2 of 6 points verified.",
@@ -184,7 +184,7 @@ describe("project views", () => {
 
     const delta = createProjectView(snapshot, "delta-star", "2026-07");
     expect(delta.opportunities.map((row) => row.source.id)).toEqual([
-      "PR_arklib_open",
+      "PR_proximityprize_open",
     ]);
   });
 
@@ -307,7 +307,7 @@ describe("project views", () => {
     const deltaRun = receipt({
       runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAW",
       projectId: "delta-star",
-      repositoryId: "elizaos/proximityprize",
+      repositoryId: "elizaOS/proximityprize",
       skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-delta-star`,
       deviceSignature: "g".repeat(86),
     });
@@ -316,8 +316,8 @@ describe("project views", () => {
       attribution(snapshot, deltaRun, {
         id: `${deltaRun.runId}:other-project`,
         actor: SECOND_ACTOR,
-        artifactId: "PR_arklib_fixture",
-        sourceId: "PR_arklib_fixture",
+        artifactId: "PR_proximityprize_fixture",
+        sourceId: "PR_proximityprize_fixture",
       }),
     );
 

@@ -40,7 +40,7 @@ describe("project registry", () => {
     ).toEqual([
       ["elizaOS/eliza", "eliza"],
       ["elizaOS/asi", "asi"],
-      ["elizaos/proximityprize", "delta-star"],
+      ["elizaOS/proximityprize", "delta-star"],
     ]);
     expect(findProjectByRepositoryId("ELIZAOS/ELIZA")?.id).toBe("eliza");
     expect(findProjectByRepositoryId("unknown/repository")).toBeNull();
