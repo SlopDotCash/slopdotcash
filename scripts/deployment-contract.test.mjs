@@ -119,6 +119,12 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob.indexOf("wrangler versions deploy \\")).toBeLessThan(
       deployJob.indexOf("wrangler pages deploy \\"),
     );
+    expect(deployJob.indexOf("wrangler pages deploy \\")).toBeLessThan(
+      deployJob.indexOf("Require public identity OAuth app"),
+    );
+    expect(
+      deployJob.indexOf("Verify published skill and leaderboard"),
+    ).toBeLessThan(deployJob.indexOf("Require public identity OAuth app"));
     expect(deployJob).not.toContain("wrangler deploy \\");
     expect(deployJob).toContain("has no zone-level Workers Routes permission");
     expect(deployJob).not.toContain("working-directory:");
