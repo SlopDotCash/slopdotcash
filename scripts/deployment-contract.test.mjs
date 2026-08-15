@@ -33,6 +33,9 @@ const pagesHeaders = readFileSync(
   join(packageRoot, "public", "_headers"),
   "utf8",
 );
+const pagesRoutes = JSON.parse(
+  readFileSync(join(packageRoot, "public", "_routes.json"), "utf8"),
+);
 const playwrightConfiguration = readFileSync(
   join(packageRoot, "playwright.config.ts"),
   "utf8",
@@ -228,6 +231,7 @@ describe("slop.cash deployment contract", () => {
     expect(pagesHeaders).toContain(
       "Cache-Control: public, max-age=31536000, immutable",
     );
+    expect(pagesRoutes.include).toContain("/api/v1/*");
   });
 
   it("binds the private trace and identity runtime through reviewed configuration", () => {
