@@ -8,6 +8,16 @@ const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
   process.env.GITARMY_BASE_URL ??
   process.env.ELIZA_ARMY_BASE_URL;
+const prebuiltSite = process.env.SLOP_E2E_PREBUILT === "1";
+const localServer = process.env.SLOP_E2E_SERVER ?? "pages";
+if (!new Set(["pages", "preview"]).has(localServer)) {
+  throw new TypeError(`Unsupported SLOP_E2E_SERVER: ${localServer}`);
+}
+
+const localServerCommand =
+  localServer === "preview"
+    ? "bun --bun vite preview --host 127.0.0.1 --port 4466 --strictPort"
+    : "bunx wrangler pages dev dist --ip 127.0.0.1 --port 4466 --log-level warn --show-interactive-dev-session=false";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -30,8 +40,7 @@ export default defineConfig({
   webServer: externalBaseUrl
     ? undefined
     : {
-        command:
-          "bun run build && bunx wrangler pages dev dist --ip 127.0.0.1 --port 4466 --log-level warn --show-interactive-dev-session=false",
+        command: `${prebuiltSite ? "" : "bun run build && "}${localServerCommand}`,
         url: "http://127.0.0.1:4466",
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
