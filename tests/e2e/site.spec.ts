@@ -89,6 +89,18 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(page.getByRole("link", { name: "Slop home" })).toHaveText(
     "slop.cash",
   );
+  const header = page.locator(".site-header");
+  await expect(header.getByRole("link", { name: "Slop Git" })).toHaveCount(0);
+  await expect(header.getByRole("link", { name: "Source" })).toHaveCount(0);
+  const footer = page.locator(".site-footer");
+  await expect(footer.getByRole("link", { name: "GitHub" })).toHaveAttribute(
+    "href",
+    "https://github.com/elizaOS/slopdotcash",
+  );
+  await expect(footer.getByRole("link", { name: "Slop Git" })).toHaveAttribute(
+    "href",
+    "https://git.slop.cash",
+  );
   await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
   await expect(page.getByRole("link", { name: "Protocol" })).toHaveCount(0);
   await expect(page.getByText("© 2026 slop.cash.")).toBeVisible();

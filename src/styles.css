@@ -94,13 +94,6 @@ textarea:focus-visible {
   color: var(--ink);
 }
 
-.nav-source {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 0;
-}
-
 .menu-button {
   display: none;
   border: 0;
@@ -1918,11 +1911,6 @@ small {
 
   .nav-links-open a {
     padding: 13px;
-  }
-
-  .nav-source {
-    justify-content: space-between;
-    border: 0;
   }
 
   .hero {
