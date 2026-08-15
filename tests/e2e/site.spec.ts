@@ -434,7 +434,28 @@ test("renders contributor and cycle records from validated public data", async (
     waitUntil: "networkidle",
   });
   await expect(page.getByRole("heading", { name: actor.login })).toBeVisible();
-  await expect(page.getByText("total paid")).toBeVisible();
+  await expect(
+    page.locator(".profile-totals").getByText("paid", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("all-time score", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("monthly estimate", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Progress" })).toHaveCount(0);
+  const acceptedRecordCount = snapshot.ledger.filter(
+    (event) => event.actor.id === actor.id,
+  ).length;
+  if (acceptedRecordCount > 10) {
+    const acceptedSection = page
+      .locator(".profile-section")
+      .filter({ has: page.getByRole("heading", { name: "Accepted work" }) });
+    await expect(
+      acceptedSection.locator(":scope > .event-list > a"),
+    ).toHaveCount(10);
+    await expect(
+      acceptedSection.getByText(`View all ${acceptedRecordCount} records`),
+    ).toBeVisible();
+  }
 
   const archived = cycles.cycles.find((cycle) =>
     cycle.contributors.some((entry) => entry.actor.id === actor.id),
