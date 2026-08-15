@@ -363,7 +363,7 @@ function Economics() {
         <div>
           <h2>Every payout makes the network stronger.</h2>
           <div className="deck-revenue-chips">
-            <span>Planned 3% payout fee</span>
+            <span>Planned 1% payout fee</span>
             <span>Collaborations</span>
             <span>Features</span>
             <span>Sponsors</span>
@@ -373,20 +373,20 @@ function Economics() {
           <strong>$100</strong>
           <span>payout</span>
           <b>→</b>
-          <strong>$3</strong>
+          <strong>$1</strong>
           <span>fee</span>
         </div>
         <div className="deck-token-split">
           <article>
-            <strong>$1</strong>
+            <strong>⅓</strong>
             <span>$SLOP buybacks</span>
           </article>
           <article>
-            <strong>$1</strong>
+            <strong>⅓</strong>
             <span>team</span>
           </article>
           <article>
-            <strong>$1</strong>
+            <strong>⅓</strong>
             <span>new incentives</span>
           </article>
         </div>
