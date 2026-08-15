@@ -218,7 +218,9 @@ describe("slop.cash deployment contract", () => {
       `"https://slop.cash${"$"}{remote_path}?verify=`,
     );
     expect(verificationStep).toContain("node scripts/dist-manifest.mjs verify");
-    expect(verificationStep).toContain("for manifest_attempt in 1 2 3; do");
+    expect(verificationStep).toContain(
+      "for manifest_attempt in $(seq 1 24); do",
+    );
     expect(verificationStep).toContain(
       '"$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$manifest_attempt"',
     );

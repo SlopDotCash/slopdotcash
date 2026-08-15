@@ -650,7 +650,7 @@ jobs:
             return 1
           }
           manifest_verified=false
-          for manifest_attempt in 1 2 3; do
+          for manifest_attempt in $(seq 1 24); do
             if node scripts/dist-manifest.mjs verify \
               dist \
               https://slop.cash \
