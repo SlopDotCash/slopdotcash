@@ -1718,6 +1718,18 @@ small {
   margin-top: 16px;
 }
 
+.allocation-search {
+  display: block;
+  max-width: 360px;
+  margin-block: 24px;
+}
+
+.allocation-count {
+  margin-block: 12px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .allocation-rows {
   border-top: 1px solid var(--line);
 }

@@ -1884,6 +1884,11 @@ function ProjectManagePage({
   );
   const [total, setTotal] = useState(microUsdcInput(initialTotal.toString()));
   const [copied, setCopied] = useState<"allocation" | "project" | null>(null);
+  const [allocationQuery, setAllocationQuery] = useState("");
+  const matchingRows = rows.filter((row) =>
+    row.login.toLowerCase().includes(allocationQuery.trim().toLowerCase()),
+  );
+  const visibleRows = matchingRows.slice(0, 10);
   const parsedRows = rows.map((row) => ({
     ...row,
     approvedMinor: exactUsdc(row.amount),
@@ -1992,11 +1997,24 @@ function ProjectManagePage({
             onChange={(event) => setTotal(event.target.value)}
           />
         </label>
+        {rows.length > 20 ? (
+          <label className="allocation-search">
+            Find contributor
+            <input
+              onChange={(event) => setAllocationQuery(event.target.value)}
+              placeholder="GitHub login"
+              type="search"
+              value={allocationQuery}
+            />
+          </label>
+        ) : null}
         {rows.length === 0 ? (
           <EmptyState text="No contributors are available for this cycle." />
+        ) : visibleRows.length === 0 ? (
+          <EmptyState text="No contributor matches that login." />
         ) : (
           <div className="allocation-rows">
-            {rows.map((row, index) => (
+            {visibleRows.map((row) => (
               <fieldset key={row.login}>
                 <legend>{row.login}</legend>
                 <label>
@@ -2010,8 +2028,8 @@ function ProjectManagePage({
                     value={row.amount}
                     onChange={(event) =>
                       setRows((current) =>
-                        current.map((candidate, rowIndex) =>
-                          rowIndex === index
+                        current.map((candidate) =>
+                          candidate.login === row.login
                             ? { ...candidate, amount: event.target.value }
                             : candidate,
                         ),
@@ -2026,8 +2044,8 @@ function ProjectManagePage({
                     value={row.reason}
                     onChange={(event) =>
                       setRows((current) =>
-                        current.map((candidate, rowIndex) =>
-                          rowIndex === index
+                        current.map((candidate) =>
+                          candidate.login === row.login
                             ? { ...candidate, reason: event.target.value }
                             : candidate,
                         ),
@@ -2039,6 +2057,11 @@ function ProjectManagePage({
             ))}
           </div>
         )}
+        {matchingRows.length > visibleRows.length ? (
+          <p className="allocation-count">
+            Showing 10 contributors. Search by GitHub login to edit another.
+          </p>
+        ) : null}
         <div className="payout-totals" aria-live="polite">
           <span>{formatMicroUsdc(allocated.toString())} allocated</span>
           <span>{formatMicroUsdc(feeMinor)} fee</span>
