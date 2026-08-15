@@ -1,6 +1,7 @@
 import { isSolanaAddress } from "../../src/lib/wallets";
 import { signApiToken, verifyApiToken } from "./auth";
 import {
+  type ApiRole,
   type AuthenticatedActor,
   MAX_TRACE_BYTES,
   OPERATOR_GRANT_TTL_SECONDS,
@@ -373,7 +374,11 @@ async function exchangeIdentityAssertion(
   if (identity === null)
     fail(401, "unauthorized", "Identity authentication failed");
   const issuedAt = Math.floor(deps.now().getTime() / 1000);
-  const expiresAt = issuedAt + 10 * 60;
+  const isOperator = deps.operatorGithubIds.has(identity.githubId);
+  const expiresAt = issuedAt + (isOperator ? 5 : 10) * 60;
+  const roles: ApiRole[] = isOperator
+    ? ["contributor", "operator"]
+    : ["contributor"];
   const token = await signApiToken(
     {
       iss: "slop.cash",
@@ -381,7 +386,7 @@ async function exchangeIdentityAssertion(
       sub: `github:${identity.githubId}`,
       githubId: identity.githubId,
       githubLogin: identity.githubLogin,
-      roles: ["contributor"],
+      roles,
       iat: issuedAt,
       exp: expiresAt,
       jti: deps.randomId(),
