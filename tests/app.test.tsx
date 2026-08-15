@@ -15,7 +15,11 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App, publicFooterDomain } from "../src/App";
+import { App, ProjectManagePage, publicFooterDomain } from "../src/App";
+import { assertCycleIndex } from "../src/lib/cycle-index";
+import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
+import { createProjectView } from "../src/lib/project-view";
+import { PROJECTS } from "../src/lib/projects.mjs";
 import { cycleIndexFixture, snapshotFixture } from "./fixtures";
 
 function route(path: string): void {
@@ -819,8 +823,8 @@ describe("project proposals", () => {
   });
 });
 
-describe("project owner workspace", () => {
-  it("lets an owner set zero or larger allocations and calculates the exact payout fee", async () => {
+describe("public project draft workspace", () => {
+  it("makes the public boundary explicit and hides disabled payout controls", async () => {
     route("/projects/eliza/manage");
     const index = archivedPaidCycleIndex();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
@@ -831,26 +835,87 @@ describe("project owner workspace", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "Run Eliza." }),
+      await screen.findByRole("heading", {
+        name: "Propose changes to Eliza.",
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Sign the exact mainnet USDC transfers/u),
+      screen.getByText(/does not save or publish changes/u),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Payouts disabled")).toBeInTheDocument();
+    expect(
+      screen.getByText(/cannot draft, approve, sign, or pay allocations/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Draft total, USDC/u),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /allocation/u }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/mainnet USDC transfers/u),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy GitHub brief" }));
+    await act(async () => Promise.resolve());
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("Update eliza through a reviewed Slop PR"),
+    );
+  });
+
+  it("keeps an enabled allocation unsigned, bounded, and exact", async () => {
+    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+    if (!project) throw new TypeError("The Eliza project fixture is missing");
+    const snapshot = snapshotFixture();
+    assertLeaderboardSnapshot(snapshot);
+    const cycleIndex = archivedPaidCycleIndex();
+    assertCycleIndex(cycleIndex);
+    const enabledProject = {
+      ...project,
+      reward: {
+        ...project.reward,
+        committedMinor: project.reward.monthlyCapMinor,
+        fundingState: "committed" as const,
+        paymentMode: "enabled" as const,
+      },
+    };
+    render(
+      <ProjectManagePage
+        project={enabledProject}
+        state={{
+          status: "ready",
+          snapshot,
+          cycleIndex,
+          views: [createProjectView(snapshot, "eliza")],
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "2026-06 allocation" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/cannot save, approve, sign, or send USDC/u),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /View unsigned plan/u }),
     ).toHaveAttribute("href", expect.stringContaining("execution-plan.json"));
     expect(
-      screen.getByText(/paid only after finalized USDC deltas/u),
-    ).toBeInTheDocument();
+      screen.queryByText(/Sign the exact mainnet USDC transfers/u),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByText("Edit 1 contributor allocation", { exact: true }),
+    );
     const amount = screen.getByLabelText("archive-only amount in USDC");
-    const total = screen.getByLabelText("Total payout, USDC");
+    const total = screen.getByLabelText("Draft total, USDC");
     const reason = screen.getByLabelText("archive-only reason");
 
     fireEvent.change(amount, { target: { value: "0" } });
     fireEvent.change(total, { target: { value: "0" } });
     fireEvent.change(reason, { target: { value: "Creator decision" } });
     expect(
-      screen.getByRole("button", { name: "Copy allocation draft" }),
+      screen.getByRole("button", { name: "Copy unsigned allocation" }),
     ).toBeEnabled();
 
     fireEvent.change(amount, { target: { value: "12.345678" } });
@@ -858,7 +923,7 @@ describe("project owner workspace", () => {
     expect(screen.getByText("$0.12 fee")).toBeInTheDocument();
     expect(screen.getByText("$12.47 total debit")).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Copy allocation draft" }),
+      screen.getByRole("button", { name: "Copy unsigned allocation" }),
     );
     await act(async () => Promise.resolve());
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(

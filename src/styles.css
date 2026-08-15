@@ -1641,22 +1641,23 @@ small {
 }
 
 .manage-intro {
-  max-width: 920px;
-  padding-bottom: 70px;
+  max-width: 860px;
+  padding-bottom: 56px;
 }
 
 .manage-intro h1 {
-  margin-bottom: 20px;
-  font-size: clamp(52px, 8vw, 104px);
-  letter-spacing: -0.065em;
-  line-height: 0.92;
+  max-width: 14ch;
+  margin-bottom: 18px;
+  font-size: clamp(46px, 6.5vw, 86px);
+  letter-spacing: -0.035em;
+  line-height: 0.96;
 }
 
 .manage-intro p,
-.owner-section > p {
+.owner-section-body > p {
   max-width: 68ch;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.65;
 }
 
@@ -1668,18 +1669,12 @@ small {
   border-top: 1px solid var(--line);
 }
 
-:where(.owner-section)
-  > :where(
-    p,
-    .total-field,
-    .allocation-rows,
-    .payout-totals,
-    .form-error,
-    .button,
-    .payout-action,
-    .empty-state
-  ) {
-  grid-column: 2;
+.owner-section-body {
+  min-width: 0;
+}
+
+.owner-section-body > :first-child {
+  margin-top: 0;
 }
 
 .owner-form {
@@ -1726,13 +1721,46 @@ small {
 
 .total-field {
   max-width: 360px;
-  margin-top: 16px;
+  margin-top: 24px;
+}
+
+.allocation-details {
+  margin-top: 32px;
+  border-block: 1px solid var(--line);
+}
+
+.allocation-details > summary {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 750;
+  list-style: none;
+}
+
+.allocation-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.allocation-details > summary::after {
+  content: "+";
+  color: var(--orange-dark);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.allocation-details[open] > summary::after {
+  content: "−";
 }
 
 .allocation-search {
   display: block;
   max-width: 360px;
-  margin-block: 24px;
+  margin-block: 16px 24px;
 }
 
 .allocation-count {
@@ -1756,9 +1784,10 @@ small {
 }
 
 .allocation-rows legend {
-  float: left;
+  grid-column: 1 / -1;
+  float: none;
   width: 100%;
-  margin-bottom: 10px;
+  padding: 0;
   font-size: 16px;
   font-weight: 750;
 }
@@ -1782,13 +1811,34 @@ small {
   font-size: 12px;
 }
 
-.owner-section > .button {
+.owner-section-body > .button {
   width: fit-content;
+  margin-top: 24px;
 }
 
-.owner-section > .button:disabled {
+.owner-section-body > .button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.payout-status {
+  max-width: 680px;
+}
+
+.payout-status strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--orange-dark);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.payout-status p {
+  max-width: 64ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.65;
 }
 
 .payout-action {
@@ -1887,20 +1937,6 @@ small {
 
   .proposal-grid {
     gap: 18px;
-  }
-
-  :where(.owner-section)
-    > :where(
-      p,
-      .total-field,
-      .allocation-rows,
-      .payout-totals,
-      .form-error,
-      .button,
-      .payout-action,
-      .empty-state
-    ) {
-    grid-column: 1;
   }
 
   .project-card-content {
@@ -2312,6 +2348,10 @@ small {
 
   .allocation-rows fieldset {
     grid-template-columns: 1fr;
+  }
+
+  .allocation-rows legend {
+    grid-column: 1;
   }
 
   .payout-totals {
