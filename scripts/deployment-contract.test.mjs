@@ -219,7 +219,7 @@ describe("slop.cash deployment contract", () => {
     );
     expect(verificationStep).toContain("node scripts/dist-manifest.mjs verify");
     expect(verificationStep).toContain(
-      "for manifest_attempt in $(seq 1 24); do",
+      "for manifest_attempt in $(seq 1 72); do",
     );
     expect(verificationStep).toContain(
       '"$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$manifest_attempt"',
