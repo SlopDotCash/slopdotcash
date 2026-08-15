@@ -420,7 +420,10 @@ export async function handleIdentityRequest(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error = caught as ApiError;
+    const error =
+      typeof caught === "object" && caught !== null
+        ? (caught as Partial<ApiError>)
+        : {};
     const status =
       Number.isSafeInteger(error.status) &&
       Number(error.status) >= 400 &&
@@ -435,7 +438,10 @@ export async function handleIdentityRequest(
     if (status >= 500) console.error("slop identity request failed");
     return json(status, {
       error: code,
-      message: status >= 500 ? "Internal error" : error.message,
+      message:
+        status >= 500 || typeof error.message !== "string"
+          ? "Internal error"
+          : error.message,
     });
   }
 }
