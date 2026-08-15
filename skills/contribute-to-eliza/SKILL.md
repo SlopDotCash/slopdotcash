@@ -24,6 +24,11 @@ choice and token volume are diagnostic only and never change score or payout.
    `CLAUDE.md`,
    `CONTRIBUTING.md`, `SECURITY.md`, the relevant package guide, and
    [repository-contract.md](references/repository-contract.md).
+   Require `gh auth status --hostname github.com` and
+   `gh api user --jq '.login'` to succeed first. Show the login and stop if it
+   is absent, unexpected, or not the contributor the operator intends to use;
+   never handle their credential. Read the authenticated user's upstream
+   permission before choosing the push path.
    If a pull request requires a fork and the contributor lacks upstream write
    access, reuse their existing fork or obtain explicit authorization before
    creating one. Do not fork when an upstream branch is authorized. A

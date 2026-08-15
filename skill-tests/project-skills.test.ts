@@ -59,6 +59,9 @@ describe("project skill contracts", () => {
       assert.match(source, /--trajectory <path>/u);
       assert.match(source, /permanent\s+private\s+upload/u);
       assert.match(source, /elizaOS\/slopdotcash/u);
+      assert.match(source, /gh auth status --hostname github\.com/u);
+      assert.match(source, /gh api user --jq '\.login'/u);
+      assert.match(source, /upstream\s+permission/is);
       assert.match(source, /stars are\s+optional/u);
       assert.match(source, /explicit authorization before\s+creating one/is);
       assert.match(source, /live-report\.mjs --repo/u);
