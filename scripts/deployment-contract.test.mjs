@@ -49,6 +49,17 @@ describe("slop.cash deployment contract", () => {
     );
     expect(deployJob).toContain(`node-version: ${"$"}{{ env.NODE_VERSION }}`);
     expect(deployJob).toContain("./node_modules/.bin/wrangler pages deploy \\");
+    expect(deployJob).toContain(
+      "./node_modules/.bin/wrangler deploy \\\n            --config workers/identity/wrangler.toml \\",
+    );
+    expect(deployJob).toContain(
+      "./node_modules/.bin/wrangler secret list \\\n            --config workers/identity/wrangler.toml",
+    );
+    expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/start");
+    expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/callback");
+    expect(deployJob.indexOf("wrangler deploy \\")).toBeLessThan(
+      deployJob.indexOf("wrangler pages deploy \\"),
+    );
     expect(deployJob).not.toContain("working-directory:");
     expect(deployJob).not.toContain("bunx wrangler");
     expect(deployJob).not.toContain("pages deploy dist");
