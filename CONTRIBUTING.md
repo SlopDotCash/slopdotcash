@@ -5,7 +5,7 @@ deployment automation are developed in this repository. Product contributions
 that the leaderboard tracks belong in the target repository registry
 (`src/lib/repositories.mjs`) — currently
 [`elizaOS/eliza`](https://github.com/elizaOS/eliza) and
-[`lalalune/arklib`](https://github.com/lalalune/arklib).
+[`elizaos/proximityprize`](https://github.com/elizaos/proximityprize).
 
 Open an issue before non-trivial work. Branch from the latest `develop`, keep
 the change scoped, and open a pull request back to `develop`. Before requesting

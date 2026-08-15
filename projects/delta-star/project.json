@@ -5,13 +5,13 @@
   "name": "Delta Star",
   "eyebrow": "Machine-checked mathematics",
   "headline": "Make money solving math.",
-  "description": "Advance ArkLib's machine-checked Reed–Solomon proximity work toward the Ethereum Foundation Proximity Prize.",
+  "description": "Advance machine-checked Reed–Solomon proximity work in the dedicated Proximity Prize repository.",
   "status": "active",
   "repositories": [
     {
-      "id": "lalalune/arklib",
-      "displayName": "lalalune/ArkLib",
-      "githubUrl": "https://github.com/lalalune/ArkLib",
+      "id": "elizaos/proximityprize",
+      "displayName": "elizaOS/proximityprize",
+      "githubUrl": "https://github.com/elizaOS/proximityprize",
       "description": "Machine-checked Reed–Solomon proximity work in Lean 4.",
       "integrationBranch": "main"
     }
@@ -49,9 +49,9 @@
     "disclosureRequired": true
   },
   "links": {
-    "repository": "https://github.com/lalalune/arklib",
-    "issues": "https://github.com/lalalune/arklib/issues",
-    "discussions": "https://github.com/lalalune/arklib/discussions",
+    "repository": "https://github.com/elizaos/proximityprize",
+    "issues": "https://github.com/elizaos/proximityprize/issues",
+    "discussions": "https://github.com/elizaos/proximityprize/discussions",
     "mission": "https://deltastar.computer/",
     "prize": "https://proximityprize.org/"
   }

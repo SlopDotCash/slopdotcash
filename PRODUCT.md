@@ -63,8 +63,8 @@ owed money. Use these financial states consistently:
 
 ### Delta Star
 
-- Goal: advance ArkLib’s machine-checked Reed–Solomon proximity work.
-- Repository: `lalalune/ArkLib`, integration branch `main`.
+- Goal: advance the Proximity Prize’s machine-checked Reed–Solomon proximity work.
+- Repository: `elizaOS/proximityprize`, integration branch `main`.
 - Platform pool: $0.
 - Output: provisional contribution percentages toward the external Ethereum
   Foundation Proximity Prize.

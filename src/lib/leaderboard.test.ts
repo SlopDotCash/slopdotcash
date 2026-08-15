@@ -243,7 +243,7 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       repositories: [
         { id: "elizaOS/eliza", repositoryId: "REPO_1" },
         { id: "elizaOS/asi", repositoryId: "REPO_3" },
-        { id: "lalalune/arklib", repositoryId: "REPO_2" },
+        { id: "elizaos/proximityprize", repositoryId: "REPO_2" },
       ],
       requestCount: 12,
       searchSliceCount: 30,
@@ -1764,7 +1764,7 @@ describe("scoring and limits", () => {
         number: 700 + index,
         author: contributor,
         mergedAt: "2026-07-30T11:00:00.000Z",
-        url: `https://github.com/lalalune/ArkLib/pull/${700 + index}`,
+        url: `https://github.com/elizaOS/proximityprize/pull/${700 + index}`,
       }),
     );
 
@@ -1790,9 +1790,9 @@ describe("scoring and limits", () => {
       "elizaOS/eliza",
       "elizaOS/eliza",
       "elizaOS/eliza",
-      "lalalune/arklib",
-      "lalalune/arklib",
-      "lalalune/arklib",
+      "elizaos/proximityprize",
+      "elizaos/proximityprize",
+      "elizaos/proximityprize",
     ]);
   });
 
@@ -1803,7 +1803,7 @@ describe("scoring and limits", () => {
       closedAt: null,
       stateReason: null,
       labels: [{ id: "LABEL_READY", name: "help wanted", color: "fff" }],
-      url: "https://github.com/lalalune/arklib/issues/12",
+      url: "https://github.com/elizaos/proximityprize/issues/12",
     });
     const snapshot = createLeaderboardSnapshot(
       input({
@@ -1812,12 +1812,14 @@ describe("scoring and limits", () => {
       }),
     );
 
-    expect(snapshot.workQueue.issues[0].repository).toBe("lalalune/arklib");
+    expect(snapshot.workQueue.issues[0].repository).toBe(
+      "elizaos/proximityprize",
+    );
     expect(snapshot.workQueue.pullRequests[0].repository).toBe("elizaOS/eliza");
     expect(snapshot.repositories.map((repository) => repository.id)).toEqual([
       "elizaOS/eliza",
       "elizaOS/asi",
-      "lalalune/arklib",
+      "elizaos/proximityprize",
     ]);
     expect(() =>
       createLeaderboardSnapshot(

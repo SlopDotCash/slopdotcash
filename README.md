@@ -25,7 +25,7 @@ The active projects are:
   the continual-reinforcement-learning framework pursuing The Alberta Plan,
   shares a pledged maximum of **$5,000 USDC per UTC month**.
 - **Delta Star:** accepted work in
-  [`lalalune/ArkLib`](https://github.com/lalalune/ArkLib) receives a provisional
+  [`elizaOS/proximityprize`](https://github.com/elizaOS/proximityprize) receives a provisional
   contribution percentage toward the external Ethereum Foundation Proximity
   Prize. Slop does not promise or distribute that prize.
 
