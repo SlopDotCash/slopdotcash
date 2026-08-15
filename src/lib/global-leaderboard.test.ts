@@ -95,7 +95,7 @@ describe("createGlobalLeaders", () => {
     const [leader] = createGlobalLeaders(snapshot, views, cycleIndex);
 
     // The July archive replaces 24 Eliza points in the rolling ledger while
-    // the separate arklib project contributes its remaining 10 points.
+    // the separate Proximity Prize project contributes its remaining 10 points.
     expect(leader.score).toBe(87);
     expect(leader.paidMinor).toBe(1_000_000n);
     expect(leader.projects).toBe(2);

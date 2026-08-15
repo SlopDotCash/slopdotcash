@@ -9,7 +9,7 @@
   "status": "active",
   "repositories": [
     {
-      "id": "elizaos/proximityprize",
+      "id": "elizaOS/proximityprize",
       "displayName": "elizaOS/proximityprize",
       "githubUrl": "https://github.com/elizaOS/proximityprize",
       "description": "Machine-checked Reed–Solomon proximity work in Lean 4.",
@@ -49,9 +49,9 @@
     "disclosureRequired": true
   },
   "links": {
-    "repository": "https://github.com/elizaos/proximityprize",
-    "issues": "https://github.com/elizaos/proximityprize/issues",
-    "discussions": "https://github.com/elizaos/proximityprize/discussions",
+    "repository": "https://github.com/elizaOS/proximityprize",
+    "issues": "https://github.com/elizaOS/proximityprize/issues",
+    "discussions": "https://github.com/elizaOS/proximityprize/discussions",
     "mission": "https://deltastar.computer/",
     "prize": "https://proximityprize.org/"
   }

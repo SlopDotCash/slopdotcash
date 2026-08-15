@@ -243,7 +243,7 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       repositories: [
         { id: "elizaOS/eliza", repositoryId: "REPO_1" },
         { id: "elizaOS/asi", repositoryId: "REPO_3" },
-        { id: "elizaos/proximityprize", repositoryId: "REPO_2" },
+        { id: "elizaOS/proximityprize", repositoryId: "REPO_2" },
       ],
       requestCount: 12,
       searchSliceCount: 30,
@@ -1758,9 +1758,9 @@ describe("scoring and limits", () => {
         mergedAt: "2026-07-30T10:00:00.000Z",
       }),
     );
-    const arklibPullRequests = Array.from({ length: 3 }, (_, index) =>
+    const proximityPrizePullRequests = Array.from({ length: 3 }, (_, index) =>
       pullRequest({
-        id: `PR_ARKLIB_${index + 1}`,
+        id: `PR_PROXIMITY_PRIZE_${index + 1}`,
         number: 700 + index,
         author: contributor,
         mergedAt: "2026-07-30T11:00:00.000Z",
@@ -1770,7 +1770,10 @@ describe("scoring and limits", () => {
 
     const snapshot = createLeaderboardSnapshot(
       input({
-        mergedPullRequests: [...elizaPullRequests, ...arklibPullRequests],
+        mergedPullRequests: [
+          ...elizaPullRequests,
+          ...proximityPrizePullRequests,
+        ],
       }),
     );
     const entry = snapshot.leaders.find(
@@ -1790,36 +1793,36 @@ describe("scoring and limits", () => {
       "elizaOS/eliza",
       "elizaOS/eliza",
       "elizaOS/eliza",
-      "elizaos/proximityprize",
-      "elizaos/proximityprize",
-      "elizaos/proximityprize",
+      "elizaOS/proximityprize",
+      "elizaOS/proximityprize",
+      "elizaOS/proximityprize",
     ]);
   });
 
   it("attributes work items and rejects artifacts outside the registry", () => {
-    const arklibIssue = issue({
-      id: "ISSUE_ARKLIB",
+    const proximityPrizeIssue = issue({
+      id: "ISSUE_PROXIMITY_PRIZE",
       number: 12,
       closedAt: null,
       stateReason: null,
       labels: [{ id: "LABEL_READY", name: "help wanted", color: "fff" }],
-      url: "https://github.com/elizaos/proximityprize/issues/12",
+      url: "https://github.com/elizaOS/proximityprize/issues/12",
     });
     const snapshot = createLeaderboardSnapshot(
       input({
-        openIssues: [arklibIssue],
+        openIssues: [proximityPrizeIssue],
         openPullRequests: [pullRequest({ mergedAt: null })],
       }),
     );
 
     expect(snapshot.workQueue.issues[0].repository).toBe(
-      "elizaos/proximityprize",
+      "elizaOS/proximityprize",
     );
     expect(snapshot.workQueue.pullRequests[0].repository).toBe("elizaOS/eliza");
     expect(snapshot.repositories.map((repository) => repository.id)).toEqual([
       "elizaOS/eliza",
       "elizaOS/asi",
-      "elizaos/proximityprize",
+      "elizaOS/proximityprize",
     ]);
     expect(() =>
       createLeaderboardSnapshot(
