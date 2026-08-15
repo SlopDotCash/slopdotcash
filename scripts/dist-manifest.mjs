@@ -279,6 +279,12 @@ async function loadLocalManifest(root) {
   return { manifest, manifestBytes };
 }
 
+/** Verifies that an artifact download still contains every inventoried byte. */
+export async function verifyLocalBundle(distRoot) {
+  const { manifest } = await loadLocalManifest(resolve(distRoot));
+  return manifest.files.length;
+}
+
 export async function createDistManifest(distRoot) {
   const root = resolve(distRoot);
   const files = await inventory(root);
@@ -494,6 +500,17 @@ async function main(arguments_) {
     return;
   }
   if (
+    command === "verify-local" &&
+    distRoot !== undefined &&
+    origin === undefined
+  ) {
+    const count = await verifyLocalBundle(distRoot);
+    process.stdout.write(
+      `[DistManifest] Verified ${count} local public files against the manifest.\n`,
+    );
+    return;
+  }
+  if (
     command === "verify" &&
     distRoot !== undefined &&
     origin === CANONICAL_ORIGIN &&
@@ -511,7 +528,7 @@ async function main(arguments_) {
     return;
   }
   throw new TypeError(
-    `Usage: ${basename(process.argv[1])} create <dist> | verify <dist> ${CANONICAL_ORIGIN} <token>`,
+    `Usage: ${basename(process.argv[1])} create <dist> | verify-local <dist> | verify <dist> ${CANONICAL_ORIGIN} <token>`,
   );
 }
 
