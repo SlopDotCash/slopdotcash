@@ -14,6 +14,7 @@
     "vitest.config.ts",
     "playwright.config.ts",
     "backend/**/*.ts",
+    "workers/**/*.ts",
     "functions/**/*.ts",
     "scripts/**/*.ts",
     "src/lib/cycle-index.ts",
