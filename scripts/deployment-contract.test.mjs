@@ -33,6 +33,10 @@ const pagesHeaders = readFileSync(
   join(packageRoot, "public", "_headers"),
   "utf8",
 );
+const playwrightConfiguration = readFileSync(
+  join(packageRoot, "playwright.config.ts"),
+  "utf8",
+);
 const qualityJob = workflow.slice(
   workflow.indexOf("\n  quality:"),
   workflow.indexOf("\n  deploy:"),
@@ -109,6 +113,8 @@ describe("slop.cash deployment contract", () => {
     expect(packageManifest.scripts.build).toContain(
       "node scripts/dist-manifest.mjs create dist",
     );
+    expect(playwrightConfiguration).toContain("workers: 1");
+    expect(qualityJob).toContain("run: bun run test:e2e");
   });
 
   it("keeps every release path restricted to develop", () => {

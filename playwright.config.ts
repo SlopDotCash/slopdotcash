@@ -14,6 +14,10 @@ export default defineConfig({
   timeout: 45_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
+  // Wrangler's Pages proxy can terminate while serving concurrent browser
+  // workers. Keep one browser worker so the production-like server remains
+  // available for the complete desktop/mobile matrix.
+  workers: 1,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
   use: {
