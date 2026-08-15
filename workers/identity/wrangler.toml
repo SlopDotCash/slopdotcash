@@ -13,5 +13,27 @@ database_name = "slop-private"
 database_id = "1b453124-2709-45af-8389-151a8105c461"
 migrations_dir = "../../migrations"
 
+[[ratelimits]]
+name = "IDENTITY_START_LIMITER"
+namespace_id = "81001"
+
+  [ratelimits.simple]
+  limit = 12
+  period = 60
+
+[[ratelimits]]
+name = "IDENTITY_POLL_LIMITER"
+namespace_id = "81002"
+
+  [ratelimits.simple]
+  limit = 120
+  period = 60
+
 [triggers]
 crons = ["17 * * * *"]
+
+[observability]
+enabled = true
+
+  [observability.logs]
+  invocation_logs = false
