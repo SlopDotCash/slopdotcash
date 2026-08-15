@@ -134,6 +134,7 @@ jobs:
         with:
           name: slop-pages-${{ github.run_id }}
           path: dist
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
@@ -216,6 +217,9 @@ jobs:
         with:
           name: slop-pages-${{ github.run_id }}
           path: dist
+
+      - name: Verify downloaded Pages bundle
+        run: node scripts/dist-manifest.mjs verify-local dist
 
       - name: Require live release-input equivalence
         run: |

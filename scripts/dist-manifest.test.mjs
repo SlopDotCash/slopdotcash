@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createDistManifest,
   MANIFEST_FILENAME,
+  verifyLocalBundle,
   verifyPublishedBundle,
 } from "./dist-manifest.mjs";
 
@@ -28,6 +29,7 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "gitarmy-dist-manifest-"));
   temporaryDirectories.push(root);
   await mkdir(join(root, "assets"));
+  await mkdir(join(root, ".well-known", "agent-skills"), { recursive: true });
   await writeFile(
     join(root, "index.html"),
     "<!doctype html><title>slop.cash</title>\n",
@@ -39,6 +41,10 @@ async function fixture() {
   await writeFile(
     join(root, "assets", "index-test.js"),
     "export const ready = true;\n",
+  );
+  await writeFile(
+    join(root, ".well-known", "agent-skills", "index.json"),
+    '{"skills":["slop"]}\n',
   );
   await writeFile(
     join(root, "_headers"),
@@ -72,6 +78,7 @@ describe("Cloudflare Pages deployment manifest", () => {
 
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.files.map((record) => record.path)).toEqual([
+      ".well-known/agent-skills/index.json",
       "assets/index-test.js",
       "index.html",
       "skill-manifest.json",
@@ -189,6 +196,17 @@ describe("Cloudflare Pages deployment manifest", () => {
         retryDelayMs: 0,
       }),
     ).rejects.toThrow(/does not match the local Pages bundle/u);
+  });
+
+  it("fails local artifact verification when a hidden endpoint is omitted", async () => {
+    const root = await fixture();
+    const manifest = await createDistManifest(root);
+
+    await expect(verifyLocalBundle(root)).resolves.toBe(manifest.files.length);
+    await rm(join(root, ".well-known", "agent-skills", "index.json"));
+    await expect(verifyLocalBundle(root)).rejects.toThrow(
+      /does not match the local Pages bundle/u,
+    );
   });
 
   it("rejects verification settings that exceed the production time bound", async () => {

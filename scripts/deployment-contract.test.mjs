@@ -145,6 +145,13 @@ describe("slop.cash deployment contract", () => {
     expect(packageManifest.scripts.build).toContain(
       "node scripts/dist-manifest.mjs create dist",
     );
+    expect(qualityJob).toContain("include-hidden-files: true");
+    expect(deployJob).toContain(
+      "- name: Verify downloaded Pages bundle\n        run: node scripts/dist-manifest.mjs verify-local dist",
+    );
+    expect(deployJob.indexOf("Verify downloaded Pages bundle")).toBeLessThan(
+      deployJob.indexOf("Require scoped Cloudflare credentials"),
+    );
     expect(playwrightConfiguration).toContain("workers: 1");
     expect(packageManifest.scripts["test:e2e"]).toBe(
       "node scripts/run-e2e.mjs",
