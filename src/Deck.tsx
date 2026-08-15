@@ -227,12 +227,12 @@ function GoToMarket() {
     {
       icon: <Users aria-hidden="true" />,
       title: "Hack traction.",
-      copy: "Turn a builder’s roadmap into public, fundable work the community can rally around.",
+      copy: "Turn open projects like Extropic’s THRML + torx into public, fundable work.",
     },
     {
       icon: <Cpu aria-hidden="true" />,
       title: "Align the supporters.",
-      copy: "Match sponsors, compute providers, and fans directly to the builder’s goals.",
+      copy: "Match sponsors like Sapiom—capital, compute, and distribution—to the builder’s goals.",
     },
     {
       icon: <Megaphone aria-hidden="true" />,
@@ -352,9 +352,9 @@ function Competition() {
 
 function Economics() {
   const projections = [
-    ["Year 1", "$2M", "$150K", "−$300K"],
-    ["Year 2", "$12M", "$650K", "+$100K"],
-    ["Year 3", "$30M", "$1.6M", "+$750K"],
+    ["Year 1", "$2M", "$100K", "−$150K"],
+    ["Year 2", "$10M", "$400K", "+$50K"],
+    ["Year 3", "$30M", "$1.0M", "+$400K"],
   ];
   return (
     <Frame
@@ -373,7 +373,7 @@ function Economics() {
         <div
           className="deck-profit-chart"
           role="img"
-          aria-label="Projected annual profit rises from negative 300 thousand dollars in year one to positive 100 thousand dollars in year two and positive 750 thousand dollars in year three"
+          aria-label="Projected annual profit rises from negative 150 thousand dollars in year one to positive 50 thousand dollars in year two and positive 400 thousand dollars in year three"
         >
           <span className="deck-chart-zero">$0</span>
           <i aria-hidden="true" />
@@ -391,13 +391,13 @@ function Economics() {
             <circle cx="740" cy="40" r="8" />
           </svg>
           <strong className="deck-chart-label deck-chart-label-one">
-            −$300K
+            −$150K
           </strong>
           <strong className="deck-chart-label deck-chart-label-two">
-            +$100K
+            +$50K
           </strong>
           <strong className="deck-chart-label deck-chart-label-three">
-            +$750K
+            +$400K
           </strong>
           <span className="deck-chart-year deck-chart-year-one">Y1</span>
           <span className="deck-chart-year deck-chart-year-two">Y2</span>
@@ -429,16 +429,16 @@ function Economics() {
 
 function Raise() {
   const allocation = [
-    ["40%", "$200K", "Team"],
-    ["30%", "$150K", "Bounties + incentives"],
-    ["20%", "$100K", "Marketing"],
-    ["10%", "$50K", "Legal"],
+    ["40%", "$100K", "Team"],
+    ["30%", "$75K", "Bounties + incentives"],
+    ["20%", "$50K", "Marketing"],
+    ["10%", "$25K", "Legal"],
   ];
   return (
-    <Frame index={8} label="A 500 thousand dollar raise" className="deck-raise">
+    <Frame index={8} label="A 250 thousand dollar raise" className="deck-raise">
       <div className="deck-raise-heading">
         <h2>
-          We need <em>$500K</em> to change the world.
+          We need <em>$250K</em> to change the world.
         </h2>
       </div>
       <div className="deck-allocation-bar">

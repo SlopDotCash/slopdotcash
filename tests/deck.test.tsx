@@ -50,6 +50,8 @@ describe("Slop fundraising deck", () => {
     expect(screen.getByText("Hack traction.")).toBeInTheDocument();
     expect(screen.getByText("Align the supporters.")).toBeInTheDocument();
     expect(screen.getByText("Make support one click.")).toBeInTheDocument();
+    expect(screen.getByText(/Extropic’s THRML \+ torx/)).toBeInTheDocument();
+    expect(screen.getByText(/sponsors like Sapiom/)).toBeInTheDocument();
 
     window.history.replaceState({}, "", "/deck#6");
     rerender(<Deck key="ownership" />);
@@ -61,16 +63,18 @@ describe("Slop fundraising deck", () => {
     rerender(<Deck key="economics" />);
     expect(screen.getByText(/Base case: a 1% payout fee/)).toBeInTheDocument();
     expect(screen.getByText("$2M")).toBeInTheDocument();
-    expect(screen.getByText("$1.6M")).toBeInTheDocument();
-    expect(screen.getAllByText("+$750K")).toHaveLength(2);
+    expect(screen.getByText("$1.0M")).toBeInTheDocument();
+    expect(screen.getAllByText("+$400K")).toHaveLength(2);
 
     window.history.replaceState({}, "", "/deck#9");
     rerender(<Deck key="raise" />);
-    expect(screen.getByText("$500K")).toBeInTheDocument();
+    expect(screen.getByText("$250K")).toBeInTheDocument();
     expect(screen.getByText("40%")).toBeInTheDocument();
-    expect(screen.getByText("$200K")).toBeInTheDocument();
-    expect(screen.getByText("Bounties + incentives")).toBeInTheDocument();
     expect(screen.getByText("$100K")).toBeInTheDocument();
+    expect(screen.getByText("Bounties + incentives")).toBeInTheDocument();
+    expect(screen.getByText("$75K")).toBeInTheDocument();
+    expect(screen.getByText("$50K")).toBeInTheDocument();
+    expect(screen.getByText("$25K")).toBeInTheDocument();
     expect(screen.getByText("Legal")).toBeInTheDocument();
   });
 });
