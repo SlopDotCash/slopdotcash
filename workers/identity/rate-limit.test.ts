@@ -32,6 +32,8 @@ describe("identity rate limits", () => {
     );
 
     expect(response?.status).toBe(429);
+    expect(response?.headers.get("cache-control")).toBe("no-store");
+    expect(response?.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response?.headers.get("retry-after")).toBe("60");
     expect(await response?.json()).toEqual({
       error: "rate_limited",
@@ -75,6 +77,8 @@ describe("identity rate limits", () => {
     );
 
     expect(response?.status).toBe(503);
+    expect(response?.headers.get("cache-control")).toBe("no-store");
+    expect(response?.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response?.headers.get("retry-after")).toBe("60");
     expect(await response?.json()).toEqual({
       error: "service_unavailable",

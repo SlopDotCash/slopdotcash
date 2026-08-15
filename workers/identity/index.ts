@@ -32,7 +32,9 @@ function rateLimitResponse(): Response {
     {
       status: 429,
       headers: {
+        "cache-control": "no-store",
         "content-type": "application/json; charset=utf-8",
+        "referrer-policy": "no-referrer",
         "retry-after": "60",
         "x-content-type-options": "nosniff",
       },
@@ -49,7 +51,9 @@ function limiterUnavailableResponse(): Response {
     {
       status: 503,
       headers: {
+        "cache-control": "no-store",
         "content-type": "application/json; charset=utf-8",
+        "referrer-policy": "no-referrer",
         "retry-after": "60",
         "x-content-type-options": "nosniff",
       },
