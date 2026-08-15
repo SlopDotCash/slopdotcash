@@ -93,6 +93,22 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/start");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/callback");
     expect(deployJob).toContain("https://api.slop.cash/api/v1/runs?verify=");
+    expect(deployJob).toContain("timeout-minutes: 30");
+    expect(deployJob).toContain("- name: Ensure deck Pages custom domain");
+    expect(deployJob).toContain(
+      "/pages/projects/eliza-computer/domains/deck.slop.cash",
+    );
+    expect(deployJob).toContain('--data \'{"name":"deck.slop.cash"}\'');
+    expect(deployJob).toContain('value?.result?.status !== "active"');
+    expect(deployJob).toContain(
+      'require("node:dns").promises.lookup("deck.slop.cash", { all: true })',
+    );
+    expect(deployJob).toContain('"https://deck.slop.cash/?verify=');
+    expect(deployJob).toContain("--tlsv1.3");
+    expect(deployJob).toContain("cmp --silent dist/index.html");
+    expect(deployJob.indexOf("Ensure deck Pages custom domain")).toBeLessThan(
+      deployJob.indexOf("wrangler pages deploy \\"),
+    );
     expect(deployJob.indexOf("wrangler versions deploy \\")).toBeLessThan(
       deployJob.indexOf("wrangler pages deploy \\"),
     );

@@ -10,6 +10,7 @@ import "@fontsource/poppins/800.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { Deck } from "./Deck";
 import { ErrorBoundary } from "./ErrorBoundary";
 import "./styles.css";
 
@@ -18,10 +19,13 @@ if (!root) {
   throw new Error("[Slop] #root is missing");
 }
 
+const isDeck =
+  window.location.hostname === "deck.slop.cash" ||
+  window.location.pathname === "/deck" ||
+  window.location.pathname.startsWith("/deck/");
+
 createRoot(root).render(
   <StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
+    <ErrorBoundary>{isDeck ? <Deck /> : <App />}</ErrorBoundary>
   </StrictMode>,
 );

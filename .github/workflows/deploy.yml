@@ -156,7 +156,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop')
     needs: quality
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     concurrency:
       # Cloudflare Pages publishes atomically; newest trusted develop wins and
       # replaces an obsolete run that is still waiting for environment review.
@@ -282,6 +282,56 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Ensure deck Pages custom domain
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          response="$RUNNER_TEMP/eliza-computer-deck-domain.json"
+          endpoint="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer/domains/deck.slop.cash"
+          status="$(
+            curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --output "$response" \
+              --write-out "%{http_code}" \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "$endpoint"
+          )"
+          case "$status" in
+            200) ;;
+            404)
+              status="$(
+                curl --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 30 \
+                  --output "$response" \
+                  --write-out "%{http_code}" \
+                  --request POST \
+                  --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                  --header "Content-Type: application/json" \
+                  --data '{"name":"deck.slop.cash"}' \
+                  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer/domains"
+              )"
+              if [ "$status" != "200" ]; then
+                echo "::error::Creating the deck.slop.cash Pages domain failed with HTTP $status."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Looking up the deck.slop.cash Pages domain failed with HTTP $status."
+              exit 1
+              ;;
+          esac
+          node - "$response" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (value?.success !== true || value?.result?.name !== "deck.slop.cash") {
+            throw new TypeError("Cloudflare did not confirm the exact deck.slop.cash Pages domain");
+          }
+          NODE
 
       - name: Deploy private identity and Cloudflare Pages
         id: pages-deploy
@@ -620,6 +670,73 @@ jobs:
             throw new TypeError("private trace API returned an unexpected unauthenticated response");
           }
           NODE
+
+      - name: Verify deck custom domain, DNS, TLS, and deployed bytes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          domain_response="$RUNNER_TEMP/eliza-computer-deck-domain-active.json"
+          domain_active=false
+          for attempt in $(seq 1 120); do
+            status="$(
+              curl --silent --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --output "$domain_response" \
+                --write-out "%{http_code}" \
+                --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer/domains/deck.slop.cash"
+            )"
+            if [ "$status" = "200" ] && node - "$domain_response" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (
+            value?.success !== true ||
+            value?.result?.name !== "deck.slop.cash" ||
+            value?.result?.status !== "active"
+          ) process.exit(1);
+          NODE
+            then
+              domain_active=true
+              break
+            fi
+            echo "::warning::deck.slop.cash is not active yet (attempt $attempt/120)."
+            sleep 5
+          done
+          if [ "$domain_active" != true ]; then
+            echo "::error::Cloudflare did not activate deck.slop.cash."
+            exit 1
+          fi
+
+          node -e 'require("node:dns").promises.lookup("deck.slop.cash", { all: true }).then((addresses) => { if (!Array.isArray(addresses) || addresses.length === 0) throw new TypeError("deck.slop.cash DNS returned no addresses"); })'
+          received="$RUNNER_TEMP/deck-slop-cash-index.html"
+          headers="$RUNNER_TEMP/deck-slop-cash.headers"
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent --show-error \
+              --tlsv1.3 \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --header "Cache-Control: no-cache" \
+              --dump-header "$headers" \
+              "https://deck.slop.cash/?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$attempt" \
+              --output "$received" &&
+              cmp --silent dist/index.html "$received"; then
+              node - "$headers" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const headers = readFileSync(process.argv[2], "utf8").toLowerCase();
+          for (const name of ["content-security-policy:", "strict-transport-security:", "x-content-type-options:"]) {
+            if (!headers.includes(name)) throw new TypeError(`deck.slop.cash omitted ${name}`);
+          }
+          NODE
+              exit 0
+            fi
+            echo "::warning::deck.slop.cash did not match the verified build yet (attempt $attempt/120)."
+            sleep 5
+          done
+          echo "::error::deck.slop.cash did not serve the verified build over authorized TLS."
+          exit 1
 
       - name: Verify published skill and leaderboard
         run: |
