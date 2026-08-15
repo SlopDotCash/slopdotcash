@@ -105,7 +105,7 @@ describe("slop.cash deployment contract", () => {
     expect(wranglerConfiguration).toContain(
       'pages_build_output_dir = "./dist"',
     );
-    expect(packageManifest.devDependencies.wrangler).toBe("4.120.0");
+    expect(packageManifest.devDependencies.wrangler).toBe("4.123.0");
     expect(packageManifest.scripts.build).toContain(
       "node scripts/dist-manifest.mjs create dist",
     );
