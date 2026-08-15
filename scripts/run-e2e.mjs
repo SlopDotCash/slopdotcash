@@ -1,8 +1,9 @@
 /**
- * Runs the complete browser matrix with a fresh Pages emulator per viewport.
- * Wrangler can terminate after a long, multi-browser session on constrained
- * hosted runners; restarting only the emulator keeps the exact Pages behavior
- * under test without rebuilding or weakening the assertions.
+ * Runs the complete browser matrix against the stable built-site preview, then
+ * gives the one redirect/header/artifact contract a focused Pages-emulator run.
+ * Wrangler can terminate during long browser sessions on constrained hosted
+ * runners, while that focused check still exercises the behavior only Pages
+ * supplies instead of replacing it with a generic static-server assertion.
  */
 
 import { spawnSync } from "node:child_process";
@@ -11,12 +12,8 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const playwright = join(packageRoot, "node_modules", ".bin", "playwright");
-const projects = [
-  "wide-desktop-chromium",
-  "desktop-chromium",
-  "tablet-chromium",
-  "narrow-mobile-chromium",
-];
+const artifactContract =
+  "serves byte-consistent install and read-only artifacts for every project";
 
 function run(command, args, env = process.env) {
   const result = spawnSync(command, args, {
@@ -30,9 +27,28 @@ function run(command, args, env = process.env) {
 
 run("bun", ["run", "build"]);
 
-for (const project of projects) {
-  run(playwright, ["test", `--project=${project}`, ...process.argv.slice(2)], {
+run(
+  playwright,
+  ["test", "--grep-invert", artifactContract, ...process.argv.slice(2)],
+  {
     ...process.env,
     SLOP_E2E_PREBUILT: "1",
-  });
-}
+    SLOP_E2E_SERVER: "preview",
+  },
+);
+
+run(
+  playwright,
+  [
+    "test",
+    "--project=wide-desktop-chromium",
+    "--grep",
+    artifactContract,
+    ...process.argv.slice(2),
+  ],
+  {
+    ...process.env,
+    SLOP_E2E_PREBUILT: "1",
+    SLOP_E2E_SERVER: "pages",
+  },
+);

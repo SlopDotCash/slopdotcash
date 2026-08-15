@@ -130,14 +130,23 @@ describe("slop.cash deployment contract", () => {
     expect(playwrightConfiguration).toContain(
       'process.env.SLOP_E2E_PREBUILT === "1"',
     );
+    expect(playwrightConfiguration).toContain(
+      'process.env.SLOP_E2E_SERVER ?? "pages"',
+    );
+    expect(playwrightConfiguration).toContain("vite preview");
+    expect(playwrightConfiguration).toContain("wrangler pages dev dist");
     for (const project of [
       "wide-desktop-chromium",
       "desktop-chromium",
       "tablet-chromium",
       "narrow-mobile-chromium",
     ]) {
-      expect(e2eRunner).toContain(`"${project}"`);
+      expect(playwrightConfiguration).toContain(`name: "${project}"`);
     }
+    expect(e2eRunner).toContain('SLOP_E2E_SERVER: "preview"');
+    expect(e2eRunner).toContain('SLOP_E2E_SERVER: "pages"');
+    expect(e2eRunner).toContain('"--grep-invert", artifactContract');
+    expect(e2eRunner).toContain('"--grep",\n    artifactContract');
     expect(qualityJob).toContain("run: bun run test:e2e");
   });
 
