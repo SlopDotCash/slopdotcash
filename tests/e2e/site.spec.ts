@@ -97,10 +97,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     "href",
     "https://github.com/elizaOS/slopdotcash",
   );
-  await expect(footer.getByRole("link", { name: "Slop Git" })).toHaveAttribute(
-    "href",
-    "https://git.slop.cash",
-  );
+  await expect(footer.getByRole("link", { name: "Slop Git" })).toHaveCount(0);
   await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
   await expect(page.getByRole("link", { name: "Protocol" })).toHaveCount(0);
   await expect(page.getByText("© 2026 slop.cash.")).toBeVisible();
@@ -279,7 +276,7 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   ).toHaveAttribute("href", "https://github.com/elizaOS/eliza");
   await expect(
     page.getByRole("link", { name: /View in SlopHub/u }),
-  ).toHaveAttribute("href", "https://git.slop.cash/elizaOS/eliza");
+  ).toHaveCount(0);
   await expect(page.getByText("1% platform fee · Solana")).toHaveCount(0);
   const rewardStyle = await page.locator(".reward-card").evaluate((card) => {
     const amount = card.querySelector<HTMLElement>(".reward-amount-monthly");

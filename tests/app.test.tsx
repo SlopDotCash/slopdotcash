@@ -164,8 +164,8 @@ describe("discovery", () => {
       within(footer).getByRole("link", { name: "GitHub" }),
     ).toHaveAttribute("href", "https://github.com/elizaOS/slopdotcash");
     expect(
-      within(footer).getByRole("link", { name: "Slop Git" }),
-    ).toHaveAttribute("href", "https://git.slop.cash");
+      within(footer).queryByRole("link", { name: "Slop Git" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: /^Home$/u }),
     ).not.toBeInTheDocument();
@@ -382,8 +382,8 @@ describe("project routes", () => {
       screen.getByRole("link", { name: /View in GitHub/u }),
     ).toHaveAttribute("href", "https://github.com/elizaOS/eliza");
     expect(
-      screen.getByRole("link", { name: /View in SlopHub/u }),
-    ).toHaveAttribute("href", "https://git.slop.cash/elizaOS/eliza");
+      screen.queryByRole("link", { name: /View in SlopHub/u }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText("1% platform fee · Solana"),
     ).not.toBeInTheDocument();

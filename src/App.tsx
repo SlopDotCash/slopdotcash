@@ -57,7 +57,6 @@ import {
 import { feeForPrincipal } from "./lib/rewards";
 
 const SOURCE_REPOSITORY = "https://github.com/elizaOS/slopdotcash";
-const HUB_ORIGIN = "https://git.slop.cash";
 const PROJECT_PROPOSAL_ROOT = `${SOURCE_REPOSITORY}/new/develop`;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
@@ -416,7 +415,6 @@ function Footer() {
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
           </ExternalLinkAnchor>
-          <ExternalLinkAnchor href={HUB_ORIGIN}>Slop Git</ExternalLinkAnchor>
         </div>
         <p className="footer-fine">
           Projections are estimates, not wages or guarantees. Project owners
@@ -1123,10 +1121,6 @@ function ProjectPage({
     state.status === "ready"
       ? state.views.find((candidate) => candidate.project.id === project.id)
       : undefined;
-  const repository = project.repositories[0]?.id;
-  if (!repository) {
-    throw new TypeError(`Project ${project.id} has no contribution repository`);
-  }
   const headlinePrefix = "Make money ";
   const headlineAction = project.headline.startsWith(headlinePrefix)
     ? project.headline.slice(headlinePrefix.length)
@@ -1186,10 +1180,6 @@ function ProjectPage({
                 <div className="reward-actions">
                   <ExternalLinkAnchor href={project.links.repository}>
                     View in GitHub
-                    <ExternalLink aria-hidden="true" size={14} />
-                  </ExternalLinkAnchor>
-                  <ExternalLinkAnchor href={`${HUB_ORIGIN}/${repository}`}>
-                    View in SlopHub
                     <ExternalLink aria-hidden="true" size={14} />
                   </ExternalLinkAnchor>
                 </div>
