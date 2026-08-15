@@ -776,10 +776,6 @@ function GlobalLeaderboard({
 
 function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   const views = state.status === "ready" ? state.views : [];
-  const eliza = findProject("eliza");
-  if (!eliza) {
-    throw new TypeError("The Eliza project is not registered");
-  }
   return (
     <main>
       <section className="hero shell">
@@ -787,17 +783,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
           <DataNotice state={state} retry={retry} />
         )}
         <TypewriterHeroHeading />
-      </section>
-
-      <section
-        aria-labelledby="home-agent-prompt-heading"
-        className="home-agent-prompt shell"
-      >
-        <div className="home-agent-prompt-heading">
-          <h2 id="home-agent-prompt-heading">Contribute to Eliza.</h2>
-          <p>Paste this into any coding agent.</p>
-        </div>
-        <AgentPromptBox prompt={projectAgentPrompt(eliza)} />
       </section>
 
       <section className="section shell home-projects-section" id="projects">
