@@ -467,6 +467,32 @@ test("renders contributor and cycle records from validated public data", async (
   }
 });
 
+test("keeps a large payout editor searchable and bounded", async ({
+  page,
+  request,
+}) => {
+  const snapshot = await loadSnapshot(request);
+  const leaders = createProjectView(snapshot, "eliza").leaders;
+  if (leaders.length <= 10) {
+    test.skip(true, "The live Eliza ledger has ten or fewer contributors.");
+    return;
+  }
+  const target = leaders.at(-1);
+  if (!target) return;
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("searchbox", { name: "Find contributor" }),
+  ).toBeVisible();
+  await expect(page.locator(".allocation-rows fieldset")).toHaveCount(10);
+  await page
+    .getByRole("searchbox", { name: "Find contributor" })
+    .fill(target.actor.login);
+  await expect(
+    page.getByRole("group", { name: target.actor.login }),
+  ).toBeVisible();
+  await expect(page.locator(".allocation-rows fieldset")).toHaveCount(1);
+});
+
 test("creates a valid GitHub-native project handoff", async ({ page }) => {
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page.getByLabel("Project name").fill("Open Protein");
