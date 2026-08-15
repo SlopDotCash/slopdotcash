@@ -21,6 +21,10 @@ const wranglerConfiguration = readFileSync(
   join(packageRoot, "wrangler.toml"),
   "utf8",
 );
+const identityWranglerConfiguration = readFileSync(
+  join(packageRoot, "workers", "identity", "wrangler.toml"),
+  "utf8",
+);
 const pagesHeaders = readFileSync(
   join(packageRoot, "public", "_headers"),
   "utf8",
@@ -45,6 +49,17 @@ describe("slop.cash deployment contract", () => {
     );
     expect(deployJob).toContain(`node-version: ${"$"}{{ env.NODE_VERSION }}`);
     expect(deployJob).toContain("./node_modules/.bin/wrangler pages deploy \\");
+    expect(deployJob).toContain(
+      "./node_modules/.bin/wrangler deploy \\\n            --config workers/identity/wrangler.toml \\",
+    );
+    expect(deployJob).toContain(
+      "./node_modules/.bin/wrangler secret list \\\n            --config workers/identity/wrangler.toml",
+    );
+    expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/start");
+    expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/callback");
+    expect(deployJob.indexOf("wrangler deploy \\")).toBeLessThan(
+      deployJob.indexOf("wrangler pages deploy \\"),
+    );
     expect(deployJob).not.toContain("working-directory:");
     expect(deployJob).not.toContain("bunx wrangler");
     expect(deployJob).not.toContain("pages deploy dist");
@@ -155,6 +170,31 @@ describe("slop.cash deployment contract", () => {
     expect(pagesHeaders).toContain("/assets/*");
     expect(pagesHeaders).toContain(
       "Cache-Control: public, max-age=31536000, immutable",
+    );
+  });
+
+  it("binds the private trace and identity runtime through reviewed configuration", () => {
+    expect(wranglerConfiguration).toContain('binding = "SLOP_DB"');
+    expect(wranglerConfiguration).toContain('database_name = "slop-private"');
+    expect(wranglerConfiguration).toContain(
+      'database_id = "1b453124-2709-45af-8389-151a8105c461"',
+    );
+    expect(wranglerConfiguration).toContain('binding = "PRIVATE_TRACES"');
+    expect(wranglerConfiguration).toContain(
+      'bucket_name = "slop-private-traces"',
+    );
+    expect(wranglerConfiguration).toContain('binding = "SLOP_IDENTITY"');
+    expect(wranglerConfiguration).toContain('service = "slop-identity"');
+    expect(wranglerConfiguration).not.toContain("[env.preview");
+
+    expect(identityWranglerConfiguration).toContain('name = "slop-identity"');
+    expect(identityWranglerConfiguration).toContain("workers_dev = false");
+    expect(identityWranglerConfiguration).toContain(
+      '{ pattern = "identity.slop.cash", custom_domain = true }',
+    );
+    expect(identityWranglerConfiguration).toContain('binding = "IDENTITY_DB"');
+    expect(identityWranglerConfiguration).toContain(
+      'database_id = "1b453124-2709-45af-8389-151a8105c461"',
     );
   });
 });

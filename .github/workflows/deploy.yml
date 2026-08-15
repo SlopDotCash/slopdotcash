@@ -283,7 +283,7 @@ jobs:
               ;;
           esac
 
-      - name: Deploy to Cloudflare Pages
+      - name: Deploy private identity and Cloudflare Pages
         id: pages-deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -307,6 +307,97 @@ jobs:
             echo "::error::Live develop changed a slop.cash release input immediately before deployment."
             exit 1
           fi
+
+          identity_secrets="$RUNNER_TEMP/slop-identity-secrets.json"
+          ./node_modules/.bin/wrangler secret list \
+            --config workers/identity/wrangler.toml > "$identity_secrets"
+          node - "$identity_secrets" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expected = [
+            "GITHUB_APP_CLIENT_ID",
+            "GITHUB_APP_CLIENT_SECRET",
+            "IDENTITY_ASSERTION_KEY",
+            "IDENTITY_STATE_KEY",
+          ];
+          if (!Array.isArray(value)) throw new TypeError("identity secret inventory must be an array");
+          const actual = value.map((entry) => entry?.name).sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new TypeError("identity Worker secret inventory is incomplete or contains unexpected entries");
+          }
+          NODE
+          ./node_modules/.bin/wrangler deploy \
+            --config workers/identity/wrangler.toml \
+            --minify
+
+          identity_response="$RUNNER_TEMP/slop-identity-start.json"
+          identity_status="$(
+            curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --output "$identity_response" \
+              --write-out "%{http_code}" \
+              --header "Content-Type: application/json" \
+              --data '{"audience":"private-trace-api"}' \
+              https://identity.slop.cash/v1/oauth/start
+          )"
+          if [ "$identity_status" != "201" ]; then
+            echo "::error::Identity start returned HTTP $identity_status; expected 201."
+            exit 1
+          fi
+          authorization_url="$(node - "$identity_response" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const expected = ["authorizationUrl", "expiresAt", "flowId", "pollAfterSeconds", "pollCapability"];
+          if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expected)) {
+            throw new TypeError("identity start response has an unexpected shape");
+          }
+          if (!/^flow_[A-Za-z0-9_-]{24}$/u.test(value.flowId)) throw new TypeError("invalid identity flow id");
+          if (!/^[A-Za-z0-9_-]{43}$/u.test(value.pollCapability)) throw new TypeError("invalid poll capability");
+          if (value.pollAfterSeconds !== 2 || !Number.isFinite(Date.parse(value.expiresAt))) {
+            throw new TypeError("invalid identity expiry contract");
+          }
+          const authorization = new URL(value.authorizationUrl);
+          if (authorization.origin !== "https://identity.slop.cash" || authorization.pathname !== "/v1/oauth/authorize") {
+            throw new TypeError("invalid identity authorization URL");
+          }
+          process.stdout.write(authorization.toString());
+          NODE
+          )"
+          authorization_headers="$RUNNER_TEMP/slop-identity-authorization.headers"
+          authorization_status="$(
+            curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --output /dev/null \
+              --dump-header "$authorization_headers" \
+              --write-out "%{http_code}" \
+              "$authorization_url"
+          )"
+          if [ "$authorization_status" != "302" ]; then
+            echo "::error::Identity authorization returned HTTP $authorization_status; expected 302."
+            exit 1
+          fi
+          node - "$authorization_headers" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const headers = readFileSync(process.argv[2], "utf8");
+          const match = headers.match(/^location:\s*(\S+)\s*$/imu);
+          if (!match) throw new TypeError("identity authorization omitted its redirect");
+          const location = new URL(match[1]);
+          if (location.origin !== "https://github.com" || location.pathname !== "/login/oauth/authorize") {
+            throw new TypeError("identity authorization did not target GitHub");
+          }
+          if (location.searchParams.get("redirect_uri") !== "https://identity.slop.cash/v1/oauth/callback") {
+            throw new TypeError("identity authorization callback drifted");
+          }
+          if (location.searchParams.get("code_challenge_method") !== "S256") {
+            throw new TypeError("identity authorization did not require PKCE S256");
+          }
+          if (!/^Iv[0-9A-Za-z]{18}$/u.test(location.searchParams.get("client_id") ?? "")) {
+            throw new TypeError("identity authorization omitted the GitHub App client id");
+          }
+          NODE
+
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"
           for attempt in 1 2 3; do
             if ./node_modules/.bin/wrangler pages deploy \
