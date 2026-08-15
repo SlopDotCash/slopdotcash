@@ -795,9 +795,15 @@ test("presents every fundraising slide without viewport or accessibility failure
   await page.goto("/deck#1", { waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", {
-      name: /^MAKE MONEY/,
+      exact: true,
+      name: "MAKE MONEY SHIPPING SLOP.",
     }),
   ).toBeVisible();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator(".deck-orbit-label").first()).toHaveCSS(
+    "animation-name",
+    "none",
+  );
   await expect(page).toHaveTitle("Slop — make money shipping slop");
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
     "content",

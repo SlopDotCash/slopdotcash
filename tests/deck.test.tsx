@@ -16,7 +16,9 @@ describe("Slop fundraising deck", () => {
     render(<Deck />);
 
     expect(
-      screen.getByRole("heading", { name: /^MAKE MONEY/ }),
+      screen.getByRole("heading", {
+        name: "MAKE MONEY SHIPPING SLOP.",
+      }),
     ).toBeInTheDocument();
     expect(screen.getByText("Slop.cash", { selector: "strong" })).toBeVisible();
     expect(screen.getByText("1 / 10")).toBeInTheDocument();

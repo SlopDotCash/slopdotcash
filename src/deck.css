@@ -91,7 +91,6 @@
   font-size: 0.7em;
   line-height: 0.95;
   overflow-wrap: normal;
-  animation: deck-action-enter 360ms ease-out both;
 }
 .deck-cover-copy > p {
   max-width: 650px;
@@ -867,13 +866,6 @@
     transform: rotate(-360deg);
   }
 }
-@keyframes deck-action-enter {
-  from {
-    opacity: 0;
-    transform: translateY(0.12em);
-  }
-}
-
 @media (max-width: 760px) {
   .deck-slide {
     padding: 76px 22px 74px;
@@ -1144,6 +1136,7 @@
   .deck-stage,
   .deck-cover-network,
   .deck-cover-network > strong,
+  .deck-orbit-label,
   .deck-mission-ring::before,
   .deck-flywheel,
   .deck-flywheel > strong {
