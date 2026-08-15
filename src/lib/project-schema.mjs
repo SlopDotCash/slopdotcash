@@ -180,7 +180,7 @@ function validateReward(value, field) {
   }
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
-  if (reward.cycle !== "calendar-month-utc" || reward.feeBasisPoints !== 100) {
+  if (reward.cycle !== "calendar-month-utc" || reward.feeBasisPoints !== 300) {
     throw new TypeError(`${field} cycle or fee policy is invalid`);
   }
   if (reward.kind === "monthly-pool") {

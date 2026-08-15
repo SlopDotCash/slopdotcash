@@ -174,7 +174,7 @@ For Eliza, the suggested principal uses largest-remainder integer allocation
 over score plus bounded compute weight and can never exceed the published
 monthly cap. Unused funds remain with the creator and roll forward as treasury
 availability without increasing a later month’s cap. The platform fee is
-exactly 1% of approved principal, not of the advertised pool.
+exactly 3% of approved principal, not of the advertised pool.
 
 The proposal stays editable for 14 days. A reduction requires a public reason.
 A wallet change is a material change and restarts the review deadline. Missing
@@ -199,7 +199,7 @@ not read signing material or broadcast transactions. The creator signs and
 sends externally, then commits transaction signatures. Verification fetches
 each finalized Solana transaction and reconciles exact source and destination
 USDC token-balance deltas against every immutable payout intent and the
-separate 1% fee transfer. Duplicate, partial, wrong-mint, wrong-recipient,
+separate 3% fee transfer. Duplicate, partial, wrong-mint, wrong-recipient,
 overpaid, missing, failed, or non-finalized transfers fail closed.
 
 Cycle files are append-only:
