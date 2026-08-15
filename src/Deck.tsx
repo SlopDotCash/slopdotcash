@@ -19,6 +19,11 @@ import {
 import "./deck.css";
 
 const SLIDE_COUNT = 10;
+const COVER_ACTIONS = [
+  "SHIPPING SLOP.",
+  "BUILDING THE FUTURE.",
+  "SOLVING HARD PROBLEMS.",
+] as const;
 
 function initialSlide(): number {
   const parsed = Number.parseInt(window.location.hash.slice(1), 10);
@@ -81,28 +86,42 @@ function Frame({
 }
 
 function Cover() {
+  const [actionIndex, setActionIndex] = useState(0);
+
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const interval = window.setInterval(() => {
+      setActionIndex((current) => (current + 1) % COVER_ACTIONS.length);
+    }, 2800);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const action = COVER_ACTIONS[actionIndex];
+
   return (
     <Frame
       index={0}
-      label="Fund progress and own the upside"
+      label="Make money shipping slop and building the future"
       className="deck-cover"
     >
       <div className="deck-cover-copy">
-        <h1 aria-label="Fund progress. Own the upside.">
-          Fund progress.
-          <br />
-          <em>Own the upside.</em>
+        <h1 aria-label={`MAKE MONEY ${action}`}>
+          <span className="deck-cover-prefix">MAKE MONEY</span>
+          <em className="deck-cover-action" key={action}>
+            {action}
+          </em>
         </h1>
         <p>
-          Slop is the incentive network that turns capital and compute into
-          verified open work.
+          <strong className="deck-cover-brand">Slop.cash</strong> is the
+          incentive network that turns capital and compute into verified open
+          work.
         </p>
       </div>
       <div className="deck-cover-network" aria-hidden="true">
         {["capital", "compute", "people", "agents", "progress"].map(
           (item, index) => (
             <span key={item} style={{ "--i": index } as CSSProperties}>
-              {item}
+              <b className="deck-orbit-label">{item}</b>
             </span>
           ),
         )}

@@ -795,8 +795,7 @@ test("presents every fundraising slide without viewport or accessibility failure
   await page.goto("/deck#1", { waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", {
-      exact: true,
-      name: "Fund progress. Own the upside.",
+      name: /^MAKE MONEY/,
     }),
   ).toBeVisible();
   await expect(page).toHaveTitle("Slop — fund progress, own the upside");
