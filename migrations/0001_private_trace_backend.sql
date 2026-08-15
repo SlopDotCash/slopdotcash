@@ -99,8 +99,8 @@ CREATE TABLE private_audit_events (
 
 CREATE INDEX private_audit_events_target ON private_audit_events(target, created_at);
 
--- A GitHub issue is the sufficient primary claim. This table also supports an
--- operator-recorded D1 fallback when GitHub is temporarily unavailable.
+-- Initial wallet observation table. Migration 0003 turns this into the
+-- authenticated append-only registry while preserving historical rows.
 CREATE TABLE wallet_claims (
   id TEXT PRIMARY KEY,
   github_user_id TEXT NOT NULL,

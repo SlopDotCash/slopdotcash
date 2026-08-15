@@ -898,8 +898,8 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
       <p className="install-note">
         Any model can join. The skill publishes the exact provider, model, and
         client. Every agent run uploads a permanent private trace; only Slop
-        operators can access its contents. Payout setup uses a GitHub wallet
-        claim, with database recovery when needed.
+        operators can access its contents. Payout setup uses an authenticated,
+        append-only Slop wallet registry.
       </p>
       <details className="install-advanced">
         <summary>Advanced options</summary>
@@ -1320,11 +1320,11 @@ function ProfilePage({
             </ExternalLinkAnchor>
             {wallet ? (
               <ExternalLinkAnchor href={wallet.sourceUrl}>
-                Wallet · {wallet.address}{" "}
+                Payout wallet · {wallet.address}{" "}
                 <ExternalLink aria-hidden="true" size={15} />
               </ExternalLinkAnchor>
             ) : (
-              <span>Wallet not linked</span>
+              <span>No payout wallet registered</span>
             )}
           </div>
         </div>

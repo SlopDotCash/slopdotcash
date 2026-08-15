@@ -250,12 +250,37 @@ class MemoryPersistence implements TracePersistence {
       (item) => item.recordSha256 === claim.recordSha256,
     );
     if (existing !== undefined) return { status: "existing", value: existing };
+    const actorClaims = [...this.claims.values()].filter(
+      (item) => item.githubId === claim.githubId,
+    );
+    if (
+      (claim.supersedesClaimId === null &&
+        actorClaims.some((item) => item.supersedesClaimId === null)) ||
+      (claim.supersedesClaimId !== null &&
+        actorClaims.some(
+          (item) => item.supersedesClaimId === claim.supersedesClaimId,
+        ))
+    ) {
+      return { status: "conflict" };
+    }
     this.claims.set(claim.id, claim);
     return { status: "created", value: claim };
   }
 
   async getWalletClaim(claimId: string): Promise<WalletClaim | null> {
     return this.claims.get(claimId) ?? null;
+  }
+
+  async getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null> {
+    const claims = [...this.claims.values()].filter(
+      (claim) => claim.githubId === githubId,
+    );
+    return (
+      claims.find(
+        (claim) =>
+          !claims.some((candidate) => candidate.supersedesClaimId === claim.id),
+      ) ?? null
+    );
   }
 }
 
@@ -679,8 +704,117 @@ describe("private trace API", () => {
     expect(await publicResponse.json()).toMatchObject({
       githubActorId: "42",
       address: "11111111111111111111111111111111",
-      source: "d1_fallback",
+      source: "d1_registry",
       recordDigest: claim.recordDigest,
     });
+  });
+
+  it("lets a GitHub-authenticated contributor create and supersede one wallet lineage", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const first = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        contributor,
+        JSON.stringify({ address: "11111111111111111111111111111111" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(first.status).toBe(201);
+    const firstClaim = (await first.json()) as {
+      claimId: string;
+      githubActorId: string;
+      source: string;
+    };
+    expect(firstClaim).toMatchObject({
+      githubActorId: "42",
+      source: "d1_registry",
+    });
+
+    const unchanged = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        contributor,
+        JSON.stringify({
+          address: "11111111111111111111111111111111",
+          supersedesClaimId: firstClaim.claimId,
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(unchanged.status).toBe(200);
+    expect((await unchanged.json()).claimId).toBe(firstClaim.claimId);
+
+    const changed = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        contributor,
+        JSON.stringify({
+          address: "SysvarRent111111111111111111111111111111111",
+          supersedesClaimId: firstClaim.claimId,
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(changed.status).toBe(201);
+    const secondClaim = (await changed.json()) as {
+      claimId: string;
+      supersedesClaimId: string;
+    };
+    expect(secondClaim.supersedesClaimId).toBe(firstClaim.claimId);
+
+    const current = await handleTraceApi(
+      new Request(
+        "https://api.slop.cash/api/v1/wallet-claims/actors/42/current",
+      ),
+      deps,
+    );
+    expect(current.status).toBe(200);
+    expect((await current.json()).claimId).toBe(secondClaim.claimId);
+
+    const authenticatedCurrent = await handleTraceApi(
+      request("wallet-claims/current", "GET", contributor),
+      deps,
+    );
+    expect(authenticatedCurrent.status).toBe(200);
+    expect((await authenticatedCurrent.json()).claimId).toBe(
+      secondClaim.claimId,
+    );
+
+    const stale = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        contributor,
+        JSON.stringify({
+          address: "Vote111111111111111111111111111111111111111",
+          supersedesClaimId: firstClaim.claimId,
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: "stale_wallet_claim" });
+  });
+
+  it("does not let an unauthenticated caller create a wallet claim", async () => {
+    const response = await handleTraceApi(
+      new Request("https://api.slop.cash/api/v1/wallet-claims", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          address: "11111111111111111111111111111111",
+        }),
+      }),
+      dependencies(),
+    );
+    expect(response.status).toBe(401);
   });
 });

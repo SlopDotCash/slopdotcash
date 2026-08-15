@@ -72,15 +72,20 @@ atomically, and cannot be replayed. Grant creation and successful reads append
 audit records. Responses are attachments with `no-store`, `nosniff`, and a
 deny-all content security policy.
 
-## Wallet fallback
+## Wallet registry
 
-GitHub-authored wallet-claim issues remain sufficient primary evidence. A Slop
-operator can record a D1 fallback with `POST /api/v1/operator/wallet-claims`.
-Wallet claim records are append-only; SQLite triggers reject updates and
-deletes. The metadata-only URL `GET /api/v1/wallet-claims/{claimId}` is public
-so a reward manifest can bind the claim ID, GitHub actor ID, address,
-observation time, and canonical record digest. This endpoint never exposes a
-trace or credential.
+Contributors authenticate through the same one-time GitHub OAuth bridge and
+append their claim with `POST /api/v1/wallet-claims`. `GET
+/api/v1/wallet-claims/current` returns only the authenticated contributor's
+current safe metadata; `GET /api/v1/wallet-claims/actors/{numericId}/current`
+and `GET /api/v1/wallet-claims/{claimId}` are public metadata receipts used by
+reward preparation. Wallet records are append-only; changes must name the exact
+current predecessor, unique lineage indexes reject forks, and SQLite triggers
+reject updates and deletes.
+
+The operator endpoint remains only for bounded migration of historical GitHub
+issue/profile observations and disaster recovery. No endpoint exposes a trace,
+OAuth capability, assertion, bearer token, or credential.
 
 ## Cloudflare provisioning
 

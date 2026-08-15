@@ -163,6 +163,7 @@ export async function prepareRewardCycle(
     generatedAt?: string;
     githubToken?: string;
     observeWallet?: (
+      actorId: string,
       login: string,
       observedAt: string,
     ) => Promise<WalletProof | null>;
@@ -224,8 +225,8 @@ export async function prepareRewardCycle(
     }
     const observe =
       options.observeWallet ??
-      ((login: string, observedAt: string) =>
-        fetchPublishedGithubWallet(login, observedAt, {
+      ((actorId: string, login: string, observedAt: string) =>
+        fetchPublishedGithubWallet(actorId, login, observedAt, {
           token: options.githubToken,
         }));
     const observations = await mapWithConcurrency(
@@ -233,7 +234,7 @@ export async function prepareRewardCycle(
       WALLET_LOOKUP_CONCURRENCY,
       async (leader) => ({
         actorId: leader.actor.id,
-        wallet: await observe(leader.actor.login, generatedAt),
+        wallet: await observe(leader.actor.id, leader.actor.login, generatedAt),
       }),
     );
     for (const observation of observations) {

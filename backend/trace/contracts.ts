@@ -128,7 +128,7 @@ export type WalletClaim = {
   githubId: string;
   githubLogin: string;
   walletAddress: string;
-  source: "github_issue" | "profile_readme" | "d1_fallback";
+  source: "github_issue" | "profile_readme" | "d1_registry";
   issueRepository: string | null;
   issueNumber: number | null;
   sourceBodySha256: string;
@@ -179,4 +179,5 @@ export interface TracePersistence {
     claim: WalletClaim,
   ): Promise<PersistenceResult<WalletClaim>>;
   getWalletClaim(claimId: string): Promise<WalletClaim | null>;
+  getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null>;
 }

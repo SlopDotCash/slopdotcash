@@ -32,6 +32,7 @@ import {
   uploadPrivateTrace,
   usageDelta,
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
+import { registerWalletClaim } from "../skills/contribute-to-eliza/scripts/wallet-claim.mjs";
 import { assessModelAttribution } from "../src/lib/leaderboard";
 import { PROJECTS } from "../src/lib/projects.mjs";
 
@@ -63,7 +64,9 @@ describe("project skill contracts", () => {
       assert.match(source, /gh api user --jq '\.login'/u);
       assert.match(source, /upstream\s+permission/is);
       assert.match(source, /stars are\s+optional/u);
-      assert.match(source, /explicit authorization before\s+creating one/is);
+      if (project.reward.kind === "monthly-pool") {
+        assert.match(source, /explicit approval before registration/is);
+      }
       assert.match(source, /live-report\.mjs --repo/u);
       assert.match(source, /token.*never earns|receipt cannot create score/is);
       assert.match(source, /untrusted/u);
@@ -173,19 +176,19 @@ describe("project skill contracts", () => {
       );
       assert.strictEqual(result.status, 0, result.stderr);
       const plan = JSON.parse(result.stdout);
-      assert.strictEqual(plan.repository, "elizaOS/slopdotcash");
-      assert.strictEqual(plan.title, "Slop wallet claim");
+      assert.deepStrictEqual(plan, {
+        action: "register-wallet",
+        address: "11111111111111111111111111111111",
+        authority: "https://api.slop.cash/api/v1/wallet-claims",
+        authentication: "one-time-github-oauth",
+        storage: "append-only-d1",
+        writes: false,
+      });
+      const authority = new URL(plan.authority);
       assert.strictEqual(
-        plan.body,
-        '<!-- slop-wallet:v1 {"chain":"solana","address":"11111111111111111111111111111111"} -->',
+        `${authority.origin}${authority.pathname}`,
+        "https://api.slop.cash/api/v1/wallet-claims",
       );
-      const issueUrl = new URL(plan.newIssueUrl);
-      assert.strictEqual(
-        `${issueUrl.origin}${issueUrl.pathname}`,
-        "https://github.com/elizaOS/slopdotcash/issues/new",
-      );
-      assert.strictEqual(issueUrl.searchParams.get("title"), plan.title);
-      assert.strictEqual(issueUrl.searchParams.get("body"), plan.body);
     }
     const invalid = spawnSync(
       process.execPath,
@@ -198,6 +201,61 @@ describe("project skill contracts", () => {
     );
     assert.notStrictEqual(invalid.status, 0);
     assert.match(invalid.stderr, /refused.*canonical 32-byte Solana/u);
+  });
+
+  it("registers a wallet only after one-time identity authentication", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const responses = [
+      Response.json({
+        expiresAt: "2026-08-15T00:10:00.000Z",
+        token: "private_test_bearer_token_value",
+        tokenType: "Bearer",
+      }),
+      Response.json({ error: "not_found" }, { status: 404 }),
+      Response.json(
+        {
+          schemaVersion: 1,
+          claimId: "wallet_claim_01",
+          githubActorId: "123456",
+          githubLogin: "octocat",
+          address: "11111111111111111111111111111111",
+          source: "d1_registry",
+          issueRepository: null,
+          issueNumber: null,
+          sourceBodySha256: "a".repeat(64),
+          observedAt: "2026-08-15T00:00:00.000Z",
+          recordDigest: "b".repeat(64),
+          supersedesClaimId: null,
+        },
+        { status: 201 },
+      ),
+    ];
+    const fetchMock = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ input: String(input), init });
+      const response = responses.shift();
+      assert.ok(response);
+      return response;
+    };
+    const registered = await registerWalletClaim(
+      "11111111111111111111111111111111",
+      {
+        fetch: fetchMock,
+        assertionProvider: async () => "one_time_identity_assertion_value",
+      },
+    );
+    assert.strictEqual(registered.claimId, "wallet_claim_01");
+    assert.deepStrictEqual(
+      calls.map(({ input }) => input),
+      [
+        "https://api.slop.cash/api/v1/auth/session",
+        "https://api.slop.cash/api/v1/wallet-claims/current",
+        "https://api.slop.cash/api/v1/wallet-claims",
+      ],
+    );
+    assert.match(
+      String(calls[1].init?.headers && Object.values(calls[1].init.headers)[0]),
+      /^Bearer private_test_/u,
+    );
   });
 
   it("keeps every registered review skill hostile-input aware and non-punitive", () => {

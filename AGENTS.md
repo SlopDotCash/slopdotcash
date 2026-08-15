@@ -179,9 +179,10 @@ and safe metadata, never the trace body.
   reason. Wallet changes reset the review deadline. Missing wallets stay
   unclaimed; suspicious rows stay visible as held or excluded. Related-party
   money needs separate approval.
-- A wallet claim is one open issue authored by the contributor and bound to its
-  exact GitHub identity and body snapshot. An immutable profile README marker
-  or immutable, actor-bound D1 claim is a compatibility fallback. None proves
+- A wallet claim is an authenticated, actor-bound, append-only D1 record. An
+  address change creates an immutable successor and resets review; it never
+  edits or deletes prior records. Historical GitHub issue and immutable profile
+  README observations are migration-only compatibility inputs. None proves
   cryptographic wallet ownership.
 - Settlement tools create unsigned Solana mainnet USDC plans only. They never
   read keys, sign, broadcast, or claim success optimistically.

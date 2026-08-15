@@ -153,6 +153,13 @@ bunx wrangler deploy --config workers/identity/wrangler.toml
 `SLOP_IDENTITY`. Keep `workers_dev = false`; only the custom OAuth domain and
 service binding should invoke it.
 
+The final `wrangler deploy` above is a one-time provisioning operation because
+it creates the custom domain and cron trigger. Normal production releases use
+the protected workflow's `wrangler versions upload` followed by
+`wrangler versions deploy`; that updates the active code and bindings without
+requesting zone-level Workers Routes authority or rewriting the established
+domain.
+
 Before enabling clients, verify the custom domain's DNS and TLS separately and
 prove rate limiting, assertion replay, and CSRF rejection in production. Zone
 WAF rules remain defense in depth and must not replace the route-specific

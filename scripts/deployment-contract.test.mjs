@@ -58,7 +58,10 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(`node-version: ${"$"}{{ env.NODE_VERSION }}`);
     expect(deployJob).toContain("./node_modules/.bin/wrangler pages deploy \\");
     expect(deployJob).toContain(
-      "./node_modules/.bin/wrangler deploy \\\n            --config workers/identity/wrangler.toml \\",
+      "./node_modules/.bin/wrangler versions upload \\\n            --config workers/identity/wrangler.toml \\",
+    );
+    expect(deployJob).toContain(
+      "./node_modules/.bin/wrangler versions deploy \\\n            --name slop-identity \\",
     );
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler secret list \\\n            --config workers/identity/wrangler.toml",
@@ -73,15 +76,18 @@ describe("slop.cash deployment contract", () => {
       "./node_modules/.bin/wrangler d1 execute slop-private \\",
     );
     expect(deployJob).toContain('--tag="$GITHUB_SHA"');
+    expect(deployJob).toContain('--version-tag="$GITHUB_SHA@100%"');
     expect(deployJob).toContain('--message="slop.cash release $GITHUB_SHA"');
     expect(deployJob).toContain("wrangler versions list \\");
     expect(deployJob).toContain("wrangler deployments status \\");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/start");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/callback");
     expect(deployJob).toContain("https://api.slop.cash/api/v1/runs?verify=");
-    expect(deployJob.indexOf("wrangler deploy \\")).toBeLessThan(
+    expect(deployJob.indexOf("wrangler versions deploy \\")).toBeLessThan(
       deployJob.indexOf("wrangler pages deploy \\"),
     );
+    expect(deployJob).not.toContain("wrangler deploy \\");
+    expect(deployJob).toContain("has no zone-level Workers Routes permission");
     expect(deployJob).not.toContain("working-directory:");
     expect(deployJob).not.toContain("bunx wrangler");
     expect(deployJob).not.toContain("pages deploy dist");
