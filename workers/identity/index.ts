@@ -2,13 +2,88 @@ import { randomToken } from "./crypto";
 import { handleIdentityRequest } from "./handler";
 import { type D1Database, D1IdentityPersistence } from "./persistence";
 
+type RateLimitBinding = {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+};
+
 type Env = {
   IDENTITY_DB: D1Database;
+  IDENTITY_START_LIMITER: RateLimitBinding;
+  IDENTITY_POLL_LIMITER: RateLimitBinding;
   GITHUB_APP_CLIENT_ID: string;
   GITHUB_APP_CLIENT_SECRET: string;
   IDENTITY_STATE_KEY: string;
   IDENTITY_ASSERTION_KEY: string;
 };
+
+function rateLimitKey(request: Request): string {
+  const connectingIp = request.headers.get("cf-connecting-ip");
+  return connectingIp !== null && connectingIp.length <= 64
+    ? connectingIp
+    : "unattributed";
+}
+
+function rateLimitResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: "rate_limited",
+      message: "Too many requests. Try again later.",
+    }),
+    {
+      status: 429,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "retry-after": "60",
+        "x-content-type-options": "nosniff",
+      },
+    },
+  );
+}
+
+function limiterUnavailableResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: "service_unavailable",
+      message: "Identity service is temporarily unavailable.",
+    }),
+    {
+      status: 503,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "retry-after": "60",
+        "x-content-type-options": "nosniff",
+      },
+    },
+  );
+}
+
+export async function applyIdentityRateLimit(
+  request: Request,
+  env: Pick<Env, "IDENTITY_START_LIMITER" | "IDENTITY_POLL_LIMITER">,
+): Promise<Response | null> {
+  const url = new URL(request.url);
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "identity.slop.cash" ||
+    request.method !== "POST"
+  ) {
+    return null;
+  }
+  const limiter =
+    url.pathname === "/v1/oauth/start"
+      ? env.IDENTITY_START_LIMITER
+      : url.pathname === "/v1/oauth/poll"
+        ? env.IDENTITY_POLL_LIMITER
+        : null;
+  if (limiter === null) return null;
+  try {
+    const result = await limiter.limit({ key: rateLimitKey(request) });
+    return result.success ? null : rateLimitResponse();
+  } catch {
+    console.error("slop identity rate limiter failed");
+    return limiterUnavailableResponse();
+  }
+}
 
 async function resolveGithubIdentity(
   code: string,
@@ -93,7 +168,9 @@ function dependencies(env: Env) {
 }
 
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const limited = await applyIdentityRateLimit(request, env);
+    if (limited !== null) return limited;
     return handleIdentityRequest(request, dependencies(env));
   },
   async scheduled(_controller: unknown, env: Env): Promise<void> {

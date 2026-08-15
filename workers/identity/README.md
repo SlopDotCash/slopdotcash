@@ -107,12 +107,16 @@ returns the separate ten-minute contributor session described in
 - Poll capabilities and assertions are stored only as SHA-256 digests.
 - Assertions are fixed to `private-trace-api`, consumed atomically, and never
   carry an operator role. The identity Worker has no role-issuance endpoint.
+- Worker-native counters limit OAuth starts to 12 per minute and polls to 120
+  per minute per connecting address and Cloudflare location. Counters are
+  eventually consistent abuse controls, not accounting records, and never
+  enter D1.
 - Expired flows and assertions are removed hourly. Trace retention is
   unaffected.
 - Response bodies and application logs never contain GitHub codes or access
-  tokens. Cloudflare HTTP logs must be configured to redact query strings on
-  the OAuth callback because authorization codes arrive in the standard query
-  parameter.
+  tokens. Persisted Worker invocation logs are disabled because OAuth codes
+  arrive in the standard callback query parameter. Do not enable full-URL
+  Logpush fields or production request tails for this Worker.
 
 ## Provisioning
 
@@ -149,6 +153,7 @@ bunx wrangler deploy --config workers/identity/wrangler.toml
 `SLOP_IDENTITY`. Keep `workers_dev = false`; only the custom OAuth domain and
 service binding should invoke it.
 
-Before enabling clients, verify the custom domain's DNS and TLS separately,
-configure WAF/rate limits for start and poll routes, redact callback query
-strings from logs, and prove assertion replay and CSRF rejection in production.
+Before enabling clients, verify the custom domain's DNS and TLS separately and
+prove rate limiting, assertion replay, and CSRF rejection in production. Zone
+WAF rules remain defense in depth and must not replace the route-specific
+Worker counters.

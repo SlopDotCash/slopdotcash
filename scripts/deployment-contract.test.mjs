@@ -200,6 +200,23 @@ describe("slop.cash deployment contract", () => {
     expect(identityWranglerConfiguration).toContain(
       'database_id = "1b453124-2709-45af-8389-151a8105c461"',
     );
+    expect(identityWranglerConfiguration).toContain(
+      'name = "IDENTITY_START_LIMITER"',
+    );
+    expect(identityWranglerConfiguration).toContain('namespace_id = "81001"');
+    expect(identityWranglerConfiguration).toContain("limit = 12");
+    expect(identityWranglerConfiguration).toContain(
+      'name = "IDENTITY_POLL_LIMITER"',
+    );
+    expect(identityWranglerConfiguration).toContain('namespace_id = "81002"');
+    expect(identityWranglerConfiguration).toContain("limit = 120");
+    expect(identityWranglerConfiguration.match(/period = 60/gu)).toHaveLength(
+      2,
+    );
+    expect(identityWranglerConfiguration).toContain("invocation_logs = false");
+    expect(identityWranglerConfiguration).not.toContain(
+      "invocation_logs = true",
+    );
     expect(identityDeploymentGuide).toContain("- Account permissions: none.");
     expect(
       identityDeploymentGuide.match(
