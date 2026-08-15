@@ -158,7 +158,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     page.getByRole("heading", { name: "Contribute to Eliza." }),
   ).toBeVisible();
   await expect(
-    page.getByText("Paste this to your Claude or Codex agent."),
+    page.getByText("Paste this into any coding agent."),
   ).toBeVisible();
   const homePrompt = page.getByRole("status", { name: "Agent prompt" });
   await expect(homePrompt).toContainText(/\/SKILL\.md/u);
@@ -457,7 +457,7 @@ test("renders contributor and cycle records from validated public data", async (
       }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Public cycle files." }),
+      page.getByRole("heading", { name: "Public files" }),
     ).toBeVisible();
   } else {
     const view = createProjectView(snapshot, "eliza");
@@ -467,7 +467,7 @@ test("renders contributor and cycle records from validated public data", async (
     await expect(
       page.getByRole("heading", { name: `Eliza · ${view.cycle.id}` }),
     ).toBeVisible();
-    await expect(page.getByText("14-day review")).toBeVisible();
+    await expect(page.getByText("Review")).toBeVisible();
     await expect(page.getByText("Cycle evidence.")).toHaveCount(0);
     await expect(page.getByText(/score events ·/u)).toHaveCount(0);
   }
@@ -482,6 +482,10 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
   await page
     .getByLabel("Money-forward headline")
     .fill("Make money proving proteins fold.");
+  await page.getByLabel("Goal").fill("Make protein research reproducible.");
+  await page
+    .getByLabel("Acceptance criteria")
+    .fill("Accepted pull requests with verified tests.");
   await page.getByLabel("Maximum monthly pool, digital dollars").fill("2500");
 
   const handoff = page.getByRole("link", { name: /Continue on GitHub/u });
@@ -492,9 +496,9 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
   await expect(page.locator(".manifest-preview")).toContainText(
     '"monthlyCapMinor": "2500000000"',
   );
-  await expect(
-    page.getByText(/New projects pass automated safety checks/u),
-  ).toBeVisible();
+  await expect(page.locator(".manifest-preview")).toContainText(
+    '"mode": "open"',
+  );
   await expect(
     page.getByRole("button", { name: "Copy agent brief" }),
   ).toBeVisible();

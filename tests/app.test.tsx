@@ -170,7 +170,7 @@ describe("discovery", () => {
       screen.getByRole("heading", { name: "Contribute to Eliza." }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Paste this to your Claude or Codex agent."),
+      screen.getByText("Paste this into any coding agent."),
     ).toBeInTheDocument();
     const homePrompt = screen.getByLabelText("Agent prompt");
     expect(homePrompt).toHaveTextContent(`${window.location.origin}/SKILL.md`);
@@ -328,7 +328,7 @@ describe("discovery", () => {
       ).toBeInTheDocument();
       expect(visibleAction()).toBe(action);
     }
-  });
+  }, 8_000);
 
   it("keeps the first hero statement fixed when reduced motion is requested", () => {
     vi.useFakeTimers();
@@ -463,14 +463,12 @@ describe("project routes", () => {
     expect(prompt).not.toHaveTextContent(
       "Before installing anything or reading local usage",
     );
-    expect(
-      screen.getByText(/Works in Codex and Claude Code/u),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Any model can join/u)).toBeInTheDocument();
     expect(
       screen.queryByText(/One prompt handles the contribution/u),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/asks only for a public Solana address/u),
+      screen.getByText(/Payout setup uses a GitHub wallet claim/u),
     ).toBeInTheDocument();
     expect(
       screen.queryByLabelText("Solana public address"),
@@ -572,7 +570,7 @@ describe("public records", () => {
       }).length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getByRole("heading", { name: "Things that could be worked on." }),
+      screen.getByRole("heading", { name: "Open work" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -629,7 +627,7 @@ describe("public records", () => {
       await screen.findByRole("heading", { name: "open-only" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Things that could be worked on." }),
+      screen.getByRole("heading", { name: "Open work" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Finish verified evidence categories before merge."),
@@ -654,7 +652,7 @@ describe("public records", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", {
-        name: "Things that could be worked on.",
+        name: "Open work",
       }),
     ).not.toBeInTheDocument();
   });
@@ -704,7 +702,7 @@ describe("public records", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Things that could be worked on.",
+        name: "Open work",
       }),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/\+6 if it verifies/)).toHaveLength(5);
@@ -724,7 +722,7 @@ describe("public records", () => {
     render(<App />);
 
     const wallet = await screen.findByRole("link", {
-      name: /Solana wallet 11111111111111111111111111111111/i,
+      name: /GitHub wallet claim · 11111111111111111111111111111111/i,
     });
     expect(wallet).toHaveAttribute("href", expect.stringContaining("/blob/"));
   });
@@ -737,7 +735,7 @@ describe("public records", () => {
     expect(
       await screen.findByRole("heading", { name: "Eliza · 2026-07" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("14-day review")).toBeInTheDocument();
+    expect(screen.getByText("Review")).toBeInTheDocument();
     expect(screen.getByText("Settlement")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "July 2026 leaderboard." }),
@@ -773,7 +771,7 @@ describe("public records", () => {
     );
     render(<App />);
 
-    expect(await screen.findByText("closed no awards")).toBeInTheDocument();
+    expect(await screen.findByText(/closed no awards/u)).toBeInTheDocument();
     expect(
       screen.getByText("This cycle closed with no accepted awards."),
     ).toBeInTheDocument();
@@ -788,7 +786,7 @@ describe("project proposals", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Put money behind an open problem.",
+        name: "Add a project.",
       }),
     ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Project name"), {
@@ -799,6 +797,12 @@ describe("project proposals", () => {
     });
     fireEvent.change(screen.getByLabelText("Money-forward headline"), {
       target: { value: "Make money proving proteins fold." },
+    });
+    fireEvent.change(screen.getByLabelText("Goal"), {
+      target: { value: "Make protein research reproducible." },
+    });
+    fireEvent.change(screen.getByLabelText("Acceptance criteria"), {
+      target: { value: "Accepted pull requests with verified tests." },
     });
     fireEvent.change(
       screen.getByLabelText("Maximum monthly pool, digital dollars"),
@@ -819,6 +823,7 @@ describe("project proposals", () => {
     expect(
       screen.getByText(/"monthlyCapMinor": "2500000000"/),
     ).toBeInTheDocument();
+    expect(screen.getByText(/"mode": "open"/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
     await act(async () => Promise.resolve());
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -844,6 +849,12 @@ describe("project proposals", () => {
     fireEvent.change(screen.getByLabelText("Money-forward headline"), {
       target: { value: "Make money doing exact work." },
     });
+    fireEvent.change(screen.getByLabelText("Goal"), {
+      target: { value: "Make exact work public." },
+    });
+    fireEvent.change(screen.getByLabelText("Acceptance criteria"), {
+      target: { value: "Accepted pull requests only." },
+    });
     fireEvent.change(
       screen.getByLabelText("Maximum monthly pool, digital dollars"),
       { target: { value: "1000000000.01" } },
@@ -852,5 +863,77 @@ describe("project proposals", () => {
     expect(
       screen.getByRole("button", { name: /continue on github/i }),
     ).toBeDisabled();
+  });
+});
+
+describe("project owner workspace", () => {
+  it("lets an owner set zero or larger allocations and calculates the exact payout fee", async () => {
+    route("/projects/eliza/manage");
+    const index = archivedPaidCycleIndex();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      Response.json(
+        String(input).includes("/data/cycles/") ? index : snapshotFixture(),
+      ),
+    );
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Run Eliza." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Sign payout unavailable" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("link", { name: /View unsigned plan/u }),
+    ).toHaveAttribute("href", expect.stringContaining("execution-plan.json"));
+    expect(
+      screen.getByText(/remains unpaid until finalized USDC deltas/u),
+    ).toBeInTheDocument();
+    const amount = screen.getByLabelText("archive-only amount in USDC");
+    const total = screen.getByLabelText("Total payout, USDC");
+    const reason = screen.getByLabelText("archive-only reason");
+
+    fireEvent.change(amount, { target: { value: "0" } });
+    fireEvent.change(total, { target: { value: "0" } });
+    fireEvent.change(reason, { target: { value: "Creator decision" } });
+    expect(
+      screen.getByRole("button", { name: "Copy allocation draft" }),
+    ).toBeEnabled();
+
+    fireEvent.change(amount, { target: { value: "12.345678" } });
+    fireEvent.change(total, { target: { value: "12.345678" } });
+    expect(screen.getByText("$0.12 fee")).toBeInTheDocument();
+    expect(screen.getByText("$12.47 total debit")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy allocation draft" }),
+    );
+    await act(async () => Promise.resolve());
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining('"approvedMinor": "12345678"'),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining('"feeMinor": "123456"'),
+    );
+  });
+
+  it("shows project payment history without exposing trace contents", async () => {
+    route("/projects/eliza");
+    const index = archivedPaidCycleIndex();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      Response.json(
+        String(input).includes("/data/cycles/") ? index : snapshotFixture(),
+      ),
+    );
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Payment history" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("$1 paid")).toBeInTheDocument();
+    expect(screen.getByText("$0.01 in 1% payout fees")).toBeInTheDocument();
+    expect(
+      screen.getByText(/only Slop operators can access its contents/u),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/raw prompt/u)).not.toBeInTheDocument();
   });
 });

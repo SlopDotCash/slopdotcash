@@ -54,6 +54,7 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
+import { feeForPrincipal } from "./lib/rewards";
 
 const SOURCE_REPOSITORY = "https://github.com/elizaOS/slopdotcash";
 const HUB_ORIGIN = "https://git.slop.cash";
@@ -141,7 +142,14 @@ async function readBoundedJson(
 }
 
 interface Route {
-  kind: "cycle" | "home" | "new-project" | "profile" | "project" | "unknown";
+  kind:
+    | "cycle"
+    | "home"
+    | "manage-project"
+    | "new-project"
+    | "profile"
+    | "project"
+    | "unknown";
   projectId?: string;
   cycleId?: string;
   login?: string;
@@ -152,6 +160,13 @@ function internalRoute(pathname: string): Route {
   if (segments.length === 0) return { kind: "home" };
   if (segments[0] === "projects" && segments[1] === "new") {
     return { kind: "new-project" };
+  }
+  if (
+    segments[0] === "projects" &&
+    segments.length === 3 &&
+    segments[2] === "manage"
+  ) {
+    return { kind: "manage-project", projectId: segments[1] };
   }
   if (segments[0] === "projects" && segments.length === 2) {
     return { kind: "project", projectId: segments[1] };
@@ -393,6 +408,7 @@ function Header({ isHome }: { isHome: boolean }) {
           {!isHome ? <Link href="/">Home</Link> : null}
           <Link href="/#projects">Projects</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
+          <Link href="/projects/new">Add project</Link>
           <ExternalLinkAnchor href={HUB_ORIGIN}>Slop Git</ExternalLinkAnchor>
           <ExternalLinkAnchor className="nav-source" href={SOURCE_REPOSITORY}>
             Source <ExternalLink aria-hidden="true" size={14} />
@@ -839,7 +855,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
       >
         <div className="home-agent-prompt-heading">
           <h2 id="home-agent-prompt-heading">Contribute to Eliza.</h2>
-          <p>Paste this to your Claude or Codex agent.</p>
+          <p>Paste this into any coding agent.</p>
         </div>
         <AgentPromptBox prompt={projectAgentPrompt(eliza)} />
       </section>
@@ -961,9 +977,10 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
       </div>
       <AgentPromptBox prompt={projectAgentPrompt(project)} />
       <p className="install-note">
-        Works in Codex and Claude Code. If you choose payout setup, the skill
-        asks only for a public Solana address and waits before writing to
-        GitHub.
+        Any model can join. The skill publishes the exact provider, model, and
+        client. Every agent run uploads a permanent private trace; only Slop
+        operators can access its contents. Payout setup uses a GitHub wallet
+        claim, with database recovery when needed.
       </p>
       <details className="install-advanced">
         <summary>Advanced options</summary>
@@ -1099,6 +1116,79 @@ function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
 }
 
+function ProjectPaymentHistory({
+  project,
+  state,
+}: {
+  project: ProjectDefinition;
+  state: DataState;
+}) {
+  if (state.status !== "ready") return null;
+  const cycles = state.cycleIndex.cycles
+    .filter((cycle) => cycle.projectId === project.id)
+    .sort((left, right) => right.cycleId.localeCompare(left.cycleId));
+  const approved = cycles.reduce(
+    (total, cycle) => total + BigInt(cycle.reward.approvedMinor),
+    0n,
+  );
+  const paid = cycles.reduce(
+    (total, cycle) => total + BigInt(cycle.reward.paidMinor),
+    0n,
+  );
+  const fees = cycles.reduce(
+    (total, cycle) => total + BigInt(cycle.reward.feeMinor),
+    0n,
+  );
+  return (
+    <section className="section payment-history">
+      <div className="simple-heading">
+        <h2>Payment history</h2>
+        <Link href={`/projects/${project.slug}/manage`}>Manage project</Link>
+      </div>
+      <p className="money-summary">
+        <strong>{formatMicroUsdc(paid.toString())} paid</strong>
+        <span>{formatMicroUsdc(approved.toString())} approved</span>
+        <span>{formatMicroUsdc(fees.toString())} in 1% payout fees</span>
+      </p>
+      {cycles.length === 0 ? (
+        <EmptyState text="No payment cycles have closed yet." />
+      ) : (
+        <div className="plain-table-wrap">
+          <table className="plain-table">
+            <caption className="visually-hidden">
+              {project.name} payment cycles
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Cycle</th>
+                <th scope="col">Approved</th>
+                <th scope="col">Fee</th>
+                <th scope="col">Paid</th>
+                <th scope="col">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cycles.map((cycle) => (
+                <tr key={cycle.cycleId}>
+                  <th scope="row">
+                    <Link href={`/cycles/${project.slug}/${cycle.cycleId}`}>
+                      {cycle.cycleId}
+                    </Link>
+                  </th>
+                  <td>{formatMicroUsdc(cycle.reward.approvedMinor)}</td>
+                  <td>{formatMicroUsdc(cycle.reward.feeMinor)}</td>
+                  <td>{formatMicroUsdc(cycle.reward.paidMinor)}</td>
+                  <td>{cycle.state.replaceAll("-", " ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ProjectPage({
   project,
   state,
@@ -1189,6 +1279,7 @@ function ProjectPage({
       </section>
       <div className="shell">
         <InstallPanel project={project} />
+        <ProjectPaymentHistory project={project} state={state} />
         {view && state.status === "ready" ? (
           <ProjectLeaderboard
             updatedAt={state.snapshot.generatedAt}
@@ -1197,6 +1288,56 @@ function ProjectPage({
         ) : null}
       </div>
     </main>
+  );
+}
+
+function ContributorProgress({
+  accepted,
+  paidMinor,
+  wallet,
+}: {
+  accepted: number;
+  paidMinor: bigint;
+  wallet: CycleIndexEntry["contributors"][number]["wallet"] | undefined;
+}) {
+  const walletSource = wallet
+    ? "sourceIssueId" in wallet
+      ? "GitHub wallet claim recorded"
+      : "GitHub profile claim recorded"
+    : "No public claim; database recovery can restore a prior claim";
+  return (
+    <section className="section contributor-progress">
+      <h2>Progress</h2>
+      <ol>
+        <li>
+          <strong>Work</strong>
+          <span>
+            {accepted > 0
+              ? `${accepted} accepted outcome${accepted === 1 ? "" : "s"}`
+              : "No accepted outcome yet"}
+          </span>
+        </li>
+        <li>
+          <strong>Trace</strong>
+          <span>
+            Required for every agent run, retained permanently, and visible only
+            to Slop operators
+          </span>
+        </li>
+        <li>
+          <strong>Wallet</strong>
+          <span>{walletSource}</span>
+        </li>
+        <li>
+          <strong>Payment</strong>
+          <span>
+            {paidMinor > 0n
+              ? `${formatMicroUsdc(paidMinor.toString())} paid`
+              : "Nothing paid yet"}
+          </span>
+        </li>
+      </ol>
+    </section>
   );
 }
 
@@ -1306,7 +1447,6 @@ function ProfilePage({
       <section className="profile-hero">
         <Avatar actor={actor} size="large" />
         <div>
-          <p className="eyebrow">Public contributor portfolio</p>
           <h1>{actor.login}</h1>
           <div className="profile-links">
             <ExternalLinkAnchor href={actor.url}>
@@ -1314,10 +1454,14 @@ function ProfilePage({
             </ExternalLinkAnchor>
             {wallet ? (
               <ExternalLinkAnchor href={wallet.sourceUrl}>
-                Solana wallet {wallet.address}{" "}
+                GitHub wallet claim · {wallet.address}{" "}
                 <ExternalLink aria-hidden="true" size={15} />
               </ExternalLinkAnchor>
-            ) : null}
+            ) : (
+              <span>
+                Wallet not claimed on GitHub · database recovery available
+              </span>
+            )}
           </div>
         </div>
       </section>
@@ -1339,12 +1483,14 @@ function ProfilePage({
           <span>total paid</span>
         </div>
       </div>
+      <ContributorProgress
+        accepted={acceptedOutcomes}
+        paidMinor={paid}
+        wallet={wallet}
+      />
       <section className="section">
         <div className="section-heading">
-          <div>
-            <p className="eyebrow">Active cycles</p>
-            <h2>Project record.</h2>
-          </div>
+          <h2>Projects</h2>
         </div>
         <div className="profile-projects">
           {matches.length === 0 ? (
@@ -1383,14 +1529,8 @@ function ProfilePage({
       {opportunities.length > 0 ? (
         <section className="section">
           <div className="section-heading">
-            <div>
-              <p className="eyebrow">Still open</p>
-              <h2>Things that could be worked on.</h2>
-            </div>
-            <p>
-              Concrete next actions on still-open work that can still change the
-              score if they qualify under the published rules.
-            </p>
+            <h2>Open work</h2>
+            <p>These actions can still change the score if they qualify.</p>
           </div>
           <OpportunityList opportunities={opportunities} />
         </section>
@@ -1398,13 +1538,7 @@ function ProfilePage({
       {history.length > 0 ? (
         <section className="section">
           <div className="section-heading">
-            <div>
-              <p className="eyebrow">Permanent public record</p>
-              <h2>Reward history.</h2>
-            </div>
-            <p>
-              Approved and paid amounts come from immutable cycle manifests.
-            </p>
+            <h2>Rewards</h2>
           </div>
           <div className="profile-projects">
             {history.map(({ contributor, cycle }) => (
@@ -1436,10 +1570,7 @@ function ProfilePage({
       ) : null}
       <section className="section">
         <div className="section-heading">
-          <div>
-            <p className="eyebrow">Accepted evidence</p>
-            <h2>Contribution ledger.</h2>
-          </div>
+          <h2>Accepted work</h2>
         </div>
         <EventList events={events} />
       </section>
@@ -1524,11 +1655,7 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
-        <div>
-          <p className="eyebrow">Immutable allocation record</p>
-          <h2>Cycle contributors.</h2>
-        </div>
-        <p>Amounts reflect this cycle’s latest verified public state.</p>
+        <h2>Contributors</h2>
       </div>
       {cycle.contributors.length === 0 ? (
         <EmptyState text="This cycle closed with no accepted awards." />
@@ -1587,11 +1714,7 @@ function CycleArtifacts({ cycle }: { cycle: CycleIndexEntry }) {
   return (
     <section className="section cycle-artifacts">
       <div className="section-heading">
-        <div>
-          <p className="eyebrow">Digest-linked record</p>
-          <h2>Public cycle files.</h2>
-        </div>
-        <p>Each file is immutable evidence, not a dashboard-only balance.</p>
+        <h2>Public files</h2>
       </div>
       <div className="artifact-links">
         {files
@@ -1672,14 +1795,13 @@ function CyclePage({
       </p>
       <section className="cycle-hero">
         <div>
-          <p className="eyebrow">{lifecycle.replaceAll("-", " ")}</p>
           <h1>
             {project.name} · {cycleId}
           </h1>
           <p>
-            {formatDate(from)} through {formatDate(to)}. Projections can change
-            until the reviewed allocation is approved; paid means finalized
-            Solana evidence reconciled exactly.
+            {lifecycle.replaceAll("-", " ")} · {formatDate(from)}–
+            {formatDate(to)}. Paid means finalized Solana evidence reconciled
+            exactly.
           </p>
         </div>
         <div className="cycle-number">
@@ -1694,30 +1816,24 @@ function CyclePage({
           </span>
         </div>
       </section>
-      <div className="cycle-status-grid">
-        <article>
-          <span>1</span>
+      <ol className="cycle-status-grid" aria-label="Cycle progress">
+        <li>
           <strong>Contribution</strong>
-          <p>
-            GitHub events and signed usage are collected for the UTC window.
-          </p>
-        </article>
-        <article>
-          <span>2</span>
-          <strong>14-day review</strong>
-          <p>Maintainers can hold or reduce rows with a public reason.</p>
-        </article>
-        <article>
-          <span>3</span>
+          <p>Accepted GitHub work and private traces are collected.</p>
+        </li>
+        <li>
+          <strong>Review</strong>
+          <p>Owners may set every allocation and total payout.</p>
+        </li>
+        <li>
           <strong>Approval</strong>
-          <p>Wallet-linked allocations freeze into immutable payout intents.</p>
-        </article>
-        <article>
-          <span>4</span>
+          <p>Wallet-linked amounts become immutable payout intents.</p>
+        </li>
+        <li>
           <strong>Settlement</strong>
-          <p>Finalized Solana transaction signatures reconcile each intent.</p>
-        </article>
-      </div>
+          <p>The 1% fee applies when the approved principal is paid.</p>
+        </li>
+      </ol>
       {view ? (
         <ProjectLeaderboard
           updatedAt={state.snapshot.generatedAt}
@@ -1763,10 +1879,277 @@ function monthlyPoolValue(value: string): {
   };
 }
 
+function exactUsdc(value: string): string | null {
+  if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,6})?$/u.test(value)) return null;
+  const [whole, fraction = ""] = value.split(".");
+  return (
+    BigInt(whole) * 1_000_000n +
+    BigInt(fraction.padEnd(6, "0"))
+  ).toString();
+}
+
+function microUsdcInput(value: string): string {
+  const minor = BigInt(value);
+  const whole = minor / 1_000_000n;
+  const fraction = (minor % 1_000_000n).toString().padStart(6, "0");
+  return fraction === "000000"
+    ? whole.toString()
+    : `${whole}.${fraction.replace(/0+$/u, "")}`;
+}
+
+interface AllocationDraftRow {
+  login: string;
+  suggestedMinor: string;
+  amount: string;
+  reason: string;
+}
+
+function ProjectManagePage({
+  project,
+  state,
+}: {
+  project: ProjectDefinition;
+  state: Extract<DataState, { status: "ready" }>;
+}) {
+  const view = state.views.find(
+    (candidate) => candidate.project.id === project.id,
+  );
+  const latestRecord = state.cycleIndex.cycles
+    .filter((cycle) => cycle.projectId === project.id)
+    .sort((left, right) => right.cycleId.localeCompare(left.cycleId))[0];
+  const sourceRows: AllocationDraftRow[] = latestRecord
+    ? latestRecord.contributors.map((contributor) => ({
+        login: contributor.actor.login,
+        suggestedMinor: contributor.suggestedMinor,
+        amount: microUsdcInput(contributor.approvedMinor),
+        reason: "",
+      }))
+    : (view?.leaders ?? []).map((leader) => ({
+        login: leader.actor.login,
+        suggestedMinor: leader.projectedMinor ?? "0",
+        amount: microUsdcInput(leader.projectedMinor ?? "0"),
+        reason: "",
+      }));
+  const [headline, setHeadline] = useState(project.headline);
+  const [goal, setGoal] = useState(project.description);
+  const [criteria, setCriteria] = useState(
+    "Describe exactly what must be accepted on GitHub to qualify.",
+  );
+  const [rows, setRows] = useState(sourceRows);
+  const initialTotal = sourceRows.reduce(
+    (total, row) => total + BigInt(exactUsdc(row.amount) ?? "0"),
+    0n,
+  );
+  const [total, setTotal] = useState(microUsdcInput(initialTotal.toString()));
+  const [copied, setCopied] = useState<"allocation" | "project" | null>(null);
+  const parsedRows = rows.map((row) => ({
+    ...row,
+    approvedMinor: exactUsdc(row.amount),
+  }));
+  const parsedTotal = exactUsdc(total);
+  const allocated = parsedRows.reduce(
+    (sum, row) => sum + BigInt(row.approvedMinor ?? "0"),
+    0n,
+  );
+  const changedRowsHaveReasons = parsedRows.every(
+    (row) =>
+      row.approvedMinor === null ||
+      row.approvedMinor === row.suggestedMinor ||
+      row.reason.trim().length > 0,
+  );
+  const validAllocation =
+    parsedTotal !== null &&
+    parsedRows.every((row) => row.approvedMinor !== null) &&
+    allocated === BigInt(parsedTotal) &&
+    changedRowsHaveReasons;
+  const feeMinor = feeForPrincipal(parsedTotal ?? "0", 100);
+  const cycleId = latestRecord?.cycleId ?? view?.cycle.id ?? "next-cycle";
+  const allocationDraft = JSON.stringify(
+    {
+      projectId: project.id,
+      cycleId,
+      approvedPrincipalMinor: parsedTotal ?? "invalid",
+      feeBasisPoints: 100,
+      feeMinor,
+      allocations: parsedRows.map((row) => ({
+        login: row.login,
+        suggestedMinor: row.suggestedMinor,
+        approvedMinor: row.approvedMinor ?? "invalid",
+        reason: row.reason.trim() || null,
+      })),
+    },
+    null,
+    2,
+  );
+  const projectBrief = `Update ${project.id} through a reviewed Slop PR.\n\nHeadline: ${headline}\nGoal: ${goal}\nAcceptance criteria: ${criteria}\n\nKeep the project manifest, contributor skill, reviewer skill, goals, and criteria synchronized. Any model may contribute, but every run must publish its exact provider, model, and client. Every run must upload a permanent trace whose contents are restricted to Slop operators.`;
+  const copy = async (kind: "allocation" | "project", value: string) => {
+    await navigator.clipboard.writeText(value);
+    setCopied(kind);
+  };
+  return (
+    <main className="shell route-main manage-page">
+      <p className="breadcrumb">
+        <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+        <span>/</span>Manage
+      </p>
+      <div className="manage-intro">
+        <h1>Run {project.name}.</h1>
+        <p>
+          Draft changes here. GitHub review remains the publishing boundary.
+        </p>
+      </div>
+
+      <section className="owner-section">
+        <h2>Project</h2>
+        <div className="owner-form">
+          <label>
+            Headline
+            <input
+              value={headline}
+              onChange={(event) => setHeadline(event.target.value)}
+            />
+          </label>
+          <label>
+            Goal
+            <textarea
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+            />
+          </label>
+          <label>
+            Acceptance criteria
+            <textarea
+              value={criteria}
+              onChange={(event) => setCriteria(event.target.value)}
+            />
+          </label>
+          <button
+            className="text-button"
+            onClick={() => void copy("project", projectBrief)}
+            type="button"
+          >
+            {copied === "project" ? "Copied" : "Copy project update"}
+          </button>
+        </div>
+      </section>
+
+      <section className="owner-section allocation-editor">
+        <h2>{cycleId} payout</h2>
+        <p>
+          Set any nonnegative amount, including zero. Changed amounts need a
+          public reason. The 1% fee is charged only when principal is paid.
+        </p>
+        <label className="total-field">
+          Total payout, USDC
+          <input
+            inputMode="decimal"
+            min="0"
+            step="0.000001"
+            type="number"
+            value={total}
+            onChange={(event) => setTotal(event.target.value)}
+          />
+        </label>
+        {rows.length === 0 ? (
+          <EmptyState text="No contributors are available for this cycle." />
+        ) : (
+          <div className="allocation-rows">
+            {rows.map((row, index) => (
+              <fieldset key={row.login}>
+                <legend>{row.login}</legend>
+                <label>
+                  Amount, USDC
+                  <input
+                    aria-label={`${row.login} amount in USDC`}
+                    inputMode="decimal"
+                    min="0"
+                    step="0.000001"
+                    type="number"
+                    value={row.amount}
+                    onChange={(event) =>
+                      setRows((current) =>
+                        current.map((candidate, rowIndex) =>
+                          rowIndex === index
+                            ? { ...candidate, amount: event.target.value }
+                            : candidate,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  Reason
+                  <input
+                    aria-label={`${row.login} reason`}
+                    value={row.reason}
+                    onChange={(event) =>
+                      setRows((current) =>
+                        current.map((candidate, rowIndex) =>
+                          rowIndex === index
+                            ? { ...candidate, reason: event.target.value }
+                            : candidate,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+              </fieldset>
+            ))}
+          </div>
+        )}
+        <div className="payout-totals" aria-live="polite">
+          <span>{formatMicroUsdc(allocated.toString())} allocated</span>
+          <span>{formatMicroUsdc(feeMinor)} fee</span>
+          <strong>
+            {formatMicroUsdc(
+              (BigInt(parsedTotal ?? "0") + BigInt(feeMinor)).toString(),
+            )}{" "}
+            total debit
+          </strong>
+        </div>
+        {!validAllocation && rows.length > 0 ? (
+          <p className="form-error" role="alert">
+            Allocations must equal the total. Add a reason for every changed
+            amount.
+          </p>
+        ) : null}
+        <button
+          className="button primary-button"
+          disabled={!validAllocation || rows.length === 0}
+          onClick={() => void copy("allocation", allocationDraft)}
+          type="button"
+        >
+          {copied === "allocation"
+            ? "Allocation copied"
+            : "Copy allocation draft"}
+        </button>
+        <div className="payout-action">
+          {latestRecord?.files.executionPlan ? (
+            <ExternalLinkAnchor href={latestRecord.files.executionPlan.url}>
+              View unsigned plan <ExternalLink aria-hidden="true" size={14} />
+            </ExternalLinkAnchor>
+          ) : (
+            <span>Generate an immutable unsigned plan before signing.</span>
+          )}
+          <button className="button" disabled type="button">
+            Sign payout unavailable
+          </button>
+          <p>
+            This static client cannot connect a wallet safely. A cycle remains
+            unpaid until finalized USDC deltas pass settlement verification.
+          </p>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function ProjectProposalPage() {
   const [name, setName] = useState("");
   const [repository, setRepository] = useState("");
   const [headline, setHeadline] = useState("");
+  const [goal, setGoal] = useState("");
+  const [criteria, setCriteria] = useState("");
   const [monthlyPool, setMonthlyPool] = useState("0");
   const [integrationBranch, setIntegrationBranch] = useState("main");
   const [copied, setCopied] = useState(false);
@@ -1781,8 +2164,7 @@ function ProjectProposalPage() {
       name: name || "New project",
       eyebrow: "Open-source project",
       headline: headline || "Make money solving something hard.",
-      description:
-        "Describe the concrete open-source goal and what accepted progress means.",
+      description: goal || "Describe the concrete open-source goal.",
       status: "active",
       repositories: [
         {
@@ -1818,15 +2200,8 @@ function ProjectProposalPage() {
         fundingState: "pledged",
       },
       modelPolicy: {
-        mode: "frontier-only",
-        approved: [
-          { client: "codex", provider: "openai", model: "gpt-5.6-sol" },
-          {
-            client: "claude-code",
-            provider: "anthropic",
-            model: "claude-fable-5",
-          },
-        ],
+        mode: "open",
+        disclosureRequired: true,
       },
       links: {
         repository: `https://github.com/${repository || "owner/repository"}`,
@@ -1834,6 +2209,7 @@ function ProjectProposalPage() {
       },
     }),
     [
+      goal,
       headline,
       integrationBranch,
       name,
@@ -1844,7 +2220,7 @@ function ProjectProposalPage() {
     ],
   );
   const manifestText = JSON.stringify(manifest, null, 2);
-  const agentBrief = `In a fork of elizaOS/slopdotcash, add the Slop project "${name || "New project"}" for the public repository ${repository || "owner/repository"}. Read AGENTS.md, README.md, projects/eliza/project.json, skills/contribute-to-eliza, and skills/review-eliza-contributions before editing. Add projects/${slug}/project.json using the manifest below, a project-specific contributor skill with authenticated atomic update and signed ccusage receipt, a separate adversarial CI reviewer skill, and focused tests. Adapt the mission and repository instructions; do not copy Eliza-specific work criteria. Run projects:check, evaluations:check, every skill validator, typecheck, tests, build, and browser checks. Never add credentials, private keys, raw prompts, or autonomous payout/ban authority.\n\n${manifestText}`;
+  const agentBrief = `In a fork of elizaOS/slopdotcash, add the Slop project "${name || "New project"}" for the public repository ${repository || "owner/repository"}. Read AGENTS.md, README.md, projects/eliza/project.json, skills/contribute-to-eliza, and skills/review-eliza-contributions before editing. Add projects/${slug}/project.json using the manifest below, a project-specific contributor skill with authenticated atomic update and signed usage receipt, a separate adversarial CI reviewer skill, and focused tests. Acceptance criteria: ${criteria || "define exact accepted outcomes with the creator"}. Allow every model and require exact provider, model, and client disclosure. Require every run to upload a permanent trace whose contents are restricted to Slop operators. Adapt the mission and repository instructions; do not copy Eliza-specific work criteria. Run projects:check, evaluations:check, every skill validator, typecheck, tests, build, and browser checks. Never add credentials, private keys, raw prompts, or autonomous payout/ban authority.\n\n${manifestText}`;
   const githubUrl = `${PROJECT_PROPOSAL_ROOT}?filename=${encodeURIComponent(`projects/${slug}/project.json`)}&value=${encodeURIComponent(`${manifestText}\n`)}`;
   const valid =
     /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) &&
@@ -1853,6 +2229,8 @@ function ProjectProposalPage() {
     ) &&
     name.trim().length > 1 &&
     headline.trim().length > 5 &&
+    goal.trim().length > 5 &&
+    criteria.trim().length > 5 &&
     pool.valid;
   return (
     <main className="shell route-main proposal-page">
@@ -1861,14 +2239,8 @@ function ProjectProposalPage() {
         <span>/</span>Add a project
       </p>
       <section className="proposal-intro">
-        <p className="eyebrow">GitHub-native creation</p>
-        <h1>Put money behind an open problem.</h1>
-        <p>
-          No creator account or private dashboard. Generate the public manifest,
-          add contributor and reviewer skills in a fork, and submit one PR. New
-          projects pass automated safety checks and maintainer review before
-          listing.
-        </p>
+        <h1>Add a project.</h1>
+        <p>Define the work and funding. GitHub review publishes it.</p>
       </section>
       <div className="proposal-grid">
         <form>
@@ -1909,6 +2281,24 @@ function ProjectProposalPage() {
             />
           </label>
           <label>
+            Goal
+            <textarea
+              onChange={(event) => setGoal(event.target.value)}
+              placeholder="What should this project achieve?"
+              required
+              value={goal}
+            />
+          </label>
+          <label>
+            Acceptance criteria
+            <textarea
+              onChange={(event) => setCriteria(event.target.value)}
+              placeholder="What accepted GitHub outcomes qualify?"
+              required
+              value={criteria}
+            />
+          </label>
+          <label>
             Maximum monthly pool, digital dollars
             <input
               inputMode="decimal"
@@ -1922,17 +2312,8 @@ function ProjectProposalPage() {
           </label>
           <div className="proposal-rules">
             <p>
-              <Check aria-hidden="true" /> Public repository only
-            </p>
-            <p>
-              <Check aria-hidden="true" /> 1% platform fee on settled principal
-            </p>
-            <p>
-              <Check aria-hidden="true" /> 14-day review before approval
-            </p>
-            <p>
-              <Check aria-hidden="true" /> Project skill plus separate CI review
-              skill
+              Public repository · any model · permanent private traces · 1% fee
+              when payouts settle
             </p>
           </div>
           {valid ? (
@@ -1948,6 +2329,17 @@ function ProjectProposalPage() {
               Continue on GitHub <ArrowRight aria-hidden="true" />
             </button>
           )}
+          <button
+            className="text-button"
+            onClick={() =>
+              void navigator.clipboard
+                .writeText(agentBrief)
+                .then(() => setBriefCopied(true))
+            }
+            type="button"
+          >
+            {briefCopied ? "Brief copied" : "Copy agent brief"}
+          </button>
         </form>
         <div className="manifest-preview">
           <div>
@@ -1972,65 +2364,6 @@ function ProjectProposalPage() {
           />
         </div>
       </div>
-      <section className="proposal-checklist">
-        <h2>What the PR must include.</h2>
-        <div>
-          <article>
-            <span>01</span>
-            <h3>Project manifest</h3>
-            <p>
-              Goal, public repositories, reward type, monthly cap, links, and
-              model policy.
-            </p>
-          </article>
-          <article>
-            <span>02</span>
-            <h3>Contributor skill</h3>
-            <p>
-              One-command setup, precise work loop, repository rules, evidence,
-              and run receipt.
-            </p>
-          </article>
-          <article>
-            <span>03</span>
-            <h3>Review skill</h3>
-            <p>
-              CI evaluator rubric, adversarial checks, duplicate detection, and
-              score evidence.
-            </p>
-          </article>
-          <article>
-            <span>04</span>
-            <h3>Funding status</h3>
-            <p>
-              V1 labels creator pools as pledges. Only a later verifiable escrow
-              path may use the committed label.
-            </p>
-          </article>
-        </div>
-      </section>
-      <section className="agent-handoff">
-        <div>
-          <p className="eyebrow">Agent-native setup</p>
-          <h2>Let an agent build the project PR.</h2>
-          <p>
-            The brief points at the live repository contracts, supplies this
-            manifest, and keeps the project-specific judgment with you.
-          </p>
-        </div>
-        <button
-          className="button primary-button"
-          onClick={() =>
-            void navigator.clipboard
-              .writeText(agentBrief)
-              .then(() => setBriefCopied(true))
-          }
-          type="button"
-        >
-          {briefCopied ? <Check /> : <Clipboard />}{" "}
-          {briefCopied ? "Brief copied" : "Copy agent brief"}
-        </button>
-      </section>
     </main>
   );
 }
@@ -2038,7 +2371,6 @@ function ProjectProposalPage() {
 function NotFound({ title = "Page not found" }: { title?: string }) {
   return (
     <main className="shell not-found">
-      <p className="eyebrow">404</p>
       <h1>{title}</h1>
       <Link className="button primary-button" href="/">
         See open projects <ArrowRight aria-hidden="true" />
@@ -2053,7 +2385,20 @@ export function App() {
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
-  else if (route.kind === "project") {
+  else if (route.kind === "manage-project") {
+    const project = findProject(route.projectId ?? "");
+    content = project ? (
+      state.status === "ready" ? (
+        <ProjectManagePage project={project} state={state} />
+      ) : (
+        <main className="shell route-main">
+          <DataNotice retry={retry} state={state} />
+        </main>
+      )
+    ) : (
+      <NotFound title="Project not found" />
+    );
+  } else if (route.kind === "project") {
     const project = findProject(route.projectId ?? "");
     content = project ? (
       <ProjectPage project={project} retry={retry} state={state} />
