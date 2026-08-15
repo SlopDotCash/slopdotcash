@@ -493,13 +493,13 @@ describe("public records", () => {
     ).toBeInTheDocument();
     const totals = document.querySelector(".profile-totals");
     expect(totals).not.toBeNull();
-    expect(totals).toHaveTextContent("34recorded score");
+    expect(totals).toHaveTextContent("34all-time score");
     expect(
       screen.getByText("Harden the proximity manifest loader"),
     ).toBeVisible();
   });
 
-  it("shows a contributor's cross-project score, tokens, projections, and evidence", async () => {
+  it("shows a contributor's cross-project score, estimate, and accepted work", async () => {
     route("/contributors/finish-line");
     mockSnapshot();
     render(<App />);
@@ -524,8 +524,14 @@ describe("public records", () => {
         "Add verified screenshot, video, or log evidence before merge.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getAllByText(/2026-07 scoring ·/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/2026-07 scoring ·/)).toHaveLength(0);
     expect(screen.getByText(/\+6 if it verifies/)).toBeInTheDocument();
+    expect(screen.getByText("all-time score")).toBeInTheDocument();
+    expect(screen.getByText("monthly estimate")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Progress" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/retained permanently/u)).not.toBeInTheDocument();
   });
 
   it("shows opportunity-only contributors that have still-open guidance", async () => {
@@ -669,7 +675,7 @@ describe("public records", () => {
     render(<App />);
 
     const wallet = await screen.findByRole("link", {
-      name: /GitHub wallet claim · 11111111111111111111111111111111/i,
+      name: /Wallet · 11111111111111111111111111111111/i,
     });
     expect(wallet).toHaveAttribute("href", expect.stringContaining("/blob/"));
   });

@@ -43,7 +43,6 @@ import {
 } from "./lib/project-schema.mjs";
 import {
   createProjectView,
-  formatCapUsageLine,
   type ProjectContributor,
   type ProjectView,
   projectCycleHasOpened,
@@ -62,6 +61,7 @@ const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
 const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
+const PROFILE_EVENT_PREVIEW_LIMIT = 10;
 
 export function publicFooterDomain(
   hostname: string,
@@ -1202,58 +1202,6 @@ function ProjectPage({
   );
 }
 
-function ContributorProgress({
-  accepted,
-  paidMinor,
-  wallet,
-}: {
-  accepted: number;
-  paidMinor: bigint;
-  wallet: CycleIndexEntry["contributors"][number]["wallet"] | undefined;
-}) {
-  const walletSource = wallet
-    ? "sourceIssueId" in wallet
-      ? "GitHub wallet claim recorded"
-      : "sourceClaimId" in wallet
-        ? "Recovered wallet claim recorded"
-        : "GitHub profile claim recorded"
-    : "No public claim; database recovery can restore a prior claim";
-  return (
-    <section className="section contributor-progress">
-      <h2>Progress</h2>
-      <ol>
-        <li>
-          <strong>Work</strong>
-          <span>
-            {accepted > 0
-              ? `${accepted} accepted outcome${accepted === 1 ? "" : "s"}`
-              : "No accepted outcome yet"}
-          </span>
-        </li>
-        <li>
-          <strong>Trace</strong>
-          <span>
-            Required for every agent run, retained permanently, and visible only
-            to Slop operators
-          </span>
-        </li>
-        <li>
-          <strong>Wallet</strong>
-          <span>{walletSource}</span>
-        </li>
-        <li>
-          <strong>Payment</strong>
-          <span>
-            {paidMinor > 0n
-              ? `${formatMicroUsdc(paidMinor.toString())} paid`
-              : "Nothing paid yet"}
-          </span>
-        </li>
-      </ol>
-    </section>
-  );
-}
-
 function ProfilePage({
   login,
   state,
@@ -1292,11 +1240,16 @@ function ProfilePage({
       )
       .map((opportunity) => ({ opportunity, project: view.project })),
   );
-  const globalLeader = createGlobalLeaders(
+  const globalLeaders = createGlobalLeaders(
     state.snapshot,
     state.views,
     state.cycleIndex,
-  ).find((leader) => leader.actor.login.toLowerCase() === login.toLowerCase());
+  );
+  const globalRank = globalLeaders.findIndex(
+    (leader) => leader.actor.login.toLowerCase() === login.toLowerCase(),
+  );
+  const globalLeader =
+    globalRank === -1 ? undefined : globalLeaders[globalRank];
   if (
     matches.length === 0 &&
     history.length === 0 &&
@@ -1349,60 +1302,59 @@ function ProfilePage({
   );
   const wallet = history.find(({ contributor }) => contributor.wallet)
     ?.contributor.wallet;
+  const featuredEvents = events.slice(0, PROFILE_EVENT_PREVIEW_LIMIT);
+  const remainingEvents = events.slice(PROFILE_EVENT_PREVIEW_LIMIT);
   return (
     <main className="shell route-main profile-page">
       <DataNotice state={state} retry={retry} />
       <p className="breadcrumb">
-        <Link href="/">Leaderboard</Link>
-        <span>/</span>
-        {actor.login}
+        <Link href="/">Back to leaderboard</Link>
       </p>
       <section className="profile-hero">
         <Avatar actor={actor} size="large" />
-        <div>
+        <div className="profile-identity">
           <h1>{actor.login}</h1>
           <div className="profile-links">
             <ExternalLinkAnchor href={actor.url}>
-              GitHub profile <ExternalLink aria-hidden="true" size={15} />
+              GitHub <ExternalLink aria-hidden="true" size={15} />
             </ExternalLinkAnchor>
             {wallet ? (
               <ExternalLinkAnchor href={wallet.sourceUrl}>
-                GitHub wallet claim · {wallet.address}{" "}
+                Wallet · {wallet.address}{" "}
                 <ExternalLink aria-hidden="true" size={15} />
               </ExternalLinkAnchor>
             ) : (
-              <span>
-                Wallet not claimed on GitHub · database recovery available
-              </span>
+              <span>Wallet not linked</span>
             )}
           </div>
         </div>
       </section>
       <div className="profile-totals">
+        {globalRank >= 0 ? (
+          <div>
+            <strong>#{globalRank + 1}</strong>
+            <span>overall rank</span>
+          </div>
+        ) : null}
         <div>
           <strong>{score}</strong>
-          <span>recorded score</span>
+          <span>all-time score</span>
         </div>
         <div>
           <strong>{formatCompact(acceptedOutcomes)}</strong>
-          <span>current accepted outcomes</span>
+          <span>accepted this month</span>
         </div>
         <div>
           <strong>{formatMicroUsdc(projected.toString())}</strong>
-          <span>current simulated share</span>
+          <span>monthly estimate</span>
         </div>
         <div>
           <strong>{formatMicroUsdc(paid.toString())}</strong>
-          <span>total paid</span>
+          <span>paid</span>
         </div>
       </div>
-      <ContributorProgress
-        accepted={acceptedOutcomes}
-        paidMinor={paid}
-        wallet={wallet}
-      />
-      <section className="section">
-        <div className="section-heading">
+      <section className="section profile-section">
+        <div className="profile-section-heading">
           <h2>Projects</h2>
         </div>
         <div className="profile-projects">
@@ -1410,29 +1362,25 @@ function ProfilePage({
             <EmptyState text="No accepted project score in the current cycles yet." />
           ) : (
             matches.map(({ leader, view }) => {
-              const capLine = formatCapUsageLine(leader.capUsage);
               return (
                 <div className="profile-project-block" key={view.project.id}>
                   <Link href={`/projects/${view.project.slug}`}>
-                    <span>
+                    <span className="profile-project-name">
                       <strong>{view.project.name}</strong>
                       <small>{view.cycle.id}</small>
                     </span>
-                    <span>
+                    <span className="profile-project-stat">
                       <strong>{leader.score} score</strong>
                       <small>
                         {leader.acceptedOutcomeCount} accepted outcome
                         {leader.acceptedOutcomeCount === 1 ? "" : "s"}
                       </small>
                     </span>
-                    <span>
+                    <span className="profile-project-stat">
                       <RewardValue leader={leader} />
                     </span>
                     <ChevronRight aria-hidden="true" />
                   </Link>
-                  {capLine ? (
-                    <p className="profile-cap-line">{capLine}</p>
-                  ) : null}
                 </div>
               );
             })
@@ -1440,18 +1388,18 @@ function ProfilePage({
         </div>
       </section>
       {opportunities.length > 0 ? (
-        <section className="section">
-          <div className="section-heading">
+        <section className="section profile-section">
+          <div className="profile-section-heading">
             <h2>Open work</h2>
-            <p>These actions can still change the score if they qualify.</p>
+            <span>{opportunities.length} available</span>
           </div>
           <OpportunityList opportunities={opportunities} />
         </section>
       ) : null}
       {history.length > 0 ? (
-        <section className="section">
-          <div className="section-heading">
-            <h2>Rewards</h2>
+        <section className="section profile-section">
+          <div className="profile-section-heading">
+            <h2>Past cycles</h2>
           </div>
           <div className="profile-projects">
             {history.map(({ contributor, cycle }) => (
@@ -1481,11 +1429,20 @@ function ProfilePage({
           </div>
         </section>
       ) : null}
-      <section className="section">
-        <div className="section-heading">
+      <section className="section profile-section">
+        <div className="profile-section-heading">
           <h2>Accepted work</h2>
+          <span>
+            {events.length} recent record{events.length === 1 ? "" : "s"}
+          </span>
         </div>
-        <EventList events={events} />
+        <EventList events={featuredEvents} />
+        {remainingEvents.length > 0 ? (
+          <details className="profile-work-more">
+            <summary>View all {events.length} records</summary>
+            <EventList events={remainingEvents} />
+          </details>
+        ) : null}
       </section>
     </main>
   );
@@ -1537,8 +1494,7 @@ function EventList({
 }: {
   events: Array<{ event: ScoreEvent; project: ProjectDefinition }>;
 }) {
-  if (events.length === 0)
-    return <EmptyState text="No accepted evidence is available." />;
+  if (events.length === 0) return <EmptyState text="No accepted work yet." />;
   return (
     <div className="event-list">
       {events.map(({ event, project }) => (
