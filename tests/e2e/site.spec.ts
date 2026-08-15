@@ -134,7 +134,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     deltaCard.getByText("external prize", { exact: true }),
   ).toBeVisible();
   await expect(
-    deltaCard.getByText(/Advance ArkLib's machine-checked/u),
+    deltaCard.getByText(/Advance machine-checked Reed–Solomon/u),
   ).toBeVisible();
   const [gridBox, elizaBox, deltaBox] = await Promise.all([
     page.locator(".project-grid").boundingBox(),
