@@ -614,6 +614,14 @@ describe("public records", () => {
         hint: "Finish verified evidence categories before merge.",
       },
     ];
+    snapshot.workQueue.pullRequests[0] = {
+      ...snapshot.workQueue.pullRequests[0],
+      id: "PR_open_only",
+      number: 17399,
+      title: "Open-only checklist",
+      url: "https://github.com/elizaOS/eliza/pull/17399",
+      author: openOnly,
+    };
     mockSnapshot(snapshot);
     render(<App />);
 
@@ -677,6 +685,20 @@ describe("public records", () => {
         hint: "Add verified screenshot, video, or log evidence before merge.",
       };
     });
+    crowded.workQueue.pullRequests = crowded.opportunities.map(
+      (opportunity) => ({
+        ...crowded.workQueue.pullRequests[0],
+        id: opportunity.source.id,
+        number: opportunity.source.number,
+        title: opportunity.source.title,
+        url: opportunity.source.url,
+      }),
+    );
+    crowded.workQueue.pullRequests.sort(
+      (left, right) => right.number - left.number,
+    );
+    crowded.source.counts.openPullRequests =
+      crowded.workQueue.pullRequests.length;
     mockSnapshot(crowded);
     render(<App />);
 

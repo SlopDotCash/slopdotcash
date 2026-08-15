@@ -38,7 +38,20 @@ export interface GithubIssueWalletProof {
   sourceUrl: string;
 }
 
-export type WalletProof = ProfileReadmeWalletProof | GithubIssueWalletProof;
+export interface SlopDatabaseWalletProof {
+  address: string;
+  chain: "solana";
+  observedAt: string;
+  sourceActorId: string;
+  sourceClaimId: string;
+  sourceRecordSha256: string;
+  sourceUrl: string;
+}
+
+export type WalletProof =
+  | ProfileReadmeWalletProof
+  | GithubIssueWalletProof
+  | SlopDatabaseWalletProof;
 
 export interface RewardAllocation {
   intentId: string;
@@ -300,6 +313,61 @@ function assertWallet(
       sourceUrl,
     };
   }
+  if ("sourceClaimId" in wallet) {
+    exactKeys(
+      wallet,
+      [
+        "address",
+        "chain",
+        "observedAt",
+        "sourceActorId",
+        "sourceClaimId",
+        "sourceRecordSha256",
+        "sourceUrl",
+      ],
+      path,
+    );
+    const sourceActorId = text(wallet.sourceActorId, `${path}.sourceActorId`, {
+      max: 128,
+    });
+    if (sourceActorId !== actor.id) {
+      throw new TypeError(
+        `${path}.sourceActorId does not match the contributor`,
+      );
+    }
+    const sourceClaimId = text(wallet.sourceClaimId, `${path}.sourceClaimId`, {
+      max: 128,
+      pattern: /^[A-Za-z0-9_-]+$/u,
+    });
+    const sourceRecordSha256 = text(
+      wallet.sourceRecordSha256,
+      `${path}.sourceRecordSha256`,
+      { pattern: /^[0-9a-f]{64}$/u },
+    );
+    if (
+      parsedUrl.protocol !== "https:" ||
+      parsedUrl.hostname !== "api.slop.cash" ||
+      parsedUrl.pathname !== `/api/v1/wallet-claims/${sourceClaimId}` ||
+      parsedUrl.search ||
+      parsedUrl.hash ||
+      parsedUrl.username ||
+      parsedUrl.password ||
+      parsedUrl.port
+    ) {
+      throw new TypeError(
+        `${path}.sourceUrl is not a canonical Slop wallet claim`,
+      );
+    }
+    return {
+      address: wallet.address,
+      chain: "solana",
+      observedAt: iso(wallet.observedAt, `${path}.observedAt`),
+      sourceActorId,
+      sourceClaimId,
+      sourceRecordSha256,
+      sourceUrl,
+    };
+  }
   exactKeys(
     wallet,
     [
@@ -397,9 +465,6 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
     allocation.approvedMinor,
     `${path}.approvedMinor`,
   );
-  if (BigInt(approvedMinor) > BigInt(suggestedMinor)) {
-    throw new TypeError(`${path}.approvedMinor exceeds the suggested amount`);
-  }
   const adjustmentReason =
     allocation.adjustmentReason === null
       ? null
@@ -410,10 +475,10 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
   if (
     state !== "proposed" &&
     state !== "unclaimed" &&
-    BigInt(approvedMinor) < BigInt(suggestedMinor) &&
+    approvedMinor !== suggestedMinor &&
     !adjustmentReason
   ) {
-    throw new TypeError(`${path} reduction requires an adjustment reason`);
+    throw new TypeError(`${path} adjustment requires an adjustment reason`);
   }
   if (typeof allocation.relatedParty !== "boolean") {
     throw new TypeError(`${path}.relatedParty must be boolean`);

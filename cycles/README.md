@@ -14,15 +14,18 @@ roll forward without raising the next cap. Existing complete cycles are left
 untouched; a directory containing only one required file is refused as partial.
 
 For a platform-funded monthly pool, the creator edits `proposal.json` during
-the 14-day review. Reductions require a reason; wallet changes update
-`review.lastMaterialChangeAt` and reset `review.endsAt`. The normal progression
-then adds, without replacing earlier files:
+the 14-day review. The creator may set any contributor amount, including zero,
+or raise it above the deterministic suggestion while the cycle total remains
+within the published cap. Every changed amount records a public reason. Wallet
+changes update `review.lastMaterialChangeAt` and reset `review.endsAt`. The
+normal progression then adds, without replacing earlier files:
 
 - `allocation.json` — reviewed and approved payout intents;
 - `execution-plan.json` — an unsigned, exact Solana USDC transfer plan;
 - `transactions.json` — submitted public transaction signatures;
 - `settlement.json` — generated only after finalized on-chain balance changes
-  reconcile every contributor transfer and the 1% platform fee.
+  reconcile every contributor transfer and the 1% platform fee charged when
+  the approved payout is paid.
 
 Delta Star uses only `source-snapshot.json` and `proposal.json`; it publishes a
 provisional contribution percentage and never represents the external prize as

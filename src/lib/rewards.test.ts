@@ -50,7 +50,7 @@ function allocationManifest() {
         state: "approved",
         wallet: { ...wallet },
         evidenceEventIds: ["event_1"],
-        adjustmentReason: null,
+        adjustmentReason: null as string | null,
         relatedParty: false,
         platformApproval: null,
       },
@@ -94,6 +94,24 @@ describe("reward manifests", () => {
     );
   });
 
+  it("allows an owner to raise an individual award within the cycle cap", () => {
+    const increased = allocationManifest();
+    increased.allocations[0].suggestedMinor = "500000";
+    increased.allocations[0].approvedMinor = "1500000";
+    increased.allocations[0].adjustmentReason =
+      "Project owner increased the award after reviewing the accepted result.";
+    increased.totals.suggestedMinor = "500000";
+    increased.totals.approvedMinor = "1500000";
+    increased.totals.feeMinor = "15000";
+
+    const manifest = assertRewardAllocationManifest(increased);
+    expect(manifest.allocations[0].approvedMinor).toBe("1500000");
+    expect(manifest.totals.feeMinor).toBe("15000");
+
+    increased.allocations[0].adjustmentReason = null;
+    expect(() => assertRewardAllocationManifest(increased)).toThrow(/reason/u);
+  });
+
   it("requires independent approval for owner payments", () => {
     const manifest = allocationManifest();
     manifest.allocations[0].relatedParty = true;
@@ -131,6 +149,30 @@ describe("reward manifests", () => {
       sourceIssueNumber: 42,
       sourceUpdatedAt: "2026-08-09T00:00:00.000Z",
       sourceUrl: "https://github.com/elizaOS/slopdotcash/issues/42",
+    };
+    expect(() => assertRewardAllocationManifest(manifest)).not.toThrow();
+
+    const forged = structuredClone(manifest) as {
+      allocations: Array<{ wallet: { sourceActorId: string } }>;
+    };
+    forged.allocations[0].wallet.sourceActorId = "U_attacker";
+    expect(() => assertRewardAllocationManifest(forged)).toThrow(
+      /does not match the contributor/u,
+    );
+  });
+
+  it("accepts an immutable actor-bound Slop database wallet fallback", () => {
+    const manifest = allocationManifest() as unknown as {
+      allocations: Array<{ wallet: unknown }>;
+    };
+    manifest.allocations[0].wallet = {
+      address: wallet.address,
+      chain: "solana",
+      observedAt: wallet.observedAt,
+      sourceActorId: "U_1",
+      sourceClaimId: "wc_fixture_01",
+      sourceRecordSha256: "c".repeat(64),
+      sourceUrl: "https://api.slop.cash/api/v1/wallet-claims/wc_fixture_01",
     };
     expect(() => assertRewardAllocationManifest(manifest)).not.toThrow();
 

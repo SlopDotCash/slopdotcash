@@ -2148,18 +2148,18 @@ async function collectOpenIssues(
   onProgress: (progress: GenerationProgress) => void,
 ): Promise<IssueRecord[]> {
   for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
-    const before = await collectOpenReferences(
-      client,
-      targetRepository,
-      OPEN_ISSUE_REFERENCES_QUERY,
-      "issues",
-      "Issue",
-    );
-    if (before.repositoryId !== repositoryId) {
-      throw new Error("GitHub returned an inconsistent repository node ID");
-    }
-    assertEstimatedBudget(client, 0, before.references.length);
     try {
+      const before = await collectOpenReferences(
+        client,
+        targetRepository,
+        OPEN_ISSUE_REFERENCES_QUERY,
+        "issues",
+        "Issue",
+      );
+      if (before.repositoryId !== repositoryId) {
+        throw new Error("GitHub returned an inconsistent repository node ID");
+      }
+      assertEstimatedBudget(client, 0, before.references.length);
       return await hydrateIssues(
         client,
         before.references,
@@ -2188,18 +2188,18 @@ async function collectOpenPullRequests(
   onProgress: (progress: GenerationProgress) => void,
 ): Promise<PullRequestRecord[]> {
   for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
-    const before = await collectOpenReferences(
-      client,
-      targetRepository,
-      OPEN_PULL_REQUEST_REFERENCES_QUERY,
-      "pullRequests",
-      "PullRequest",
-    );
-    if (before.repositoryId !== repositoryId) {
-      throw new Error("GitHub returned an inconsistent repository node ID");
-    }
-    assertEstimatedBudget(client, before.references.length, 0);
     try {
+      const before = await collectOpenReferences(
+        client,
+        targetRepository,
+        OPEN_PULL_REQUEST_REFERENCES_QUERY,
+        "pullRequests",
+        "PullRequest",
+      );
+      if (before.repositoryId !== repositoryId) {
+        throw new Error("GitHub returned an inconsistent repository node ID");
+      }
+      assertEstimatedBudget(client, before.references.length, 0);
       return await hydratePullRequests(
         client,
         before.references,
