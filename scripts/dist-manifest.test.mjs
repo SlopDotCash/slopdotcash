@@ -35,6 +35,10 @@ async function fixture() {
     "<!doctype html><title>slop.cash</title>\n",
   );
   await writeFile(
+    join(root, "404.html"),
+    "<!doctype html><title>Not found</title>\n",
+  );
+  await writeFile(
     join(root, "skill-manifest.json"),
     '{"name":"contribute-to-eliza"}\n',
   );
@@ -79,6 +83,7 @@ describe("Cloudflare Pages deployment manifest", () => {
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.files.map((record) => record.path)).toEqual([
       ".well-known/agent-skills/index.json",
+      "404.html",
       "assets/index-test.js",
       "index.html",
       "skill-manifest.json",
@@ -118,7 +123,11 @@ describe("Cloudflare Pages deployment manifest", () => {
       const parsed = new URL(url);
       const publicPath = decodeURIComponent(parsed.pathname);
       const bundlePath =
-        publicPath === "/" ? "index.html" : publicPath.slice(1);
+        publicPath === "/"
+          ? "index.html"
+          : publicPath === "/404"
+            ? "404.html"
+            : publicPath.slice(1);
       requested.push({
         init,
         path: publicPath,
@@ -142,13 +151,19 @@ describe("Cloudflare Pages deployment manifest", () => {
       [
         `/${MANIFEST_FILENAME}`,
         ...manifest.files.map((record) =>
-          record.path === "index.html" ? "/" : `/${record.path}`,
+          record.path === "index.html"
+            ? "/"
+            : record.path.endsWith(".html")
+              ? `/${record.path.slice(0, -".html".length)}`
+              : `/${record.path}`,
         ),
       ].sort(),
     );
     expect(requested.map((request) => request.path)).not.toContain(
       "/index.html",
     );
+    expect(requested.map((request) => request.path)).toContain("/404");
+    expect(requested.map((request) => request.path)).not.toContain("/404.html");
     expect(requested.every((request) => request.token === "release-1-1")).toBe(
       true,
     );
@@ -166,7 +181,8 @@ describe("Cloudflare Pages deployment manifest", () => {
     const root = await fixture();
     await createDistManifest(root);
     const fetchImpl = async (url) => {
-      const path = decodeURIComponent(new URL(url).pathname.slice(1));
+      const publicPath = decodeURIComponent(new URL(url).pathname.slice(1));
+      const path = publicPath === "404" ? "404.html" : publicPath;
       const contents =
         path === "assets/index-test.js"
           ? Buffer.from("tampered")

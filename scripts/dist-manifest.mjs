@@ -308,9 +308,19 @@ function remoteUrl(origin, path, verificationToken, attempt) {
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
-  // Pages canonically serves the entry document at the apex and redirects
-  // /index.html, so its bytes must be checked at the public route.
-  const publicPath = path === "index.html" ? "/" : `/${encodedPath}`;
+  // Cloudflare Pages redirects HTML filenames to its extensionless public
+  // routes. Verify the bytes at the canonical route while continuing to bind
+  // them to the exact file recorded in the local deployment manifest.
+  let publicPath;
+  if (encodedPath === "index.html") {
+    publicPath = "/";
+  } else if (encodedPath.endsWith("/index.html")) {
+    publicPath = `/${encodedPath.slice(0, -"index.html".length)}`;
+  } else if (encodedPath.endsWith(".html")) {
+    publicPath = `/${encodedPath.slice(0, -".html".length)}`;
+  } else {
+    publicPath = `/${encodedPath}`;
+  }
   const url = new URL(publicPath, origin);
   url.searchParams.set("verify", `${verificationToken}-${attempt}`);
   return url;
