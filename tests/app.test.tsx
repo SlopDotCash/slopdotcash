@@ -762,7 +762,7 @@ describe("project proposals", () => {
     expect(
       screen.getByText(/"monthlyCapMinor": "2500000000"/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/"mode": "open"/)).toBeInTheDocument();
+    expect(screen.getByText(/"mode": "open-declared"/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
     await act(async () => Promise.resolve());
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
