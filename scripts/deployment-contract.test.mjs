@@ -92,6 +92,13 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain("wrangler deployments status \\");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/start");
     expect(deployJob).toContain("https://identity.slop.cash/v1/oauth/callback");
+    expect(deployJob).toContain(
+      "Identity start request 13 returned HTTP $limited_status; expected 429.",
+    );
+    expect(deployJob).toContain(
+      "identity exact rate-limit probe did not produce one authoritative bucket",
+    );
+    expect(deployJob).toContain("row?.request_count !== 13");
     expect(deployJob).toContain("https://api.github.com/apps/slop-identity");
     expect(deployJob).toContain(
       "The Slop Identity GitHub App is not publicly discoverable",
@@ -313,20 +320,25 @@ describe("slop.cash deployment contract", () => {
       'name = "IDENTITY_START_LIMITER"',
     );
     expect(identityWranglerConfiguration).toContain('namespace_id = "81001"');
-    expect(identityWranglerConfiguration).toContain("limit = 12");
+    expect(identityWranglerConfiguration).toContain("limit = 60");
     expect(identityWranglerConfiguration).toContain(
       'name = "IDENTITY_POLL_LIMITER"',
     );
     expect(identityWranglerConfiguration).toContain('namespace_id = "81002"');
-    expect(identityWranglerConfiguration).toContain("limit = 120");
+    expect(identityWranglerConfiguration).toContain("limit = 600");
     expect(identityWranglerConfiguration.match(/period = 60/gu)).toHaveLength(
       2,
     );
+    expect(deployJob).toContain("'identity_rate_limits'");
+    expect(deployJob).toContain('"table:identity_rate_limits"');
     expect(identityWranglerConfiguration).toContain("invocation_logs = false");
     expect(identityWranglerConfiguration).not.toContain(
       "invocation_logs = true",
     );
     expect(identityDeploymentGuide).toContain("- Account permissions: none.");
+    expect(identityDeploymentGuide).toContain(
+      "A single atomic D1 statement\nenforces the exact per-client fixed window",
+    );
     expect(
       identityDeploymentGuide.match(
         /randomBytes\(32\)\.toString\("base64url"\)/gu,

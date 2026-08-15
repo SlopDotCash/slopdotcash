@@ -18,7 +18,7 @@ name = "IDENTITY_START_LIMITER"
 namespace_id = "81001"
 
   [ratelimits.simple]
-  limit = 12
+  limit = 60
   period = 60
 
 [[ratelimits]]
@@ -26,7 +26,7 @@ name = "IDENTITY_POLL_LIMITER"
 namespace_id = "81002"
 
   [ratelimits.simple]
-  limit = 120
+  limit = 600
   period = 60
 
 [triggers]
