@@ -563,40 +563,7 @@ jobs:
           process.stdout.write(clientId);
           NODE
           )"
-
-          # Query without GitHub credentials. A private App is visible to this
-          # repository's organization token but returns 404 to contributors,
-          # which makes every external OAuth authorization fail before consent.
-          github_app_response="$RUNNER_TEMP/slop-identity-github-app.json"
-          github_app_status="$(
-            curl --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --output "$github_app_response" \
-              --write-out "%{http_code}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              https://api.github.com/apps/slop-identity
-          )"
-          if [ "$github_app_status" != "200" ]; then
-            echo "::error::The Slop Identity GitHub App is not publicly discoverable (HTTP $github_app_status)."
-            exit 1
-          fi
-          node - "$github_app_response" "$github_client_id" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          const clientId = process.argv[3];
-          if (
-            value?.slug !== "slop-identity" ||
-            value?.name !== "Slop Identity" ||
-            value?.client_id !== clientId ||
-            value?.owner?.login !== "elizaOS" ||
-            JSON.stringify(value?.permissions) !== "{}" ||
-            JSON.stringify(value?.events) !== "[]"
-          ) {
-            throw new TypeError("the public Slop Identity GitHub App contract drifted");
-          }
-          NODE
+          printf '%s\n' "github_client_id=$github_client_id" >> "$GITHUB_OUTPUT"
 
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
@@ -827,3 +794,43 @@ jobs:
           # The inventory checks /index.html; this additional request proves the
           # public root route resolves to those same tested bytes.
           verify_download / dist/index.html index.html
+
+      - name: Require public identity OAuth app
+        env:
+          GITHUB_CLIENT_ID: ${{ steps.pages-deploy.outputs.github_client_id }}
+        run: |
+          set -euo pipefail
+          # Query without GitHub credentials. A private App is visible to this
+          # repository's organization token but returns 404 to contributors.
+          # Run this after Pages verification so an identity configuration
+          # failure cannot suppress an unrelated, already-verified site fix.
+          github_app_response="$RUNNER_TEMP/slop-identity-github-app.json"
+          github_app_status="$(
+            curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --output "$github_app_response" \
+              --write-out "%{http_code}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              https://api.github.com/apps/slop-identity
+          )"
+          if [ "$github_app_status" != "200" ]; then
+            echo "::error::The Slop Identity GitHub App is not publicly discoverable (HTTP $github_app_status)."
+            exit 1
+          fi
+          node - "$github_app_response" "$GITHUB_CLIENT_ID" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const clientId = process.argv[3];
+          if (
+            value?.slug !== "slop-identity" ||
+            value?.name !== "Slop Identity" ||
+            value?.client_id !== clientId ||
+            value?.owner?.login !== "elizaOS" ||
+            JSON.stringify(value?.permissions) !== "{}" ||
+            JSON.stringify(value?.events) !== "[]"
+          ) {
+            throw new TypeError("the public Slop Identity GitHub App contract drifted");
+          }
+          NODE
