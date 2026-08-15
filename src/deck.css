@@ -70,17 +70,28 @@
 
 /* 01 — opening */
 .deck-cover {
-  grid-template-columns: 1.12fr 0.88fr;
+  grid-template-columns: 1.25fr 0.75fr;
   align-items: center;
-  gap: 7vw;
+  gap: 5vw;
 }
 .deck-cover h1 {
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0;
-  font-size: clamp(66px, 8.7vw, 142px);
+  font-size: clamp(54px, 7vw, 112px);
   font-weight: 800;
-  letter-spacing: -0.08em;
-  line-height: 0.84;
+  letter-spacing: -0.072em;
+  line-height: 0.88;
+}
+.deck-cover-prefix,
+.deck-cover-action {
+  display: block;
+}
+.deck-cover-action {
+  max-width: 100%;
+  font-size: 0.7em;
+  line-height: 0.95;
+  overflow-wrap: normal;
+  animation: deck-action-enter 360ms ease-out both;
 }
 .deck-cover-copy > p {
   max-width: 650px;
@@ -88,6 +99,10 @@
   color: var(--muted);
   font-size: clamp(17px, 1.5vw, 24px);
   line-height: 1.45;
+}
+.deck-cover-brand {
+  color: var(--ink);
+  font-weight: 800;
 }
 .deck-cover-network {
   position: relative;
@@ -128,14 +143,18 @@
   top: 50%;
   left: 50%;
   z-index: 2;
+  transform: translate(-50%, -50%) rotate(var(--angle))
+    translateX(min(18vw, 260px)) rotate(calc(var(--angle) * -1));
+}
+.deck-orbit-label {
+  display: block;
   padding: 8px 13px;
   border: 1px solid rgba(22, 19, 15, 0.16);
   border-radius: 99px;
   background: var(--paper);
   font-size: 11px;
   font-weight: 750;
-  transform: translate(-50%, -50%) rotate(var(--angle))
-    translateX(min(18vw, 260px)) rotate(calc(var(--angle) * -1));
+  animation: deck-counter-spin 34s linear infinite;
 }
 
 /* 02 — team */
@@ -148,13 +167,12 @@
 }
 .deck-team-proof {
   display: grid;
-  grid-template-columns: 0.72fr 1.28fr;
+  grid-template-columns: 0.58fr 1.42fr;
   gap: clamp(28px, 5vw, 80px);
   min-height: 0;
 }
 .deck-team-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   align-content: end;
   border-top: 1px solid rgba(22, 19, 15, 0.18);
 }
@@ -179,13 +197,13 @@
 }
 .deck-team-list {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   align-items: end;
   border-top: 1px solid rgba(22, 19, 15, 0.18);
 }
 .deck-team-list article {
   display: flex;
-  min-height: 210px;
+  min-height: 260px;
   flex-direction: column;
   justify-content: flex-end;
   padding: 20px 14px;
@@ -229,18 +247,32 @@
   font-size: clamp(18px, 1.8vw, 28px);
   line-height: 1.42;
 }
-.deck-mission-copy > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+.deck-mission-examples {
+  display: grid;
+  max-width: 760px;
+  grid-template-columns: repeat(2, 1fr);
+  border-top: 1px solid rgba(22, 19, 15, 0.18);
 }
-.deck-mission-copy span,
-.deck-revenue-chips span {
-  padding: 9px 14px;
-  border: 1px solid rgba(22, 19, 15, 0.18);
-  border-radius: 99px;
-  font-size: 11px;
-  font-weight: 800;
+.deck-mission-examples article {
+  display: flex;
+  min-height: 118px;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 20px 22px 0 0;
+}
+.deck-mission-examples article + article {
+  padding-left: 22px;
+  border-left: 1px solid rgba(22, 19, 15, 0.18);
+}
+.deck-mission-examples strong {
+  font-size: clamp(18px, 1.8vw, 27px);
+  letter-spacing: -0.04em;
+}
+.deck-mission-examples span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .deck-mission-ring {
   position: relative;
@@ -341,7 +373,11 @@
   gap: 24px;
 }
 .deck-gtm h2 {
-  max-width: 1050px;
+  max-width: 1160px;
+  font-size: clamp(48px, 6.3vw, 96px);
+}
+.deck-gtm h2 em {
+  color: var(--orange-ink);
 }
 .deck-gtm-grid {
   display: grid;
@@ -509,81 +545,108 @@
   grid-template-rows: auto 1fr;
   gap: clamp(24px, 4vh, 46px);
 }
-.deck-economics-top {
-  display: grid;
-  grid-template-columns: 1.25fr 0.35fr 0.7fr;
+.deck-economics-heading {
+  display: flex;
   align-items: end;
-  gap: clamp(20px, 3vw, 48px);
+  justify-content: space-between;
+  gap: 42px;
 }
 .deck-economics h2 {
-  max-width: 820px;
+  max-width: 760px;
   font-size: clamp(46px, 5.8vw, 88px);
 }
-.deck-revenue-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 22px;
-}
-.deck-revenue-chips span:first-child {
-  border-color: var(--orange);
-  background: var(--orange);
-}
-.deck-fee-example {
-  display: grid;
-  grid-template-columns: auto auto;
-  align-items: baseline;
-  justify-content: center;
-  padding: 18px;
-  border: 1px solid rgba(22, 19, 15, 0.18);
-  border-radius: 16px;
-  text-align: center;
-}
-.deck-fee-example strong {
-  font-size: clamp(32px, 3.8vw, 58px);
-  letter-spacing: -0.07em;
-}
-.deck-fee-example span {
+.deck-economics-heading p {
+  max-width: 390px;
+  margin: 0;
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
+  font-size: clamp(14px, 1.25vw, 19px);
+  line-height: 1.45;
 }
-.deck-fee-example b {
-  grid-column: 1 / -1;
-  margin: -2px 0;
-  color: var(--orange-ink);
-  font-size: 18px;
-}
-.deck-token-split {
+.deck-economics-model {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  overflow: hidden;
-  border-radius: 16px;
-  background: var(--orange);
+  grid-template-columns: 1.05fr 0.95fr;
+  align-items: end;
+  gap: clamp(28px, 5vw, 72px);
+  min-height: 0;
 }
-.deck-token-split article {
-  display: flex;
-  min-width: 0;
-  min-height: 128px;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 16px 12px;
-  border-right: 1px solid rgba(22, 19, 15, 0.18);
+.deck-profit-chart {
+  position: relative;
+  align-self: stretch;
+  min-height: 330px;
+  border-bottom: 1px solid rgba(22, 19, 15, 0.18);
 }
-.deck-token-split article:last-child {
-  border-right: 0;
+.deck-profit-chart svg {
+  position: absolute;
+  inset: 18px 0 22px;
+  width: 100%;
+  height: calc(100% - 40px);
+  overflow: visible;
 }
-.deck-token-split strong {
-  font-size: clamp(28px, 3vw, 46px);
-  letter-spacing: -0.07em;
+.deck-chart-area {
+  fill: rgba(255, 84, 31, 0.13);
 }
-.deck-token-split span {
-  font-size: 10px;
+.deck-chart-line {
+  fill: none;
+  stroke: var(--orange-ink);
+  stroke-linecap: round;
+  stroke-width: 7;
+}
+.deck-profit-chart circle {
+  fill: var(--paper);
+  stroke: var(--orange-ink);
+  stroke-width: 6;
+}
+.deck-profit-chart > i {
+  position: absolute;
+  top: 55%;
+  right: 0;
+  left: 0;
+  border-top: 1px dashed rgba(22, 19, 15, 0.28);
+}
+.deck-chart-zero {
+  position: absolute;
+  top: calc(55% - 18px);
+  left: 0;
+  color: var(--muted);
+  font-size: 9px;
   font-weight: 800;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-  text-transform: uppercase;
+}
+.deck-chart-label,
+.deck-chart-year {
+  position: absolute;
+  z-index: 1;
+}
+.deck-chart-label {
+  font-size: clamp(17px, 1.8vw, 27px);
+  letter-spacing: -0.05em;
+}
+.deck-chart-label-one {
+  bottom: 4%;
+  left: 4%;
+}
+.deck-chart-label-two {
+  top: 40%;
+  left: 48%;
+}
+.deck-chart-label-three {
+  top: 0;
+  right: 1%;
+  color: var(--orange-ink);
+}
+.deck-chart-year {
+  bottom: -20px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+}
+.deck-chart-year-one {
+  left: 7%;
+}
+.deck-chart-year-two {
+  left: 50%;
+}
+.deck-chart-year-three {
+  right: 3%;
 }
 .deck-projections {
   align-self: end;
@@ -592,7 +655,7 @@
 .deck-projection-labels,
 .deck-projections article {
   display: grid;
-  grid-template-columns: 0.65fr repeat(3, 1fr);
+  grid-template-columns: 0.7fr repeat(3, 1fr);
   align-items: center;
 }
 .deck-projection-labels {
@@ -627,28 +690,16 @@
   margin-top: 10px;
   color: var(--muted);
   font-size: 9px;
+  line-height: 1.4;
 }
 
 /* 09 — raise */
 .deck-raise {
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   gap: 28px;
 }
-.deck-raise-heading {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 48px;
-}
 .deck-raise h2 {
-  max-width: 1020px;
-}
-.deck-raise-heading > p {
-  max-width: 270px;
-  margin: 0;
-  color: var(--muted);
-  font-size: clamp(15px, 1.4vw, 21px);
-  line-height: 1.4;
+  max-width: 1120px;
 }
 .deck-allocation-bar {
   display: flex;
@@ -671,10 +722,6 @@
 .deck-allocation-bar article:first-child {
   background: var(--orange);
 }
-.deck-allocation-bar article:not(:first-child) {
-  padding-right: clamp(10px, 1.2vw, 18px);
-  padding-left: clamp(10px, 1.2vw, 18px);
-}
 .deck-allocation-bar article:last-child {
   border-right: 0;
 }
@@ -692,26 +739,6 @@
   font-size: 11px;
   font-weight: 700;
   line-height: 1.3;
-}
-.deck-raise-targets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 32px;
-}
-.deck-raise-targets p {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin: 0;
-  font-size: 12px;
-  font-weight: 800;
-}
-.deck-raise-targets svg {
-  width: 20px;
-  height: 20px;
-  padding: 4px;
-  border-radius: 50%;
-  background: var(--orange);
 }
 
 /* 10 — close */
@@ -840,6 +867,12 @@
     transform: rotate(-360deg);
   }
 }
+@keyframes deck-action-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.12em);
+  }
+}
 
 @media (max-width: 760px) {
   .deck-slide {
@@ -856,7 +889,7 @@
     align-content: center;
   }
   .deck-cover h1 {
-    font-size: clamp(56px, 16vw, 92px);
+    font-size: clamp(46px, 11vw, 76px);
   }
   .deck-cover-network {
     position: absolute;
@@ -881,7 +914,7 @@
     font-size: 34px;
   }
   .deck-team-list {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
   .deck-team-list article {
     min-height: 130px;
@@ -902,6 +935,21 @@
   }
   .deck-mission-copy > p {
     font-size: 17px;
+  }
+  .deck-mission-examples {
+    grid-template-columns: 1fr;
+  }
+  .deck-mission-examples article {
+    min-height: auto;
+    padding: 12px 0;
+  }
+  .deck-mission-examples article + article {
+    padding-left: 0;
+    border-top: 1px solid rgba(22, 19, 15, 0.18);
+    border-left: 0;
+  }
+  .deck-mission-examples span {
+    font-size: 10px;
   }
   .deck-mission-ring {
     position: absolute;
@@ -926,6 +974,9 @@
   .deck-ownership {
     align-content: center;
     overflow-y: auto;
+  }
+  .deck-gtm h2 {
+    font-size: clamp(36px, 9.5vw, 52px);
   }
   .deck-gtm-grid,
   .deck-ownership-modes {
@@ -982,41 +1033,37 @@
     align-content: center;
     overflow-y: auto;
   }
-  .deck-economics-top {
-    grid-template-columns: 0.7fr 1.3fr;
-    gap: 8px;
-  }
-  .deck-economics-top > div:first-child {
-    grid-column: 1 / -1;
+  .deck-economics-heading {
+    display: block;
   }
   .deck-economics h2 {
     font-size: clamp(38px, 10.5vw, 56px);
   }
-  .deck-revenue-chips {
+  .deck-economics-heading p {
     margin-top: 12px;
+    font-size: 11px;
   }
-  .deck-revenue-chips span {
-    padding: 6px 8px;
-    font-size: 8px;
+  .deck-economics-model {
+    grid-template-columns: 1fr;
+    gap: 28px;
   }
-  .deck-fee-example {
-    padding: 10px 6px;
+  .deck-profit-chart {
+    min-height: 210px;
   }
-  .deck-token-split article {
-    min-height: 92px;
-    padding: 9px 6px;
+  .deck-chart-label {
+    font-size: 14px;
   }
-  .deck-token-split strong {
-    font-size: 24px;
-  }
-  .deck-token-split span {
-    font-size: 7px;
+  .deck-projections article {
+    padding: 8px 0;
   }
   .deck-projection-labels {
     font-size: 7px;
   }
   .deck-projections article strong {
-    font-size: 21px;
+    font-size: clamp(15px, 5vw, 19px);
+  }
+  .deck-projections article > span {
+    font-size: 8px;
   }
   .deck-projections small {
     font-size: 7px;
@@ -1024,17 +1071,11 @@
   .deck-raise {
     align-content: center;
   }
-  .deck-raise-heading {
-    display: block;
-  }
-  .deck-raise-heading > p {
-    margin-top: 14px;
-  }
   .deck-allocation-bar {
     display: grid;
     min-height: 330px;
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: 2fr 1fr;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(2, 1fr);
   }
   .deck-allocation-bar article {
     min-width: 0;
@@ -1042,7 +1083,9 @@
     border-right: 1px solid rgba(22, 19, 15, 0.18);
   }
   .deck-allocation-bar article:first-child {
-    grid-column: 1 / -1;
+    border-bottom: 1px solid rgba(22, 19, 15, 0.18);
+  }
+  .deck-allocation-bar article:nth-child(2) {
     border-right: 0;
     border-bottom: 1px solid rgba(22, 19, 15, 0.18);
   }
@@ -1051,12 +1094,6 @@
   }
   .deck-allocation-bar p {
     font-size: 8px;
-  }
-  .deck-raise-targets {
-    gap: 8px 14px;
-  }
-  .deck-raise-targets p {
-    font-size: 9px;
   }
   .deck-close h2 {
     font-size: clamp(58px, 16vw, 92px);

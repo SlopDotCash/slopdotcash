@@ -2,7 +2,6 @@
 import {
   ArrowLeft,
   ArrowRight,
-  Check,
   Cpu,
   GitBranch,
   Megaphone,
@@ -19,6 +18,11 @@ import {
 import "./deck.css";
 
 const SLIDE_COUNT = 10;
+const COVER_ACTIONS = [
+  "SHIPPING SLOP.",
+  "BUILDING THE FUTURE.",
+  "SOLVING HARD PROBLEMS.",
+] as const;
 
 function initialSlide(): number {
   const parsed = Number.parseInt(window.location.hash.slice(1), 10);
@@ -29,18 +33,20 @@ function initialSlide(): number {
 
 function Meta() {
   useEffect(() => {
-    document.title = "Slop — fund progress, own the upside";
+    document.title = "Slop — make money shipping slop";
     const values: Record<string, string> = {
       'meta[name="description"]':
         "Slop turns capital and compute into verified open-source progress.",
-      'meta[property="og:title"]': "Fund progress. Own the upside.",
+      'meta[property="og:title"]': "MAKE MONEY SHIPPING SLOP.",
       'meta[property="og:description"]':
         "The fundraising deck for slop.cash — the incentive network for open progress.",
-      'meta[property="og:image"]': "https://deck.slop.cash/og-deck-v2.png",
-      'meta[name="twitter:title"]': "Fund progress. Own the upside.",
+      'meta[property="og:image"]':
+        "https://deck.slop.cash/og-shipping-slop.png",
+      'meta[name="twitter:title"]': "MAKE MONEY SHIPPING SLOP.",
       'meta[name="twitter:description"]':
         "The fundraising deck for slop.cash — the incentive network for open progress.",
-      'meta[name="twitter:image"]': "https://deck.slop.cash/og-deck-v2.png",
+      'meta[name="twitter:image"]':
+        "https://deck.slop.cash/og-shipping-slop.png",
     };
     for (const [selector, content] of Object.entries(values)) {
       document
@@ -81,28 +87,42 @@ function Frame({
 }
 
 function Cover() {
+  const [actionIndex, setActionIndex] = useState(0);
+
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const interval = window.setInterval(() => {
+      setActionIndex((current) => (current + 1) % COVER_ACTIONS.length);
+    }, 2800);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const action = COVER_ACTIONS[actionIndex];
+
   return (
     <Frame
       index={0}
-      label="Fund progress and own the upside"
+      label="Make money shipping slop and building the future"
       className="deck-cover"
     >
       <div className="deck-cover-copy">
-        <h1 aria-label="Fund progress. Own the upside.">
-          Fund progress.
-          <br />
-          <em>Own the upside.</em>
+        <h1 aria-label={`MAKE MONEY ${action}`}>
+          <span className="deck-cover-prefix">MAKE MONEY</span>
+          <em className="deck-cover-action" key={action}>
+            {action}
+          </em>
         </h1>
         <p>
-          Slop is the incentive network that turns capital and compute into
-          verified open work.
+          <strong className="deck-cover-brand">Slop.cash</strong> is the
+          incentive network that turns capital and compute into verified open
+          work.
         </p>
       </div>
       <div className="deck-cover-network" aria-hidden="true">
         {["capital", "compute", "people", "agents", "progress"].map(
           (item, index) => (
             <span key={item} style={{ "--i": index } as CSSProperties}>
-              {item}
+              <b className="deck-orbit-label">{item}</b>
             </span>
           ),
         )}
@@ -115,34 +135,27 @@ function Cover() {
 const team = [
   ["Shaw", "CEO"],
   ["Nubs", "CTO"],
-  ["Shadow", "Head of partnerships"],
-  ["Sayo", "Founding engineer"],
-  ["Stan", "Founding engineer"],
 ];
 
 function Team() {
   return (
-    <Frame index={1} label="The team behind Slop" className="deck-team">
+    <Frame
+      index={1}
+      label="Two builders with 25 thousand GitHub stars"
+      className="deck-team"
+    >
       <div>
-        <h2>We know how to make open source move.</h2>
+        <h2>Two builders. 25K+ GitHub stars.</h2>
         <p className="deck-supporting">
-          The team behind elizaOS is building the incentive layer for what comes
-          next.
+          Shaw and Nubs have built open-source projects used and followed by
+          thousands of developers.
         </p>
       </div>
       <div className="deck-team-proof">
         <div className="deck-team-stats">
           <p>
-            <strong>19K</strong>
-            <span>stars</span>
-          </p>
-          <p>
-            <strong>5.6K</strong>
-            <span>forks</span>
-          </p>
-          <p>
-            <strong>671</strong>
-            <span>contributors</span>
+            <strong>25K+</strong>
+            <span>GitHub stars across projects</span>
           </p>
         </div>
         <div className="deck-team-list">
@@ -175,10 +188,17 @@ function Mission() {
           Use decentralized compute to accelerate humanity—without concentrating
           the value in a handful of companies.
         </p>
-        <div>
-          <span>Open work</span>
-          <span>Shared upside</span>
-          <span>Collective ownership</span>
+        <div className="deck-mission-examples">
+          <article>
+            <strong>$1M Proximity Prize</strong>
+            <span>
+              A major conjecture. A prize split fairly by contribution.
+            </span>
+          </article>
+          <article>
+            <strong>ASI continual learning</strong>
+            <span>Novel IP built together—and owned collectively.</span>
+          </article>
         </div>
       </div>
     </Frame>
@@ -226,18 +246,18 @@ function GoToMarket() {
   const channels = [
     {
       icon: <Users aria-hidden="true" />,
-      title: "Start with trust.",
-      copy: "Help well-known builders with specific work in their open-source repos.",
+      title: "Hack traction.",
+      copy: "Turn a builder’s roadmap into public, fundable work the community can rally around.",
     },
     {
       icon: <Cpu aria-hidden="true" />,
-      title: "Turn compute into sponsorship.",
-      copy: "Providers allocate resources. Projects give them visible proof of impact.",
+      title: "Align the supporters.",
+      copy: "Match sponsors, compute providers, and fans directly to the builder’s goals.",
     },
     {
       icon: <Megaphone aria-hidden="true" />,
-      title: "Make useful work the ad.",
-      copy: "Sponsors fund public challenges that earn attention by creating value.",
+      title: "Make support one click.",
+      copy: "Give anyone a simple path to donate, fund a task, or sponsor an outcome.",
     },
   ];
   return (
@@ -247,7 +267,10 @@ function GoToMarket() {
       className="deck-gtm"
     >
       <div>
-        <h2>Start with people the world already trusts.</h2>
+        <h2>
+          Find the people building the future.{" "}
+          <em>Accelerate the shit out of their work.</em>
+        </h2>
       </div>
       <div className="deck-gtm-grid">
         {channels.map(({ icon, title, copy }, index) => (
@@ -260,7 +283,7 @@ function GoToMarket() {
         ))}
       </div>
       <p className="deck-gtm-loop">
-        Every accepted result becomes the proof that wins the next project.
+        Visible progress → attention → sponsor proof → more progress.
       </p>
     </Frame>
   );
@@ -349,9 +372,9 @@ function Competition() {
 
 function Economics() {
   const projections = [
-    ["12 mo", "50", "$5M", "$0.5M"],
-    ["24 mo", "200", "$25M", "$2M"],
-    ["36 mo", "500", "$75M", "$5M"],
+    ["Year 1", "$2M", "$150K", "−$300K"],
+    ["Year 2", "$12M", "$650K", "+$100K"],
+    ["Year 3", "$30M", "$1.6M", "+$750K"],
   ];
   return (
     <Frame
@@ -359,57 +382,66 @@ function Economics() {
       label="Revenue and token economics"
       className="deck-economics"
     >
-      <div className="deck-economics-top">
-        <div>
-          <h2>Every payout makes the network stronger.</h2>
-          <div className="deck-revenue-chips">
-            <span>Planned 1% payout fee</span>
-            <span>Collaborations</span>
-            <span>Features</span>
-            <span>Sponsors</span>
-          </div>
-        </div>
-        <div className="deck-fee-example">
-          <strong>$100</strong>
-          <span>payout</span>
-          <b>→</b>
-          <strong>$1</strong>
-          <span>fee</span>
-        </div>
-        <div className="deck-token-split">
-          <article>
-            <strong>⅓</strong>
-            <span>$SLOP buybacks</span>
-          </article>
-          <article>
-            <strong>⅓</strong>
-            <span>team</span>
-          </article>
-          <article>
-            <strong>⅓</strong>
-            <span>new incentives</span>
-          </article>
-        </div>
+      <div className="deck-economics-heading">
+        <h2>A realistic path to profit.</h2>
+        <p>
+          Base case: a 1% payout fee plus sponsor programs, collaborations, and
+          paid features.
+        </p>
       </div>
-      <div className="deck-projections">
-        <div className="deck-projection-labels">
-          <span>Projects</span>
-          <span>Annual payouts</span>
-          <span>Projected revenue</span>
+      <div className="deck-economics-model">
+        <div
+          className="deck-profit-chart"
+          role="img"
+          aria-label="Projected annual profit rises from negative 300 thousand dollars in year one to positive 100 thousand dollars in year two and positive 750 thousand dollars in year three"
+        >
+          <span className="deck-chart-zero">$0</span>
+          <i aria-hidden="true" />
+          <svg viewBox="0 0 800 360" aria-hidden="true">
+            <path
+              className="deck-chart-area"
+              d="M60 286 C180 286 260 198 390 190 S610 82 740 40 L740 190 L60 190 Z"
+            />
+            <path
+              className="deck-chart-line"
+              d="M60 286 C180 286 260 198 390 190 S610 82 740 40"
+            />
+            <circle cx="60" cy="286" r="8" />
+            <circle cx="390" cy="190" r="8" />
+            <circle cx="740" cy="40" r="8" />
+          </svg>
+          <strong className="deck-chart-label deck-chart-label-one">
+            −$300K
+          </strong>
+          <strong className="deck-chart-label deck-chart-label-two">
+            +$100K
+          </strong>
+          <strong className="deck-chart-label deck-chart-label-three">
+            +$750K
+          </strong>
+          <span className="deck-chart-year deck-chart-year-one">Y1</span>
+          <span className="deck-chart-year deck-chart-year-two">Y2</span>
+          <span className="deck-chart-year deck-chart-year-three">Y3</span>
         </div>
-        {projections.map(([period, projects, payouts, revenue]) => (
-          <article key={period}>
-            <span>{period}</span>
-            <strong>{projects}</strong>
-            <strong>{payouts}</strong>
-            <strong>{revenue}</strong>
-          </article>
-        ))}
-        <small>
-          Illustrative operating model including sponsorship, collaboration, and
-          feature revenue—not historical results. $SLOP design is proposed and
-          subject to final legal review.
-        </small>
+        <div className="deck-projections">
+          <div className="deck-projection-labels">
+            <span>Payout volume</span>
+            <span>Revenue</span>
+            <span>Profit</span>
+          </div>
+          {projections.map(([period, payouts, revenue, profit]) => (
+            <article key={period}>
+              <span>{period}</span>
+              <strong>{payouts}</strong>
+              <strong>{revenue}</strong>
+              <strong>{profit}</strong>
+            </article>
+          ))}
+          <small>
+            Illustrative base case, not historical results. Planned 1% fee: ⅓
+            $SLOP buybacks · ⅓ team · ⅓ bounties and incentives.
+          </small>
+        </div>
       </div>
     </Frame>
   );
@@ -417,26 +449,25 @@ function Economics() {
 
 function Raise() {
   const allocation = [
-    ["75%", "$375K", "Bounties + incentives"],
-    ["10%", "$50K", "Core team"],
-    ["10%", "$50K", "Partnership launches"],
-    ["5%", "$25K", "Protocol, legal + security"],
+    ["40%", "$200K", "Team"],
+    ["30%", "$150K", "Bounties + incentives"],
+    ["20%", "$100K", "Marketing"],
+    ["10%", "$50K", "Legal"],
   ];
   return (
     <Frame index={8} label="A 500 thousand dollar raise" className="deck-raise">
       <div className="deck-raise-heading">
         <h2>
-          <em>$500K</em> turns the flywheel for 18 months.
+          We need <em>$500K</em> to change the world.
         </h2>
-        <p>Every dollar exists to create more useful work.</p>
       </div>
       <div className="deck-allocation-bar">
-        {allocation.map(([percent, amount, label], index) => (
+        {allocation.map(([percent, amount, label]) => (
           <article
             key={label}
             style={
               {
-                "--weight": index === 0 ? 7.5 : index === 3 ? 0.5 : 1,
+                "--weight": Number.parseInt(percent, 10),
               } as CSSProperties
             }
           >
@@ -445,19 +476,6 @@ function Raise() {
             <p>{label}</p>
           </article>
         ))}
-      </div>
-      <div className="deck-raise-targets">
-        <p>
-          <Check aria-hidden="true" />
-          50 funded projects
-        </p>
-        <p>
-          <Check aria-hidden="true" />
-          $5M annual payout volume
-        </p>
-        <p>
-          <Check aria-hidden="true" />A repeatable sponsor engine
-        </p>
       </div>
     </Frame>
   );
