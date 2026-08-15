@@ -238,7 +238,7 @@ describe("discovery", () => {
     expect(within(deltaCard).getByText("$1,000,000")).toBeInTheDocument();
     expect(within(deltaCard).getByText("external prize")).toBeInTheDocument();
     expect(
-      within(deltaCard).getByText(/Advance ArkLib's machine-checked/u),
+      within(deltaCard).getByText(/dedicated Proximity Prize repository/u),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/GitHub ledger \+ reward records live/u),

@@ -54,7 +54,7 @@ describe("project run receipt", () => {
 
   it("rejects repository and project mismatches", () => {
     const marker = runReceiptMarker(receipt);
-    marker.run.repository = "lalalune/arklib";
+    marker.run.repository = "elizaos/proximityprize";
     expect(() => assertRunReceiptMarker(marker)).toThrow(
       /does not belong to the project/u,
     );

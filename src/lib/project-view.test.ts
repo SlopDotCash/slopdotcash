@@ -149,13 +149,13 @@ describe("project views", () => {
         category: "evidence",
         potentialPoints: 4,
         occurredAt: "2026-07-29T12:00:00.000Z",
-        repository: "lalalune/arklib",
+        repository: "elizaos/proximityprize",
         source: {
           id: "PR_arklib_open",
           kind: "pull-request",
           number: 99,
           title: "Ark open checklist",
-          url: "https://github.com/lalalune/arklib/pull/99",
+          url: "https://github.com/elizaos/proximityprize/pull/99",
         },
         reason:
           "Open pull request evidence is partial with 2 of 6 points verified.",
@@ -307,7 +307,7 @@ describe("project views", () => {
     const deltaRun = receipt({
       runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAW",
       projectId: "delta-star",
-      repositoryId: "lalalune/arklib",
+      repositoryId: "elizaos/proximityprize",
       skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-delta-star`,
       deviceSignature: "g".repeat(86),
     });

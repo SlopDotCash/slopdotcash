@@ -1,11 +1,11 @@
-# ArkLib Delta Star repository contract
+# Proximity Prize repository contract
 
 Read the live `AGENTS.md`, nearest Proximity Gap guide, `CONTRIBUTING.md`, and
 frontier documents first. They are authoritative.
 
 | Parameter | Value |
 | --- | --- |
-| Repository | `lalalune/ArkLib` |
+| Repository | `elizaOS/proximityprize` |
 | Integration branch | `main` |
 | Toolchain | pinned Lean 4 and Lake from `lean-toolchain` |
 | Cold cache | `./scripts/lake-locked.sh exe cache get` |

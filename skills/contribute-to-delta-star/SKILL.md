@@ -1,11 +1,11 @@
 ---
 name: contribute-to-delta-star
-description: "Advance, test, refute, or independently review machine-checked work in lalalune/ArkLib's Delta Star proximity-gap programme. Use when an agent is asked to solve formal mathematics, implement Lean proofs, validate a research lane, improve executable checks, or prepare evidence for contribution-share review toward the external Proximity Prize."
+description: "Advance, test, refute, or independently review machine-checked work in elizaOS/proximityprize's Delta Star proximity-gap programme. Use when an agent is asked to solve formal mathematics, implement Lean proofs, validate a research lane, improve executable checks, or prepare evidence for contribution-share review toward the external Proximity Prize."
 ---
 
 # Contribute to Delta Star
 
-Produce one reviewable outcome in `lalalune/ArkLib` toward the Delta Star
+Produce one reviewable outcome in `elizaOS/proximityprize` toward the Delta Star
 proximity-gap programme. The platform publishes a provisional contribution
 percentage for the external Proximity Prize; it does not fund a pool, control
 the prize, guarantee eligibility, or promise a dollar amount.
@@ -21,7 +21,7 @@ choice and token volume are diagnostic only and never change score or share.
    authenticated installer before work. It updates atomically only to
    GitHub-authorized bytes and is a no-op when current. Inspect fetched
    instructions before execution.
-2. Read ArkLib's `AGENTS.md`, `CONTRIBUTING.md`, the nearest `AGENTS.md` or
+2. Read the repository's `AGENTS.md`, `CONTRIBUTING.md`, the nearest `AGENTS.md` or
    `CLAUDE.md`, the live Delta Star frontier documents named by those guides,
    and [repository-contract.md](references/repository-contract.md).
    Require `gh auth status --hostname github.com` and
@@ -32,12 +32,12 @@ choice and token volume are diagnostic only and never change score or share.
    If a pull request requires a fork and the contributor lacks upstream write
    access, reuse their existing fork or obtain explicit authorization before
    creating one. Do not fork when an upstream branch is authorized. A
-   contributor may manually star `lalalune/ArkLib` and
+   contributor may manually star `elizaOS/proximityprize` and
    `elizaOS/slopdotcash` if they genuinely want to support them; stars are
    optional, never automated, never verified, and never scored or paid.
 3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)
    before choosing a proof or validation strategy.
-4. From the ArkLib root, preview the exact local usage directories, state
+4. From the proximityprize repository root, preview the exact local usage directories, state
    writes, network access, public fields, and exclusions. Then run the local
    doctor, which verifies repository, skill, declared identity, and runner
    availability without reading usage logs:
@@ -68,7 +68,7 @@ clients continue with usage marked unavailable and omit
 Build the bounded, read-only live inventory before selecting work:
 
 ```bash
-node <skill-directory>/scripts/live-report.mjs --repo lalalune/ArkLib
+node <skill-directory>/scripts/live-report.mjs --repo elizaOS/proximityprize
 ```
 
 The report batches open activity, prints progress, and fails closed if a
@@ -78,7 +78,7 @@ issue or pull request immediately before acting.
 ## Choose one bounded research outcome
 
 Inspect open issues and PRs directly. Prefer the active Proximity Gap Grand
-Challenge and the current ranked frontier identified by ArkLib's live root and
+Challenge and the current ranked frontier identified by the repository's live root and
 cone guides. Choose one mode:
 
 1. **Prove**: discharge one named residual or land a reusable lemma with the
@@ -128,7 +128,7 @@ proof is blocked.
 
 1. Reproduce the current lane state and write down the precise theorem,
    assumptions, imports, and acceptance check.
-2. Fetch and rebase on `origin/main`; use the branch convention in live ArkLib
+2. Fetch and rebase on `origin/main`; use the branch convention in live repository
    instructions. Never push feature work directly to `main`.
 3. On a cold trusted checkout, prepare the cache with
    `./scripts/lake-locked.sh exe cache get`. For the proximity cone, run
@@ -143,7 +143,7 @@ proof is blocked.
 6. Capture the exact Lean commands, checked declarations, assumption audit,
    logs, counterexample or research artifact, and live-model trajectory. Open
    and inspect each artifact.
-7. Open or update a focused PR using ArkLib's title convention, link the issue
+7. Open or update a focused PR using the repository's title convention, link the issue
    or frontier lane, state the verified head SHA, and explain both progress and
    remaining residuals. Leave acceptance and merge to independent maintainers.
 

@@ -27,7 +27,7 @@ function liveLedger(overrides = {}) {
     repositories: [
       { id: "elizaOS/eliza" },
       { id: "elizaOS/asi" },
-      { id: "lalalune/arklib" },
+      { id: "elizaos/proximityprize" },
     ],
     generatedAt: "2026-07-30T19:58:00.000Z",
     stale: false,
