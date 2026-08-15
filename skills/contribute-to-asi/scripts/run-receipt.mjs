@@ -44,7 +44,8 @@ const MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const SHA_PATTERN = /^[0-9a-f]{64}$/u;
-const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._:/+-]*$/iu;
+const IDENTIFIER_PATTERN =
+  /^[@~]?[A-Za-z0-9](?:[A-Za-z0-9._:@/+~-]{0,126}[A-Za-z0-9])?$/u;
 const COMMON_PLACEHOLDERS = new Set([
   "na",
   "none",
@@ -172,7 +173,7 @@ function declaredIdentifier(value, field, maxLength = 128) {
   return value;
 }
 
-function declaredIdentity(value, field, kind, maxLength = 128) {
+export function declaredIdentity(value, field, kind, maxLength = 128) {
   declaredIdentifier(value, field, maxLength);
   const normalized = value.toLowerCase().replaceAll(/[^a-z0-9]/gu, "");
   if (

@@ -18,6 +18,10 @@ import {
   type TargetRepository,
 } from "./repositories.mjs";
 import {
+  assertReviewRecordReceiptJoin,
+  parseReviewRecordBlock,
+} from "./review-records";
+import {
   assertProjectRunReceipt,
   assertRunReceiptMarker,
   type ProjectRunReceipt,
@@ -99,6 +103,8 @@ export interface GitHubTextSource {
   updatedAt: string;
   author: GitHubActor | null;
   authorAssociation?: string | null;
+  artifactUrl?: string;
+  artifactHeadSha?: string;
 }
 
 export interface PullRequestFile {
@@ -748,10 +754,13 @@ function attributionMarkerRecords(body: string): AttributionMarkerRecord[] {
 }
 
 function hasAttributionEligibilitySignal(body: string): boolean {
-  return attributionDeclarationLines(body).some(
-    (line) =>
-      ATTRIBUTION_DECLARATION_PATTERN.test(line) ||
-      ATTRIBUTION_MARKER_LINE_PATTERN.test(line),
+  return (
+    /^ {0,3}```slop-review[\t ]*$/mu.test(body) ||
+    attributionDeclarationLines(body).some(
+      (line) =>
+        ATTRIBUTION_DECLARATION_PATTERN.test(line) ||
+        ATTRIBUTION_MARKER_LINE_PATTERN.test(line),
+    )
   );
 }
 
@@ -1268,7 +1277,31 @@ export function assessModelAttribution(
     }
     let markerIndex = 0;
     const markerIdentifiers = new Set<string>();
+    let reviewRecord: unknown | null;
+    try {
+      reviewRecord = parseReviewRecordBlock(source.body);
+    } catch (error: unknown) {
+      invalidSourceIds.add(source.id);
+      invalidMarkers.push({
+        sourceId: source.id,
+        sourceUrl: source.url,
+        reason:
+          error instanceof Error
+            ? error.message
+            : "slop-review record is invalid",
+      });
+      continue;
+    }
     const markerMatches = attributionMarkerRecords(source.body);
+    if (reviewRecord !== null && markerMatches.length !== 1) {
+      invalidSourceIds.add(source.id);
+      invalidMarkers.push({
+        sourceId: source.id,
+        sourceUrl: source.url,
+        reason: "slop-review requires exactly one terminal signed run receipt",
+      });
+      continue;
+    }
     if (markerMatches.length > 1) {
       invalidSourceIds.add(source.id);
       invalidMarkers.push({
@@ -1302,6 +1335,32 @@ export function assessModelAttribution(
         markerIndex += 1;
         continue;
       }
+      if (reviewRecord !== null) {
+        try {
+          assertReviewRecordReceiptJoin(
+            reviewRecord,
+            marker.run,
+            source.artifactUrl && source.artifactHeadSha
+              ? {
+                  artifactUrl: source.artifactUrl,
+                  headSha: source.artifactHeadSha,
+                }
+              : null,
+          );
+        } catch (error: unknown) {
+          invalidSourceIds.add(source.id);
+          invalidMarkers.push({
+            sourceId: source.id,
+            sourceUrl: source.url,
+            reason:
+              error instanceof Error
+                ? error.message
+                : "slop-review receipt join is invalid",
+          });
+          markerIndex += 1;
+          continue;
+        }
+      }
       const identifier = exactIdentifier(marker.provider, marker.model);
       validSourceIds.add(source.id);
       markerIdentifiers.add(identifier.toLowerCase());
@@ -1321,6 +1380,10 @@ export function assessModelAttribution(
         status: "self-reported",
       });
       markerIndex += 1;
+    }
+
+    if (reviewRecord !== null && invalidSourceIds.has(source.id)) {
+      continue;
     }
 
     let visibleIndex = 0;
@@ -1428,7 +1491,13 @@ export function pullRequestTextSources(
       author: review.author,
     }),
   );
-  return dedupeByNodeId([body, ...pullRequest.comments, ...reviewSources]);
+  return dedupeByNodeId([body, ...pullRequest.comments, ...reviewSources]).map(
+    (source) => ({
+      ...source,
+      artifactUrl: pullRequest.url,
+      artifactHeadSha: pullRequest.headRefOid.toLowerCase(),
+    }),
+  );
 }
 
 export function issueTextSources(issue: IssueRecord): GitHubTextSource[] {

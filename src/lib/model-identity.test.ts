@@ -6,8 +6,22 @@ import {
   isExactModelIdentifier,
   isExactProviderIdentifier,
 } from "./model-identity";
+import { MODEL_IDENTITY_CONFORMANCE_CASES } from "./model-identity-corpus";
 
 describe("exact model identity", () => {
+  it.each(MODEL_IDENTITY_CONFORMANCE_CASES)(
+    "$field identity $value has the shared expected validity",
+    ({ field, value, valid }) => {
+      const validators = {
+        provider: isExactProviderIdentifier,
+        model: isExactModelIdentifier,
+        client: isExactClientIdentifier,
+        version: isExactClientVersion,
+      };
+      expect(validators[field](value)).toBe(valid);
+    },
+  );
+
   it("accepts arbitrary concrete identifiers including slash and plus", () => {
     expect(isExactProviderIdentifier("x-ai/hosted+edge")).toBe(true);
     expect(isExactModelIdentifier("accounts/x/models/grok-4.5+reasoning")).toBe(

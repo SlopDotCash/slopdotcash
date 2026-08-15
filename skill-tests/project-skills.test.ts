@@ -24,7 +24,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { declaredIdentity as asiDeclaredIdentity } from "../skills/contribute-to-asi/scripts/run-receipt.mjs";
+import { declaredIdentity as deltaDeclaredIdentity } from "../skills/contribute-to-delta-star/scripts/run-receipt.mjs";
 import {
+  declaredIdentity as elizaDeclaredIdentity,
   footer,
   normalizeSessionReport,
   signingPayload,
@@ -34,6 +37,7 @@ import {
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
 import { registerWalletClaim } from "../skills/contribute-to-eliza/scripts/wallet-claim.mjs";
 import { assessModelAttribution } from "../src/lib/leaderboard";
+import { MODEL_IDENTITY_CONFORMANCE_CASES } from "../src/lib/model-identity-corpus";
 import { PROJECTS } from "../src/lib/projects.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,6 +48,20 @@ const projectPackages = PROJECTS.map((project) => ({
 }));
 
 describe("project skill contracts", () => {
+  it("keeps every packaged CLI aligned with the shared identity corpus", () => {
+    for (const validate of [
+      elizaDeclaredIdentity,
+      asiDeclaredIdentity,
+      deltaDeclaredIdentity,
+    ]) {
+      for (const { field, value, valid } of MODEL_IDENTITY_CONFORMANCE_CASES) {
+        const attempt = () => validate(value, field, field, 128);
+        if (valid) assert.strictEqual(attempt(), value);
+        else assert.throws(attempt, /identifier/u);
+      }
+    }
+  });
+
   it("keeps every registered contributor package focused and open to declared models", () => {
     for (const { project, contributorRoot } of projectPackages) {
       const source = readFileSync(join(contributorRoot, "SKILL.md"), "utf8");
