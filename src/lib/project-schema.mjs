@@ -5,6 +5,10 @@
  */
 
 import { assertFundingAddresses } from "./funding-address.mjs";
+import {
+  assertFundingCommitments,
+  hasActiveFundingCommitment,
+} from "./funding-instruments.mjs";
 
 const PROJECT_KEYS = [
   "authority",
@@ -748,9 +752,16 @@ function validateReward(value, field) {
 
 function validateFunding(value, projectId) {
   const funding = record(value, "project.funding");
+  const hasCommitments = Object.hasOwn(funding, "commitments");
   exactKeys(
     funding,
-    ["addresses", "disclosure", "mode", "recordsPath"],
+    [
+      "addresses",
+      ...(hasCommitments ? ["commitments"] : []),
+      "disclosure",
+      "mode",
+      "recordsPath",
+    ],
     "project.funding",
   );
   if (
@@ -762,6 +773,12 @@ function validateFunding(value, projectId) {
     throw new TypeError("project.funding non-custodial policy is invalid");
   }
   assertFundingAddresses(funding.addresses, "project.funding.addresses");
+  if (hasCommitments) {
+    assertFundingCommitments(
+      funding.commitments,
+      "project.funding.commitments",
+    );
+  }
   return funding;
 }
 
@@ -813,6 +830,14 @@ export function assertProjectDefinition(value) {
   );
   validateReward(project.reward, "project.reward");
   validateFunding(project.funding, id);
+  if (
+    project.reward.fundingState === "committed" &&
+    !hasActiveFundingCommitment(project.funding.commitments)
+  ) {
+    throw new TypeError(
+      "project.reward committed funding requires an active commitment instrument",
+    );
+  }
   validateSteward(project.steward);
   validateAuthority(project.authority, repositories[0]);
   validateTerms(

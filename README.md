@@ -319,8 +319,10 @@ revision it used.
   pull request, CI, release, or star history.
 - Eliza Cloud sign-in and creator roles are deferred; contribution identity is
   the public GitHub actor plus optional wallets.
-- Pools are labeled pledged until a later non-custodial escrow contract can
-  prove committed funds and define a withdrawal grace period.
+- Pools are labeled pledged by default. A pool may be labeled committed only
+  when a deterministic read-only verifier proves a locked balance in a
+  reviewed third-party, non-upgradeable smart contract that Slop does not
+  control. Slop still never custodies funds or keys.
 - Creators sign payments outside the platform. Slop prepares and verifies
   public state but does not custody funds or keys.
 - No KYC flow ships in v1. That product decision does not remove legal, tax,

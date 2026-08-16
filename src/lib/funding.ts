@@ -6,6 +6,11 @@ import {
   isFundingAddress,
   isSolanaTransactionId,
 } from "./funding-address.mjs";
+import {
+  assertProjectCommitmentLedger,
+  type ProjectCommitmentRecord,
+} from "./funding-commitment";
+import type { FundingCommitmentInstrument } from "./funding-instruments.mjs";
 
 export { isFundingAddress } from "./funding-address.mjs";
 
@@ -60,6 +65,7 @@ export interface ProjectFundingIndex {
   schemaVersion: typeof FUNDING_PROTOCOL_VERSION;
   generatedAt: string | null;
   records: readonly ProjectFundingRecord[];
+  commitments: readonly ProjectCommitmentRecord[];
 }
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -455,11 +461,15 @@ export function publicFundingRecordsForDonor(
 export function assertProjectFundingIndex(
   value: unknown,
   addressesByProject: ReadonlyMap<string, readonly ProjectFundingAddress[]>,
+  commitmentsByProject: ReadonlyMap<
+    string,
+    readonly FundingCommitmentInstrument[]
+  >,
 ): ProjectFundingIndex {
   const index = object(value, "funding index");
   exactKeys(
     index,
-    ["generatedAt", "records", "schemaVersion"],
+    ["commitments", "generatedAt", "records", "schemaVersion"],
     "funding index",
   );
   if (index.schemaVersion !== FUNDING_PROTOCOL_VERSION) {
@@ -471,6 +481,9 @@ export function assertProjectFundingIndex(
       : timestamp(index.generatedAt, "funding index generatedAt");
   if (!Array.isArray(index.records) || index.records.length > 100_000) {
     throw new TypeError("funding index records are invalid or unbounded");
+  }
+  if (!Array.isArray(index.commitments) || index.commitments.length > 100_000) {
+    throw new TypeError("funding index commitments are invalid or unbounded");
   }
   const grouped = new Map<string, unknown[]>();
   for (const candidate of index.records) {
@@ -499,5 +512,40 @@ export function assertProjectFundingIndex(
     }
     transactionProjects.set(key, record.projectId);
   }
-  return { schemaVersion: FUNDING_PROTOCOL_VERSION, generatedAt, records };
+  const groupedCommitments = new Map<string, unknown[]>();
+  for (const candidate of index.commitments) {
+    const projectId = object(candidate, "funding index commitment").projectId;
+    if (typeof projectId !== "string" || !commitmentsByProject.has(projectId)) {
+      throw new TypeError(
+        "funding index commitments reference an unknown project",
+      );
+    }
+    const group = groupedCommitments.get(projectId) ?? [];
+    group.push(candidate);
+    groupedCommitments.set(projectId, group);
+  }
+  const commitments = [...groupedCommitments.entries()].flatMap(
+    ([projectId, candidates]) =>
+      assertProjectCommitmentLedger(
+        candidates,
+        commitmentsByProject.get(projectId) ?? [],
+      ),
+  );
+  const commitmentTransactionProjects = new Map<string, string>();
+  for (const record of commitments) {
+    const key = `${record.network}:${record.transactionId}`;
+    const projectId = commitmentTransactionProjects.get(key);
+    if (projectId !== undefined && projectId !== record.projectId) {
+      throw new TypeError(
+        "funding index attributes a commitment transaction to multiple projects",
+      );
+    }
+    commitmentTransactionProjects.set(key, record.projectId);
+  }
+  return {
+    schemaVersion: FUNDING_PROTOCOL_VERSION,
+    generatedAt,
+    records,
+    commitments,
+  };
 }

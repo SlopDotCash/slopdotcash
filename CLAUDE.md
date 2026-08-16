@@ -208,6 +208,20 @@ finalization fails.
 - An LLM may recommend a hold or award but cannot autonomously ban, approve,
   exclude, or move money.
 
+## Committed funding
+
+Committed funding uses only reviewed references to third-party, immutable,
+audited on-chain instruments: currently Squads v4 multisig vaults on Solana
+and Sablier Lockup v4 streams on Base and Ethereum. Slop holds no key, admin,
+or fee position in any instrument and publishes read-only evidence only.
+`fundingState: "committed"` and a positive `committedMinor` require an active
+reviewed instrument and deterministic verifier evidence covering the claimed
+amount; the ledger-bound check is pure arithmetic and fails closed. The words
+"escrow" and "guaranteed" are banned from user-facing copy; say committed
+funds are locked in a third-party, non-upgradeable smart contract that Slop
+does not control. Commitment tooling produces unsigned transactions only and
+never signs, broadcasts, or handles a key.
+
 ## Deployment
 
 Use Cloudflare Pages Direct Upload from the checked-in workflow. Required

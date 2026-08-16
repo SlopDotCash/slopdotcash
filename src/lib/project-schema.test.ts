@@ -143,6 +143,70 @@ describe("project proposal schema", () => {
     );
   });
 
+  it("labels a pool committed only behind an active reviewed instrument", () => {
+    const instrument = {
+      kind: "squads-v4-vault",
+      network: "solana",
+      asset: "USDC",
+      multisig: "11111111111111111111111111111111",
+      vault: "Vote111111111111111111111111111111111111111",
+      funderActorId: "18633264",
+      deadline: "2026-12-01T00:00:00.000Z",
+      effectiveAt: "2026-08-01T00:00:00.000Z",
+      replacedAt: null,
+    };
+    const committed = structuredClone(eliza) as Record<string, unknown> & {
+      reward: Record<string, unknown>;
+      funding: Record<string, unknown>;
+    };
+    committed.reward.paymentMode = "enabled";
+    committed.reward.fundingState = "committed";
+    committed.reward.committedMinor = "5000000";
+    committed.funding.commitments = [instrument];
+    expect(assertProjectDefinition(committed).reward.fundingState).toBe(
+      "committed",
+    );
+
+    const missingInstrument = structuredClone(committed);
+    delete missingInstrument.funding.commitments;
+    expect(() => assertProjectDefinition(missingInstrument)).toThrow(
+      /active commitment instrument/u,
+    );
+
+    const replacedOnly = structuredClone(committed);
+    replacedOnly.funding.commitments = [
+      { ...instrument, replacedAt: "2026-09-01T00:00:00.000Z" },
+    ];
+    expect(() => assertProjectDefinition(replacedOnly)).toThrow(
+      /active commitment instrument/u,
+    );
+
+    const custodialKind = structuredClone(committed);
+    custodialKind.funding.commitments = [
+      { ...instrument, kind: "slop-custody" },
+    ];
+    expect(() => assertProjectDefinition(custodialKind)).toThrow(
+      /kind is unsupported/u,
+    );
+
+    const wrongStream = structuredClone(committed);
+    wrongStream.funding.commitments = [
+      {
+        kind: "sablier-lockup-v4",
+        network: "base",
+        asset: "USDC",
+        contract: `0x${"9".repeat(40)}`,
+        streamId: "7",
+        deadline: "2026-12-01T00:00:00.000Z",
+        effectiveAt: "2026-08-01T00:00:00.000Z",
+        replacedAt: null,
+      },
+    ];
+    expect(() => assertProjectDefinition(wrongStream)).toThrow(
+      /reviewed Sablier Lockup v4 deployment/u,
+    );
+  });
+
   it("fails closed on inferred or mutable project authority", () => {
     const activeWithoutProof = structuredClone(eliza);
     activeWithoutProof.status = "active";
