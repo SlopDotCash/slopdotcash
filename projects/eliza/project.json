@@ -35,7 +35,7 @@
     "monthlyCapDisplay": "$10,000",
     "committedMinor": "0",
     "paymentMode": "disabled",
-    "feeBasisPoints": 300,
+    "feeBasisPoints": 100,
     "unusedFunds": "rollover-without-cap-increase",
     "fundingState": "pledged"
   },

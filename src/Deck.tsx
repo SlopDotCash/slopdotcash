@@ -365,7 +365,7 @@ function Economics() {
       <div className="deck-economics-heading">
         <h2>A realistic path to profit.</h2>
         <p>
-          Base case: a 3% payout fee plus sponsor programs, collaborations, and
+          Base case: a 1% payout fee plus sponsor programs, collaborations, and
           paid features.
         </p>
       </div>
@@ -418,7 +418,7 @@ function Economics() {
             </article>
           ))}
           <small>
-            Illustrative base case, not historical results. Planned 3% fee: ⅓
+            Illustrative base case, not historical results. Planned 1% fee: ⅓
             $SLOP buybacks · ⅓ team · ⅓ bounties and incentives.
           </small>
         </div>
