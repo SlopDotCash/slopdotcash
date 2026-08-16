@@ -7,6 +7,9 @@ export declare function formatMonthlyCapDisplay(value: string): string;
 export declare function assertProjectDefinition(
   value: unknown,
 ): ProjectDefinition;
+export declare function assertHistoricalProjectDefinition(
+  value: unknown,
+): ProjectDefinition;
 export declare function assertProjectRegistry(
   values: unknown,
 ): ProjectDefinition[];

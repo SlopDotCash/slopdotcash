@@ -28,8 +28,8 @@
     "proof": null
   },
   "terms": {
-    "revision": "2026-08-16.2",
-    "effectiveAt": "2026-08-16T20:30:00.000Z",
+    "revision": "2026-08-16.3",
+    "effectiveAt": "2026-08-16T21:45:00.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
       "activatedAt": null,
@@ -38,9 +38,9 @@
     "paymentTransfersIp": false,
     "retroactive": false,
     "copyright": {
-      "model": "contributor-retained",
+      "model": "unknown",
       "claimedLegalHolder": null,
-      "notice": "ASI contributors",
+      "notice": null,
       "legalCapacity": null,
       "governanceResolution": null
     },

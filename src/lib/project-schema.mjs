@@ -231,7 +231,13 @@ function validateAuthority(value, repository) {
   return authority;
 }
 
-function validateTerms(value, repositoryId, reward, steward) {
+function validateTerms(
+  value,
+  repositoryId,
+  reward,
+  steward,
+  { allowLegacyUnsupportedOwnershipClaim = false } = {},
+) {
   const field = "project.terms";
   const terms = record(value, field);
   exactKeys(
@@ -332,6 +338,7 @@ function validateTerms(value, repositoryId, reward, steward) {
     );
   }
   if (
+    !allowLegacyUnsupportedOwnershipClaim &&
     (copyright.model === "mixed" || copyright.model === "unknown") &&
     copyright.claimedLegalHolder !== null
   ) {
@@ -790,8 +797,10 @@ function validateFunding(value, projectId) {
   return funding;
 }
 
-/** Validates one project folder manifest. */
-export function assertProjectDefinition(value) {
+function validateProjectDefinition(
+  value,
+  { allowLegacyUnsupportedOwnershipClaim = false } = {},
+) {
   const project = record(value, "project");
   exactKeys(project, PROJECT_KEYS, "project");
   if (project.schemaVersion !== "1")
@@ -853,6 +862,7 @@ export function assertProjectDefinition(value) {
     repositories[0].id,
     project.reward,
     project.steward,
+    { allowLegacyUnsupportedOwnershipClaim },
   );
   if (project.status === "active" && project.authority.state !== "verified") {
     throw new TypeError(
@@ -898,6 +908,22 @@ export function assertProjectDefinition(value) {
     url(value, `project.links.${name}`);
   }
   return project;
+}
+
+/** Validates one current project folder manifest. */
+export function assertProjectDefinition(value) {
+  return validateProjectDefinition(value);
+}
+
+/**
+ * Validates the immutable prior side of a policy transition. Historical
+ * manifests may contain an unsupported mixed/unknown holder assertion that a
+ * strict successor removes; all other schema rules remain enforced.
+ */
+export function assertHistoricalProjectDefinition(value) {
+  return validateProjectDefinition(value, {
+    allowLegacyUnsupportedOwnershipClaim: true,
+  });
 }
 
 /** Validates uniqueness and trust boundaries across the full registry. */

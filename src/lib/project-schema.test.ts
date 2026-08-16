@@ -6,6 +6,7 @@ import deltaStar from "../../projects/delta-star/project.json";
 import eliza from "../../projects/eliza/project.json";
 import heirElements from "../../projects/heir-elements-sdk/project.json";
 import {
+  assertHistoricalProjectDefinition,
   assertProjectDefinition,
   assertProjectRegistry,
 } from "./project-schema.mjs";
@@ -389,6 +390,20 @@ describe("project proposal schema", () => {
         /no ownership claim/u,
       );
     }
+  });
+
+  it("permits a legacy unsupported holder only on the historical transition side", () => {
+    const legacy = mutablePolicyFixture(eliza);
+    legacy.terms.copyright.model = "mixed";
+    legacy.terms.copyright.claimedLegalHolder = "Unsupported Legacy Holder";
+
+    expect(() => assertProjectDefinition(legacy)).toThrow(
+      /no ownership claim/u,
+    );
+    expect(
+      assertHistoricalProjectDefinition(legacy).terms.copyright
+        .claimedLegalHolder,
+    ).toBe("Unsupported Legacy Holder");
   });
 
   it("keeps external prize rules outside platform settlement", () => {

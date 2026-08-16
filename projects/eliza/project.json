@@ -28,8 +28,8 @@
     "proof": null
   },
   "terms": {
-    "revision": "2026-08-16.2",
-    "effectiveAt": "2026-08-16T20:30:00.000Z",
+    "revision": "2026-08-16.3",
+    "effectiveAt": "2026-08-16T21:45:00.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
       "activatedAt": null,
@@ -39,7 +39,7 @@
     "retroactive": false,
     "copyright": {
       "model": "mixed",
-      "claimedLegalHolder": "Shaw Walters",
+      "claimedLegalHolder": null,
       "notice": "Shaw Walters and elizaOS Contributors",
       "legalCapacity": null,
       "governanceResolution": null
