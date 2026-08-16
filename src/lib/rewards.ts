@@ -11,7 +11,7 @@ import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
 export const REWARD_PROTOCOL_VERSION = "1" as const;
 export const REVIEW_WINDOW_DAYS = 14;
 export const SHARE_PARTS_TOTAL = 1_000_000;
-export const PLATFORM_FEE_BASIS_POINTS = 300 as const;
+export const PLATFORM_FEE_BASIS_POINTS = 100 as const;
 
 export type AllocationState =
   | "approved"
@@ -145,7 +145,7 @@ export interface RewardSettlementManifest {
     dueMinor: string;
     paidMinor: string;
     signature: string | null;
-    state: "failed" | "not-applicable" | "paid" | "pending";
+    state: "failed" | "not-applicable" | "paid" | "pending" | "reported";
   };
   totals: {
     approvedMinor: string;
@@ -236,6 +236,26 @@ export function feeForPrincipal(
   basisPoints: number,
 ): string {
   return ((BigInt(principalMinor) * BigInt(basisPoints)) / 10_000n).toString();
+}
+
+/**
+ * Computes only the newly due fee so splitting a settlement cannot change
+ * integer rounding or reduce the project's cumulative obligation.
+ */
+export function incrementalFeeForPrincipal(
+  settledBeforeMinor: string,
+  batchMinor: string,
+  basisPoints: number = PLATFORM_FEE_BASIS_POINTS,
+): string {
+  const settledBefore = BigInt(settledBeforeMinor);
+  const batch = BigInt(batchMinor);
+  if (settledBefore < 0n || batch < 0n) {
+    throw new RangeError("settled principal cannot be negative");
+  }
+  return (
+    ((settledBefore + batch) * BigInt(basisPoints)) / 10_000n -
+    (settledBefore * BigInt(basisPoints)) / 10_000n
+  ).toString();
 }
 
 function assertActor(
@@ -1084,7 +1104,8 @@ export function assertRewardSettlementManifest(
     feeState !== "failed" &&
     feeState !== "not-applicable" &&
     feeState !== "paid" &&
-    feeState !== "pending"
+    feeState !== "pending" &&
+    feeState !== "reported"
   ) {
     throw new TypeError("settlement platform fee state is invalid");
   }
@@ -1124,11 +1145,19 @@ export function assertRewardSettlementManifest(
   ) {
     throw new TypeError("paid platform fee must be exact and signed");
   }
-  if (
+  if (feeState === "reported") {
+    if (BigInt(feePaidMinor) !== 0n || feeSignature === null) {
+      throw new TypeError(
+        "reported platform fee needs a signature but cannot claim verified payment",
+      );
+    }
+  } else if (
     feeState !== "paid" &&
     (BigInt(feePaidMinor) !== 0n || feeSignature !== null)
   ) {
-    throw new TypeError("unpaid platform fee cannot claim payment evidence");
+    throw new TypeError(
+      "outstanding platform fee cannot claim transaction evidence",
+    );
   }
   if (
     feeSignature &&

@@ -70,4 +70,51 @@ describe("project proposal schema", () => {
       /unexpected|declared model/u,
     );
   });
+
+  it("keeps direct funding non-custodial and rejects ambiguous routes", () => {
+    expect(assertProjectDefinition(eliza).funding).toMatchObject({
+      mode: "direct-noncustodial",
+      addresses: [],
+    });
+    const alteredDisclosure = structuredClone(eliza);
+    alteredDisclosure.funding.disclosure = "Slop holds the funds." as never;
+    expect(() => assertProjectDefinition(alteredDisclosure)).toThrow(
+      /non-custodial/u,
+    );
+
+    const duplicate = structuredClone(eliza);
+    duplicate.funding.addresses = [
+      {
+        network: "solana",
+        asset: "USDC",
+        address: "11111111111111111111111111111111",
+        effectiveAt: "2026-08-16T00:00:00.000Z",
+        replacedAt: null,
+      },
+      {
+        network: "solana",
+        asset: "USDC",
+        address: "Vote111111111111111111111111111111111111111",
+        effectiveAt: "2026-08-17T00:00:00.000Z",
+        replacedAt: null,
+      },
+    ] as never;
+    expect(() => assertProjectDefinition(duplicate)).toThrow(
+      /duplicate route/u,
+    );
+
+    const invalidSolana = structuredClone(eliza);
+    invalidSolana.funding.addresses = [
+      {
+        network: "solana",
+        asset: "USDC",
+        address: "2".repeat(32),
+        effectiveAt: "2026-08-16T00:00:00.000Z",
+        replacedAt: null,
+      },
+    ] as never;
+    expect(() => assertProjectDefinition(invalidSolana)).toThrow(
+      /address is invalid/u,
+    );
+  });
 });

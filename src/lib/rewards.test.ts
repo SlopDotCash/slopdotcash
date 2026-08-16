@@ -6,6 +6,7 @@ import {
   assertRewardAllocationManifest,
   assertRewardSettlementManifest,
   feeForPrincipal,
+  incrementalFeeForPrincipal,
 } from "./rewards";
 
 const wallet = {
@@ -37,7 +38,7 @@ function allocationManifest() {
     currency: "USDC",
     chain: "solana",
     capMinor: "10000000000",
-    feeBasisPoints: 300,
+    feeBasisPoints: 100,
     scoringRuleVersion: "outcome-compute-v1",
     sourceSnapshotSha256: "a".repeat(64),
     allocations: [
@@ -58,7 +59,7 @@ function allocationManifest() {
     totals: {
       suggestedMinor: "1000000",
       approvedMinor: "1000000",
-      feeMinor: "30000",
+      feeMinor: "10000",
     },
   };
 }
@@ -69,9 +70,11 @@ describe("reward manifests", () => {
     expect(manifest.totals).toEqual({
       suggestedMinor: "1000000",
       approvedMinor: "1000000",
-      feeMinor: "30000",
+      feeMinor: "10000",
     });
     expect(feeForPrincipal("999", 300)).toBe("29");
+    expect(incrementalFeeForPrincipal("99", "1", 100)).toBe("1");
+    expect(incrementalFeeForPrincipal("0", "99", 100)).toBe("0");
   });
 
   it("rejects cap overflow, silent reductions, and early approval", () => {
@@ -80,7 +83,7 @@ describe("reward manifests", () => {
     overflow.allocations[0].approvedMinor = "10000000001";
     overflow.totals.suggestedMinor = "10000000001";
     overflow.totals.approvedMinor = "10000000001";
-    overflow.totals.feeMinor = "300000000";
+    overflow.totals.feeMinor = "100000000";
     expect(() => assertRewardAllocationManifest(overflow)).toThrow(/cap/u);
 
     const reduction = allocationManifest();
@@ -102,11 +105,11 @@ describe("reward manifests", () => {
       "Project owner increased the award after reviewing the accepted result.";
     increased.totals.suggestedMinor = "500000";
     increased.totals.approvedMinor = "1500000";
-    increased.totals.feeMinor = "45000";
+    increased.totals.feeMinor = "15000";
 
     const manifest = assertRewardAllocationManifest(increased);
     expect(manifest.allocations[0].approvedMinor).toBe("1500000");
-    expect(manifest.totals.feeMinor).toBe("45000");
+    expect(manifest.totals.feeMinor).toBe("15000");
 
     increased.allocations[0].adjustmentReason = null;
     expect(() => assertRewardAllocationManifest(increased)).toThrow(/reason/u);
@@ -274,20 +277,28 @@ describe("reward manifests", () => {
       ],
       platformFee: {
         recipient: "11111111111111111111111111111111",
-        dueMinor: "30000",
-        paidMinor: "30000",
+        dueMinor: "10000",
+        paidMinor: "10000",
         signature: "5".repeat(88),
         state: "paid",
       },
       totals: {
         approvedMinor: "1000000",
         paidMinor: "1000000",
-        feeMinor: "30000",
+        feeMinor: "10000",
       },
     };
     expect(assertRewardSettlementManifest(settlement, allocation).status).toBe(
       "paid",
     );
+
+    const reportedFee = structuredClone(settlement);
+    reportedFee.status = "partially-paid";
+    reportedFee.platformFee.state = "reported";
+    reportedFee.platformFee.paidMinor = "0";
+    expect(
+      assertRewardSettlementManifest(reportedFee, allocation).platformFee,
+    ).toMatchObject({ state: "reported", paidMinor: "0" });
 
     settlement.attempts.push({
       attemptId: "attempt_eliza_2026_08_2",

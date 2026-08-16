@@ -55,7 +55,7 @@ owed money. Use these financial states consistently:
 - Goal: improve the public elizaOS framework.
 - Repository: `elizaOS/eliza`, integration branch `develop`.
 - Reward: pledged maximum $10,000 USDC per UTC calendar month.
-- Fee: 3% of approved principal.
+- Fee: 1% of approved principal.
 - Unused funds: remain available to the creator and roll forward without
   raising the next monthly cap.
 - Reward start: 2026-07-07 UTC, allowing the first snapshot to backdate recent

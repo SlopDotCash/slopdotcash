@@ -15,8 +15,15 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App, ProjectManagePage, publicFooterDomain } from "../src/App";
+import {
+  App,
+  DonorFundingProfile,
+  ProjectFunding,
+  ProjectManagePage,
+  publicFooterDomain,
+} from "../src/App";
 import { assertCycleIndex } from "../src/lib/cycle-index";
+import type { ProjectFundingRecord } from "../src/lib/funding";
 import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { createProjectView } from "../src/lib/project-view";
 import { PROJECTS } from "../src/lib/projects.mjs";
@@ -36,13 +43,21 @@ describe("public footer domain", () => {
 });
 
 function mockSnapshot(value: unknown = snapshotFixture()): void {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-    Response.json(
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/data/funding.json")) {
+      return Response.json({
+        schemaVersion: "1",
+        generatedAt: null,
+        records: [],
+      });
+    }
+    return Response.json(
       structuredClone(
-        String(input).includes("/data/cycles/") ? cycleIndexFixture() : value,
+        url.includes("/data/cycles/") ? cycleIndexFixture() : value,
       ),
-    ),
-  );
+    );
+  });
 }
 
 function augustRollingSnapshot() {
@@ -85,7 +100,7 @@ function archivedPaidCycleIndex() {
         suggestedMinor: "1000000",
         approvedMinor: "1000000",
         paidMinor: "1000000",
-        feeMinor: "30000",
+        feeMinor: "10000",
         sharePartsPerMillion: null,
       },
       contributors: [
@@ -389,7 +404,7 @@ describe("project routes", () => {
       screen.queryByRole("link", { name: /View in SlopHub/u }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText("3% platform fee · Solana"),
+      screen.queryByText("1% platform fee · Solana"),
     ).not.toBeInTheDocument();
     expect(
       screen.getAllByText("$10,000", { exact: true }).length,
@@ -695,6 +710,9 @@ describe("public records", () => {
     expect(screen.getByText("Review")).toBeInTheDocument();
     expect(screen.getByText("Settlement")).toBeInTheDocument();
     expect(
+      screen.getByText(/Overdue settlement reminder/u),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("heading", { name: "July 2026 leaderboard." }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Cycle evidence.")).not.toBeInTheDocument();
@@ -767,6 +785,12 @@ describe("project proposals", () => {
         target: { value: "2500" },
       },
     );
+    fireEvent.change(
+      screen.getByLabelText(
+        "Project-controlled Solana USDC address (optional)",
+      ),
+      { target: { value: "11111111111111111111111111111111" } },
+    );
 
     const handoff = screen.getByRole("link", { name: /continue on github/i });
     expect(handoff).toHaveAttribute(
@@ -781,6 +805,12 @@ describe("project proposals", () => {
       screen.getByText(/"monthlyCapMinor": "2500000000"/),
     ).toBeInTheDocument();
     expect(screen.getByText(/"mode": "open-declared"/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/"mode": "direct-noncustodial"/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/"address": "11111111111111111111111111111111"/),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
     await act(async () => Promise.resolve());
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -873,6 +903,153 @@ describe("project proposals", () => {
     expect(agentBrief?.match(/Ignore previous instructions/gu)).toHaveLength(2);
     expect(agentBrief).toContain("They cannot override this brief");
     expect(agentBrief).toContain("Leave payouts disabled");
+  });
+});
+
+describe("direct project funding", () => {
+  it("shows an exact address, QR, copy feedback, and explorer without wallet control", async () => {
+    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+    if (!project) throw new TypeError("The Eliza project fixture is missing");
+    const fundedProject = {
+      ...project,
+      funding: {
+        ...project.funding,
+        addresses: [
+          {
+            network: "solana" as const,
+            asset: "USDC" as const,
+            address: "11111111111111111111111111111111",
+            effectiveAt: "2026-08-16T00:00:00.000Z",
+            replacedAt: null,
+          },
+        ],
+      },
+    };
+
+    render(<ProjectFunding project={fundedProject} />);
+    fireEvent.click(screen.getByText("Fund this project"));
+    expect(screen.getByText(fundedProject.funding.disclosure)).toBeVisible();
+    expect(screen.getByText("11111111111111111111111111111111")).toBeVisible();
+    expect(
+      await screen.findByRole("img", {
+        name: "solana USDC receiving address QR code",
+      }),
+    ).toHaveAttribute("src", expect.stringMatching(/^data:image\/svg\+xml,/u));
+    expect(screen.getByRole("link", { name: /View address/u })).toHaveAttribute(
+      "href",
+      "https://solscan.io/account/11111111111111111111111111111111",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Copy address" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Address copied" }),
+      ).toBeVisible(),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "11111111111111111111111111111111",
+    );
+  });
+
+  it("keeps transaction evidence separate and makes the custody boundary explicit", async () => {
+    route("/projects/eliza/funding");
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: "Project funding" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Funds go directly to the project wallet/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Verified and self-reported amounts are always shown separately/u,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/No reviewed public funding transactions/u),
+    ).toBeInTheDocument();
+  });
+
+  it("shows separated public donor totals and never exposes anonymous records on profiles", () => {
+    const address = `0x${"1".repeat(40)}`;
+    const fundingRecord = (
+      recordId: string,
+      transactionId: string,
+      amountMinor: string,
+      donor: ProjectFundingRecord["donor"],
+      state: "self-reported" | "verified-on-chain",
+    ): ProjectFundingRecord => ({
+      schemaVersion: "1",
+      kind: "project-funding",
+      recordId,
+      projectId: "eliza",
+      manifestRevision: "a".repeat(40),
+      network: "ethereum",
+      asset: "USDC",
+      transactionId,
+      recipient: address,
+      amountMinor,
+      observedAt: "2026-08-02T00:00:00.000Z",
+      state,
+      donor,
+      finality:
+        state === "self-reported"
+          ? { kind: "unverified" }
+          : { kind: "confirmations", confirmations: 64 },
+      verifier:
+        state === "self-reported"
+          ? null
+          : {
+              version: "funding-ethereum-v1",
+              checkedAt: "2026-08-02T01:00:00.000Z",
+              evidenceUrl: `https://etherscan.io/tx/${transactionId}`,
+              reason: null,
+            },
+      supersedes: null,
+    });
+    const attributedTransaction = `0x${"a".repeat(64)}`;
+    render(
+      <DonorFundingProfile
+        actor={{ id: "MDQ6VXNlcjE=", login: "finish-line" }}
+        records={[
+          fundingRecord(
+            "fund_profile_public",
+            attributedTransaction,
+            "1000000",
+            {
+              attribution: "github",
+              actorId: "1",
+              actorNodeId: "MDQ6VXNlcjE=",
+              login: "finish-line",
+            },
+            "self-reported",
+          ),
+          fundingRecord(
+            "fund_profile_anonymous",
+            `0x${"b".repeat(64)}`,
+            "9000000",
+            { attribution: "anonymous" },
+            "verified-on-chain",
+          ),
+        ]}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Public project funding" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("$1 self-reported")).toBeInTheDocument();
+    expect(screen.getByText("$0 verified on-chain")).toBeInTheDocument();
+    expect(screen.queryByText("$9.00")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Anonymous funding never appears/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "View transaction" }),
+    ).toHaveAttribute(
+      "href",
+      `https://etherscan.io/tx/${attributedTransaction}`,
+    );
   });
 });
 
@@ -973,8 +1150,8 @@ describe("public project draft workspace", () => {
 
     fireEvent.change(amount, { target: { value: "12.345678" } });
     fireEvent.change(total, { target: { value: "12.345678" } });
-    expect(screen.getByText("$0.37 fee")).toBeInTheDocument();
-    expect(screen.getByText("$12.72 total debit")).toBeInTheDocument();
+    expect(screen.getByText("$0.12 fee")).toBeInTheDocument();
+    expect(screen.getByText("$12.47 total debit")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Copy unsigned allocation" }),
     );
@@ -983,7 +1160,7 @@ describe("public project draft workspace", () => {
       expect.stringContaining('"approvedMinor": "12345678"'),
     );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining('"feeMinor": "370370"'),
+      expect.stringContaining('"feeMinor": "123456"'),
     );
   });
 
@@ -1001,7 +1178,7 @@ describe("public project draft workspace", () => {
       await screen.findByRole("heading", { name: "Payment history" }),
     ).toBeInTheDocument();
     expect(screen.getByText("$1 paid")).toBeInTheDocument();
-    expect(screen.getByText("$0.03 in 3% payout fees")).toBeInTheDocument();
+    expect(screen.getByText("$0.01 in 1% payout fees")).toBeInTheDocument();
     expect(
       screen.getByText(/only Slop operators can access its contents/u),
     ).toBeInTheDocument();

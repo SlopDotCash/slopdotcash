@@ -4,9 +4,15 @@
  * request cannot smuggle executable configuration or ambiguous reward terms.
  */
 
+import {
+  fundingAssetForNetwork,
+  isFundingAddress,
+} from "./funding-address.mjs";
+
 const PROJECT_KEYS = [
   "description",
   "eyebrow",
+  "funding",
   "headline",
   "id",
   "links",
@@ -180,7 +186,7 @@ function validateReward(value, field) {
   }
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
-  if (reward.cycle !== "calendar-month-utc" || reward.feeBasisPoints !== 300) {
+  if (reward.cycle !== "calendar-month-utc" || reward.feeBasisPoints !== 100) {
     throw new TypeError(`${field} cycle or fee policy is invalid`);
   }
   if (reward.kind === "monthly-pool") {
@@ -236,6 +242,64 @@ function validateReward(value, field) {
   return reward;
 }
 
+function validateFunding(value, projectId) {
+  const funding = record(value, "project.funding");
+  exactKeys(
+    funding,
+    ["addresses", "disclosure", "mode", "recordsPath"],
+    "project.funding",
+  );
+  if (
+    funding.mode !== "direct-noncustodial" ||
+    funding.recordsPath !== `funding/${projectId}` ||
+    funding.disclosure !==
+      "Funds go directly to the project wallet. Slop does not hold or recover funds."
+  ) {
+    throw new TypeError("project.funding non-custodial policy is invalid");
+  }
+  if (!Array.isArray(funding.addresses) || funding.addresses.length > 4) {
+    throw new TypeError(
+      "project.funding addresses must contain at most four routes",
+    );
+  }
+  const seen = new Set();
+  for (const [index, value] of funding.addresses.entries()) {
+    const field = `project.funding.addresses[${index}]`;
+    const route = record(value, field);
+    exactKeys(
+      route,
+      ["address", "asset", "effectiveAt", "network", "replacedAt"],
+      field,
+    );
+    const expectedAsset = fundingAssetForNetwork(route.network);
+    if (!expectedAsset || route.asset !== expectedAsset) {
+      throw new TypeError(`${field} network or asset is unsupported`);
+    }
+    if (!isFundingAddress(route.network, route.address)) {
+      throw new TypeError(`${field}.address is invalid`);
+    }
+    const effectiveAt = timestamp(route.effectiveAt, `${field}.effectiveAt`);
+    const replacedAt =
+      route.replacedAt === null
+        ? null
+        : timestamp(route.replacedAt, `${field}.replacedAt`);
+    if (
+      replacedAt !== null &&
+      Date.parse(replacedAt) <= Date.parse(effectiveAt)
+    ) {
+      throw new TypeError(`${field}.replacedAt must follow effectiveAt`);
+    }
+    const key = `${route.network}:${route.asset}`;
+    if (seen.has(key)) {
+      throw new TypeError(
+        "project.funding addresses contain a duplicate route",
+      );
+    }
+    seen.add(key);
+  }
+  return funding;
+}
+
 /** Validates one project folder manifest. */
 export function assertProjectDefinition(value) {
   const project = record(value, "project");
@@ -283,6 +347,7 @@ export function assertProjectDefinition(value) {
     `review-${id}-contributions`,
   );
   validateReward(project.reward, "project.reward");
+  validateFunding(project.funding, id);
   const modelPolicy = record(project.modelPolicy, "project.modelPolicy");
   exactKeys(modelPolicy, ["disclosureRequired", "mode"], "project.modelPolicy");
   if (

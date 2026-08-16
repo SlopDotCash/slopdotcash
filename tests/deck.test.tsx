@@ -89,7 +89,7 @@ describe("Slop fundraising deck", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/3% of payouts plus sponsorships/),
+      screen.getByText(/1% of payouts plus sponsorships/),
     ).toBeInTheDocument();
     expect(screen.getByText("$2M")).toBeInTheDocument();
     expect(screen.getByText("$1.0M")).toBeInTheDocument();

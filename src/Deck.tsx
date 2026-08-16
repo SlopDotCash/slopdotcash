@@ -353,7 +353,7 @@ function Economics() {
       <div className="deck-economics-heading">
         <h2>This can actually make a lot of money.</h2>
         <p>
-          3% of payouts plus sponsorships, collaborations, and contributed
+          1% of payouts plus sponsorships, collaborations, and contributed
           compute offset the network’s cost in year one.
         </p>
       </div>
@@ -405,7 +405,7 @@ function Economics() {
           ))}
           <small>
             Illustrative base case, not historical results. Year one assumes
-            $60K from 3% payout fees and $190K from sponsors, collaborations,
+            $20K from 1% payout fees and $230K from sponsors, collaborations,
             and contributed resources.
           </small>
         </div>
