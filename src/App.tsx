@@ -30,6 +30,7 @@ import {
 } from "./lib/cycle-index";
 import {
   assertProjectFundingIndex,
+  currentProjectFundingRecords,
   isFundingAddress,
   type ProjectFundingIndex,
   type ProjectFundingRecord,
@@ -1306,8 +1307,10 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
   const funding = useFundingIndex();
   const records =
     funding.status === "ready"
-      ? funding.index.records.filter(
-          (record) => record.projectId === project.id,
+      ? currentProjectFundingRecords(
+          funding.index.records.filter(
+            (record) => record.projectId === project.id,
+          ),
         )
       : [];
   const totals = projectFundingTotals(records);

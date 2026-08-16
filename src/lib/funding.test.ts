@@ -5,6 +5,7 @@ import {
   assertProjectFundingAddresses,
   assertProjectFundingLedger,
   assertProjectFundingRecord,
+  currentProjectFundingRecords,
   projectFundingTotals,
   publicFundingRecordsForDonor,
 } from "./funding";
@@ -206,6 +207,9 @@ describe("project funding records", () => {
       supersedes: original.recordId,
     });
     const ledger = assertProjectFundingLedger([original, correction], routes);
+    expect(
+      currentProjectFundingRecords(ledger).map(({ recordId }) => recordId),
+    ).toEqual(["fund_fixture_02"]);
     expect(projectFundingTotals(ledger)).toEqual([
       { asset: "USDC", selfReportedMinor: "0", verifiedMinor: "0" },
     ]);

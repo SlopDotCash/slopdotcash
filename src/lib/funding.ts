@@ -387,16 +387,26 @@ export function assertProjectFundingLedger(
   return records;
 }
 
-export function projectFundingTotals(records: readonly ProjectFundingRecord[]) {
+export function currentProjectFundingRecords(
+  records: readonly ProjectFundingRecord[],
+): readonly ProjectFundingRecord[] {
   const latest = new Map<string, ProjectFundingRecord>();
   for (const record of records) {
     latest.set(`${record.network}:${record.transactionId}`, record);
   }
+  return [...latest.values()].sort(
+    (left, right) =>
+      Date.parse(right.observedAt) - Date.parse(left.observedAt) ||
+      left.recordId.localeCompare(right.recordId),
+  );
+}
+
+export function projectFundingTotals(records: readonly ProjectFundingRecord[]) {
   const byAsset = new Map<
     FundingAsset,
     { selfReportedMinor: bigint; verifiedMinor: bigint }
   >();
-  for (const record of latest.values()) {
+  for (const record of currentProjectFundingRecords(records)) {
     const totals = byAsset.get(record.asset) ?? {
       selfReportedMinor: 0n,
       verifiedMinor: 0n,
@@ -427,11 +437,7 @@ export function publicFundingRecordsForDonor(
   records: readonly ProjectFundingRecord[],
   actorNodeId: string,
 ): readonly ProjectFundingRecord[] {
-  const latest = new Map<string, ProjectFundingRecord>();
-  for (const record of records) {
-    latest.set(`${record.network}:${record.transactionId}`, record);
-  }
-  return [...latest.values()]
+  return currentProjectFundingRecords(records)
     .filter((record) => {
       if (record.donor.attribution !== "github") return false;
       return record.donor.actorNodeId === actorNodeId;
