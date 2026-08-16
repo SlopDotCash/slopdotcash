@@ -37,7 +37,7 @@ import {
   projectFundingTotals,
   publicFundingRecordsForDonor,
 } from "./lib/funding";
-import { settlementReminder } from "./lib/funding-reminders";
+import { cycleSettlementReminder } from "./lib/funding-reminders";
 import { createGlobalLeaders } from "./lib/global-leaderboard";
 import { createInstallCommand } from "./lib/install-command";
 import {
@@ -2046,11 +2046,17 @@ function CyclePage({
   if (!from || !to) return <NotFound title="Cycle unavailable" />;
   const lifecycle =
     record?.state ?? (view?.cycle.status === "live" ? "live" : "closed");
-  const reminder = settlementReminder(
-    to,
-    new Date().toISOString(),
-    record?.settledAt ?? null,
-  );
+  const reminder = cycleSettlementReminder({
+    closesAt: to,
+    kind:
+      record?.kind ??
+      (view?.reward.kind === "external-prize-share"
+        ? "external-prize-share"
+        : "monthly-pool"),
+    now: new Date().toISOString(),
+    settledAt: record?.settledAt ?? null,
+    state: record?.state ?? (view?.cycle.status === "live" ? "live" : "review"),
+  });
   const headlineAmount = record
     ? record.kind === "external-prize-share"
       ? `${(record.reward.sharePartsPerMillion ?? 0) / 10_000}%`

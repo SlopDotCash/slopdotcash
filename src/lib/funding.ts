@@ -249,19 +249,29 @@ export function assertProjectFundingRecord(
   ) {
     throw new TypeError("funding record recipient is invalid");
   }
+  if (
+    record.supersedes !== null &&
+    (typeof record.supersedes !== "string" ||
+      !RECORD_ID_PATTERN.test(record.supersedes))
+  ) {
+    throw new TypeError("funding record supersedes id is invalid");
+  }
   const observedAt = timestamp(record.observedAt, "funding record observedAt");
   const route = addresses.find(
     (candidate) =>
       candidate.network === network &&
       candidate.asset === record.asset &&
       candidate.address === record.recipient &&
-      Date.parse(candidate.effectiveAt) <= Date.parse(observedAt) &&
-      (candidate.replacedAt === null ||
-        Date.parse(observedAt) < Date.parse(candidate.replacedAt)),
+      (record.supersedes !== null ||
+        (Date.parse(candidate.effectiveAt) <= Date.parse(observedAt) &&
+          (candidate.replacedAt === null ||
+            Date.parse(observedAt) < Date.parse(candidate.replacedAt)))),
   );
   if (!route) {
     throw new TypeError(
-      "funding record recipient was not active at the manifest-bound observation time",
+      record.supersedes === null
+        ? "funding record recipient was not active at the manifest-bound observation time"
+        : "funding correction recipient is absent from the manifest-bound route history",
     );
   }
   canonicalMinor(record.amountMinor, "funding record amountMinor");
@@ -335,13 +345,6 @@ export function assertProjectFundingRecord(
     ) {
       throw new TypeError("funding record dispute reason is inconsistent");
     }
-  }
-  if (
-    record.supersedes !== null &&
-    (typeof record.supersedes !== "string" ||
-      !RECORD_ID_PATTERN.test(record.supersedes))
-  ) {
-    throw new TypeError("funding record supersedes id is invalid");
   }
   return value as ProjectFundingRecord;
 }

@@ -760,6 +760,7 @@ describe("public records", () => {
     expect(
       screen.getByText("This cycle closed with no accepted awards."),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/settlement reminder/u)).not.toBeInTheDocument();
   });
 });
 

@@ -6,6 +6,15 @@ export type SettlementReminder =
   | { kind: "ready-to-sign"; message: string }
   | { kind: "settler-seven-day"; message: string };
 
+export type SettlementReminderLifecycle =
+  | "closed-no-awards"
+  | "external-provisional"
+  | "live"
+  | "paid"
+  | "payment-ready"
+  | "review"
+  | "settlement-planned";
+
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 function utc(value: string): string {
@@ -55,4 +64,23 @@ export function settlementReminder(
     message:
       "Overdue settlement reminder: more than 72 hours have passed since UTC cycle close without reconciled settlement evidence.",
   };
+}
+
+/** Suppresses signing language for cycles that never enter platform settlement. */
+export function cycleSettlementReminder(input: {
+  closesAt: string;
+  kind: "external-prize-share" | "monthly-pool";
+  now: string;
+  settledAt: string | null;
+  state: SettlementReminderLifecycle;
+}): SettlementReminder | null {
+  if (
+    input.kind !== "monthly-pool" ||
+    input.state === "closed-no-awards" ||
+    input.state === "external-provisional" ||
+    input.state === "paid"
+  ) {
+    return null;
+  }
+  return settlementReminder(input.closesAt, input.now, input.settledAt);
 }
