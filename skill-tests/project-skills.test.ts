@@ -36,6 +36,7 @@ import {
   usageDelta,
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
 import { registerWalletClaim } from "../skills/contribute-to-eliza/scripts/wallet-claim.mjs";
+import { declaredIdentity as heirElementsDeclaredIdentity } from "../skills/contribute-to-heir-elements-sdk/scripts/run-receipt.mjs";
 import { assessModelAttribution } from "../src/lib/leaderboard";
 import { MODEL_IDENTITY_CONFORMANCE_CASES } from "../src/lib/model-identity-corpus";
 import { PROJECTS } from "../src/lib/projects.mjs";
@@ -53,6 +54,7 @@ describe("project skill contracts", () => {
       elizaDeclaredIdentity,
       asiDeclaredIdentity,
       deltaDeclaredIdentity,
+      heirElementsDeclaredIdentity,
     ]) {
       for (const { field, value, valid } of MODEL_IDENTITY_CONFORMANCE_CASES) {
         const attempt = () => validate(value, field, field, 128);
@@ -175,7 +177,7 @@ describe("project skill contracts", () => {
     const monthlyPackages = projectPackages.filter(
       ({ project }) => project.reward.kind === "monthly-pool",
     );
-    assert.strictEqual(monthlyPackages.length, 2);
+    assert.strictEqual(monthlyPackages.length, 3);
     const [canonicalPackage] = monthlyPackages;
     const canonicalSource = readFileSync(
       join(canonicalPackage.contributorRoot, "scripts", "wallet-claim.mjs"),

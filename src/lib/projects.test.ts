@@ -9,10 +9,11 @@ import {
 import { TARGET_REPOSITORIES } from "./repositories.mjs";
 
 describe("project registry", () => {
-  it("defines the two launch projects with distinct reward semantics", () => {
+  it("defines the launch projects with distinct reward semantics", () => {
     expect(PROJECTS.map((project) => project.id)).toEqual([
       "eliza",
       "asi",
+      "heir-elements-sdk",
       "delta-star",
     ]);
     expect(findProject("eliza")?.reward).toMatchObject({
@@ -24,6 +25,11 @@ describe("project registry", () => {
       kind: "monthly-pool",
       monthlyCapMinor: "5000000000",
       rewardStartAt: "2026-08-12T00:00:00.000Z",
+    });
+    expect(findProject("heir-elements-sdk")?.reward).toMatchObject({
+      kind: "monthly-pool",
+      monthlyCapMinor: "100000000",
+      rewardStartAt: "2026-08-16T01:15:28.387Z",
     });
     expect(findProject("delta-star")?.reward).toMatchObject({
       kind: "external-prize-share",
@@ -40,6 +46,7 @@ describe("project registry", () => {
     ).toEqual([
       ["elizaOS/eliza", "eliza"],
       ["elizaOS/asi", "asi"],
+      ["heirlabs/element-sdk", "heir-elements-sdk"],
       ["elizaOS/proximityprize", "delta-star"],
     ]);
     expect(findProjectByRepositoryId("ELIZAOS/ELIZA")?.id).toBe("eliza");

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1",
+  "id": "heir-elements-sdk",
+  "slug": "heir-elements-sdk",
+  "name": "Heir Elements SDK",
+  "eyebrow": "Open-source project",
+  "headline": "Make Money Creating Intelligent Inheritance Apps",
+  "description": "Make the element SDK the most hardened global software developers kit for intelligent inheritance applications.",
+  "status": "active",
+  "repositories": [
+    {
+      "id": "heirlabs/element-sdk",
+      "displayName": "heirlabs/element-sdk",
+      "githubUrl": "https://github.com/heirlabs/element-sdk",
+      "description": "Public HEIR Elements SDK monorepo: sandboxed element runtime, validator, CLI, React bindings, and templates for intelligent inheritance apps.",
+      "integrationBranch": "slop"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-heir-elements-sdk",
+    "sourcePath": "skills/contribute-to-heir-elements-sdk",
+    "publicPath": "/projects/heir-elements-sdk/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-heir-elements-sdk-contributions",
+    "sourcePath": "skills/review-heir-elements-sdk-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-08-16T01:15:28.387Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "100000000",
+    "monthlyCapDisplay": "$100",
+    "committedMinor": "0",
+    "paymentMode": "disabled",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "modelPolicy": {
+    "mode": "open-declared",
+    "disclosureRequired": true
+  },
+  "links": {
+    "repository": "https://github.com/heirlabs/element-sdk",
+    "issues": "https://github.com/heirlabs/element-sdk/issues"
+  }
+}
