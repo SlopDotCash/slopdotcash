@@ -57,6 +57,41 @@ bun run funding:verify-solana -- --signature <signature> --recipient <project-ow
 It emits candidate finality and verifier fields for human review; it never
 signs, broadcasts, handles a key, or writes a funding record.
 
+For Base and Ethereum mainnet USDC, the read-only verifier queries three fixed,
+independent public RPC authorities for `eth_chainId`, the `finalized` head, and
+the canonical block at the receipt height. At least two must agree on the exact
+transaction and block identity. It then accepts only a successful receipt whose
+block-bound canonical USDC `Transfer` logs credit the project owner the exact
+amount with balanced deltas, no undeclared positive credit, no mint or burn,
+and at least the network confirmation policy (12 on Base, 64 on Ethereum)
+behind each agreeing authority's finalized head:
+
+```text
+bun run funding:verify-evm -- --network <base|ethereum> --transaction <0x-hash> --recipient <project-owner-address> --amount-minor <integer>
+```
+
+It has the same boundaries: read-only evidence for human review, never a key,
+signature, broadcast, or written funding record. The production CLI has no RPC
+override; deterministic tests may inject only the fetch implementation.
+
+For Bitcoin mainnet BTC, the read-only verifier queries three fixed,
+independent public Esplora authorities for the transaction, the chain tip, and
+the canonical block hash at the transaction height. At least two must agree on
+the exact transaction and block identity. It then accepts only a confirmed
+transaction whose block hash still sits in each agreeing authority's best
+chain, with at least 6 confirmations behind each tip, a coherent fee that
+exactly reconciles input and output sums, no coinbase input, no input spending
+the recipient's own coins, no dust-level credited output, and non-dust
+recipient outputs summing to the exact amount:
+
+```text
+bun run funding:verify-bitcoin -- --transaction <txid> --recipient <project-owner-address> --amount-minor <satoshis>
+```
+
+Same boundaries again: read-only evidence for human review, never a key,
+signature, broadcast, or written funding record. The production CLI has no API
+override; deterministic tests may inject only the fetch implementation.
+
 Project payout plans remain unsigned and are executed outside Slop by the
 declared project settler. A transaction signature is only reported evidence;
 the cycle remains unpaid until deterministic finalized balance deltas reconcile
