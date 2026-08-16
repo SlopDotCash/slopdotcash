@@ -4597,6 +4597,24 @@ export function assertLeaderboardSnapshot(
   ) {
     throw new Error("snapshot.attributions must contain unique IDs");
   }
+  const receiptClaims = new Map<string, string>();
+  for (const attribution of validatedAttributions) {
+    if (!attribution.run?.traceUpload) continue;
+    for (const [kind, value] of [
+      ["client run", attribution.run.runId],
+      ["server run", attribution.run.traceUpload.serverRunId],
+      ["trace object", attribution.run.traceUpload.objectId],
+    ] as const) {
+      const key = `${kind}:${value}`;
+      const prior = receiptClaims.get(key);
+      if (prior !== undefined) {
+        throw new Error(
+          `snapshot attribution ${attribution.id} reuses ${kind} already claimed by ${prior}`,
+        );
+      }
+      receiptClaims.set(key, attribution.id);
+    }
+  }
   for (const attribution of validatedAttributions) {
     const hasCausalLedgerEvent = validatedLedger.some((event) => {
       if (!sameActor(event.actor, attribution.actor)) {

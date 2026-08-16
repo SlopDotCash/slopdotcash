@@ -1518,6 +1518,15 @@ describe("scoring and limits", () => {
       }),
     );
 
+    const replayedReceipt = structuredClone(snapshot);
+    replayedReceipt.attributions.push({
+      ...replayedReceipt.attributions[0],
+      id: "attribution_replayed_receipt",
+    });
+    expect(() => assertLeaderboardSnapshot(replayedReceipt)).toThrow(
+      /reuses client run/u,
+    );
+
     for (const mismatchedActor of [
       actor("different-author"),
       { ...contributor, id: "ACTOR_same-login-impostor" },
