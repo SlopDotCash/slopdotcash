@@ -5,6 +5,74 @@
 
 import { assertProjectDefinition } from "./project-schema.mjs";
 
+function assertFundingRouteTransition(previousRoutes, nextRoutes) {
+  if (
+    nextRoutes.length < previousRoutes.length ||
+    nextRoutes.length > previousRoutes.length + 1
+  ) {
+    throw new TypeError(
+      "funding history must remain an append-only prefix with at most one successor",
+    );
+  }
+  let closedIndex = null;
+  for (let index = 0; index < previousRoutes.length; index += 1) {
+    const previous = previousRoutes[index];
+    const next = nextRoutes[index];
+    if (
+      previous.network !== next.network ||
+      previous.asset !== next.asset ||
+      previous.address !== next.address ||
+      previous.effectiveAt !== next.effectiveAt
+    ) {
+      throw new TypeError(
+        "historical funding routes must remain an exact append-only prefix",
+      );
+    }
+    if (previous.replacedAt !== null) {
+      if (previous.replacedAt !== next.replacedAt) {
+        throw new TypeError("closed funding routes are immutable");
+      }
+    } else if (next.replacedAt !== null) {
+      if (closedIndex !== null) {
+        throw new TypeError("a transition may close at most one funding route");
+      }
+      closedIndex = index;
+    }
+  }
+  const successor = nextRoutes[previousRoutes.length];
+  if (successor === undefined) {
+    if (closedIndex !== null) {
+      throw new TypeError(
+        "an active funding route may close only with a successor",
+      );
+    }
+    return;
+  }
+  if (successor.replacedAt !== null) {
+    throw new TypeError("an appended funding successor must be active");
+  }
+  const activePredecessor = previousRoutes.findIndex(
+    (route) =>
+      route.network === successor.network &&
+      route.asset === successor.asset &&
+      route.replacedAt === null,
+  );
+  if (activePredecessor === -1) {
+    if (closedIndex !== null) {
+      throw new TypeError("a funding successor must rotate the closed route");
+    }
+    return;
+  }
+  if (
+    closedIndex !== activePredecessor ||
+    nextRoutes[activePredecessor].replacedAt !== successor.effectiveAt
+  ) {
+    throw new TypeError(
+      "a funding rotation must close its active predecessor exactly when its successor starts",
+    );
+  }
+}
+
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {
@@ -25,6 +93,10 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
   const previous = assertProjectDefinition(previousValue);
   const next = assertProjectDefinition(nextValue);
   if (previous.id !== next.id) throw new TypeError("project id cannot change");
+  assertFundingRouteTransition(
+    previous.funding.addresses,
+    next.funding.addresses,
+  );
   if (
     previous.authority.repositoryId !== next.authority.repositoryId ||
     previous.authority.repositoryNodeId !== next.authority.repositoryNodeId ||

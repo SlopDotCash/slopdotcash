@@ -1,0 +1,44 @@
+name: Trusted project transition gate
+
+on:
+  pull_request_target:
+    branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-project-transition-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  project-transitions:
+    name: Trusted project transition gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Execute only the checker committed at the immutable base SHA. The PR
+      # head is fetched as Git object data and is never checked out or run.
+      - name: Checkout immutable trusted base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Validate immutable base and head manifests
+        env:
+          PROJECT_POLICY_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PROJECT_POLICY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PROJECT_POLICY_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PROJECT_POLICY_BASE_SHA"
+          git fetch --no-tags --depth=1 origin \
+            "+refs/pull/$PROJECT_POLICY_PR_NUMBER/head:refs/remotes/origin/slop-transition-head"
+          fetched_head="$(git rev-parse refs/remotes/origin/slop-transition-head)"
+          test "$fetched_head" = "$PROJECT_POLICY_HEAD_SHA"
+          node scripts/check-project-transitions.mjs \
+            "$PROJECT_POLICY_BASE_SHA" "$PROJECT_POLICY_HEAD_SHA"
