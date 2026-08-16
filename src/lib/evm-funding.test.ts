@@ -2,11 +2,12 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  assertConfirmedUsdcFundingTransfer,
+  assertConfirmedUsdcFundingTransfer as assertTransfer,
   EVM_FUNDING_MIN_CONFIRMATIONS,
   EVM_FUNDING_USDC_CONTRACTS,
   EVM_FUNDING_VERIFIER_VERSIONS,
   type EvmFundingNetwork,
+  MAX_EVM_FUNDING_RECEIPT_LOGS,
 } from "./evm-funding";
 import {
   assertProjectFundingAddresses,
@@ -18,6 +19,8 @@ const SENDER = `0x${"2".repeat(40)}`;
 const OTHER = `0x${"3".repeat(40)}`;
 const ZERO = `0x${"0".repeat(40)}`;
 const HASH = `0x${"a".repeat(64)}`;
+const BLOCK_HASH = `0x${"b".repeat(64)}`;
+const FINALIZED_HASH = `0x${"c".repeat(64)}`;
 const TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
@@ -40,6 +43,9 @@ function transferLog(
     topics: [TRANSFER_TOPIC, topic(from), topic(to)],
     data: amountData(value),
     removed: false,
+    transactionHash: HASH,
+    blockHash: BLOCK_HASH,
+    blockNumber: "0x100",
   };
 }
 
@@ -51,12 +57,38 @@ function receipt(
     status: "0x1",
     transactionHash: HASH,
     blockNumber: "0x100",
+    blockHash: BLOCK_HASH,
     logs: [transferLog(network, SENDER, RECIPIENT, 1_000_000n)],
     ...overrides,
   };
 }
 
-const FINALIZED = 0x1000n;
+const FINALIZED = { number: 0x1000n, hash: FINALIZED_HASH };
+
+function assertConfirmedUsdcFundingTransfer(
+  receiptValue: unknown,
+  network: EvmFundingNetwork,
+  expectedTransactionHash: string,
+  recipient: string,
+  amountMinor: string,
+  finalized: bigint | typeof FINALIZED,
+) {
+  const candidate = receiptValue as {
+    blockHash: string;
+    blockNumber: string;
+  };
+  return assertTransfer(
+    receiptValue,
+    network,
+    expectedTransactionHash,
+    recipient,
+    amountMinor,
+    typeof finalized === "bigint"
+      ? { number: finalized, hash: FINALIZED_HASH }
+      : finalized,
+    { number: BigInt(candidate.blockNumber), hash: candidate.blockHash },
+  );
+}
 
 describe("EVM funding transfer verification", () => {
   it("verifies an exact confirmed USDC credit on both networks", () => {
@@ -72,6 +104,7 @@ describe("EVM funding transfer verification", () => {
         ),
       ).toEqual({
         transactionHash: HASH,
+        blockHash: BLOCK_HASH,
         blockNumber: 0x100,
         confirmations: 0x1000 - 0x100 + 1,
       });
@@ -223,6 +256,82 @@ describe("EVM funding transfer verification", () => {
         FINALIZED,
       ),
     ).toThrow(/exact amount/u);
+  });
+
+  it("binds the receipt and counted logs to one canonical transaction block", () => {
+    expect(() =>
+      assertTransfer(
+        receipt("ethereum"),
+        "ethereum",
+        HASH,
+        RECIPIENT,
+        "1000000",
+        FINALIZED,
+        { number: 0x100n, hash: `0x${"d".repeat(64)}` },
+      ),
+    ).toThrow(/canonical block/u);
+    for (const logOverride of [
+      { transactionHash: `0x${"d".repeat(64)}` },
+      { blockHash: `0x${"d".repeat(64)}` },
+      { blockNumber: "0x101" },
+      { removed: undefined },
+    ]) {
+      expect(() =>
+        assertConfirmedUsdcFundingTransfer(
+          receipt("ethereum", {
+            logs: [
+              {
+                ...transferLog("ethereum", SENDER, RECIPIENT, 1_000_000n),
+                ...logOverride,
+              },
+            ],
+          }),
+          "ethereum",
+          HASH,
+          RECIPIENT,
+          "1000000",
+          FINALIZED,
+        ),
+      ).toThrow(/funding transaction block/u);
+    }
+  });
+
+  it("bounds receipt work and rejects an unsafe confirmation conversion", () => {
+    expect(() =>
+      assertConfirmedUsdcFundingTransfer(
+        receipt("ethereum", {
+          logs: Array.from(
+            { length: MAX_EVM_FUNDING_RECEIPT_LOGS + 1 },
+            () => ({ address: `0x${"9".repeat(40)}` }),
+          ),
+        }),
+        "ethereum",
+        HASH,
+        RECIPIENT,
+        "1000000",
+        FINALIZED,
+      ),
+    ).toThrow(/at most/u);
+    const zeroBlockReceipt = receipt("ethereum", {
+      blockNumber: "0x0",
+      logs: [
+        {
+          ...transferLog("ethereum", SENDER, RECIPIENT, 1_000_000n),
+          blockNumber: "0x0",
+        },
+      ],
+    });
+    expect(() =>
+      assertTransfer(
+        zeroBlockReceipt,
+        "ethereum",
+        HASH,
+        RECIPIENT,
+        "1000000",
+        { number: BigInt(Number.MAX_SAFE_INTEGER), hash: FINALIZED_HASH },
+        { number: 0n, hash: BLOCK_HASH },
+      ),
+    ).toThrow(/safe integer/u);
   });
 
   it("rejects malformed expectations before reading the receipt", () => {

@@ -2,6 +2,7 @@
 
 import {
   assertConfirmedUsdcFundingTransfer,
+  assertEvmCanonicalBlock,
   EVM_FUNDING_CHAIN_IDS,
   EVM_FUNDING_VERIFIER_VERSIONS,
   type EvmFundingNetwork,
@@ -11,50 +12,120 @@ import {
 } from "../src/lib/evm-funding";
 import { isFundingAddress } from "../src/lib/funding-address.mjs";
 
-const DEFAULT_RPCS = {
-  base: "https://mainnet.base.org",
-  ethereum: "https://ethereum-rpc.publicnode.com",
+export const EVM_FUNDING_RPC_AUTHORITIES = {
+  base: [
+    "https://mainnet.base.org",
+    "https://base-rpc.publicnode.com",
+    "https://base.drpc.org",
+  ],
+  ethereum: [
+    "https://ethereum-rpc.publicnode.com",
+    "https://eth.drpc.org",
+    "https://rpc.flashbots.net",
+  ],
 } as const;
+const EVM_FUNDING_RPC_QUORUM = 2;
 const EVIDENCE_HOSTS = {
   base: "https://basescan.org",
   ethereum: "https://etherscan.io",
 } as const;
-const MAX_RPC_BYTES = 8 * 1024 * 1024;
+export const MAX_EVM_RPC_BYTES = 8 * 1024 * 1024;
 
-function argument(name: string): string | null {
-  const index = process.argv.indexOf(name);
-  if (index < 0) return null;
-  const value = process.argv[index + 1];
-  if (!value || value.startsWith("--")) {
-    throw new TypeError(`${name} requires a value`);
+type FetchLike = (url: URL, init?: RequestInit) => Promise<Response>;
+
+const CLI_ARGUMENTS = new Set([
+  "--network",
+  "--transaction",
+  "--recipient",
+  "--amount-minor",
+]);
+
+export function parseEvmFundingArguments(argv: readonly string[]) {
+  const parsed = new Map<string, string>();
+  for (let index = 0; index < argv.length; index += 2) {
+    const name = argv[index];
+    const value = argv[index + 1];
+    if (
+      !name ||
+      !CLI_ARGUMENTS.has(name) ||
+      !value ||
+      value.startsWith("--") ||
+      parsed.has(name)
+    ) {
+      throw new TypeError(
+        "Usage: verify-funding-evm.ts --network <base|ethereum> --transaction <0x-hash> --recipient <0x-address> --amount-minor <integer>",
+      );
+    }
+    parsed.set(name, value);
   }
-  return value;
+  return {
+    network: parsed.get("--network") ?? null,
+    transactionHash: parsed.get("--transaction") ?? null,
+    recipient: parsed.get("--recipient") ?? null,
+    amountMinor: parsed.get("--amount-minor") ?? null,
+  };
+}
+
+async function boundedBody(response: Response): Promise<string> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
+      throw new TypeError("EVM RPC returned an invalid Content-Length");
+    }
+    if (parsedLength > MAX_EVM_RPC_BYTES) {
+      throw new RangeError("EVM RPC response exceeded its size limit");
+    }
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new TypeError("EVM RPC returned no readable body");
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let byteLength = 0;
+  let body = "";
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      byteLength += chunk.value.byteLength;
+      if (byteLength > MAX_EVM_RPC_BYTES) {
+        throw new RangeError("EVM RPC response exceeded its size limit");
+      }
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    body += decoder.decode();
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new TypeError("EVM RPC response is not valid UTF-8", {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+  if (byteLength === 0) throw new RangeError("EVM RPC response is empty");
+  return body;
 }
 
 async function rpcCall(
   rpc: URL,
-  fetchImpl: (url: URL, init?: RequestInit) => Promise<Response>,
+  fetchImpl: FetchLike,
   method: string,
   params: readonly unknown[],
+  id: string,
 ): Promise<unknown> {
   const response = await fetchImpl(rpc, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    redirect: "error",
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {
     throw new Error(`EVM RPC ${method} returned HTTP ${response.status}`);
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.length === 0 || bytes.length > MAX_RPC_BYTES) {
-    throw new RangeError(`EVM RPC ${method} response is empty or oversized`);
-  }
+  const responseBody = await boundedBody(response);
   let envelope: unknown;
   try {
-    envelope = JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    );
+    envelope = JSON.parse(responseBody);
   } catch (error) {
     throw new TypeError(`EVM RPC ${method} response is invalid JSON`, {
       cause: error,
@@ -68,6 +139,9 @@ async function rpcCall(
     throw new TypeError(`EVM RPC ${method} response is invalid`);
   }
   const body = envelope as Record<string, unknown>;
+  if (body.jsonrpc !== "2.0" || body.id !== id) {
+    throw new TypeError(`EVM RPC ${method} response identity is invalid`);
+  }
   if (body.error !== undefined && body.error !== null) {
     throw new TypeError(
       `EVM RPC ${method} returned an error: ${JSON.stringify(body.error)}`,
@@ -79,12 +153,73 @@ async function rpcCall(
   return body.result;
 }
 
+async function verifyWithAuthority(
+  input: {
+    amountMinor: string;
+    network: EvmFundingNetwork;
+    recipient: string;
+    transactionHash: string;
+  },
+  authority: string,
+  authorityIndex: number,
+  fetchImpl: FetchLike,
+) {
+  const rpc = new URL(authority);
+  let requestIndex = 0;
+  const request = (method: string, params: readonly unknown[]) =>
+    rpcCall(
+      rpc,
+      fetchImpl,
+      method,
+      params,
+      `slop-funding:${input.network}:${authorityIndex}:${requestIndex++}:${method}`,
+    );
+  const chainId = evmQuantity(
+    await request("eth_chainId", []),
+    "eth_chainId result",
+  );
+  if (chainId !== EVM_FUNDING_CHAIN_IDS[input.network]) {
+    throw new TypeError(
+      `EVM RPC chain id ${chainId} is not ${input.network} mainnet`,
+    );
+  }
+  const finalizedBlock = assertEvmCanonicalBlock(
+    await request("eth_getBlockByNumber", ["finalized", false]),
+    "finalized block",
+  );
+  const receipt = await request("eth_getTransactionReceipt", [
+    input.transactionHash,
+  ]);
+  if (
+    typeof receipt !== "object" ||
+    receipt === null ||
+    Array.isArray(receipt)
+  ) {
+    throw new TypeError("EVM transaction receipt is absent or invalid");
+  }
+  const receiptBlockNumber = (receipt as Record<string, unknown>).blockNumber;
+  evmQuantity(receiptBlockNumber, "receipt.blockNumber");
+  const receiptBlock = assertEvmCanonicalBlock(
+    await request("eth_getBlockByNumber", [receiptBlockNumber, false]),
+    "canonical receipt block",
+  );
+  const verified = assertConfirmedUsdcFundingTransfer(
+    receipt,
+    input.network,
+    input.transactionHash,
+    input.recipient,
+    input.amountMinor,
+    finalizedBlock,
+    receiptBlock,
+  );
+  return { authority: rpc.toString(), finalizedBlock, verified };
+}
+
 export async function verifyFundingEvm(input: {
   amountMinor: string;
-  fetchImpl?: (url: URL, init?: RequestInit) => Promise<Response>;
+  fetchImpl?: FetchLike;
   network: EvmFundingNetwork;
   recipient: string;
-  rpcUrl?: string;
   transactionHash: string;
 }) {
   if (
@@ -98,56 +233,43 @@ export async function verifyFundingEvm(input: {
       "network, transaction hash, recipient, or amount is invalid",
     );
   }
-  const rpc = new URL(input.rpcUrl ?? DEFAULT_RPCS[input.network]);
-  if (rpc.protocol !== "https:" || rpc.username || rpc.password || rpc.hash) {
-    throw new TypeError("EVM RPC must be a credential-free HTTPS URL");
-  }
   const fetchImpl = input.fetchImpl ?? fetch;
-
-  const chainId = evmQuantity(
-    await rpcCall(rpc, fetchImpl, "eth_chainId", []),
-    "eth_chainId result",
+  const authorities = EVM_FUNDING_RPC_AUTHORITIES[input.network];
+  const settled = await Promise.allSettled(
+    authorities.map((authority, index) =>
+      verifyWithAuthority(input, authority, index, fetchImpl),
+    ),
   );
-  if (chainId !== EVM_FUNDING_CHAIN_IDS[input.network]) {
+  const groups = new Map<
+    string,
+    Array<Awaited<ReturnType<typeof verifyWithAuthority>>>
+  >();
+  for (const result of settled) {
+    if (result.status !== "fulfilled") continue;
+    const { verified } = result.value;
+    const key = `${verified.transactionHash}:${verified.blockNumber}:${verified.blockHash}`;
+    const group = groups.get(key) ?? [];
+    group.push(result.value);
+    groups.set(key, group);
+  }
+  const results = [...groups.values()].sort(
+    (left, right) => right.length - left.length,
+  )[0];
+  const first = results?.[0];
+  if (!first || !results || results.length < EVM_FUNDING_RPC_QUORUM) {
     throw new TypeError(
-      `EVM RPC chain id ${chainId} is not ${input.network} mainnet`,
+      "EVM RPC authorities did not reach canonical transaction quorum",
     );
   }
-  const finalizedBlock = await rpcCall(rpc, fetchImpl, "eth_getBlockByNumber", [
-    "finalized",
-    false,
-  ]);
-  if (
-    typeof finalizedBlock !== "object" ||
-    finalizedBlock === null ||
-    Array.isArray(finalizedBlock)
-  ) {
-    throw new TypeError("EVM RPC did not return a finalized block");
-  }
-  const finalizedBlockNumber = evmQuantity(
-    (finalizedBlock as Record<string, unknown>).number,
-    "finalized block number",
-  );
-  const receipt = await rpcCall(rpc, fetchImpl, "eth_getTransactionReceipt", [
-    input.transactionHash,
-  ]);
-  if (receipt === null || receipt === undefined) {
-    throw new TypeError("EVM transaction receipt is absent");
-  }
-  const verified = assertConfirmedUsdcFundingTransfer(
-    receipt,
-    input.network,
-    input.transactionHash,
-    input.recipient,
-    input.amountMinor,
-    finalizedBlockNumber,
+  const confirmations = Math.min(
+    ...results.map(({ verified }) => verified.confirmations),
   );
   const checkedAt = new Date().toISOString();
   return {
     state: "verified-on-chain" as const,
     finality: {
       kind: "confirmations" as const,
-      confirmations: verified.confirmations,
+      confirmations,
     },
     verifier: {
       version: EVM_FUNDING_VERIFIER_VERSIONS[input.network],
@@ -155,16 +277,21 @@ export async function verifyFundingEvm(input: {
       evidenceUrl: `${EVIDENCE_HOSTS[input.network]}/tx/${input.transactionHash}`,
       reason: null,
     },
-    chainEvidence: verified,
+    chainEvidence: {
+      ...first.verified,
+      confirmations,
+      authorities: results.map(({ authority, finalizedBlock }) => ({
+        authority,
+        finalizedBlockHash: finalizedBlock.hash,
+        finalizedBlockNumber: Number(finalizedBlock.number),
+      })),
+    },
   };
 }
 
 if (import.meta.main) {
-  const network = argument("--network");
-  const transactionHash = argument("--transaction");
-  const recipient = argument("--recipient");
-  const amountMinor = argument("--amount-minor");
-  const rpcUrl = argument("--rpc-url") ?? undefined;
+  const { network, transactionHash, recipient, amountMinor } =
+    parseEvmFundingArguments(process.argv.slice(2));
   if (
     !network ||
     !isEvmFundingNetwork(network) ||
@@ -173,10 +300,10 @@ if (import.meta.main) {
     !amountMinor
   ) {
     throw new TypeError(
-      "Usage: verify-funding-evm.ts --network <base|ethereum> --transaction <0x-hash> --recipient <0x-address> --amount-minor <integer> [--rpc-url <https-url>]",
+      "Usage: verify-funding-evm.ts --network <base|ethereum> --transaction <0x-hash> --recipient <0x-address> --amount-minor <integer>",
     );
   }
   process.stdout.write(
-    `${JSON.stringify(await verifyFundingEvm({ network, transactionHash, recipient, amountMinor, rpcUrl }), null, 2)}\n`,
+    `${JSON.stringify(await verifyFundingEvm({ network, transactionHash, recipient, amountMinor }), null, 2)}\n`,
   );
 }

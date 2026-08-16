@@ -23,14 +23,22 @@ export const EVM_FUNDING_MIN_CONFIRMATIONS = {
   ethereum: 64,
 } as const;
 
+export const MAX_EVM_FUNDING_RECEIPT_LOGS = 4_096;
+
 const ERC20_TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const ZERO_EVM_ADDRESS = `0x${"0".repeat(40)}`;
 
 export interface VerifiedEvmTransaction {
+  blockHash: string;
   blockNumber: number;
   confirmations: number;
   transactionHash: string;
+}
+
+export interface EvmCanonicalBlock {
+  hash: string;
+  number: bigint;
 }
 
 function record(value: unknown, field: string): Record<string, unknown> {
@@ -62,6 +70,24 @@ export function evmQuantity(value: unknown, field: string): bigint {
   return BigInt(value);
 }
 
+function evmHash(value: unknown, field: string): string {
+  if (typeof value !== "string" || !/^0x[0-9a-f]{64}$/u.test(value)) {
+    throw new TypeError(`${field} is not a canonical EVM hash`);
+  }
+  return value;
+}
+
+export function assertEvmCanonicalBlock(
+  value: unknown,
+  field: string,
+): EvmCanonicalBlock {
+  const block = record(value, field);
+  return {
+    hash: evmHash(block.hash, `${field}.hash`),
+    number: evmQuantity(block.number, `${field}.number`),
+  };
+}
+
 function topicAddress(value: unknown, field: string): string {
   if (typeof value !== "string" || !/^0x0{24}[0-9a-f]{40}$/u.test(value)) {
     throw new TypeError(`${field} is not an ABI-encoded EVM address topic`);
@@ -83,7 +109,8 @@ export function assertConfirmedUsdcFundingTransfer(
   expectedTransactionHash: string,
   recipient: string,
   amountMinor: string,
-  finalizedBlockNumber: bigint,
+  finalizedBlock: EvmCanonicalBlock,
+  receiptBlock: EvmCanonicalBlock,
 ): VerifiedEvmTransaction {
   if (!isEvmFundingNetwork(network)) {
     throw new TypeError("funding network must be base or ethereum");
@@ -99,8 +126,12 @@ export function assertConfirmedUsdcFundingTransfer(
     throw new TypeError("funding transfer expectation is invalid");
   }
   if (
-    finalizedBlockNumber < 0n ||
-    finalizedBlockNumber > BigInt(Number.MAX_SAFE_INTEGER)
+    finalizedBlock.number < 0n ||
+    finalizedBlock.number > BigInt(Number.MAX_SAFE_INTEGER) ||
+    receiptBlock.number < 0n ||
+    receiptBlock.number > BigInt(Number.MAX_SAFE_INTEGER) ||
+    !/^0x[0-9a-f]{64}$/u.test(finalizedBlock.hash) ||
+    !/^0x[0-9a-f]{64}$/u.test(receiptBlock.hash)
   ) {
     throw new TypeError("finalized block number is invalid");
   }
@@ -114,18 +145,29 @@ export function assertConfirmedUsdcFundingTransfer(
     );
   }
   const blockNumber = evmQuantity(receipt.blockNumber, "receipt.blockNumber");
-  if (blockNumber > finalizedBlockNumber) {
+  const blockHash = evmHash(receipt.blockHash, "receipt.blockHash");
+  if (blockNumber !== receiptBlock.number || blockHash !== receiptBlock.hash) {
+    throw new TypeError(
+      "EVM receipt is not bound to the canonical block at its height",
+    );
+  }
+  if (blockNumber > finalizedBlock.number) {
     throw new TypeError("EVM transaction block is not finalized yet");
   }
-  const confirmations = finalizedBlockNumber - blockNumber + 1n;
+  const confirmations = finalizedBlock.number - blockNumber + 1n;
   const minimum = BigInt(EVM_FUNDING_MIN_CONFIRMATIONS[network]);
   if (confirmations < minimum) {
     throw new TypeError(
       "EVM transaction does not meet the network finality policy",
     );
   }
-  if (!Array.isArray(receipt.logs)) {
-    throw new TypeError("EVM receipt logs must be an array");
+  if (
+    !Array.isArray(receipt.logs) ||
+    receipt.logs.length > MAX_EVM_FUNDING_RECEIPT_LOGS
+  ) {
+    throw new TypeError(
+      `EVM receipt logs must be an array of at most ${MAX_EVM_FUNDING_RECEIPT_LOGS} entries`,
+    );
   }
   const usdcContract = EVM_FUNDING_USDC_CONTRACTS[network];
   const deltas = new Map<string, bigint>();
@@ -147,6 +189,17 @@ export function assertConfirmedUsdcFundingTransfer(
     if (log.topics.length !== 3) {
       throw new TypeError(
         `receipt.logs[${index}] is not a canonical ERC-20 Transfer`,
+      );
+    }
+    if (
+      log.removed !== false ||
+      log.transactionHash !== expectedTransactionHash ||
+      log.blockHash !== blockHash ||
+      evmQuantity(log.blockNumber, `receipt.logs[${index}].blockNumber`) !==
+        blockNumber
+    ) {
+      throw new TypeError(
+        `receipt.logs[${index}] is not bound to the funding transaction block`,
       );
     }
     const from = topicAddress(log.topics[1], `receipt.logs[${index}].from`);
@@ -180,8 +233,12 @@ export function assertConfirmedUsdcFundingTransfer(
   if (netDelta !== 0n) {
     throw new TypeError("EVM funding transaction USDC deltas do not balance");
   }
+  if (confirmations > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new TypeError("EVM confirmation count is not a safe integer");
+  }
   return {
     transactionHash: expectedTransactionHash,
+    blockHash,
     blockNumber: Number(blockNumber),
     confirmations: Number(confirmations),
   };
