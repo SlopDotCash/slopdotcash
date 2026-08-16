@@ -17,6 +17,8 @@
     "funding:sync": "bun scripts/sync-funding-index.ts",
     "funding:check": "bun scripts/sync-funding-index.ts --check",
     "funding:verify-solana": "bun scripts/verify-funding-solana.ts",
+    "funding:verify-evm": "bun scripts/verify-funding-evm.ts",
+    "funding:verify-bitcoin": "bun scripts/verify-funding-bitcoin.ts",
     "funding:verify-commitment-squads": "bun scripts/verify-commitment-squads.ts",
     "funding:verify-commitment-sablier": "bun scripts/verify-commitment-sablier.ts",
     "cycles:sync": "bun scripts/sync-cycle-index.ts",
