@@ -234,6 +234,21 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain("name: eliza-army-production");
   });
 
+  it("validates immutable project policy transitions before the registry", () => {
+    const transitionGate = qualityJob.indexOf(
+      'node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA"',
+    );
+    const registryGate = qualityJob.indexOf("bun run projects:check");
+    expect(qualityJob).toContain(
+      `PROJECT_POLICY_BASE_SHA: ${"$"}{{ github.event.pull_request.base.sha || github.event.before }}`,
+    );
+    expect(qualityJob).toContain(
+      `if [ "${"$"}{{ github.event_name }}" = "pull_request" ] || [ "${"$"}{{ github.event_name }}" = "push" ]; then`,
+    );
+    expect(transitionGate).toBeGreaterThan(-1);
+    expect(registryGate).toBeGreaterThan(transitionGate);
+  });
+
   it("has no candidate-controlled production release path", () => {
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).not.toContain("release_mode");
