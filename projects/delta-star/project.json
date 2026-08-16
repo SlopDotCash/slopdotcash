@@ -32,7 +32,8 @@
     "effectiveAt": "2026-08-16T00:00:00.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
-      "activatedAt": null
+      "activatedAt": null,
+      "bindings": []
     },
     "paymentTransfersIp": false,
     "retroactive": false,

@@ -79,8 +79,22 @@ export interface ProjectReceiptPolicyBinding {
   terms: {
     revision: string;
     receiptPolicy:
-      | { state: "pending-authority-activation"; activatedAt: null }
-      | { state: "active"; activatedAt: string };
+      | {
+          state: "pending-authority-activation";
+          activatedAt: null;
+          bindings: readonly [];
+        }
+      | {
+          state: "active";
+          activatedAt: string;
+          bindings: readonly {
+            policyRevision: string;
+            licenseSha256: string;
+            inboundTermsSha256: string | null;
+            prizeRulesSha256: string | null;
+            activatedAt: string;
+          }[];
+        };
     repositoryLicense: { fileSha256: string | null };
     inbound: { fileSha256: string | null };
     externalPrize: { rulesSha256: string | null } | null;
@@ -121,14 +135,16 @@ export function assertRunReceiptPolicyJoin(
     );
   }
   const acknowledgement = receipt.policyAcknowledgement;
+  const binding = activation.bindings.find(
+    (entry) => entry.policyRevision === acknowledgement?.policyRevision,
+  );
   if (
     !acknowledgement ||
-    acknowledgement.policyRevision !== project.terms.revision ||
-    acknowledgement.licenseSha256 !==
-      project.terms.repositoryLicense.fileSha256 ||
-    acknowledgement.inboundTermsSha256 !== project.terms.inbound.fileSha256 ||
-    acknowledgement.prizeRulesSha256 !==
-      (project.terms.externalPrize?.rulesSha256 ?? null)
+    !binding ||
+    Date.parse(receipt.startedAt) < Date.parse(binding.activatedAt) ||
+    acknowledgement.licenseSha256 !== binding.licenseSha256 ||
+    acknowledgement.inboundTermsSha256 !== binding.inboundTermsSha256 ||
+    acknowledgement.prizeRulesSha256 !== binding.prizeRulesSha256
   ) {
     throw new TypeError(
       "run receipt policy acknowledgement does not match the pinned project policy",

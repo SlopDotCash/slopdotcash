@@ -198,6 +198,16 @@ describe("project run receipt", () => {
         receiptPolicy: {
           state: "active" as const,
           activatedAt: "2026-08-16T12:00:00.000Z",
+          bindings: [
+            {
+              policyRevision: pendingProject.terms.revision,
+              licenseSha256: pendingProject.terms.repositoryLicense.fileSha256!,
+              inboundTermsSha256: pendingProject.terms.inbound.fileSha256,
+              prizeRulesSha256:
+                pendingProject.terms.externalPrize?.rulesSha256 ?? null,
+              activatedAt: "2026-08-16T12:00:00.000Z",
+            },
+          ],
         },
       },
     };
@@ -222,6 +232,16 @@ describe("project run receipt", () => {
         receiptPolicy: {
           state: "active" as const,
           activatedAt: "2026-08-16T12:00:00.000Z",
+          bindings: [
+            {
+              policyRevision: pendingProject.terms.revision,
+              licenseSha256: pendingProject.terms.repositoryLicense.fileSha256!,
+              inboundTermsSha256: pendingProject.terms.inbound.fileSha256,
+              prizeRulesSha256:
+                pendingProject.terms.externalPrize?.rulesSha256 ?? null,
+              activatedAt: "2026-08-16T12:00:00.000Z",
+            },
+          ],
         },
       },
     };

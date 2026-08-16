@@ -88,10 +88,18 @@ export interface ProjectDefinition {
       | {
           readonly state: "pending-authority-activation";
           readonly activatedAt: null;
+          readonly bindings: readonly [];
         }
       | {
           readonly state: "active";
           readonly activatedAt: string;
+          readonly bindings: readonly {
+            readonly policyRevision: string;
+            readonly licenseSha256: string;
+            readonly inboundTermsSha256: string | null;
+            readonly prizeRulesSha256: string | null;
+            readonly activatedAt: string;
+          }[];
         };
     readonly paymentTransfersIp: false;
     readonly retroactive: false;

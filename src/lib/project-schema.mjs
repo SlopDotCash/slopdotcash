@@ -255,15 +255,30 @@ function validateTerms(value, repositoryId, reward, steward) {
   });
   timestamp(terms.effectiveAt, `${field}.effectiveAt`);
   const receiptPolicy = record(terms.receiptPolicy, `${field}.receiptPolicy`);
-  exactKeys(receiptPolicy, ["activatedAt", "state"], `${field}.receiptPolicy`);
+  exactKeys(
+    receiptPolicy,
+    ["activatedAt", "bindings", "state"],
+    `${field}.receiptPolicy`,
+  );
+  if (!Array.isArray(receiptPolicy.bindings)) {
+    throw new TypeError(`${field}.receiptPolicy.bindings must be an array`);
+  }
   if (receiptPolicy.state === "pending-authority-activation") {
-    if (receiptPolicy.activatedAt !== null) {
+    if (
+      receiptPolicy.activatedAt !== null ||
+      receiptPolicy.bindings.length !== 0
+    ) {
       throw new TypeError(
-        `${field}.receiptPolicy pending state cannot have an activation time`,
+        `${field}.receiptPolicy pending state cannot have activation bindings`,
       );
     }
   } else if (receiptPolicy.state === "active") {
     timestamp(receiptPolicy.activatedAt, `${field}.receiptPolicy.activatedAt`);
+    if (receiptPolicy.bindings.length === 0) {
+      throw new TypeError(
+        `${field}.receiptPolicy active state requires bindings`,
+      );
+    }
   } else {
     throw new TypeError(`${field}.receiptPolicy.state is invalid`);
   }
@@ -514,6 +529,73 @@ function validateTerms(value, repositoryId, reward, steward) {
     throw new TypeError(
       `${field}.externalPrize is only valid for external prizes`,
     );
+  }
+  if (receiptPolicy.state === "active") {
+    const revisions = new Set();
+    let previousActivation = -Infinity;
+    const bindings = receiptPolicy.bindings.map((value, index) => {
+      const bindingField = `${field}.receiptPolicy.bindings[${index}]`;
+      const binding = record(value, bindingField);
+      exactKeys(
+        binding,
+        [
+          "activatedAt",
+          "inboundTermsSha256",
+          "licenseSha256",
+          "policyRevision",
+          "prizeRulesSha256",
+        ],
+        bindingField,
+      );
+      const policyRevision = text(
+        binding.policyRevision,
+        `${bindingField}.policyRevision`,
+        { max: 80, pattern: /^[a-z0-9][a-z0-9._-]*$/u },
+      );
+      if (revisions.has(policyRevision)) {
+        throw new TypeError(`${field}.receiptPolicy has duplicate revisions`);
+      }
+      revisions.add(policyRevision);
+      const activatedAt = timestamp(
+        binding.activatedAt,
+        `${bindingField}.activatedAt`,
+      );
+      if (Date.parse(activatedAt) <= previousActivation) {
+        throw new TypeError(
+          `${field}.receiptPolicy bindings must be activation ordered`,
+        );
+      }
+      previousActivation = Date.parse(activatedAt);
+      digest(binding.licenseSha256, `${bindingField}.licenseSha256`);
+      nullable(
+        binding.inboundTermsSha256,
+        `${bindingField}.inboundTermsSha256`,
+        digest,
+      );
+      nullable(
+        binding.prizeRulesSha256,
+        `${bindingField}.prizeRulesSha256`,
+        digest,
+      );
+      return binding;
+    });
+    const first = bindings[0];
+    const current = bindings.at(-1);
+    if (first.activatedAt !== receiptPolicy.activatedAt) {
+      throw new TypeError(
+        `${field}.receiptPolicy cutover must equal its first binding activation`,
+      );
+    }
+    if (
+      current.policyRevision !== terms.revision ||
+      current.licenseSha256 !== license.fileSha256 ||
+      current.inboundTermsSha256 !== inbound.fileSha256 ||
+      current.prizeRulesSha256 !== (terms.externalPrize?.rulesSha256 ?? null)
+    ) {
+      throw new TypeError(
+        `${field}.receiptPolicy latest binding must match current terms`,
+      );
+    }
   }
   return terms;
 }
