@@ -4,6 +4,7 @@
  * amount is tied to one immutable payout intent.
  */
 
+import { assertExactModelIdentity } from "./model-identity";
 import { findProject, type ProjectId } from "./projects.mjs";
 import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
 
@@ -1186,21 +1187,22 @@ export function assertRewardSettlementManifest(
   };
 }
 
-/** Confirms that a registered project received concrete model disclosure. */
-export function isApprovedProjectModel(
+/** Confirms that an open project received exact, non-placeholder disclosure. */
+export function hasDeclaredProjectModelIdentity(
   projectId: ProjectId,
   input: { client: string; model: string; provider: string },
 ): boolean {
   const project = findProject(projectId);
-  const concrete = (value: string, maxLength: number) =>
-    value.length > 0 &&
-    value.length <= maxLength &&
-    /^[a-z0-9][a-z0-9._:/+-]*$/iu.test(value);
-  return Boolean(
-    project?.modelPolicy.mode === "open-declared" &&
-      project.modelPolicy.disclosureRequired &&
-      concrete(input.client, 64) &&
-      concrete(input.provider, 64) &&
-      concrete(input.model, 128),
-  );
+  if (
+    project?.modelPolicy.mode !== "open-declared" ||
+    !project.modelPolicy.disclosureRequired
+  ) {
+    return false;
+  }
+  try {
+    assertExactModelIdentity(input);
+    return true;
+  } catch {
+    return false;
+  }
 }

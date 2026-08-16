@@ -5,6 +5,11 @@
  */
 
 import {
+  isExactClientIdentifier,
+  isExactModelIdentifier,
+  isExactProviderIdentifier,
+} from "./model-identity";
+import {
   findProject,
   findProjectByRepositoryId,
   type ProjectId,
@@ -234,6 +239,17 @@ function identifier(value: unknown, path: string, maxLength = 128): string {
   return value;
 }
 
+function declaredIdentity(
+  value: unknown,
+  path: string,
+  validator: (input: unknown) => input is string,
+): string {
+  if (!validator(value)) {
+    throw new TypeError(`${path} must be an exact non-placeholder identifier`);
+  }
+  return value;
+}
+
 function digest(value: unknown, path: string): string {
   if (typeof value !== "string" || !SHA256_PATTERN.test(value)) {
     throw new TypeError(`${path} must be a lowercase SHA-256 digest`);
@@ -348,9 +364,21 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
   if (Date.parse(completedAt) < Date.parse(startedAt)) {
     throw new TypeError("run marker completed_at precedes started_at");
   }
-  const client = identifier(value.client, "run marker.client", 64);
-  const provider = identifier(value.provider, "run marker.provider", 64);
-  const model = identifier(value.model, "run marker.model");
+  const client = declaredIdentity(
+    value.client,
+    "run marker.client",
+    isExactClientIdentifier,
+  );
+  const provider = declaredIdentity(
+    value.provider,
+    "run marker.provider",
+    isExactProviderIdentifier,
+  );
+  const model = declaredIdentity(
+    value.model,
+    "run marker.model",
+    isExactModelIdentifier,
+  );
   if (
     typeof value.skill_revision !== "string" ||
     !FULL_SKILL_REVISION_PATTERN.test(value.skill_revision) ||

@@ -5,6 +5,11 @@
  */
 
 import {
+  isExactClientIdentifier,
+  isExactModelIdentifier,
+  isExactProviderIdentifier,
+} from "./model-identity";
+import {
   findTargetRepository,
   findTargetRepositoryById,
   PRIMARY_REPOSITORY,
@@ -12,6 +17,10 @@ import {
   TARGET_REPOSITORIES,
   type TargetRepository,
 } from "./repositories.mjs";
+import {
+  assertReviewRecordReceiptJoin,
+  parseReviewRecordBlock,
+} from "./review-records";
 import {
   assertProjectRunReceipt,
   assertRunReceiptMarker,
@@ -94,6 +103,8 @@ export interface GitHubTextSource {
   updatedAt: string;
   author: GitHubActor | null;
   authorAssociation?: string | null;
+  artifactUrl?: string;
+  artifactHeadSha?: string;
 }
 
 export interface PullRequestFile {
@@ -608,28 +619,9 @@ const LOW_PRIORITY_LABELS = new Set([
 ]);
 
 const EXACT_MODEL_IDENTIFIER_PATTERN =
-  /\b([a-z0-9][a-z0-9._-]{0,63})\/([a-z0-9][a-z0-9._:/-]{0,127})\b/gi;
-const ATTRIBUTION_PLACEHOLDER_PATTERN =
-  /<[^>]+>|\b(?:unknown|unspecified|placeholder|provider|model|tbd|todo|null)\b/i;
+  /\b([a-z0-9][a-z0-9._+~-]{0,63})\/([a-z0-9][a-z0-9._:/+~-]{0,127})\b/gi;
 const FULL_SKILL_REVISION_PATTERN =
   /^[a-z0-9_.-]+\/[a-z0-9_.-]+@[0-9a-f]{40}:[^\s`]+$/i;
-const GENERIC_MODEL_IDENTIFIERS = new Set([
-  "ai",
-  "claude",
-  "gemini",
-  "gpt",
-  "llama",
-  "model",
-  "na",
-  "none",
-]);
-const GENERIC_PROVIDER_IDENTIFIERS = new Set([
-  "ai",
-  "model",
-  "na",
-  "none",
-  "provider",
-]);
 const HUMAN_ONLY_PATTERN =
   /^\s*(?:[-*]\s*)?(?:(?:AI assistance|Attribution)\s*:\s*)?`?(?:no\s*[-—:]\s*)?human[- ]only\s+(?:comment|contribution|epic|issue|report|request|review|work)`?\s*$/im;
 const ISSUE_CLAIM_PATTERN = /^CLAIMING:\s*\S/i;
@@ -762,34 +754,13 @@ function attributionMarkerRecords(body: string): AttributionMarkerRecord[] {
 }
 
 function hasAttributionEligibilitySignal(body: string): boolean {
-  return attributionDeclarationLines(body).some(
-    (line) =>
-      ATTRIBUTION_DECLARATION_PATTERN.test(line) ||
-      ATTRIBUTION_MARKER_LINE_PATTERN.test(line),
-  );
-}
-
-function providerSlug(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function identifierKey(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function isGenericProviderIdentifier(value: string): boolean {
-  return GENERIC_PROVIDER_IDENTIFIERS.has(identifierKey(value));
-}
-
-function isGenericModelIdentifier(value: string): boolean {
-  const segments = value.split("/");
   return (
-    GENERIC_MODEL_IDENTIFIERS.has(identifierKey(value)) ||
-    GENERIC_MODEL_IDENTIFIERS.has(identifierKey(segments.at(-1) ?? ""))
+    /^ {0,3}```slop-review[\t ]*$/mu.test(body) ||
+    attributionDeclarationLines(body).some(
+      (line) =>
+        ATTRIBUTION_DECLARATION_PATTERN.test(line) ||
+        ATTRIBUTION_MARKER_LINE_PATTERN.test(line),
+    )
   );
 }
 
@@ -1116,32 +1087,15 @@ function parseMarker(
   }
   const provider = parsed.provider;
   const model = parsed.model;
-  if (
-    typeof provider !== "string" ||
-    !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(provider) ||
-    providerSlug(provider) !== provider ||
-    ATTRIBUTION_PLACEHOLDER_PATTERN.test(provider) ||
-    isGenericProviderIdentifier(provider)
-  ) {
-    return { error: "provider must be a concrete lowercase provider slug" };
+  if (!isExactProviderIdentifier(provider)) {
+    return { error: "provider must be an exact provider identifier" };
   }
-  if (
-    typeof model !== "string" ||
-    !/^[a-z0-9][a-z0-9._:/+-]{0,127}$/i.test(model) ||
-    ATTRIBUTION_PLACEHOLDER_PATTERN.test(model) ||
-    isGenericModelIdentifier(model)
-  ) {
+  if (!isExactModelIdentifier(model)) {
     return { error: "model must be an exact model identifier" };
   }
   const client = parsed.client;
-  if (
-    typeof client !== "string" ||
-    client.length < 2 ||
-    client.length > 128 ||
-    ATTRIBUTION_PLACEHOLDER_PATTERN.test(client) ||
-    /^n\/?a\b/i.test(client)
-  ) {
-    return { error: "client must name the concrete client used" };
+  if (!isExactClientIdentifier(client)) {
+    return { error: "client must name the exact client used" };
   }
   const skillRevision = parsed.skill_revision;
   if (
@@ -1278,14 +1232,14 @@ function markerFooterError(
   ) {
     return "marker requires exactly one complete visible attribution footer";
   }
-  const providerModel = providerModelLines[0].match(/^([^/]+?)\s+\/\s+(.+)$/);
+  const providerModel = providerModelLines[0].match(/^(.+?)\s+\/\s+(.+)$/);
   if (!providerModel) {
     return "visible provider/model row is not canonical";
   }
-  const visibleProvider = providerSlug(providerModel[1]);
+  const visibleProvider = providerModel[1].trim();
   const visibleModel = providerModel[2].trim();
   if (
-    marker.provider !== visibleProvider ||
+    marker.provider.toLowerCase() !== visibleProvider.toLowerCase() ||
     marker.model !== visibleModel ||
     marker.client !== clientLines[0] ||
     marker.skillRevision !== skillRevisionLines[0] ||
@@ -1323,7 +1277,31 @@ export function assessModelAttribution(
     }
     let markerIndex = 0;
     const markerIdentifiers = new Set<string>();
+    let reviewRecord: unknown | null;
+    try {
+      reviewRecord = parseReviewRecordBlock(source.body);
+    } catch (error: unknown) {
+      invalidSourceIds.add(source.id);
+      invalidMarkers.push({
+        sourceId: source.id,
+        sourceUrl: source.url,
+        reason:
+          error instanceof Error
+            ? error.message
+            : "slop-review record is invalid",
+      });
+      continue;
+    }
     const markerMatches = attributionMarkerRecords(source.body);
+    if (reviewRecord !== null && markerMatches.length !== 1) {
+      invalidSourceIds.add(source.id);
+      invalidMarkers.push({
+        sourceId: source.id,
+        sourceUrl: source.url,
+        reason: "slop-review requires exactly one terminal signed run receipt",
+      });
+      continue;
+    }
     if (markerMatches.length > 1) {
       invalidSourceIds.add(source.id);
       invalidMarkers.push({
@@ -1357,6 +1335,32 @@ export function assessModelAttribution(
         markerIndex += 1;
         continue;
       }
+      if (reviewRecord !== null) {
+        try {
+          assertReviewRecordReceiptJoin(
+            reviewRecord,
+            marker.run,
+            source.artifactUrl && source.artifactHeadSha
+              ? {
+                  artifactUrl: source.artifactUrl,
+                  headSha: source.artifactHeadSha,
+                }
+              : null,
+          );
+        } catch (error: unknown) {
+          invalidSourceIds.add(source.id);
+          invalidMarkers.push({
+            sourceId: source.id,
+            sourceUrl: source.url,
+            reason:
+              error instanceof Error
+                ? error.message
+                : "slop-review receipt join is invalid",
+          });
+          markerIndex += 1;
+          continue;
+        }
+      }
       const identifier = exactIdentifier(marker.provider, marker.model);
       validSourceIds.add(source.id);
       markerIdentifiers.add(identifier.toLowerCase());
@@ -1378,13 +1382,17 @@ export function assessModelAttribution(
       markerIndex += 1;
     }
 
+    if (reviewRecord !== null && invalidSourceIds.has(source.id)) {
+      continue;
+    }
+
     let visibleIndex = 0;
     for (const line of attributionDeclarationLines(source.body)) {
       const declarationLine = line.match(
         /^\s*(?:[-*]\s*)?(?:AI\s+)?Model(?:s|\(s\))?(?:\s+used)?\s*:\s*(.+?)\s*$/i,
       );
       const canonicalLine = line.match(
-        /^\s*(?:[-*]\s*)?AI\s+provider\s*\/\s*model\s*:\s*`?([a-z0-9][a-z0-9._-]{0,63})`?\s*\/\s*`?([a-z0-9][a-z0-9._:/-]{0,127})`?\s*$/i,
+        /^\s*(?:[-*]\s*)?AI\s+provider\s*\/\s*model\s*:\s*`?([^`\s]+)`?\s+\/\s+`?([^`\s]+)`?\s*$/i,
       );
       const visibleIdentifiers: Array<{ provider: string; model: string }> = [];
       if (declarationLine) {
@@ -1401,10 +1409,9 @@ export function assessModelAttribution(
         });
       }
       for (const declaration of visibleIdentifiers) {
-        const normalizedProvider = providerSlug(declaration.provider);
         if (
-          isGenericProviderIdentifier(normalizedProvider) ||
-          isGenericModelIdentifier(declaration.model)
+          !isExactProviderIdentifier(declaration.provider) ||
+          !isExactModelIdentifier(declaration.model)
         ) {
           continue;
         }
@@ -1484,7 +1491,13 @@ export function pullRequestTextSources(
       author: review.author,
     }),
   );
-  return dedupeByNodeId([body, ...pullRequest.comments, ...reviewSources]);
+  return dedupeByNodeId([body, ...pullRequest.comments, ...reviewSources]).map(
+    (source) => ({
+      ...source,
+      artifactUrl: pullRequest.url,
+      artifactHeadSha: pullRequest.headRefOid.toLowerCase(),
+    }),
+  );
 }
 
 export function issueTextSources(issue: IssueRecord): GitHubTextSource[] {

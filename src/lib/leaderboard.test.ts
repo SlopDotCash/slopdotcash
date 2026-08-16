@@ -37,6 +37,7 @@ import {
   type ScoreEvent,
   type VerifiedEvidenceArtifact,
 } from "./leaderboard";
+import { type ProjectRunReceipt, serializeRunMarker } from "./run-receipts";
 
 const NOW = "2026-07-30T12:00:00.000Z";
 const WINDOW_FROM = "2026-06-25T12:00:00.000Z";
@@ -160,6 +161,83 @@ function machineAttribution(
       client,
       skill_revision: skillRevision,
     })} -->`,
+  ].join("\n");
+}
+
+function reviewAttribution(
+  overrides: Partial<ProjectRunReceipt> = {},
+  recordOverrides: Record<string, unknown> = {},
+): string {
+  const traceSha256 = "b".repeat(64);
+  const receipt: ProjectRunReceipt = {
+    schemaVersion: "1",
+    runId: "run_01K3JZ6Y7E8M9N0P1Q2R3S4T5V",
+    projectId: "eliza",
+    repositoryId: "elizaOS/eliza",
+    startedAt: "2026-07-29T09:00:00.000Z",
+    completedAt: "2026-07-29T10:00:00.000Z",
+    provider: "x-ai/hosted+edge",
+    model: "accounts/x/models/grok-4.5+reasoning",
+    client: "grok-build+acp",
+    skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
+    skillSha256: "c".repeat(64),
+    usage: {
+      source: "none",
+      confidence: "unavailable",
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      totalTokens: 0,
+      costMicroUsd: "0",
+      sessionCount: 0,
+    },
+    trajectorySha256: traceSha256,
+    traceUpload: {
+      authority: "https://api.slop.cash",
+      serverRunId: "server_review_test",
+      objectId: `sha256:${traceSha256}`,
+      sha256: traceSha256,
+    },
+    signatureAlgorithm: "ed25519",
+    devicePublicKey: "A".repeat(44),
+    deviceKeyId: "d".repeat(64),
+    deviceSignature: "B".repeat(86),
+    ...overrides,
+  };
+  const record = {
+    schemaVersion: "1",
+    projectId: receipt.projectId,
+    artifactUrl: "https://github.com/elizaOS/eliza/pull/1",
+    headSha: "a".repeat(40),
+    provider: receipt.provider,
+    model: receipt.model,
+    client: receipt.client,
+    runId: receipt.runId,
+    traceSha256: receipt.traceUpload?.sha256 ?? traceSha256,
+    recommendation: "accept",
+    reproduced: true,
+    securityRisk: "none",
+    duplicateRisk: "none",
+    usefulArtifacts: [],
+    commands: ["bun test"],
+    evidenceUrls: [],
+    summary: "The focused regression test passed at the reviewed head.",
+    ...recordOverrides,
+  };
+  return [
+    "Findings: none.",
+    "",
+    "```slop-review",
+    JSON.stringify(record),
+    "```",
+    "",
+    `AI provider/model: ${receipt.provider} / ${receipt.model}`,
+    `Client / agent tooling: ${receipt.client}`,
+    `Contribution skill revision: ${receipt.skillRevision}`,
+    "Attribution status: self-reported",
+    "— [review]",
+    serializeRunMarker(receipt),
   ].join("\n");
 }
 
@@ -304,13 +382,56 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
 }
 
 describe("model attribution", () => {
+  it("ingests a review record only when it joins its finalized terminal receipt", () => {
+    const source = {
+      ...textSource("COMMENT_REVIEW_RECORD", reviewAttribution()),
+      artifactUrl: "https://github.com/elizaOS/eliza/pull/1",
+      artifactHeadSha: "a".repeat(40),
+    };
+    const result = assessModelAttribution([source]);
+    expect(result.invalidMarkers).toEqual([]);
+    expect(result.declarations).toHaveLength(1);
+    expect(result.declarations[0].run?.traceUpload).not.toBeNull();
+  });
+
+  it("rejects review ingestion without finalization or with a mismatched join", () => {
+    const missingFinalization = {
+      ...textSource(
+        "COMMENT_REVIEW_NO_TRACE",
+        reviewAttribution({ traceUpload: null }),
+      ),
+      artifactUrl: "https://github.com/elizaOS/eliza/pull/1",
+      artifactHeadSha: "a".repeat(40),
+    };
+    const mismatched = {
+      ...textSource(
+        "COMMENT_REVIEW_MISMATCH",
+        reviewAttribution({}, { runId: `run_${"A".repeat(26)}` }),
+      ),
+      artifactUrl: "https://github.com/elizaOS/eliza/pull/1",
+      artifactHeadSha: "a".repeat(40),
+    };
+    const result = assessModelAttribution([missingFinalization, mismatched]);
+    expect(result.declarations).toEqual([]);
+    expect(result.invalidMarkers).toEqual([
+      expect.objectContaining({
+        sourceId: "COMMENT_REVIEW_NO_TRACE",
+        reason: expect.stringMatching(/finalized private trace upload/u),
+      }),
+      expect.objectContaining({
+        sourceId: "COMMENT_REVIEW_MISMATCH",
+        reason: expect.stringMatching(/does not match its run receipt/u),
+      }),
+    ]);
+  });
+
   it("extracts exact visible declarations and valid machine markers", () => {
     const source = textSource(
       "COMMENT_1",
       machineAttribution(
-        "OpenAI",
-        "gpt-5.6-sol",
-        "codex-desktop",
+        "x-ai/hosted+edge",
+        "accounts/x/models/grok-4.5+reasoning",
+        "grok-build+acp",
         "elizaOS/army@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:skills/contribute-to-eliza",
       ),
     );
@@ -320,10 +441,10 @@ describe("model attribution", () => {
     expect(result.invalidMarkers).toEqual([]);
     expect(result.declarations).toHaveLength(1);
     expect(result.declarations[0]).toMatchObject({
-      provider: "openai",
-      model: "gpt-5.6-sol",
-      identifier: "openai/gpt-5.6-sol",
-      client: "codex-desktop",
+      provider: "x-ai/hosted+edge",
+      model: "accounts/x/models/grok-4.5+reasoning",
+      identifier: "x-ai/hosted+edge/accounts/x/models/grok-4.5+reasoning",
+      client: "grok-build+acp",
       skillRevision:
         "elizaOS/army@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:skills/contribute-to-eliza",
       format: "machine-marker",
@@ -578,7 +699,7 @@ describe("model attribution", () => {
     expect(result.invalidMarkers).toEqual([
       expect.objectContaining({
         sourceId: "COMMENT_PLACEHOLDER_MARKER",
-        reason: "provider must be a concrete lowercase provider slug",
+        reason: "provider must be an exact provider identifier",
       }),
       expect.objectContaining({
         sourceId: "COMMENT_EXTRA_MARKER_FIELD",
@@ -595,11 +716,11 @@ describe("model attribution", () => {
       }),
       expect.objectContaining({
         sourceId: "COMMENT_GENERIC_PROVIDER",
-        reason: "provider must be a concrete lowercase provider slug",
+        reason: "provider must be an exact provider identifier",
       }),
       expect.objectContaining({
         sourceId: "COMMENT_NO_PROVIDER",
-        reason: "provider must be a concrete lowercase provider slug",
+        reason: "provider must be an exact provider identifier",
       }),
       expect.objectContaining({
         sourceId: "COMMENT_NO_MODEL",

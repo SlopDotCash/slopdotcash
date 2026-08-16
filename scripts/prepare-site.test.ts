@@ -598,6 +598,12 @@ describe("contribution skill package", () => {
         url: `https://github.com/elizaOS/slopdotcash/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
         publicUrl: "https://slop.cash/projects/eliza/skill.md",
       },
+      provenance: {
+        status: "self-reported",
+      },
+      telemetry: {
+        source: "ccusage@20.0.20",
+      },
     });
     expect(asRecord(manifest.archive, "skill manifest.archive")).toMatchObject({
       url: "https://slop.cash/downloads/contribute-to-eliza.skill",
@@ -866,8 +872,10 @@ describe("contribution skill package", () => {
         source: { path: `${project.reviewSkill.sourcePath}/SKILL.md` },
         review: {
           policy:
-            "Advisory review only. Maintainers decide acceptance, score, and every money-state transition.",
+            "Advisory review only. The reviewer must post exact provider, model, and client identity plus finalized private-trace evidence. Maintainers decide acceptance, score, and every money-state transition.",
         },
+        provenance: { status: "self-reported" },
+        telemetry: { source: "ccusage@20.0.20" },
       });
       expect(
         readFileSync(join(projectRoot, "review-codex.md"), "utf8"),

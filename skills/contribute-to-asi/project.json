@@ -7,6 +7,7 @@
   "publicOrigin": "https://slop.cash/projects/asi",
   "usageAdapters": {
     "codex": "codex",
-    "claude-code": "claude"
+    "claude-code": "claude",
+    "grok-build": "grok"
   }
 }
