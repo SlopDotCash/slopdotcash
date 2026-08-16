@@ -50,6 +50,7 @@ function mockSnapshot(value: unknown = snapshotFixture()): void {
         schemaVersion: "1",
         generatedAt: null,
         records: [],
+        commitments: [],
       });
     }
     return Response.json(

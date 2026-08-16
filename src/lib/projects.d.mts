@@ -1,5 +1,7 @@
 /** Types for the public project and reward-policy registry. */
 
+import type { FundingCommitmentInstrument } from "./funding-instruments.mjs";
+
 export type ProjectId = string;
 export type ProjectStatus = "active" | "paused";
 export type RewardKind = "monthly-pool" | "external-prize-share";
@@ -15,6 +17,7 @@ export interface ProjectFundingPolicy {
     readonly effectiveAt: string;
     readonly replacedAt: string | null;
   }[];
+  readonly commitments?: readonly FundingCommitmentInstrument[];
 }
 
 export interface ProjectRewardPolicy {

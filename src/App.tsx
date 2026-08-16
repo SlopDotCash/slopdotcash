@@ -1275,6 +1275,12 @@ function useFundingIndex(): FundingDataState {
     const addresses = new Map(
       PROJECTS.map((candidate) => [candidate.id, candidate.funding.addresses]),
     );
+    const commitments = new Map(
+      PROJECTS.map((candidate) => [
+        candidate.id,
+        candidate.funding.commitments ?? [],
+      ]),
+    );
     void fetch("/data/funding.json", { cache: "no-store" })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1284,7 +1290,7 @@ function useFundingIndex(): FundingDataState {
           "Funding index",
         );
       })
-      .then((value) => assertProjectFundingIndex(value, addresses))
+      .then((value) => assertProjectFundingIndex(value, addresses, commitments))
       .then((index) => {
         if (active) setFunding({ status: "ready", index });
       })

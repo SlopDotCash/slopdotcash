@@ -163,9 +163,11 @@ need a separate platform approval. The cap is immutable for that cycle.
 ### Settle
 
 The repository creates an unsigned Solana USDC plan. The owner may choose not
-to pay, but the project’s public history and risk remain visible. The owner can
-move pledged wallet funds at any time in v1 because enforceable escrow is not
-yet implemented. Settlement verification is exact and append-only.
+to pay, but the project’s public history and risk remain visible. Pledged funds
+are uncommitted intent: the owner can move a pledged wallet at any time. A pool
+is labeled committed only when a deterministic read-only verifier proves a
+locked balance in a third-party, non-upgradeable smart contract that Slop does
+not control. Settlement verification is exact and append-only.
 
 ## Ranking
 
@@ -225,7 +227,9 @@ Track all of these without collapsing them into one vanity number:
 
 - Slop Git as a second write-master for mirrored repositories;
 - Eliza Cloud login, email identity, organizations, or agent-fleet profiles;
-- enforceable escrow, withdrawal grace periods, or custody;
+- custody in any form: committed funds are locked in reviewed third-party,
+  non-upgradeable smart contracts that Slop does not control, and Slop never
+  holds funds, keys, or an admin position;
 - creator team roles and private dashboards;
 - KYC, tax, or sanctions product flows;
 - task claims and reservations;
