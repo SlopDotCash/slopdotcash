@@ -106,6 +106,42 @@ describe("evaluator award protocol", () => {
     ).toThrow("not canonical");
   });
 
+  it("binds review awards to an exact review receipt", () => {
+    const source = {
+      id: "PRR_review_17",
+      kind: "review",
+      number: 17,
+      title: "Review the scheduler repair",
+      url: "https://github.com/elizaOS/eliza/pull/17#pullrequestreview-170",
+    };
+
+    expect(assertEvaluatorAwardManifest(award({ source })).source).toEqual(
+      source,
+    );
+
+    for (const url of [
+      "https://github.com/elizaOS/eliza/pull/17",
+      "https://github.com/elizaOS/eliza/pull/17#issuecomment-170",
+      "https://github.com/elizaOS/eliza/pull/17#pullrequestreview-invalid",
+      "https://github.com/elizaOS/eliza/pull/17?diff=split#pullrequestreview-170",
+    ]) {
+      expect(() =>
+        assertEvaluatorAwardManifest(award({ source: { ...source, url } })),
+      ).toThrow("not the expected canonical GitHub URL");
+    }
+
+    expect(() =>
+      assertEvaluatorAwardManifest(
+        award({
+          source: {
+            ...source,
+            kind: "pull-request",
+          },
+        }),
+      ),
+    ).toThrow("not the expected canonical GitHub URL");
+  });
+
   it("rejects duplicate source credit even when award ids differ", () => {
     const root = fixtureRoot();
     writeFileSync(

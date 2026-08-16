@@ -92,6 +92,7 @@ function githubUrl(
   value: unknown,
   field: string,
   expectedPath: string,
+  expectedHash?: RegExp,
 ): string {
   const result = text(value, field, { max: 512 });
   let parsed: URL;
@@ -105,7 +106,7 @@ function githubUrl(
     parsed.hostname !== "github.com" ||
     parsed.pathname.toLowerCase() !== expectedPath.toLowerCase() ||
     parsed.search ||
-    parsed.hash ||
+    (expectedHash ? !expectedHash.test(parsed.hash) : parsed.hash !== "") ||
     parsed.username ||
     parsed.password ||
     parsed.port
@@ -255,6 +256,9 @@ export function assertEvaluatorAwardManifest(
     source.url,
     "evaluator award.source.url",
     `/${normalizedRepository[0]}/${normalizedRepository[1]}/${pathKind}/${number}`,
+    sourceKind === "review"
+      ? /^#(?:pullrequestreview-|discussion_r)\d+$/iu
+      : undefined,
   );
   const occurredAt = iso(manifest.occurredAt, "evaluator award.occurredAt");
   const approval = review(manifest.review, "evaluator award.review");

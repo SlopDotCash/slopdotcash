@@ -18,7 +18,7 @@
     "kind": "review",
     "number": 19464,
     "title": "fix(x): restore broker auth and reply to inbound dms",
-    "url": "https://github.com/elizaOS/eliza/pull/19464"
+    "url": "https://github.com/elizaOS/eliza/pull/19464#pullrequestreview-4936452802"
   },
   "reason": "The formal review independently identified three release-blocking defects: lost direct messages beyond the first page, permanent deduplication after a transient reply failure, and an OAuth2 path without expiry or refresh rotation. Maintainer follow-ups confirmed each finding on later heads, and the merged replacement PR #19873 explicitly repaired all three boundaries. The review materially changed the accepted implementation and prevented the unsafe incident branch from landing.",
   "review": {
