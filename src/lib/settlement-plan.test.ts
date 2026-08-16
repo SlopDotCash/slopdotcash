@@ -35,7 +35,7 @@ function approvedAllocation() {
     currency: "USDC",
     chain: "solana",
     capMinor: "10000000000",
-    feeBasisPoints: 300,
+    feeBasisPoints: 100,
     scoringRuleVersion: "gitarmy-v1",
     sourceSnapshotSha256: "b".repeat(64),
     allocations: [
@@ -62,7 +62,7 @@ function approvedAllocation() {
     totals: {
       suggestedMinor: "1000000",
       approvedMinor: "1000000",
-      feeMinor: "30000",
+      feeMinor: "10000",
     },
   });
 }
@@ -81,8 +81,8 @@ describe("settlement execution plans", () => {
     expect(plan.transfers).toHaveLength(2);
     expect(plan.totals).toEqual({
       contributorMinor: "1000000",
-      platformFeeMinor: "30000",
-      totalMinor: "1030000",
+      platformFeeMinor: "10000",
+      totalMinor: "1010000",
     });
     expect(assertSettlementExecutionPlan(plan, allocation)).toEqual(plan);
   });

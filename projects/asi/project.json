@@ -35,9 +35,15 @@
     "monthlyCapDisplay": "$5,000",
     "committedMinor": "0",
     "paymentMode": "disabled",
-    "feeBasisPoints": 300,
+    "feeBasisPoints": 100,
     "unusedFunds": "rollover-without-cap-increase",
     "fundingState": "pledged"
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+    "recordsPath": "funding/asi",
+    "addresses": []
   },
   "modelPolicy": {
     "mode": "open-declared",

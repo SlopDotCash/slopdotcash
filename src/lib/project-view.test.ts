@@ -105,7 +105,7 @@ describe("project views", () => {
     expect(eliza.reward).toMatchObject({
       kind: "monthly-pool",
       projectedPrincipalMinor: "10000000000",
-      platformFeeMinor: "300000000",
+      platformFeeMinor: "100000000",
     });
 
     expect(delta.leaders[0]).toMatchObject({

@@ -26,7 +26,7 @@ function reviewedProposal() {
     currency: "USDC",
     chain: "solana",
     capMinor: "10000000000",
-    feeBasisPoints: 300,
+    feeBasisPoints: 100,
     scoringRuleVersion: "gitarmy-v1",
     sourceSnapshotSha256: "b".repeat(64),
     allocations: [
@@ -56,7 +56,7 @@ function reviewedProposal() {
     totals: {
       suggestedMinor: "10000000000",
       approvedMinor: "9000000000",
-      feeMinor: "270000000",
+      feeMinor: "90000000",
     },
   };
 }
@@ -72,7 +72,7 @@ describe("reward allocation finalization", () => {
     expect(approved.approvedAt).toBe("2026-08-17T00:00:00.000Z");
     expect(approved.totals).toMatchObject({
       approvedMinor: "9000000000",
-      feeMinor: "270000000",
+      feeMinor: "90000000",
     });
   });
 

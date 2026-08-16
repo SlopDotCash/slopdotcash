@@ -27,6 +27,13 @@ import {
   type CycleIndex,
   type CycleIndexEntry,
 } from "./lib/cycle-index";
+import {
+  assertProjectFundingIndex,
+  isFundingAddress,
+  type ProjectFundingIndex,
+  type ProjectFundingRecord,
+  projectFundingTotals,
+} from "./lib/funding";
 import { createGlobalLeaders } from "./lib/global-leaderboard";
 import { createInstallCommand } from "./lib/install-command";
 import {
@@ -61,6 +68,7 @@ const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
 const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
+const MAX_FUNDING_INDEX_BYTES = 8 * 1024 * 1024;
 const PROFILE_EVENT_PREVIEW_LIMIT = 10;
 
 export function publicFooterDomain(
@@ -128,6 +136,7 @@ async function readBoundedJson(
 interface Route {
   kind:
     | "cycle"
+    | "funding-project"
     | "home"
     | "manage-project"
     | "new-project"
@@ -151,6 +160,13 @@ function internalRoute(pathname: string): Route {
     segments[2] === "manage"
   ) {
     return { kind: "manage-project", projectId: segments[1] };
+  }
+  if (
+    segments[0] === "projects" &&
+    segments.length === 3 &&
+    segments[2] === "funding"
+  ) {
+    return { kind: "funding-project", projectId: segments[1] };
   }
   if (segments[0] === "projects" && segments.length === 2) {
     return { kind: "project", projectId: segments[1] };
@@ -1067,7 +1083,7 @@ function ProjectPaymentHistory({
       <p className="money-summary">
         <strong>{formatMicroUsdc(paid.toString())} paid</strong>
         <span>{formatMicroUsdc(approved.toString())} approved</span>
-        <span>{formatMicroUsdc(fees.toString())} in 3% payout fees</span>
+        <span>{formatMicroUsdc(fees.toString())} in 1% payout fees</span>
       </p>
       {cycles.length === 0 ? (
         <EmptyState text="No payment cycles have closed yet." />
@@ -1105,6 +1121,208 @@ function ProjectPaymentHistory({
         </div>
       )}
     </section>
+  );
+}
+
+function fundingExplorer(
+  network: ProjectDefinition["funding"]["addresses"][number]["network"],
+  address: string,
+): string {
+  const encoded = encodeURIComponent(address);
+  if (network === "solana") return `https://solscan.io/account/${encoded}`;
+  if (network === "base") return `https://basescan.org/address/${encoded}`;
+  if (network === "ethereum") return `https://etherscan.io/address/${encoded}`;
+  return `https://mempool.space/address/${encoded}`;
+}
+
+function fundingTransactionExplorer(record: ProjectFundingRecord): string {
+  const encoded = encodeURIComponent(record.transactionId);
+  if (record.network === "solana") return `https://solscan.io/tx/${encoded}`;
+  if (record.network === "base") return `https://basescan.org/tx/${encoded}`;
+  if (record.network === "ethereum")
+    return `https://etherscan.io/tx/${encoded}`;
+  return `https://mempool.space/tx/${encoded}`;
+}
+
+function formatFundingMinor(record: ProjectFundingRecord): string {
+  if (record.asset === "USDC") return formatMicroUsdc(record.amountMinor);
+  const satoshis = BigInt(record.amountMinor);
+  const whole = satoshis / 100_000_000n;
+  const fraction = (satoshis % 100_000_000n).toString().padStart(8, "0");
+  return `${whole}.${fraction} BTC`;
+}
+
+function ProjectFunding({ project }: { project: ProjectDefinition }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  if (project.funding.addresses.length === 0) return null;
+  return (
+    <section className="section project-funding">
+      <details>
+        <summary>Fund this project</summary>
+        <p>{project.funding.disclosure}</p>
+        <p>
+          Check the network, asset, and full address in your wallet before
+          sending. Transfers are irreversible. GitHub identity does not prove
+          wallet ownership.
+        </p>
+        <div className="funding-routes">
+          {project.funding.addresses.map((route) => {
+            const key = `${route.network}:${route.asset}`;
+            return (
+              <div className="funding-route" key={key}>
+                <strong>
+                  {route.asset} · {route.network}
+                </strong>
+                <code>{route.address}</code>
+                <div>
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      void navigator.clipboard
+                        .writeText(route.address)
+                        .then(() => setCopied(key))
+                    }
+                    type="button"
+                  >
+                    {copied === key ? "Address copied" : "Copy address"}
+                  </button>
+                  <ExternalLinkAnchor
+                    href={fundingExplorer(route.network, route.address)}
+                  >
+                    View address <ExternalLink aria-hidden="true" size={14} />
+                  </ExternalLinkAnchor>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <Link href={`/projects/${project.slug}/funding`}>
+          View transactions
+        </Link>
+      </details>
+    </section>
+  );
+}
+
+function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
+  const [funding, setFunding] = useState<
+    | { status: "error"; message: string }
+    | { status: "loading" }
+    | { status: "ready"; index: ProjectFundingIndex }
+  >({ status: "loading" });
+  useEffect(() => {
+    let active = true;
+    const addresses = new Map(
+      PROJECTS.map((candidate) => [candidate.id, candidate.funding.addresses]),
+    );
+    void fetch("/data/funding.json", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return readBoundedJson(
+          response,
+          MAX_FUNDING_INDEX_BYTES,
+          "Funding index",
+        );
+      })
+      .then((value) => assertProjectFundingIndex(value, addresses))
+      .then((index) => {
+        if (active) setFunding({ status: "ready", index });
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setFunding({
+            status: "error",
+            message: error instanceof Error ? error.message : "Invalid data",
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const records =
+    funding.status === "ready"
+      ? funding.index.records.filter(
+          (record) => record.projectId === project.id,
+        )
+      : [];
+  const totals = projectFundingTotals(records);
+  return (
+    <main className="shell route-main funding-page">
+      <p className="breadcrumb">
+        <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+        <span>/</span>Funding
+      </p>
+      <section className="simple-heading">
+        <div>
+          <h1>Project funding</h1>
+          <p>{project.funding.disclosure}</p>
+        </div>
+      </section>
+      <p>
+        Verified and self-reported amounts are always shown separately. A GitHub
+        login or submitted transaction ID does not prove wallet ownership or
+        payment.
+      </p>
+      {funding.status === "loading" ? (
+        <div className="data-notice" role="status">
+          <span className="pulse" /> Reading funding records…
+        </div>
+      ) : funding.status === "error" ? (
+        <div className="data-notice data-error" role="alert">
+          <CircleAlert aria-hidden="true" size={18} />
+          Funding records unavailable: {funding.message}
+        </div>
+      ) : records.length === 0 ? (
+        <EmptyState text="No reviewed public funding transactions have been published yet." />
+      ) : (
+        <>
+          <p className="money-summary">
+            <strong>
+              {formatMicroUsdc(totals.verifiedMinor)} verified on-chain
+            </strong>
+            <span>
+              {formatMicroUsdc(totals.selfReportedMinor)} self-reported
+            </span>
+          </p>
+          <div className="plain-table-wrap">
+            <table className="plain-table">
+              <caption className="visually-hidden">
+                {project.name} funding transactions
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Transaction</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Attribution</th>
+                  <th scope="col">State</th>
+                </tr>
+              </thead>
+              <tbody>
+                {records.map((record) => (
+                  <tr key={record.recordId}>
+                    <th scope="row">
+                      <ExternalLinkAnchor
+                        href={fundingTransactionExplorer(record)}
+                      >
+                        {record.transactionId.slice(0, 12)}…
+                      </ExternalLinkAnchor>
+                    </th>
+                    <td>{formatFundingMinor(record)}</td>
+                    <td>
+                      {record.donor.attribution === "github"
+                        ? `@${record.donor.login}`
+                        : "Anonymous"}
+                    </td>
+                    <td>{record.state.replaceAll("-", " ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </main>
   );
 }
 
@@ -1190,6 +1408,7 @@ function ProjectPage({
       </section>
       <div className="shell">
         <InstallPanel project={project} />
+        <ProjectFunding project={project} />
         <ProjectPaymentHistory project={project} state={state} />
         {view && state.status === "ready" ? (
           <ProjectLeaderboard
@@ -1700,7 +1919,7 @@ function CyclePage({
         </li>
         <li>
           <strong>Settlement</strong>
-          <p>The 3% fee applies when the approved principal is paid.</p>
+          <p>The 1% fee applies when the approved principal is paid.</p>
         </li>
       </ol>
       {view ? (
@@ -1921,7 +2140,7 @@ export function ProjectManagePage({
           <div className="owner-section-body">
             <p>
               Draft only. This page cannot save, approve, sign, or send USDC.
-              Changed amounts need a public reason; the 3% fee applies only if a
+              Changed amounts need a public reason; the 1% fee applies only if a
               reviewed cycle is later paid.
             </p>
             <label className="total-field">
@@ -2083,6 +2302,7 @@ function ProjectProposalPage() {
   const [goal, setGoal] = useState("");
   const [criteria, setCriteria] = useState("");
   const [monthlyPool, setMonthlyPool] = useState("0");
+  const [solanaFundingAddress, setSolanaFundingAddress] = useState("");
   const [integrationBranch, setIntegrationBranch] = useState("main");
   const [copied, setCopied] = useState(false);
   const [briefCopied, setBriefCopied] = useState(false);
@@ -2131,6 +2351,23 @@ function ProjectProposalPage() {
         unusedFunds: "rollover-without-cap-increase",
         fundingState: "pledged",
       },
+      funding: {
+        mode: "direct-noncustodial",
+        disclosure:
+          "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+        recordsPath: `funding/${slug}`,
+        addresses: solanaFundingAddress
+          ? [
+              {
+                network: "solana",
+                asset: "USDC",
+                address: solanaFundingAddress,
+                effectiveAt: new Date().toISOString(),
+                replacedAt: null,
+              },
+            ]
+          : [],
+      },
       modelPolicy: {
         mode: "open-declared",
         disclosureRequired: true,
@@ -2149,6 +2386,7 @@ function ProjectProposalPage() {
       pool.minor,
       repository,
       slug,
+      solanaFundingAddress,
     ],
   );
   const manifestText = JSON.stringify(manifest, null, 2);
@@ -2187,7 +2425,9 @@ ${manifestText}`;
     headline.trim().length > 5 &&
     goal.trim().length > 5 &&
     criteria.trim().length > 5 &&
-    pool.valid;
+    pool.valid &&
+    (solanaFundingAddress === "" ||
+      isFundingAddress("solana", solanaFundingAddress));
   return (
     <main className="shell route-main proposal-page">
       <p className="breadcrumb">
@@ -2266,9 +2506,23 @@ ${manifestText}`;
               value={monthlyPool}
             />
           </label>
+          <label>
+            Project-controlled Solana USDC address (optional)
+            <input
+              autoComplete="off"
+              onChange={(event) => setSolanaFundingAddress(event.target.value)}
+              placeholder="Published only after GitHub review"
+              spellCheck={false}
+              value={solanaFundingAddress}
+            />
+          </label>
+          <p className="proposal-disclosure">
+            Funds go directly to the project wallet. Slop does not hold or
+            recover funds. GitHub identity does not prove wallet ownership.
+          </p>
           <div className="proposal-rules">
             <p>
-              Public repository · any model · permanent private traces · 3% fee
+              Public repository · any model · permanent private traces · 1% fee
               when payouts settle
             </p>
           </div>
@@ -2351,6 +2605,13 @@ export function App() {
     const project = findProject(route.projectId ?? "");
     content = project ? (
       <ProjectPage project={project} retry={retry} state={state} />
+    ) : (
+      <NotFound title="Project not found" />
+    );
+  } else if (route.kind === "funding-project") {
+    const project = findProject(route.projectId ?? "");
+    content = project ? (
+      <ProjectFundingPage project={project} />
     ) : (
       <NotFound title="Project not found" />
     );

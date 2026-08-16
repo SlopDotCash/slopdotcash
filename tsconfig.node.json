@@ -19,6 +19,7 @@
     "scripts/**/*.ts",
     "src/lib/cycle-index.ts",
     "src/lib/evaluator-awards.ts",
+    "src/lib/funding.ts",
     "src/lib/leaderboard.ts",
     "src/lib/model-identity.ts",
     "src/lib/install-command.ts",

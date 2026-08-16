@@ -14,6 +14,8 @@
     "projects:sync": "node scripts/sync-project-registry.mjs",
     "projects:check": "node scripts/sync-project-registry.mjs --check",
     "evaluations:check": "bun scripts/validate-evaluator-awards.ts",
+    "funding:sync": "bun scripts/sync-funding-index.ts",
+    "funding:check": "bun scripts/sync-funding-index.ts --check",
     "cycles:sync": "bun scripts/sync-cycle-index.ts",
     "cycles:check": "bun scripts/sync-cycle-index.ts --check",
     "cycles:verify": "bun scripts/sync-cycle-index.ts --check --online",

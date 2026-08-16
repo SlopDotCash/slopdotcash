@@ -283,7 +283,7 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   await expect(
     page.getByRole("link", { name: /View in SlopHub/u }),
   ).toHaveCount(0);
-  await expect(page.getByText("3% platform fee · Solana")).toHaveCount(0);
+  await expect(page.getByText("1% platform fee · Solana")).toHaveCount(0);
   const rewardStyle = await page.locator(".reward-card").evaluate((card) => {
     const amount = card.querySelector<HTMLElement>(".reward-amount-monthly");
     const actions = card.querySelector<HTMLElement>(":scope > div");
@@ -528,6 +528,9 @@ test("creates a valid GitHub-native project handoff", async ({
     .getByLabel("Acceptance criteria")
     .fill("Accepted pull requests with verified tests.");
   await page.getByLabel("Maximum monthly pool, digital dollars").fill("2500");
+  await page
+    .getByLabel("Project-controlled Solana USDC address (optional)")
+    .fill("11111111111111111111111111111111");
 
   const handoff = page.getByRole("link", { name: /Continue on GitHub/u });
   await expect(handoff).toHaveAttribute(
@@ -539,6 +542,9 @@ test("creates a valid GitHub-native project handoff", async ({
   );
   await expect(page.locator(".manifest-preview")).toContainText(
     '"mode": "open-declared"',
+  );
+  await expect(page.locator(".manifest-preview")).toContainText(
+    '"mode": "direct-noncustodial"',
   );
   const copyAgentBrief = page.getByRole("button", {
     name: "Copy agent brief",

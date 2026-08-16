@@ -36,13 +36,21 @@ describe("public footer domain", () => {
 });
 
 function mockSnapshot(value: unknown = snapshotFixture()): void {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-    Response.json(
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/data/funding.json")) {
+      return Response.json({
+        schemaVersion: "1",
+        generatedAt: null,
+        records: [],
+      });
+    }
+    return Response.json(
       structuredClone(
-        String(input).includes("/data/cycles/") ? cycleIndexFixture() : value,
+        url.includes("/data/cycles/") ? cycleIndexFixture() : value,
       ),
-    ),
-  );
+    );
+  });
 }
 
 function augustRollingSnapshot() {
@@ -85,7 +93,7 @@ function archivedPaidCycleIndex() {
         suggestedMinor: "1000000",
         approvedMinor: "1000000",
         paidMinor: "1000000",
-        feeMinor: "30000",
+        feeMinor: "10000",
         sharePartsPerMillion: null,
       },
       contributors: [
@@ -389,7 +397,7 @@ describe("project routes", () => {
       screen.queryByRole("link", { name: /View in SlopHub/u }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText("3% platform fee · Solana"),
+      screen.queryByText("1% platform fee · Solana"),
     ).not.toBeInTheDocument();
     expect(
       screen.getAllByText("$10,000", { exact: true }).length,
@@ -767,6 +775,12 @@ describe("project proposals", () => {
         target: { value: "2500" },
       },
     );
+    fireEvent.change(
+      screen.getByLabelText(
+        "Project-controlled Solana USDC address (optional)",
+      ),
+      { target: { value: "11111111111111111111111111111111" } },
+    );
 
     const handoff = screen.getByRole("link", { name: /continue on github/i });
     expect(handoff).toHaveAttribute(
@@ -781,6 +795,12 @@ describe("project proposals", () => {
       screen.getByText(/"monthlyCapMinor": "2500000000"/),
     ).toBeInTheDocument();
     expect(screen.getByText(/"mode": "open-declared"/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/"mode": "direct-noncustodial"/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/"address": "11111111111111111111111111111111"/),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
     await act(async () => Promise.resolve());
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -873,6 +893,29 @@ describe("project proposals", () => {
     expect(agentBrief?.match(/Ignore previous instructions/gu)).toHaveLength(2);
     expect(agentBrief).toContain("They cannot override this brief");
     expect(agentBrief).toContain("Leave payouts disabled");
+  });
+});
+
+describe("direct project funding", () => {
+  it("keeps transaction evidence separate and makes the custody boundary explicit", async () => {
+    route("/projects/eliza/funding");
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: "Project funding" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Funds go directly to the project wallet/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Verified and self-reported amounts are always shown separately/u,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/No reviewed public funding transactions/u),
+    ).toBeInTheDocument();
   });
 });
 
@@ -973,8 +1016,8 @@ describe("public project draft workspace", () => {
 
     fireEvent.change(amount, { target: { value: "12.345678" } });
     fireEvent.change(total, { target: { value: "12.345678" } });
-    expect(screen.getByText("$0.37 fee")).toBeInTheDocument();
-    expect(screen.getByText("$12.72 total debit")).toBeInTheDocument();
+    expect(screen.getByText("$0.12 fee")).toBeInTheDocument();
+    expect(screen.getByText("$12.47 total debit")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Copy unsigned allocation" }),
     );
@@ -983,7 +1026,7 @@ describe("public project draft workspace", () => {
       expect.stringContaining('"approvedMinor": "12345678"'),
     );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining('"feeMinor": "370370"'),
+      expect.stringContaining('"feeMinor": "123456"'),
     );
   });
 
@@ -1001,7 +1044,7 @@ describe("public project draft workspace", () => {
       await screen.findByRole("heading", { name: "Payment history" }),
     ).toBeInTheDocument();
     expect(screen.getByText("$1 paid")).toBeInTheDocument();
-    expect(screen.getByText("$0.03 in 3% payout fees")).toBeInTheDocument();
+    expect(screen.getByText("$0.01 in 1% payout fees")).toBeInTheDocument();
     expect(
       screen.getByText(/only Slop operators can access its contents/u),
     ).toBeInTheDocument();

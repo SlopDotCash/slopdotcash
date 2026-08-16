@@ -878,6 +878,7 @@ for (const project of PROJECTS) {
   });
 }
 run("bun", [join(repositoryRoot, "scripts", "sync-cycle-index.ts")]);
+run("bun", [join(repositoryRoot, "scripts", "sync-funding-index.ts")]);
 
 console.log(
   `[Slop] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,

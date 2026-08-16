@@ -24,7 +24,7 @@ normal progression then adds, without replacing earlier files:
 - `execution-plan.json` — an unsigned, exact Solana USDC transfer plan;
 - `transactions.json` — submitted public transaction signatures;
 - `settlement.json` — generated only after finalized on-chain balance changes
-  reconcile every contributor transfer and the 3% platform fee charged when
+  reconcile every contributor transfer and the 1% platform fee charged when
   the approved payout is paid.
 
 Delta Star uses only `source-snapshot.json` and `proposal.json`; it publishes a

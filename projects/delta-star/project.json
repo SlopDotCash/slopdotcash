@@ -35,7 +35,7 @@
     "monthlyCapDisplay": "$0 platform pool",
     "committedMinor": "0",
     "paymentMode": "disabled",
-    "feeBasisPoints": 300,
+    "feeBasisPoints": 100,
     "unusedFunds": "not-applicable",
     "fundingState": "external-opportunity",
     "externalOpportunity": {
@@ -43,6 +43,12 @@
       "advertisedAmountDisplay": "$1,000,000",
       "url": "https://proximityprize.org/"
     }
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+    "recordsPath": "funding/delta-star",
+    "addresses": []
   },
   "modelPolicy": {
     "mode": "open-declared",

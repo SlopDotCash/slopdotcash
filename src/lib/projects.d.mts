@@ -4,6 +4,19 @@ export type ProjectId = string;
 export type ProjectStatus = "active" | "paused";
 export type RewardKind = "monthly-pool" | "external-prize-share";
 
+export interface ProjectFundingPolicy {
+  readonly mode: "direct-noncustodial";
+  readonly disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.";
+  readonly recordsPath: string;
+  readonly addresses: readonly {
+    readonly network: "base" | "bitcoin" | "ethereum" | "solana";
+    readonly asset: "BTC" | "USDC";
+    readonly address: string;
+    readonly effectiveAt: string;
+    readonly replacedAt: string | null;
+  }[];
+}
+
 export interface ProjectRewardPolicy {
   readonly kind: RewardKind;
   readonly currency: "USDC" | null;
@@ -14,7 +27,7 @@ export interface ProjectRewardPolicy {
   readonly monthlyCapDisplay: string;
   readonly committedMinor: string;
   readonly paymentMode: "disabled" | "enabled";
-  readonly feeBasisPoints: 300;
+  readonly feeBasisPoints: 100;
   readonly unusedFunds: "not-applicable" | "rollover-without-cap-increase";
   readonly fundingState: "committed" | "external-opportunity" | "pledged";
   readonly externalOpportunity?: {
@@ -50,6 +63,7 @@ export interface ProjectDefinition {
     readonly sourcePath: string;
   };
   readonly reward: ProjectRewardPolicy;
+  readonly funding: ProjectFundingPolicy;
   readonly modelPolicy: {
     readonly mode: "open-declared";
     readonly disclosureRequired: true;
