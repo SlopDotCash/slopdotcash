@@ -1,63 +1,81 @@
-/** Proves the read-only Bitcoin verifier pins best-chain data and fails closed. */
+/** Proves the read-only Bitcoin verifier pins a bounded, canonical API quorum. */
 
 import { describe, expect, it } from "vitest";
-import { verifyFundingBitcoin } from "./verify-funding-bitcoin";
+import {
+  BITCOIN_FUNDING_API_AUTHORITIES,
+  parseBitcoinFundingArguments,
+  verifyFundingBitcoin,
+} from "./verify-funding-bitcoin";
 
 const RECIPIENT = "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq";
 const SENDER = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
 const TXID = "a".repeat(64);
 const BLOCK_HASH = "f".repeat(64);
 
-function apiResponses(overrides: Record<string, string> = {}) {
-  return {
-    [`/tx/${TXID}`]: JSON.stringify({
-      txid: TXID,
-      status: {
-        confirmed: true,
-        block_height: 800_000,
-        block_hash: BLOCK_HASH,
+function transactionBody(blockHash = BLOCK_HASH) {
+  return JSON.stringify({
+    txid: TXID,
+    status: { confirmed: true, block_height: 800_000, block_hash: blockHash },
+    vin: [
+      {
+        is_coinbase: false,
+        prevout: { scriptpubkey_address: SENDER, value: 200_000 },
       },
-      vin: [
-        {
-          is_coinbase: false,
-          prevout: { scriptpubkey_address: SENDER, value: 200_000 },
-        },
-      ],
-      vout: [
-        { scriptpubkey_address: RECIPIENT, value: 150_000 },
-        { scriptpubkey_address: SENDER, value: 49_000 },
-      ],
-      fee: 1_000,
-    }),
+    ],
+    vout: [
+      { scriptpubkey_address: RECIPIENT, value: 150_000 },
+      { scriptpubkey_address: SENDER, value: 49_000 },
+    ],
+    fee: 1_000,
+  });
+}
+
+function authorityResponses(overrides: Record<string, string> = {}) {
+  return {
+    [`/tx/${TXID}`]: transactionBody(),
     "/blocks/tip/height": "800010",
     "/block-height/800000": BLOCK_HASH,
     ...overrides,
   } as Record<string, string>;
 }
 
-function fetchFor(responses: Record<string, string>, paths: string[] = []) {
+function fetchFor(
+  perHost: Record<string, Record<string, string>>,
+  requests: string[] = [],
+) {
   return async (url: URL) => {
     const path = url.pathname.replace(/^\/api/u, "");
-    paths.push(path);
-    if (!(path in responses)) throw new Error(`unexpected API path ${path}`);
+    requests.push(`${url.host}${path}`);
+    const responses = perHost[url.host];
+    if (!responses || !(path in responses)) {
+      throw new Error(`unexpected API request ${url.host}${path}`);
+    }
     return new Response(responses[path]);
   };
 }
 
+const HOSTS = BITCOIN_FUNDING_API_AUTHORITIES.map(
+  (authority) => new URL(authority).host,
+);
+
+function allHosts(responses: Record<string, string>) {
+  return Object.fromEntries(HOSTS.map((host) => [host, responses]));
+}
+
 describe("Bitcoin funding verifier", () => {
-  it("checks tip and best-chain hash, then emits reviewed record fields", async () => {
-    const paths: string[] = [];
+  it("reaches quorum across fixed authorities and emits reviewed fields", async () => {
+    const requests: string[] = [];
     const result = await verifyFundingBitcoin({
       transactionId: TXID,
       recipient: RECIPIENT,
       amountMinor: "150000",
-      fetchImpl: fetchFor(apiResponses(), paths),
+      fetchImpl: fetchFor(allHosts(authorityResponses()), requests),
     });
-    expect(paths).toEqual([
-      `/tx/${TXID}`,
-      "/blocks/tip/height",
-      "/block-height/800000",
-    ]);
+    for (const host of HOSTS) {
+      expect(requests).toContain(`${host}/tx/${TXID}`);
+      expect(requests).toContain(`${host}/blocks/tip/height`);
+      expect(requests).toContain(`${host}/block-height/800000`);
+    }
     expect(result).toMatchObject({
       state: "verified-on-chain",
       finality: { kind: "confirmations", confirmations: 11 },
@@ -72,22 +90,50 @@ describe("Bitcoin funding verifier", () => {
         blockHash: BLOCK_HASH,
       },
     });
+    expect(result.chainEvidence.authorities).toHaveLength(HOSTS.length);
   });
 
-  it("rejects a transaction whose block left the best chain", async () => {
+  it("uses the minimum agreeing confirmations and survives one divergence", async () => {
+    const result = await verifyFundingBitcoin({
+      transactionId: TXID,
+      recipient: RECIPIENT,
+      amountMinor: "150000",
+      fetchImpl: fetchFor({
+        [HOSTS[0]]: authorityResponses({ "/blocks/tip/height": "800020" }),
+        [HOSTS[1]]: authorityResponses(),
+        [HOSTS[2]]: authorityResponses({
+          "/block-height/800000": "e".repeat(64),
+        }),
+      }),
+    });
+    expect(result.finality).toEqual({
+      kind: "confirmations",
+      confirmations: 11,
+    });
+    expect(result.chainEvidence.authorities).toHaveLength(2);
+  });
+
+  it("fails closed when authorities cannot reach canonical quorum", async () => {
     await expect(
       verifyFundingBitcoin({
         transactionId: TXID,
         recipient: RECIPIENT,
         amountMinor: "150000",
-        fetchImpl: fetchFor(
-          apiResponses({ "/block-height/800000": "e".repeat(64) }),
-        ),
+        fetchImpl: fetchFor({
+          [HOSTS[0]]: authorityResponses(),
+          [HOSTS[1]]: authorityResponses({
+            "/block-height/800000": "e".repeat(64),
+          }),
+          [HOSTS[2]]: authorityResponses({
+            [`/tx/${TXID}`]: transactionBody("d".repeat(64)),
+            "/block-height/800000": "d".repeat(64),
+          }),
+        }),
       }),
-    ).rejects.toThrow(/best chain/u);
+    ).rejects.toThrow(/quorum/u);
   });
 
-  it("rejects invalid inputs and credentialed APIs before querying", async () => {
+  it("rejects invalid inputs before querying any authority", async () => {
     let queried = false;
     const spy = async () => {
       queried = true;
@@ -113,11 +159,38 @@ describe("Bitcoin funding verifier", () => {
       verifyFundingBitcoin({
         transactionId: TXID,
         recipient: RECIPIENT,
-        amountMinor: "150000",
-        apiUrl: "https://user:pass@mempool.example.com/api",
+        amountMinor: "1".repeat(41),
         fetchImpl: spy,
       }),
-    ).rejects.toThrow(/credential-free/u);
+    ).rejects.toThrow(/invalid/u);
     expect(queried).toBe(false);
+  });
+
+  it("rejects malformed, repeated, or unknown CLI arguments", () => {
+    expect(
+      parseBitcoinFundingArguments([
+        "--transaction",
+        TXID,
+        "--recipient",
+        RECIPIENT,
+        "--amount-minor",
+        "150000",
+      ]),
+    ).toEqual({
+      transactionId: TXID,
+      recipient: RECIPIENT,
+      amountMinor: "150000",
+    });
+    expect(() =>
+      parseBitcoinFundingArguments(["--api-url", "https://example.com"]),
+    ).toThrow(/Usage/u);
+    expect(() =>
+      parseBitcoinFundingArguments([
+        "--transaction",
+        TXID,
+        "--transaction",
+        TXID,
+      ]),
+    ).toThrow(/Usage/u);
   });
 });
