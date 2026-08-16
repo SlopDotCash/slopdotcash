@@ -123,6 +123,7 @@ describe("project funding records", () => {
           donor: {
             attribution: "github",
             actorId: "1".repeat(21),
+            actorNodeId: "MDQ6VXNlcjE4NjMzMjY0",
             login: "lalalune",
           },
         }),
