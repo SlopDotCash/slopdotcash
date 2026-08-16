@@ -768,6 +768,19 @@ describe("contribution skill package", () => {
     expect(claudeGuide).not.toContain("CODEX_HOME");
     for (const project of PROJECTS) {
       const projectRoot = join(publicRoot, "projects", project.id);
+      expect(
+        parseJsonRecord(
+          readFileSync(join(projectRoot, "terms.json"), "utf8"),
+          `${project.id} terms`,
+        ),
+      ).toEqual({
+        schemaVersion: "1",
+        projectId: project.id,
+        status: project.status,
+        steward: project.steward,
+        authority: project.authority,
+        terms: project.terms,
+      });
       const projectManifest = parseJsonRecord(
         readFileSync(join(projectRoot, "skill-manifest.json"), "utf8"),
         `${project.id} skill manifest`,

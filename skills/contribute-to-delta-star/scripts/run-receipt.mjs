@@ -128,6 +128,64 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function validatePolicyAcknowledgement(value) {
+  if (
+    !hasExactKeys(value, [
+      "acknowledgedAt",
+      "inboundTermsSha256",
+      "licenseSha256",
+      "policyRevision",
+      "prizeRulesSha256",
+    ]) ||
+    typeof value.policyRevision !== "string" ||
+    value.policyRevision.length === 0 ||
+    !SHA_PATTERN.test(value.licenseSha256 ?? "") ||
+    (value.inboundTermsSha256 !== null &&
+      !SHA_PATTERN.test(value.inboundTermsSha256 ?? "")) ||
+    (value.prizeRulesSha256 !== null &&
+      !SHA_PATTERN.test(value.prizeRulesSha256 ?? "")) ||
+    canonicalIso(value.acknowledgedAt) !== value.acknowledgedAt
+  ) {
+    fail("project policy acknowledgement is invalid");
+  }
+  return value;
+}
+
+function projectPolicyPreflight() {
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(scriptDirectory, "terms-preflight.mjs"),
+      "--project",
+      PROJECT.projectId,
+      "--authority",
+      PROJECT.policyAuthority,
+      "--json",
+    ],
+    { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 30_000 },
+  );
+  if (result.status !== 0 || result.signal || result.error) {
+    fail(
+      result.stderr.trim() ||
+        "project terms preflight failed without a diagnostic",
+    );
+  }
+  try {
+    return validatePolicyAcknowledgement(JSON.parse(result.stdout));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      fail("project terms preflight returned invalid JSON");
+    }
+    throw error;
+  }
+}
+
+function policyBinding(value) {
+  const { acknowledgedAt: _acknowledgedAt, ...binding } =
+    validatePolicyAcknowledgement(value);
+  return JSON.stringify(binding);
+}
+
 function canonicalIso(value = new Date()) {
   const time = value instanceof Date ? value.getTime() : Date.parse(value);
   if (!Number.isFinite(time)) fail("timestamp is invalid");
@@ -691,11 +749,16 @@ function validateSessionBaseline(value) {
 }
 
 function validateActiveRecord(value) {
+  const hasPolicyAcknowledgement = Object.hasOwn(
+    value ?? {},
+    "policyAcknowledgement",
+  );
   const expectedKeys = [
     "baseline",
     "client",
     "lane",
     "model",
+    ...(hasPolicyAcknowledgement ? ["policyAcknowledgement"] : []),
     "projectId",
     "provider",
     "repositoryId",
@@ -714,7 +777,8 @@ function validateActiveRecord(value) {
     typeof value !== "object" ||
     Array.isArray(value) ||
     Object.keys(value).sort().join("\0") !== expectedKeys ||
-    value.schemaVersion !== "1" ||
+    !["1", "2"].includes(value.schemaVersion) ||
+    (value.schemaVersion === "2") !== hasPolicyAcknowledgement ||
     value.projectId !== PROJECT.projectId ||
     value.repositoryId !== PROJECT.repositoryId ||
     !RUN_ID_PATTERN.test(value.runId ?? "") ||
@@ -737,6 +801,9 @@ function validateActiveRecord(value) {
     !SHA_PATTERN.test(value.skillSha256 ?? "")
   ) {
     fail("active run state has an invalid identity");
+  }
+  if (hasPolicyAcknowledgement) {
+    validatePolicyAcknowledgement(value.policyAcknowledgement);
   }
   validateSessionBaseline(value.baseline);
   return value;
@@ -1474,13 +1541,25 @@ export async function uploadPrivateTrace(
 
 export function marker(receipt) {
   const run = {
-    schema_version: "1",
+    schema_version: receipt.schemaVersion,
     run_id: receipt.runId,
     project: receipt.projectId,
     repository: receipt.repositoryId,
     started_at: receipt.startedAt,
     completed_at: receipt.completedAt,
     skill_sha256: receipt.skillSha256,
+    ...(receipt.policyAcknowledgement
+      ? {
+          policy_acknowledgement: {
+            policy_revision: receipt.policyAcknowledgement.policyRevision,
+            license_sha256: receipt.policyAcknowledgement.licenseSha256,
+            inbound_terms_sha256:
+              receipt.policyAcknowledgement.inboundTermsSha256,
+            prize_rules_sha256: receipt.policyAcknowledgement.prizeRulesSha256,
+            acknowledged_at: receipt.policyAcknowledgement.acknowledgedAt,
+          },
+        }
+      : {}),
     usage: {
       source: receipt.usage.source,
       confidence: receipt.usage.confidence,
@@ -1582,6 +1661,10 @@ function completedLane(value, receipt) {
 
 function validateCompletedRecord(value) {
   const receipt = value?.receipt;
+  const hasPolicyAcknowledgement = Object.hasOwn(
+    receipt ?? {},
+    "policyAcknowledgement",
+  );
   const wrapperIsCurrent = hasExactKeys(value, [
     "footer",
     "lane",
@@ -1596,6 +1679,7 @@ function validateCompletedRecord(value) {
     "devicePublicKey",
     "deviceSignature",
     "model",
+    ...(hasPolicyAcknowledgement ? ["policyAcknowledgement"] : []),
     "projectId",
     "provider",
     "repositoryId",
@@ -1635,7 +1719,8 @@ function validateCompletedRecord(value) {
     !receipt ||
     !hasExactKeys(receipt, receiptKeys) ||
     !hasExactKeys(usage, usageKeys) ||
-    receipt.schemaVersion !== "1" ||
+    !["1", "2"].includes(receipt.schemaVersion) ||
+    (receipt.schemaVersion === "2") !== hasPolicyAcknowledgement ||
     receipt.projectId !== PROJECT.projectId ||
     receipt.repositoryId !== PROJECT.repositoryId ||
     !RUN_ID_PATTERN.test(receipt.runId ?? "") ||
@@ -1687,6 +1772,9 @@ function validateCompletedRecord(value) {
         traceUpload.sha256 !== receipt.trajectorySha256))
   ) {
     fail("completed run state has an invalid identity");
+  }
+  if (hasPolicyAcknowledgement) {
+    validatePolicyAcknowledgement(receipt.policyAcknowledgement);
   }
   const lane = completedLane(value, receipt);
   if (
@@ -2099,7 +2187,7 @@ function startRun(options) {
   const usageAdapter = PROJECT.usageAdapters[options.client] ?? null;
   const runId = createRunId();
   const state = validateActiveRecord({
-    schemaVersion: "1",
+    schemaVersion: "2",
     runId,
     projectId: PROJECT.projectId,
     repositoryId: PROJECT.repositoryId,
@@ -2110,6 +2198,7 @@ function startRun(options) {
     lane: options.lane,
     startedAt: canonicalIso(),
     baseline: collectUsage(options.client, repositoryRoot),
+    policyAcknowledgement: projectPolicyPreflight(),
     ...provenance,
   });
   const directories = runDirectories();
@@ -2242,8 +2331,14 @@ function finishRun(options) {
     : unavailableUsage("none");
   const key = deviceKey();
   const trajectorySha256 = trajectoryDigest(options.trajectory);
+  const currentPolicy = projectPolicyPreflight();
+  if (
+    policyBinding(currentPolicy) !== policyBinding(state.policyAcknowledgement)
+  ) {
+    fail("project terms changed during the run; start a new acknowledged run");
+  }
   const receipt = {
-    schemaVersion: "1",
+    schemaVersion: "2",
     runId: state.runId,
     projectId: state.projectId,
     repositoryId: state.repositoryId,
@@ -2254,6 +2349,7 @@ function finishRun(options) {
     client: state.client,
     skillRevision: state.skillRevision,
     skillSha256: state.skillSha256,
+    policyAcknowledgement: state.policyAcknowledgement,
     usage,
     trajectorySha256,
     traceUpload: traceUploadEvidence(

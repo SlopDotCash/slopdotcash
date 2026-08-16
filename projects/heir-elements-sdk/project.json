@@ -6,7 +6,57 @@
   "eyebrow": "Public repository",
   "headline": "Make Money Creating Intelligent Inheritance Apps",
   "description": "Make the element SDK the most hardened global software developers kit for intelligent inheritance applications.",
-  "status": "active",
+  "status": "paused",
+  "steward": {
+    "displayName": "awidearray",
+    "kind": "individual",
+    "github": {
+      "actorId": "58874935",
+      "nodeId": "MDQ6VXNlcjU4ODc0OTM1",
+      "login": "awidearray",
+      "type": "User",
+      "profileUrl": "https://github.com/awidearray"
+    },
+    "website": null
+  },
+  "authority": {
+    "state": "unverified",
+    "reason": "missing-repository-proof",
+    "role": "project-steward",
+    "repositoryId": "1013158722",
+    "repositoryNodeId": "R_kgDOPGOTQg",
+    "proof": null
+  },
+  "terms": {
+    "revision": "2026-08-16.1",
+    "effectiveAt": "2026-08-16T00:00:00.000Z",
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "copyright": {
+      "model": "unknown",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "unknown",
+      "spdx": null,
+      "url": null,
+      "commitSha": null,
+      "fileSha256": null
+    },
+    "inbound": {
+      "mode": "unknown",
+      "termsUrl": null,
+      "commitSha": null,
+      "fileSha256": null,
+      "version": null,
+      "acceptance": null
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
   "repositories": [
     {
       "id": "heirlabs/element-sdk",

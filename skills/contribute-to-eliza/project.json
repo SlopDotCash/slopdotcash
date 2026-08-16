@@ -5,6 +5,7 @@
   "skillName": "contribute-to-eliza",
   "skillSourcePath": "skills/contribute-to-eliza",
   "publicOrigin": "https://slop.cash/projects/eliza",
+  "policyAuthority": "https://slop.cash",
   "selection": {
     "eligibleIssueLabels": ["mission-ready"]
   },

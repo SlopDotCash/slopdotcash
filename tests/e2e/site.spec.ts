@@ -709,6 +709,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
       codexResponse,
       claudeResponse,
       claudeCodeResponse,
+      termsResponse,
     ] = await Promise.all([
       request.get(`${root}/skill.md`),
       request.get(`${root}/skill-manifest.json`),
@@ -716,6 +717,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
       request.get(`${root}/codex.md`),
       request.get(`${root}/claude.md`),
       request.get(`${root}/claude-code.md`),
+      request.get(`${root}/terms.json`),
     ]);
     for (const response of [
       skillResponse,
@@ -724,6 +726,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
       codexResponse,
       claudeResponse,
       claudeCodeResponse,
+      termsResponse,
     ]) {
       expect(response.status()).toBe(200);
     }
@@ -745,6 +748,17 @@ test("serves byte-consistent install and read-only artifacts for every project",
     expect(manifestResponse.headers()["cache-control"]).toContain(
       "max-age=300",
     );
+    expect(termsResponse.headers()["content-type"]).toContain(
+      "application/json",
+    );
+    expect(await termsResponse.json()).toEqual({
+      schemaVersion: "1",
+      projectId: project.id,
+      status: project.status,
+      steward: project.steward,
+      authority: project.authority,
+      terms: project.terms,
+    });
     const skillBytes = await skillResponse.body();
     const manifest = (await manifestResponse.json()) as {
       archive: { sha256: string; url: string; checksumUrl: string };

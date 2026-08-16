@@ -110,6 +110,41 @@ describe("project run receipt", () => {
     expect(() => assertRunReceiptMarker(marker)).toThrow(/zero values/u);
   });
 
+  it("binds new receipts to the exact policy acknowledgement", () => {
+    const current: ProjectRunReceipt = {
+      ...receipt,
+      schemaVersion: "2",
+      policyAcknowledgement: {
+        policyRevision: "2026-08-16.1",
+        licenseSha256:
+          "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+        inboundTermsSha256: null,
+        prizeRulesSha256: null,
+        acknowledgedAt: "2026-08-16T00:00:00.000Z",
+      },
+    };
+    expect(parseRunMarker(serializeRunMarker(current))).toEqual(current);
+
+    const missing = runReceiptMarker(current);
+    delete missing.run.policy_acknowledgement;
+    expect(() => assertRunReceiptMarker(missing)).toThrow(/schema/u);
+  });
+
+  it("keeps historical v2 receipts pinned after policy changes", () => {
+    const historical: ProjectRunReceipt = {
+      ...receipt,
+      schemaVersion: "2",
+      policyAcknowledgement: {
+        policyRevision: "historical-policy-1",
+        licenseSha256: "a".repeat(64),
+        inboundTermsSha256: "b".repeat(64),
+        prizeRulesSha256: null,
+        acknowledgedAt: "2026-08-15T00:00:00.000Z",
+      },
+    };
+    expect(parseRunMarker(serializeRunMarker(historical))).toEqual(historical);
+  });
+
   it("rejects extra fields and noncanonical money", () => {
     const marker = runReceiptMarker(receipt) as unknown as Record<
       string,

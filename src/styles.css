@@ -773,6 +773,21 @@ small {
   color: var(--orange-dark);
 }
 
+.project-terms-line {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin: 1rem 0 0;
+}
+
+.project-policy-warning {
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  margin: 0.75rem 0 0;
+  max-width: 46rem;
+  padding-left: 0.75rem;
+}
+
 .reward-card {
   padding: 24px;
   border-radius: var(--radius);

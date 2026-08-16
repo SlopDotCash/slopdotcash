@@ -16,7 +16,8 @@ import {
 } from "./projects.mjs";
 import type { RepositoryId } from "./repositories.mjs";
 
-export const RUN_RECEIPT_SCHEMA_VERSION = "1" as const;
+export const RUN_RECEIPT_SCHEMA_VERSION = "2" as const;
+export type RunReceiptSchemaVersion = "1" | "2";
 export const RUN_MARKER_VERSION = "v1" as const;
 export const RUN_MARKER_NAME = "slop-contribution-attribution" as const;
 
@@ -41,7 +42,7 @@ export interface ProjectRunUsage {
 }
 
 export interface ProjectRunReceipt {
-  schemaVersion: typeof RUN_RECEIPT_SCHEMA_VERSION;
+  schemaVersion: RunReceiptSchemaVersion;
   runId: string;
   projectId: ProjectId;
   repositoryId: RepositoryId;
@@ -52,6 +53,13 @@ export interface ProjectRunReceipt {
   client: string;
   skillRevision: string;
   skillSha256: string;
+  policyAcknowledgement?: {
+    policyRevision: string;
+    licenseSha256: string;
+    inboundTermsSha256: string | null;
+    prizeRulesSha256: string | null;
+    acknowledgedAt: string;
+  };
   usage: ProjectRunUsage;
   trajectorySha256: string | null;
   traceUpload: {
@@ -72,13 +80,20 @@ export interface RunReceiptMarker {
   client: ProjectRunReceipt["client"];
   skill_revision: string;
   run: {
-    schema_version: typeof RUN_RECEIPT_SCHEMA_VERSION;
+    schema_version: RunReceiptSchemaVersion;
     run_id: string;
     project: ProjectId;
     repository: RepositoryId;
     started_at: string;
     completed_at: string;
     skill_sha256: string;
+    policy_acknowledgement?: {
+      policy_revision: string;
+      license_sha256: string;
+      inbound_terms_sha256: string | null;
+      prize_rules_sha256: string | null;
+      acknowledged_at: string;
+    };
     usage: {
       source: ProjectRunUsage["source"];
       confidence: UsageConfidence;
@@ -108,6 +123,10 @@ export interface RunReceiptMarker {
 export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
   if (!isRecord(value)) throw new TypeError("run receipt must be an object");
   const hasTraceUpload = Object.hasOwn(value, "traceUpload");
+  const hasPolicyAcknowledgement = Object.hasOwn(
+    value,
+    "policyAcknowledgement",
+  );
   exactKeys(
     value,
     [
@@ -117,6 +136,7 @@ export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
       "devicePublicKey",
       "deviceSignature",
       "model",
+      ...(hasPolicyAcknowledgement ? ["policyAcknowledgement"] : []),
       "projectId",
       "provider",
       "repositoryId",
@@ -162,6 +182,18 @@ export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
       started_at: value.startedAt,
       completed_at: value.completedAt,
       skill_sha256: value.skillSha256,
+      ...(hasPolicyAcknowledgement && isRecord(value.policyAcknowledgement)
+        ? {
+            policy_acknowledgement: {
+              policy_revision: value.policyAcknowledgement.policyRevision,
+              license_sha256: value.policyAcknowledgement.licenseSha256,
+              inbound_terms_sha256:
+                value.policyAcknowledgement.inboundTermsSha256,
+              prize_rules_sha256: value.policyAcknowledgement.prizeRulesSha256,
+              acknowledged_at: value.policyAcknowledgement.acknowledgedAt,
+            },
+          }
+        : {}),
       usage: {
         source: value.usage.source,
         confidence: value.usage.confidence,
@@ -296,6 +328,10 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
   if (!isRecord(value.run))
     throw new TypeError("run marker.run must be an object");
   const hasTraceUpload = Object.hasOwn(value.run, "trace_upload");
+  const hasPolicyAcknowledgement = Object.hasOwn(
+    value.run,
+    "policy_acknowledgement",
+  );
   exactKeys(
     value.run,
     [
@@ -304,6 +340,7 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
       "device_public_key",
       "device_signature",
       "project",
+      ...(hasPolicyAcknowledgement ? ["policy_acknowledgement"] : []),
       "repository",
       "run_id",
       "schema_version",
@@ -347,8 +384,19 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
   if (!repositoryProject || repositoryProject.id !== project.id) {
     throw new TypeError("run marker repository does not belong to the project");
   }
-  if (value.run.schema_version !== RUN_RECEIPT_SCHEMA_VERSION) {
+  if (
+    value.run.schema_version !== "1" &&
+    value.run.schema_version !== RUN_RECEIPT_SCHEMA_VERSION
+  ) {
     throw new TypeError("run marker schema_version is unsupported");
+  }
+  if (
+    (value.run.schema_version === "2") !== hasPolicyAcknowledgement ||
+    (value.run.schema_version === "1" && hasPolicyAcknowledgement)
+  ) {
+    throw new TypeError(
+      "run marker policy acknowledgement does not match its schema",
+    );
   }
   if (
     typeof value.run.run_id !== "string" ||
@@ -496,8 +544,52 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
     };
   }
 
+  let policyAcknowledgement: ProjectRunReceipt["policyAcknowledgement"];
+  if (hasPolicyAcknowledgement) {
+    if (!isRecord(value.run.policy_acknowledgement)) {
+      throw new TypeError(
+        "run marker.policy_acknowledgement must be an object",
+      );
+    }
+    exactKeys(
+      value.run.policy_acknowledgement,
+      [
+        "acknowledged_at",
+        "inbound_terms_sha256",
+        "license_sha256",
+        "policy_revision",
+        "prize_rules_sha256",
+      ],
+      "run marker.policy_acknowledgement",
+    );
+    const policyRevision = identifier(
+      value.run.policy_acknowledgement.policy_revision,
+      "run marker.policy_acknowledgement.policy_revision",
+      80,
+    );
+    policyAcknowledgement = {
+      policyRevision,
+      licenseSha256: digest(
+        value.run.policy_acknowledgement.license_sha256,
+        "run marker.policy_acknowledgement.license_sha256",
+      ),
+      inboundTermsSha256: optionalDigest(
+        value.run.policy_acknowledgement.inbound_terms_sha256,
+        "run marker.policy_acknowledgement.inbound_terms_sha256",
+      ),
+      prizeRulesSha256: optionalDigest(
+        value.run.policy_acknowledgement.prize_rules_sha256,
+        "run marker.policy_acknowledgement.prize_rules_sha256",
+      ),
+      acknowledgedAt: isoTimestamp(
+        value.run.policy_acknowledgement.acknowledged_at,
+        "run marker.policy_acknowledgement.acknowledged_at",
+      ),
+    };
+  }
+
   return {
-    schemaVersion: RUN_RECEIPT_SCHEMA_VERSION,
+    schemaVersion: value.run.schema_version,
     runId: value.run.run_id,
     projectId: project.id,
     repositoryId: value.run.repository as RepositoryId,
@@ -508,6 +600,7 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
     client,
     skillRevision: value.skill_revision,
     skillSha256: digest(value.run.skill_sha256, "run marker.skill_sha256"),
+    ...(policyAcknowledgement ? { policyAcknowledgement } : {}),
     usage,
     trajectorySha256,
     traceUpload,
@@ -536,13 +629,26 @@ export function runReceiptMarker(receipt: ProjectRunReceipt): RunReceiptMarker {
     client: receipt.client,
     skill_revision: receipt.skillRevision,
     run: {
-      schema_version: RUN_RECEIPT_SCHEMA_VERSION,
+      schema_version: receipt.schemaVersion,
       run_id: receipt.runId,
       project: receipt.projectId,
       repository: receipt.repositoryId,
       started_at: receipt.startedAt,
       completed_at: receipt.completedAt,
       skill_sha256: receipt.skillSha256,
+      ...(receipt.policyAcknowledgement
+        ? {
+            policy_acknowledgement: {
+              policy_revision: receipt.policyAcknowledgement.policyRevision,
+              license_sha256: receipt.policyAcknowledgement.licenseSha256,
+              inbound_terms_sha256:
+                receipt.policyAcknowledgement.inboundTermsSha256,
+              prize_rules_sha256:
+                receipt.policyAcknowledgement.prizeRulesSha256,
+              acknowledged_at: receipt.policyAcknowledgement.acknowledgedAt,
+            },
+          }
+        : {}),
       usage: {
         source: receipt.usage.source,
         confidence: receipt.usage.confidence,

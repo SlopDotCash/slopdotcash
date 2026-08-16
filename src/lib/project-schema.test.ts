@@ -3,10 +3,25 @@
 import { describe, expect, it } from "vitest";
 import deltaStar from "../../projects/delta-star/project.json";
 import eliza from "../../projects/eliza/project.json";
+import heirElements from "../../projects/heir-elements-sdk/project.json";
 import {
   assertProjectDefinition,
   assertProjectRegistry,
 } from "./project-schema.mjs";
+
+interface MutablePolicyFixture {
+  authority: unknown;
+  steward: { kind: string };
+  terms: {
+    assignment: unknown;
+    copyright: { claimedLegalHolder: string | null; model: string };
+    externalPrize: { rulesSha256: string | null };
+  };
+}
+
+function mutablePolicyFixture(value: unknown): MutablePolicyFixture {
+  return structuredClone(value) as MutablePolicyFixture;
+}
 
 describe("project proposal schema", () => {
   it("accepts the two launch folders as complete self-contained definitions", () => {
@@ -51,6 +66,9 @@ describe("project proposal schema", () => {
   it("rejects repository and skill collisions across project folders", () => {
     const copy = structuredClone(deltaStar);
     copy.repositories[0] = structuredClone(eliza.repositories[0]);
+    copy.terms.repositoryLicense = structuredClone(
+      eliza.terms.repositoryLicense,
+    );
     expect(() => assertProjectRegistry([eliza, copy])).toThrow(
       /duplicate repositories/u,
     );
@@ -115,6 +133,97 @@ describe("project proposal schema", () => {
     ] as never;
     expect(() => assertProjectDefinition(invalidSolana)).toThrow(
       /address is invalid/u,
+    );
+  });
+
+  it("fails closed on inferred or mutable project authority", () => {
+    const activeWithoutProof = structuredClone(eliza);
+    activeWithoutProof.status = "active";
+    expect(() => assertProjectDefinition(activeWithoutProof)).toThrow(
+      /verified repository authority/u,
+    );
+
+    const loginAsIdentity = structuredClone(eliza);
+    loginAsIdentity.steward.github.actorId = "elizaOS";
+    expect(() => assertProjectDefinition(loginAsIdentity)).toThrow(/actorId/u);
+
+    const mutableLicense = structuredClone(eliza);
+    mutableLicense.terms.repositoryLicense.url =
+      "https://github.com/elizaOS/eliza/blob/develop/LICENSE";
+    expect(() => assertProjectDefinition(mutableLicense)).toThrow(/immutable/u);
+
+    const fakeProof = mutablePolicyFixture(eliza);
+    fakeProof.authority = {
+      state: "verified",
+      reason: null,
+      role: "project-steward",
+      repositoryId: eliza.authority.repositoryId,
+      repositoryNodeId: eliza.authority.repositoryNodeId,
+      proof: {
+        url: "https://github.com/elizaOS/eliza/blob/develop/.github/slop-project.json",
+        commitSha: "a".repeat(40),
+        fileSha256: "b".repeat(64),
+        policyRevision: eliza.terms.revision,
+        verifiedAt: "2026-08-16T00:00:00.000Z",
+      },
+    };
+    expect(() => assertProjectDefinition(fakeProof)).toThrow(/immutable/u);
+  });
+
+  it("requires signed legal evidence for sponsor and DAO title claims", () => {
+    const sponsor = mutablePolicyFixture(eliza);
+    sponsor.terms.copyright.model = "sponsor-owned";
+    sponsor.terms.copyright.claimedLegalHolder = "Example Research, Inc.";
+    expect(() => assertProjectDefinition(sponsor)).toThrow(
+      /signed assignment/u,
+    );
+
+    const contributorRetained = mutablePolicyFixture(eliza);
+    contributorRetained.terms.copyright.model = "contributor-retained";
+    contributorRetained.terms.copyright.claimedLegalHolder = "Sponsor, Inc.";
+    expect(() => assertProjectDefinition(contributorRetained)).toThrow(
+      /forbid/u,
+    );
+
+    const dao = mutablePolicyFixture(eliza);
+    dao.steward.kind = "dao";
+    dao.terms.copyright.model = "sponsor-owned";
+    dao.terms.copyright.claimedLegalHolder = "Example DAO";
+    dao.terms.assignment = {
+      assignee: "Example DAO",
+      instrumentUrl: "https://example.com/assignment.pdf",
+      version: "1",
+      fileSha256: "a".repeat(64),
+      signedAt: "2026-08-16T00:00:00.000Z",
+    };
+    expect(() => assertProjectDefinition(dao)).toThrow(/legal capacity/u);
+  });
+
+  it("keeps external prize rules outside platform settlement", () => {
+    expect(deltaStar.reward.paymentMode).toBe("disabled");
+    expect(deltaStar.terms.externalPrize?.allocationAuthority).toMatch(
+      /author-approved/u,
+    );
+    const inventedCapture = mutablePolicyFixture(deltaStar);
+    inventedCapture.terms.externalPrize.rulesSha256 = "a".repeat(64);
+    expect(() => assertProjectDefinition(inventedCapture)).toThrow(
+      /unverified rules/u,
+    );
+  });
+
+  it("represents a missing repository license as unknown and paused", () => {
+    expect(assertProjectDefinition(heirElements).status).toBe("paused");
+    expect(heirElements.terms.repositoryLicense).toEqual({
+      state: "unknown",
+      spdx: null,
+      url: null,
+      commitSha: null,
+      fileSha256: null,
+    });
+    const active = structuredClone(heirElements);
+    active.status = "active";
+    expect(() => assertProjectDefinition(active)).toThrow(
+      /verified repository authority/u,
     );
   });
 });

@@ -885,6 +885,23 @@ for (const project of PROJECTS) {
     publicationPrefix: "review-",
     skillRepositoryPath: project.reviewSkill.sourcePath,
   });
+  const projectRoot = join(publicRoot, "projects", project.id);
+  mkdirSync(projectRoot, { recursive: true });
+  writeFileSync(
+    join(projectRoot, "terms.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: "1",
+        projectId: project.id,
+        status: project.status,
+        steward: project.steward,
+        authority: project.authority,
+        terms: project.terms,
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 run("bun", [join(repositoryRoot, "scripts", "sync-cycle-index.ts")]);
 run("bun", [join(repositoryRoot, "scripts", "sync-funding-index.ts")]);

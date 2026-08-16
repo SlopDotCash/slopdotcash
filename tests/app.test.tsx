@@ -387,6 +387,16 @@ describe("project routes", () => {
     expect(screen.getByText("building agents.")).toHaveClass(
       "project-headline-action",
     );
+    expect(screen.getByText(/Steward pending:/u)).toHaveTextContent(
+      "Eliza Research · MIT · inbound terms unknown · Terms",
+    );
+    expect(screen.getByRole("link", { name: "Terms" })).toHaveAttribute(
+      "href",
+      "/projects/eliza/terms.json",
+    );
+    expect(
+      screen.getByText(/New runs are paused until repository authority/u),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Home$/u })).toHaveAttribute(
       "href",
       "/",
@@ -754,6 +764,36 @@ describe("public records", () => {
 });
 
 describe("project proposals", () => {
+  function fillAuthorityDraft() {
+    fireEvent.change(screen.getByLabelText("GitHub repository numeric ID"), {
+      target: { value: "123456789" },
+    });
+    fireEvent.change(screen.getByLabelText("GitHub repository node ID"), {
+      target: { value: "R_fixture" },
+    });
+    fireEvent.change(screen.getByLabelText("Display name"), {
+      target: { value: "Example Research" },
+    });
+    fireEvent.change(screen.getByLabelText("GitHub login"), {
+      target: { value: "example" },
+    });
+    fireEvent.change(screen.getByLabelText("GitHub numeric actor ID"), {
+      target: { value: "987654321" },
+    });
+    fireEvent.change(screen.getByLabelText("GitHub actor node ID"), {
+      target: { value: "O_fixture" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository license, SPDX"), {
+      target: { value: "MIT" },
+    });
+    fireEvent.change(screen.getByLabelText("LICENSE commit SHA"), {
+      target: { value: "a".repeat(40) },
+    });
+    fireEvent.change(screen.getByLabelText("LICENSE SHA-256"), {
+      target: { value: "b".repeat(64) },
+    });
+  }
+
   it("generates a public manifest and a GitHub new-file handoff without login state", async () => {
     route("/projects/new");
     mockSnapshot();
@@ -770,6 +810,7 @@ describe("project proposals", () => {
     fireEvent.change(screen.getByLabelText("Public GitHub repository"), {
       target: { value: "example/open-protein" },
     });
+    fillAuthorityDraft();
     fireEvent.change(screen.getByLabelText("Money-forward headline"), {
       target: { value: "Make money proving proteins fold." },
     });
@@ -811,6 +852,8 @@ describe("project proposals", () => {
     expect(
       screen.getByText(/"address": "11111111111111111111111111111111"/),
     ).toBeInTheDocument();
+    expect(screen.getByText(/"status": "paused"/)).toBeInTheDocument();
+    expect(screen.getByText(/"paymentTransfersIp": false/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
     await act(async () => Promise.resolve());
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -828,6 +871,7 @@ describe("project proposals", () => {
     expect(agentBrief).toContain("Never push directly to develop");
     expect(agentBrief).toContain("independent review, merge, deployment");
     expect(agentBrief).toContain("Do not infer creator, steward");
+    expect(agentBrief).toContain(".github/slop-project.json");
     expect(agentBrief).toContain("Leave payouts disabled");
     expect(agentBrief).toContain("skills/review-eliza-contributions");
     expect(agentBrief).toContain('"paymentMode": "disabled"');
@@ -849,6 +893,7 @@ describe("project proposals", () => {
     fireEvent.change(screen.getByLabelText("Public GitHub repository"), {
       target: { value: "example/unsafe-pool" },
     });
+    fillAuthorityDraft();
     fireEvent.change(screen.getByLabelText("Money-forward headline"), {
       target: { value: "Make money doing exact work." },
     });
@@ -882,6 +927,7 @@ describe("project proposals", () => {
     fireEvent.change(screen.getByLabelText("Public GitHub repository"), {
       target: { value: "example/adversarial-project" },
     });
+    fillAuthorityDraft();
     fireEvent.change(screen.getByLabelText("Money-forward headline"), {
       target: { value: "Make exact public work reviewable." },
     });

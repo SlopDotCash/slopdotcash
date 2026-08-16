@@ -5,6 +5,7 @@
   "skillName": "contribute-to-heir-elements-sdk",
   "skillSourcePath": "skills/contribute-to-heir-elements-sdk",
   "publicOrigin": "https://slop.cash/projects/heir-elements-sdk",
+  "policyAuthority": "https://slop.cash",
   "usageAdapters": {
     "codex": "codex",
     "claude-code": "claude",

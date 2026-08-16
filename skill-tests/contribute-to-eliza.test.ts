@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   auditCommentDisclosures,
   auditPrEvidence,
@@ -2261,6 +2261,50 @@ describe("run receipt CLI", () => {
         "contribute-to-eliza",
       );
       cpSync(skillDir, installedSkillRoot, { recursive: true });
+      const policyRoot = join(fixtureRoot, "policy-authority");
+      const policyDirectory = join(policyRoot, "projects", "eliza");
+      mkdirSync(policyDirectory, { recursive: true });
+      const policyLicense = join(policyRoot, "LICENSE");
+      writeFileSync(policyLicense, "fixture license bytes\n");
+      const policyLicenseSha256 = createHash("sha256")
+        .update(readFileSync(policyLicense))
+        .digest("hex");
+      writeFileSync(
+        join(policyDirectory, "terms.json"),
+        JSON.stringify({
+          schemaVersion: "1",
+          projectId: "eliza",
+          status: "active",
+          steward: {},
+          authority: {
+            state: "verified",
+            proof: { policyRevision: "test-policy-1" },
+          },
+          terms: {
+            revision: "test-policy-1",
+            repositoryLicense: {
+              state: "verified",
+              url: pathToFileURL(policyLicense).href,
+              fileSha256: policyLicenseSha256,
+            },
+            inbound: {
+              mode: "license",
+              termsUrl: null,
+              fileSha256: null,
+            },
+            externalPrize: null,
+          },
+        }),
+      );
+      const installedProjectPath = join(installedSkillRoot, "project.json");
+      const installedProject = JSON.parse(
+        readFileSync(installedProjectPath, "utf8"),
+      );
+      installedProject.policyAuthority = pathToFileURL(policyRoot).href;
+      writeFileSync(
+        installedProjectPath,
+        `${JSON.stringify(installedProject, null, 2)}\n`,
+      );
       const sourceRevision = "a".repeat(40);
       const installedFiles = readdirSync(installedSkillRoot, {
         recursive: true,

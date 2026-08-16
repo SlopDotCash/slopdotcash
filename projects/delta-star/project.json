@@ -6,7 +6,67 @@
   "eyebrow": "Machine-checked mathematics",
   "headline": "Make money solving math.",
   "description": "Advance machine-checked Reed–Solomon proximity work in the dedicated Proximity Prize repository.",
-  "status": "active",
+  "status": "paused",
+  "steward": {
+    "displayName": "Proximity Prize contributors",
+    "kind": "collective",
+    "github": {
+      "actorId": "186240462",
+      "nodeId": "O_kgDOCxnNzg",
+      "login": "elizaOS",
+      "type": "Organization",
+      "profileUrl": "https://github.com/elizaOS"
+    },
+    "website": "https://proximityprize.org"
+  },
+  "authority": {
+    "state": "unverified",
+    "reason": "missing-repository-proof",
+    "role": "project-steward",
+    "repositoryId": "1334780197",
+    "repositoryNodeId": "R_kgDOT48hJQ",
+    "proof": null
+  },
+  "terms": {
+    "revision": "2026-08-16.1",
+    "effectiveAt": "2026-08-16T00:00:00.000Z",
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "copyright": {
+      "model": "unknown",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "verified",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/elizaOS/proximityprize/blob/b72890393a68745ecc43f6b39470509b630c7192/LICENSE",
+      "commitSha": "b72890393a68745ecc43f6b39470509b630c7192",
+      "fileSha256": "c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851"
+    },
+    "inbound": {
+      "mode": "unknown",
+      "termsUrl": null,
+      "commitSha": null,
+      "fileSha256": null,
+      "version": null,
+      "acceptance": null
+    },
+    "assignment": null,
+    "externalPrize": {
+      "organizer": "Ethereum Foundation Proximity Prize",
+      "rulesUrl": "https://proximityprize.org/",
+      "rulesSha256": null,
+      "rulesCapturedAt": null,
+      "version": "unknown",
+      "eligibility": "Organizer controlled; immutable captured rules are not yet supplied.",
+      "allocationAuthority": "Final author-approved allocation, subject to organizer rules.",
+      "defaultContributorAllocation": "Unknown until the project owner confirms the equal-share default.",
+      "ipTerms": "Unknown until immutable organizer rules are captured."
+    }
+  },
   "repositories": [
     {
       "id": "elizaOS/proximityprize",
