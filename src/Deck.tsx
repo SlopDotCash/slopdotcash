@@ -112,41 +112,68 @@ function Cover() {
   );
 }
 
-const team = [
-  ["Shaw", "CEO"],
-  ["Nubs", "CTO"],
-];
-
 function Team() {
   return (
-    <Frame
-      index={1}
-      label="Two builders with 25 thousand GitHub stars"
-      className="deck-team"
-    >
-      <div>
-        <h2>Two builders. 25K+ GitHub stars.</h2>
-        <p className="deck-supporting">
-          Shaw and Nubs have built open-source projects used and followed by
-          thousands of developers.
-        </p>
+    <Frame index={1} label="Shaw leads Slop" className="deck-team">
+      <div className="deck-team-founder">
+        <div className="deck-team-copy">
+          <span className="deck-team-eyebrow">
+            <strong>Shaw</strong> · Founder / CEO
+          </span>
+          <h2>Shaw built a movement in open source.</h2>
+          <p className="deck-supporting">
+            Founder of elizaOS—one of the most followed open-source AI projects.
+            Now building the incentive layer for what comes next.
+          </p>
+          <div className="deck-founder-links">
+            <a
+              href="https://x.com/shawmakesmagic"
+              target="_blank"
+              rel="noreferrer"
+            >
+              @shawmakesmagic ↗
+            </a>
+            <a
+              href="https://github.com/lalalune"
+              target="_blank"
+              rel="noreferrer"
+            >
+              github.com/lalalune ↗
+            </a>
+          </div>
+        </div>
+        <a
+          className="deck-founder-portrait"
+          href="https://x.com/shawmakesmagic"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Shaw on X"
+        >
+          <img src="https://deck.eliza.app/team_shaw.jpg" alt="Shaw" />
+        </a>
       </div>
       <div className="deck-team-proof">
-        <div className="deck-team-stats">
-          <p>
-            <strong>25K+</strong>
-            <span>GitHub stars across projects</span>
-          </p>
-        </div>
-        <div className="deck-team-list">
-          {team.map(([name, role], index) => (
-            <article key={name}>
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              <strong>{name}</strong>
-              <small>{role}</small>
-            </article>
-          ))}
-        </div>
+        <a
+          href="https://github.com/elizaOS/eliza"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <strong>19K+</strong>
+          <span>stars · elizaOS/eliza</span>
+        </a>
+        <p>
+          <strong>5.6K</strong>
+          <span>forks</span>
+        </p>
+        <p>
+          <strong>671</strong>
+          <span>contributors</span>
+        </p>
+        <p className="deck-team-cto">
+          <span>CTO</span>
+          <strong>Nubs</strong>
+          <small>Open-source systems + protocol execution</small>
+        </p>
       </div>
     </Frame>
   );
@@ -213,7 +240,7 @@ function Flywheel() {
       <div className="deck-flywheel" role="img" aria-label={stages.join(", ")}>
         {stages.map((stage, index) => (
           <span key={stage} style={{ "--i": index } as CSSProperties}>
-            {stage}
+            <b className="deck-flywheel-label">{stage}</b>
           </span>
         ))}
         <strong>↻</strong>
@@ -253,18 +280,14 @@ function GoToMarket() {
         </h2>
       </div>
       <div className="deck-gtm-grid">
-        {channels.map(({ icon, title, copy }, index) => (
+        {channels.map(({ icon, title, copy }) => (
           <article key={title}>
-            <span>0{index + 1}</span>
             {icon}
             <h3>{title}</h3>
             <p>{copy}</p>
           </article>
         ))}
       </div>
-      <p className="deck-gtm-loop">
-        Visible progress → attention → sponsor proof → more progress.
-      </p>
     </Frame>
   );
 }
@@ -272,14 +295,17 @@ function GoToMarket() {
 function Ownership() {
   const modes = [
     [
-      "Project-owned",
-      "The creator sets assignment or license terms before work starts.",
+      "Funded by a project",
+      "An outside party funds a defined outcome. The project sets the license or assignment.",
     ],
     [
-      "Collectively owned",
-      "Proximity Prize results enter the commons; the prize is shared by contribution.",
+      "Owned together",
+      "ASI and similar projects become collective IP governed by the community.",
     ],
-    ["DAO-owned", "ASI work becomes intellectual property of the DAO."],
+    [
+      "Won together",
+      "The $1M Proximity Prize is shared by contribution—and the result enters the commons.",
+    ],
   ];
   return (
     <Frame
@@ -288,9 +314,10 @@ function Ownership() {
       className="deck-ownership"
     >
       <div>
-        <h2>The ownership rules are clear before the work begins.</h2>
+        <h2>There is more than one way to own progress.</h2>
         <p className="deck-supporting">
-          One network. Different ways to own the result.
+          Some work serves a sponsor. Some becomes collective IP. Some wins a
+          prize we split together.
         </p>
       </div>
       <div className="deck-ownership-modes">
@@ -299,7 +326,6 @@ function Ownership() {
             <i aria-hidden="true">
               {index === 0 ? "●" : index === 1 ? "◉" : "◎"}
             </i>
-            <span>{String(index + 1).padStart(2, "0")}</span>
             <h3>{title}</h3>
             <p>{copy}</p>
           </article>
@@ -311,10 +337,10 @@ function Ownership() {
 
 function Competition() {
   const competitors = [
-    ["Gitcoin", "Grant rounds"],
-    ["OnlyDust", "Fellowships + grants"],
-    ["Algora", "Bounties + hiring"],
-    ["Drips", "Funding flows"],
+    ["Yukon", "Humans + AI on frontier research"],
+    ["OpenSolve", "Agent-run, zero-trust science"],
+    ["Gitcoin", "Ecosystem grant allocation"],
+    ["LFX", "Maintainer crowdfunding"],
   ];
   return (
     <Frame
@@ -324,9 +350,9 @@ function Competition() {
     >
       <div>
         <h2>
-          Funding is crowded.
+          Open intelligence is becoming a market.
           <br />
-          <em>Verified, agent-native work is not.</em>
+          <em>Slop makes the work investable.</em>
         </h2>
       </div>
       <div className="deck-competition-map">
@@ -340,10 +366,10 @@ function Competition() {
         </div>
         <div className="deck-slop-position">
           <strong>SLOP</strong>
-          <p>Outcome-level verification</p>
-          <p>People + agents</p>
-          <p>Compute sponsorships</p>
-          <p>Explicit ownership modes</p>
+          <p>Verifiable outcomes across repos</p>
+          <p>Humans + agents</p>
+          <p>Cash + compute sponsors</p>
+          <p>Project, collective, or prize ownership</p>
         </div>
       </div>
     </Frame>
@@ -352,9 +378,9 @@ function Competition() {
 
 function Economics() {
   const projections = [
-    ["Year 1", "$2M", "$100K", "−$150K"],
-    ["Year 2", "$10M", "$400K", "+$50K"],
-    ["Year 3", "$30M", "$1.0M", "+$400K"],
+    ["Year 1", "$2M", "$250K", "$0"],
+    ["Year 2", "$8M", "$500K", "+$150K"],
+    ["Year 3", "$20M", "$1.0M", "+$500K"],
   ];
   return (
     <Frame
@@ -363,41 +389,39 @@ function Economics() {
       className="deck-economics"
     >
       <div className="deck-economics-heading">
-        <h2>A realistic path to profit.</h2>
+        <h2>Break even first. Then compound.</h2>
         <p>
-          Base case: a 1% payout fee plus sponsor programs, collaborations, and
-          paid features.
+          3% of payouts plus sponsorships, collaborations, and contributed
+          compute offset the network’s cost in year one.
         </p>
       </div>
       <div className="deck-economics-model">
         <div
           className="deck-profit-chart"
           role="img"
-          aria-label="Projected annual profit rises from negative 150 thousand dollars in year one to positive 50 thousand dollars in year two and positive 400 thousand dollars in year three"
+          aria-label="Projected annual profit starts at break even in year one, then rises to positive 150 thousand dollars in year two and positive 500 thousand dollars in year three"
         >
           <span className="deck-chart-zero">$0</span>
           <i aria-hidden="true" />
           <svg viewBox="0 0 800 360" aria-hidden="true">
             <path
               className="deck-chart-area"
-              d="M60 286 C180 286 260 198 390 190 S610 82 740 40 L740 190 L60 190 Z"
+              d="M60 190 C180 190 260 154 390 126 S610 72 740 40 L740 190 Z"
             />
             <path
               className="deck-chart-line"
-              d="M60 286 C180 286 260 198 390 190 S610 82 740 40"
+              d="M60 190 C180 190 260 154 390 126 S610 72 740 40"
             />
-            <circle cx="60" cy="286" r="8" />
-            <circle cx="390" cy="190" r="8" />
+            <circle cx="60" cy="190" r="8" />
+            <circle cx="390" cy="126" r="8" />
             <circle cx="740" cy="40" r="8" />
           </svg>
-          <strong className="deck-chart-label deck-chart-label-one">
-            −$150K
-          </strong>
+          <strong className="deck-chart-label deck-chart-label-one">$0</strong>
           <strong className="deck-chart-label deck-chart-label-two">
-            +$50K
+            +$150K
           </strong>
           <strong className="deck-chart-label deck-chart-label-three">
-            +$400K
+            +$500K
           </strong>
           <span className="deck-chart-year deck-chart-year-one">Y1</span>
           <span className="deck-chart-year deck-chart-year-two">Y2</span>
@@ -406,7 +430,7 @@ function Economics() {
         <div className="deck-projections">
           <div className="deck-projection-labels">
             <span>Payout volume</span>
-            <span>Revenue</span>
+            <span>Cash + offsets</span>
             <span>Profit</span>
           </div>
           {projections.map(([period, payouts, revenue, profit]) => (
@@ -418,8 +442,9 @@ function Economics() {
             </article>
           ))}
           <small>
-            Illustrative base case, not historical results. Planned 1% fee: ⅓
-            $SLOP buybacks · ⅓ team · ⅓ bounties and incentives.
+            Illustrative base case, not historical results. Year one assumes
+            $60K from 3% payout fees and $190K from sponsors, collaborations,
+            and contributed resources.
           </small>
         </div>
       </div>
@@ -463,12 +488,12 @@ function Raise() {
 
 function Close() {
   return (
-    <Frame index={9} label="We own the results together" className="deck-close">
+    <Frame index={9} label="When we build it we own it" className="deck-close">
       <div className="deck-close-mark" aria-hidden="true">
         <GitBranch />
       </div>
       <h2>
-        We own the results <em>together.</em>
+        When we build it, <em>we own it.</em>
       </h2>
       <p>Fund the people, agents, and compute accelerating open progress.</p>
       <div className="deck-close-links">

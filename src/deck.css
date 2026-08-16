@@ -51,7 +51,7 @@
   max-width: 1120px;
   margin: 0;
   font-size: clamp(52px, 7vw, 108px);
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.072em;
   line-height: 0.9;
 }
@@ -78,7 +78,7 @@
   max-width: 1000px;
   margin: 0;
   font-size: clamp(54px, 7vw, 112px);
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.072em;
   line-height: 0.88;
 }
@@ -158,69 +158,120 @@
 
 /* 02 — team */
 .deck-team {
-  grid-template-rows: auto 1fr;
-  gap: clamp(30px, 5vh, 70px);
+  grid-template-rows: 1fr auto;
+  gap: clamp(24px, 4vh, 48px);
 }
 .deck-team h2 {
-  max-width: 1020px;
+  max-width: 860px;
+}
+.deck-team-founder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.42fr);
+  align-items: center;
+  gap: clamp(32px, 7vw, 108px);
+}
+.deck-team-copy {
+  align-self: center;
+}
+.deck-team-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  color: var(--orange-ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.deck-team-eyebrow strong {
+  color: var(--ink);
+  font-size: 16px;
+  letter-spacing: -0.04em;
+  text-transform: none;
+}
+.deck-founder-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 28px;
+}
+.deck-founder-links a {
+  padding: 10px 14px;
+  border: 1px solid rgba(22, 19, 15, 0.18);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.deck-founder-links a:hover {
+  border-color: var(--orange);
+  background: var(--orange);
+}
+.deck-founder-portrait {
+  position: relative;
+  display: block;
+  width: min(28vw, 360px);
+  aspect-ratio: 1;
+  justify-self: end;
+  overflow: hidden;
+  border: 2px solid rgba(22, 19, 15, 0.14);
+  border-radius: 50%;
+  background: var(--orange);
+}
+.deck-founder-portrait::after {
+  position: absolute;
+  inset: 10px;
+  border: 1px solid rgba(245, 240, 231, 0.62);
+  border-radius: inherit;
+  content: "";
+}
+.deck-founder-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .deck-team-proof {
   display: grid;
-  grid-template-columns: 0.58fr 1.42fr;
-  gap: clamp(28px, 5vw, 80px);
-  min-height: 0;
-}
-.deck-team-stats {
-  display: flex;
-  align-content: end;
+  grid-template-columns: 1.15fr 0.7fr 0.7fr 1.15fr;
   border-top: 1px solid rgba(22, 19, 15, 0.18);
 }
-.deck-team-stats p {
+.deck-team-proof > a,
+.deck-team-proof > p {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 26px 12px 14px 0;
-}
-.deck-team-stats strong {
-  font-size: clamp(36px, 4.6vw, 70px);
-  letter-spacing: -0.07em;
-}
-.deck-team-stats span,
-.deck-team-list small {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-.deck-team-list {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  align-items: end;
-  border-top: 1px solid rgba(22, 19, 15, 0.18);
-}
-.deck-team-list article {
-  display: flex;
-  min-height: 260px;
+  min-height: 116px;
   flex-direction: column;
   justify-content: flex-end;
-  padding: 20px 14px;
+  gap: 5px;
+  margin: 0;
+  padding: 18px clamp(14px, 2vw, 28px);
   border-right: 1px solid rgba(22, 19, 15, 0.18);
+  color: inherit;
+  text-decoration: none;
 }
-.deck-team-list article:last-child {
+.deck-team-proof > :first-child {
+  padding-left: 0;
+}
+.deck-team-proof > :last-child {
   border-right: 0;
 }
-.deck-team-list article > span {
-  margin-bottom: auto;
-  color: var(--orange-ink);
-  font-size: 10px;
-  font-weight: 800;
+.deck-team-proof strong {
+  font-size: clamp(26px, 3vw, 48px);
+  letter-spacing: -0.07em;
+  line-height: 1;
 }
-.deck-team-list strong {
-  margin-bottom: 8px;
-  font-size: clamp(21px, 2.2vw, 34px);
-  letter-spacing: -0.05em;
+.deck-team-proof span,
+.deck-team-proof small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+.deck-team-cto strong {
+  color: var(--orange-ink);
 }
 
 /* 03 — mission */
@@ -355,6 +406,12 @@
   top: 50%;
   left: 50%;
   width: 132px;
+  text-align: center;
+  transform: translate(-50%, -50%) rotate(var(--angle))
+    translateX(calc(var(--size) * 0.5)) rotate(calc(var(--angle) * -1));
+}
+.deck-flywheel-label {
+  display: block;
   padding: 10px;
   border: 1px solid rgba(22, 19, 15, 0.16);
   border-radius: 99px;
@@ -362,13 +419,12 @@
   font-size: 11px;
   font-weight: 800;
   text-align: center;
-  transform: translate(-50%, -50%) rotate(var(--angle))
-    translateX(calc(var(--size) * 0.5)) rotate(calc(var(--angle) * -1));
+  animation: deck-counter-spin 38s linear infinite;
 }
 
 /* 05 — go to market */
 .deck-gtm {
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   gap: 24px;
 }
 .deck-gtm h2 {
@@ -385,8 +441,9 @@
   border-top: 1px solid rgba(22, 19, 15, 0.18);
 }
 .deck-gtm-grid article {
+  position: relative;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto;
   align-content: end;
   min-height: 260px;
   padding: 24px clamp(18px, 2.5vw, 38px);
@@ -398,11 +455,22 @@
 .deck-gtm-grid article:last-child {
   border-right: 0;
 }
-.deck-gtm-grid article > span {
-  align-self: start;
+.deck-gtm-grid article:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: -19px;
+  z-index: 2;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(22, 19, 15, 0.18);
+  border-radius: 50%;
+  background: var(--paper);
   color: var(--orange-ink);
-  font-size: 10px;
-  font-weight: 800;
+  content: "→";
+  font-size: 21px;
+  font-weight: 700;
 }
 .deck-gtm-grid svg {
   width: 28px;
@@ -413,6 +481,7 @@
   grid-column: 1 / -1;
   margin: 60px 0 12px;
   font-size: clamp(28px, 3.2vw, 50px);
+  font-weight: 700;
   letter-spacing: -0.06em;
   line-height: 0.98;
 }
@@ -424,12 +493,6 @@
   font-size: 14px;
   line-height: 1.48;
 }
-.deck-gtm-loop {
-  margin: 0;
-  color: var(--muted);
-  font-size: clamp(15px, 1.3vw, 20px);
-}
-
 /* 06 — ownership */
 .deck-ownership {
   grid-template-rows: auto 1fr;
@@ -446,7 +509,7 @@
 }
 .deck-ownership-modes article {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   align-content: end;
   min-height: 260px;
   padding: 24px clamp(18px, 2.5vw, 38px);
@@ -463,16 +526,11 @@
   font-size: 26px;
   font-style: normal;
 }
-.deck-ownership-modes article > span {
-  align-self: center;
-  color: var(--orange-ink);
-  font-size: 10px;
-  font-weight: 800;
-}
 .deck-ownership-modes h3 {
   grid-column: 1 / -1;
   margin: 52px 0 12px;
   font-size: clamp(28px, 3.1vw, 48px);
+  font-weight: 700;
   letter-spacing: -0.06em;
 }
 .deck-ownership-modes p {
@@ -620,11 +678,11 @@
   letter-spacing: -0.05em;
 }
 .deck-chart-label-one {
-  bottom: 4%;
+  top: calc(55% - 42px);
   left: 4%;
 }
 .deck-chart-label-two {
-  top: 40%;
+  top: 24%;
   left: 48%;
 }
 .deck-chart-label-three {
@@ -898,25 +956,49 @@
     align-content: center;
     overflow-y: auto;
   }
+  .deck-team-founder {
+    grid-template-columns: 1fr 112px;
+    gap: 16px;
+  }
+  .deck-team h2 {
+    font-size: clamp(39px, 10vw, 56px);
+  }
+  .deck-team .deck-supporting {
+    margin-top: 12px;
+    font-size: 12px;
+  }
+  .deck-team-eyebrow {
+    margin-bottom: 10px;
+    font-size: 8px;
+  }
+  .deck-team-eyebrow strong {
+    font-size: 12px;
+  }
+  .deck-founder-links {
+    gap: 5px;
+    margin-top: 12px;
+  }
+  .deck-founder-links a {
+    padding: 5px 8px;
+    font-size: 7px;
+  }
+  .deck-founder-portrait {
+    width: 112px;
+  }
   .deck-team-proof {
-    grid-template-columns: 1fr;
-    gap: 18px;
+    grid-template-columns: repeat(4, 1fr);
   }
-  .deck-team-stats strong {
-    font-size: 34px;
-  }
-  .deck-team-list {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .deck-team-list article {
-    min-height: 130px;
+  .deck-team-proof > a,
+  .deck-team-proof > p {
+    min-height: 84px;
     padding: 10px 6px;
   }
-  .deck-team-list strong {
-    font-size: 15px;
+  .deck-team-proof strong {
+    font-size: 18px;
   }
-  .deck-team-list small {
-    font-size: 7px;
+  .deck-team-proof span,
+  .deck-team-proof small {
+    font-size: 5.5px;
   }
   .deck-mission {
     grid-template-columns: 1fr;
@@ -960,12 +1042,19 @@
   }
   .deck-flywheel > span {
     width: 92px;
+  }
+  .deck-flywheel-label {
     font-size: 8px;
   }
   .deck-gtm,
   .deck-ownership {
-    align-content: center;
     overflow-y: auto;
+  }
+  .deck-gtm {
+    align-content: start;
+  }
+  .deck-ownership {
+    align-content: center;
   }
   .deck-gtm h2 {
     font-size: clamp(36px, 9.5vw, 52px);
@@ -982,6 +1071,15 @@
     border-top: 1px solid rgba(22, 19, 15, 0.18);
     border-right: 0;
   }
+  .deck-gtm-grid article:not(:last-child)::after {
+    top: auto;
+    right: 8px;
+    bottom: -13px;
+    width: 26px;
+    height: 26px;
+    content: "↓";
+    font-size: 14px;
+  }
   .deck-gtm-grid h3,
   .deck-ownership-modes h3 {
     margin: 14px 0 5px;
@@ -996,9 +1094,6 @@
     width: 20px;
     height: 20px;
     font-size: 18px;
-  }
-  .deck-gtm-loop {
-    font-size: 11px;
   }
   .deck-competition {
     grid-template-columns: 1fr;
@@ -1022,7 +1117,7 @@
     grid-column: 1 / -1;
   }
   .deck-economics {
-    align-content: center;
+    align-content: start;
     overflow-y: auto;
   }
   .deck-economics-heading {
