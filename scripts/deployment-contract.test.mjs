@@ -61,7 +61,11 @@ const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
 describe("slop.cash deployment contract", () => {
   it("rewrites the nested project funding route through the Pages SPA", () => {
     const redirects = pagesRedirects.trim().split("\n");
+    expect(redirects).toContain("/projects/:project/funding/ / 200");
     expect(redirects).toContain("/projects/:project/funding / 200");
+    expect(
+      redirects.indexOf("/projects/:project/funding/ / 200"),
+    ).toBeLessThan(redirects.indexOf("/projects/:project / 200"));
     expect(redirects.indexOf("/projects/:project/funding / 200")).toBeLessThan(
       redirects.indexOf("/projects/:project / 200"),
     );

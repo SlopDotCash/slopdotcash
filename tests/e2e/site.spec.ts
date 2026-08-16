@@ -605,6 +605,14 @@ test("serves byte-consistent install and read-only artifacts for every project",
   });
   expect(fundingRouteResponse.status()).toBe(200);
   expect(await fundingRouteResponse.text()).toContain('<div id="root"></div>');
+  const trailingFundingRouteResponse = await request.get(
+    "/projects/eliza/funding/",
+    { maxRedirects: 0 },
+  );
+  expect(trailingFundingRouteResponse.status()).toBe(200);
+  expect(await trailingFundingRouteResponse.text()).toContain(
+    '<div id="root"></div>',
+  );
 
   const [
     bootstrapResponse,
@@ -835,6 +843,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
     "/",
     ...PROJECTS.map((project) => `/projects/${project.id}`),
     "/projects/eliza/funding",
+    "/projects/eliza/funding/",
     "/projects/eliza/manage",
     "/projects/new",
   ]) {
@@ -847,7 +856,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
         }),
       ).toBeVisible();
     }
-    if (path === "/projects/eliza/funding") {
+    if (path.startsWith("/projects/eliza/funding")) {
       await expect(
         page.getByRole("heading", { exact: true, name: "Project funding" }),
       ).toBeVisible();
