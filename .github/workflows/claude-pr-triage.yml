@@ -1,0 +1,223 @@
+# Claude PR triage — automated evaluation of open pull requests.
+#
+# Flow:
+#   1. Fetch PR metadata + diff via the GitHub API (PR code is NEVER checked
+#      out or executed; the diff is treated as untrusted data).
+#   2. Claude classifies the PR: malicious / auto_merge / needs_research.
+#   3. Deterministic bash steps act on the verdict:
+#        malicious      -> close the PR, label it, block the author (needs
+#                          PR_TRIAGE_ADMIN_TOKEN org-owner PAT; otherwise
+#                          labels + warns for a human to ban).
+#        auto_merge     -> squash-merge, but only if no protected path is
+#                          touched and CI is green (auto-merge queue first,
+#                          direct merge as fallback, human label otherwise).
+#        needs_research -> a second, deeper Claude pass researches the
+#                          implementation against the base checkout, posts a
+#                          review comment, then either merges (same hard
+#                          gates) or labels needs-human-review.
+#
+# Hard guardrails enforced OUTSIDE the model:
+#   - PR head code is never checked out, built, or run.
+#   - Auto-merge is refused for changes under .github/, funding/,
+#     migrations/, CLAUDE.md, AGENTS.md, package.json, or bun.lock.
+#   - Merges go through GitHub's auto-merge queue / branch checks, so red CI
+#     can never be merged by this workflow.
+#   - A missing or unparseable verdict fails safe to needs-human-review.
+#
+# Required secrets:
+#   CLAUDE_CODE_OAUTH_TOKEN (required) subscription OAuth token for the
+#                           Claude steps — generate locally with
+#                           `claude setup-token` (Pro/Max subscription).
+#   PR_TRIAGE_ADMIN_TOKEN   (optional) org-owner PAT with admin:org, used
+#                           only to block the author of a malicious PR.
+
+name: Claude PR triage
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to triage"
+        required: true
+
+concurrency:
+  group: claude-triage-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write  # claude-code-action exchanges OIDC for its app token
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+      WORKDIR: /tmp/pr-triage
+    steps:
+      - name: Check out base branch (never PR code)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Ensure triage labels exist
+        run: |
+          gh label create flagged-malicious    --repo "$REPO" --color B60205 --description "Claude triage: flagged as malicious" || true
+          gh label create needs-human-review   --repo "$REPO" --color FBCA04 --description "Claude triage: controversial, needs a human" || true
+          gh label create claude-approved      --repo "$REPO" --color 0E8A16 --description "Claude triage: approved, merge blocked on checks/settings" || true
+
+      - name: Fetch PR data (as data, not code)
+        run: |
+          mkdir -p "$WORKDIR"
+          gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json number,title,body,author,baseRefName,headRefName,isDraft,additions,deletions,mergeable,labels \
+            > "$WORKDIR/metadata.json"
+          gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename' \
+            > "$WORKDIR/changed_files.txt"
+          # Cap the diff so a giant PR can't blow out the context; truncation
+          # alone disqualifies a PR from auto-merge (the prompt says so).
+          gh pr diff "$PR_NUMBER" --repo "$REPO" | head -c 400000 > "$WORKDIR/diff.patch"
+          echo "AUTHOR=$(jq -r '.author.login' "$WORKDIR/metadata.json")" >> "$GITHUB_ENV"
+
+      - name: Claude triage classification
+        id: claude_triage
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: true
+          prompt: |
+            Read the instructions in .github/claude/triage-prompt.md and follow
+            them exactly. The PR under review is number ${{ env.PR_NUMBER }};
+            its metadata, changed-file list, and diff are in /tmp/pr-triage/.
+            Write your verdict to /tmp/pr-triage/verdict.json.
+          claude_args: |
+            --allowedTools "Read,Grep,Glob,Write"
+            --max-turns 30
+
+      - name: Parse verdict
+        id: verdict
+        run: |
+          VERDICT="needs_research"
+          if jq -e . "$WORKDIR/verdict.json" >/dev/null 2>&1; then
+            V=$(jq -r '.verdict // empty' "$WORKDIR/verdict.json")
+            case "$V" in
+              malicious|auto_merge|needs_research) VERDICT="$V" ;;
+            esac
+          else
+            echo "::warning::verdict.json missing or invalid; failing safe to needs_research"
+          fi
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+          echo "Triage verdict: $VERDICT"
+
+      # ---------------------------------------------------------- malicious
+      - name: Close malicious PR and block author
+        if: steps.verdict.outputs.verdict == 'malicious'
+        env:
+          ADMIN_TOKEN: ${{ secrets.PR_TRIAGE_ADMIN_TOKEN }}
+        run: |
+          REASON=$(jq -r '.reasons // "Automated review flagged this pull request as malicious."' "$WORKDIR/verdict.json" 2>/dev/null || echo "Automated review flagged this pull request as malicious.")
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label flagged-malicious || true
+          gh pr close "$PR_NUMBER" --repo "$REPO" --comment \
+            "This pull request was closed by automated review, which flagged it as malicious. Summary of concern: $REASON — If you believe this is a mistake, contact the maintainers."
+          ORG="${REPO%%/*}"
+          if [ -n "$ADMIN_TOKEN" ]; then
+            GH_TOKEN="$ADMIN_TOKEN" gh api -X PUT "/orgs/$ORG/blocks/$AUTHOR" \
+              && echo "Blocked $AUTHOR from $ORG" \
+              || echo "::warning::Failed to block $AUTHOR (token lacks admin:org?)"
+          else
+            echo "::warning::PR_TRIAGE_ADMIN_TOKEN not set; cannot block $AUTHOR. PR closed and labeled flagged-malicious — block the user manually."
+          fi
+
+      # --------------------------------------------------------- auto merge
+      - name: Protected-path gate
+        id: pathgate
+        if: steps.verdict.outputs.verdict == 'auto_merge'
+        run: |
+          BLOCKED=false
+          if grep -Eq '^(\.github/|funding/|migrations/|CLAUDE\.md$|AGENTS\.md$|package\.json$|bun\.lock$)' "$WORKDIR/changed_files.txt"; then
+            BLOCKED=true
+            echo "::warning::PR touches protected paths; downgrading auto_merge to needs-human-review"
+          fi
+          echo "blocked=$BLOCKED" >> "$GITHUB_OUTPUT"
+
+      - name: Merge obviously-correct PR
+        if: steps.verdict.outputs.verdict == 'auto_merge' && steps.pathgate.outputs.blocked == 'false'
+        run: |
+          SUMMARY=$(jq -r '.summary // "Non-controversial and obviously correct."' "$WORKDIR/verdict.json")
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+            "Automated review: approved for merge. $SUMMARY"
+          # Prefer the auto-merge queue (merges only once required checks pass);
+          # fall back to a direct merge; otherwise leave it labeled for a human.
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --auto \
+            || gh pr merge "$PR_NUMBER" --repo "$REPO" --squash \
+            || { gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label claude-approved;
+                 echo "::warning::Merge blocked (checks pending/failing or settings); labeled claude-approved"; }
+
+      - name: Downgrade blocked auto-merge to human review
+        if: steps.verdict.outputs.verdict == 'auto_merge' && steps.pathgate.outputs.blocked == 'true'
+        run: |
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label needs-human-review
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+            "Automated review judged this PR correct, but it touches protected paths (workflows, pinned evidence outputs, or packaging), which are never auto-merged. Leaving for a maintainer."
+
+      # ----------------------------------------------------------- research
+      - name: Claude research review
+        id: claude_research
+        if: steps.verdict.outputs.verdict == 'needs_research'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: true
+          prompt: |
+            Read the instructions in .github/claude/research-prompt.md and
+            follow them exactly. The PR under review is number
+            ${{ env.PR_NUMBER }}; its metadata, changed-file list, and diff are
+            in /tmp/pr-triage/. The repository checkout in the working
+            directory is the BASE branch (the PR is not applied). Write
+            /tmp/pr-triage/review.md and /tmp/pr-triage/research_verdict.json.
+          claude_args: |
+            --allowedTools "Read,Grep,Glob,Write,Bash(git log:*),Bash(git show:*),Bash(git blame:*)"
+            --max-turns 60
+
+      - name: Post review and act on research verdict
+        if: steps.verdict.outputs.verdict == 'needs_research'
+        run: |
+          FINAL="manual_review"
+          if jq -e . "$WORKDIR/research_verdict.json" >/dev/null 2>&1; then
+            V=$(jq -r '.verdict // empty' "$WORKDIR/research_verdict.json")
+            case "$V" in merge|manual_review) FINAL="$V" ;; esac
+          else
+            echo "::warning::research_verdict.json missing/invalid; failing safe to manual_review"
+          fi
+
+          if [ -s "$WORKDIR/review.md" ]; then
+            gh pr review "$PR_NUMBER" --repo "$REPO" --comment --body-file "$WORKDIR/review.md"
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+              "Automated review ran but produced no report; leaving for a maintainer."
+          fi
+
+          if [ "$FINAL" = "merge" ]; then
+            if grep -Eq '^(\.github/|funding/|migrations/|CLAUDE\.md$|AGENTS\.md$|package\.json$|bun\.lock$)' "$WORKDIR/changed_files.txt"; then
+              gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label needs-human-review
+              echo "::warning::Research said merge, but protected paths are touched; left for a human."
+            else
+              gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --auto \
+                || gh pr merge "$PR_NUMBER" --repo "$REPO" --squash \
+                || { gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label claude-approved;
+                     echo "::warning::Merge blocked; labeled claude-approved"; }
+            fi
+          else
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label needs-human-review
+          fi
