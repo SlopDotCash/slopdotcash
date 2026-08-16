@@ -24,6 +24,12 @@ The active projects are:
 - **ASI:** accepted work in [`elizaOS/asi`](https://github.com/elizaOS/asi),
   the continual-reinforcement-learning framework pursuing The Alberta Plan,
   shares a pledged maximum of **$5,000 USDC per UTC month**.
+- **Heir Elements SDK:** accepted work in
+  [`heirlabs/element-sdk`](https://github.com/heirlabs/element-sdk) that
+  hardens the public Elements SDK for intelligent inheritance applications,
+  created on Slop and merged to `main` by
+  [`awidearray`](https://github.com/awidearray), shares a pledged maximum of
+  **$100 USDC per UTC month**.
 - **Delta Star:** accepted work in
   [`elizaOS/proximityprize`](https://github.com/elizaOS/proximityprize) receives a provisional
   contribution percentage toward the external Ethereum Foundation Proximity

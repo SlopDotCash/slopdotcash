@@ -321,6 +321,7 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       repositories: [
         { id: "elizaOS/eliza", repositoryId: "REPO_1" },
         { id: "elizaOS/asi", repositoryId: "REPO_3" },
+        { id: "heirlabs/element-sdk", repositoryId: "REPO_4" },
         { id: "elizaOS/proximityprize", repositoryId: "REPO_2" },
       ],
       requestCount: 12,
@@ -1943,6 +1944,7 @@ describe("scoring and limits", () => {
     expect(snapshot.repositories.map((repository) => repository.id)).toEqual([
       "elizaOS/eliza",
       "elizaOS/asi",
+      "heirlabs/element-sdk",
       "elizaOS/proximityprize",
     ]);
     expect(() =>

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contribute to Heir Elements SDK"
+  short_description: "Harden and prove the inheritance Elements SDK"
+  default_prompt: "Use $contribute-to-heir-elements-sdk to deliver and prove one bounded hardening, fix, or validator contribution to heirlabs/element-sdk."

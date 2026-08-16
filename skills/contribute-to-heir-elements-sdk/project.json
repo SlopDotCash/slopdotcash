@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1",
+  "projectId": "heir-elements-sdk",
+  "repositoryId": "heirlabs/element-sdk",
+  "skillName": "contribute-to-heir-elements-sdk",
+  "skillSourcePath": "skills/contribute-to-heir-elements-sdk",
+  "publicOrigin": "https://slop.cash/projects/heir-elements-sdk",
+  "usageAdapters": {
+    "codex": "codex",
+    "claude-code": "claude",
+    "grok-build": "grok"
+  }
+}

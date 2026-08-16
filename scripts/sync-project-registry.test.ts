@@ -20,6 +20,6 @@ describe("project registry generator", () => {
     expect(rendered).not.toMatch(/from ["'][^"']+\.json["']/u);
     expect(
       generated.RAW_PROJECT_DEFINITIONS.map((project) => project.id),
-    ).toEqual(["asi", "delta-star", "eliza"]);
+    ).toEqual(["asi", "delta-star", "eliza", "heir-elements-sdk"]);
   });
 });

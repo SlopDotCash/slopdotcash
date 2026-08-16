@@ -1548,7 +1548,9 @@ describe("current-head review selection", () => {
             ? "REPOSITORY_PROXIMITY_PRIZE"
             : repositoryName === "asi"
               ? "REPOSITORY_ASI"
-              : "REPOSITORY_ELIZA";
+              : repositoryName === "element-sdk"
+                ? "REPOSITORY_ELEMENT_SDK"
+                : "REPOSITORY_ELIZA";
         if (document.includes("query LeaderboardPreflight")) {
           return {
             repository: { id: repositoryNodeId, updatedAt },
@@ -1660,6 +1662,10 @@ describe("current-head review selection", () => {
       { id: "elizaOS/eliza", repositoryId: "REPOSITORY_ELIZA" },
       { id: "elizaOS/asi", repositoryId: "REPOSITORY_ASI" },
       {
+        id: "heirlabs/element-sdk",
+        repositoryId: "REPOSITORY_ELEMENT_SDK",
+      },
+      {
         id: "elizaOS/proximityprize",
         repositoryId: "REPOSITORY_PROXIMITY_PRIZE",
       },
@@ -1684,7 +1690,7 @@ describe("current-head review selection", () => {
     });
     expect(JSON.stringify(snapshot)).not.toContain("headRefOid");
     expect(JSON.stringify(snapshot)).not.toContain("commitId");
-    expect(openPullReferenceRequests).toBe(3);
+    expect(openPullReferenceRequests).toBe(4);
 
     paginatedHead = previousHead;
     await expect(

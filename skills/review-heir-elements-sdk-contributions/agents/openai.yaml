@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Heir Elements SDK Contributions"
+  short_description: "Reproduce, red-team, and assess Elements SDK work"
+  default_prompt: "Use $review-heir-elements-sdk-contributions to independently reproduce and assess this Heir Elements SDK contribution."
