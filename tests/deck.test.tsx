@@ -52,6 +52,13 @@ describe("Slop fundraising deck", () => {
   it("publishes the raise, revenue, token, ownership, and go-to-market model", () => {
     const { rerender } = render(<Deck />);
 
+    window.history.replaceState({}, "", "/deck#3");
+    rerender(<Deck key="mission" />);
+    expect(screen.getByText("In progress")).toBeInTheDocument();
+    expect(screen.getByText("Eliza")).toBeInTheDocument();
+    expect(screen.getByText("Proximity Prize")).toBeInTheDocument();
+    expect(screen.getByText("“ASI” continual learning")).toBeInTheDocument();
+
     window.history.replaceState({}, "", "/deck#5");
     rerender(<Deck key="gtm" />);
     expect(screen.getByText("Hack traction.")).toBeInTheDocument();

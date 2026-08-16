@@ -243,23 +243,33 @@
 }
 .deck-mission-copy h2 {
   max-width: 900px;
+  font-size: clamp(50px, 6.2vw, 94px);
 }
 .deck-mission-copy > p {
   max-width: 720px;
-  margin: 32px 0;
+  margin: 24px 0 20px;
   color: var(--muted);
   font-size: clamp(18px, 1.8vw, 28px);
   line-height: 1.42;
 }
+.deck-mission-label {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--orange-ink);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 .deck-mission-examples {
   display: grid;
-  max-width: 760px;
-  grid-template-columns: repeat(2, 1fr);
+  max-width: 980px;
+  grid-template-columns: repeat(3, 1fr);
   border-top: 1px solid rgba(22, 19, 15, 0.18);
 }
 .deck-mission-examples article {
   display: flex;
-  min-height: 118px;
+  min-height: 110px;
   flex-direction: column;
   justify-content: flex-end;
   gap: 8px;
@@ -948,6 +958,10 @@
   }
   .deck-mission-examples {
     grid-template-columns: 1fr;
+  }
+  .deck-mission-label {
+    margin-bottom: 4px;
+    font-size: 8px;
   }
   .deck-mission-examples article {
     min-height: auto;

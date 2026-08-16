@@ -185,15 +185,21 @@ function Mission() {
           Use decentralized compute to accelerate humanity—without concentrating
           the value in a handful of companies.
         </p>
+        <span className="deck-mission-label">In progress</span>
         <div className="deck-mission-examples">
           <article>
-            <strong>$1M Proximity Prize</strong>
+            <strong>Eliza</strong>
+            <span>MIT licensed open source AI for everyone.</span>
+          </article>
+          <article>
+            <strong>Proximity Prize</strong>
             <span>
-              A major conjecture. A prize split fairly by contribution.
+              $1M to solve a major conjecture. A prize split fairly by
+              contribution.
             </span>
           </article>
           <article>
-            <strong>ASI continual learning</strong>
+            <strong>“ASI” continual learning</strong>
             <span>Novel IP built together—and owned collectively.</span>
           </article>
         </div>
