@@ -63,9 +63,9 @@ describe("slop.cash deployment contract", () => {
     const redirects = pagesRedirects.trim().split("\n");
     expect(redirects).toContain("/projects/:project/funding/ / 200");
     expect(redirects).toContain("/projects/:project/funding / 200");
-    expect(
-      redirects.indexOf("/projects/:project/funding/ / 200"),
-    ).toBeLessThan(redirects.indexOf("/projects/:project / 200"));
+    expect(redirects.indexOf("/projects/:project/funding/ / 200")).toBeLessThan(
+      redirects.indexOf("/projects/:project / 200"),
+    );
     expect(redirects.indexOf("/projects/:project/funding / 200")).toBeLessThan(
       redirects.indexOf("/projects/:project / 200"),
     );
