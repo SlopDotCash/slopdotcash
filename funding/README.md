@@ -37,6 +37,11 @@ non-final transactions, and broken correction chains fail closed. Verified and
 self-reported totals are never added into one displayed number. GitHub identity
 and repository authority do not prove control of any wallet.
 
+Contributor profiles project only the latest records whose donor chose public
+GitHub attribution and whose immutable actor ID matches the profile. Anonymous
+records are excluded entirely; each supported asset keeps separate
+self-reported and verified-on-chain totals.
+
 For Solana mainnet USDC, the read-only verifier queries `getTransaction` at
 `finalized` commitment and accepts only the canonical USDC mint, successful
 execution, the exact signature, the exact project-owner credit, balanced raw
@@ -61,3 +66,9 @@ The settlement protocol stores these as `pending`, `reported`, and `paid` and
 the product labels them **Fee outstanding**, **Fee reported**, and **Fee
 verified**. A reported signature keeps `paidMinor` at zero until the read-only
 finalized balance-delta verifier succeeds.
+
+Cycle pages publish deterministic UTC timing copy: the cycle-close warning,
+the declared-settler reminder inside seven days of close, the ready-to-sign
+reminder after 24 hours, and the overdue reminder after 72 hours. These are
+coordination notices only; they do not message a wallet, sign, broadcast, or
+upgrade settlement state.

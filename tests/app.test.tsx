@@ -17,11 +17,13 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   App,
+  DonorFundingProfile,
   ProjectFunding,
   ProjectManagePage,
   publicFooterDomain,
 } from "../src/App";
 import { assertCycleIndex } from "../src/lib/cycle-index";
+import type { ProjectFundingRecord } from "../src/lib/funding";
 import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { createProjectView } from "../src/lib/project-view";
 import { PROJECTS } from "../src/lib/projects.mjs";
@@ -708,6 +710,9 @@ describe("public records", () => {
     expect(screen.getByText("Review")).toBeInTheDocument();
     expect(screen.getByText("Settlement")).toBeInTheDocument();
     expect(
+      screen.getByText(/Overdue settlement reminder/u),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("heading", { name: "July 2026 leaderboard." }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Cycle evidence.")).not.toBeInTheDocument();
@@ -964,6 +969,86 @@ describe("direct project funding", () => {
     expect(
       await screen.findByText(/No reviewed public funding transactions/u),
     ).toBeInTheDocument();
+  });
+
+  it("shows separated public donor totals and never exposes anonymous records on profiles", () => {
+    const address = `0x${"1".repeat(40)}`;
+    const fundingRecord = (
+      recordId: string,
+      transactionId: string,
+      amountMinor: string,
+      donor: ProjectFundingRecord["donor"],
+      state: "self-reported" | "verified-on-chain",
+    ): ProjectFundingRecord => ({
+      schemaVersion: "1",
+      kind: "project-funding",
+      recordId,
+      projectId: "eliza",
+      manifestRevision: "a".repeat(40),
+      network: "ethereum",
+      asset: "USDC",
+      transactionId,
+      recipient: address,
+      amountMinor,
+      observedAt: "2026-08-02T00:00:00.000Z",
+      state,
+      donor,
+      finality:
+        state === "self-reported"
+          ? { kind: "unverified" }
+          : { kind: "confirmations", confirmations: 64 },
+      verifier:
+        state === "self-reported"
+          ? null
+          : {
+              version: "funding-ethereum-v1",
+              checkedAt: "2026-08-02T01:00:00.000Z",
+              evidenceUrl: `https://etherscan.io/tx/${transactionId}`,
+              reason: null,
+            },
+      supersedes: null,
+    });
+    const attributedTransaction = `0x${"a".repeat(64)}`;
+    render(
+      <DonorFundingProfile
+        actor={{ id: "U_fixture", login: "finish-line" }}
+        records={[
+          fundingRecord(
+            "fund_profile_public",
+            attributedTransaction,
+            "1000000",
+            {
+              attribution: "github",
+              actorId: "U_fixture",
+              login: "finish-line",
+            },
+            "self-reported",
+          ),
+          fundingRecord(
+            "fund_profile_anonymous",
+            `0x${"b".repeat(64)}`,
+            "9000000",
+            { attribution: "anonymous" },
+            "verified-on-chain",
+          ),
+        ]}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Public project funding" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("$1 self-reported")).toBeInTheDocument();
+    expect(screen.getByText("$0 verified on-chain")).toBeInTheDocument();
+    expect(screen.queryByText("$9.00")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Anonymous funding never appears/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "View transaction" }),
+    ).toHaveAttribute(
+      "href",
+      `https://etherscan.io/tx/${attributedTransaction}`,
+    );
   });
 });
 

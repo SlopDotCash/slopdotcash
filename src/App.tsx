@@ -34,7 +34,9 @@ import {
   type ProjectFundingIndex,
   type ProjectFundingRecord,
   projectFundingTotals,
+  publicFundingRecordsForDonor,
 } from "./lib/funding";
+import { settlementReminder } from "./lib/funding-reminders";
 import { createGlobalLeaders } from "./lib/global-leaderboard";
 import { createInstallCommand } from "./lib/install-command";
 import {
@@ -1252,12 +1254,15 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
   );
 }
 
-function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
-  const [funding, setFunding] = useState<
-    | { status: "error"; message: string }
-    | { status: "loading" }
-    | { status: "ready"; index: ProjectFundingIndex }
-  >({ status: "loading" });
+type FundingDataState =
+  | { status: "error"; message: string }
+  | { status: "loading" }
+  | { status: "ready"; index: ProjectFundingIndex };
+
+function useFundingIndex(): FundingDataState {
+  const [funding, setFunding] = useState<FundingDataState>({
+    status: "loading",
+  });
   useEffect(() => {
     let active = true;
     const addresses = new Map(
@@ -1288,6 +1293,11 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
       active = false;
     };
   }, []);
+  return funding;
+}
+
+function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
+  const funding = useFundingIndex();
   const records =
     funding.status === "ready"
       ? funding.index.records.filter(
@@ -1479,6 +1489,82 @@ function ProjectPage({
   );
 }
 
+export function DonorFundingProfile({
+  actor,
+  records,
+}: {
+  actor: Pick<GitHubActor, "id" | "login">;
+  records: readonly ProjectFundingRecord[];
+}) {
+  const publicRecords = publicFundingRecordsForDonor(records, {
+    actorId: actor.id,
+    login: actor.login,
+  });
+  if (publicRecords.length === 0) return null;
+  const totals = projectFundingTotals(publicRecords);
+  return (
+    <section className="section profile-section">
+      <div className="profile-section-heading">
+        <h2>Public project funding</h2>
+        <span>
+          {publicRecords.length} attributed record
+          {publicRecords.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <p>
+        Only transactions explicitly attributed to this GitHub actor appear
+        here. Anonymous funding never appears on contributor profiles.
+      </p>
+      {totals.map((assetTotals) => (
+        <p className="money-summary" key={assetTotals.asset}>
+          <strong>
+            {formatFundingAmount(assetTotals.asset, assetTotals.verifiedMinor)}{" "}
+            verified on-chain
+          </strong>
+          <span>
+            {formatFundingAmount(
+              assetTotals.asset,
+              assetTotals.selfReportedMinor,
+            )}{" "}
+            self-reported
+          </span>
+        </p>
+      ))}
+      <div className="plain-table-wrap">
+        <table className="plain-table">
+          <caption className="visually-hidden">
+            Publicly attributed project funding
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Project</th>
+              <th scope="col">Amount</th>
+              <th scope="col">State</th>
+              <th scope="col">Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {publicRecords.map((record) => (
+              <tr key={record.recordId}>
+                <th scope="row">
+                  {findProject(record.projectId)?.name ?? record.projectId}
+                </th>
+                <td>{formatFundingMinor(record)}</td>
+                <td>{record.state.replaceAll("-", " ")}</td>
+                <td>
+                  <ExternalLinkAnchor href={fundingTransactionExplorer(record)}>
+                    View transaction
+                  </ExternalLinkAnchor>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function ProfilePage({
   login,
   state,
@@ -1488,12 +1574,17 @@ function ProfilePage({
   state: DataState;
   retry: () => void;
 }) {
+  const funding = useFundingIndex();
   if (state.status !== "ready")
     return (
       <main className="shell route-main">
         <DataNotice state={state} retry={retry} />
       </main>
     );
+  const loginFundingRecords =
+    funding.status === "ready"
+      ? publicFundingRecordsForDonor(funding.index.records, { login })
+      : [];
   const matches = state.views.flatMap((view) =>
     view.leaders
       .filter(
@@ -1531,17 +1622,36 @@ function ProfilePage({
     matches.length === 0 &&
     history.length === 0 &&
     !globalLeader &&
-    loginOpportunities.length === 0
+    loginOpportunities.length === 0 &&
+    loginFundingRecords.length === 0
   ) {
+    if (funding.status === "loading") {
+      return (
+        <main className="shell route-main">
+          <div className="data-notice" role="status">
+            <span className="pulse" /> Reading public donor records…
+          </div>
+        </main>
+      );
+    }
     return <NotFound title="Contributor not found" />;
   }
   const historicalActor = history[0]?.contributor.actor;
   const opportunityActor = loginOpportunities[0]?.opportunity.actor;
+  const fundingDonor = loginFundingRecords.find(
+    (record) => record.donor.attribution === "github",
+  )?.donor;
   const actor: GitHubActor = globalLeader?.actor ??
     matches[0]?.leader.actor ??
     opportunityActor ?? {
-      id: historicalActor?.id ?? `historical:${login.toLowerCase()}`,
-      login: historicalActor?.login ?? login,
+      id:
+        historicalActor?.id ??
+        (fundingDonor?.attribution === "github"
+          ? fundingDonor.actorId
+          : `historical:${login.toLowerCase()}`),
+      login:
+        historicalActor?.login ??
+        (fundingDonor?.attribution === "github" ? fundingDonor.login : login),
       avatarUrl: `https://github.com/${encodeURIComponent(login)}.png?size=160`,
       url: `https://github.com/${encodeURIComponent(login)}`,
       kind: "User",
@@ -1705,6 +1815,16 @@ function ProfilePage({
             ))}
           </div>
         </section>
+      ) : null}
+      {funding.status === "error" ? (
+        <section className="section profile-section">
+          <div className="data-notice data-error" role="alert">
+            <CircleAlert aria-hidden="true" size={18} /> Public donor records
+            unavailable: {funding.message}
+          </div>
+        </section>
+      ) : funding.status === "ready" ? (
+        <DonorFundingProfile actor={actor} records={funding.index.records} />
       ) : null}
       <section className="section profile-section">
         <div className="profile-section-heading">
@@ -1918,6 +2038,11 @@ function CyclePage({
   if (!from || !to) return <NotFound title="Cycle unavailable" />;
   const lifecycle =
     record?.state ?? (view?.cycle.status === "live" ? "live" : "closed");
+  const reminder = settlementReminder(
+    to,
+    new Date().toISOString(),
+    record?.settledAt ?? null,
+  );
   const headlineAmount = record
     ? record.kind === "external-prize-share"
       ? `${(record.reward.sharePartsPerMillion ?? 0) / 10_000}%`
@@ -1962,6 +2087,15 @@ function CyclePage({
           </span>
         </div>
       </section>
+      {reminder ? (
+        <div
+          className={`data-notice cycle-reminder ${reminder.kind}`}
+          role="status"
+        >
+          <CircleAlert aria-hidden="true" size={18} />
+          <span>{reminder.message}</span>
+        </div>
+      ) : null}
       <ol className="cycle-status-grid" aria-label="Cycle progress">
         <li>
           <strong>Contribution</strong>

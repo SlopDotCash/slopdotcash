@@ -6,6 +6,7 @@ import {
   assertProjectFundingLedger,
   assertProjectFundingRecord,
   projectFundingTotals,
+  publicFundingRecordsForDonor,
 } from "./funding";
 
 const ADDRESS = `0x${"1".repeat(40)}`;
@@ -175,5 +176,34 @@ describe("project funding records", () => {
         verifiedMinor: "2500000",
       },
     ]);
+  });
+
+  it("projects only current, explicitly attributed records onto donor profiles", () => {
+    const anonymousTransaction = `0x${"d".repeat(64)}`;
+    const anonymous = record({
+      recordId: "fund_anonymous_01",
+      transactionId: anonymousTransaction,
+      donor: { attribution: "anonymous" },
+    });
+    const otherDonor = record({
+      recordId: "fund_otherdonor_01",
+      transactionId: `0x${"e".repeat(64)}`,
+      donor: { attribution: "github", actorId: "2", login: "other" },
+    });
+    const ledger = assertProjectFundingLedger(
+      [record(), anonymous, otherDonor],
+      routes,
+    );
+    expect(
+      publicFundingRecordsForDonor(ledger, {
+        actorId: "18633264",
+        login: "lalalune",
+      }).map(({ recordId }) => recordId),
+    ).toEqual(["fund_fixture_01"]);
+    expect(
+      publicFundingRecordsForDonor(ledger, { login: "LALALUNE" }).map(
+        ({ recordId }) => recordId,
+      ),
+    ).toEqual(["fund_fixture_01"]);
   });
 });

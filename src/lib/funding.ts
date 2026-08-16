@@ -460,6 +460,34 @@ export function projectFundingTotals(records: readonly ProjectFundingRecord[]) {
     }));
 }
 
+/**
+ * Return only the current, explicitly public records attributed to a GitHub
+ * actor. Anonymous records are deliberately impossible to recover through
+ * this profile projection, including when they supersede an attributed row.
+ */
+export function publicFundingRecordsForDonor(
+  records: readonly ProjectFundingRecord[],
+  donor: { actorId?: string; login: string },
+): readonly ProjectFundingRecord[] {
+  const latest = new Map<string, ProjectFundingRecord>();
+  for (const record of records) {
+    latest.set(`${record.network}:${record.transactionId}`, record);
+  }
+  return [...latest.values()]
+    .filter((record) => {
+      if (record.donor.attribution !== "github") return false;
+      if (donor.actorId !== undefined) {
+        return record.donor.actorId === donor.actorId;
+      }
+      return record.donor.login.toLowerCase() === donor.login.toLowerCase();
+    })
+    .sort(
+      (left, right) =>
+        Date.parse(right.observedAt) - Date.parse(left.observedAt) ||
+        left.recordId.localeCompare(right.recordId),
+    );
+}
+
 export function assertProjectFundingIndex(
   value: unknown,
   addressesByProject: ReadonlyMap<string, readonly ProjectFundingAddress[]>,
