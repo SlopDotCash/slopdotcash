@@ -388,7 +388,7 @@ describe("project routes", () => {
     expect(screen.getByText("building agents.")).toHaveClass(
       "project-headline-action",
     );
-    expect(screen.getByText(/Steward pending:/u)).toHaveTextContent(
+    expect(screen.getByText(/^By/u)).toHaveTextContent(
       "Eliza Research · MIT · inbound terms unknown · Terms",
     );
     expect(screen.getByRole("link", { name: "Terms" })).toHaveAttribute(
