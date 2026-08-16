@@ -797,6 +797,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
   for (const path of [
     "/",
     ...PROJECTS.map((project) => `/projects/${project.id}`),
+    "/projects/eliza/funding",
     "/projects/eliza/manage",
     "/projects/new",
   ]) {
