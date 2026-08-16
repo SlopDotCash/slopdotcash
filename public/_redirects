@@ -2,6 +2,8 @@
 /deck / 200
 /deck/* / 200
 /projects/new / 200
+/projects/:project/funding/ / 200
+/projects/:project/funding / 200
 /projects/:project/manage / 200
 /projects/:project / 200
 /contributors/:login / 200
