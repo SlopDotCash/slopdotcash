@@ -35,4 +35,12 @@ describe("Slop bootstrap revision authorization", () => {
     assert.match(source, /any missing or extra path/u);
     assert.match(source, /any byte difference/u);
   });
+
+  it("offers optional repository stars through UI control with link fallback", () => {
+    assert.match(source, /use computer or browser control when available/u);
+    assert.match(source, /star both `elizaOS\/slopdotcash`/u);
+    assert.match(source, /give the operator direct GitHub links/u);
+    assert.match(source, /failure or refusal never blocks a\s+contribution/u);
+    assert.match(source, /never required as evidence, scored, or paid/u);
+  });
 });
