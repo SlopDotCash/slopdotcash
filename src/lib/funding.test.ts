@@ -5,6 +5,7 @@ import {
   assertProjectFundingAddresses,
   assertProjectFundingLedger,
   assertProjectFundingRecord,
+  currentProjectFundingRecords,
   projectFundingTotals,
   publicFundingRecordsForDonor,
 } from "./funding";
@@ -49,6 +50,47 @@ function record(overrides: Record<string, unknown> = {}) {
 }
 
 describe("project funding records", () => {
+  it("retains non-overlapping receiving history and rejects ambiguous time", () => {
+    expect(
+      assertProjectFundingAddresses([
+        {
+          network: "ethereum",
+          asset: "USDC",
+          address: ADDRESS,
+          effectiveAt: "2026-08-01T00:00:00.000Z",
+          replacedAt: "2026-08-02T00:00:00.000Z",
+        },
+        {
+          network: "ethereum",
+          asset: "USDC",
+          address: `0x${"2".repeat(40)}`,
+          effectiveAt: "2026-08-02T00:00:00.000Z",
+          replacedAt: null,
+        },
+      ]),
+    ).toHaveLength(2);
+    expect(() =>
+      assertProjectFundingAddresses([
+        ...routes.map((route) => ({
+          ...route,
+          replacedAt: "2026-08-03T00:00:00.000Z",
+        })),
+        {
+          network: "ethereum",
+          asset: "USDC",
+          address: `0x${"2".repeat(40)}`,
+          effectiveAt: "2026-08-02T00:00:00.000Z",
+          replacedAt: null,
+        },
+      ]),
+    ).toThrow(/overlapping active routes/u);
+    expect(() =>
+      assertProjectFundingAddresses([
+        { ...routes[0], effectiveAt: "2026-02-30T00:00:00.000Z" },
+      ]),
+    ).toThrow(/invalid/u);
+  });
+
   it("binds a self-report to the exact active manifest address", () => {
     expect(assertProjectFundingRecord(record(), routes)).toMatchObject({
       state: "self-reported",
@@ -63,6 +105,31 @@ describe("project funding records", () => {
     expect(() =>
       assertProjectFundingRecord(record({ amountMinor: "1.0" }), routes),
     ).toThrow(/integer minor units/u);
+    expect(() =>
+      assertProjectFundingRecord(
+        record({ amountMinor: "1".repeat(41) }),
+        routes,
+      ),
+    ).toThrow(/integer minor units/u);
+    expect(() =>
+      assertProjectFundingRecord(
+        record({ observedAt: "2026-02-30T00:00:00.000Z" }),
+        routes,
+      ),
+    ).toThrow(/invalid/u);
+    expect(() =>
+      assertProjectFundingRecord(
+        record({
+          donor: {
+            attribution: "github",
+            actorId: "1".repeat(21),
+            actorNodeId: "MDQ6VXNlcjE4NjMzMjY0",
+            login: "lalalune",
+          },
+        }),
+        routes,
+      ),
+    ).toThrow(/donor identity/u);
     expect(() =>
       assertProjectFundingRecord(
         record({
@@ -141,6 +208,9 @@ describe("project funding records", () => {
       supersedes: original.recordId,
     });
     const ledger = assertProjectFundingLedger([original, correction], routes);
+    expect(
+      currentProjectFundingRecords(ledger).map(({ recordId }) => recordId),
+    ).toEqual(["fund_fixture_02"]);
     expect(projectFundingTotals(ledger)).toEqual([
       { asset: "USDC", selfReportedMinor: "0", verifiedMinor: "0" },
     ]);
@@ -156,6 +226,61 @@ describe("project funding records", () => {
         routes,
       ),
     ).toThrow(/not later/u);
+  });
+
+  it("allows a later correction after rotation without permitting recipient mutation", () => {
+    const rotatedRoutes = assertProjectFundingAddresses([
+      {
+        network: "ethereum",
+        asset: "USDC",
+        address: ADDRESS,
+        effectiveAt: "2026-08-01T00:00:00.000Z",
+        replacedAt: "2026-08-03T00:00:00.000Z",
+      },
+      {
+        network: "ethereum",
+        asset: "USDC",
+        address: `0x${"2".repeat(40)}`,
+        effectiveAt: "2026-08-03T00:00:00.000Z",
+        replacedAt: null,
+      },
+    ]);
+    const original = record();
+    const correction = record({
+      recordId: "fund_rotated_correction",
+      observedAt: "2026-08-04T00:00:00.000Z",
+      state: "disputed",
+      finality: { kind: "confirmations", confirmations: 64 },
+      verifier: {
+        version: "funding-ethereum-v1",
+        checkedAt: "2026-08-04T00:00:00.000Z",
+        evidenceUrl: `https://etherscan.io/tx/${TRANSACTION}`,
+        reason: "A later reorg invalidated the original evidence.",
+      },
+      supersedes: original.recordId,
+    });
+    expect(
+      assertProjectFundingLedger([original, correction], rotatedRoutes).map(
+        ({ recordId }) => recordId,
+      ),
+    ).toEqual(["fund_fixture_01", "fund_rotated_correction"]);
+
+    expect(() =>
+      assertProjectFundingLedger(
+        [
+          original,
+          {
+            ...correction,
+            recipient: `0x${"2".repeat(40)}`,
+          },
+        ],
+        rotatedRoutes,
+      ),
+    ).toThrow(/changes transaction identity/u);
+
+    expect(() =>
+      assertProjectFundingRecord(correction, [rotatedRoutes[1]]),
+    ).toThrow(/absent from.*route history/u);
   });
 
   it("never combines self-reported and verified totals", () => {

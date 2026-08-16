@@ -4,10 +4,7 @@
  * request cannot smuggle executable configuration or ambiguous reward terms.
  */
 
-import {
-  fundingAssetForNetwork,
-  isFundingAddress,
-} from "./funding-address.mjs";
+import { assertFundingAddresses } from "./funding-address.mjs";
 
 const PROJECT_KEYS = [
   "authority",
@@ -764,46 +761,7 @@ function validateFunding(value, projectId) {
   ) {
     throw new TypeError("project.funding non-custodial policy is invalid");
   }
-  if (!Array.isArray(funding.addresses) || funding.addresses.length > 4) {
-    throw new TypeError(
-      "project.funding addresses must contain at most four routes",
-    );
-  }
-  const seen = new Set();
-  for (const [index, value] of funding.addresses.entries()) {
-    const field = `project.funding.addresses[${index}]`;
-    const route = record(value, field);
-    exactKeys(
-      route,
-      ["address", "asset", "effectiveAt", "network", "replacedAt"],
-      field,
-    );
-    const expectedAsset = fundingAssetForNetwork(route.network);
-    if (!expectedAsset || route.asset !== expectedAsset) {
-      throw new TypeError(`${field} network or asset is unsupported`);
-    }
-    if (!isFundingAddress(route.network, route.address)) {
-      throw new TypeError(`${field}.address is invalid`);
-    }
-    const effectiveAt = timestamp(route.effectiveAt, `${field}.effectiveAt`);
-    const replacedAt =
-      route.replacedAt === null
-        ? null
-        : timestamp(route.replacedAt, `${field}.replacedAt`);
-    if (
-      replacedAt !== null &&
-      Date.parse(replacedAt) <= Date.parse(effectiveAt)
-    ) {
-      throw new TypeError(`${field}.replacedAt must follow effectiveAt`);
-    }
-    const key = `${route.network}:${route.asset}`;
-    if (seen.has(key)) {
-      throw new TypeError(
-        "project.funding addresses contain a duplicate route",
-      );
-    }
-    seen.add(key);
-  }
+  assertFundingAddresses(funding.addresses, "project.funding.addresses");
   return funding;
 }
 

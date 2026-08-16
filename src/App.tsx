@@ -30,13 +30,14 @@ import {
 } from "./lib/cycle-index";
 import {
   assertProjectFundingIndex,
+  currentProjectFundingRecords,
   isFundingAddress,
   type ProjectFundingIndex,
   type ProjectFundingRecord,
   projectFundingTotals,
   publicFundingRecordsForDonor,
 } from "./lib/funding";
-import { settlementReminder } from "./lib/funding-reminders";
+import { cycleSettlementReminder } from "./lib/funding-reminders";
 import { createGlobalLeaders } from "./lib/global-leaderboard";
 import { createInstallCommand } from "./lib/install-command";
 import {
@@ -1199,7 +1200,13 @@ function FundingQr({
 
 export function ProjectFunding({ project }: { project: ProjectDefinition }) {
   const [copied, setCopied] = useState<string | null>(null);
-  if (project.funding.addresses.length === 0) return null;
+  const now = Date.now();
+  const activeRoutes = project.funding.addresses.filter(
+    (route) =>
+      Date.parse(route.effectiveAt) <= now &&
+      (route.replacedAt === null || now < Date.parse(route.replacedAt)),
+  );
+  if (activeRoutes.length === 0) return null;
   return (
     <section className="section project-funding">
       <details>
@@ -1211,8 +1218,8 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
           wallet ownership.
         </p>
         <div className="funding-routes">
-          {project.funding.addresses.map((route) => {
-            const key = `${route.network}:${route.asset}`;
+          {activeRoutes.map((route) => {
+            const key = `${route.network}:${route.asset}:${route.address}:${route.effectiveAt}`;
             return (
               <div className="funding-route" key={key}>
                 <strong>
@@ -1300,8 +1307,10 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
   const funding = useFundingIndex();
   const records =
     funding.status === "ready"
-      ? funding.index.records.filter(
-          (record) => record.projectId === project.id,
+      ? currentProjectFundingRecords(
+          funding.index.records.filter(
+            (record) => record.projectId === project.id,
+          ),
         )
       : [];
   const totals = projectFundingTotals(records);
@@ -2037,11 +2046,17 @@ function CyclePage({
   if (!from || !to) return <NotFound title="Cycle unavailable" />;
   const lifecycle =
     record?.state ?? (view?.cycle.status === "live" ? "live" : "closed");
-  const reminder = settlementReminder(
-    to,
-    new Date().toISOString(),
-    record?.settledAt ?? null,
-  );
+  const reminder = cycleSettlementReminder({
+    closesAt: to,
+    kind:
+      record?.kind ??
+      (view?.reward.kind === "external-prize-share"
+        ? "external-prize-share"
+        : "monthly-pool"),
+    now: new Date().toISOString(),
+    settledAt: record?.settledAt ?? null,
+    state: record?.state ?? (view?.cycle.status === "live" ? "live" : "review"),
+  });
   const headlineAmount = record
     ? record.kind === "external-prize-share"
       ? `${(record.reward.sharePartsPerMillion ?? 0) / 10_000}%`

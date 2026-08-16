@@ -100,14 +100,14 @@ describe("project proposal schema", () => {
       /non-custodial/u,
     );
 
-    const duplicate = structuredClone(eliza);
-    duplicate.funding.addresses = [
+    const rotation = structuredClone(eliza);
+    rotation.funding.addresses = [
       {
         network: "solana",
         asset: "USDC",
         address: "11111111111111111111111111111111",
         effectiveAt: "2026-08-16T00:00:00.000Z",
-        replacedAt: null,
+        replacedAt: "2026-08-17T00:00:00.000Z",
       },
       {
         network: "solana",
@@ -117,8 +117,15 @@ describe("project proposal schema", () => {
         replacedAt: null,
       },
     ] as never;
-    expect(() => assertProjectDefinition(duplicate)).toThrow(
-      /duplicate route/u,
+    expect(assertProjectDefinition(rotation).funding.addresses).toHaveLength(2);
+    const overlap = structuredClone(rotation);
+    (
+      overlap.funding.addresses[0] as unknown as {
+        replacedAt: string | null;
+      }
+    ).replacedAt = "2026-08-18T00:00:00.000Z";
+    expect(() => assertProjectDefinition(overlap)).toThrow(
+      /overlapping active routes/u,
     );
 
     const invalidSolana = structuredClone(eliza);

@@ -1,6 +1,7 @@
 /** Strict, non-custodial project-funding records and deterministic totals. */
 
 import {
+  assertFundingAddresses,
   fundingAssetForNetwork,
   isFundingAddress,
   isSolanaTransactionId,
@@ -86,7 +87,8 @@ function timestamp(value: unknown, field: string): string {
   if (
     typeof value !== "string" ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||
-    !Number.isFinite(Date.parse(value))
+    !Number.isFinite(Date.parse(value)) ||
+    new Date(value).toISOString() !== value
   ) {
     throw new TypeError(`${field} is invalid`);
   }
@@ -94,7 +96,11 @@ function timestamp(value: unknown, field: string): string {
 }
 
 function canonicalMinor(value: unknown, field: string): string {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+  if (
+    typeof value !== "string" ||
+    value.length > 40 ||
+    !/^(?:0|[1-9]\d*)$/u.test(value)
+  ) {
     throw new TypeError(`${field} must be canonical integer minor units`);
   }
   if (BigInt(value) === 0n) throw new TypeError(`${field} must be positive`);
@@ -130,62 +136,7 @@ function canonicalEvidenceUrl(
 export function assertProjectFundingAddresses(
   value: unknown,
 ): readonly ProjectFundingAddress[] {
-  if (!Array.isArray(value) || value.length > 4) {
-    throw new TypeError(
-      "project funding addresses must be an array of at most four routes",
-    );
-  }
-  const seen = new Set<string>();
-  return value.map((candidate, index) => {
-    const field = `project funding address ${index}`;
-    const route = object(candidate, field);
-    exactKeys(
-      route,
-      ["address", "asset", "effectiveAt", "network", "replacedAt"],
-      field,
-    );
-    if (
-      typeof route.network !== "string" ||
-      fundingAssetForNetwork(route.network) === null
-    ) {
-      throw new TypeError(`${field} network is unsupported`);
-    }
-    const network = route.network as FundingNetwork;
-    if (route.asset !== fundingAssetForNetwork(network)) {
-      throw new TypeError(`${field} asset is unsupported for its network`);
-    }
-    if (
-      typeof route.address !== "string" ||
-      !isFundingAddress(network, route.address)
-    ) {
-      throw new TypeError(`${field} address is invalid`);
-    }
-    const effectiveAt = timestamp(route.effectiveAt, `${field}.effectiveAt`);
-    const replacedAt =
-      route.replacedAt === null
-        ? null
-        : timestamp(route.replacedAt, `${field}.replacedAt`);
-    if (
-      replacedAt !== null &&
-      Date.parse(replacedAt) <= Date.parse(effectiveAt)
-    ) {
-      throw new TypeError(`${field} replacement must follow activation`);
-    }
-    const key = `${network}:${route.asset}`;
-    if (seen.has(key)) {
-      throw new TypeError(
-        "project funding addresses contain a duplicate network and asset",
-      );
-    }
-    seen.add(key);
-    return {
-      network,
-      asset: route.asset,
-      address: route.address,
-      effectiveAt,
-      replacedAt,
-    } as ProjectFundingAddress;
-  });
+  return assertFundingAddresses(value) as readonly ProjectFundingAddress[];
 }
 
 function assertFinality(
@@ -298,19 +249,29 @@ export function assertProjectFundingRecord(
   ) {
     throw new TypeError("funding record recipient is invalid");
   }
+  if (
+    record.supersedes !== null &&
+    (typeof record.supersedes !== "string" ||
+      !RECORD_ID_PATTERN.test(record.supersedes))
+  ) {
+    throw new TypeError("funding record supersedes id is invalid");
+  }
   const observedAt = timestamp(record.observedAt, "funding record observedAt");
   const route = addresses.find(
     (candidate) =>
       candidate.network === network &&
       candidate.asset === record.asset &&
       candidate.address === record.recipient &&
-      Date.parse(candidate.effectiveAt) <= Date.parse(observedAt) &&
-      (candidate.replacedAt === null ||
-        Date.parse(observedAt) < Date.parse(candidate.replacedAt)),
+      (record.supersedes !== null ||
+        (Date.parse(candidate.effectiveAt) <= Date.parse(observedAt) &&
+          (candidate.replacedAt === null ||
+            Date.parse(observedAt) < Date.parse(candidate.replacedAt)))),
   );
   if (!route) {
     throw new TypeError(
-      "funding record recipient was not active at the manifest-bound observation time",
+      record.supersedes === null
+        ? "funding record recipient was not active at the manifest-bound observation time"
+        : "funding correction recipient is absent from the manifest-bound route history",
     );
   }
   canonicalMinor(record.amountMinor, "funding record amountMinor");
@@ -334,7 +295,7 @@ export function assertProjectFundingRecord(
     if (
       donor.attribution !== "github" ||
       typeof donor.actorId !== "string" ||
-      !/^[1-9]\d*$/u.test(donor.actorId) ||
+      !/^[1-9]\d{0,19}$/u.test(donor.actorId) ||
       typeof donor.actorNodeId !== "string" ||
       !/^[A-Za-z0-9_=-]{4,128}$/u.test(donor.actorNodeId) ||
       typeof donor.login !== "string" ||
@@ -385,13 +346,6 @@ export function assertProjectFundingRecord(
       throw new TypeError("funding record dispute reason is inconsistent");
     }
   }
-  if (
-    record.supersedes !== null &&
-    (typeof record.supersedes !== "string" ||
-      !RECORD_ID_PATTERN.test(record.supersedes))
-  ) {
-    throw new TypeError("funding record supersedes id is invalid");
-  }
   return value as ProjectFundingRecord;
 }
 
@@ -436,16 +390,26 @@ export function assertProjectFundingLedger(
   return records;
 }
 
-export function projectFundingTotals(records: readonly ProjectFundingRecord[]) {
+export function currentProjectFundingRecords(
+  records: readonly ProjectFundingRecord[],
+): readonly ProjectFundingRecord[] {
   const latest = new Map<string, ProjectFundingRecord>();
   for (const record of records) {
     latest.set(`${record.network}:${record.transactionId}`, record);
   }
+  return [...latest.values()].sort(
+    (left, right) =>
+      Date.parse(right.observedAt) - Date.parse(left.observedAt) ||
+      left.recordId.localeCompare(right.recordId),
+  );
+}
+
+export function projectFundingTotals(records: readonly ProjectFundingRecord[]) {
   const byAsset = new Map<
     FundingAsset,
     { selfReportedMinor: bigint; verifiedMinor: bigint }
   >();
-  for (const record of latest.values()) {
+  for (const record of currentProjectFundingRecords(records)) {
     const totals = byAsset.get(record.asset) ?? {
       selfReportedMinor: 0n,
       verifiedMinor: 0n,
@@ -476,11 +440,7 @@ export function publicFundingRecordsForDonor(
   records: readonly ProjectFundingRecord[],
   actorNodeId: string,
 ): readonly ProjectFundingRecord[] {
-  const latest = new Map<string, ProjectFundingRecord>();
-  for (const record of records) {
-    latest.set(`${record.network}:${record.transactionId}`, record);
-  }
-  return [...latest.values()]
+  return currentProjectFundingRecords(records)
     .filter((record) => {
       if (record.donor.attribution !== "github") return false;
       return record.donor.actorNodeId === actorNodeId;

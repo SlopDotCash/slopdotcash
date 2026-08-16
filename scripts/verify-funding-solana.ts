@@ -30,6 +30,7 @@ export async function verifyFundingSolana(input: {
   if (
     !isSolanaTransactionId(input.signature) ||
     !isSolanaAddress(input.recipient) ||
+    input.amountMinor.length > 40 ||
     !/^[1-9]\d*$/u.test(input.amountMinor)
   ) {
     throw new TypeError("signature, recipient, or amount is invalid");
