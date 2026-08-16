@@ -2142,6 +2142,25 @@ describe("run receipt CLI", () => {
     }
   });
 
+  it("rejects placeholder provider, model, and client declarations", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        runReceiptPath,
+        "doctor",
+        "--client",
+        "client",
+        "--provider",
+        "provider",
+        "--model",
+        "model",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stderr, /exact non-placeholder identifier/u);
+  });
+
   it("attributes ccusage's encoded Claude Code project directories to the repository root", () => {
     const repositoryRoot = resolve(tmpdir(), "contribute-to-eliza-usage");
     const normalizedRoot = repositoryRoot
@@ -2185,6 +2204,39 @@ describe("run receipt CLI", () => {
     const delta = usageDelta(before, after, "claude-code");
     assert.strictEqual(delta.confidence, "exact");
     assert.strictEqual(delta.totalTokens, 150);
+  });
+
+  it("treats ccusage's Codex directory field as exact only for the full path", () => {
+    const repositoryRoot = resolve(tmpdir(), "slop-a", "same-name");
+    const report = normalizeSessionReport(
+      {
+        sessions: [
+          {
+            ...session("codex-exact", null, 11),
+            directory: repositoryRoot,
+          },
+          {
+            ...session("codex-bounded", null, 7),
+            directory: resolve(tmpdir(), "slop-b", "same-name"),
+          },
+        ],
+      },
+      repositoryRoot,
+    );
+    const entries = Object.values(report.sessions);
+    assert.strictEqual(entries.length, 2);
+    assert.strictEqual(
+      entries.find((entry) => entry.totalTokens === 11)?.pathMatched,
+      true,
+    );
+    assert.strictEqual(
+      entries.find((entry) => entry.totalTokens === 7)?.pathMatched,
+      false,
+    );
+    assert.strictEqual(
+      usageDelta({ sessions: {} }, report, "codex").confidence,
+      "bounded",
+    );
   });
 
   it("starts and finishes a measured run without passing --project to ccusage", {
@@ -2280,7 +2332,7 @@ describe("run receipt CLI", () => {
         "fi",
         'if [ "$3" = "--version" ]; then',
         `  printf '%s\\n' "$*" >> ${quotedArgsLog}`,
-        "  echo ccusage 20.0.19",
+        "  echo ccusage 20.0.20",
         "  exit 0",
         "fi",
         `if [ -f ${quotedFailureFlag} ]; then`,
@@ -2391,10 +2443,10 @@ describe("run receipt CLI", () => {
       );
       assert.strictEqual(doctor.status, 0, doctor.stderr);
       const doctorReport = JSON.parse(doctor.stdout);
-      assert.strictEqual(doctorReport.ccusage.version, "20.0.19");
+      assert.strictEqual(doctorReport.ccusage.version, "20.0.20");
       assert.strictEqual(doctorReport.ccusage.logsRead, false);
       assert.deepStrictEqual(readFileSync(argsLog, "utf8").trim().split("\n"), [
-        "x ccusage@20.0.19 --version",
+        "x ccusage@20.0.20 --version",
       ]);
 
       const missingConsent = spawnSync(
@@ -2570,9 +2622,9 @@ describe("run receipt CLI", () => {
         .trim()
         .split("\n");
       assert.deepStrictEqual(ccusageInvocations, [
-        "x ccusage@20.0.19 --version",
-        "x ccusage@20.0.19 claude session --json --mode calculate",
-        "x ccusage@20.0.19 claude session --json --mode calculate",
+        "x ccusage@20.0.20 --version",
+        "x ccusage@20.0.20 claude session --json --mode calculate",
+        "x ccusage@20.0.20 claude session --json --mode calculate",
       ]);
 
       writeFileSync(
@@ -2999,7 +3051,7 @@ describe("run receipt CLI", () => {
 
       writeFileSync(
         join(shimDir, "bun"),
-        shimSource.replace("echo ccusage 20.0.19", "echo ccusage 120.0.19"),
+        shimSource.replace("echo ccusage 20.0.20", "echo ccusage 120.0.20"),
       );
       const npxShimSource = [
         "#!/bin/sh",
@@ -3009,7 +3061,7 @@ describe("run receipt CLI", () => {
         "fi",
         'if [ "$3" = "--version" ]; then',
         `  printf '%s\\n' "$*" >> ${quotedArgsLog}`,
-        "  echo ccusage 20.0.19",
+        "  echo ccusage 20.0.20",
         "  exit 0",
         "fi",
         "exit 7",
@@ -3042,7 +3094,7 @@ describe("run receipt CLI", () => {
 
       writeFileSync(
         join(shimDir, "npx"),
-        npxShimSource.replace("echo ccusage 20.0.19", "echo noisy-20.0.19"),
+        npxShimSource.replace("echo ccusage 20.0.20", "echo noisy-20.0.20"),
       );
       const wrongVersionDoctor = spawnSync(
         process.execPath,

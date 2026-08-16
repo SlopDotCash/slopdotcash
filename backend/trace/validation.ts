@@ -1,4 +1,10 @@
 import {
+  isExactClientIdentifier,
+  isExactClientVersion,
+  isExactModelIdentifier,
+  isExactProviderIdentifier,
+} from "../../src/lib/model-identity";
+import {
   MAX_JSON_BYTES,
   MAX_TRACE_BYTES,
   RUN_EVENT_KINDS,
@@ -20,6 +26,13 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function validIdentifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER_PATTERN.test(value);
 }
+
+export {
+  isExactClientIdentifier,
+  isExactClientVersion,
+  isExactModelIdentifier,
+  isExactProviderIdentifier,
+};
 
 export function validRepository(value: unknown): value is string {
   return typeof value === "string" && REPOSITORY_PATTERN.test(value);

@@ -404,7 +404,7 @@ jobs:
             --remote \
             --json \
             --config workers/identity/wrangler.toml \
-            --command "SELECT type, name FROM sqlite_schema WHERE name IN ('identity_assertions','identity_oauth_flows','private_audit_events','run_progress_events','trace_objects','trace_read_grants','trace_runs','trace_upload_intents','trace_uploads','wallet_claims','wallet_claims_no_delete','wallet_claims_no_update','wallet_claims_one_root_per_actor','wallet_claims_one_successor') ORDER BY type, name" \
+            --command "SELECT type, name FROM sqlite_schema WHERE name IN ('identity_assertions','identity_oauth_flows','identity_rate_limits','private_audit_events','run_progress_events','trace_objects','trace_read_grants','trace_runs','trace_upload_intents','trace_uploads','wallet_claims','wallet_claims_no_delete','wallet_claims_no_update','wallet_claims_one_root_per_actor','wallet_claims_one_successor') ORDER BY type, name" \
             > "$schema_response"
           node - "$schema_response" <<'NODE'
           const { readFileSync } = require("node:fs");
@@ -414,6 +414,7 @@ jobs:
             "index:wallet_claims_one_successor",
             "table:identity_assertions",
             "table:identity_oauth_flows",
+            "table:identity_rate_limits",
             "table:private_audit_events",
             "table:run_progress_events",
             "table:trace_objects",
@@ -493,6 +494,11 @@ jobs:
           }
           NODE
 
+          identity_rate_probe_started_at="$(date +%s)"
+          if ! [[ "$identity_rate_probe_started_at" =~ ^[0-9]{10}$ ]]; then
+            echo "::error::Identity rate-limit probe start time is invalid."
+            exit 1
+          fi
           identity_response="$RUNNER_TEMP/slop-identity-start.json"
           identity_status="$(
             curl --silent --show-error \
@@ -564,6 +570,86 @@ jobs:
           NODE
           )"
           printf '%s\n' "github_client_id=$github_client_id" >> "$GITHUB_OUTPUT"
+
+          for request_number in $(seq 2 12); do
+            repeated_response="$RUNNER_TEMP/slop-identity-start-$request_number.json"
+            repeated_status="$(
+              curl --silent --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --output "$repeated_response" \
+                --write-out "%{http_code}" \
+                --header "Content-Type: application/json" \
+                --data '{"audience":"private-trace-api"}' \
+                https://identity.slop.cash/v1/oauth/start
+            )"
+            if [ "$repeated_status" != "201" ]; then
+              echo "::error::Identity start request $request_number returned HTTP $repeated_status; expected 201."
+              exit 1
+            fi
+          done
+          limited_response="$RUNNER_TEMP/slop-identity-rate-limited.json"
+          limited_headers="$RUNNER_TEMP/slop-identity-rate-limited.headers"
+          limited_status="$(
+            curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --output "$limited_response" \
+              --dump-header "$limited_headers" \
+              --write-out "%{http_code}" \
+              --header "Content-Type: application/json" \
+              --data '{"audience":"private-trace-api"}' \
+              https://identity.slop.cash/v1/oauth/start
+          )"
+          if [ "$limited_status" != "429" ]; then
+            echo "::error::Identity start request 13 returned HTTP $limited_status; expected 429."
+            exit 1
+          fi
+          node - "$limited_response" "$limited_headers" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const headers = readFileSync(process.argv[3], "utf8");
+          if (JSON.stringify(value) !== JSON.stringify({
+            error: "rate_limited",
+            message: "Too many requests. Try again later.",
+          })) {
+            throw new TypeError("identity rate-limit response has an unexpected shape");
+          }
+          const retryAfter = headers.match(/^retry-after:\s*(\d+)\s*$/imu)?.[1];
+          if (retryAfter === undefined || Number(retryAfter) < 1 || Number(retryAfter) > 60) {
+            throw new TypeError("identity rate-limit response omitted a bounded retry-after");
+          }
+          NODE
+
+          exact_rate_limit_response="$RUNNER_TEMP/slop-identity-exact-rate-limit.json"
+          ./node_modules/.bin/wrangler d1 execute slop-private \
+            --remote \
+            --json \
+            --config workers/identity/wrangler.toml \
+            --command "SELECT request_count, window_started_at, expires_at FROM identity_rate_limits WHERE window_started_at >= $identity_rate_probe_started_at AND request_count = 13 ORDER BY window_started_at DESC" \
+            > "$exact_rate_limit_response"
+          node - "$exact_rate_limit_response" "$identity_rate_probe_started_at" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const probeStartedAt = Number(process.argv[3]);
+          if (!Array.isArray(value) || value.length !== 1 || value[0]?.success !== true) {
+            throw new TypeError("identity exact rate-limit query failed");
+          }
+          const rows = value[0].results ?? [];
+          if (rows.length !== 1) {
+            throw new TypeError("identity exact rate-limit probe did not produce one authoritative bucket");
+          }
+          const row = rows[0];
+          if (
+            row?.request_count !== 13 ||
+            !Number.isSafeInteger(row?.window_started_at) ||
+            row.window_started_at < probeStartedAt ||
+            !Number.isSafeInteger(row?.expires_at) ||
+            row.expires_at <= row.window_started_at
+          ) {
+            throw new TypeError("identity exact rate-limit bucket has an unexpected state");
+          }
+          NODE
 
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \

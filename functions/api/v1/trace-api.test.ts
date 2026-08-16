@@ -341,6 +341,12 @@ async function createRun(
   deps: TraceApiDependencies,
   bearer: string,
   key = "create_run_key_0001",
+  identity = {
+    provider: "openai",
+    model: "gpt-5",
+    client: "codex",
+    clientVersion: "1.0.0",
+  },
 ) {
   return handleTraceApi(
     request(
@@ -352,10 +358,7 @@ async function createRun(
         projectId: "eliza",
         repository: "elizaOS/eliza",
         projectPolicyRevision: "a".repeat(40),
-        provider: "openai",
-        model: "gpt-5",
-        client: "codex",
-        clientVersion: "1.0.0",
+        ...identity,
       }),
       { "content-type": "application/json", "idempotency-key": key },
     ),
@@ -399,6 +402,39 @@ async function uploadTrace(
 }
 
 describe("private trace API", () => {
+  it("accepts arbitrary exact model identities and rejects placeholders", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const openIdentity = await createRun(
+      deps,
+      contributor,
+      "create_run_open_identity_0001",
+      {
+        provider: "x-ai/hosted+edge",
+        model: "accounts/x/models/grok-4.5+reasoning",
+        client: "grok-build+acp",
+        clientVersion: "v1.2.3+build.7",
+      },
+    );
+    expect(openIdentity.status).toBe(201);
+
+    const placeholder = await createRun(
+      deps,
+      contributor,
+      "create_run_bad_identity_0001",
+      {
+        provider: "provider",
+        model: "model",
+        client: "client",
+        clientVersion: "latest",
+      },
+    );
+    expect(placeholder.status).toBe(400);
+    expect(await placeholder.json()).toMatchObject({
+      error: "invalid_request",
+    });
+  });
+
   it("fails closed instead of throwing when the operator list is absent", async () => {
     const response = await onPagesRequest({
       request: new Request("https://api.slop.cash/api/v1/runs", {
@@ -443,6 +479,34 @@ describe("private trace API", () => {
       deps,
     );
     expect(denied.status).toBe(403);
+  });
+
+  it("grants operator access only to an asserted actor in the configured set", async () => {
+    const deps = dependencies();
+    deps.operatorGithubIds = new Set(["42"]);
+    const response = await handleTraceApi(
+      new Request("https://api.slop.cash/api/v1/auth/session", {
+        method: "POST",
+        headers: {
+          "x-slop-identity-assertion": "valid_slop_identity_assertion_value",
+        },
+      }),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { token: string };
+    const granted = await handleTraceApi(
+      request(
+        `operator/traces/${"a".repeat(64)}/grant`,
+        "POST",
+        body.token,
+        JSON.stringify({ reason: "support investigation" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(granted.status).toBe(404);
+    expect(await granted.json()).toMatchObject({ error: "not_found" });
   });
 
   it("requires a valid trace before finalization and is write-only for contributors", async () => {

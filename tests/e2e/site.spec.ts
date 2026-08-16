@@ -542,16 +542,24 @@ test("creates a valid GitHub-native project handoff", async ({ page }) => {
 });
 
 test("serves byte-consistent install and read-only artifacts for every project", async ({
+  baseURL,
   request,
 }) => {
   const privateApiResponse = await request.post("/api/v1/runs", {
     data: {},
   });
-  // The local Pages origin is intentionally plain HTTP, so reaching the
-  // Function must fail at its HTTPS boundary rather than Cloudflare's static
-  // file handler (405) or the SPA fallback (200).
-  expect(privateApiResponse.status()).toBe(400);
-  expect(await privateApiResponse.json()).toEqual({ error: "https_required" });
+  const originProtocol = new URL(baseURL ?? "http://127.0.0.1:4466").protocol;
+  if (originProtocol !== "http:" && originProtocol !== "https:") {
+    throw new Error(`unsupported test origin protocol: ${originProtocol}`);
+  }
+  const privateApiExpectation =
+    originProtocol === "https:"
+      ? { status: 401, error: "unauthorized" }
+      : { status: 400, error: "https_required" };
+  expect(privateApiResponse.status()).toBe(privateApiExpectation.status);
+  expect(await privateApiResponse.json()).toMatchObject({
+    error: privateApiExpectation.error,
+  });
 
   const legacySkillResponse = await request.get("/skill.md", {
     maxRedirects: 0,

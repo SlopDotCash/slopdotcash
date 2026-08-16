@@ -1,6 +1,7 @@
 import { randomToken } from "./crypto";
 import { handleIdentityRequest } from "./handler";
 import { type D1Database, D1IdentityPersistence } from "./persistence";
+import { consumeExactRateLimit, deleteExpiredRateLimits } from "./rate-limit";
 
 type RateLimitBinding = {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -23,7 +24,7 @@ function rateLimitKey(request: Request): string {
     : "unattributed";
 }
 
-function rateLimitResponse(): Response {
+function rateLimitResponse(retryAfterSeconds = 60): Response {
   return new Response(
     JSON.stringify({
       error: "rate_limited",
@@ -35,7 +36,7 @@ function rateLimitResponse(): Response {
         "cache-control": "no-store",
         "content-type": "application/json; charset=utf-8",
         "referrer-policy": "no-referrer",
-        "retry-after": "60",
+        "retry-after": String(retryAfterSeconds),
         "x-content-type-options": "nosniff",
       },
     },
@@ -63,7 +64,14 @@ function limiterUnavailableResponse(): Response {
 
 export async function applyIdentityRateLimit(
   request: Request,
-  env: Pick<Env, "IDENTITY_START_LIMITER" | "IDENTITY_POLL_LIMITER">,
+  env: Pick<
+    Env,
+    | "IDENTITY_DB"
+    | "IDENTITY_START_LIMITER"
+    | "IDENTITY_POLL_LIMITER"
+    | "IDENTITY_STATE_KEY"
+  >,
+  now: () => Date = () => new Date(),
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (
@@ -73,16 +81,38 @@ export async function applyIdentityRateLimit(
   ) {
     return null;
   }
-  const limiter =
+  const policy =
     url.pathname === "/v1/oauth/start"
-      ? env.IDENTITY_START_LIMITER
+      ? {
+          binding: env.IDENTITY_START_LIMITER,
+          limit: 12,
+          scope: "oauth-start",
+        }
       : url.pathname === "/v1/oauth/poll"
-        ? env.IDENTITY_POLL_LIMITER
+        ? {
+            binding: env.IDENTITY_POLL_LIMITER,
+            limit: 120,
+            scope: "oauth-poll",
+          }
         : null;
-  if (limiter === null) return null;
+  if (policy === null) return null;
   try {
-    const result = await limiter.limit({ key: rateLimitKey(request) });
-    return result.success ? null : rateLimitResponse();
+    const principal = rateLimitKey(request);
+    const edgeResult = await policy.binding.limit({ key: principal });
+    if (!edgeResult.success) return rateLimitResponse();
+    const currentEpochSeconds = Math.floor(now().getTime() / 1_000);
+    const exactResult = await consumeExactRateLimit({
+      db: env.IDENTITY_DB,
+      limit: policy.limit,
+      nowEpochSeconds: currentEpochSeconds,
+      principal,
+      scope: policy.scope,
+      secret: env.IDENTITY_STATE_KEY,
+      windowSeconds: 60,
+    });
+    return exactResult.allowed
+      ? null
+      : rateLimitResponse(exactResult.retryAfterSeconds);
   } catch {
     console.error("slop identity rate limiter failed");
     return limiterUnavailableResponse();
@@ -178,8 +208,13 @@ export default {
     return handleIdentityRequest(request, dependencies(env));
   },
   async scheduled(_controller: unknown, env: Env): Promise<void> {
+    const now = new Date();
     await new D1IdentityPersistence(env.IDENTITY_DB).deleteExpired(
-      new Date().toISOString(),
+      now.toISOString(),
+    );
+    await deleteExpiredRateLimits(
+      env.IDENTITY_DB,
+      Math.floor(now.getTime() / 1_000),
     );
   },
 };

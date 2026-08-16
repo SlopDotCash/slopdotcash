@@ -61,7 +61,7 @@ node <skill-directory>/scripts/run-receipt.mjs start \
 
 For Claude Code declare `--client claude-code --provider anthropic --model
 <exact-model>`. For Grok, Kimi, or another client, use its concrete identifiers.
-Codex and Claude Code have pinned `ccusage@20.0.19` adapters; unsupported
+Codex, Claude Code, and Grok Build have pinned `ccusage@20.0.20` adapters; unsupported
 clients continue with usage marked unavailable and omit
 `--allow-package-execution`.
 
