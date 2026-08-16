@@ -53,7 +53,7 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
-import { feeForPrincipal, PLATFORM_FEE_BASIS_POINTS } from "./lib/rewards";
+import { feeForPrincipal } from "./lib/rewards";
 
 const SOURCE_REPOSITORY = "https://github.com/elizaOS/slopdotcash";
 const PROJECT_PROPOSAL_ROOT = `${SOURCE_REPOSITORY}/new/develop`;
@@ -1067,7 +1067,7 @@ function ProjectPaymentHistory({
       <p className="money-summary">
         <strong>{formatMicroUsdc(paid.toString())} paid</strong>
         <span>{formatMicroUsdc(approved.toString())} approved</span>
-        <span>{formatMicroUsdc(fees.toString())} in 3% payout fees</span>
+        <span>{formatMicroUsdc(fees.toString())} in 1% payout fees</span>
       </p>
       {cycles.length === 0 ? (
         <EmptyState text="No payment cycles have closed yet." />
@@ -1700,7 +1700,7 @@ function CyclePage({
         </li>
         <li>
           <strong>Settlement</strong>
-          <p>The 3% fee applies when the approved principal is paid.</p>
+          <p>The 1% fee applies when the approved principal is paid.</p>
         </li>
       </ol>
       {view ? (
@@ -1836,10 +1836,7 @@ export function ProjectManagePage({
     parsedRows.every((row) => row.approvedMinor !== null) &&
     allocated === BigInt(parsedTotal) &&
     changedRowsHaveReasons;
-  const feeMinor = feeForPrincipal(
-    parsedTotal ?? "0",
-    PLATFORM_FEE_BASIS_POINTS,
-  );
+  const feeMinor = feeForPrincipal(parsedTotal ?? "0", 100);
   const cycleId = latestRecord?.cycleId ?? view?.cycle.id ?? "next-cycle";
   const payoutDraftingEnabled =
     project.reward.kind === "monthly-pool" &&
@@ -1849,7 +1846,7 @@ export function ProjectManagePage({
       projectId: project.id,
       cycleId,
       approvedPrincipalMinor: parsedTotal ?? "invalid",
-      feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
+      feeBasisPoints: 100,
       feeMinor,
       allocations: parsedRows.map((row) => ({
         login: row.login,
@@ -1921,7 +1918,7 @@ export function ProjectManagePage({
           <div className="owner-section-body">
             <p>
               Draft only. This page cannot save, approve, sign, or send USDC.
-              Changed amounts need a public reason; the 3% fee applies only if a
+              Changed amounts need a public reason; the 1% fee applies only if a
               reviewed cycle is later paid.
             </p>
             <label className="total-field">
@@ -2127,7 +2124,7 @@ function ProjectProposalPage() {
         monthlyCapDisplay: pool.display,
         committedMinor: "0",
         paymentMode: "disabled",
-        feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
+        feeBasisPoints: 100,
         unusedFunds: "rollover-without-cap-increase",
         fundingState: "pledged",
       },
@@ -2244,7 +2241,7 @@ function ProjectProposalPage() {
           </label>
           <div className="proposal-rules">
             <p>
-              Public repository · any model · permanent private traces · 3% fee
+              Public repository · any model · permanent private traces · 1% fee
               when payouts settle
             </p>
           </div>

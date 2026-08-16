@@ -51,7 +51,7 @@
   max-width: 1120px;
   margin: 0;
   font-size: clamp(52px, 7vw, 108px);
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: -0.072em;
   line-height: 0.9;
 }
@@ -78,7 +78,7 @@
   max-width: 1000px;
   margin: 0;
   font-size: clamp(54px, 7vw, 112px);
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: -0.072em;
   line-height: 0.88;
 }
@@ -413,7 +413,6 @@
   grid-column: 1 / -1;
   margin: 60px 0 12px;
   font-size: clamp(28px, 3.2vw, 50px);
-  font-weight: 700;
   letter-spacing: -0.06em;
   line-height: 0.98;
 }
@@ -474,7 +473,6 @@
   grid-column: 1 / -1;
   margin: 52px 0 12px;
   font-size: clamp(28px, 3.1vw, 48px);
-  font-weight: 700;
   letter-spacing: -0.06em;
 }
 .deck-ownership-modes p {

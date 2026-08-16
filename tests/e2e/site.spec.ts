@@ -283,7 +283,7 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   await expect(
     page.getByRole("link", { name: /View in SlopHub/u }),
   ).toHaveCount(0);
-  await expect(page.getByText("3% platform fee · Solana")).toHaveCount(0);
+  await expect(page.getByText("1% platform fee · Solana")).toHaveCount(0);
   const rewardStyle = await page.locator(".reward-card").evaluate((card) => {
     const amount = card.querySelector<HTMLElement>(".reward-amount-monthly");
     const actions = card.querySelector<HTMLElement>(":scope > div");
