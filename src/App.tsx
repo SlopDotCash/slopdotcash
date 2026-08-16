@@ -15,6 +15,7 @@ import {
   RotateCcw,
   X,
 } from "lucide-react";
+import QRCode from "qrcode";
 import {
   type ReactNode,
   useCallback,
@@ -1145,11 +1146,53 @@ function fundingTransactionExplorer(record: ProjectFundingRecord): string {
 }
 
 function formatFundingMinor(record: ProjectFundingRecord): string {
-  if (record.asset === "USDC") return formatMicroUsdc(record.amountMinor);
-  const satoshis = BigInt(record.amountMinor);
+  return formatFundingAmount(record.asset, record.amountMinor);
+}
+
+function formatFundingAmount(
+  asset: ProjectFundingRecord["asset"],
+  amountMinor: string,
+): string {
+  if (asset === "USDC") return formatMicroUsdc(amountMinor);
+  const satoshis = BigInt(amountMinor);
   const whole = satoshis / 100_000_000n;
   const fraction = (satoshis % 100_000_000n).toString().padStart(8, "0");
   return `${whole}.${fraction} BTC`;
+}
+
+function FundingQr({
+  address,
+  asset,
+  network,
+}: {
+  address: string;
+  asset: string;
+  network: string;
+}) {
+  const [source, setSource] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void QRCode.toString(address, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      type: "svg",
+      width: 176,
+    }).then((value) => {
+      if (active) setSource(`data:image/svg+xml,${encodeURIComponent(value)}`);
+    });
+    return () => {
+      active = false;
+    };
+  }, [address]);
+  return source ? (
+    <img
+      alt={`${network} ${asset} receiving address QR code`}
+      className="funding-qr"
+      height="176"
+      src={source}
+      width="176"
+    />
+  ) : null;
 }
 
 function ProjectFunding({ project }: { project: ProjectDefinition }) {
@@ -1174,6 +1217,11 @@ function ProjectFunding({ project }: { project: ProjectDefinition }) {
                   {route.asset} · {route.network}
                 </strong>
                 <code>{route.address}</code>
+                <FundingQr
+                  address={route.address}
+                  asset={route.asset}
+                  network={route.network}
+                />
                 <div>
                   <button
                     className="text-button"
@@ -1277,14 +1325,24 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
         <EmptyState text="No reviewed public funding transactions have been published yet." />
       ) : (
         <>
-          <p className="money-summary">
-            <strong>
-              {formatMicroUsdc(totals.verifiedMinor)} verified on-chain
-            </strong>
-            <span>
-              {formatMicroUsdc(totals.selfReportedMinor)} self-reported
-            </span>
-          </p>
+          {totals.map((assetTotals) => (
+            <p className="money-summary" key={assetTotals.asset}>
+              <strong>
+                {formatFundingAmount(
+                  assetTotals.asset,
+                  assetTotals.verifiedMinor,
+                )}{" "}
+                verified on-chain
+              </strong>
+              <span>
+                {formatFundingAmount(
+                  assetTotals.asset,
+                  assetTotals.selfReportedMinor,
+                )}{" "}
+                self-reported
+              </span>
+            </p>
+          ))}
           <div className="plain-table-wrap">
             <table className="plain-table">
               <caption className="visually-hidden">

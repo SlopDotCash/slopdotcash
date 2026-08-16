@@ -94,6 +94,7 @@ describe("project funding records", () => {
     const original = assertProjectFundingRecord(record(), routes);
     const correction = record({
       recordId: "fund_fixture_02",
+      observedAt: "2026-08-03T00:00:00.000Z",
       state: "disputed",
       finality: { kind: "confirmations", confirmations: 64 },
       verifier: {
@@ -105,16 +106,21 @@ describe("project funding records", () => {
       supersedes: original.recordId,
     });
     const ledger = assertProjectFundingLedger([original, correction], routes);
-    expect(projectFundingTotals(ledger)).toEqual({
-      selfReportedMinor: "0",
-      verifiedMinor: "0",
-    });
+    expect(projectFundingTotals(ledger)).toEqual([
+      { asset: "USDC", selfReportedMinor: "0", verifiedMinor: "0" },
+    ]);
     expect(() =>
       assertProjectFundingLedger(
         [original, { ...correction, supersedes: null }],
         routes,
       ),
     ).toThrow(/duplicate or correction chain/u);
+    expect(() =>
+      assertProjectFundingLedger(
+        [original, { ...correction, observedAt: original.observedAt }],
+        routes,
+      ),
+    ).toThrow(/not later/u);
   });
 
   it("never combines self-reported and verified totals", () => {
@@ -133,9 +139,12 @@ describe("project funding records", () => {
       },
     });
     const ledger = assertProjectFundingLedger([record(), verified], routes);
-    expect(projectFundingTotals(ledger)).toEqual({
-      selfReportedMinor: "1000000",
-      verifiedMinor: "2500000",
-    });
+    expect(projectFundingTotals(ledger)).toEqual([
+      {
+        asset: "USDC",
+        selfReportedMinor: "1000000",
+        verifiedMinor: "2500000",
+      },
+    ]);
   });
 });

@@ -1549,6 +1549,52 @@ small {
   font-weight: 750;
 }
 
+.project-funding details {
+  border-block: 1px solid var(--line);
+  padding-block: 20px;
+}
+
+.project-funding summary {
+  cursor: pointer;
+  font-size: clamp(24px, 4vw, 36px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.funding-routes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 18px;
+  margin-block: 24px;
+}
+
+.funding-route {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--line);
+}
+
+.funding-route code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.funding-route > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+}
+
+.funding-qr {
+  width: 176px;
+  height: 176px;
+  max-width: 100%;
+  image-rendering: pixelated;
+}
+
 .money-summary {
   display: flex;
   flex-wrap: wrap;

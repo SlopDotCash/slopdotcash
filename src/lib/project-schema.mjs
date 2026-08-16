@@ -275,10 +275,15 @@ function validateFunding(value, projectId) {
     if (!expectedAsset || route.asset !== expectedAsset) {
       throw new TypeError(`${field} network or asset is unsupported`);
     }
+    const addressPattern =
+      route.network === "base" || route.network === "ethereum"
+        ? /^0x[0-9a-f]{40}$/u
+        : route.network === "bitcoin"
+          ? /^bc1[a-z0-9]{11,87}$/u
+          : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u;
     text(route.address, `${field}.address`, {
       max: 100,
-      pattern:
-        /^(?:0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,88}|bc1[a-z0-9]{11,87})$/u,
+      pattern: addressPattern,
     });
     const effectiveAt = timestamp(route.effectiveAt, `${field}.effectiveAt`);
     const replacedAt =

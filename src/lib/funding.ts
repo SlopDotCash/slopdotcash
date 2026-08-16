@@ -447,6 +447,16 @@ export function assertProjectFundingLedger(
         "funding ledger supersedes a missing or later record",
       );
     }
+    if (
+      prior &&
+      (prior.recipient !== record.recipient ||
+        prior.asset !== record.asset ||
+        Date.parse(record.observedAt) <= Date.parse(prior.observedAt))
+    ) {
+      throw new TypeError(
+        "funding ledger correction changes transaction identity or is not later",
+      );
+    }
     byId.set(record.recordId, record);
     latestByTransaction.set(transactionKey, record);
   }
@@ -458,20 +468,30 @@ export function projectFundingTotals(records: readonly ProjectFundingRecord[]) {
   for (const record of records) {
     latest.set(`${record.network}:${record.transactionId}`, record);
   }
-  let selfReportedMinor = 0n;
-  let verifiedMinor = 0n;
+  const byAsset = new Map<
+    FundingAsset,
+    { selfReportedMinor: bigint; verifiedMinor: bigint }
+  >();
   for (const record of latest.values()) {
+    const totals = byAsset.get(record.asset) ?? {
+      selfReportedMinor: 0n,
+      verifiedMinor: 0n,
+    };
     if (record.state === "self-reported") {
-      selfReportedMinor += BigInt(record.amountMinor);
+      totals.selfReportedMinor += BigInt(record.amountMinor);
     }
     if (record.state === "verified-on-chain") {
-      verifiedMinor += BigInt(record.amountMinor);
+      totals.verifiedMinor += BigInt(record.amountMinor);
     }
+    byAsset.set(record.asset, totals);
   }
-  return {
-    selfReportedMinor: selfReportedMinor.toString(),
-    verifiedMinor: verifiedMinor.toString(),
-  };
+  return [...byAsset.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([asset, totals]) => ({
+      asset,
+      selfReportedMinor: totals.selfReportedMinor.toString(),
+      verifiedMinor: totals.verifiedMinor.toString(),
+    }));
 }
 
 export function assertProjectFundingIndex(
