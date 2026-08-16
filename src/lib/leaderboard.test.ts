@@ -3076,6 +3076,37 @@ describe("work queue claims and prioritization", () => {
     ).toBe(true);
   });
 
+  it("bounds oversized live titles instead of failing the snapshot", () => {
+    const author = actor("author");
+    const longTitle = `fix: ${"very ".repeat(80)}long upstream title`;
+    expect(longTitle.length).toBeGreaterThan(256);
+    const openNearTest = pullRequest({
+      id: "PR_OPEN_LONG_TITLE",
+      number: 55,
+      title: longTitle,
+      mergedAt: null,
+      author,
+      updatedAt: "2026-07-29T10:00:00.000Z",
+      files: [
+        { path: "src/feature.test.ts", additions: 6, deletions: 0 },
+        { path: "src/feature.ts", additions: 20, deletions: 2 },
+      ],
+    });
+
+    const snapshot = createLeaderboardSnapshot(
+      input({ openPullRequests: [openNearTest] }),
+    );
+
+    const published = snapshot.opportunities.filter(
+      (opportunity) => opportunity.source.id === openNearTest.id,
+    );
+    expect(published.length).toBeGreaterThan(0);
+    for (const opportunity of published) {
+      expect(opportunity.source.title.length).toBeLessThanOrEqual(256);
+      expect(opportunity.source.title.endsWith("…")).toBe(true);
+    }
+  });
+
   it("skips draft pull requests when publishing opportunities", () => {
     const author = actor("author");
     const reviewer = actor("reviewer");
