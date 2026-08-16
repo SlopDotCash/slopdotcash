@@ -166,8 +166,10 @@ contributors or project owners after upload. Only designated Slop operators
 may retrieve a trace through short-lived, audited authorization. The
 contributor upload path is write-only, bounded, authenticated, checksum
 verified, and fail-closed. Public artifacts may contain only the trace digest
-and safe metadata, never the trace body. Privacy and data-subject requests use
-the private security-advisory channel documented by that contract.
+and safe metadata, never the trace body. Trace upload and production activation
+remain blocked until the verified operator-controlled private request intake
+documented by that contract is publicly available; public issues are not a
+private channel.
 
 Project reviewer skills follow the same rule: measure the review through the
 project contributor receipt CLI, include exact provider/model/client and trace

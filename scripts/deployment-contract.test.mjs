@@ -63,6 +63,16 @@ describe("slop.cash deployment contract", () => {
       "uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
     );
     expect(deployJob).toContain(`node-version: ${"$"}{{ env.NODE_VERSION }}`);
+    expect(deployJob).toContain(
+      "- name: Require public private-request intake",
+    );
+    expect(deployJob).toContain(
+      "https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting",
+    );
+    expect(deployJob).toContain("value?.enabled !== true");
+    expect(
+      deployJob.indexOf("Require public private-request intake"),
+    ).toBeLessThan(deployJob.indexOf("wrangler pages deploy \\"));
     expect(deployJob).toContain("./node_modules/.bin/wrangler pages deploy \\");
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler versions upload \\\n            --config workers/identity/wrangler.toml \\",

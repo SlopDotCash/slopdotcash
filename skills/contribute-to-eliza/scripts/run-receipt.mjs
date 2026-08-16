@@ -17,11 +17,15 @@ import {
 } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  constants as fsConstants,
+  fstatSync,
   linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -77,6 +81,8 @@ const AUTHORIZATION_RECEIPT = ".slop-authorization.json";
 const TRACE_AUTHORITY = "https://api.slop.cash";
 const IDENTITY_AUTHORITY = "https://identity.slop.cash";
 const TRACE_PRIVACY_CONTRACT = "https://slop.cash/protocol/private-trace-v1.md";
+const PRIVATE_REQUEST_INTAKE_STATUS =
+  "https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting";
 
 const HELP = `Usage: node scripts/run-receipt.mjs <command> [options]
 
@@ -1011,20 +1017,36 @@ function listRegularFiles(root, prefix = "") {
 
 function readTrajectoryFile(path) {
   const absolute = resolve(path);
-  const metadata = lstatSync(absolute);
-  if (
-    !metadata.isFile() ||
-    metadata.isSymbolicLink() ||
-    metadata.size === 0 ||
-    metadata.size > MAX_TRAJECTORY_BYTES
-  ) {
-    fail("trajectory must be a non-empty regular file no larger than 8 MiB");
-  }
-  const contents = readFileSync(absolute);
+  let descriptor;
   try {
-    new TextDecoder("utf-8", { fatal: true }).decode(contents);
+    descriptor = openSync(
+      absolute,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
   } catch {
-    fail("trajectory must contain valid UTF-8 text or NDJSON");
+    fail("trajectory must be an accessible non-symlinked regular file");
+  }
+  let contents;
+  try {
+    const metadata = fstatSync(descriptor);
+    if (
+      !metadata.isFile() ||
+      metadata.size === 0 ||
+      metadata.size > MAX_TRAJECTORY_BYTES
+    ) {
+      fail("trajectory must be a non-empty regular file no larger than 8 MiB");
+    }
+    contents = readFileSync(descriptor);
+    if (contents.length === 0 || contents.length > MAX_TRAJECTORY_BYTES) {
+      fail("trajectory must be a non-empty regular file no larger than 8 MiB");
+    }
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(contents);
+    } catch {
+      fail("trajectory must contain valid UTF-8 text or NDJSON");
+    }
+  } finally {
+    closeSync(descriptor);
   }
   return {
     absolutePath: absolute,
@@ -1262,6 +1284,21 @@ export async function uploadPrivateTrace(
     automaticRedaction: "none",
     retention: "permanent",
   });
+  const intake = await jsonRequest(
+    fetchImpl,
+    PRIVATE_REQUEST_INTAKE_STATUS,
+    {
+      method: "GET",
+      headers: { Accept: "application/vnd.github+json" },
+    },
+    ["enabled"],
+    "private request intake status",
+  );
+  if (intake.enabled !== true) {
+    fail(
+      "private request intake is unavailable; private trace upload is blocked",
+    );
+  }
   const identityAssertion = await assertionProvider(fetchImpl);
   if (
     typeof identityAssertion !== "string" ||
@@ -1944,6 +1981,7 @@ function previewRun(options) {
     ],
     network: [
       `Resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
+      `Verify the public private-request intake gate at ${PRIVATE_REQUEST_INTAKE_STATUS}; trace upload remains blocked unless it reports enabled`,
       `After a local byte/digest disclosure, authenticate with GitHub and permanently upload the inspected trace through ${TRACE_AUTHORITY} under ${TRACE_PRIVACY_CONTRACT}`,
     ],
     automaticUploads: [],

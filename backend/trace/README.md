@@ -12,6 +12,12 @@ This backend stores the selected file byte-for-byte and does not redact or scan
 it. Backend integrity checks enforce the declared bytes; they do not replace
 the contributor's required pre-upload inspection.
 
+Trace upload and production activation require GitHub's public private
+vulnerability reporting status to return exactly `enabled: true`. The client
+and deploy workflow check that operator-controlled intake fail closed; an
+advisory URL alone is not evidence of availability, and a public issue is never
+a private intake.
+
 ## Storage contract
 
 - Every finalized run has exactly one SHA-256 trace object.
@@ -45,7 +51,7 @@ the immutable GitHub numeric ID also appears in `OPERATOR_GITHUB_IDS`.
 The write flow is:
 
 1. `POST /api/v1/runs` with `Idempotency-Key` and `{ clientRunId, projectId,
-   repository, projectPolicyRevision, provider, model, client, clientVersion }`.
+repository, projectPolicyRevision, provider, model, client, clientVersion }`.
 2. `POST /api/v1/runs/{serverRunId}/trace-intents` with `Idempotency-Key` and
    `{ sha256, sizeBytes, contentType }`.
 3. `PUT` the exact returned `uploadUrl` within five minutes, with the exact

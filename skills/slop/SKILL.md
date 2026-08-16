@@ -62,7 +62,9 @@ Before running the guide, show the operator one short plan containing:
   under the [private trace privacy
   contract](https://slop.cash/protocol/private-trace-v1.md); the uploader does
   not redact the contributor-inspected bytes, only designated Slop operators
-  may retrieve them, and GitHub receives only the digest and upload identity.
+  may retrieve them, and GitHub receives only the digest and upload identity;
+  upload stays blocked unless the public operator-controlled private-request
+  intake gate reports enabled.
 
 If the user's request already explicitly authorized installing the project
 skill, previewing local aggregate usage, and permanently storing the run trace

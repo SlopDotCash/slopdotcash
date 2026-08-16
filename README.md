@@ -98,14 +98,14 @@ credit is uncapped and diminishes within each contributor, project, and UTC
 month, so sustained accepted work always helps without paying every repeated
 outcome as though it were the first:
 
-| Outcome | Points | Per-contributor/project/month cap |
-| --- | ---: | ---: |
-| Merged non-bot pull request | `ceil(10 / sqrt(ordinal))`, minimum 1 | Uncapped |
-| Confirmed resolved issue | 4 | 5 |
-| Material test change | 4 | 5 |
-| Verified evidence | 1–2 by category | 30 points |
-| Substantive non-self review | 3 | 10 |
-| Maintainer-approved evaluated contribution | 1–8 | 3 |
+| Outcome                                    |                                Points | Per-contributor/project/month cap |
+| ------------------------------------------ | ------------------------------------: | --------------------------------: |
+| Merged non-bot pull request                | `ceil(10 / sqrt(ordinal))`, minimum 1 |                          Uncapped |
+| Confirmed resolved issue                   |                                     4 |                                 5 |
+| Material test change                       |                                     4 |                                 5 |
+| Verified evidence                          |                       1–2 by category |                         30 points |
+| Substantive non-self review                |                                     3 |                                10 |
+| Maintainer-approved evaluated contribution |                                   1–8 |                                 3 |
 
 Every rolling snapshot covers 35 complete days. That is long enough for a
 first-of-month job to freeze the entire prior UTC month. Every merged outcome
@@ -165,7 +165,9 @@ operator access, permanent retention, and privacy requests. Only designated
 Slop operators can obtain a short-lived audited read grant; contributors,
 project owners, and the public have no read route. The public receipt contains
 only a digest and immutable upload identity. Trace upload or finalization
-failure blocks submission.
+failure blocks submission. Upload and production activation also remain
+blocked until a verified operator-controlled private request intake is
+publicly available; never put sensitive request details in a public issue.
 
 ## Monthly rewards
 

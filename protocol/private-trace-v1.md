@@ -9,13 +9,15 @@ must not redefine it.
 
 Uploading is mandatory for an agent-authored contribution or review. It is not
 background synchronization: the contributor selects one local file and invokes
-the `trace` command. Before GitHub authorization starts, the command snapshots
-that exact file in memory and displays its local path, byte count, media type,
-and SHA-256 digest. Inspect it before opening the printed authorization URL. If
-any byte needs to change, cancel the waiting command, replace the file, and
-rerun `trace`; the current process will upload only its already-disclosed
-snapshot. The uploader sends those exact bytes without transformation, and a
-changed file has a different digest and requires a new upload intent.
+the `trace` command. Before GitHub authorization starts, the command opens that
+path once without following a final symlink, verifies the opened descriptor is
+a regular file, reads one snapshot, and enforces the byte bound again after the
+read. It displays that snapshot's local path, byte count, media type, and
+SHA-256 digest. Inspect it before opening the printed authorization URL. If any
+byte needs to change, cancel the waiting command, replace the file, and rerun
+`trace`; the current process will upload only its already-disclosed snapshot.
+The uploader sends those exact bytes without transformation, and a changed file
+has a different digest and requires a new upload intent.
 
 Do not authorize or upload if this contract or permanent retention is
 unacceptable. The contribution or review must then remain unsubmitted. A human
@@ -88,14 +90,21 @@ Slop operator may retrieve a body through a single-use grant that expires after
 and appends grant and read audit events. Cloudflare account access is separately
 limited to designated operators.
 
-For a privacy, security, or data-subject request, open a private GitHub security
-advisory at
-<https://github.com/elizaOS/slopdotcash/security/advisories/new>. Do not put
-private data or trace contents in a public issue. Operators must authenticate
-the requester and handle any action required by applicable law outside the
-contributor API with an audit record. This channel does not create a voluntary
-deletion or contributor-read right that conflicts with the permanent,
-write-only product contract.
+For a privacy, security, or data-subject request, use the repository's enabled
+private GitHub security-advisory intake at
+<https://github.com/elizaOS/slopdotcash/security/advisories/new>. It accepts a
+private report from a signed-in GitHub user without publishing the report as an
+issue. Do not put private data, trace contents, or request details in a public
+issue.
+
+The uploader and production workflow independently query GitHub's public
+private-vulnerability-reporting status before activating this path. Trace
+upload and production activation fail closed if it does not report exactly
+`enabled: true`; the advisory URL alone is not evidence that intake is usable.
+Operators must authenticate the requester and handle any action required by
+applicable law outside the contributor API with an audit record. This channel
+does not create a voluntary deletion or contributor-read right that conflicts
+with the permanent, write-only product contract.
 
 ## Integrity requirements
 

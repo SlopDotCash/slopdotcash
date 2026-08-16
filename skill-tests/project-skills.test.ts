@@ -589,6 +589,7 @@ describe("project run usage", () => {
       const sequence: string[] = [];
       let disclosure: Record<string, unknown> | null = null;
       const responses = [
+        { enabled: true },
         {
           token: "s".repeat(32),
           tokenType: "Bearer",
@@ -669,21 +670,26 @@ describe("project run usage", () => {
         automaticRedaction: "none",
         retention: "permanent",
       });
-      assert.strictEqual(calls.length, 5);
+      assert.strictEqual(calls.length, 6);
       assert.strictEqual(
-        Buffer.from(calls[3].options.body as Uint8Array).toString("utf8"),
+        Buffer.from(calls[4].options.body as Uint8Array).toString("utf8"),
         contents,
       );
       assert.strictEqual(
-        (calls[3].options.headers as Record<string, string>).Digest,
+        (calls[4].options.headers as Record<string, string>).Digest,
         `sha-256=${digest}`,
       );
       assert.strictEqual(
         calls[0].url,
+        "https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting",
+      );
+      assert.strictEqual(calls[0].options.method, "GET");
+      assert.strictEqual(
+        calls[1].url,
         "https://api.slop.cash/api/v1/auth/session",
       );
       assert.strictEqual(
-        (calls[0].options.headers as Record<string, string>)[
+        (calls[1].options.headers as Record<string, string>)[
           "X-Slop-Identity-Assertion"
         ],
         "i".repeat(32),
@@ -691,6 +697,92 @@ describe("project run usage", () => {
       assert.ok(
         calls.every(({ options }) => !JSON.stringify(options).includes("gho_")),
       );
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("blocks private trace upload before authorization when private intake is disabled", async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-trace-intake-"));
+    try {
+      const trajectory = join(fixtureRoot, "trace.ndjson");
+      writeFileSync(trajectory, '{"event":"complete"}\n');
+      let authorizationStarted = false;
+      const requests: string[] = [];
+      await assert.rejects(
+        uploadPrivateTrace(
+          {
+            runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            projectId: "eliza",
+            repositoryId: "elizaOS/eliza",
+            revision: "a".repeat(40),
+            provider: "moonshot",
+            model: "kimi-k2",
+            client: "kimi-cli",
+          },
+          trajectory,
+          "1.2.3",
+          {
+            disclosure: () => {},
+            assertionProvider: () => {
+              authorizationStarted = true;
+              return "i".repeat(32);
+            },
+            fetchImpl: async (url) => {
+              requests.push(String(url));
+              return new Response(JSON.stringify({ enabled: false }), {
+                status: 200,
+              });
+            },
+          },
+        ),
+        /private request intake is unavailable/u,
+      );
+      assert.strictEqual(authorizationStarted, false);
+      assert.deepStrictEqual(requests, [
+        "https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting",
+      ]);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a symlinked private trace before disclosure or network access", async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-trace-symlink-"));
+    try {
+      const target = join(fixtureRoot, "secret.ndjson");
+      const trajectory = join(fixtureRoot, "trace.ndjson");
+      writeFileSync(target, '{"secret":"must-not-snapshot"}\n');
+      symlinkSync(target, trajectory);
+      let disclosed = false;
+      let fetched = false;
+      await assert.rejects(
+        uploadPrivateTrace(
+          {
+            runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            projectId: "eliza",
+            repositoryId: "elizaOS/eliza",
+            revision: "a".repeat(40),
+            provider: "moonshot",
+            model: "kimi-k2",
+            client: "kimi-cli",
+          },
+          trajectory,
+          "1.2.3",
+          {
+            disclosure: () => {
+              disclosed = true;
+            },
+            fetchImpl: async () => {
+              fetched = true;
+              return new Response("{}", { status: 200 });
+            },
+          },
+        ),
+        /non-symlinked regular file/u,
+      );
+      assert.strictEqual(disclosed, false);
+      assert.strictEqual(fetched, false);
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }

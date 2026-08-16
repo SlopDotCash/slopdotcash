@@ -116,7 +116,8 @@ is retained permanently and is readable only by designated Slop operators.
 The uploader sends the contributor-inspected bytes without automatic
 redaction. Relevant usage must join to an accepted result.
 Ambiguous or unavailable usage remains visible but never changes score, rank,
-share, or payout.
+share, or payout. Upload and production activation remain blocked unless a
+verified operator-controlled private request intake is publicly available.
 
 ### Submit and review
 
