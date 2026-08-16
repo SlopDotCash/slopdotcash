@@ -26,15 +26,18 @@ describe("Slop fundraising deck", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next slide" }));
     expect(
       screen.getByRole("heading", {
-        name: "Two builders. 25K+ GitHub stars.",
+        name: "Shaw built a movement in open source.",
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Shaw")).toBeInTheDocument();
+    expect(screen.getByText("Nubs")).toBeInTheDocument();
     expect(window.location.hash).toBe("#2");
 
     fireEvent.keyDown(window, { key: "End" });
     expect(
-      screen.getByRole("heading", { name: "We own the results together." }),
+      screen.getByRole("heading", {
+        name: "When we build it, we own it.",
+      }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next slide" })).toBeDisabled();
 
@@ -52,19 +55,27 @@ describe("Slop fundraising deck", () => {
     expect(screen.getByText("Make support one click.")).toBeInTheDocument();
     expect(screen.getByText(/Extropic’s THRML \+ torx/)).toBeInTheDocument();
     expect(screen.getByText(/sponsors like Sapiom/)).toBeInTheDocument();
+    expect(screen.queryByText("01")).not.toBeInTheDocument();
 
     window.history.replaceState({}, "", "/deck#6");
     rerender(<Deck key="ownership" />);
-    expect(screen.getByText("Project-owned")).toBeInTheDocument();
-    expect(screen.getByText("Collectively owned")).toBeInTheDocument();
-    expect(screen.getByText("DAO-owned")).toBeInTheDocument();
+    expect(screen.getByText("Funded by a project")).toBeInTheDocument();
+    expect(screen.getByText("Owned together")).toBeInTheDocument();
+    expect(screen.getByText("Won together")).toBeInTheDocument();
+
+    window.history.replaceState({}, "", "/deck#7");
+    rerender(<Deck key="competition" />);
+    expect(screen.getByText("Yukon")).toBeInTheDocument();
+    expect(screen.getByText("OpenSolve")).toBeInTheDocument();
 
     window.history.replaceState({}, "", "/deck#8");
     rerender(<Deck key="economics" />);
-    expect(screen.getByText(/Base case: a 3% payout fee/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/3% of payouts plus sponsorships/),
+    ).toBeInTheDocument();
     expect(screen.getByText("$2M")).toBeInTheDocument();
     expect(screen.getByText("$1.0M")).toBeInTheDocument();
-    expect(screen.getAllByText("+$400K")).toHaveLength(2);
+    expect(screen.getAllByText("+$500K")).toHaveLength(2);
 
     window.history.replaceState({}, "", "/deck#9");
     rerender(<Deck key="raise" />);
