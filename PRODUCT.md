@@ -110,10 +110,14 @@ and prepares evidence.
 The skill runs pinned `ccusage` reporting and emits a device-signed receipt.
 Public data includes aggregate tokens, API-equivalent estimated cost, model,
 client, revision, project, repository, timestamps, and a required private-trace
-upload digest. The full trace is retained permanently and is readable only by
-designated Slop operators. Relevant usage must join to an accepted result.
+upload digest. The minimized contribution-specific trace defined by the
+[private trace privacy contract](https://slop.cash/protocol/private-trace-v1.md)
+is retained permanently and is readable only by designated Slop operators.
+The uploader sends the contributor-inspected bytes without automatic
+redaction. Relevant usage must join to an accepted result.
 Ambiguous or unavailable usage remains visible but never changes score, rank,
-share, or payout.
+share, or payout. Upload and production activation remain blocked unless a
+verified operator-controlled private request intake is publicly available.
 
 ### Submit and review
 
@@ -233,7 +237,9 @@ Track all of these without collapsing them into one vanity number:
   (per-profile still-open opportunities are in scope; a global rejection feed
   is not);
 - autonomous banning;
-- raw prompt, response, source-file, or secret upload.
+- public prompt, response, source-file, secret, or private-trace-body upload;
+  the mandatory private trace is the narrow exception and follows the
+  [private trace privacy contract](https://slop.cash/protocol/private-trace-v1.md);
 
 ## Tone
 

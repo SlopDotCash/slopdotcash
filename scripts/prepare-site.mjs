@@ -29,6 +29,8 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = packageRoot;
 const publicRoot = join(packageRoot, "public");
 const downloadsRoot = join(publicRoot, "downloads");
+const protocolRoot = join(repositoryRoot, "protocol");
+const publicProtocolRoot = join(publicRoot, "protocol");
 const bootstrapSkillRoot = join(repositoryRoot, "skills", "slop");
 const bootstrapSkillSource = join(bootstrapSkillRoot, "SKILL.md");
 const skillRoot = join(repositoryRoot, "skills", "contribute-to-eliza");
@@ -161,11 +163,18 @@ function listRegularSkillFiles(root, prefix = "") {
 
 mkdirSync(publicRoot, { recursive: true });
 mkdirSync(downloadsRoot, { recursive: true });
-const identityRecordPath = join(repositoryRoot, "protocol", "identity-v1.json");
+mkdirSync(publicProtocolRoot, { recursive: true });
+const privateTraceContractPath = join(protocolRoot, "private-trace-v1.md");
+if (!existsSync(privateTraceContractPath)) {
+  throw new TypeError("[Slop] private trace privacy contract is missing");
+}
+copyFileSync(
+  privateTraceContractPath,
+  join(publicProtocolRoot, "private-trace-v1.md"),
+);
+const identityRecordPath = join(protocolRoot, "identity-v1.json");
 if (existsSync(identityRecordPath)) {
   readIdentityRecord(identityRecordPath);
-  const publicProtocolRoot = join(publicRoot, "protocol");
-  mkdirSync(publicProtocolRoot, { recursive: true });
   copyFileSync(
     identityRecordPath,
     join(publicProtocolRoot, "identity-v1.json"),
@@ -566,7 +575,7 @@ const manifest = {
   telemetry: {
     source: "ccusage@20.0.20",
     policy:
-      "Every agent run permanently uploads its bounded raw trace to private operator-only storage before submission. Public receipts contain aggregate locally reported diagnostic usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Unsupported usage adapters never block participation.",
+      "Every agent run permanently uploads its contributor-inspected, minimized run trace under https://slop.cash/protocol/private-trace-v1.md before submission; the uploader performs no automatic redaction. Public receipts contain aggregate locally reported diagnostic usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Unsupported usage adapters never block participation.",
   },
 };
 
@@ -841,7 +850,7 @@ function publishAdditionalProject({
     telemetry: {
       source: "ccusage@20.0.20",
       policy:
-        "Every agent run permanently uploads its bounded raw trace to private operator-only storage before submission. Public receipts contain only aggregate locally reported diagnostic usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Unsupported usage adapters never block participation.",
+        "Every agent run permanently uploads its contributor-inspected, minimized run trace under https://slop.cash/protocol/private-trace-v1.md before submission; the uploader performs no automatic redaction. Public receipts contain only aggregate locally reported diagnostic usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Unsupported usage adapters never block participation.",
     },
     ...(publicationPrefix
       ? {

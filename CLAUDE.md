@@ -156,14 +156,20 @@ must not gate eligibility, scoring, review, or payment. Supported usage
 adapters may add diagnostic token provenance; unavailable usage never blocks a
 contribution and tokens never change its score or payout.
 
-Every agent run must upload its raw trace before a contribution is submitted.
-Trace objects are permanent, private platform records: store immutable bytes in
-private R2, store only metadata and digests in D1, and never publish or expose
-the object to contributors or project owners after upload. Only designated
-Slop operators may retrieve a trace through short-lived, audited authorization.
-The contributor upload path is write-only, bounded, authenticated, checksum
+Every agent run must upload the minimized contribution-specific trace defined
+by `protocol/private-trace-v1.md` before a contribution is submitted. The
+contributor must inspect and redact the selected file; the uploader stores its
+exact bytes and performs no automatic redaction. Trace objects are permanent,
+private platform records: store immutable bytes in private R2, store only
+metadata and digests in D1, and never publish or expose the object to
+contributors or project owners after upload. Only designated Slop operators
+may retrieve a trace through short-lived, audited authorization. The
+contributor upload path is write-only, bounded, authenticated, checksum
 verified, and fail-closed. Public artifacts may contain only the trace digest
-and safe metadata, never the trace body.
+and safe metadata, never the trace body. Trace upload and production activation
+remain blocked until the verified operator-controlled private request intake
+documented by that contract is publicly available; public issues are not a
+private channel.
 
 Project reviewer skills follow the same rule: measure the review through the
 project contributor receipt CLI, include exact provider/model/client and trace

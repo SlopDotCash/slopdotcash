@@ -98,14 +98,14 @@ credit is uncapped and diminishes within each contributor, project, and UTC
 month, so sustained accepted work always helps without paying every repeated
 outcome as though it were the first:
 
-| Outcome | Points | Per-contributor/project/month cap |
-| --- | ---: | ---: |
-| Merged non-bot pull request | `ceil(10 / sqrt(ordinal))`, minimum 1 | Uncapped |
-| Confirmed resolved issue | 4 | 5 |
-| Material test change | 4 | 5 |
-| Verified evidence | 1–2 by category | 30 points |
-| Substantive non-self review | 3 | 10 |
-| Maintainer-approved evaluated contribution | 1–8 | 3 |
+| Outcome                                    |                                Points | Per-contributor/project/month cap |
+| ------------------------------------------ | ------------------------------------: | --------------------------------: |
+| Merged non-bot pull request                | `ceil(10 / sqrt(ordinal))`, minimum 1 |                          Uncapped |
+| Confirmed resolved issue                   |                                     4 |                                 5 |
+| Material test change                       |                                     4 |                                 5 |
+| Verified evidence                          |                       1–2 by category |                         30 points |
+| Substantive non-self review                |                                     3 |                                10 |
+| Maintainer-approved evaluated contribution |                                   1–8 |                                 3 |
 
 Every rolling snapshot covers 35 complete days. That is long enough for a
 first-of-month job to freeze the entire prior UTC month. Every merged outcome
@@ -140,7 +140,9 @@ Run receipts bind these fields to an Ed25519 device key:
 - client, provider, exact model, skill revision, and skill digest;
 - `ccusage` input, output, cache, total-token, session, and API-equivalent cost
   estimates;
-- a required digest and finalized private-upload identity for the full trace.
+- a required digest and finalized private-upload identity for the minimized
+  contribution-specific trace defined by the
+  [private trace privacy contract](https://slop.cash/protocol/private-trace-v1.md).
 
 Receipts are supporting evidence. A device signature proves stable bytes and
 continuity of one local key; it does not prove that self-reported provider data
@@ -154,13 +156,18 @@ diagnostic evidence: it never changes score, rank, a simulated share, or a
 future payout. Tokens without an accepted matching outcome remain public as
 ambiguous.
 
-Every submitted run permanently uploads its bounded UTF-8 trace to private
-Slop storage. Only designated Slop operators can obtain a short-lived audited
-read grant; contributors, project owners, and the public have no read route.
-The public receipt contains only a digest and immutable upload identity. Trace
-upload or finalization failure blocks submission. Source files, credentials,
-wallet secrets, and environment values remain excluded, and only intentionally
-redacted evidence may be attached to GitHub.
+Every submitted run permanently uploads the exact bytes of one bounded UTF-8
+trace to private Slop storage. The contributor must inspect and redact the file;
+the uploader performs no automatic redaction. The authoritative
+[private trace privacy contract](https://slop.cash/protocol/private-trace-v1.md)
+defines included event types, mandatory exclusions, pre-upload disclosure,
+operator access, permanent retention, and privacy requests. Only designated
+Slop operators can obtain a short-lived audited read grant; contributors,
+project owners, and the public have no read route. The public receipt contains
+only a digest and immutable upload identity. Trace upload or finalization
+failure blocks submission. Upload and production activation also remain
+blocked until a verified operator-controlled private request intake is
+publicly available; never put sensitive request details in a public issue.
 
 ## Monthly rewards
 

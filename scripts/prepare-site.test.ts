@@ -403,7 +403,17 @@ describe("contribution skill package", () => {
     const llms = readFileSync(join(publicRoot, "llms.txt"), "utf8");
     expect(llms).toContain(`SHA-256: ${digest}`);
     expect(llms).toContain("never authorizes wallet creation");
-    expect(source.toString()).toContain("mandatory permanent raw-trace upload");
+    expect(source.toString()).toContain(
+      "mandatory permanent minimized trace upload",
+    );
+    expect(source.toString()).toContain(
+      "https://slop.cash/protocol/private-trace-v1.md",
+    );
+    expect(
+      readFileSync(join(publicRoot, "protocol", "private-trace-v1.md")),
+    ).toEqual(
+      readFileSync(join(repositoryRoot, "protocol", "private-trace-v1.md")),
+    );
     expect(source.toString()).toContain("--allow-local-usage");
 
     const projectDiscovery = parseJsonRecord(

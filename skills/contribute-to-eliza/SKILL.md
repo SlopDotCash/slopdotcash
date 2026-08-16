@@ -200,12 +200,17 @@ project evaluator can award it partial credit.
 
 ## Finish the measured run
 
-After all work and proof, export the full trace as UTF-8 text or NDJSON. Exclude
-credentials, private keys, wallet seeds, and prohibited source-file bodies,
-but do not omit ordinary run events. Finish only after its permanent private
-upload to `https://api.slop.cash` succeeds. The raw trace is accessible only to
-designated Slop operators; GitHub receives only its SHA-256 digest. If export,
-upload, or finalization fails, stop and do not submit the contribution.
+After all work and proof, prepare the minimized contribution-specific UTF-8
+text or NDJSON trace required by the [private trace privacy
+contract](https://slop.cash/protocol/private-trace-v1.md). Read that contract
+immediately before authorization: it defines included events, mandatory
+exclusions, the absence of automatic redaction, permanent retention, operator
+access, and privacy requests. Inspect the exact final file locally. Do not omit
+material run events, but do not upload an unfiltered client or account history.
+Finish only after its permanent private upload to `https://api.slop.cash`
+succeeds. GitHub receives only its SHA-256 digest and safe run metadata. If
+export, inspection, upload, or finalization fails, stop and do not submit the
+contribution.
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs trace \

@@ -168,12 +168,19 @@ data or a run receipt.
 
 ## Finish the measured run
 
-After all work and proof, export the full trace as UTF-8 text or NDJSON. Exclude
-credentials, private keys, wallet seeds, and prohibited source-file bodies,
-but do not omit ordinary run events. Finish only after its permanent private
-upload to `https://api.slop.cash` succeeds. The raw trace is accessible only to
-designated Slop operators; GitHub receives only its SHA-256 digest. If export,
-upload, or finalization fails, stop and do not submit the contribution.
+After all work and proof, prepare the minimized contribution-specific UTF-8
+text or NDJSON trace required by the [private trace privacy
+contract](https://slop.cash/protocol/private-trace-v1.md). Read that contract
+immediately before authorization: it defines included events, mandatory
+exclusions, the absence of automatic redaction, permanent retention, and
+privacy requests. Trace bodies are accessible only to designated Slop operators
+through short-lived audited grants. Inspect the
+exact final file locally. Do not omit
+material run events, but do not upload an unfiltered client or account history.
+Finish only after its permanent private upload to `https://api.slop.cash`
+succeeds. GitHub receives only its SHA-256 digest and safe run metadata.
+If export, upload, or finalization fails, stop and do not submit the
+contribution.
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs trace \
@@ -231,13 +238,12 @@ node <skill-directory>/scripts/wallet-claim.mjs --address <public-address>
 node <skill-directory>/scripts/wallet-claim.mjs register --address <public-address>
 ```
 
-   Show the printed `identity.slop.cash` authorization URL to the operator and
-   wait for completion. The script keeps the OAuth capability, assertion, and
-   Slop bearer token only in process memory. It prints the immutable claim ID,
-   record digest, and public metadata URL—never a credential.
-5. An address change appends a new claim linked to the current claim; it never
-   edits or deletes history. The change is material and restarts that
-   allocation's 14-day review.
+Show the printed `identity.slop.cash` authorization URL to the operator and
+wait for completion. The script keeps the OAuth capability, assertion, and
+Slop bearer token only in process memory. It prints the immutable claim ID,
+record digest, and public metadata URL—never a credential. 5. An address change appends a new claim linked to the current claim; it never
+edits or deletes history. The change is material and restarts that
+allocation's 14-day review.
 
 A claim identifies where a reviewed payout may go. It does not prove custody,
 guarantee payment, approve an allocation, connect a wallet, or move funds.

@@ -204,6 +204,27 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Require public private-request intake
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --header "Accept: application/vnd.github+json" \
+            --header "User-Agent: slop-release-intake-check" \
+            https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting |
+            node -e '
+              let source = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { source += chunk; });
+              process.stdin.on("end", () => {
+                let value;
+                try { value = JSON.parse(source); } catch { process.exit(1); }
+                if (value?.enabled !== true) {
+                  console.error("::error::No verified public private-request intake is enabled; production trace activation is blocked.");
+                  process.exit(1);
+                }
+              });
+            '
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
