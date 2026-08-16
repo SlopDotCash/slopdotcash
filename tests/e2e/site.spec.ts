@@ -520,6 +520,15 @@ test("creates a valid GitHub-native project handoff", async ({
   await page
     .getByLabel("Public GitHub repository")
     .fill("example/open-protein");
+  await page.getByLabel("GitHub repository numeric ID").fill("123456789");
+  await page.getByLabel("GitHub repository node ID").fill("R_fixture");
+  await page.getByLabel("Display name").fill("Example Research");
+  await page.getByLabel("GitHub login").fill("example");
+  await page.getByLabel("GitHub numeric actor ID").fill("987654321");
+  await page.getByLabel("GitHub actor node ID").fill("O_fixture");
+  await page.getByLabel("Repository license, SPDX").fill("MIT");
+  await page.getByLabel("LICENSE commit SHA").fill("a".repeat(40));
+  await page.getByLabel("LICENSE SHA-256").fill("b".repeat(64));
   await page
     .getByLabel("Money-forward headline")
     .fill("Make money proving proteins fold.");
