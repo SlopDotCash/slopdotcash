@@ -26,11 +26,15 @@ describe("Slop fundraising deck", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next slide" }));
     expect(
       screen.getByRole("heading", {
-        name: "Shaw built a movement in open source.",
+        name: "We built a movement in open source.",
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Shaw")).toBeInTheDocument();
     expect(screen.getByText("Nubs")).toBeInTheDocument();
+    expect(screen.getByText("CEO")).toBeInTheDocument();
+    expect(screen.getByText("CTO")).toBeInTheDocument();
+    expect(screen.getByAltText("Shaw GitHub contributions")).toBeVisible();
+    expect(screen.getByAltText("Nubs GitHub contributions")).toBeVisible();
     expect(window.location.hash).toBe("#2");
 
     fireEvent.keyDown(window, { key: "End" });
