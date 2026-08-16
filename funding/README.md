@@ -57,6 +57,20 @@ bun run funding:verify-solana -- --signature <signature> --recipient <project-ow
 It emits candidate finality and verifier fields for human review; it never
 signs, broadcasts, handles a key, or writes a funding record.
 
+For Base and Ethereum mainnet USDC, the read-only verifier first checks the
+RPC's `eth_chainId`, reads the `finalized` head, and accepts only a successful
+receipt for the exact transaction hash whose canonical USDC `Transfer` logs
+credit the project owner the exact amount with balanced deltas, no undeclared
+positive credit, no mint or burn, and at least the network confirmation policy
+(12 on Base, 64 on Ethereum) behind the finalized head:
+
+```text
+bun run funding:verify-evm -- --network <base|ethereum> --transaction <0x-hash> --recipient <project-owner-address> --amount-minor <integer>
+```
+
+It has the same boundaries: read-only evidence for human review, never a key,
+signature, broadcast, or written funding record.
+
 Project payout plans remain unsigned and are executed outside Slop by the
 declared project settler. A transaction signature is only reported evidence;
 the cycle remains unpaid until deterministic finalized balance deltas reconcile
