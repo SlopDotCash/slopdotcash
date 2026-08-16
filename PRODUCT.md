@@ -28,10 +28,11 @@ actors only.
 The secondary audience is a project owner willing to publish a goal, reviewer
 policy, and reward cap. Project creation happens through a PR so owners and
 agents can inspect and improve every operational byte without a private admin
-surface. Slop publishes repository license facts and a verifiable GitHub
-stewardship identity only; it asserts and records no copyright ownership,
-legal capacity, or assignment. A project wanting a legal ownership
-arrangement handles it entirely outside Slop, and Slop never displays it.
+surface. For current projects Slop publishes repository license facts and a
+verifiable GitHub stewardship identity only; it never infers copyright
+ownership, legal capacity, or assignment. A project handles execution of any
+legal ownership arrangement outside Slop. Slop records such terms only when
+the project supplies the complete verified public instrument set.
 
 ## Public promise
 
