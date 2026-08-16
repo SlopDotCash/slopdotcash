@@ -2886,7 +2886,7 @@ export function createLeaderboardSnapshot(
       existing &&
       (existing.url !== source.url ||
         existing.body !== source.body ||
-        !sameActor(existing.author, source.author))
+        existing.author?.id !== source.author?.id)
     ) {
       throw new TypeError(
         `Evaluated source ${source.id} has conflicting GitHub records`,
@@ -2933,7 +2933,7 @@ export function createLeaderboardSnapshot(
       if (
         source?.kind !== "comment" ||
         source.url !== event.source.url ||
-        !sameActor(source.author, event.actor) ||
+        source.author?.id !== event.actor.id ||
         parseIsoTime(source.createdAt) !== occurredAt
       ) {
         throw new TypeError(

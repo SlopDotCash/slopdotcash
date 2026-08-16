@@ -1518,25 +1518,28 @@ describe("scoring and limits", () => {
       }),
     );
 
-    expect(() =>
-      createLeaderboardSnapshot(
-        input({
-          openIssues: [
-            issue({
-              id: "ISSUE_CAMPAIGN_17",
-              number: 17,
-              url: "https://github.com/elizaOS/eliza/issues/17",
-              closedAt: null,
-              stateReason: null,
-              comments: [source],
-            }),
-          ],
-          evaluatedContributions: [
-            { ...evaluated, actor: actor("different-author") },
-          ],
-        }),
-      ),
-    ).toThrow("does not match its exact GitHub comment");
+    for (const mismatchedActor of [
+      actor("different-author"),
+      { ...contributor, id: "ACTOR_same-login-impostor" },
+    ]) {
+      expect(() =>
+        createLeaderboardSnapshot(
+          input({
+            openIssues: [
+              issue({
+                id: "ISSUE_CAMPAIGN_17",
+                number: 17,
+                url: "https://github.com/elizaOS/eliza/issues/17",
+                closedAt: null,
+                stateReason: null,
+                comments: [source],
+              }),
+            ],
+            evaluatedContributions: [{ ...evaluated, actor: mismatchedActor }],
+          }),
+        ),
+      ).toThrow("does not match its exact GitHub comment");
+    }
   });
 
   it("rejects an evaluator award for a source already scored by GitHub", () => {
