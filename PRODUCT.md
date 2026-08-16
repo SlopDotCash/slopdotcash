@@ -28,7 +28,11 @@ actors only.
 The secondary audience is a project owner willing to publish a goal, reviewer
 policy, and reward cap. Project creation happens through a PR so owners and
 agents can inspect and improve every operational byte without a private admin
-surface.
+surface. For current projects Slop publishes repository license facts and a
+verifiable GitHub stewardship identity only; it never infers copyright
+ownership, legal capacity, or assignment. A project handles execution of any
+legal ownership arrangement outside Slop. Slop records such terms only when
+the project supplies the complete verified public instrument set.
 
 ## Public promise
 
@@ -69,6 +73,9 @@ owed money. Use these financial states consistently:
 - Output: provisional contribution percentages toward the external Ethereum
   Foundation Proximity Prize.
 - The prize sponsor, not Slop, controls eligibility, award, and payment.
+- Contributor shares default to equal; a non-equal split requires approval
+  from every named author. Shares are payout allocation only, never a
+  copyright or ownership claim.
 
 ## Contributor journey
 

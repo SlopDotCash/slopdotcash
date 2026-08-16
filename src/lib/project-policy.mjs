@@ -3,7 +3,10 @@
  * independent from payment state: money events cannot rewrite IP policy.
  */
 
-import { assertProjectDefinition } from "./project-schema.mjs";
+import {
+  assertHistoricalProjectDefinition,
+  assertProjectDefinition,
+} from "./project-schema.mjs";
 
 function assertFundingRouteTransition(previousRoutes, nextRoutes) {
   if (
@@ -90,7 +93,7 @@ function canonical(value) {
  * old acknowledgement.
  */
 export function assertProjectPolicyTransition(previousValue, nextValue) {
-  const previous = assertProjectDefinition(previousValue);
+  const previous = assertHistoricalProjectDefinition(previousValue);
   const next = assertProjectDefinition(nextValue);
   if (previous.id !== next.id) throw new TypeError("project id cannot change");
   assertFundingRouteTransition(

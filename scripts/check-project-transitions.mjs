@@ -9,7 +9,10 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertProjectPolicyTransition } from "../src/lib/project-policy.mjs";
-import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
+import {
+  assertHistoricalProjectDefinition,
+  assertProjectDefinition,
+} from "../src/lib/project-schema.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PROJECTS = resolve(ROOT, "projects");
@@ -19,7 +22,7 @@ const PROJECT_PATH =
 const MAX_PROJECTS = 100;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 
-function parseManifest(bytes, path) {
+function parseManifest(bytes, path, { historical = false } = {}) {
   if (Buffer.byteLength(bytes) > MAX_MANIFEST_BYTES) {
     throw new TypeError(`${path} exceeds the manifest byte limit`);
   }
@@ -29,10 +32,12 @@ function parseManifest(bytes, path) {
   } catch (error) {
     throw new TypeError(`${path} is invalid JSON`, { cause: error });
   }
-  return assertProjectDefinition(value);
+  return historical
+    ? assertHistoricalProjectDefinition(value)
+    : assertProjectDefinition(value);
 }
 
-function boundedProjectMap(entries) {
+function boundedProjectMap(entries, options) {
   if (entries.length > MAX_PROJECTS) {
     throw new TypeError(`project inventory exceeds ${MAX_PROJECTS} entries`);
   }
@@ -40,7 +45,7 @@ function boundedProjectMap(entries) {
   for (const [path, bytes] of entries) {
     const match = path.match(PROJECT_PATH);
     if (!match) throw new TypeError(`project path is not canonical: ${path}`);
-    const project = parseManifest(bytes, path);
+    const project = parseManifest(bytes, path, options);
     if (project.id !== match[1] || projects.has(project.id)) {
       throw new TypeError(
         `project identity is duplicated or misplaced: ${path}`,
@@ -52,7 +57,7 @@ function boundedProjectMap(entries) {
 }
 
 export function validateProjectTransitions(previousEntries, currentEntries) {
-  const previous = boundedProjectMap(previousEntries);
+  const previous = boundedProjectMap(previousEntries, { historical: true });
   const current = boundedProjectMap(currentEntries);
   for (const [projectId, prior] of previous) {
     const next = current.get(projectId);

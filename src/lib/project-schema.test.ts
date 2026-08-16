@@ -1,10 +1,12 @@
 /** Tests pull-request project manifests and registry-wide collision rejection. */
 
 import { describe, expect, it } from "vitest";
+import asi from "../../projects/asi/project.json";
 import deltaStar from "../../projects/delta-star/project.json";
 import eliza from "../../projects/eliza/project.json";
 import heirElements from "../../projects/heir-elements-sdk/project.json";
 import {
+  assertHistoricalProjectDefinition,
   assertProjectDefinition,
   assertProjectRegistry,
 } from "./project-schema.mjs";
@@ -21,6 +23,74 @@ interface MutablePolicyFixture {
 
 function mutablePolicyFixture(value: unknown): MutablePolicyFixture {
   return structuredClone(value) as MutablePolicyFixture;
+}
+
+interface MutableActivationFixture {
+  status: string;
+  authority: unknown;
+  terms: {
+    revision: string;
+    receiptPolicy: unknown;
+    inbound: unknown;
+    copyright: {
+      model: string;
+      claimedLegalHolder: string | null;
+      legalCapacity: unknown;
+      governanceResolution: unknown;
+    };
+    repositoryLicense: { fileSha256: string | null };
+  };
+}
+
+function activatedWithoutOwnershipClaim(model: string): unknown {
+  const fixture = structuredClone(eliza) as unknown as MutableActivationFixture;
+  const verifiedAt = "2026-08-16T00:00:00.000Z";
+  const proofCommit = "a".repeat(40);
+  const inboundCommit = "c".repeat(40);
+  fixture.status = "active";
+  fixture.authority = {
+    state: "verified",
+    reason: null,
+    role: "project-steward",
+    repositoryId: eliza.authority.repositoryId,
+    repositoryNodeId: eliza.authority.repositoryNodeId,
+    proof: {
+      url: `https://github.com/elizaOS/eliza/blob/${proofCommit}/.github/slop-project.json`,
+      commitSha: proofCommit,
+      fileSha256: "b".repeat(64),
+      policyRevision: fixture.terms.revision,
+      verifiedAt,
+    },
+  };
+  fixture.terms.inbound = {
+    mode: "license",
+    termsUrl: `https://github.com/elizaOS/eliza/blob/${inboundCommit}/LICENSE`,
+    commitSha: inboundCommit,
+    fileSha256: "d".repeat(64),
+    version: "1",
+    acceptance: "Inbound equals outbound under the repository license",
+  };
+  fixture.terms.receiptPolicy = {
+    state: "active",
+    activatedAt: verifiedAt,
+    bindings: [
+      {
+        activatedAt: verifiedAt,
+        policyRevision: fixture.terms.revision,
+        licenseSha256: fixture.terms.repositoryLicense.fileSha256,
+        inboundTermsSha256: "d".repeat(64),
+        prizeRulesSha256: null,
+      },
+    ],
+  };
+  fixture.terms.copyright = {
+    ...fixture.terms.copyright,
+    model,
+    claimedLegalHolder: null,
+    legalCapacity: null,
+    governanceResolution: null,
+  };
+  return fixture;
 }
 
 describe("project proposal schema", () => {
@@ -294,10 +364,58 @@ describe("project proposal schema", () => {
     expect(() => assertProjectDefinition(dao)).toThrow(/legal capacity/u);
   });
 
+  it("treats null-claim unknown and mixed copyright as terminal and activation-ready", () => {
+    for (const manifest of [asi, deltaStar, eliza, heirElements]) {
+      const project = assertProjectDefinition(manifest);
+      expect(["unknown", "mixed"]).toContain(project.terms.copyright.model);
+      expect(project.terms.copyright.claimedLegalHolder).toBeNull();
+      expect(project.terms.copyright.legalCapacity).toBeNull();
+      expect(project.terms.copyright.governanceResolution).toBeNull();
+    }
+    for (const model of ["unknown", "mixed"]) {
+      const active = assertProjectDefinition(
+        activatedWithoutOwnershipClaim(model),
+      );
+      expect(active.status).toBe("active");
+      expect(active.terms.copyright.claimedLegalHolder).toBeNull();
+    }
+  });
+
+  it("rejects an ownership claim outside signed sponsor-owned terms", () => {
+    for (const model of ["unknown", "mixed"]) {
+      const claimed = mutablePolicyFixture(eliza);
+      claimed.terms.copyright.model = model;
+      claimed.terms.copyright.claimedLegalHolder = "Example Research, Inc.";
+      expect(() => assertProjectDefinition(claimed)).toThrow(
+        /no ownership claim/u,
+      );
+    }
+  });
+
+  it("permits a legacy unsupported holder only on the historical transition side", () => {
+    const legacy = mutablePolicyFixture(eliza);
+    legacy.terms.copyright.model = "mixed";
+    legacy.terms.copyright.claimedLegalHolder = "Unsupported Legacy Holder";
+
+    expect(() => assertProjectDefinition(legacy)).toThrow(
+      /no ownership claim/u,
+    );
+    expect(
+      assertHistoricalProjectDefinition(legacy).terms.copyright
+        .claimedLegalHolder,
+    ).toBe("Unsupported Legacy Holder");
+  });
+
   it("keeps external prize rules outside platform settlement", () => {
     expect(deltaStar.reward.paymentMode).toBe("disabled");
     expect(deltaStar.terms.externalPrize?.allocationAuthority).toMatch(
       /author-approved/u,
+    );
+    expect(deltaStar.terms.externalPrize?.defaultContributorAllocation).toMatch(
+      /^Equal shares for all named authors by default/u,
+    );
+    expect(deltaStar.terms.externalPrize?.defaultContributorAllocation).toMatch(
+      /approval from every named author/u,
     );
     const inventedCapture = mutablePolicyFixture(deltaStar);
     inventedCapture.terms.externalPrize.rulesSha256 = "a".repeat(64);
