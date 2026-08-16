@@ -74,6 +74,20 @@ It has the same boundaries: read-only evidence for human review, never a key,
 signature, broadcast, or written funding record. The production CLI has no RPC
 override; deterministic tests may inject only the fetch implementation.
 
+For Bitcoin mainnet BTC, the read-only verifier accepts only a confirmed
+transaction whose block hash still sits in the current best chain at its
+height, with at least 6 confirmations behind the tip, a coherent fee that
+exactly reconciles input and output sums, no coinbase input, no input spending
+the recipient's own coins, no dust-level credited output, and non-dust
+recipient outputs summing to the exact amount:
+
+```text
+bun run funding:verify-bitcoin -- --transaction <txid> --recipient <project-owner-address> --amount-minor <satoshis>
+```
+
+Same boundaries again: read-only evidence for human review, never a key,
+signature, broadcast, or written funding record.
+
 Project payout plans remain unsigned and are executed outside Slop by the
 declared project settler. A transaction signature is only reported evidence;
 the cycle remains unpaid until deterministic finalized balance deltas reconcile
