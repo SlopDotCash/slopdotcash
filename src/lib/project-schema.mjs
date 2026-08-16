@@ -10,6 +10,7 @@ import {
 } from "./funding-address.mjs";
 
 const PROJECT_KEYS = [
+  "authority",
   "description",
   "eyebrow",
   "funding",
@@ -25,6 +26,8 @@ const PROJECT_KEYS = [
   "skill",
   "slug",
   "status",
+  "steward",
+  "terms",
 ];
 export const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
 
@@ -91,6 +94,510 @@ function url(value, field, expectedOrigin) {
 
 function minor(value, field) {
   return text(value, field, { pattern: /^(?:0|[1-9]\d*)$/u });
+}
+
+function nullable(value, field, validator) {
+  return value === null ? null : validator(value, field);
+}
+
+function digest(value, field) {
+  return text(value, field, { pattern: /^[0-9a-f]{64}$/u });
+}
+
+function commit(value, field) {
+  return text(value, field, { pattern: /^[0-9a-f]{40}$/u });
+}
+
+function numericId(value, field) {
+  return text(value, field, { max: 40, pattern: /^[1-9]\d*$/u });
+}
+
+function immutableGithubUrl(value, field, repositoryId, commitSha, path) {
+  const result = url(value, field, "https://github.com");
+  if (
+    new URL(result).pathname !== `/${repositoryId}/blob/${commitSha}/${path}`
+  ) {
+    throw new TypeError(`${field} must be an immutable repository URL`);
+  }
+  return result;
+}
+
+function immutableGithubCommitUrl(value, field, repositoryId, commitSha) {
+  const result = url(value, field, "https://github.com");
+  const prefix = `/${repositoryId}/blob/${commitSha}/`;
+  const pathname = new URL(result).pathname;
+  if (!pathname.startsWith(prefix) || pathname.length === prefix.length) {
+    throw new TypeError(
+      `${field} must bind its repository, commit, and non-empty path`,
+    );
+  }
+  return result;
+}
+
+function validateSteward(value) {
+  const field = "project.steward";
+  const steward = record(value, field);
+  exactKeys(steward, ["displayName", "github", "kind", "website"], field);
+  text(steward.displayName, `${field}.displayName`, { max: 120, min: 2 });
+  if (
+    !["individual", "organization", "dao", "collective"].includes(steward.kind)
+  ) {
+    throw new TypeError(`${field}.kind is invalid`);
+  }
+  const github = record(steward.github, `${field}.github`);
+  exactKeys(
+    github,
+    ["actorId", "login", "nodeId", "profileUrl", "type"],
+    `${field}.github`,
+  );
+  numericId(github.actorId, `${field}.github.actorId`);
+  text(github.nodeId, `${field}.github.nodeId`, {
+    max: 100,
+    pattern: /^[A-Za-z0-9_=-]+$/u,
+  });
+  text(github.login, `${field}.github.login`, {
+    max: 39,
+    pattern: /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u,
+  });
+  if (!["User", "Organization"].includes(github.type)) {
+    throw new TypeError(`${field}.github.type is invalid`);
+  }
+  const profileUrl = url(
+    github.profileUrl,
+    `${field}.github.profileUrl`,
+    "https://github.com",
+  );
+  if (
+    new URL(profileUrl).pathname.toLowerCase() !==
+    `/${github.login}`.toLowerCase()
+  ) {
+    throw new TypeError(`${field}.github.profileUrl does not match its login`);
+  }
+  nullable(steward.website, `${field}.website`, (entry, name) =>
+    url(entry, name),
+  );
+  return steward;
+}
+
+function validateAuthority(value, repository) {
+  const field = "project.authority";
+  const authority = record(value, field);
+  exactKeys(
+    authority,
+    ["proof", "reason", "repositoryId", "repositoryNodeId", "role", "state"],
+    field,
+  );
+  numericId(authority.repositoryId, `${field}.repositoryId`);
+  text(authority.repositoryNodeId, `${field}.repositoryNodeId`, {
+    max: 100,
+    pattern: /^[A-Za-z0-9_=-]+$/u,
+  });
+  if (authority.role !== "project-steward") {
+    throw new TypeError(`${field}.role is invalid`);
+  }
+  if (authority.state === "unverified") {
+    if (
+      authority.proof !== null ||
+      authority.reason !== "missing-repository-proof"
+    ) {
+      throw new TypeError(`${field} unverified state is inconsistent`);
+    }
+    return authority;
+  }
+  if (authority.state !== "verified" || authority.reason !== null) {
+    throw new TypeError(`${field}.state is invalid`);
+  }
+  const proof = record(authority.proof, `${field}.proof`);
+  exactKeys(
+    proof,
+    ["commitSha", "fileSha256", "policyRevision", "url", "verifiedAt"],
+    `${field}.proof`,
+  );
+  const commitSha = commit(proof.commitSha, `${field}.proof.commitSha`);
+  digest(proof.fileSha256, `${field}.proof.fileSha256`);
+  text(proof.policyRevision, `${field}.proof.policyRevision`, {
+    max: 80,
+    pattern: /^[a-z0-9][a-z0-9._-]*$/u,
+  });
+  timestamp(proof.verifiedAt, `${field}.proof.verifiedAt`);
+  immutableGithubUrl(
+    proof.url,
+    `${field}.proof.url`,
+    repository.id,
+    commitSha,
+    ".github/slop-project.json",
+  );
+  return authority;
+}
+
+function validateTerms(value, repositoryId, reward, steward) {
+  const field = "project.terms";
+  const terms = record(value, field);
+  exactKeys(
+    terms,
+    [
+      "assignment",
+      "copyright",
+      "effectiveAt",
+      "externalPrize",
+      "inbound",
+      "paymentTransfersIp",
+      "receiptPolicy",
+      "repositoryLicense",
+      "retroactive",
+      "revision",
+    ],
+    field,
+  );
+  text(terms.revision, `${field}.revision`, {
+    max: 80,
+    pattern: /^[a-z0-9][a-z0-9._-]*$/u,
+  });
+  timestamp(terms.effectiveAt, `${field}.effectiveAt`);
+  const receiptPolicy = record(terms.receiptPolicy, `${field}.receiptPolicy`);
+  exactKeys(
+    receiptPolicy,
+    ["activatedAt", "bindings", "state"],
+    `${field}.receiptPolicy`,
+  );
+  if (!Array.isArray(receiptPolicy.bindings)) {
+    throw new TypeError(`${field}.receiptPolicy.bindings must be an array`);
+  }
+  if (receiptPolicy.state === "pending-authority-activation") {
+    if (
+      receiptPolicy.activatedAt !== null ||
+      receiptPolicy.bindings.length !== 0
+    ) {
+      throw new TypeError(
+        `${field}.receiptPolicy pending state cannot have activation bindings`,
+      );
+    }
+  } else if (receiptPolicy.state === "active") {
+    timestamp(receiptPolicy.activatedAt, `${field}.receiptPolicy.activatedAt`);
+    if (receiptPolicy.bindings.length === 0) {
+      throw new TypeError(
+        `${field}.receiptPolicy active state requires bindings`,
+      );
+    }
+  } else {
+    throw new TypeError(`${field}.receiptPolicy.state is invalid`);
+  }
+  if (terms.paymentTransfersIp !== false || terms.retroactive !== false) {
+    throw new TypeError(
+      `${field} cannot transfer IP by payment or apply retroactively`,
+    );
+  }
+  const copyright = record(terms.copyright, `${field}.copyright`);
+  exactKeys(
+    copyright,
+    [
+      "claimedLegalHolder",
+      "governanceResolution",
+      "legalCapacity",
+      "model",
+      "notice",
+    ],
+    `${field}.copyright`,
+  );
+  if (
+    !["sponsor-owned", "contributor-retained", "mixed", "unknown"].includes(
+      copyright.model,
+    )
+  ) {
+    throw new TypeError(`${field}.copyright.model is invalid`);
+  }
+  nullable(
+    copyright.claimedLegalHolder,
+    `${field}.copyright.claimedLegalHolder`,
+    (entry, name) => text(entry, name, { max: 240 }),
+  );
+  nullable(copyright.notice, `${field}.copyright.notice`, (entry, name) =>
+    text(entry, name, { max: 500 }),
+  );
+  if (
+    copyright.model === "contributor-retained" &&
+    copyright.claimedLegalHolder !== null
+  ) {
+    throw new TypeError(
+      `${field} contributor-retained terms forbid a sole-holder claim`,
+    );
+  }
+  if (
+    copyright.model === "sponsor-owned" &&
+    copyright.claimedLegalHolder === null
+  ) {
+    throw new TypeError(
+      `${field} sponsor-owned terms require an exact legal holder`,
+    );
+  }
+  if (copyright.legalCapacity !== null) {
+    const capacity = record(
+      copyright.legalCapacity,
+      `${field}.copyright.legalCapacity`,
+    );
+    exactKeys(
+      capacity,
+      ["entityId", "jurisdiction", "legalName"],
+      `${field}.copyright.legalCapacity`,
+    );
+    for (const name of ["entityId", "jurisdiction", "legalName"]) {
+      text(capacity[name], `${field}.copyright.legalCapacity.${name}`, {
+        max: 240,
+      });
+    }
+  }
+  if (copyright.governanceResolution !== null) {
+    const resolution = record(
+      copyright.governanceResolution,
+      `${field}.copyright.governanceResolution`,
+    );
+    exactKeys(
+      resolution,
+      ["fileSha256", "url", "version"],
+      `${field}.copyright.governanceResolution`,
+    );
+    digest(
+      resolution.fileSha256,
+      `${field}.copyright.governanceResolution.fileSha256`,
+    );
+    url(resolution.url, `${field}.copyright.governanceResolution.url`);
+    text(
+      resolution.version,
+      `${field}.copyright.governanceResolution.version`,
+      {
+        max: 80,
+      },
+    );
+  }
+  const license = record(terms.repositoryLicense, `${field}.repositoryLicense`);
+  exactKeys(
+    license,
+    ["commitSha", "fileSha256", "spdx", "state", "url"],
+    `${field}.repositoryLicense`,
+  );
+  if (license.state === "unknown") {
+    if (
+      [license.commitSha, license.fileSha256, license.spdx, license.url].some(
+        (entry) => entry !== null,
+      )
+    ) {
+      throw new TypeError(
+        `${field}.repositoryLicense unknown state must not invent terms`,
+      );
+    }
+  } else if (license.state === "verified") {
+    text(license.spdx, `${field}.repositoryLicense.spdx`, {
+      max: 80,
+      pattern: /^[A-Za-z0-9-.+]+$/u,
+    });
+    const licenseCommit = commit(
+      license.commitSha,
+      `${field}.repositoryLicense.commitSha`,
+    );
+    digest(license.fileSha256, `${field}.repositoryLicense.fileSha256`);
+    immutableGithubUrl(
+      license.url,
+      `${field}.repositoryLicense.url`,
+      repositoryId,
+      licenseCommit,
+      "LICENSE",
+    );
+  } else {
+    throw new TypeError(`${field}.repositoryLicense.state is invalid`);
+  }
+  const inbound = record(terms.inbound, `${field}.inbound`);
+  exactKeys(
+    inbound,
+    ["acceptance", "commitSha", "fileSha256", "mode", "termsUrl", "version"],
+    `${field}.inbound`,
+  );
+  if (
+    !["license", "cla", "assignment", "dco", "mixed", "unknown"].includes(
+      inbound.mode,
+    )
+  ) {
+    throw new TypeError(`${field}.inbound.mode is invalid`);
+  }
+  if (inbound.mode === "unknown") {
+    if (
+      [
+        inbound.acceptance,
+        inbound.commitSha,
+        inbound.fileSha256,
+        inbound.termsUrl,
+        inbound.version,
+      ].some((entry) => entry !== null)
+    ) {
+      throw new TypeError(
+        `${field}.inbound unknown state must not invent terms`,
+      );
+    }
+  } else {
+    text(inbound.acceptance, `${field}.inbound.acceptance`, { max: 240 });
+    const inboundCommit = commit(
+      inbound.commitSha,
+      `${field}.inbound.commitSha`,
+    );
+    digest(inbound.fileSha256, `${field}.inbound.fileSha256`);
+    text(inbound.version, `${field}.inbound.version`, { max: 80 });
+    immutableGithubCommitUrl(
+      inbound.termsUrl,
+      `${field}.inbound.termsUrl`,
+      repositoryId,
+      inboundCommit,
+    );
+  }
+  if (terms.assignment !== null) {
+    const assignment = record(terms.assignment, `${field}.assignment`);
+    exactKeys(
+      assignment,
+      ["assignee", "fileSha256", "instrumentUrl", "signedAt", "version"],
+      `${field}.assignment`,
+    );
+    text(assignment.assignee, `${field}.assignment.assignee`, { max: 240 });
+    digest(assignment.fileSha256, `${field}.assignment.fileSha256`);
+    url(assignment.instrumentUrl, `${field}.assignment.instrumentUrl`);
+    timestamp(assignment.signedAt, `${field}.assignment.signedAt`);
+    text(assignment.version, `${field}.assignment.version`, { max: 80 });
+  }
+  if (inbound.mode === "assignment" && terms.assignment === null) {
+    throw new TypeError(
+      `${field} assignment inbound mode requires a signed instrument`,
+    );
+  }
+  if (copyright.model === "sponsor-owned" && terms.assignment === null) {
+    throw new TypeError(
+      `${field} sponsor-owned terms require a signed assignment instrument`,
+    );
+  }
+  if (
+    copyright.model === "sponsor-owned" &&
+    steward.kind === "dao" &&
+    (copyright.legalCapacity === null ||
+      copyright.governanceResolution === null)
+  ) {
+    throw new TypeError(
+      `${field} DAO title requires legal capacity and a governance resolution`,
+    );
+  }
+  if (reward.kind === "external-prize-share") {
+    const prize = record(terms.externalPrize, `${field}.externalPrize`);
+    exactKeys(
+      prize,
+      [
+        "allocationAuthority",
+        "defaultContributorAllocation",
+        "eligibility",
+        "ipTerms",
+        "organizer",
+        "rulesCapturedAt",
+        "rulesSha256",
+        "rulesUrl",
+        "version",
+      ],
+      `${field}.externalPrize`,
+    );
+    text(prize.organizer, `${field}.externalPrize.organizer`, { max: 160 });
+    url(prize.rulesUrl, `${field}.externalPrize.rulesUrl`);
+    for (const name of [
+      "allocationAuthority",
+      "defaultContributorAllocation",
+      "eligibility",
+      "ipTerms",
+      "version",
+    ]) {
+      text(prize[name], `${field}.externalPrize.${name}`, { max: 240 });
+    }
+    if (prize.rulesSha256 === null || prize.rulesCapturedAt === null) {
+      if (
+        prize.rulesSha256 !== null ||
+        prize.rulesCapturedAt !== null ||
+        prize.version !== "unknown"
+      ) {
+        throw new TypeError(
+          `${field}.externalPrize unverified rules are inconsistent`,
+        );
+      }
+    } else {
+      digest(prize.rulesSha256, `${field}.externalPrize.rulesSha256`);
+      timestamp(
+        prize.rulesCapturedAt,
+        `${field}.externalPrize.rulesCapturedAt`,
+      );
+    }
+  } else if (terms.externalPrize !== null) {
+    throw new TypeError(
+      `${field}.externalPrize is only valid for external prizes`,
+    );
+  }
+  if (receiptPolicy.state === "active") {
+    const revisions = new Set();
+    let previousActivation = -Infinity;
+    const bindings = receiptPolicy.bindings.map((value, index) => {
+      const bindingField = `${field}.receiptPolicy.bindings[${index}]`;
+      const binding = record(value, bindingField);
+      exactKeys(
+        binding,
+        [
+          "activatedAt",
+          "inboundTermsSha256",
+          "licenseSha256",
+          "policyRevision",
+          "prizeRulesSha256",
+        ],
+        bindingField,
+      );
+      const policyRevision = text(
+        binding.policyRevision,
+        `${bindingField}.policyRevision`,
+        { max: 80, pattern: /^[a-z0-9][a-z0-9._-]*$/u },
+      );
+      if (revisions.has(policyRevision)) {
+        throw new TypeError(`${field}.receiptPolicy has duplicate revisions`);
+      }
+      revisions.add(policyRevision);
+      const activatedAt = timestamp(
+        binding.activatedAt,
+        `${bindingField}.activatedAt`,
+      );
+      if (Date.parse(activatedAt) <= previousActivation) {
+        throw new TypeError(
+          `${field}.receiptPolicy bindings must be activation ordered`,
+        );
+      }
+      previousActivation = Date.parse(activatedAt);
+      digest(binding.licenseSha256, `${bindingField}.licenseSha256`);
+      nullable(
+        binding.inboundTermsSha256,
+        `${bindingField}.inboundTermsSha256`,
+        digest,
+      );
+      nullable(
+        binding.prizeRulesSha256,
+        `${bindingField}.prizeRulesSha256`,
+        digest,
+      );
+      return binding;
+    });
+    const first = bindings[0];
+    const current = bindings.at(-1);
+    if (first.activatedAt !== receiptPolicy.activatedAt) {
+      throw new TypeError(
+        `${field}.receiptPolicy cutover must equal its first binding activation`,
+      );
+    }
+    if (
+      current.policyRevision !== terms.revision ||
+      current.licenseSha256 !== license.fileSha256 ||
+      current.inboundTermsSha256 !== inbound.fileSha256 ||
+      current.prizeRulesSha256 !== (terms.externalPrize?.rulesSha256 ?? null)
+    ) {
+      throw new TypeError(
+        `${field}.receiptPolicy latest binding must match current terms`,
+      );
+    }
+  }
+  return terms;
 }
 
 function timestamp(value, field) {
@@ -348,6 +855,39 @@ export function assertProjectDefinition(value) {
   );
   validateReward(project.reward, "project.reward");
   validateFunding(project.funding, id);
+  validateSteward(project.steward);
+  validateAuthority(project.authority, repositories[0]);
+  validateTerms(
+    project.terms,
+    repositories[0].id,
+    project.reward,
+    project.steward,
+  );
+  if (project.status === "active" && project.authority.state !== "verified") {
+    throw new TypeError(
+      "active projects require verified repository authority",
+    );
+  }
+  if (project.status === "active") {
+    if (
+      project.terms.receiptPolicy.state !== "active" ||
+      project.terms.receiptPolicy.activatedAt !==
+        project.authority.proof.verifiedAt
+    ) {
+      throw new TypeError(
+        "active projects require receipt cutover at the immutable authority activation",
+      );
+    }
+  }
+  if (
+    project.status === "active" &&
+    (project.terms.inbound.mode === "unknown" ||
+      project.terms.repositoryLicense.state === "unknown" ||
+      (project.reward.kind === "external-prize-share" &&
+        project.terms.externalPrize?.version === "unknown"))
+  ) {
+    throw new TypeError("active projects require known mandatory terms");
+  }
   const modelPolicy = record(project.modelPolicy, "project.modelPolicy");
   exactKeys(modelPolicy, ["disclosureRequired", "mode"], "project.modelPolicy");
   if (

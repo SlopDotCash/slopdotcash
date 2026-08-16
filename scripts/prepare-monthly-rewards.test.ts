@@ -8,6 +8,11 @@ import {
 } from "./prepare-monthly-rewards";
 
 describe("monthly reward close", () => {
+  const activeProjects = PROJECTS.map((project) => ({
+    ...project,
+    status: "active" as const,
+  }));
+
   it("selects the previous UTC month across a year boundary", () => {
     expect(previousUtcCycleId(new Date("2027-01-01T00:11:00.000Z"))).toBe(
       "2026-12",
@@ -26,7 +31,7 @@ describe("monthly reward close", () => {
       {
         inspectPath: vi.fn().mockResolvedValue("missing"),
         prepare,
-        projects: PROJECTS,
+        projects: activeProjects,
         validateCycles,
       },
     );
@@ -45,7 +50,7 @@ describe("monthly reward close", () => {
       {
         inspectPath: vi.fn().mockResolvedValue("file"),
         prepare: vi.fn(),
-        projects: PROJECTS,
+        projects: activeProjects,
         validateCycles: vi.fn().mockResolvedValue({}),
       },
     );
@@ -64,7 +69,7 @@ describe("monthly reward close", () => {
             return call % 2 === 1 ? "file" : "missing";
           }),
           prepare: vi.fn(),
-          projects: PROJECTS,
+          projects: activeProjects,
           validateCycles: vi.fn(),
         },
       ),

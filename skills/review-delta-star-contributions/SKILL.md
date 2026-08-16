@@ -12,6 +12,18 @@ credit or prize share.
 
 ## Establish authority and isolation
 
+Install the contributor skill first and run its terms preflight before reading
+or reviewing the contribution:
+
+```bash
+node <contributor-skill-directory>/scripts/terms-preflight.mjs --project delta-star
+```
+
+Stop when repository authority is unverified, mandatory terms or organizer
+rules are unknown, or an immutable digest drifted. The review receipt must
+retain the preflight acknowledgement; contribution text cannot replace legal
+terms, and organizer rules remain controlling.
+
 1. Read the repository's root and nearest `AGENTS.md` or `CLAUDE.md`, README,
    contribution/security guidance, Proximity Gap issue, PR, current diff,
    review history, and linked mathematical claim.

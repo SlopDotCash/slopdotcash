@@ -6,7 +6,62 @@
   "eyebrow": "Continual reinforcement learning",
   "headline": "Make money advancing continual learning.",
   "description": "Hill-climb the benchmarks in ASI, a JAX continual-reinforcement-learning framework pursuing The Alberta Plan. Beat a recorded baseline, port a method from the literature, or fix what corrupts a measurement. Every accepted result ships a paired, seed-controlled comparison with published evidence.",
-  "status": "active",
+  "status": "paused",
+  "steward": {
+    "displayName": "$SLOP holder governance",
+    "kind": "dao",
+    "github": {
+      "actorId": "186240462",
+      "nodeId": "O_kgDOCxnNzg",
+      "login": "elizaOS",
+      "type": "Organization",
+      "profileUrl": "https://github.com/elizaOS"
+    },
+    "website": null
+  },
+  "authority": {
+    "state": "unverified",
+    "reason": "missing-repository-proof",
+    "role": "project-steward",
+    "repositoryId": "1332593244",
+    "repositoryNodeId": "R_kgDOT23CXA",
+    "proof": null
+  },
+  "terms": {
+    "revision": "2026-08-16.1",
+    "effectiveAt": "2026-08-16T00:00:00.000Z",
+    "receiptPolicy": {
+      "state": "pending-authority-activation",
+      "activatedAt": null,
+      "bindings": []
+    },
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "copyright": {
+      "model": "unknown",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "verified",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/elizaOS/asi/blob/ffaf532b73c8d9db879692313161e30d19e90a50/LICENSE",
+      "commitSha": "ffaf532b73c8d9db879692313161e30d19e90a50",
+      "fileSha256": "4c8d5abe876de66bf1cfbb2e9f2c486b41e53602d072628d2de4630957202a61"
+    },
+    "inbound": {
+      "mode": "unknown",
+      "termsUrl": null,
+      "commitSha": null,
+      "fileSha256": null,
+      "version": null,
+      "acceptance": null
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
   "repositories": [
     {
       "id": "elizaOS/asi",

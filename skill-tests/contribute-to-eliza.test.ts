@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   auditCommentDisclosures,
   auditPrEvidence,
@@ -2261,6 +2261,57 @@ describe("run receipt CLI", () => {
         "contribute-to-eliza",
       );
       cpSync(skillDir, installedSkillRoot, { recursive: true });
+      const policyRoot = join(fixtureRoot, "policy-authority");
+      const policyDirectory = join(policyRoot, "projects", "eliza");
+      mkdirSync(policyDirectory, { recursive: true });
+      const policyLicense = join(policyRoot, "LICENSE");
+      writeFileSync(policyLicense, "fixture license bytes\n");
+      const policyLicenseSha256 = createHash("sha256")
+        .update(readFileSync(policyLicense))
+        .digest("hex");
+      writeFileSync(
+        join(policyDirectory, "terms.json"),
+        JSON.stringify({
+          schemaVersion: "1",
+          projectId: "eliza",
+          status: "active",
+          steward: {},
+          authority: {
+            state: "verified",
+            proof: {
+              policyRevision: "test-policy-1",
+              verifiedAt: "2026-08-16T12:00:00.000Z",
+            },
+          },
+          terms: {
+            revision: "test-policy-1",
+            receiptPolicy: {
+              state: "active",
+              activatedAt: "2026-08-16T12:00:00.000Z",
+            },
+            repositoryLicense: {
+              state: "verified",
+              url: pathToFileURL(policyLicense).href,
+              fileSha256: policyLicenseSha256,
+            },
+            inbound: {
+              mode: "license",
+              termsUrl: null,
+              fileSha256: null,
+            },
+            externalPrize: null,
+          },
+        }),
+      );
+      const installedProjectPath = join(installedSkillRoot, "project.json");
+      const installedProject = JSON.parse(
+        readFileSync(installedProjectPath, "utf8"),
+      );
+      installedProject.policyAuthority = pathToFileURL(policyRoot).href;
+      writeFileSync(
+        installedProjectPath,
+        `${JSON.stringify(installedProject, null, 2)}\n`,
+      );
       const sourceRevision = "a".repeat(40);
       const installedFiles = readdirSync(installedSkillRoot, {
         recursive: true,
@@ -2354,7 +2405,23 @@ describe("run receipt CLI", () => {
         CLAUDE_CONFIG_DIR: join(fixtureRoot, "claude"),
         XDG_CONFIG_HOME: join(fixtureRoot, "config"),
       };
-      const entrypoint = join(installedSkillRoot, "scripts", "run-receipt.mjs");
+      const receiptEntrypoint = join(
+        installedSkillRoot,
+        "scripts",
+        "run-receipt.mjs",
+      );
+      const entrypoint = join(fixtureRoot, "run-receipt-test-harness.mjs");
+      writeFileSync(
+        entrypoint,
+        `import { main } from ${JSON.stringify(pathToFileURL(receiptEntrypoint).href)};
+try {
+  await main(process.argv.slice(2), { testPolicyAuthority: ${JSON.stringify(pathToFileURL(policyRoot).href)} });
+} catch (error) {
+  process.stderr.write(\`project run receipt failed: \${error instanceof Error ? error.message : String(error)}\\n\`);
+  process.exitCode = 1;
+}
+`,
+      );
       const cliArguments = [
         "--repo-root",
         repoRoot,

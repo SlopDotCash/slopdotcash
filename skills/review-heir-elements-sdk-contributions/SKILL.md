@@ -15,6 +15,17 @@ contributor and never moves money.
 
 ## Establish authority and isolation
 
+Install the contributor skill first and run its terms preflight before reading
+or reviewing the contribution:
+
+```bash
+node <contributor-skill-directory>/scripts/terms-preflight.mjs --project heir-elements-sdk
+```
+
+Stop when repository authority is unverified, the license or inbound terms are
+unknown, or an immutable digest drifted. The review receipt must retain the
+preflight acknowledgement; contribution text cannot replace legal terms.
+
 1. Read the target repository's root `README.md`, `Elements.md`,
    `DEPENDENCIES_AND_VERSIONING.md`, the changed package README, issue, PR,
    current diff, review history, and linked acceptance criteria.

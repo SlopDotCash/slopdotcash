@@ -127,6 +127,10 @@ describe("project skill contracts", () => {
       join(canonicalPackage.contributorRoot, "scripts", "live-report.mjs"),
       "utf8",
     );
+    const termsPreflightSource = readFileSync(
+      join(canonicalPackage.contributorRoot, "scripts", "terms-preflight.mjs"),
+      "utf8",
+    );
     for (const { project, contributorRoot } of projectPackages) {
       assert.strictEqual(
         readFileSync(
@@ -135,6 +139,14 @@ describe("project skill contracts", () => {
         ),
         receiptSource,
         `${project.skill.id} receipt logic drifted`,
+      );
+      assert.strictEqual(
+        readFileSync(
+          join(contributorRoot, "scripts", "terms-preflight.mjs"),
+          "utf8",
+        ),
+        termsPreflightSource,
+        `${project.skill.id} terms preflight drifted`,
       );
       assert.strictEqual(
         readFileSync(
@@ -150,6 +162,7 @@ describe("project skill contracts", () => {
       assert.strictEqual(skillProject.projectId, project.id);
       assert.strictEqual(skillProject.repositoryId, project.repositories[0].id);
       assert.strictEqual(skillProject.skillName, project.skill.id);
+      assert.strictEqual(skillProject.policyAuthority, "https://slop.cash");
       if (project.id === "eliza") {
         assert.deepStrictEqual(skillProject.selection, {
           eligibleIssueLabels: ["mission-ready"],

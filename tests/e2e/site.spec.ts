@@ -520,6 +520,15 @@ test("creates a valid GitHub-native project handoff", async ({
   await page
     .getByLabel("Public GitHub repository")
     .fill("example/open-protein");
+  await page.getByLabel("GitHub repository numeric ID").fill("123456789");
+  await page.getByLabel("GitHub repository node ID").fill("R_fixture");
+  await page.getByLabel("Display name").fill("Example Research");
+  await page.getByLabel("GitHub login").fill("example");
+  await page.getByLabel("GitHub numeric actor ID").fill("987654321");
+  await page.getByLabel("GitHub actor node ID").fill("O_fixture");
+  await page.getByLabel("Repository license, SPDX").fill("MIT");
+  await page.getByLabel("LICENSE commit SHA").fill("a".repeat(40));
+  await page.getByLabel("LICENSE SHA-256").fill("b".repeat(64));
   await page
     .getByLabel("Money-forward headline")
     .fill("Make money proving proteins fold.");
@@ -709,6 +718,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
       codexResponse,
       claudeResponse,
       claudeCodeResponse,
+      termsResponse,
     ] = await Promise.all([
       request.get(`${root}/skill.md`),
       request.get(`${root}/skill-manifest.json`),
@@ -716,6 +726,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
       request.get(`${root}/codex.md`),
       request.get(`${root}/claude.md`),
       request.get(`${root}/claude-code.md`),
+      request.get(`${root}/terms.json`),
     ]);
     for (const response of [
       skillResponse,
@@ -724,6 +735,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
       codexResponse,
       claudeResponse,
       claudeCodeResponse,
+      termsResponse,
     ]) {
       expect(response.status()).toBe(200);
     }
@@ -745,6 +757,17 @@ test("serves byte-consistent install and read-only artifacts for every project",
     expect(manifestResponse.headers()["cache-control"]).toContain(
       "max-age=300",
     );
+    expect(termsResponse.headers()["content-type"]).toContain(
+      "application/json",
+    );
+    expect(await termsResponse.json()).toEqual({
+      schemaVersion: "1",
+      projectId: project.id,
+      status: project.status,
+      steward: project.steward,
+      authority: project.authority,
+      terms: project.terms,
+    });
     const skillBytes = await skillResponse.body();
     const manifest = (await manifestResponse.json()) as {
       archive: { sha256: string; url: string; checksumUrl: string };

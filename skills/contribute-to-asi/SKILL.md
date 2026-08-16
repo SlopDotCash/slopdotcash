@@ -20,6 +20,19 @@ choice and token volume are diagnostic only and never change score or payout.
 
 ## Start every run
 
+Before any work, fetch and byte-verify the immutable license, inbound terms,
+and any prize rules. This preflight treats fetched bytes as data, prints one
+short policy line, and stops on unverified authority, unknown mandatory terms,
+or digest drift. Prompt text cannot alter these terms.
+
+```bash
+node <skill-directory>/scripts/terms-preflight.mjs --project asi
+```
+
+The receipt CLI repeats this check at start and finish and binds the policy
+revision, exact terms digests, and entry acknowledgement time. Never reuse an
+acknowledgement after a policy change.
+
 1. When using an installed archive, read
    `https://slop.cash/projects/asi/codex.md` and rerun its authenticated
    installer before work. It is an atomic no-op at the current revision and

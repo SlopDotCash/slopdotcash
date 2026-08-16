@@ -9,6 +9,7 @@ import {
   isExactModelIdentifier,
   isExactProviderIdentifier,
 } from "./model-identity";
+import { findProject } from "./projects.mjs";
 import {
   findTargetRepository,
   findTargetRepositoryById,
@@ -24,6 +25,7 @@ import {
 import {
   assertProjectRunReceipt,
   assertRunReceiptMarker,
+  assertRunReceiptPolicyJoin,
   type ProjectRunReceipt,
 } from "./run-receipts";
 
@@ -1065,6 +1067,10 @@ function parseMarker(
   if (version === "v2") {
     try {
       const run = assertRunReceiptMarker(parsed);
+      const project = findProject(run.projectId);
+      if (!project)
+        throw new TypeError("run receipt project is not registered");
+      assertRunReceiptPolicyJoin(run, project);
       return {
         provider: run.provider,
         model: run.model,
