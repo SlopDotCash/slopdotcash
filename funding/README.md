@@ -136,6 +136,28 @@ input—a release must credit an active manifest receiving route and a refund
 the funder's claimed wallet—and are never inferred. The verifier never signs,
 broadcasts, handles a key, or writes a record.
 
+For a Sablier Lockup v4 USDC stream on Base or Ethereum, the read-only
+verifier (`commitment-sablier-v1`) queries three fixed public RPC authorities,
+checks each authority's chain ID, pins every stream view call to that
+authority's own finalized block, and requires two to agree exactly on the
+stream state:
+
+```text
+bun run funding:verify-commitment-sablier -- --network <base|ethereum> --stream-id <integer> --recipient <0x-address>
+```
+
+It proves the stream's underlying token is the canonical USDC contract for
+the network and that the stream recipient equals the expected project payout
+address, which is explicit input and never inferred. It reports the exact
+integer deposited, withdrawn, refunded, and locked (deposited minus withdrawn
+minus refunded) minor-unit amounts, the funder-side sender address, the
+on-chain end time, and the canceled and depleted flags truthfully, with the
+canonical evidence URL `https://basescan.org/address/<contract>` or
+`https://etherscan.io/address/<contract>` and each agreeing authority's
+finalized block identity. Wrong chains, wrong tokens, wrong recipients, and
+malformed return data fail closed. The verifier never signs, broadcasts,
+handles a key, or writes a record.
+
 A manifest may set `fundingState: "committed"` only while an active instrument
 is declared and the verified commitment ledger (deposits minus releases and
 refunds) covers `committedMinor`. The check is deterministic ledger arithmetic
