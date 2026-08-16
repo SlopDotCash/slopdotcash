@@ -34,6 +34,59 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
       "repository transfer, rename, or integration-branch drift requires a new project review",
     );
   }
+  const previousReceiptPolicy = previous.terms.receiptPolicy;
+  const nextReceiptPolicy = next.terms.receiptPolicy;
+  if (
+    previousReceiptPolicy.state === "pending-authority-activation" &&
+    nextReceiptPolicy.state === "active" &&
+    (next.authority.state !== "verified" ||
+      nextReceiptPolicy.bindings.length !== 1 ||
+      nextReceiptPolicy.activatedAt !== next.authority.proof.verifiedAt)
+  ) {
+    throw new TypeError(
+      "receipt policy activation requires exactly one first binding at authority verification",
+    );
+  }
+  if (previousReceiptPolicy.state === "active") {
+    if (nextReceiptPolicy.state !== "active") {
+      throw new TypeError("active receipt policy cannot revert to pending");
+    }
+    if (previousReceiptPolicy.activatedAt !== nextReceiptPolicy.activatedAt) {
+      throw new TypeError("receipt policy cutover activation is immutable");
+    }
+    if (
+      nextReceiptPolicy.bindings.length <
+        previousReceiptPolicy.bindings.length ||
+      previousReceiptPolicy.bindings.some(
+        (binding, index) =>
+          canonical(binding) !== canonical(nextReceiptPolicy.bindings[index]),
+      )
+    ) {
+      throw new TypeError(
+        "historical receipt policy bindings must remain an exact append-only prefix",
+      );
+    }
+    const appended =
+      nextReceiptPolicy.bindings.length - previousReceiptPolicy.bindings.length;
+    if (appended > 1) {
+      throw new TypeError(
+        "receipt policy transition may append at most one binding",
+      );
+    }
+    const bindingTerms = (project) =>
+      canonical({
+        policyRevision: project.terms.revision,
+        licenseSha256: project.terms.repositoryLicense.fileSha256,
+        inboundTermsSha256: project.terms.inbound.fileSha256,
+        prizeRulesSha256: project.terms.externalPrize?.rulesSha256 ?? null,
+      });
+    const bindingChanged = bindingTerms(previous) !== bindingTerms(next);
+    if (bindingChanged !== (appended === 1)) {
+      throw new TypeError(
+        "receipt policy binding append must exactly match a binding-relevant terms change",
+      );
+    }
+  }
   const materialBefore = canonical({
     steward: previous.steward,
     terms: previous.terms,
