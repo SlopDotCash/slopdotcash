@@ -600,6 +600,11 @@ test("serves byte-consistent install and read-only artifacts for every project",
   expect(legacySkillResponse.headers().location).toBe(
     "/projects/eliza/skill.md",
   );
+  const fundingRouteResponse = await request.get("/projects/eliza/funding", {
+    maxRedirects: 0,
+  });
+  expect(fundingRouteResponse.status()).toBe(200);
+  expect(await fundingRouteResponse.text()).toContain('<div id="root"></div>');
 
   const [
     bootstrapResponse,
