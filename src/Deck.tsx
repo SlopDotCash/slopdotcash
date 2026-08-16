@@ -17,7 +17,7 @@ import {
 } from "react";
 import "./deck.css";
 
-const SLIDE_COUNT = 10;
+const SLIDE_COUNT = 9;
 function initialSlide(): number {
   const parsed = Number.parseInt(window.location.hash.slice(1), 10);
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= SLIDE_COUNT
@@ -250,7 +250,7 @@ function GoToMarket() {
     {
       icon: <Users aria-hidden="true" />,
       title: "Hack traction.",
-      copy: "Turn open projects like Extropic’s THRML + torx into public, fundable work.",
+      copy: "Turn open projects into public, fundable work.",
     },
     {
       icon: <Cpu aria-hidden="true" />,
@@ -288,49 +288,6 @@ function GoToMarket() {
   );
 }
 
-function Ownership() {
-  const modes = [
-    [
-      "Funded by a project",
-      "An outside party funds a defined outcome. The project sets the license or assignment.",
-    ],
-    [
-      "Owned together",
-      "ASI and similar projects become collective IP governed by the community.",
-    ],
-    [
-      "Won together",
-      "The $1M Proximity Prize is shared by contribution—and the result enters the commons.",
-    ],
-  ];
-  return (
-    <Frame
-      index={5}
-      label="Ownership follows published project rules"
-      className="deck-ownership"
-    >
-      <div>
-        <h2>There is more than one way to own progress.</h2>
-        <p className="deck-supporting">
-          Some work serves a sponsor. Some becomes collective IP. Some wins a
-          prize we split together.
-        </p>
-      </div>
-      <div className="deck-ownership-modes">
-        {modes.map(([title, copy], index) => (
-          <article key={title}>
-            <i aria-hidden="true">
-              {index === 0 ? "●" : index === 1 ? "◉" : "◎"}
-            </i>
-            <h3>{title}</h3>
-            <p>{copy}</p>
-          </article>
-        ))}
-      </div>
-    </Frame>
-  );
-}
-
 function Competition() {
   const competitors = [
     ["Yukon", "Humans + AI on frontier research"],
@@ -339,20 +296,21 @@ function Competition() {
     ["LFX", "Maintainer crowdfunding"],
   ];
   return (
-    <Frame
-      index={6}
-      label="Slop in the open-source funding market"
-      className="deck-competition"
-    >
+    <Frame index={5} label="Why Slop is different" className="deck-competition">
       <div>
         <h2>
-          Open intelligence is becoming a market.
+          Built for open source.
           <br />
-          <em>Slop makes the work investable.</em>
+          <em>Open to every kind of project.</em>
         </h2>
+        <p className="deck-supporting">
+          Slop starts where the work lives—GitHub—and lets anyone fund verified
+          progress.
+        </p>
       </div>
       <div className="deck-competition-map">
-        <div className="deck-competitor-row">
+        <div className="deck-market-context">
+          <span>Adjacent models</span>
           {competitors.map(([name, focus]) => (
             <article key={name}>
               <strong>{name}</strong>
@@ -361,11 +319,19 @@ function Competition() {
           ))}
         </div>
         <div className="deck-slop-position">
-          <strong>SLOP</strong>
-          <p>Verifiable outcomes across repos</p>
-          <p>Humans + agents</p>
-          <p>Cash + compute sponsors</p>
-          <p>Project, collective, or prize ownership</p>
+          <strong>Why Slop wins</strong>
+          <p>
+            <b>Any project</b>
+            <span>Software, science, research, art, and beyond.</span>
+          </p>
+          <p>
+            <b>GitHub-native</b>
+            <span>Work, proof, and reputation live in the open.</span>
+          </p>
+          <p>
+            <b>Open-source first</b>
+            <span>Funding compounds into shared public infrastructure.</span>
+          </p>
         </div>
       </div>
     </Frame>
@@ -380,12 +346,12 @@ function Economics() {
   ];
   return (
     <Frame
-      index={7}
+      index={6}
       label="Revenue and token economics"
       className="deck-economics"
     >
       <div className="deck-economics-heading">
-        <h2>Break even first. Then compound.</h2>
+        <h2>This can actually make a lot of money.</h2>
         <p>
           3% of payouts plus sponsorships, collaborations, and contributed
           compute offset the network’s cost in year one.
@@ -456,27 +422,33 @@ function Raise() {
     ["10%", "$25K", "Legal"],
   ];
   return (
-    <Frame index={8} label="A 250 thousand dollar raise" className="deck-raise">
+    <Frame index={7} label="A 250 thousand dollar raise" className="deck-raise">
       <div className="deck-raise-heading">
         <h2>
           We need <em>$250K</em> to change the world.
         </h2>
       </div>
-      <div className="deck-allocation-bar">
-        {allocation.map(([percent, amount, label]) => (
-          <article
-            key={label}
-            style={
-              {
-                "--weight": Number.parseInt(percent, 10),
-              } as CSSProperties
-            }
-          >
-            <span>{percent}</span>
-            <strong>{amount}</strong>
-            <p>{label}</p>
-          </article>
-        ))}
+      <div className="deck-raise-model">
+        <div
+          className="deck-allocation-pie"
+          role="img"
+          aria-label="250 thousand dollar allocation: 40 percent team, 30 percent bounties and incentives, 20 percent marketing, and 10 percent legal"
+        >
+          <div>
+            <strong>$250K</strong>
+            <span>total raise</span>
+          </div>
+        </div>
+        <div className="deck-allocation-legend">
+          {allocation.map(([percent, amount, label]) => (
+            <article key={label}>
+              <i aria-hidden="true" />
+              <span>{percent}</span>
+              <strong>{amount}</strong>
+              <p>{label}</p>
+            </article>
+          ))}
+        </div>
       </div>
     </Frame>
   );
@@ -484,7 +456,7 @@ function Raise() {
 
 function Close() {
   return (
-    <Frame index={9} label="When we build it we own it" className="deck-close">
+    <Frame index={8} label="When we build it we own it" className="deck-close">
       <div className="deck-close-mark" aria-hidden="true">
         <GitBranch />
       </div>
@@ -508,7 +480,6 @@ const slides = [
   <Mission key="mission" />,
   <Flywheel key="flywheel" />,
   <GoToMarket key="gtm" />,
-  <Ownership key="ownership" />,
   <Competition key="competition" />,
   <Economics key="economics" />,
   <Raise key="raise" />,
