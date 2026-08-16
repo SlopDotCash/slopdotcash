@@ -247,6 +247,60 @@ describe("Bitcoin funding transfer verification", () => {
     ).toThrow(/expectation is invalid/u);
   });
 
+  it("rejects aggregate input and output totals above the 21 million BTC supply", () => {
+    expect(() =>
+      assertConfirmedBtcFundingTransfer(
+        transaction({
+          vin: [
+            {
+              is_coinbase: false,
+              prevout: {
+                scriptpubkey_address: SENDER,
+                value: 2_100_000_000_000_000,
+              },
+            },
+            {
+              is_coinbase: false,
+              prevout: { scriptpubkey_address: SENDER, value: 1 },
+            },
+          ],
+        }),
+        TXID,
+        RECIPIENT,
+        "150000",
+        TIP,
+        BLOCK_HASH,
+      ),
+    ).toThrow(/input total exceeds/u);
+    expect(() =>
+      assertConfirmedBtcFundingTransfer(
+        transaction({
+          vin: [
+            {
+              is_coinbase: false,
+              prevout: {
+                scriptpubkey_address: SENDER,
+                value: 2_100_000_000_000_000,
+              },
+            },
+          ],
+          vout: [
+            { scriptpubkey_address: RECIPIENT, value: 150_000 },
+            {
+              scriptpubkey_address: SENDER,
+              value: 2_100_000_000_000_000,
+            },
+          ],
+        }),
+        TXID,
+        RECIPIENT,
+        "150000",
+        TIP,
+        BLOCK_HASH,
+      ),
+    ).toThrow(/output total exceeds/u);
+  });
+
   it("produces verifier fields the funding record schema accepts", () => {
     const routes = assertProjectFundingAddresses([
       {

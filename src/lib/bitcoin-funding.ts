@@ -156,6 +156,11 @@ export function assertConfirmedBtcFundingTransfer(
       prevout.value,
       `Bitcoin vin[${index}].prevout.value`,
     );
+    if (inputTotal > MAX_SATS) {
+      throw new TypeError(
+        "Bitcoin transaction input total exceeds the satoshi supply",
+      );
+    }
   });
   let outputTotal = 0n;
   let recipientCredit = 0n;
@@ -163,6 +168,11 @@ export function assertConfirmedBtcFundingTransfer(
     const output = record(entry, `Bitcoin vout[${index}]`);
     const value = satoshis(output.value, `Bitcoin vout[${index}].value`);
     outputTotal += value;
+    if (outputTotal > MAX_SATS) {
+      throw new TypeError(
+        "Bitcoin transaction output total exceeds the satoshi supply",
+      );
+    }
     if (output.scriptpubkey_address === recipient) {
       if (value <= BITCOIN_FUNDING_DUST_MINIMUM_SATS) {
         throw new TypeError(

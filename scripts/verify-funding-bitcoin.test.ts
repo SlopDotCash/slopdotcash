@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BITCOIN_FUNDING_API_AUTHORITIES,
+  MAX_BITCOIN_API_BYTES,
   parseBitcoinFundingArguments,
   verifyFundingBitcoin,
 } from "./verify-funding-bitcoin";
@@ -42,10 +43,12 @@ function authorityResponses(overrides: Record<string, string> = {}) {
 function fetchFor(
   perHost: Record<string, Record<string, string>>,
   requests: string[] = [],
+  redirects: Array<RequestRedirect | undefined> = [],
 ) {
-  return async (url: URL) => {
+  return async (url: URL, init?: RequestInit) => {
     const path = url.pathname.replace(/^\/api/u, "");
     requests.push(`${url.host}${path}`);
+    redirects.push(init?.redirect);
     const responses = perHost[url.host];
     if (!responses || !(path in responses)) {
       throw new Error(`unexpected API request ${url.host}${path}`);
@@ -65,17 +68,19 @@ function allHosts(responses: Record<string, string>) {
 describe("Bitcoin funding verifier", () => {
   it("reaches quorum across fixed authorities and emits reviewed fields", async () => {
     const requests: string[] = [];
+    const redirects: Array<RequestRedirect | undefined> = [];
     const result = await verifyFundingBitcoin({
       transactionId: TXID,
       recipient: RECIPIENT,
       amountMinor: "150000",
-      fetchImpl: fetchFor(allHosts(authorityResponses()), requests),
+      fetchImpl: fetchFor(allHosts(authorityResponses()), requests, redirects),
     });
     for (const host of HOSTS) {
       expect(requests).toContain(`${host}/tx/${TXID}`);
       expect(requests).toContain(`${host}/blocks/tip/height`);
       expect(requests).toContain(`${host}/block-height/800000`);
     }
+    expect(redirects.every((redirect) => redirect === "error")).toBe(true);
     expect(result).toMatchObject({
       state: "verified-on-chain",
       finality: { kind: "confirmations", confirmations: 11 },
@@ -109,6 +114,19 @@ describe("Bitcoin funding verifier", () => {
     expect(result.finality).toEqual({
       kind: "confirmations",
       confirmations: 11,
+    });
+    expect(result.chainEvidence.authorities).toHaveLength(2);
+  });
+
+  it("survives one unavailable authority", async () => {
+    const result = await verifyFundingBitcoin({
+      transactionId: TXID,
+      recipient: RECIPIENT,
+      amountMinor: "150000",
+      fetchImpl: fetchFor({
+        [HOSTS[0]]: authorityResponses(),
+        [HOSTS[1]]: authorityResponses(),
+      }),
     });
     expect(result.chainEvidence.authorities).toHaveLength(2);
   });
@@ -192,5 +210,38 @@ describe("Bitcoin funding verifier", () => {
         TXID,
       ]),
     ).toThrow(/Usage/u);
+  });
+
+  it("rejects declared and streamed bodies above 8 MiB", async () => {
+    await expect(
+      verifyFundingBitcoin({
+        transactionId: TXID,
+        recipient: RECIPIENT,
+        amountMinor: "150000",
+        fetchImpl: async () =>
+          new Response("{}", {
+            headers: {
+              "content-length": String(MAX_BITCOIN_API_BYTES + 1),
+            },
+          }),
+      }),
+    ).rejects.toThrow(/quorum/u);
+    await expect(
+      verifyFundingBitcoin({
+        transactionId: TXID,
+        recipient: RECIPIENT,
+        amountMinor: "150000",
+        fetchImpl: async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array(MAX_BITCOIN_API_BYTES));
+                controller.enqueue(new Uint8Array(1));
+                controller.close();
+              },
+            }),
+          ),
+      }),
+    ).rejects.toThrow(/quorum/u);
   });
 });
