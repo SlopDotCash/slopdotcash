@@ -500,7 +500,7 @@ function Close() {
         <a href="https://slop.cash" target="_blank" rel="noreferrer">
           slop.cash <ArrowRight aria-hidden="true" />
         </a>
-        <a href="mailto:shaw@elizalabs.ai">shaw@elizalabs.ai</a>
+        <a href="mailto:shawmakesmagic@gmail.com">shawmakesmagic@gmail.com</a>
       </div>
     </Frame>
   );
