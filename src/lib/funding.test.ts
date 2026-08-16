@@ -49,6 +49,47 @@ function record(overrides: Record<string, unknown> = {}) {
 }
 
 describe("project funding records", () => {
+  it("retains non-overlapping receiving history and rejects ambiguous time", () => {
+    expect(
+      assertProjectFundingAddresses([
+        {
+          network: "ethereum",
+          asset: "USDC",
+          address: ADDRESS,
+          effectiveAt: "2026-08-01T00:00:00.000Z",
+          replacedAt: "2026-08-02T00:00:00.000Z",
+        },
+        {
+          network: "ethereum",
+          asset: "USDC",
+          address: `0x${"2".repeat(40)}`,
+          effectiveAt: "2026-08-02T00:00:00.000Z",
+          replacedAt: null,
+        },
+      ]),
+    ).toHaveLength(2);
+    expect(() =>
+      assertProjectFundingAddresses([
+        ...routes.map((route) => ({
+          ...route,
+          replacedAt: "2026-08-03T00:00:00.000Z",
+        })),
+        {
+          network: "ethereum",
+          asset: "USDC",
+          address: `0x${"2".repeat(40)}`,
+          effectiveAt: "2026-08-02T00:00:00.000Z",
+          replacedAt: null,
+        },
+      ]),
+    ).toThrow(/overlapping active routes/u);
+    expect(() =>
+      assertProjectFundingAddresses([
+        { ...routes[0], effectiveAt: "2026-02-30T00:00:00.000Z" },
+      ]),
+    ).toThrow(/invalid/u);
+  });
+
   it("binds a self-report to the exact active manifest address", () => {
     expect(assertProjectFundingRecord(record(), routes)).toMatchObject({
       state: "self-reported",
@@ -63,6 +104,30 @@ describe("project funding records", () => {
     expect(() =>
       assertProjectFundingRecord(record({ amountMinor: "1.0" }), routes),
     ).toThrow(/integer minor units/u);
+    expect(() =>
+      assertProjectFundingRecord(
+        record({ amountMinor: "1".repeat(41) }),
+        routes,
+      ),
+    ).toThrow(/integer minor units/u);
+    expect(() =>
+      assertProjectFundingRecord(
+        record({ observedAt: "2026-02-30T00:00:00.000Z" }),
+        routes,
+      ),
+    ).toThrow(/invalid/u);
+    expect(() =>
+      assertProjectFundingRecord(
+        record({
+          donor: {
+            attribution: "github",
+            actorId: "1".repeat(21),
+            login: "lalalune",
+          },
+        }),
+        routes,
+      ),
+    ).toThrow(/donor identity/u);
     expect(() =>
       assertProjectFundingRecord(
         record({

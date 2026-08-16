@@ -1199,7 +1199,13 @@ function FundingQr({
 
 export function ProjectFunding({ project }: { project: ProjectDefinition }) {
   const [copied, setCopied] = useState<string | null>(null);
-  if (project.funding.addresses.length === 0) return null;
+  const now = Date.now();
+  const activeRoutes = project.funding.addresses.filter(
+    (route) =>
+      Date.parse(route.effectiveAt) <= now &&
+      (route.replacedAt === null || now < Date.parse(route.replacedAt)),
+  );
+  if (activeRoutes.length === 0) return null;
   return (
     <section className="section project-funding">
       <details>
@@ -1211,8 +1217,8 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
           wallet ownership.
         </p>
         <div className="funding-routes">
-          {project.funding.addresses.map((route) => {
-            const key = `${route.network}:${route.asset}`;
+          {activeRoutes.map((route) => {
+            const key = `${route.network}:${route.asset}:${route.address}:${route.effectiveAt}`;
             return (
               <div className="funding-route" key={key}>
                 <strong>

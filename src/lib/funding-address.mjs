@@ -1,6 +1,32 @@
 /** Validates canonical public receiving addresses for each funding network. */
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+export const MAX_FUNDING_ROUTES = 32;
+
+function fundingTimestamp(value, field) {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||
+    !Number.isFinite(Date.parse(value)) ||
+    new Date(value).toISOString() !== value
+  ) {
+    throw new TypeError(`${field} is invalid`);
+  }
+  return value;
+}
+
+function fundingRecord(value, field) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${field} must be an object`);
+  }
+  return value;
+}
+
+function exactFundingKeys(value, keys, field) {
+  if (Object.keys(value).sort().join("\0") !== [...keys].sort().join("\0")) {
+    throw new TypeError(`${field} has unexpected or missing fields`);
+  }
+}
 
 function decodedBase58Length(value, minimumLength, maximumLength) {
   if (
@@ -105,4 +131,82 @@ export function isFundingAddress(network, value) {
 
 export function isSolanaTransactionId(value) {
   return decodedBase58Length(value, 64, 88) === 64;
+}
+
+/**
+ * Validates the complete bounded receiving-address history. A project keeps
+ * replaced routes so old transaction records remain independently verifiable,
+ * while intervals for the same network and asset may never overlap.
+ */
+export function assertFundingAddresses(
+  value,
+  field = "project funding addresses",
+) {
+  if (!Array.isArray(value) || value.length > MAX_FUNDING_ROUTES) {
+    throw new TypeError(
+      `${field} must be an array of at most ${MAX_FUNDING_ROUTES} routes`,
+    );
+  }
+  const seenAddresses = new Set();
+  const histories = new Map();
+  const routes = value.map((candidate, index) => {
+    const routeField = `${field}[${index}]`;
+    const route = fundingRecord(candidate, routeField);
+    exactFundingKeys(
+      route,
+      ["address", "asset", "effectiveAt", "network", "replacedAt"],
+      routeField,
+    );
+    const asset = fundingAssetForNetwork(route.network);
+    if (asset === null || route.asset !== asset) {
+      throw new TypeError(`${routeField} network or asset is unsupported`);
+    }
+    if (!isFundingAddress(route.network, route.address)) {
+      throw new TypeError(`${routeField}.address is invalid`);
+    }
+    const effectiveAt = fundingTimestamp(
+      route.effectiveAt,
+      `${routeField}.effectiveAt`,
+    );
+    const replacedAt =
+      route.replacedAt === null
+        ? null
+        : fundingTimestamp(route.replacedAt, `${routeField}.replacedAt`);
+    if (
+      replacedAt !== null &&
+      Date.parse(replacedAt) <= Date.parse(effectiveAt)
+    ) {
+      throw new TypeError(`${routeField}.replacedAt must follow effectiveAt`);
+    }
+    const addressKey = `${route.network}:${route.asset}:${route.address}`;
+    if (seenAddresses.has(addressKey)) {
+      throw new TypeError(`${field} contain a duplicate receiving address`);
+    }
+    seenAddresses.add(addressKey);
+    const result = {
+      network: route.network,
+      asset: route.asset,
+      address: route.address,
+      effectiveAt,
+      replacedAt,
+    };
+    const historyKey = `${route.network}:${route.asset}`;
+    const history = histories.get(historyKey) ?? [];
+    history.push(result);
+    histories.set(historyKey, history);
+    return result;
+  });
+  for (const history of histories.values()) {
+    history.sort((left, right) =>
+      left.effectiveAt.localeCompare(right.effectiveAt),
+    );
+    for (let index = 1; index < history.length; index += 1) {
+      const prior = history[index - 1];
+      const current = history[index];
+      if (prior.replacedAt === null || prior.replacedAt > current.effectiveAt) {
+        throw new TypeError(`${field} contain overlapping active routes`);
+      }
+    }
+  }
+  return routes;
 }

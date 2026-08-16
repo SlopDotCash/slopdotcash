@@ -77,4 +77,20 @@ describe("Solana funding verifier", () => {
       }),
     ).rejects.toThrow(/absent at finalized/u);
   });
+
+  it("rejects an unbounded amount before querying an RPC", async () => {
+    let queried = false;
+    await expect(
+      verifyFundingSolana({
+        signature: SIGNATURE,
+        recipient: RECIPIENT,
+        amountMinor: "1".repeat(41),
+        fetchImpl: async () => {
+          queried = true;
+          return new Response();
+        },
+      }),
+    ).rejects.toThrow(/invalid/u);
+    expect(queried).toBe(false);
+  });
 });

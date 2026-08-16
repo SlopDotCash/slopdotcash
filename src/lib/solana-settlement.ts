@@ -92,6 +92,7 @@ function tokenBalances(
     if (
       ui.decimals !== USDC_DECIMALS ||
       typeof ui.amount !== "string" ||
+      ui.amount.length > 40 ||
       !/^(?:0|[1-9]\d*)$/u.test(ui.amount)
     ) {
       throw new TypeError(`${field}[${index}] has invalid raw token amount`);
@@ -210,7 +211,11 @@ export function assertFinalizedUsdcFundingTransfer(
   amountMinor: string,
 ): VerifiedSolanaTransaction {
   signature(expectedSignature, "expected signature");
-  if (!isSolanaAddress(recipientOwner) || !/^[1-9]\d*$/u.test(amountMinor)) {
+  if (
+    !isSolanaAddress(recipientOwner) ||
+    amountMinor.length > 40 ||
+    !/^[1-9]\d*$/u.test(amountMinor)
+  ) {
     throw new TypeError("funding transfer expectation is invalid");
   }
   const transaction = record(transactionValue, "Solana transaction");

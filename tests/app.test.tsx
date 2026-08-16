@@ -964,6 +964,13 @@ describe("direct project funding", () => {
           {
             network: "solana" as const,
             asset: "USDC" as const,
+            address: "Vote111111111111111111111111111111111111111",
+            effectiveAt: "2026-08-14T00:00:00.000Z",
+            replacedAt: "2026-08-15T00:00:00.000Z",
+          },
+          {
+            network: "solana" as const,
+            asset: "USDC" as const,
             address: "11111111111111111111111111111111",
             effectiveAt: "2026-08-16T00:00:00.000Z",
             replacedAt: null,
@@ -975,6 +982,9 @@ describe("direct project funding", () => {
     render(<ProjectFunding project={fundedProject} />);
     fireEvent.click(screen.getByText("Fund this project"));
     expect(screen.getByText(fundedProject.funding.disclosure)).toBeVisible();
+    expect(
+      screen.queryByText("Vote111111111111111111111111111111111111111"),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("11111111111111111111111111111111")).toBeVisible();
     expect(
       await screen.findByRole("img", {
