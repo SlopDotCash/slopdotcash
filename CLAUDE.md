@@ -137,6 +137,27 @@ requested, security-sensitive labels, human-gated work, and epics are
 fail-closed selection signals. Users and agents must re-read live GitHub before
 acting.
 
+## Project authority and IP contract
+
+Slop is a public record, not a rights registry, and it carries no legal
+claims. It publishes exactly two kinds of provenance: repository license
+facts observed from the repository itself (SPDX plus an immutable LICENSE
+URL, commit, and digest, never an ownership claim) and a verifiable GitHub
+stewardship identity. Stewardship is a GitHub identity only; it implies no
+legal capacity, ownership, or assignment. Slop asserts and records no
+copyright ownership, legal capacity, or assignment on its own behalf or any
+project's. `unknown` and `mixed` copyright terms with null legal fields are
+the complete terminal state, never a pending one; no activation,
+verification, or payment path may require a legal holder, legal capacity, or
+governance resolution. `sponsor-owned` terms stay schema-supported only for
+a project that itself supplies the full signed instrument set, and any
+legal-holder claim without that set fails closed. Projects wanting legal
+ownership arrangements handle them entirely outside Slop, and Slop never
+displays them. External-prize shares are payout allocation only, never a
+copyright claim: Delta Star contributor shares default to equal and change
+only when every named author approves a non-equal split, while organizer
+rules remain controlling.
+
 ## Model attribution
 
 Contributions made through a project skill must carry the machine-readable

@@ -331,6 +331,14 @@ function validateTerms(value, repositoryId, reward, steward) {
       `${field} sponsor-owned terms require an exact legal holder`,
     );
   }
+  if (
+    (copyright.model === "mixed" || copyright.model === "unknown") &&
+    copyright.claimedLegalHolder !== null
+  ) {
+    throw new TypeError(
+      `${field} records no ownership claim outside signed sponsor-owned terms`,
+    );
+  }
   if (copyright.legalCapacity !== null) {
     const capacity = record(
       copyright.legalCapacity,

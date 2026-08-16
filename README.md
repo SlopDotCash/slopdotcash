@@ -328,6 +328,11 @@ revision it used.
 - No KYC flow ships in v1. That product decision does not remove legal, tax,
   sanctions, contest, employment, or payment obligations from project owners,
   contributors, or platform operators.
+- No copyright ownership claims, ever. Slop permanently publishes repository
+  license facts and GitHub stewardship identity only; it asserts and records
+  no copyright ownership, legal capacity, or assignment. Stewardship implies
+  no legal capacity. Projects wanting legal ownership arrangements handle
+  them entirely outside Slop, and Slop never displays them.
 - No issue reservation system ships. Skills may recommend work, but live GitHub
   state remains authoritative.
 - No autonomous bans ship. Automation can reject malformed evidence or propose

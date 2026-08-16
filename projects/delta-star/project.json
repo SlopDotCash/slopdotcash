@@ -29,7 +29,7 @@
   },
   "terms": {
     "revision": "2026-08-16.2",
-    "effectiveAt": "2026-08-16T20:30:00.000Z",
+    "effectiveAt": "2026-08-16T00:00:00.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
       "activatedAt": null,
@@ -38,9 +38,9 @@
     "paymentTransfersIp": false,
     "retroactive": false,
     "copyright": {
-      "model": "contributor-retained",
+      "model": "unknown",
       "claimedLegalHolder": null,
-      "notice": "Proximity Prize contributors",
+      "notice": null,
       "legalCapacity": null,
       "governanceResolution": null
     },
@@ -68,7 +68,7 @@
       "version": "unknown",
       "eligibility": "Organizer controlled; immutable captured rules are not yet supplied.",
       "allocationAuthority": "Final author-approved allocation, subject to organizer rules.",
-      "defaultContributorAllocation": "Unknown until the project owner confirms the equal-share default.",
+      "defaultContributorAllocation": "Equal shares for all named authors by default; a non-equal split requires approval from every named author. Organizer rules remain controlling. Shares are payout allocation only, never a copyright or ownership claim.",
       "ipTerms": "Unknown until immutable organizer rules are captured."
     }
   },

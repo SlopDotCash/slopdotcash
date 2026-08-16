@@ -2580,7 +2580,8 @@ function ProjectProposalPage() {
         retroactive: false,
         copyright: {
           model: copyrightModel,
-          claimedLegalHolder: legalHolder || null,
+          claimedLegalHolder:
+            copyrightModel === "sponsor-owned" ? legalHolder || null : null,
           notice: null,
           legalCapacity: null,
           governanceResolution: null,
