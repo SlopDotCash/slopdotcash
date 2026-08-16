@@ -11,6 +11,7 @@ import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
 export const REWARD_PROTOCOL_VERSION = "1" as const;
 export const REVIEW_WINDOW_DAYS = 14;
 export const SHARE_PARTS_TOTAL = 1_000_000;
+export const PLATFORM_FEE_BASIS_POINTS = 300 as const;
 
 export type AllocationState =
   | "approved"
@@ -88,7 +89,7 @@ export interface RewardAllocationManifest {
   currency: "USDC";
   chain: "solana";
   capMinor: string;
-  feeBasisPoints: 100;
+  feeBasisPoints: typeof PLATFORM_FEE_BASIS_POINTS;
   scoringRuleVersion: string;
   sourceSnapshotSha256: string;
   allocations: RewardAllocation[];
@@ -751,7 +752,7 @@ export function assertRewardAllocationManifest(
     currency: "USDC",
     chain: "solana",
     capMinor,
-    feeBasisPoints: 100,
+    feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
     scoringRuleVersion: text(
       manifest.scoringRuleVersion,
       "allocation manifest.scoringRuleVersion",

@@ -178,7 +178,7 @@ finalization fails.
 - The monthly automation runs trusted `develop` only, is idempotent, refuses a
   partial cycle, and records zero-award months explicitly.
 - Monthly allocations use integer USDC micro-units, largest remainder, and the
-  published cap. The 1% fee applies to approved principal. Never use floats for
+  published cap. The 3% fee applies to approved principal. Never use floats for
   money or let rollover increase a later monthly cap.
 - Proposal review lasts 14 days. A project owner may set any contributor award,
   including zero or an amount above the deterministic suggestion, while the
@@ -194,7 +194,7 @@ finalization fails.
 - Settlement tools create unsigned Solana mainnet USDC plans only. They never
   read keys, sign, broadcast, or claim success optimistically.
 - `paid` requires finalized transaction evidence whose exact source and
-  destination USDC deltas reconcile every immutable intent and the 1% fee
+  destination USDC deltas reconcile every immutable intent and the 3% fee
   charged when the payout is paid. Reject
   replay, wrong mint, wrong owner, partial, duplicate, failed, or overpaid state.
 - Delta Star publishes external-prize shares only and never enters the platform
