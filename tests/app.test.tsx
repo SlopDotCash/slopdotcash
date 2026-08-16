@@ -1011,7 +1011,7 @@ describe("direct project funding", () => {
     const attributedTransaction = `0x${"a".repeat(64)}`;
     render(
       <DonorFundingProfile
-        actor={{ id: "U_fixture", login: "finish-line" }}
+        actor={{ id: "MDQ6VXNlcjE=", login: "finish-line" }}
         records={[
           fundingRecord(
             "fund_profile_public",
@@ -1019,7 +1019,8 @@ describe("direct project funding", () => {
             "1000000",
             {
               attribution: "github",
-              actorId: "U_fixture",
+              actorId: "1",
+              actorNodeId: "MDQ6VXNlcjE=",
               login: "finish-line",
             },
             "self-reported",

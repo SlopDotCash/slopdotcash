@@ -36,7 +36,12 @@ export interface ProjectFundingRecord {
   state: FundingState;
   donor:
     | { attribution: "anonymous" }
-    | { attribution: "github"; actorId: string; login: string };
+    | {
+        attribution: "github";
+        actorId: string;
+        actorNodeId: string;
+        login: string;
+      };
   finality:
     | { kind: "confirmations"; confirmations: number }
     | { kind: "finalized" }
@@ -323,13 +328,15 @@ export function assertProjectFundingRecord(
   } else {
     exactKeys(
       donor,
-      ["actorId", "attribution", "login"],
+      ["actorId", "actorNodeId", "attribution", "login"],
       "funding record donor",
     );
     if (
       donor.attribution !== "github" ||
       typeof donor.actorId !== "string" ||
       !/^[1-9]\d*$/u.test(donor.actorId) ||
+      typeof donor.actorNodeId !== "string" ||
+      !/^[A-Za-z0-9_=-]{4,128}$/u.test(donor.actorNodeId) ||
       typeof donor.login !== "string" ||
       !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}[A-Za-z0-9])?$/u.test(donor.login)
     ) {
@@ -467,7 +474,7 @@ export function projectFundingTotals(records: readonly ProjectFundingRecord[]) {
  */
 export function publicFundingRecordsForDonor(
   records: readonly ProjectFundingRecord[],
-  donor: { actorId?: string; login: string },
+  actorNodeId: string,
 ): readonly ProjectFundingRecord[] {
   const latest = new Map<string, ProjectFundingRecord>();
   for (const record of records) {
@@ -476,10 +483,7 @@ export function publicFundingRecordsForDonor(
   return [...latest.values()]
     .filter((record) => {
       if (record.donor.attribution !== "github") return false;
-      if (donor.actorId !== undefined) {
-        return record.donor.actorId === donor.actorId;
-      }
-      return record.donor.login.toLowerCase() === donor.login.toLowerCase();
+      return record.donor.actorNodeId === actorNodeId;
     })
     .sort(
       (left, right) =>

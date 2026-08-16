@@ -35,7 +35,12 @@ function record(overrides: Record<string, unknown> = {}) {
     amountMinor: "1000000",
     observedAt: "2026-08-02T00:00:00.000Z",
     state: "self-reported",
-    donor: { attribution: "github", actorId: "18633264", login: "lalalune" },
+    donor: {
+      attribution: "github",
+      actorId: "18633264",
+      actorNodeId: "MDQ6VXNlcjE4NjMzMjY0",
+      login: "lalalune",
+    },
     finality: { kind: "unverified" },
     verifier: null,
     supersedes: null,
@@ -188,22 +193,32 @@ describe("project funding records", () => {
     const otherDonor = record({
       recordId: "fund_otherdonor_01",
       transactionId: `0x${"e".repeat(64)}`,
-      donor: { attribution: "github", actorId: "2", login: "other" },
+      donor: {
+        attribution: "github",
+        actorId: "2",
+        actorNodeId: "MDQ6VXNlcjI=",
+        login: "other",
+      },
     });
     const ledger = assertProjectFundingLedger(
       [record(), anonymous, otherDonor],
       routes,
     );
     expect(
-      publicFundingRecordsForDonor(ledger, {
-        actorId: "18633264",
-        login: "lalalune",
-      }).map(({ recordId }) => recordId),
-    ).toEqual(["fund_fixture_01"]);
-    expect(
-      publicFundingRecordsForDonor(ledger, { login: "LALALUNE" }).map(
+      publicFundingRecordsForDonor(ledger, "MDQ6VXNlcjE4NjMzMjY0").map(
         ({ recordId }) => recordId,
       ),
     ).toEqual(["fund_fixture_01"]);
+    expect(
+      publicFundingRecordsForDonor(ledger, "MDQ6VXNlcjE4NjMzMjY0").map(
+        ({ recordId }) => recordId,
+      ),
+    ).toEqual(["fund_fixture_01"]);
+    expect(publicFundingRecordsForDonor(ledger, "MDQ6VXNlcjI=")).toEqual([
+      expect.objectContaining({ recordId: "fund_otherdonor_01" }),
+    ]);
+    expect(
+      publicFundingRecordsForDonor(ledger, "MDQ6VXNlcjE4NjMzMjY1"),
+    ).toEqual([]);
   });
 });

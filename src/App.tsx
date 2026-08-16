@@ -1496,10 +1496,7 @@ export function DonorFundingProfile({
   actor: Pick<GitHubActor, "id" | "login">;
   records: readonly ProjectFundingRecord[];
 }) {
-  const publicRecords = publicFundingRecordsForDonor(records, {
-    actorId: actor.id,
-    login: actor.login,
-  });
+  const publicRecords = publicFundingRecordsForDonor(records, actor.id);
   if (publicRecords.length === 0) return null;
   const totals = projectFundingTotals(publicRecords);
   return (
@@ -1581,10 +1578,6 @@ function ProfilePage({
         <DataNotice state={state} retry={retry} />
       </main>
     );
-  const loginFundingRecords =
-    funding.status === "ready"
-      ? publicFundingRecordsForDonor(funding.index.records, { login })
-      : [];
   const matches = state.views.flatMap((view) =>
     view.leaders
       .filter(
@@ -1622,36 +1615,17 @@ function ProfilePage({
     matches.length === 0 &&
     history.length === 0 &&
     !globalLeader &&
-    loginOpportunities.length === 0 &&
-    loginFundingRecords.length === 0
+    loginOpportunities.length === 0
   ) {
-    if (funding.status === "loading") {
-      return (
-        <main className="shell route-main">
-          <div className="data-notice" role="status">
-            <span className="pulse" /> Reading public donor records…
-          </div>
-        </main>
-      );
-    }
     return <NotFound title="Contributor not found" />;
   }
   const historicalActor = history[0]?.contributor.actor;
   const opportunityActor = loginOpportunities[0]?.opportunity.actor;
-  const fundingDonor = loginFundingRecords.find(
-    (record) => record.donor.attribution === "github",
-  )?.donor;
   const actor: GitHubActor = globalLeader?.actor ??
     matches[0]?.leader.actor ??
     opportunityActor ?? {
-      id:
-        historicalActor?.id ??
-        (fundingDonor?.attribution === "github"
-          ? fundingDonor.actorId
-          : `historical:${login.toLowerCase()}`),
-      login:
-        historicalActor?.login ??
-        (fundingDonor?.attribution === "github" ? fundingDonor.login : login),
+      id: historicalActor?.id ?? `historical:${login.toLowerCase()}`,
+      login: historicalActor?.login ?? login,
       avatarUrl: `https://github.com/${encodeURIComponent(login)}.png?size=160`,
       url: `https://github.com/${encodeURIComponent(login)}`,
       kind: "User",

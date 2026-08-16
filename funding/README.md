@@ -38,9 +38,12 @@ self-reported totals are never added into one displayed number. GitHub identity
 and repository authority do not prove control of any wallet.
 
 Contributor profiles project only the latest records whose donor chose public
-GitHub attribution and whose immutable actor ID matches the profile. Anonymous
-records are excluded entirely; each supported asset keeps separate
-self-reported and verified-on-chain totals.
+GitHub attribution and whose immutable GraphQL actor node ID matches the
+profile. The record retains GitHub's numeric actor ID as an additional audited
+identity field, but mutable login text is never used to join history.
+Funding-only profile discovery by login fails closed. Anonymous records are
+excluded entirely; each supported asset keeps separate self-reported and
+verified-on-chain totals.
 
 For Solana mainnet USDC, the read-only verifier queries `getTransaction` at
 `finalized` commitment and accepts only the canonical USDC mint, successful
