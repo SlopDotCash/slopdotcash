@@ -3,7 +3,7 @@
   "id": "heir-elements-sdk",
   "slug": "heir-elements-sdk",
   "name": "Heir Elements SDK",
-  "eyebrow": "Open-source project",
+  "eyebrow": "Public repository",
   "headline": "Make Money Creating Intelligent Inheritance Apps",
   "description": "Make the element SDK the most hardened global software developers kit for intelligent inheritance applications.",
   "status": "active",
@@ -13,7 +13,7 @@
       "displayName": "heirlabs/element-sdk",
       "githubUrl": "https://github.com/heirlabs/element-sdk",
       "description": "Public HEIR Elements SDK monorepo: sandboxed element runtime, validator, CLI, React bindings, and templates for intelligent inheritance apps.",
-      "integrationBranch": "slop"
+      "integrationBranch": "main"
     }
   ],
   "skill": {
@@ -35,7 +35,7 @@
     "monthlyCapDisplay": "$100",
     "committedMinor": "0",
     "paymentMode": "disabled",
-    "feeBasisPoints": 100,
+    "feeBasisPoints": 300,
     "unusedFunds": "rollover-without-cap-increase",
     "fundingState": "pledged"
   },
@@ -44,6 +44,7 @@
     "disclosureRequired": true
   },
   "links": {
+    "creator": "https://github.com/awidearray",
     "repository": "https://github.com/heirlabs/element-sdk",
     "issues": "https://github.com/heirlabs/element-sdk/issues"
   }

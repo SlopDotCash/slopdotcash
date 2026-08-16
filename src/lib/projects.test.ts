@@ -31,6 +31,9 @@ describe("project registry", () => {
       monthlyCapMinor: "100000000",
       rewardStartAt: "2026-08-16T01:15:28.387Z",
     });
+    expect(findProject("heir-elements-sdk")?.links.creator).toBe(
+      "https://github.com/awidearray",
+    );
     expect(findProject("delta-star")?.reward).toMatchObject({
       kind: "external-prize-share",
       monthlyCapMinor: "0",

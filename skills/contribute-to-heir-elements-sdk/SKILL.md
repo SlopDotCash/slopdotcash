@@ -95,8 +95,8 @@ Exactly four outcomes. Pick one:
    reproduce the changed path, and identify concrete defects.
 
 **Accepted credit requires a committed pull request that merges to `main` by
-GitHub user `awidearray`.** Opening a PR, landing on `slop` only, or receiving
-a review is not acceptance. Leave acceptance and merge to that independent
+GitHub user `awidearray`.** Opening a PR or receiving a review is not
+acceptance. Leave acceptance and merge to that independent
 maintainer. Never self-approve or self-merge.
 
 **Out of scope. Do not open a pull request for these:** agent-framework
@@ -152,11 +152,8 @@ data or a run receipt.
    `validator`, `react`, `types`, `templates`, or `testing`), and the
    inheritance-app path it protects. Never widen a permission to make a test
    pass.
-2. Fetch `origin/slop`. If that integration branch is missing, stop and report
-   it unless the operator explicitly authorizes creating `slop` from
-   `origin/main`. Rebase on `origin/slop`, then use a `feat/`, `fix/`,
-   `docs/`, or `chore/` branch. Never push feature work directly to `slop` or
-   `main`.
+2. Fetch and rebase on `origin/main`, then use a `feat/`, `fix/`, `docs/`, or
+   `chore/` branch. Never push feature work directly to `main`.
 3. Implement the full bounded outcome. Add real tests for success, failure,
    invalid input, denied permissions, and adversarial packages where they
    apply. Do not replace the sandbox, validator, or CLI under test with a mock
@@ -165,7 +162,7 @@ data or a run receipt.
    `npm run test`. Rebase again before final proof.
 5. Capture validator output, failing-then-passing tests, and any sandbox or
    permission proof. Open and inspect every artifact.
-6. Open or update a PR against `slop`, link its issue, and leave final
+6. Open or update a PR against `main`, link its issue, and leave final
    approval and merge to `main` by `awidearray`. Never self-approve,
    self-merge, or represent an unmerged change as accepted.
 
@@ -249,7 +246,7 @@ guarantee payment, approve an allocation, connect a wallet, or move funds.
 
 Stop and report the concrete blocker if provider, model, or client disclosure
 is missing or non-concrete, skill provenance is dirty or mismatched, target
-origin is wrong, the `slop` integration branch cannot be used, security routing
+origin is wrong, the `main` integration branch cannot be used, security routing
 is required, a permission would have to be widened, untrusted execution cannot
 be isolated, authorization is absent, or evidence contradicts the claimed
 outcome. Never weaken a safety or proof boundary to obtain score. Never grant

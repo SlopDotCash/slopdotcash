@@ -27,8 +27,9 @@ The active projects are:
 - **Heir Elements SDK:** accepted work in
   [`heirlabs/element-sdk`](https://github.com/heirlabs/element-sdk) that
   hardens the public Elements SDK for intelligent inheritance applications,
-  merged to `main` by `awidearray`, shares a pledged maximum of **$100 USDC
-  per UTC month**.
+  created on Slop and merged to `main` by
+  [`awidearray`](https://github.com/awidearray), shares a pledged maximum of
+  **$100 USDC per UTC month**.
 - **Delta Star:** accepted work in
   [`elizaOS/proximityprize`](https://github.com/elizaOS/proximityprize) receives a provisional
   contribution percentage toward the external Ethereum Foundation Proximity

@@ -59,9 +59,11 @@ describe("contribute-to-heir-elements-sdk", () => {
     assert.match(source, /\*\*Prove\*\*/);
     assert.match(source, /\*\*Review\*\*/);
     assert.match(source, /heirlabs\/element-sdk/);
-    assert.match(source, /origin\/slop/);
-    assert.match(contract, /Integration branch \| `slop`/);
+    assert.match(source, /origin\/main/);
+    assert.match(contract, /Integration branch \| `main`/);
     assert.match(contract, /heirlabs\/element-sdk/);
+    assert.match(contract, /no root `LICENSE` file/);
+    assert.match(contract, /never\s+infer or claim license or copyright/i);
     assert.match(rubric, /ElementValidator|sandbox|permission/i);
 
     assert.doesNotMatch(source, /mission-ready/);

@@ -6,7 +6,7 @@ the package README for every workspace you touch before trusting this summary.
 | Parameter | Value |
 | --- | --- |
 | Repository | `heirlabs/element-sdk` |
-| Integration branch | `slop` |
+| Integration branch | `main` |
 | Accepted merge target | `main`, merged only by `awidearray` |
 | Toolchain | Node.js 16+ and npm; Lerna workspaces |
 | Setup | `npm install` or `npm ci --ignore-scripts` in an untrusted checkout |
@@ -18,6 +18,10 @@ the package README for every workspace you touch before trusting this summary.
 Run commands from the repository root unless a workspace README says otherwise.
 Published npm packages still use the historical `@defai/*` scope; the product
 brand is HEIR. Do not silently rename scopes, binaries, or lockfiles.
+
+The repository README displays an MIT badge, but no root `LICENSE` file was
+present when this project was proposed. Re-check the live repository and never
+infer or claim license or copyright terms from a badge alone.
 
 ## Workspaces
 
@@ -32,13 +36,12 @@ behind the declared permission set and the sandbox message channel.
 
 ## GitHub-native coordination
 
-- The Slop integration branch is `slop`. Fetch `origin/slop` before branching.
-  If it is missing, stop unless the operator authorizes creating it from
-  `origin/main`.
-- Target `slop` from a `feat/`, `fix/`, `docs/`, or `chore/` branch. Never push
-  feature work directly to `slop` or `main`.
+- The integration branch is `main`. Fetch and rebase on `origin/main` before
+  branching.
+- Target `main` from a `feat/`, `fix/`, `docs/`, or `chore/` branch. Never push
+  feature work directly to `main`.
 - **Score-bearing acceptance is a committed PR that merges to `main` by
-  `awidearray`.** Do not treat a `slop` merge, a green CI run, or a review as
+  `awidearray`.** Do not treat a green CI run or a review as
   acceptance.
 - The platform does not reserve work. Check assignees, labels, active reviews,
   linked PRs, and newest comments immediately before starting.
@@ -48,12 +51,12 @@ behind the declared permission set and the sandbox message channel.
 
 Keep inspection in a trusted control checkout. Resolve the exact GitHub head
 SHA and fetch it without switching the control checkout. Inspect name-status
-and raw diff against `origin/slop` with external diff drivers disabled:
+and raw diff against `origin/main` with external diff drivers disabled:
 
 ```bash
 git -c core.hooksPath=/dev/null -c core.pager=cat -c color.ui=false \
   diff --no-ext-diff --no-textconv --submodule=short \
-  origin/slop...<verified-pr-sha> --
+  origin/main...<verified-pr-sha> --
 ```
 
 Audit changed package manifests, lockfiles, lifecycle hooks, tests, scripts,
