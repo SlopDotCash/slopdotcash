@@ -2427,6 +2427,16 @@ function hasOpenPullRequestOpportunitySignal(
   );
 }
 
+/**
+ * Bounds a live GitHub title to the published 256-character opportunity limit
+ * without splitting a surrogate pair, so one long upstream title cannot fail
+ * the whole snapshot.
+ */
+function boundedSourceTitle(title: string): string {
+  if (title.length <= 256) return title;
+  return `${title.slice(0, 255).replace(/[\uD800-\uDBFF]$/u, "")}…`;
+}
+
 function collectOpenPullRequestOpportunities(
   openPullRequests: PullRequestRecord[],
   verifiedEvidence: VerifiedEvidenceArtifact[],
@@ -2442,7 +2452,7 @@ function collectOpenPullRequestOpportunities(
       id: pullRequest.id,
       kind: "pull-request" as const,
       number: pullRequest.number,
-      title: pullRequest.title,
+      title: boundedSourceTitle(pullRequest.title),
       url: pullRequest.url,
     };
 
@@ -2561,7 +2571,7 @@ function collectOpenPullRequestOpportunities(
           id: review.id,
           kind: "review",
           number: pullRequest.number,
-          title: pullRequest.title,
+          title: boundedSourceTitle(pullRequest.title),
           url: review.url,
         },
         reason:
