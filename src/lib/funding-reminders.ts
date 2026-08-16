@@ -29,10 +29,7 @@ export function settlementReminder(
   if (settledAt !== null) return null;
   const elapsed = current - close;
   if (elapsed < -7 * DAY_MS) {
-    return {
-      kind: "cycle-close",
-      message: `UTC cycle-close warning: this cycle closes ${utc(closesAt)} UTC.`,
-    };
+    return null;
   }
   if (elapsed < 0) {
     return {

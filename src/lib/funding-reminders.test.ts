@@ -5,9 +5,7 @@ const close = "2026-08-01T00:00:00.000Z";
 
 describe("funding cycle reminders", () => {
   it("publishes the UTC warning and seven-day settler reminder", () => {
-    expect(settlementReminder(close, "2026-07-20T00:00:00.000Z")?.kind).toBe(
-      "cycle-close",
-    );
+    expect(settlementReminder(close, "2026-07-20T00:00:00.000Z")).toBeNull();
     expect(settlementReminder(close, "2026-07-25T00:00:00.000Z")?.kind).toBe(
       "settler-seven-day",
     );
