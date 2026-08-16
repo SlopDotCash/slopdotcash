@@ -90,11 +90,12 @@ jobs:
 
       - name: Validate project registry and every skill
         env:
-          PROJECT_POLICY_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PROJECT_POLICY_BASE_SHA: ${{ github.event.before }}
+          PROJECT_POLICY_HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "push" ]; then
-            node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA" "$PROJECT_POLICY_HEAD_SHA"
           fi
           bun run projects:check
           bun run evaluations:check

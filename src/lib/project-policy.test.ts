@@ -6,6 +6,38 @@ import {
 } from "./project-policy.mjs";
 
 describe("project policy transitions", () => {
+  interface MutableFundingRoute {
+    network: "solana";
+    asset: "USDC";
+    address: string;
+    effectiveAt: string;
+    replacedAt: string | null;
+  }
+
+  function fundingFixture(routes: MutableFundingRoute[]) {
+    const fixture = structuredClone(eliza) as unknown as {
+      funding: { addresses: MutableFundingRoute[] };
+    };
+    fixture.funding.addresses = routes;
+    return fixture;
+  }
+
+  const firstRoute = (): MutableFundingRoute => ({
+    network: "solana",
+    asset: "USDC",
+    address: "11111111111111111111111111111111",
+    effectiveAt: "2026-08-17T00:00:00.000Z",
+    replacedAt: null,
+  });
+
+  const successorRoute = (): MutableFundingRoute => ({
+    network: "solana",
+    asset: "USDC",
+    address: "Vote111111111111111111111111111111111111111",
+    effectiveAt: "2026-08-18T00:00:00.000Z",
+    replacedAt: null,
+  });
+
   interface MutableReceiptBinding {
     policyRevision: string;
     licenseSha256: string;
@@ -109,6 +141,89 @@ describe("project policy transitions", () => {
     expect(() => assertPaymentDoesNotMutateTerms(eliza, rewritten)).toThrow(
       /cannot mutate/u,
     );
+  });
+
+  it("allows only a bounded append-only funding rotation", () => {
+    const previous = fundingFixture([firstRoute()]);
+    const rotated = structuredClone(previous);
+    rotated.funding.addresses[0].replacedAt = successorRoute().effectiveAt;
+    rotated.funding.addresses.push(successorRoute());
+    expect(assertProjectPolicyTransition(previous, rotated)).toEqual(rotated);
+
+    const initial = fundingFixture([]);
+    const first = fundingFixture([firstRoute()]);
+    expect(assertProjectPolicyTransition(initial, first)).toEqual(first);
+
+    const closeOnly = structuredClone(previous);
+    closeOnly.funding.addresses[0].replacedAt = successorRoute().effectiveAt;
+    expect(() => assertProjectPolicyTransition(previous, closeOnly)).toThrow(
+      /only with a successor/u,
+    );
+
+    const wrongCutover = structuredClone(rotated);
+    wrongCutover.funding.addresses[0].replacedAt = "2026-08-17T23:59:59.000Z";
+    expect(() => assertProjectPolicyTransition(previous, wrongCutover)).toThrow(
+      /exactly when/u,
+    );
+  });
+
+  it("rejects funding history alteration, deletion, reorder, and backfill", () => {
+    const first = firstRoute();
+    first.replacedAt = successorRoute().effectiveAt;
+    const previous = fundingFixture([first, successorRoute()]);
+
+    const altered = structuredClone(previous);
+    altered.funding.addresses[0].address =
+      "Stake11111111111111111111111111111111111111";
+    expect(() => assertProjectPolicyTransition(previous, altered)).toThrow(
+      /append-only prefix/u,
+    );
+
+    const closedOnlyRoute = firstRoute();
+    closedOnlyRoute.replacedAt = successorRoute().effectiveAt;
+    const closedOnly = fundingFixture([closedOnlyRoute]);
+    const reopened = structuredClone(closedOnly);
+    reopened.funding.addresses[0].replacedAt = null;
+    expect(() => assertProjectPolicyTransition(closedOnly, reopened)).toThrow(
+      /closed funding routes are immutable/u,
+    );
+
+    const movedClosure = structuredClone(previous);
+    movedClosure.funding.addresses[0].replacedAt = "2026-08-17T23:59:59.000Z";
+    expect(() => assertProjectPolicyTransition(previous, movedClosure)).toThrow(
+      /closed funding routes are immutable/u,
+    );
+
+    const deleted = fundingFixture([successorRoute()]);
+    expect(() => assertProjectPolicyTransition(previous, deleted)).toThrow(
+      /append-only prefix/u,
+    );
+
+    const reordered = fundingFixture([successorRoute(), first]);
+    expect(() => assertProjectPolicyTransition(previous, reordered)).toThrow(
+      /append-only prefix/u,
+    );
+
+    const backfilledFirst = firstRoute();
+    backfilledFirst.replacedAt = successorRoute().effectiveAt;
+    const multiAppend = fundingFixture([
+      backfilledFirst,
+      {
+        ...successorRoute(),
+      },
+    ]);
+    expect(() =>
+      assertProjectPolicyTransition(fundingFixture([]), multiAppend),
+    ).toThrow(/at most one successor/u);
+
+    const preclosed = fundingFixture([]);
+    preclosed.funding.addresses.push({
+      ...firstRoute(),
+      replacedAt: "2026-08-18T00:00:00.000Z",
+    });
+    expect(() =>
+      assertProjectPolicyTransition(fundingFixture([]), preclosed),
+    ).toThrow(/successor must be active/u);
   });
 
   it("preserves receipt activation and every historical binding append-only", () => {
