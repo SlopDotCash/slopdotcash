@@ -172,6 +172,8 @@ describe("project policy transitions", () => {
     const previous = activePolicyFixture();
     const next = structuredClone(previous);
     next.terms.revision = "2026-08-16.2";
+    const licenseSha256 = next.terms.repositoryLicense.fileSha256;
+    if (!licenseSha256) throw new Error("missing fixture license digest");
     const lastActivation = "2026-08-20T00:00:00.000Z";
     next.terms.receiptPolicy.bindings.push(
       {
@@ -183,7 +185,7 @@ describe("project policy transitions", () => {
       },
       {
         policyRevision: next.terms.revision,
-        licenseSha256: next.terms.repositoryLicense.fileSha256!,
+        licenseSha256,
         inboundTermsSha256: next.terms.inbound.fileSha256,
         prizeRulesSha256: null,
         activatedAt: "2026-08-21T00:00:00.000Z",

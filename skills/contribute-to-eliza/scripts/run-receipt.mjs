@@ -34,7 +34,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const skillDirectory = resolve(scriptDirectory, "..");
@@ -151,17 +151,29 @@ function validatePolicyAcknowledgement(value) {
   return value;
 }
 
-function projectPolicyPreflight() {
-  const result = spawnSync(
-    process.execPath,
-    [
-      join(scriptDirectory, "terms-preflight.mjs"),
-      "--project",
-      PROJECT.projectId,
-      "--json",
-    ],
-    { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 30_000 },
-  );
+function projectPolicyPreflight(testOptions) {
+  const testAuthority = testOptions?.testPolicyAuthority;
+  if (
+    testOptions !== undefined &&
+    (!hasExactKeys(testOptions, ["testPolicyAuthority"]) ||
+      typeof testAuthority !== "string" ||
+      new URL(testAuthority).protocol !== "file:")
+  ) {
+    fail("test policy authority option is invalid");
+  }
+  const preflightScript = join(scriptDirectory, "terms-preflight.mjs");
+  const command = testAuthority
+    ? [
+        "--input-type=module",
+        "--eval",
+        `import { preflight } from ${JSON.stringify(pathToFileURL(preflightScript).href)}; const value = await preflight(${JSON.stringify(PROJECT.projectId)}, { testAuthority: ${JSON.stringify(testAuthority)} }); process.stdout.write(JSON.stringify(value));`,
+      ]
+    : [preflightScript, "--project", PROJECT.projectId, "--json"];
+  const result = spawnSync(process.execPath, command, {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+    timeout: 30_000,
+  });
   if (result.status !== 0 || result.signal || result.error) {
     fail(
       result.stderr.trim() ||
@@ -2179,7 +2191,7 @@ function statusRun(options) {
   );
 }
 
-function startRun(options) {
+function startRun(options, testOptions) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
   const usageAdapter = PROJECT.usageAdapters[options.client] ?? null;
@@ -2196,7 +2208,7 @@ function startRun(options) {
     lane: options.lane,
     startedAt: canonicalIso(),
     baseline: collectUsage(options.client, repositoryRoot),
-    policyAcknowledgement: projectPolicyPreflight(),
+    policyAcknowledgement: projectPolicyPreflight(testOptions),
     ...provenance,
   });
   const directories = runDirectories();
@@ -2248,7 +2260,7 @@ async function traceRun(options) {
   );
 }
 
-function finishRun(options) {
+function finishRun(options, testOptions) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
   const directories = runDirectories();
@@ -2329,7 +2341,7 @@ function finishRun(options) {
     : unavailableUsage("none");
   const key = deviceKey();
   const trajectorySha256 = trajectoryDigest(options.trajectory);
-  const currentPolicy = projectPolicyPreflight();
+  const currentPolicy = projectPolicyPreflight(testOptions);
   if (
     policyBinding(currentPolicy) !== policyBinding(state.policyAcknowledgement)
   ) {
@@ -2397,15 +2409,15 @@ function finishRun(options) {
   );
 }
 
-export async function main(args = process.argv.slice(2)) {
+export async function main(args = process.argv.slice(2), testOptions) {
   const options = parseArguments(args);
   if (options.action === "help") process.stdout.write(HELP);
   else if (options.action === "preview") previewRun(options);
   else if (options.action === "doctor") doctorRun(options);
   else if (options.action === "status") statusRun(options);
-  else if (options.action === "start") startRun(options);
+  else if (options.action === "start") startRun(options, testOptions);
   else if (options.action === "trace") await traceRun(options);
-  else finishRun(options);
+  else finishRun(options, testOptions);
 }
 
 const invokedDirectly =

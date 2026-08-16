@@ -2278,10 +2278,17 @@ describe("run receipt CLI", () => {
           steward: {},
           authority: {
             state: "verified",
-            proof: { policyRevision: "test-policy-1" },
+            proof: {
+              policyRevision: "test-policy-1",
+              verifiedAt: "2026-08-16T12:00:00.000Z",
+            },
           },
           terms: {
             revision: "test-policy-1",
+            receiptPolicy: {
+              state: "active",
+              activatedAt: "2026-08-16T12:00:00.000Z",
+            },
             repositoryLicense: {
               state: "verified",
               url: pathToFileURL(policyLicense).href,
@@ -2398,7 +2405,23 @@ describe("run receipt CLI", () => {
         CLAUDE_CONFIG_DIR: join(fixtureRoot, "claude"),
         XDG_CONFIG_HOME: join(fixtureRoot, "config"),
       };
-      const entrypoint = join(installedSkillRoot, "scripts", "run-receipt.mjs");
+      const receiptEntrypoint = join(
+        installedSkillRoot,
+        "scripts",
+        "run-receipt.mjs",
+      );
+      const entrypoint = join(fixtureRoot, "run-receipt-test-harness.mjs");
+      writeFileSync(
+        entrypoint,
+        `import { main } from ${JSON.stringify(pathToFileURL(receiptEntrypoint).href)};
+try {
+  await main(process.argv.slice(2), { testPolicyAuthority: ${JSON.stringify(pathToFileURL(policyRoot).href)} });
+} catch (error) {
+  process.stderr.write(\`project run receipt failed: \${error instanceof Error ? error.message : String(error)}\\n\`);
+  process.exitCode = 1;
+}
+`,
+      );
       const cliArguments = [
         "--repo-root",
         repoRoot,

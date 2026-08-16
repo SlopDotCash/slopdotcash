@@ -190,6 +190,8 @@ describe("project run receipt", () => {
   it("uses immutable authority activation as the non-retroactive v1 cutover", () => {
     const pendingProject = findProject("eliza");
     if (!pendingProject) throw new Error("missing fixture project");
+    const licenseSha256 = pendingProject.terms.repositoryLicense.fileSha256;
+    if (!licenseSha256) throw new Error("missing fixture license digest");
     expect(assertRunReceiptPolicyJoin(receipt, pendingProject)).toBe(receipt);
     const project = {
       ...pendingProject,
@@ -201,7 +203,7 @@ describe("project run receipt", () => {
           bindings: [
             {
               policyRevision: pendingProject.terms.revision,
-              licenseSha256: pendingProject.terms.repositoryLicense.fileSha256!,
+              licenseSha256,
               inboundTermsSha256: pendingProject.terms.inbound.fileSha256,
               prizeRulesSha256:
                 pendingProject.terms.externalPrize?.rulesSha256 ?? null,
@@ -225,6 +227,9 @@ describe("project run receipt", () => {
   it("rejects arbitrary v2 terms digests at the pinned-policy join", () => {
     const pendingProject = findProject("eliza");
     if (!pendingProject) throw new Error("missing fixture project");
+    const pinnedLicenseSha256 =
+      pendingProject.terms.repositoryLicense.fileSha256;
+    if (!pinnedLicenseSha256) throw new Error("missing fixture license digest");
     const project = {
       ...pendingProject,
       terms: {
@@ -235,7 +240,7 @@ describe("project run receipt", () => {
           bindings: [
             {
               policyRevision: pendingProject.terms.revision,
-              licenseSha256: pendingProject.terms.repositoryLicense.fileSha256!,
+              licenseSha256: pinnedLicenseSha256,
               inboundTermsSha256: pendingProject.terms.inbound.fileSha256,
               prizeRulesSha256:
                 pendingProject.terms.externalPrize?.rulesSha256 ?? null,
