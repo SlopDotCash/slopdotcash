@@ -137,7 +137,7 @@ describe("project policy transitions", () => {
     expect(assertPaymentDoesNotMutateTerms(eliza, payment)).toEqual(payment);
 
     const rewritten = structuredClone(payment);
-    rewritten.terms.revision = "2026-08-16.2";
+    rewritten.terms.revision = `${eliza.terms.revision}-mutated`;
     expect(() => assertPaymentDoesNotMutateTerms(eliza, rewritten)).toThrow(
       /cannot mutate/u,
     );
@@ -286,7 +286,7 @@ describe("project policy transitions", () => {
 
     const previous = activePolicyFixture();
     const next = structuredClone(previous);
-    next.terms.revision = "2026-08-16.2";
+    next.terms.revision = `${previous.terms.revision}-appended`;
     const licenseSha256 = next.terms.repositoryLicense.fileSha256;
     if (!licenseSha256) throw new Error("missing fixture license digest");
     const lastActivation = "2026-08-20T00:00:00.000Z";
