@@ -113,67 +113,57 @@ function Cover() {
 }
 
 function Team() {
+  const leads = [
+    {
+      name: "Shaw",
+      role: "CEO",
+      x: "https://x.com/shawmakesmagic",
+      github: "https://github.com/lalalune",
+      portrait: "https://deck.eliza.app/team_shaw.jpg",
+      contributions: "https://deck.eliza.app/github_lalalune.svg",
+    },
+    {
+      name: "Nubs",
+      role: "CTO",
+      x: "https://x.com/nubsvault",
+      github: "https://github.com/NubsCarson",
+      portrait: "https://deck.eliza.app/team_nubs.jpg",
+      contributions: "https://deck.eliza.app/github_nubscarson.svg",
+    },
+  ];
   return (
-    <Frame index={1} label="Shaw leads Slop" className="deck-team">
-      <div className="deck-team-founder">
-        <div className="deck-team-copy">
-          <span className="deck-team-eyebrow">
-            <strong>Shaw</strong> · Founder / CEO
-          </span>
-          <h2>Shaw built a movement in open source.</h2>
-          <p className="deck-supporting">
-            Founder of elizaOS—one of the most followed open-source AI projects.
-            Now building the incentive layer for what comes next.
-          </p>
-          <div className="deck-founder-links">
+    <Frame index={1} label="The builders behind Slop" className="deck-team">
+      <h2>We built a movement in open source.</h2>
+      <div className="deck-team-leads">
+        {leads.map((lead) => (
+          <article className="deck-team-lead" key={lead.name}>
             <a
-              href="https://x.com/shawmakesmagic"
+              className="deck-team-avatar"
+              href={lead.x}
               target="_blank"
               rel="noreferrer"
+              aria-label={`${lead.name} on X`}
             >
-              @shawmakesmagic ↗
+              <img src={lead.portrait} alt={lead.name} />
             </a>
+            <div className="deck-team-identity">
+              <h3>{lead.name}</h3>
+              <span>{lead.role}</span>
+            </div>
             <a
-              href="https://github.com/lalalune"
+              className="deck-team-contributions"
+              href={lead.github}
               target="_blank"
               rel="noreferrer"
+              aria-label={`${lead.name} on GitHub`}
             >
-              github.com/lalalune ↗
+              <img
+                src={lead.contributions}
+                alt={`${lead.name} GitHub contributions`}
+              />
             </a>
-          </div>
-        </div>
-        <a
-          className="deck-founder-portrait"
-          href="https://x.com/shawmakesmagic"
-          target="_blank"
-          rel="noreferrer"
-          aria-label="Shaw on X"
-        >
-          <img src="https://deck.eliza.app/team_shaw.jpg" alt="Shaw" />
-        </a>
-      </div>
-      <div className="deck-team-proof">
-        <a
-          href="https://github.com/elizaOS/eliza"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <strong>19K+</strong>
-          <span>stars · elizaOS/eliza</span>
-        </a>
-        <p>
-          <strong>5.6K</strong>
-          <span>forks</span>
-        </p>
-        <p>
-          <strong>671</strong>
-          <span>contributors</span>
-        </p>
-        <p className="deck-team-cto">
-          <span>CTO</span>
-          <strong>Nubs</strong>
-          <small>Open-source systems + protocol execution</small>
-        </p>
+          </article>
+        ))}
       </div>
     </Frame>
   );
