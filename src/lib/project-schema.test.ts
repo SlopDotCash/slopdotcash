@@ -152,6 +152,30 @@ describe("project proposal schema", () => {
       "https://github.com/elizaOS/eliza/blob/develop/LICENSE";
     expect(() => assertProjectDefinition(mutableLicense)).toThrow(/immutable/u);
 
+    const mismatchedInbound = structuredClone(eliza) as unknown as {
+      terms: {
+        inbound: {
+          mode: string;
+          termsUrl: string | null;
+          commitSha: string | null;
+          fileSha256: string | null;
+          version: string | null;
+          acceptance: string | null;
+        };
+      };
+    };
+    mismatchedInbound.terms.inbound = {
+      mode: "cla",
+      termsUrl: `https://github.com/elizaOS/eliza/blob/${"b".repeat(40)}/CLA.md`,
+      commitSha: "a".repeat(40),
+      fileSha256: "c".repeat(64),
+      version: "1",
+      acceptance: "Signed before contribution",
+    };
+    expect(() => assertProjectDefinition(mismatchedInbound)).toThrow(
+      /bind its repository, commit/u,
+    );
+
     const fakeProof = mutablePolicyFixture(eliza);
     fakeProof.authority = {
       state: "verified",

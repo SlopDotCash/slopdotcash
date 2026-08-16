@@ -122,6 +122,18 @@ function immutableGithubUrl(value, field, repositoryId, commitSha, path) {
   return result;
 }
 
+function immutableGithubCommitUrl(value, field, repositoryId, commitSha) {
+  const result = url(value, field, "https://github.com");
+  const prefix = `/${repositoryId}/blob/${commitSha}/`;
+  const pathname = new URL(result).pathname;
+  if (!pathname.startsWith(prefix) || pathname.length === prefix.length) {
+    throw new TypeError(
+      `${field} must bind its repository, commit, and non-empty path`,
+    );
+  }
+  return result;
+}
+
 function validateSteward(value) {
   const field = "project.steward";
   const steward = record(value, field);
@@ -230,6 +242,7 @@ function validateTerms(value, repositoryId, reward, steward) {
       "externalPrize",
       "inbound",
       "paymentTransfersIp",
+      "receiptPolicy",
       "repositoryLicense",
       "retroactive",
       "revision",
@@ -241,6 +254,19 @@ function validateTerms(value, repositoryId, reward, steward) {
     pattern: /^[a-z0-9][a-z0-9._-]*$/u,
   });
   timestamp(terms.effectiveAt, `${field}.effectiveAt`);
+  const receiptPolicy = record(terms.receiptPolicy, `${field}.receiptPolicy`);
+  exactKeys(receiptPolicy, ["activatedAt", "state"], `${field}.receiptPolicy`);
+  if (receiptPolicy.state === "pending-authority-activation") {
+    if (receiptPolicy.activatedAt !== null) {
+      throw new TypeError(
+        `${field}.receiptPolicy pending state cannot have an activation time`,
+      );
+    }
+  } else if (receiptPolicy.state === "active") {
+    timestamp(receiptPolicy.activatedAt, `${field}.receiptPolicy.activatedAt`);
+  } else {
+    throw new TypeError(`${field}.receiptPolicy.state is invalid`);
+  }
   if (terms.paymentTransfersIp !== false || terms.retroactive !== false) {
     throw new TypeError(
       `${field} cannot transfer IP by payment or apply retroactively`,
@@ -393,10 +419,18 @@ function validateTerms(value, repositoryId, reward, steward) {
     }
   } else {
     text(inbound.acceptance, `${field}.inbound.acceptance`, { max: 240 });
-    commit(inbound.commitSha, `${field}.inbound.commitSha`);
+    const inboundCommit = commit(
+      inbound.commitSha,
+      `${field}.inbound.commitSha`,
+    );
     digest(inbound.fileSha256, `${field}.inbound.fileSha256`);
     text(inbound.version, `${field}.inbound.version`, { max: 80 });
-    url(inbound.termsUrl, `${field}.inbound.termsUrl`);
+    immutableGithubCommitUrl(
+      inbound.termsUrl,
+      `${field}.inbound.termsUrl`,
+      repositoryId,
+      inboundCommit,
+    );
   }
   if (terms.assignment !== null) {
     const assignment = record(terms.assignment, `${field}.assignment`);
@@ -751,6 +785,17 @@ export function assertProjectDefinition(value) {
     throw new TypeError(
       "active projects require verified repository authority",
     );
+  }
+  if (project.status === "active") {
+    if (
+      project.terms.receiptPolicy.state !== "active" ||
+      project.terms.receiptPolicy.activatedAt !==
+        project.authority.proof.verifiedAt
+    ) {
+      throw new TypeError(
+        "active projects require receipt cutover at the immutable authority activation",
+      );
+    }
   }
   if (
     project.status === "active" &&

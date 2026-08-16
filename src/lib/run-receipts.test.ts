@@ -1,8 +1,10 @@
 /** Exercises strict project-run marker validation and adversarial failures. */
 
 import { describe, expect, it } from "vitest";
+import { findProject } from "./projects.mjs";
 import {
   assertRunReceiptMarker,
+  assertRunReceiptPolicyJoin,
   type ProjectRunReceipt,
   parseRunMarker,
   runReceiptMarker,
@@ -114,6 +116,8 @@ describe("project run receipt", () => {
     const current: ProjectRunReceipt = {
       ...receipt,
       schemaVersion: "2",
+      startedAt: "2026-08-16T00:00:00.000Z",
+      completedAt: "2026-08-16T01:00:00.000Z",
       policyAcknowledgement: {
         policyRevision: "2026-08-16.1",
         licenseSha256:
@@ -130,10 +134,35 @@ describe("project run receipt", () => {
     expect(() => assertRunReceiptMarker(missing)).toThrow(/schema/u);
   });
 
+  it("rejects policy acknowledgement outside the signed run interval", () => {
+    const current: ProjectRunReceipt = {
+      ...receipt,
+      schemaVersion: "2",
+      policyAcknowledgement: {
+        policyRevision: "policy-2",
+        licenseSha256: "a".repeat(64),
+        inboundTermsSha256: null,
+        prizeRulesSha256: null,
+        acknowledgedAt: "2026-08-07T09:59:59.999Z",
+      },
+    };
+    expect(() => assertRunReceiptMarker(runReceiptMarker(current))).toThrow(
+      /within the run/u,
+    );
+    const acknowledgement = current.policyAcknowledgement;
+    if (!acknowledgement) throw new Error("test receipt lacks acknowledgement");
+    acknowledgement.acknowledgedAt = "2026-08-07T11:00:00.001Z";
+    expect(() => assertRunReceiptMarker(runReceiptMarker(current))).toThrow(
+      /within the run/u,
+    );
+  });
+
   it("keeps historical v2 receipts pinned after policy changes", () => {
     const historical: ProjectRunReceipt = {
       ...receipt,
       schemaVersion: "2",
+      startedAt: "2026-08-15T00:00:00.000Z",
+      completedAt: "2026-08-15T01:00:00.000Z",
       policyAcknowledgement: {
         policyRevision: "historical-policy-1",
         licenseSha256: "a".repeat(64),
@@ -156,5 +185,67 @@ describe("project run receipt", () => {
     const invalidMoney = runReceiptMarker(receipt);
     invalidMoney.run.usage.cost_micro_usd = "01";
     expect(() => assertRunReceiptMarker(invalidMoney)).toThrow(/minor units/u);
+  });
+
+  it("uses immutable authority activation as the non-retroactive v1 cutover", () => {
+    const pendingProject = findProject("eliza");
+    if (!pendingProject) throw new Error("missing fixture project");
+    expect(assertRunReceiptPolicyJoin(receipt, pendingProject)).toBe(receipt);
+    const project = {
+      ...pendingProject,
+      terms: {
+        ...pendingProject.terms,
+        receiptPolicy: {
+          state: "active" as const,
+          activatedAt: "2026-08-16T12:00:00.000Z",
+        },
+      },
+    };
+    expect(assertRunReceiptPolicyJoin(receipt, project)).toBe(receipt);
+    const afterCutover = {
+      ...receipt,
+      startedAt: "2026-08-16T12:00:00.000Z",
+      completedAt: "2026-08-16T13:00:00.000Z",
+    };
+    expect(() => assertRunReceiptPolicyJoin(afterCutover, project)).toThrow(
+      /not allowed after/u,
+    );
+  });
+
+  it("rejects arbitrary v2 terms digests at the pinned-policy join", () => {
+    const pendingProject = findProject("eliza");
+    if (!pendingProject) throw new Error("missing fixture project");
+    const project = {
+      ...pendingProject,
+      terms: {
+        ...pendingProject.terms,
+        receiptPolicy: {
+          state: "active" as const,
+          activatedAt: "2026-08-16T12:00:00.000Z",
+        },
+      },
+    };
+    const licenseSha256 = project.terms.repositoryLicense.fileSha256;
+    if (!licenseSha256) throw new Error("test project lacks a license digest");
+    const current: ProjectRunReceipt = {
+      ...receipt,
+      schemaVersion: "2",
+      startedAt: "2026-08-16T12:00:00.000Z",
+      completedAt: "2026-08-16T13:00:00.000Z",
+      policyAcknowledgement: {
+        policyRevision: project.terms.revision,
+        licenseSha256,
+        inboundTermsSha256: project.terms.inbound.fileSha256,
+        prizeRulesSha256: project.terms.externalPrize?.rulesSha256 ?? null,
+        acknowledgedAt: "2026-08-16T12:00:00.000Z",
+      },
+    };
+    expect(assertRunReceiptPolicyJoin(current, project)).toBe(current);
+    const acknowledgement = current.policyAcknowledgement;
+    if (!acknowledgement) throw new Error("test receipt lacks acknowledgement");
+    acknowledgement.licenseSha256 = "f".repeat(64);
+    expect(() => assertRunReceiptPolicyJoin(current, project)).toThrow(
+      /pinned project policy/u,
+    );
   });
 });

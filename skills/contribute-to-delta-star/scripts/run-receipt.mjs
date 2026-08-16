@@ -158,8 +158,6 @@ function projectPolicyPreflight() {
       join(scriptDirectory, "terms-preflight.mjs"),
       "--project",
       PROJECT.projectId,
-      "--authority",
-      PROJECT.policyAuthority,
       "--json",
     ],
     { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 30_000 },

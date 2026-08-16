@@ -48,13 +48,22 @@ async function verifiedBytes(url, expected, field) {
   if (digest(bytes) !== expected) fail(`${field} digest drifted`);
 }
 
-export async function preflight(projectId, origin = "https://slop.cash") {
+export async function preflight(projectId, options = {}) {
   if (!/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u.test(projectId)) {
     fail("project id is invalid");
   }
+  exact(
+    options,
+    Object.hasOwn(options, "testAuthority") ? ["testAuthority"] : [],
+    "preflight options",
+  );
+  const origin = options.testAuthority ?? "https://slop.cash";
   const authority = new URL(origin);
+  if (options.testAuthority !== undefined && authority.protocol !== "file:") {
+    fail("test authority must be a file URL");
+  }
   if (
-    authority.protocol !== "file:" &&
+    options.testAuthority === undefined &&
     (authority.protocol !== "https:" ||
       authority.origin !== "https://slop.cash")
   ) {
@@ -88,6 +97,13 @@ export async function preflight(projectId, origin = "https://slop.cash") {
   }
   if (policy.authority.proof?.policyRevision !== policy.terms?.revision) {
     fail("repository proof does not bind the current terms revision");
+  }
+  if (
+    policy.terms?.receiptPolicy?.state !== "active" ||
+    policy.terms.receiptPolicy.activatedAt !==
+      policy.authority.proof?.verifiedAt
+  ) {
+    fail("receipt policy is not bound to authority activation");
   }
   if (policy.terms?.inbound?.mode === "unknown") {
     fail("mandatory inbound terms are unknown");
@@ -137,12 +153,10 @@ if (direct) {
   try {
     const projectIndex = process.argv.indexOf("--project");
     const projectId = process.argv[projectIndex + 1];
-    const authorityIndex = process.argv.indexOf("--authority");
-    const authority =
-      authorityIndex === -1
-        ? "https://slop.cash"
-        : process.argv[authorityIndex + 1];
-    const acknowledgement = await preflight(projectId, authority);
+    if (process.argv.includes("--authority")) {
+      fail("direct CLI authority overrides are forbidden");
+    }
+    const acknowledgement = await preflight(projectId);
     if (process.argv.includes("--json")) {
       process.stdout.write(`${JSON.stringify(acknowledgement)}\n`);
     } else {

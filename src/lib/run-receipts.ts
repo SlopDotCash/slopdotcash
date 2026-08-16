@@ -74,6 +74,69 @@ export interface ProjectRunReceipt {
   deviceSignature: string;
 }
 
+export interface ProjectReceiptPolicyBinding {
+  id: ProjectId;
+  terms: {
+    revision: string;
+    receiptPolicy:
+      | { state: "pending-authority-activation"; activatedAt: null }
+      | { state: "active"; activatedAt: string };
+    repositoryLicense: { fileSha256: string | null };
+    inbound: { fileSha256: string | null };
+    externalPrize: { rulesSha256: string | null } | null;
+  };
+}
+
+/**
+ * Joins a structurally valid receipt to the reviewed policy manifest used by
+ * ingestion. Historical ingestion must resolve the manifest at the receipt's
+ * immutable skill revision; passing an unpinned or current substitute is not a
+ * valid join.
+ */
+export function assertRunReceiptPolicyJoin(
+  receipt: ProjectRunReceipt,
+  project: ProjectReceiptPolicyBinding,
+): ProjectRunReceipt {
+  if (receipt.projectId !== project.id) {
+    throw new TypeError("run receipt policy project does not match");
+  }
+  const activation = project.terms.receiptPolicy;
+  if (receipt.schemaVersion === "1") {
+    if (
+      activation.state === "active" &&
+      Date.parse(receipt.completedAt) >= Date.parse(activation.activatedAt)
+    ) {
+      throw new TypeError(
+        "v1 run receipt is not allowed after project policy activation",
+      );
+    }
+    return receipt;
+  }
+  if (activation.state !== "active") {
+    throw new TypeError("v2 run receipt predates project policy activation");
+  }
+  if (Date.parse(receipt.startedAt) < Date.parse(activation.activatedAt)) {
+    throw new TypeError(
+      "v2 run receipt started before project policy activation",
+    );
+  }
+  const acknowledgement = receipt.policyAcknowledgement;
+  if (
+    !acknowledgement ||
+    acknowledgement.policyRevision !== project.terms.revision ||
+    acknowledgement.licenseSha256 !==
+      project.terms.repositoryLicense.fileSha256 ||
+    acknowledgement.inboundTermsSha256 !== project.terms.inbound.fileSha256 ||
+    acknowledgement.prizeRulesSha256 !==
+      (project.terms.externalPrize?.rulesSha256 ?? null)
+  ) {
+    throw new TypeError(
+      "run receipt policy acknowledgement does not match the pinned project policy",
+    );
+  }
+  return receipt;
+}
+
 export interface RunReceiptMarker {
   provider: string;
   model: string;
@@ -586,6 +649,15 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
         "run marker.policy_acknowledgement.acknowledged_at",
       ),
     };
+    const acknowledgedTime = Date.parse(policyAcknowledgement.acknowledgedAt);
+    if (
+      acknowledgedTime < Date.parse(startedAt) ||
+      acknowledgedTime > Date.parse(completedAt)
+    ) {
+      throw new TypeError(
+        "run marker policy acknowledgement must fall within the run",
+      );
+    }
   }
 
   return {

@@ -84,6 +84,15 @@ export interface ProjectDefinition {
   readonly terms: {
     readonly revision: string;
     readonly effectiveAt: string;
+    readonly receiptPolicy:
+      | {
+          readonly state: "pending-authority-activation";
+          readonly activatedAt: null;
+        }
+      | {
+          readonly state: "active";
+          readonly activatedAt: string;
+        };
     readonly paymentTransfersIp: false;
     readonly retroactive: false;
     readonly copyright: {
