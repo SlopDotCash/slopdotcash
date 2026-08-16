@@ -75,8 +75,8 @@ function git(args) {
   });
 }
 
-function revisionEntries(revision) {
-  if (!REVISION.test(revision)) throw new TypeError("base revision is invalid");
+function revisionEntries(revision, label = "revision") {
+  if (!REVISION.test(revision)) throw new TypeError(`${label} is invalid`);
   git(["cat-file", "-e", `${revision}^{commit}`]);
   const paths = git([
     "ls-tree",
@@ -104,19 +104,26 @@ async function workingEntries() {
   );
 }
 
-export async function checkProjectTransitions(baseRevision) {
+export async function checkProjectTransitions(baseRevision, currentRevision) {
   return validateProjectTransitions(
-    revisionEntries(baseRevision),
-    await workingEntries(),
+    revisionEntries(baseRevision, "base revision"),
+    currentRevision === undefined
+      ? await workingEntries()
+      : revisionEntries(currentRevision, "current revision"),
   );
 }
 
 if (import.meta.main) {
   try {
-    if (process.argv.length !== 3) {
-      throw new TypeError("Usage: check-project-transitions.mjs <base-sha>");
+    if (process.argv.length < 3 || process.argv.length > 4) {
+      throw new TypeError(
+        "Usage: check-project-transitions.mjs <base-sha> [current-sha]",
+      );
     }
-    const result = await checkProjectTransitions(process.argv[2]);
+    const result = await checkProjectTransitions(
+      process.argv[2],
+      process.argv[3],
+    );
     process.stdout.write(
       `[Slop] validated ${result.previous} existing project policy transitions across ${result.current} current projects\n`,
     );

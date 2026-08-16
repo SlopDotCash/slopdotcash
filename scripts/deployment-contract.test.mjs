@@ -14,6 +14,10 @@ const workflow = readFileSync(
   join(repositoryRoot, ".github", "workflows", "deploy.yml"),
   "utf8",
 );
+const transitionWorkflow = readFileSync(
+  join(repositoryRoot, ".github", "workflows", "project-transitions.yml"),
+  "utf8",
+);
 const packageManifest = JSON.parse(
   readFileSync(join(packageRoot, "package.json"), "utf8"),
 );
@@ -234,19 +238,48 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain("name: eliza-army-production");
   });
 
-  it("validates immutable project policy transitions before the registry", () => {
+  it("preserves an immutable-sha transition gate on trusted develop pushes", () => {
     const transitionGate = qualityJob.indexOf(
-      'node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA"',
+      'node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA" "$PROJECT_POLICY_HEAD_SHA"',
     );
     const registryGate = qualityJob.indexOf("bun run projects:check");
     expect(qualityJob).toContain(
-      `PROJECT_POLICY_BASE_SHA: ${"$"}{{ github.event.pull_request.base.sha || github.event.before }}`,
+      `PROJECT_POLICY_BASE_SHA: ${"$"}{{ github.event.before }}`,
     );
     expect(qualityJob).toContain(
-      `if [ "${"$"}{{ github.event_name }}" = "pull_request" ] || [ "${"$"}{{ github.event_name }}" = "push" ]; then`,
+      `PROJECT_POLICY_HEAD_SHA: ${"$"}{{ github.sha }}`,
+    );
+    expect(qualityJob).toContain(
+      `if [ "${"$"}{{ github.event_name }}" = "push" ]; then`,
     );
     expect(transitionGate).toBeGreaterThan(-1);
     expect(registryGate).toBeGreaterThan(transitionGate);
+  });
+
+  it("executes the PR transition gate only from the immutable trusted base", () => {
+    expect(transitionWorkflow).toContain("pull_request_target:");
+    expect(transitionWorkflow).toContain("permissions:\n  contents: read");
+    expect(transitionWorkflow).toContain(
+      `ref: ${"$"}{{ github.event.pull_request.base.sha }}`,
+    );
+    expect(transitionWorkflow).toContain("persist-credentials: false");
+    expect(transitionWorkflow).toContain(
+      'test "$(git rev-parse HEAD)" = "$PROJECT_POLICY_BASE_SHA"',
+    );
+    expect(transitionWorkflow).toContain(
+      '"+refs/pull/$PROJECT_POLICY_PR_NUMBER/head:refs/remotes/origin/slop-transition-head"',
+    );
+    expect(transitionWorkflow).toContain(
+      'test "$fetched_head" = "$PROJECT_POLICY_HEAD_SHA"',
+    );
+    expect(transitionWorkflow).toContain(
+      '"$PROJECT_POLICY_BASE_SHA" "$PROJECT_POLICY_HEAD_SHA"',
+    );
+    expect(transitionWorkflow).not.toContain("secrets.");
+    expect(transitionWorkflow).not.toContain("bun install");
+    expect(transitionWorkflow).not.toContain(
+      `ref: ${"$"}{{ github.event.pull_request.head.sha }}`,
+    );
   });
 
   it("has no candidate-controlled production release path", () => {
