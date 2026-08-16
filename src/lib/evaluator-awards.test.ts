@@ -142,6 +142,30 @@ describe("evaluator award protocol", () => {
     ).toThrow("not the expected canonical GitHub URL");
   });
 
+  it("binds comment awards to one immutable issue comment", () => {
+    const source = {
+      id: "IC_useful_comment_17",
+      kind: "comment",
+      number: 17,
+      title: "Useful campaign contribution",
+      url: "https://github.com/elizaOS/eliza/issues/17#issuecomment-170",
+    };
+
+    expect(assertEvaluatorAwardManifest(award({ source })).source).toEqual(
+      source,
+    );
+
+    for (const url of [
+      "https://github.com/elizaOS/eliza/issues/17",
+      "https://github.com/elizaOS/eliza/issues/17#pullrequestreview-170",
+      "https://github.com/elizaOS/eliza/issues/17?notification=1#issuecomment-170",
+    ]) {
+      expect(() =>
+        assertEvaluatorAwardManifest(award({ source: { ...source, url } })),
+      ).toThrow("not the expected canonical GitHub URL");
+    }
+  });
+
   it("rejects duplicate source credit even when award ids differ", () => {
     const root = fixtureRoot();
     writeFileSync(

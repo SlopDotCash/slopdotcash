@@ -294,7 +294,7 @@ export interface ScoreEvent {
   repository: RepositoryId;
   source: {
     id: string;
-    kind: "issue" | "pull-request" | "review";
+    kind: "comment" | "issue" | "pull-request" | "review";
     number: number;
     title: string;
     url: string;
@@ -2874,6 +2874,26 @@ export function createLeaderboardSnapshot(
   }
 
   const evaluatedSourceKeys = new Set<string>();
+  const evaluatedTextSources = new Map<string, GitHubTextSource>();
+  for (const source of [
+    ...mergedPullRequests.flatMap(pullRequestTextSources),
+    ...openPullRequests.flatMap(pullRequestTextSources),
+    ...resolvedIssues.flatMap(issueTextSources),
+    ...openIssues.flatMap(issueTextSources),
+  ]) {
+    const existing = evaluatedTextSources.get(source.id);
+    if (
+      existing &&
+      (existing.url !== source.url ||
+        existing.body !== source.body ||
+        !sameActor(existing.author, source.author))
+    ) {
+      throw new TypeError(
+        `Evaluated source ${source.id} has conflicting GitHub records`,
+      );
+    }
+    evaluatedTextSources.set(source.id, source);
+  }
   const evaluatedContributions = [...(input.evaluatedContributions ?? [])].sort(
     (left, right) =>
       parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
@@ -2908,6 +2928,20 @@ export function createLeaderboardSnapshot(
     }
     evaluatedSourceKeys.add(sourceKey);
     addScore(entries, ledger, event);
+    if (event.source.kind === "comment") {
+      const source = evaluatedTextSources.get(event.source.id);
+      if (
+        source?.kind !== "comment" ||
+        source.url !== event.source.url ||
+        !sameActor(source.author, event.actor) ||
+        parseIsoTime(source.createdAt) !== occurredAt
+      ) {
+        throw new TypeError(
+          `Evaluated contribution ${event.id} does not match its exact GitHub comment`,
+        );
+      }
+      recordScoredSources([source]);
+    }
   }
 
   const issueQueue = openIssues.map((record) =>
@@ -3090,7 +3124,7 @@ function secureUrl(value: unknown, path: string): URL {
 function assertRepositoryUrl(
   value: unknown,
   path: string,
-  expectedKind?: "issue" | "pull-request" | "review",
+  expectedKind?: "comment" | "issue" | "pull-request" | "review",
   expectedNumber?: number,
   expectedRepository?: RepositoryId,
 ): RepositoryId {
@@ -3117,6 +3151,7 @@ function assertRepositoryUrl(
     match[3].toLowerCase() === "issues" ? "issue" : "pull-request";
   if (
     expectedKind &&
+    expectedKind !== "comment" &&
     (expectedKind === "issue"
       ? actualKind !== "issue"
       : actualKind !== "pull-request")
@@ -3126,7 +3161,13 @@ function assertRepositoryUrl(
   if (expectedNumber !== undefined && Number(match[4]) !== expectedNumber) {
     throw new Error(`${path} number does not match its repository URL`);
   }
-  if (expectedKind === "review") {
+  if (expectedKind === "comment") {
+    if (!/^#issuecomment-\d+$/i.test(parsed.hash)) {
+      throw new Error(
+        `${path} comment URL must identify an exact GitHub issue or pull-request comment`,
+      );
+    }
+  } else if (expectedKind === "review") {
     if (!/^#(?:pullrequestreview-|discussion_r)\d+$/i.test(parsed.hash)) {
       throw new Error(
         `${path} review URL must identify a GitHub review or inline discussion`,
@@ -3985,7 +4026,7 @@ function assertLedgerValue(
   assertString(source.id, `${path}.source.id`);
   assertEnum(
     source.kind,
-    ["issue", "pull-request", "review"],
+    ["comment", "issue", "pull-request", "review"],
     `${path}.source.kind`,
   );
   assertPositiveInteger(source.number, `${path}.source.number`);
@@ -4570,6 +4611,13 @@ export function assertLeaderboardSnapshot(
       if (
         event.category === "substantive-review" &&
         event.source.kind === "review" &&
+        event.source.id === attribution.sourceId
+      ) {
+        return true;
+      }
+      if (
+        event.category === "evaluated-contribution" &&
+        event.source.kind === "comment" &&
         event.source.id === attribution.sourceId
       ) {
         return true;
