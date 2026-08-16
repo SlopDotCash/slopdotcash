@@ -88,7 +88,16 @@ describe("project skill contracts", () => {
       assert.match(source, /gh auth status --hostname github\.com/u);
       assert.match(source, /gh api user --jq '\.login'/u);
       assert.match(source, /upstream\s+permission/is);
-      assert.match(source, /stars are\s+optional/u);
+      assert.match(
+        source,
+        /use computer or browser control when\s+available/is,
+      );
+      assert.match(source, /give the\s+operator direct links/is);
+      assert.match(source, /stars are\s+optional/iu);
+      assert.match(
+        source,
+        /failure or refusal never\s+blocks a contribution/is,
+      );
       if (project.reward.kind === "monthly-pool") {
         assert.match(source, /explicit approval before registration/is);
       }
