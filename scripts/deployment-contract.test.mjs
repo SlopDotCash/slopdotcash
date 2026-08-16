@@ -37,6 +37,10 @@ const pagesHeaders = readFileSync(
   join(packageRoot, "public", "_headers"),
   "utf8",
 );
+const pagesRedirects = readFileSync(
+  join(packageRoot, "public", "_redirects"),
+  "utf8",
+);
 const pagesRoutes = JSON.parse(
   readFileSync(join(packageRoot, "public", "_routes.json"), "utf8"),
 );
@@ -55,6 +59,14 @@ const qualityJob = workflow.slice(
 const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
 
 describe("slop.cash deployment contract", () => {
+  it("rewrites the nested project funding route through the Pages SPA", () => {
+    const redirects = pagesRedirects.trim().split("\n");
+    expect(redirects).toContain("/projects/:project/funding / 200");
+    expect(redirects.indexOf("/projects/:project/funding / 200")).toBeLessThan(
+      redirects.indexOf("/projects/:project / 200"),
+    );
+  });
+
   it("deploys only the exact tested SHA through wrangler.toml", () => {
     expect(qualityJob).toContain(`ref: ${"$"}{{ github.sha }}`);
     expect(qualityJob).toContain("does not match the event SHA $GITHUB_SHA");
