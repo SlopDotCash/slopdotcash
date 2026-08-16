@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_neutize_review_19615",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "MDQ6VXNlcjM4OTkxMjQz",
+    "login": "Neutize",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/38991243?u=5884a38e5f489400941246854be4d9b7c51a1030&v=4",
+    "url": "https://github.com/Neutize",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-14T17:22:08.000Z",
+  "points": 8,
+  "source": {
+    "id": "PRR_kwDOMT5cIs8AAAABJm2H0w",
+    "kind": "review",
+    "number": 19615,
+    "title": "fix(plugin-app-control): a static app is not a failed worker spawn",
+    "url": "https://github.com/elizaOS/eliza/pull/19615#pullrequestreview-4939679699"
+  },
+  "reason": "The formal review identified a release-blocking load-from-directory regression: treating a missing declared build artifact as proof of no worker surface silently skipped valid source plugins. It supplied the concrete plugin-blocker counterexample and the missing regression boundary. A maintainer independently confirmed the defect on the same head, and the accepted repair restored the deliberate source fallback, classified worker capability from the loaded module, preserved missing-artifact failures, and added the requested static, valid-worker, missing-artifact, and legacy coverage.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-08-16T16:44:25.000Z",
+    "decisionUrl": "https://github.com/elizaOS/slopdotcash/pull/134"
+  }
+}
