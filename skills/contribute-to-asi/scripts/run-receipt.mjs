@@ -76,6 +76,7 @@ const MAX_STATE_BYTES = MAX_REPORT_BYTES + 1024 * 1024;
 const AUTHORIZATION_RECEIPT = ".slop-authorization.json";
 const TRACE_AUTHORITY = "https://api.slop.cash";
 const IDENTITY_AUTHORITY = "https://identity.slop.cash";
+const TRACE_PRIVACY_CONTRACT = "https://slop.cash/protocol/private-trace-v1.md";
 
 const HELP = `Usage: node scripts/run-receipt.mjs <command> [options]
 
@@ -1008,8 +1009,7 @@ function listRegularFiles(root, prefix = "") {
   return files;
 }
 
-function trajectoryDigest(path) {
-  if (path === null) return null;
+function readTrajectoryFile(path) {
   const absolute = resolve(path);
   const metadata = lstatSync(absolute);
   if (
@@ -1026,7 +1026,16 @@ function trajectoryDigest(path) {
   } catch {
     fail("trajectory must contain valid UTF-8 text or NDJSON");
   }
-  return sha256(contents);
+  return {
+    absolutePath: absolute,
+    contents,
+    sha256: sha256(contents),
+  };
+}
+
+function trajectoryDigest(path) {
+  if (path === null) return null;
+  return readTrajectoryFile(path).sha256;
 }
 
 function traceUploadEvidence(serverRunId, objectId, trajectorySha256) {
@@ -1201,17 +1210,31 @@ export async function slopIdentityAssertion(
 }
 
 function privateTraceFile(path) {
-  const sha = trajectoryDigest(path);
-  const contents = readFileSync(resolve(path));
+  const snapshot = readTrajectoryFile(path);
   return {
-    contents,
-    sha256: sha,
-    sizeBytes: contents.length,
+    ...snapshot,
+    sizeBytes: snapshot.contents.length,
     contentType:
       extname(path).toLowerCase() === ".ndjson"
         ? "application/x-ndjson"
         : "text/plain",
   };
+}
+
+export function disclosePrivateTrace(trace) {
+  process.stderr.write(
+    `${[
+      "Private trace pre-upload disclosure (authorization has not started):",
+      `Privacy contract: ${TRACE_PRIVACY_CONTRACT}`,
+      `Inspect exact final bytes: ${trace.absolutePath}`,
+      `Size: ${trace.sizeBytes} bytes`,
+      `Content-Type: ${trace.contentType}`,
+      `SHA-256: ${trace.sha256}`,
+      "Automatic redaction: none; the selected bytes are uploaded unchanged and retained permanently.",
+      "Inspect before opening the authorization URL. To change any byte, cancel and rerun trace; this process retains the disclosed snapshot.",
+      "Do not authorize unless you accept the disclosed bytes and permanent-retention contract.",
+    ].join("\n")}\n`,
+  );
 }
 
 export async function uploadPrivateTrace(
@@ -1221,12 +1244,24 @@ export async function uploadPrivateTrace(
   {
     fetchImpl = globalThis.fetch,
     assertionProvider = slopIdentityAssertion,
+    disclosure = disclosePrivateTrace,
   } = {},
 ) {
   declaredIdentifier(clientVersion, "--client-version", 128);
   if (typeof fetchImpl !== "function")
     fail("private trace transport is unavailable");
   const trace = privateTraceFile(trajectoryPath);
+  if (typeof disclosure !== "function")
+    fail("private trace disclosure is unavailable");
+  disclosure({
+    absolutePath: trace.absolutePath,
+    sha256: trace.sha256,
+    sizeBytes: trace.sizeBytes,
+    contentType: trace.contentType,
+    privacyContract: TRACE_PRIVACY_CONTRACT,
+    automaticRedaction: "none",
+    retention: "permanent",
+  });
   const identityAssertion = await assertionProvider(fetchImpl);
   if (
     typeof identityAssertion !== "string" ||
@@ -1909,7 +1944,7 @@ function previewRun(options) {
     ],
     network: [
       `Resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
-      `Authenticate with GitHub and permanently upload the bounded trace through ${TRACE_AUTHORITY}`,
+      `After a local byte/digest disclosure, authenticate with GitHub and permanently upload the inspected trace through ${TRACE_AUTHORITY} under ${TRACE_PRIVACY_CONTRACT}`,
     ],
     automaticUploads: [],
     publicReceiptFields: [
@@ -1924,9 +1959,9 @@ function previewRun(options) {
       "public Ed25519 device key and signature",
     ],
     excluded: [
-      "source files and diffs",
-      "transcript and session identifiers",
-      "credentials, environment values, private keys, and wallet secrets",
+      "source-file bodies and private diffs",
+      "unrelated transcripts and session identifiers",
+      "credentials, environment values, private keys, wallet secrets, absolute local paths, and hidden reasoning",
     ],
     consentFlag: "--allow-local-usage",
     packageExecutionConsentFlag: "--allow-package-execution",

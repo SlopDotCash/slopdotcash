@@ -6,6 +6,12 @@ settlement. D1 records private joins and metadata only. Trace bodies live in a
 dedicated private R2 bucket and are never returned from a contributor or
 project-owner route.
 
+The authoritative content, consent, redaction, retention, and data-request
+policy is [`protocol/private-trace-v1.md`](../../protocol/private-trace-v1.md).
+This backend stores the selected file byte-for-byte and does not redact or scan
+it. Backend integrity checks enforce the declared bytes; they do not replace
+the contributor's required pre-upload inspection.
+
 ## Storage contract
 
 - Every finalized run has exactly one SHA-256 trace object.

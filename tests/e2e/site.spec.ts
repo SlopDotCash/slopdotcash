@@ -591,6 +591,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
     discoveryResponse,
     discoverySkillResponse,
     identityResponse,
+    privateTraceContractResponse,
     projectDiscoveryResponse,
     llmsResponse,
   ] = await Promise.all([
@@ -598,6 +599,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
     request.get("/.well-known/agent-skills/index.json"),
     request.get("/.well-known/agent-skills/slop/SKILL.md"),
     request.get("/protocol/identity-v1.json"),
+    request.get("/protocol/private-trace-v1.md"),
     request.get("/.well-known/slop/projects.json"),
     request.get("/llms.txt"),
   ]);
@@ -606,6 +608,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
     discoveryResponse,
     discoverySkillResponse,
     identityResponse,
+    privateTraceContractResponse,
     projectDiscoveryResponse,
     llmsResponse,
   ]) {
@@ -632,6 +635,12 @@ test("serves byte-consistent install and read-only artifacts for every project",
   );
   expect(identityResponse.headers()["content-type"]).toContain(
     "application/json",
+  );
+  expect(privateTraceContractResponse.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  expect(await privateTraceContractResponse.text()).toContain(
+    "Neither the receipt CLI nor the trace API automatically redacts",
   );
   expect(identityResponse.headers()["access-control-allow-origin"]).toBe("*");
   expect(identityResponse.headers()["cache-control"]).toContain("max-age=300");
@@ -668,7 +677,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
   expect(await discoverySkillResponse.body()).toEqual(bootstrap);
   expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
   expect(bootstrap.toString()).toContain(
-    "mandatory permanent raw-trace upload",
+    "mandatory permanent minimized trace upload",
   );
   expect(await projectDiscoveryResponse.json()).toEqual({
     schemaVersion: "1",

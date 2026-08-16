@@ -58,9 +58,11 @@ Before running the guide, show the operator one short plan containing:
 - the exact public receipt fields: aggregate token categories, estimated
   API-equivalent cost, client, declared model, timestamps, repository, skill
   revision and digest, required trajectory digest, and public device key;
-- the mandatory permanent raw-trace upload to `https://api.slop.cash`; only
-  designated Slop operators may retrieve it, while GitHub receives its digest
-  and upload identity only.
+- the mandatory permanent minimized trace upload to `https://api.slop.cash`
+  under the [private trace privacy
+  contract](https://slop.cash/protocol/private-trace-v1.md); the uploader does
+  not redact the contributor-inspected bytes, only designated Slop operators
+  may retrieve them, and GitHub receives only the digest and upload identity.
 
 If the user's request already explicitly authorized installing the project
 skill, previewing local aggregate usage, and permanently storing the run trace

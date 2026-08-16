@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { declaredIdentity as asiDeclaredIdentity } from "../skills/contribute-to-asi/scripts/run-receipt.mjs";
 import { declaredIdentity as deltaDeclaredIdentity } from "../skills/contribute-to-delta-star/scripts/run-receipt.mjs";
 import {
+  disclosePrivateTrace,
   declaredIdentity as elizaDeclaredIdentity,
   footer,
   normalizeSessionReport,
@@ -79,6 +80,10 @@ describe("project skill contracts", () => {
       assert.match(source, /--allow-local-usage/u);
       assert.match(source, /--trajectory <path>/u);
       assert.match(source, /permanent\s+private\s+upload/u);
+      assert.match(
+        source,
+        /https:\/\/slop\.cash\/protocol\/private-trace-v1\.md/u,
+      );
       assert.match(source, /elizaOS\/slopdotcash/u);
       assert.match(source, /gh auth status --hostname github\.com/u);
       assert.match(source, /gh api user --jq '\.login'/u);
@@ -355,6 +360,37 @@ describe("project skill contracts", () => {
 });
 
 describe("project run usage", () => {
+  it("renders the immutable trace facts before authorization", () => {
+    const writes: string[] = [];
+    const originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk: Uint8Array | string) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      disclosePrivateTrace({
+        absolutePath: "/private/example/trace.ndjson",
+        sha256: "a".repeat(64),
+        sizeBytes: 123,
+        contentType: "application/x-ndjson",
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    const rendered = writes.join("");
+    assert.match(rendered, /authorization has not started/u);
+    assert.match(
+      rendered,
+      /https:\/\/slop\.cash\/protocol\/private-trace-v1\.md/u,
+    );
+    assert.match(rendered, /\/private\/example\/trace\.ndjson/u);
+    assert.match(rendered, /Size: 123 bytes/u);
+    assert.match(rendered, /Content-Type: application\/x-ndjson/u);
+    assert.match(rendered, new RegExp(`SHA-256: ${"a".repeat(64)}`, "u"));
+    assert.match(rendered, /Automatic redaction: none/u);
+    assert.match(rendered, /retained permanently/u);
+  });
+
   const repositoryRoot = "/work/eliza";
   const before = normalizeSessionReport(
     {
@@ -550,6 +586,8 @@ describe("project run usage", () => {
       const digest = createHash("sha256").update(contents).digest("hex");
       const serverRunId = "srv_test";
       const calls: Array<{ url: string; options: RequestInit }> = [];
+      const sequence: string[] = [];
+      let disclosure: Record<string, unknown> | null = null;
       const responses = [
         {
           token: "s".repeat(32),
@@ -598,7 +636,15 @@ describe("project run usage", () => {
         trajectory,
         "1.2.3",
         {
-          assertionProvider: () => "i".repeat(32),
+          disclosure: (value: Record<string, unknown>) => {
+            sequence.push("disclosure");
+            disclosure = value;
+            writeFileSync(trajectory, '{"event":"changed-after-snapshot"}\n');
+          },
+          assertionProvider: () => {
+            sequence.push("authorization");
+            return "i".repeat(32);
+          },
           fetchImpl: async (url, options = {}) => {
             calls.push({ url: String(url), options });
             return new Response(JSON.stringify(responses.shift()), {
@@ -613,7 +659,25 @@ describe("project run usage", () => {
         objectId: `sha256:${digest}`,
         sha256: digest,
       });
+      assert.deepStrictEqual(sequence, ["disclosure", "authorization"]);
+      assert.deepStrictEqual(disclosure, {
+        absolutePath: trajectory,
+        sha256: digest,
+        sizeBytes: Buffer.byteLength(contents),
+        contentType: "application/x-ndjson",
+        privacyContract: "https://slop.cash/protocol/private-trace-v1.md",
+        automaticRedaction: "none",
+        retention: "permanent",
+      });
       assert.strictEqual(calls.length, 5);
+      assert.strictEqual(
+        Buffer.from(calls[3].options.body as Uint8Array).toString("utf8"),
+        contents,
+      );
+      assert.strictEqual(
+        (calls[3].options.headers as Record<string, string>).Digest,
+        `sha-256=${digest}`,
+      );
       assert.strictEqual(
         calls[0].url,
         "https://api.slop.cash/api/v1/auth/session",
