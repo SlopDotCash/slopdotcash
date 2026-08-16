@@ -242,7 +242,11 @@ export function assertEvaluatorAwardManifest(
     ["id", "kind", "number", "title", "url"],
     "evaluator award.source",
   );
-  if (!["issue", "pull-request", "review"].includes(String(source.kind))) {
+  if (
+    !["comment", "issue", "pull-request", "review"].includes(
+      String(source.kind),
+    )
+  ) {
     throw new TypeError("evaluator award.source.kind is invalid");
   }
   if (!Number.isSafeInteger(source.number) || Number(source.number) <= 0) {
@@ -250,7 +254,8 @@ export function assertEvaluatorAwardManifest(
   }
   const number = Number(source.number);
   const sourceKind = source.kind as ScoreEvent["source"]["kind"];
-  const pathKind = sourceKind === "issue" ? "issues" : "pull";
+  const pathKind =
+    sourceKind === "issue" || sourceKind === "comment" ? "issues" : "pull";
   const normalizedRepository = repository.split("/");
   const sourceUrl = githubUrl(
     source.url,
@@ -258,7 +263,9 @@ export function assertEvaluatorAwardManifest(
     `/${normalizedRepository[0]}/${normalizedRepository[1]}/${pathKind}/${number}`,
     sourceKind === "review"
       ? /^#(?:pullrequestreview-|discussion_r)\d+$/iu
-      : undefined,
+      : sourceKind === "comment"
+        ? /^#issuecomment-\d+$/iu
+        : undefined,
   );
   const occurredAt = iso(manifest.occurredAt, "evaluator award.occurredAt");
   const approval = review(manifest.review, "evaluator award.review");

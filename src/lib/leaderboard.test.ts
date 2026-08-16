@@ -1458,6 +1458,99 @@ describe("scoring and limits", () => {
     ).toHaveLength(3);
   });
 
+  it("joins an evaluated issue comment to its signed finalized run", () => {
+    const contributor = actor("campaign-author");
+    const source: GitHubTextSource = {
+      ...textSource(
+        "IC_campaign_17",
+        reviewAttribution({
+          provider: "openai",
+          model: "gpt-5.6-sol",
+          client: "hermes-agent",
+        }).replace(/^Findings: none\.\n\n```slop-review\n[^\n]+\n```\n\n/u, ""),
+        contributor,
+      ),
+      artifactId: "ISSUE_CAMPAIGN_17",
+      url: "https://github.com/elizaOS/eliza/issues/17#issuecomment-170",
+    };
+    const evaluated = {
+      ...evaluatedContribution(0, contributor),
+      occurredAt: source.createdAt,
+      source: {
+        id: source.id,
+        kind: "comment" as const,
+        number: 17,
+        title: "Useful campaign contribution",
+        url: source.url,
+      },
+    };
+
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        openIssues: [
+          issue({
+            id: "ISSUE_CAMPAIGN_17",
+            number: 17,
+            url: "https://github.com/elizaOS/eliza/issues/17",
+            closedAt: null,
+            stateReason: null,
+            comments: [source],
+          }),
+        ],
+        evaluatedContributions: [evaluated],
+      }),
+    );
+
+    expect(snapshot.invalidAttributionMarkers).toEqual([]);
+    expect(snapshot.attributions).toEqual([
+      expect.objectContaining({
+        sourceId: source.id,
+        actor: contributor,
+        run: expect.objectContaining({
+          traceUpload: expect.objectContaining({ sha256: "b".repeat(64) }),
+        }),
+      }),
+    ]);
+    expect(snapshot.ledger).toContainEqual(
+      expect.objectContaining({
+        id: evaluated.id,
+        source: expect.objectContaining({ kind: "comment", id: source.id }),
+      }),
+    );
+
+    const replayedReceipt = structuredClone(snapshot);
+    replayedReceipt.attributions.push({
+      ...replayedReceipt.attributions[0],
+      id: "attribution_replayed_receipt",
+    });
+    expect(() => assertLeaderboardSnapshot(replayedReceipt)).toThrow(
+      /reuses client run/u,
+    );
+
+    for (const mismatchedActor of [
+      actor("different-author"),
+      { ...contributor, id: "ACTOR_same-login-impostor" },
+    ]) {
+      expect(() =>
+        createLeaderboardSnapshot(
+          input({
+            openIssues: [
+              issue({
+                id: "ISSUE_CAMPAIGN_17",
+                number: 17,
+                url: "https://github.com/elizaOS/eliza/issues/17",
+                closedAt: null,
+                stateReason: null,
+                comments: [source],
+              }),
+            ],
+            evaluatedContributions: [{ ...evaluated, actor: mismatchedActor }],
+          }),
+        ),
+      ).toThrow("does not match its exact GitHub comment");
+    }
+  });
+
   it("rejects an evaluator award for a source already scored by GitHub", () => {
     const merged = pullRequest();
     const duplicate = {
