@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_region_middle_counterexample_23",
+  "projectId": "delta-star",
+  "repository": "elizaOS/proximityprize",
+  "actor": {
+    "id": "MDQ6VXNlcjEyNDcxNTI=",
+    "login": "leo-guinan",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/1247152?v=4",
+    "url": "https://github.com/leo-guinan",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-16T12:45:11.000Z",
+  "points": 8,
+  "source": {
+    "id": "IC_kwDOT48hJc8AAAABPFoBmA",
+    "kind": "comment",
+    "number": 1,
+    "title": "Counterexample: RegionMiddleExclusion (ZMod 23) is false",
+    "url": "https://github.com/elizaOS/proximityprize/issues/1#issuecomment-5307498904"
+  },
+  "reason": "The contribution supplies two disjoint exact ZMod 23 witnesses that refute the stronger RegionMiddleExclusion conjecture at the first advertised test-family member. Both dependency-free verifiers independently reproduce the claimed vanishing polynomials, nonzero linear-cofactor syzygies, determinant obstructions to constant cofactors, and arithmetic profile, while explicitly limiting the conclusion so it does not claim genuine F1 or the open delta-star result.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-08-16T16:23:05.000Z",
+    "decisionUrl": "https://github.com/elizaOS/slopdotcash/pull/129"
+  }
+}
