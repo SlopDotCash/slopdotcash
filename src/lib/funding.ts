@@ -1,6 +1,12 @@
 /** Strict, non-custodial project-funding records and deterministic totals. */
 
-import { isSolanaAddress } from "./wallets";
+import {
+  fundingAssetForNetwork,
+  isFundingAddress,
+  isSolanaTransactionId,
+} from "./funding-address.mjs";
+
+export { isFundingAddress } from "./funding-address.mjs";
 
 export const FUNDING_PROTOCOL_VERSION = "1" as const;
 export type FundingNetwork = "base" | "bitcoin" | "ethereum" | "solana";
@@ -50,13 +56,6 @@ export interface ProjectFundingIndex {
   records: readonly ProjectFundingRecord[];
 }
 
-const NETWORK_ASSET: Readonly<Record<FundingNetwork, FundingAsset>> = {
-  base: "USDC",
-  bitcoin: "BTC",
-  ethereum: "USDC",
-  solana: "USDC",
-};
-const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const RECORD_ID_PATTERN = /^fund_[a-z0-9](?:[a-z0-9_-]{6,79})$/u;
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
@@ -97,70 +96,30 @@ function canonicalMinor(value: unknown, field: string): string {
   return value;
 }
 
-function decodedBase58Length(value: string): number | null {
-  let number = 0n;
-  for (const character of value) {
-    const digit = BASE58.indexOf(character);
-    if (digit < 0) return null;
-    number = number * 58n + BigInt(digit);
-  }
-  let bytes = 0;
-  while (number > 0n) {
-    bytes += 1;
-    number >>= 8n;
-  }
-  return (value.match(/^1*/u)?.[0].length ?? 0) + bytes;
-}
-
-function bech32Polymod(values: readonly number[]): number {
-  const generators = [
-    0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3,
-  ];
-  let checksum = 1;
-  for (const value of values) {
-    const top = checksum >>> 25;
-    checksum = ((checksum & 0x1ffffff) << 5) ^ value;
-    for (let index = 0; index < generators.length; index += 1) {
-      if ((top >>> index) & 1) checksum ^= generators[index];
-    }
-  }
-  return checksum >>> 0;
-}
-
-function validBitcoinAddress(value: string): boolean {
-  if (value !== value.toLowerCase() || !value.startsWith("bc1")) return false;
-  const separator = value.lastIndexOf("1");
-  if (separator !== 2 || value.length < 14 || value.length > 90) return false;
-  const alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-  const data = [...value.slice(separator + 1)].map((character) =>
-    alphabet.indexOf(character),
-  );
-  if (data.some((entry) => entry < 0) || data.length < 7) return false;
-  const encoding = bech32Polymod([3, 3, 0, 2, 3, ...data]);
-  return encoding === 1 || encoding === 0x2bc830a3;
-}
-
-export function isFundingAddress(
-  network: FundingNetwork,
-  value: string,
-): boolean {
-  if (network === "solana") return isSolanaAddress(value);
-  if (network === "bitcoin") return validBitcoinAddress(value);
-  return /^0x[0-9a-f]{40}$/u.test(value) && !/^0x0{40}$/u.test(value);
-}
-
 function validTransactionId(
   network: FundingNetwork,
   value: unknown,
 ): value is string {
   if (typeof value !== "string") return false;
-  if (network === "solana") return decodedBase58Length(value) === 64;
+  if (network === "solana") return isSolanaTransactionId(value);
   return (
     /^(?:0x)?[0-9a-f]{64}$/u.test(value) &&
     (network === "ethereum" || network === "base"
       ? value.startsWith("0x")
       : !value.startsWith("0x"))
   );
+}
+
+function canonicalEvidenceUrl(
+  network: FundingNetwork,
+  transactionId: string,
+): string {
+  if (network === "solana") return `https://solscan.io/tx/${transactionId}`;
+  if (network === "base") return `https://basescan.org/tx/${transactionId}`;
+  if (network === "ethereum") {
+    return `https://etherscan.io/tx/${transactionId}`;
+  }
+  return `https://mempool.space/tx/${transactionId}`;
 }
 
 export function assertProjectFundingAddresses(
@@ -182,12 +141,12 @@ export function assertProjectFundingAddresses(
     );
     if (
       typeof route.network !== "string" ||
-      !(route.network in NETWORK_ASSET)
+      fundingAssetForNetwork(route.network) === null
     ) {
       throw new TypeError(`${field} network is unsupported`);
     }
     const network = route.network as FundingNetwork;
-    if (route.asset !== NETWORK_ASSET[network]) {
+    if (route.asset !== fundingAssetForNetwork(network)) {
       throw new TypeError(`${field} asset is unsupported for its network`);
     }
     if (
@@ -317,12 +276,12 @@ export function assertProjectFundingRecord(
   }
   if (
     typeof record.network !== "string" ||
-    !(record.network in NETWORK_ASSET)
+    fundingAssetForNetwork(record.network) === null
   ) {
     throw new TypeError("funding record network is unsupported");
   }
   const network = record.network as FundingNetwork;
-  if (record.asset !== NETWORK_ASSET[network]) {
+  if (record.asset !== fundingAssetForNetwork(network)) {
     throw new TypeError("funding record asset is unsupported");
   }
   if (!validTransactionId(network, record.transactionId)) {
@@ -390,7 +349,13 @@ export function assertProjectFundingRecord(
       ["checkedAt", "evidenceUrl", "reason", "version"],
       "funding record verifier",
     );
-    timestamp(verifier.checkedAt, "funding record verifier.checkedAt");
+    const checkedAt = timestamp(
+      verifier.checkedAt,
+      "funding record verifier.checkedAt",
+    );
+    if (Date.parse(checkedAt) < Date.parse(observedAt)) {
+      throw new TypeError("funding record verification predates observation");
+    }
     if (
       typeof verifier.version !== "string" ||
       !/^funding-[a-z0-9-]+-v\d+$/u.test(verifier.version)
@@ -398,15 +363,16 @@ export function assertProjectFundingRecord(
       throw new TypeError("funding record verifier version is invalid");
     }
     if (
-      typeof verifier.evidenceUrl !== "string" ||
-      !/^https:\/\//u.test(verifier.evidenceUrl)
+      verifier.evidenceUrl !==
+      canonicalEvidenceUrl(network, record.transactionId as string)
     ) {
       throw new TypeError("funding record verifier evidence is invalid");
     }
     if (
       record.state === "disputed"
         ? typeof verifier.reason !== "string" ||
-          verifier.reason.trim().length < 8
+          verifier.reason.trim().length < 8 ||
+          verifier.reason.length > 1_000
         : verifier.reason !== null
     ) {
       throw new TypeError("funding record dispute reason is inconsistent");

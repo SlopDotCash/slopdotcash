@@ -57,6 +57,21 @@ describe("project funding records", () => {
     expect(() =>
       assertProjectFundingRecord(record({ amountMinor: "1.0" }), routes),
     ).toThrow(/integer minor units/u);
+    expect(() =>
+      assertProjectFundingRecord(
+        record({
+          state: "verified-on-chain",
+          finality: { kind: "confirmations", confirmations: 64 },
+          verifier: {
+            version: "funding-ethereum-v1",
+            checkedAt: "2026-08-01T23:59:59.000Z",
+            evidenceUrl: `https://etherscan.io/tx/${TRANSACTION}`,
+            reason: null,
+          },
+        }),
+        routes,
+      ),
+    ).toThrow(/predates/u);
   });
 
   it("requires network finality and independent evidence before verification", () => {
@@ -82,6 +97,20 @@ describe("project funding records", () => {
         routes,
       ),
     ).toThrow(/finality/u);
+    expect(() =>
+      assertProjectFundingRecord(
+        {
+          ...verified,
+          verifier: {
+            version: "funding-ethereum-v1",
+            checkedAt: "2026-08-02T01:00:00.000Z",
+            evidenceUrl: `https://attacker.example/tx/${TRANSACTION}`,
+            reason: null,
+          },
+        },
+        routes,
+      ),
+    ).toThrow(/evidence/u);
     expect(() =>
       assertProjectFundingRecord(
         record({ state: "verified-on-chain" }),

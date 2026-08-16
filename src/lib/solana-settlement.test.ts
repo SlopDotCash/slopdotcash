@@ -2,7 +2,10 @@
 
 import { describe, expect, it } from "vitest";
 import { SOLANA_MAINNET_USDC_MINT } from "./settlement-plan";
-import { assertFinalizedUsdcTransfer } from "./solana-settlement";
+import {
+  assertFinalizedUsdcFundingTransfer,
+  assertFinalizedUsdcTransfer,
+} from "./solana-settlement";
 
 const SOURCE = "Vote111111111111111111111111111111111111111";
 const RECIPIENT = "11111111111111111111111111111111";
@@ -81,5 +84,29 @@ describe("finalized Solana settlement", () => {
         { recipientOwner: RECIPIENT, amountMinor: "1000000" },
       ]),
     ).toThrow(/source USDC debit|undeclared/u);
+  });
+
+  it("verifies an exact direct-funding credit without trusting the sender", () => {
+    expect(
+      assertFinalizedUsdcFundingTransfer(
+        transaction(),
+        SIGNATURE,
+        RECIPIENT,
+        "1000000",
+      ),
+    ).toEqual({ signature: SIGNATURE, slot: 123, blockTime: 1_786_000_000 });
+
+    const padded = transaction();
+    padded.meta.preTokenBalances.push(balance(2, ATTACKER, "0"));
+    padded.meta.postTokenBalances[0] = balance(0, SOURCE, "900000");
+    padded.meta.postTokenBalances.push(balance(2, ATTACKER, "100000"));
+    expect(() =>
+      assertFinalizedUsdcFundingTransfer(
+        padded,
+        SIGNATURE,
+        RECIPIENT,
+        "1000000",
+      ),
+    ).toThrow(/undeclared credit/u);
   });
 });

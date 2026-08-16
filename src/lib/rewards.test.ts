@@ -292,6 +292,14 @@ describe("reward manifests", () => {
       "paid",
     );
 
+    const reportedFee = structuredClone(settlement);
+    reportedFee.status = "partially-paid";
+    reportedFee.platformFee.state = "reported";
+    reportedFee.platformFee.paidMinor = "0";
+    expect(
+      assertRewardSettlementManifest(reportedFee, allocation).platformFee,
+    ).toMatchObject({ state: "reported", paidMinor: "0" });
+
     settlement.attempts.push({
       attemptId: "attempt_eliza_2026_08_2",
       intentIds: ["pay_eliza_2026_08_u1"],

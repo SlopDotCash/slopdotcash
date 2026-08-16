@@ -37,6 +37,18 @@ non-final transactions, and broken correction chains fail closed. Verified and
 self-reported totals are never added into one displayed number. GitHub identity
 and repository authority do not prove control of any wallet.
 
+For Solana mainnet USDC, the read-only verifier queries `getTransaction` at
+`finalized` commitment and accepts only the canonical USDC mint, successful
+execution, the exact signature, the exact project-owner credit, balanced raw
+token deltas, and no undeclared positive credit:
+
+```text
+bun run funding:verify-solana -- --signature <signature> --recipient <project-owner-address> --amount-minor <integer>
+```
+
+It emits candidate finality and verifier fields for human review; it never
+signs, broadcasts, handles a key, or writes a funding record.
+
 Project payout plans remain unsigned and are executed outside Slop by the
 declared project settler. A transaction signature is only reported evidence;
 the cycle remains unpaid until deterministic finalized balance deltas reconcile
@@ -44,3 +56,8 @@ every contributor intent. The separately sent 1% platform fee is outstanding
 until a signature is reported, reported until the same verification succeeds,
 and verified only with finalized exact recipient and amount evidence. Slop does
 not deduct, sweep, enforce, sign, or broadcast the fee.
+
+The settlement protocol stores these as `pending`, `reported`, and `paid` and
+the product labels them **Fee outstanding**, **Fee reported**, and **Fee
+verified**. A reported signature keeps `paidMinor` at zero until the read-only
+finalized balance-delta verifier succeeds.

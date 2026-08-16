@@ -1195,7 +1195,7 @@ function FundingQr({
   ) : null;
 }
 
-function ProjectFunding({ project }: { project: ProjectDefinition }) {
+export function ProjectFunding({ project }: { project: ProjectDefinition }) {
   const [copied, setCopied] = useState<string | null>(null);
   if (project.funding.addresses.length === 0) return null;
   return (

@@ -32,6 +32,8 @@ export interface VerifiedSolanaTransaction {
   slot: number;
 }
 
+export const SOLANA_FUNDING_VERIFIER_VERSION = "funding-solana-v1" as const;
+
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`${field} must be an object`);
@@ -200,6 +202,85 @@ export function assertFinalizedUsdcTransfer(
   };
 }
 
+/** Validates one finalized direct-funding credit without trusting its sender. */
+export function assertFinalizedUsdcFundingTransfer(
+  transactionValue: unknown,
+  expectedSignature: string,
+  recipientOwner: string,
+  amountMinor: string,
+): VerifiedSolanaTransaction {
+  signature(expectedSignature, "expected signature");
+  if (!isSolanaAddress(recipientOwner) || !/^[1-9]\d*$/u.test(amountMinor)) {
+    throw new TypeError("funding transfer expectation is invalid");
+  }
+  const transaction = record(transactionValue, "Solana transaction");
+  const meta = record(transaction.meta, "Solana transaction.meta");
+  if (meta.err !== null) {
+    throw new TypeError("Solana transaction did not execute successfully");
+  }
+  const envelope = record(
+    transaction.transaction,
+    "Solana transaction.transaction",
+  );
+  if (
+    !Array.isArray(envelope.signatures) ||
+    !envelope.signatures.some((value) => value === expectedSignature)
+  ) {
+    throw new TypeError(
+      "Solana transaction signature does not match the funding record",
+    );
+  }
+  const pre = tokenBalances(meta.preTokenBalances, "preTokenBalances");
+  const post = tokenBalances(meta.postTokenBalances, "postTokenBalances");
+  const accountIndexes = new Set([...pre.keys(), ...post.keys()]);
+  const deltas = new Map<string, bigint>();
+  for (const accountIndex of accountIndexes) {
+    const before = pre.get(accountIndex);
+    const after = post.get(accountIndex);
+    const identity = after ?? before;
+    if (!identity || identity.mint !== SOLANA_MAINNET_USDC_MINT) continue;
+    if (
+      before &&
+      after &&
+      (before.mint !== after.mint || before.owner !== after.owner)
+    ) {
+      throw new TypeError("Solana token-account identity changed unexpectedly");
+    }
+    const delta = (after?.amount ?? 0n) - (before?.amount ?? 0n);
+    deltas.set(identity.owner, (deltas.get(identity.owner) ?? 0n) + delta);
+  }
+  const expected = BigInt(amountMinor);
+  if (deltas.get(recipientOwner) !== expected) {
+    throw new TypeError(
+      "Solana funding recipient did not receive the exact amount",
+    );
+  }
+  if (
+    [...deltas.entries()].some(
+      ([owner, delta]) => delta > 0n && owner !== recipientOwner,
+    )
+  ) {
+    throw new TypeError("Solana funding transaction has an undeclared credit");
+  }
+  const netDelta = [...deltas.values()].reduce(
+    (total, delta) => total + delta,
+    0n,
+  );
+  if (netDelta !== 0n) {
+    throw new TypeError(
+      "Solana funding transaction USDC deltas do not balance",
+    );
+  }
+  return {
+    signature: expectedSignature,
+    slot: safeInteger(transaction.slot, "Solana transaction.slot"),
+    blockTime: safeInteger(
+      transaction.blockTime,
+      "Solana transaction.blockTime",
+    ),
+  };
+}
+
 function contributorTransferByIntent(
   plan: SettlementExecutionPlan,
 ): Map<string, SettlementPlanTransfer> {
@@ -256,12 +337,15 @@ export async function verifyRewardSettlementOnchain(input: {
       ),
     );
   }
-  if (settlement.platformFee.state === "paid") {
+  if (
+    settlement.platformFee.state === "paid" ||
+    settlement.platformFee.state === "reported"
+  ) {
     const transfer = plan.transfers.find(
       (candidate) => candidate.kind === "platform-fee",
     );
     if (!transfer || !settlement.platformFee.signature) {
-      throw new TypeError("Paid platform fee has no planned transaction");
+      throw new TypeError("Reported platform fee has no planned transaction");
     }
     verified.push(
       assertFinalizedUsdcTransfer(

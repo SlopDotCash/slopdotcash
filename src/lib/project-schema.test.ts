@@ -102,5 +102,19 @@ describe("project proposal schema", () => {
     expect(() => assertProjectDefinition(duplicate)).toThrow(
       /duplicate route/u,
     );
+
+    const invalidSolana = structuredClone(eliza);
+    invalidSolana.funding.addresses = [
+      {
+        network: "solana",
+        asset: "USDC",
+        address: "2".repeat(32),
+        effectiveAt: "2026-08-16T00:00:00.000Z",
+        replacedAt: null,
+      },
+    ] as never;
+    expect(() => assertProjectDefinition(invalidSolana)).toThrow(
+      /address is invalid/u,
+    );
   });
 });

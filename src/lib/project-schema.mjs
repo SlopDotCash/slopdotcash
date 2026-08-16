@@ -4,6 +4,11 @@
  * request cannot smuggle executable configuration or ambiguous reward terms.
  */
 
+import {
+  fundingAssetForNetwork,
+  isFundingAddress,
+} from "./funding-address.mjs";
+
 const PROJECT_KEYS = [
   "description",
   "eyebrow",
@@ -266,25 +271,13 @@ function validateFunding(value, projectId) {
       ["address", "asset", "effectiveAt", "network", "replacedAt"],
       field,
     );
-    const expectedAsset = {
-      base: "USDC",
-      bitcoin: "BTC",
-      ethereum: "USDC",
-      solana: "USDC",
-    }[route.network];
+    const expectedAsset = fundingAssetForNetwork(route.network);
     if (!expectedAsset || route.asset !== expectedAsset) {
       throw new TypeError(`${field} network or asset is unsupported`);
     }
-    const addressPattern =
-      route.network === "base" || route.network === "ethereum"
-        ? /^0x[0-9a-f]{40}$/u
-        : route.network === "bitcoin"
-          ? /^bc1[a-z0-9]{11,87}$/u
-          : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u;
-    text(route.address, `${field}.address`, {
-      max: 100,
-      pattern: addressPattern,
-    });
+    if (!isFundingAddress(route.network, route.address)) {
+      throw new TypeError(`${field}.address is invalid`);
+    }
     const effectiveAt = timestamp(route.effectiveAt, `${field}.effectiveAt`);
     const replacedAt =
       route.replacedAt === null

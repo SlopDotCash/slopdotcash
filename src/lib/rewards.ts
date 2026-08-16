@@ -145,7 +145,7 @@ export interface RewardSettlementManifest {
     dueMinor: string;
     paidMinor: string;
     signature: string | null;
-    state: "failed" | "not-applicable" | "paid" | "pending";
+    state: "failed" | "not-applicable" | "paid" | "pending" | "reported";
   };
   totals: {
     approvedMinor: string;
@@ -1104,7 +1104,8 @@ export function assertRewardSettlementManifest(
     feeState !== "failed" &&
     feeState !== "not-applicable" &&
     feeState !== "paid" &&
-    feeState !== "pending"
+    feeState !== "pending" &&
+    feeState !== "reported"
   ) {
     throw new TypeError("settlement platform fee state is invalid");
   }
@@ -1144,11 +1145,19 @@ export function assertRewardSettlementManifest(
   ) {
     throw new TypeError("paid platform fee must be exact and signed");
   }
-  if (
+  if (feeState === "reported") {
+    if (BigInt(feePaidMinor) !== 0n || feeSignature === null) {
+      throw new TypeError(
+        "reported platform fee needs a signature but cannot claim verified payment",
+      );
+    }
+  } else if (
     feeState !== "paid" &&
     (BigInt(feePaidMinor) !== 0n || feeSignature !== null)
   ) {
-    throw new TypeError("unpaid platform fee cannot claim payment evidence");
+    throw new TypeError(
+      "outstanding platform fee cannot claim transaction evidence",
+    );
   }
   if (
     feeSignature &&

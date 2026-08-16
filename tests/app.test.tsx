@@ -15,7 +15,12 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App, ProjectManagePage, publicFooterDomain } from "../src/App";
+import {
+  App,
+  ProjectFunding,
+  ProjectManagePage,
+  publicFooterDomain,
+} from "../src/App";
 import { assertCycleIndex } from "../src/lib/cycle-index";
 import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { createProjectView } from "../src/lib/project-view";
@@ -897,6 +902,49 @@ describe("project proposals", () => {
 });
 
 describe("direct project funding", () => {
+  it("shows an exact address, QR, copy feedback, and explorer without wallet control", async () => {
+    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+    if (!project) throw new TypeError("The Eliza project fixture is missing");
+    const fundedProject = {
+      ...project,
+      funding: {
+        ...project.funding,
+        addresses: [
+          {
+            network: "solana" as const,
+            asset: "USDC" as const,
+            address: "11111111111111111111111111111111",
+            effectiveAt: "2026-08-16T00:00:00.000Z",
+            replacedAt: null,
+          },
+        ],
+      },
+    };
+
+    render(<ProjectFunding project={fundedProject} />);
+    fireEvent.click(screen.getByText("Fund this project"));
+    expect(screen.getByText(fundedProject.funding.disclosure)).toBeVisible();
+    expect(screen.getByText("11111111111111111111111111111111")).toBeVisible();
+    expect(
+      await screen.findByRole("img", {
+        name: "solana USDC receiving address QR code",
+      }),
+    ).toHaveAttribute("src", expect.stringMatching(/^data:image\/svg\+xml,/u));
+    expect(screen.getByRole("link", { name: /View address/u })).toHaveAttribute(
+      "href",
+      "https://solscan.io/account/11111111111111111111111111111111",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Copy address" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Address copied" }),
+      ).toBeVisible(),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "11111111111111111111111111111111",
+    );
+  });
+
   it("keeps transaction evidence separate and makes the custody boundary explicit", async () => {
     route("/projects/eliza/funding");
     mockSnapshot();
