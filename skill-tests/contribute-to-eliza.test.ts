@@ -191,6 +191,25 @@ describe("contribute-to-eliza skill structure", () => {
     assert.match(source, /normal `gh` config/i);
   });
 
+  it("documents the signed Eliza last-line alias without duplicating the Slop receipt", () => {
+    const source = readFileSync(skillPath, "utf8");
+
+    assert.match(source, /slop-contribution-attribution:v1/);
+    assert.match(source, /eliza-computer-attribution:v1/);
+    assert.match(source, /elizaos-contribution-attribution:v2/);
+    assert.match(source, /check-agent-comment-attribution\.mjs/);
+    assert.match(source, /at most one\s+attribution marker per source/i);
+    assert.match(
+      source,
+      /preserve the complete visible\s+footer and exact signed JSON payload/i,
+    );
+    assert.match(source, /marker name is outside the signed\s+payload/i);
+    assert.match(source, /Do not remove the `run` object/i);
+    assert.match(source, /generate the unsigned\s+legacy marker/i);
+    assert.match(source, /Do not put both markers in the same\s+source/i);
+    assert.doesNotMatch(source, /ss251 gets \+50|give ss251 extra points/i);
+  });
+
   it("rejects contribution spam and gates work on the primary Eliza mission", () => {
     const source = readFileSync(skillPath, "utf8");
     const mission = readFileSync(

@@ -247,10 +247,33 @@ node <skill-directory>/scripts/run-receipt.mjs finish \
   --trace-server-run <server-run-id> --trace-object-id sha256:<digest>
 ```
 
-The command prints the exact footer. Append it unchanged to the final PR body,
-review, or issue comment that carries the contribution. The hidden Slop marker
-must be the final line. Do not hand-edit token counts, identifiers, timestamps,
+The command prints the exact native Slop footer. Preserve it unchanged when
+using the native marker. Do not hand-edit token counts, identifiers, timestamps,
 digests, key material, or signature. Re-running `finish` is idempotent.
+
+The hidden Slop marker (`slop-contribution-attribution:v1`) must be the
+final line of that printed receipt footer. Two last-line judges exist, but
+the signed interoperability marker is accepted by both:
+
+- Slop ingestion and this skill treat the official receipt's last line as
+  `slop-contribution-attribution:v1`.
+- The `elizaOS/eliza` comment validator
+  (`scripts/check-agent-comment-attribution.mjs`) requires the last line of a
+  checked GitHub comment or review to be `eliza-computer-attribution:v1` or a
+  signed `elizaos-contribution-attribution:v2`. It rejects a terminal Slop
+  marker.
+- Slop ingestion accepts the signed `elizaos-contribution-attribution:v2`
+  interoperability marker as well as its native marker. It allows at most one
+  attribution marker per source.
+
+Put the unchanged official footer on the PR body (Slop marker last). For a
+comment or review checked by the Eliza validator, preserve the complete visible
+footer and exact signed JSON payload, but render its final marker name as
+`elizaos-contribution-attribution:v2`. The marker name is outside the signed
+payload, so this alias does not change the receipt bytes covered by the device
+signature. Do not remove the `run` object, alter its JSON, generate the unsigned
+legacy marker, or invent a signature. Do not put both markers in the same
+source.
 
 The receipt publishes aggregate tokens, estimated API-equivalent cost, client,
 model, repository, skill revision, run times, required trajectory hash, and a
