@@ -5,7 +5,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { link, mkdir, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -15,6 +15,7 @@ import {
 } from "../src/lib/projects.mjs";
 import { createSettlementExecutionPlan } from "../src/lib/settlement-plan";
 import { validateCycleTransition } from "./sync-cycle-index";
+import { writeNewJsonFile } from "./write-new-file";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CYCLES_ROOT = resolve(REPOSITORY_ROOT, "cycles");
@@ -46,8 +47,13 @@ export function parseSettlementPlanArguments(
   let feeRecipient: string | null = null;
   let projectId: ProjectId | null = null;
   let createdAt = now;
+  const seen = new Set<string>();
   for (let index = 0; index < values.length; index += 1) {
     const flag = values[index];
+    if (seen.has(flag)) {
+      throw new TypeError(`Repeated settlement-plan argument: ${flag}`);
+    }
+    seen.add(flag);
     const value = next(values, index, flag);
     if (flag === "--cycle") cycleId = value;
     else if (flag === "--project") {
@@ -78,26 +84,6 @@ export function parseSettlementPlanArguments(
     projectId,
     sourceOwner,
   };
-}
-
-async function writeNewFile(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    await Bun.write(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
-    try {
-      await link(temporaryPath, path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new Error(`Refusing to replace settlement plan ${path}`, {
-          cause: error,
-        });
-      }
-      throw error;
-    }
-  } finally {
-    await rm(temporaryPath, { force: true });
-  }
 }
 
 export async function prepareSettlementPlan(
@@ -140,7 +126,15 @@ export async function prepareSettlementPlan(
   if (plan.projectId !== arguments_.projectId) {
     throw new TypeError("Allocation project does not match its cycle path");
   }
-  await (options.write ?? writeNewFile)(arguments_.outputPath, plan);
+  await (
+    options.write ??
+    ((path, value) =>
+      writeNewJsonFile(
+        path,
+        value,
+        `Refusing to replace settlement plan ${path}`,
+      ))
+  )(arguments_.outputPath, plan);
   return plan;
 }
 

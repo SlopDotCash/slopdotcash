@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { onRequest, publicSocialMetadata, renderSocialMetadata } from "./index";
+import {
+  MAX_TRANSFORMED_HTML_BYTES,
+  onRequest,
+  publicSocialMetadata,
+  renderSocialMetadata,
+} from "./index";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const indexHtml = readFileSync(join(repositoryRoot, "index.html"), "utf8");
@@ -32,6 +37,14 @@ describe("hostname-aware social metadata", () => {
       rendered.match(/https:\/\/slop\.tech\/og-shipping-slop-tech\.png/gu),
     ).toHaveLength(2);
     expect(rendered).not.toContain("https://slop.cash/");
+  });
+
+  it("does not treat arbitrary slop.tech subdomains as public authorities", () => {
+    expect(publicSocialMetadata("attacker.slop.tech")).toEqual({
+      domain: "slop.cash",
+      origin: "https://slop.cash",
+      imageUrl: "https://slop.cash/og-shipping-slop.png",
+    });
   });
 
   it("rewrites the crawler-visible HTML response only for slop.tech", async () => {
@@ -83,5 +96,41 @@ describe("hostname-aware social metadata", () => {
 
     expect(response).toBe(original);
     expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+  });
+
+  it("does not parse or rewrite HTML error responses", async () => {
+    const original = new Response("<h1>Not found</h1>", {
+      status: 404,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+    const response = await onRequest({
+      request: new Request("https://slop.tech/missing"),
+      next: async () => original,
+    });
+
+    expect(response).toBe(original);
+    expect(await response.text()).toBe("<h1>Not found</h1>");
+  });
+
+  it("cancels oversized transformed HTML without buffering the full body", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(MAX_TRANSFORMED_HTML_BYTES / 2 + 1));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(
+      onRequest({
+        request: new Request("https://slop.tech/"),
+        next: async () =>
+          new Response(body, {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          }),
+      }),
+    ).rejects.toThrow(/transform limit/u);
+    expect(cancelled).toBe(true);
   });
 });

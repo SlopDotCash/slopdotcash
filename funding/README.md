@@ -95,13 +95,15 @@ override; deterministic tests may inject only the fetch implementation.
 ## Committed funds
 
 A project may additionally declare reviewed commitment instruments in
-`project.funding.commitments`. Each instrument is a third-party, immutable,
-audited on-chain contract that Slop does not control: a Squads v4 multisig
-vault holding USDC on Solana (a 2-of-2 funder and project-steward vault) or a
-Sablier Lockup v4 USDC stream on Base or Ethereum. Slop holds no key, admin,
-or fee position in any instrument; it publishes the reviewed reference and
-read-only evidence only. Committed funds are locked in that third-party,
-non-upgradeable smart contract, not with Slop.
+`project.funding.commitments`. Each instrument is a third-party on-chain
+mechanism that Slop does not control: an autonomous Squads v4 multisig vault
+holding USDC on Solana or a Sablier Lockup v4 USDC stream on Base or Ethereum.
+A Squads commitment requires an exact 2-of-2 funder and project-steward
+multisig with no configuration authority; a Sablier commitment uses a
+non-upgradeable stream. Slop holds no key, admin, or fee position in any
+instrument; it publishes the reviewed reference and read-only evidence only.
+Committed funds are constrained by that reviewed third-party instrument, not
+held by Slop.
 
 Public commitment evidence is append-only under:
 
@@ -111,29 +113,46 @@ funding/<project>/commitments/<network>/<transaction-id>/<record-id>.json
 
 Every record uses `project-commitment` schema version `1`, an event of
 `deposit`, `release`, or `refund`, and binds the exact project-manifest
-commit, instrument identity (multisig and vault, or contract and stream id),
-transaction ID, integer minor-unit amount, observation time, state, finality,
-and verifier version. Corrections use the same `supersedes` chain rules as
-direct-funding records, and verified and self-reported amounts are never
-summed into one number. Commitment records are never mixed into direct-funding
-totals.
+commit, instrument identity (multisig, vault index, vault, and both reviewed
+members; or contract and stream id), transaction ID, integer minor-unit amount,
+observation time, state, finality, and verifier version. Corrections use the
+same `supersedes` chain rules as direct-funding records, and verified and
+self-reported amounts are never summed into one number. Commitment records are
+never mixed into direct-funding totals.
 
 For a Squads v4 vault on Solana mainnet, the read-only verifier
-(`commitment-squads-v1`) queries three fixed public RPC authorities at
+(`commitment-squads-v2`) queries three fixed public RPC authorities at
 `finalized` commitment and requires two to agree exactly:
 
 ```text
-bun run funding:verify-commitment-squads -- --mode state --vault <vault> --token-account <token-account>
-bun run funding:verify-commitment-squads -- --mode deposit --vault <vault> --signature <signature> --amount-minor <integer>
-bun run funding:verify-commitment-squads -- --mode release --vault <vault> --recipient <owner> --signature <signature> --amount-minor <integer>
+bun run funding:verify-commitment-squads -- --mode state \
+  --multisig <multisig> --vault <vault> --vault-index <0..255> \
+  --funder-member <pubkey> --steward-member <pubkey> \
+  --token-account <token-account>
+bun run funding:verify-commitment-squads -- --mode deposit \
+  --multisig <multisig> --vault <vault> --vault-index <0..255> \
+  --funder-member <pubkey> --steward-member <pubkey> \
+  --signature <signature> --amount-minor <integer>
+bun run funding:verify-commitment-squads -- --mode release \
+  --multisig <multisig> --vault <vault> --vault-index <0..255> \
+  --funder-member <pubkey> --steward-member <pubkey> \
+  --recipient <owner> --signature <signature> --amount-minor <integer>
+bun run funding:verify-commitment-squads -- --mode refund \
+  --multisig <multisig> --vault <vault> --vault-index <0..255> \
+  --funder-member <pubkey> --steward-member <pubkey> \
+  --recipient <owner> --signature <signature> --amount-minor <integer>
 ```
 
-State mode proves the vault's USDC token account balance (canonical mint,
-vault-owned account, exact integer) with the canonical evidence URL
-`https://solscan.io/account/<vault>`. Deposit mode proves the exact vault
-credit. Release and refund modes take the expected recipient as explicit
-input—a release must credit an active manifest receiving route and a refund
-the funder's claimed wallet—and are never inferred. The verifier never signs,
+Every mode proves that the declared vault is the canonical Squads PDA for the
+reviewed multisig and vault index. It also proves that the multisig account is
+owned by the fixed Squads v4 program, has the default (absent) configuration
+authority, and contains exactly the two declared voting member keys at a 2-of-2
+threshold. State mode additionally proves the vault's USDC token-account
+balance (canonical mint, vault-owned account, exact integer) with the canonical
+evidence URL `https://solscan.io/account/<vault>`. Deposit mode proves the exact
+vault credit. Release and refund modes take the expected recipient as explicit
+input—a release must credit an active manifest receiving route and a refund the
+funder's claimed wallet—and are never inferred. The verifier never signs,
 broadcasts, handles a key, or writes a record.
 
 For a Sablier Lockup v4 USDC stream on Base or Ethereum, the read-only

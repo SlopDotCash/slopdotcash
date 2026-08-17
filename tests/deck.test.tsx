@@ -33,14 +33,23 @@ describe("Slop fundraising deck", () => {
     expect(screen.getByText("Nubs")).toBeInTheDocument();
     expect(screen.getByText("CEO")).toBeInTheDocument();
     expect(screen.getByText("CTO")).toBeInTheDocument();
-    expect(screen.getByAltText("Shaw GitHub contributions")).toBeVisible();
-    expect(screen.getByAltText("Nubs GitHub contributions")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Shaw on GitHub" }),
+    ).toHaveTextContent("View Shaw's public GitHub profile");
+    expect(
+      screen.getByRole("link", { name: "Nubs on GitHub" }),
+    ).toHaveTextContent("View Nubs's public GitHub profile");
+    expect(document.querySelector('img[src^="http"]')).toBeNull();
+    expect(screen.getByRole("link", { name: "Shaw on X" })).toHaveAttribute(
+      "rel",
+      "noreferrer",
+    );
     expect(window.location.hash).toBe("#2");
 
     fireEvent.keyDown(window, { key: "End" });
     expect(
       screen.getByRole("heading", {
-        name: "When we build it, we own it.",
+        name: "When we build it, the terms stay clear.",
       }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next slide" })).toBeDisabled();
@@ -58,6 +67,8 @@ describe("Slop fundraising deck", () => {
     expect(screen.getByText("Eliza")).toBeInTheDocument();
     expect(screen.getByText("Proximity Prize")).toBeInTheDocument();
     expect(screen.getByText("“ASI” continual learning")).toBeInTheDocument();
+    expect(screen.getByText(/ownership terms published/u)).toBeInTheDocument();
+    expect(screen.queryByText(/owned collectively/u)).not.toBeInTheDocument();
 
     window.history.replaceState({}, "", "/deck#5");
     rerender(<Deck key="gtm" />);
@@ -65,7 +76,7 @@ describe("Slop fundraising deck", () => {
     expect(screen.getByText("Align the supporters.")).toBeInTheDocument();
     expect(screen.getByText("Make support one click.")).toBeInTheDocument();
     expect(
-      screen.getByText("Turn open projects into public, fundable work."),
+      screen.getByText(/reviewed public repositories/u),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/Extropic’s THRML \+ torx/),
@@ -77,7 +88,7 @@ describe("Slop fundraising deck", () => {
     rerender(<Deck key="competition" />);
     expect(screen.getByText("Yukon")).toBeInTheDocument();
     expect(screen.getByText("OpenSolve")).toBeInTheDocument();
-    expect(screen.getByText("Any project")).toBeInTheDocument();
+    expect(screen.getByText("Manifest governed")).toBeInTheDocument();
     expect(screen.getByText("GitHub-native")).toBeInTheDocument();
     expect(screen.getByText("Open-source first")).toBeInTheDocument();
 
@@ -85,29 +96,30 @@ describe("Slop fundraising deck", () => {
     rerender(<Deck key="economics" />);
     expect(
       screen.getByRole("heading", {
-        name: "This can actually make a lot of money.",
+        name: "Transparent fee math.",
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/1% of payouts plus sponsorships/),
+      screen.getByText(/Slop charges 1% of the approved principal/),
     ).toBeInTheDocument();
     expect(screen.getByText("$2M")).toBeInTheDocument();
-    expect(screen.getByText("$1.0M")).toBeInTheDocument();
-    expect(screen.getAllByText("+$500K")).toHaveLength(2);
+    expect(screen.getByText("$20M")).toBeInTheDocument();
+    expect(screen.getAllByText("$200K")).toHaveLength(2);
+    expect(screen.getByText("S1")).toBeInTheDocument();
+    expect(screen.queryByText("Y1")).not.toBeInTheDocument();
 
     window.history.replaceState({}, "", "/deck#8");
     rerender(<Deck key="raise" />);
     expect(screen.getAllByText("$250K")).toHaveLength(2);
-    expect(screen.getByText("40%")).toBeInTheDocument();
-    expect(screen.getByText("$100K")).toBeInTheDocument();
-    expect(screen.getByText("Bounties + incentives")).toBeInTheDocument();
-    expect(screen.getByText("$75K")).toBeInTheDocument();
-    expect(screen.getByText("$50K")).toBeInTheDocument();
+    expect(screen.getByText("55%")).toBeInTheDocument();
+    expect(screen.getByText("$137.5K")).toBeInTheDocument();
+    expect(screen.getByText("Contributor incentives")).toBeInTheDocument();
+    expect(screen.getByText("$37.5K")).toBeInTheDocument();
     expect(screen.getByText("$25K")).toBeInTheDocument();
     expect(screen.getByText("Legal")).toBeInTheDocument();
     expect(
       screen.getByRole("img", {
-        name: /250 thousand dollar allocation: 40 percent team/,
+        name: /250 thousand dollar allocation: 55 percent contributor incentives/,
       }),
     ).toBeInTheDocument();
   });

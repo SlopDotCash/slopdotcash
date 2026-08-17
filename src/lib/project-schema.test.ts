@@ -94,8 +94,9 @@ function activatedWithoutOwnershipClaim(model: string): unknown {
 }
 
 describe("project proposal schema", () => {
-  it("accepts the two launch folders as complete self-contained definitions", () => {
+  it("accepts complete self-contained definitions from the manifest inventory", () => {
     expect(assertProjectRegistry([eliza, deltaStar])).toHaveLength(2);
+    expect(assertProjectRegistry([eliza])).toHaveLength(1);
     expect(assertProjectDefinition(eliza).reviewSkill.id).toBe(
       "review-eliza-contributions",
     );
@@ -141,6 +142,20 @@ describe("project proposal schema", () => {
     );
     expect(() => assertProjectRegistry([eliza, copy])).toThrow(
       /duplicate repositories/u,
+    );
+  });
+
+  it("requires exactly one manifest-selected root publication", () => {
+    const none = [structuredClone(eliza), structuredClone(deltaStar)];
+    none[0].skill.publishAtRoot = false;
+    expect(() => assertProjectRegistry(none)).toThrow(
+      /exactly one root-published/u,
+    );
+
+    const multiple = [structuredClone(eliza), structuredClone(deltaStar)];
+    multiple[1].skill.publishAtRoot = true;
+    expect(() => assertProjectRegistry(multiple)).toThrow(
+      /exactly one root-published/u,
     );
   });
 
@@ -220,6 +235,9 @@ describe("project proposal schema", () => {
       asset: "USDC",
       multisig: "11111111111111111111111111111111",
       vault: "Vote111111111111111111111111111111111111111",
+      vaultIndex: 0,
+      funderMember: "Stake11111111111111111111111111111111111111",
+      stewardMember: "SysvarRent111111111111111111111111111111111",
       funderActorId: "18633264",
       deadline: "2026-12-01T00:00:00.000Z",
       effectiveAt: "2026-08-01T00:00:00.000Z",

@@ -83,6 +83,7 @@
   ],
   "skill": {
     "id": "contribute-to-delta-star",
+    "publishAtRoot": false,
     "sourcePath": "skills/contribute-to-delta-star",
     "publicPath": "/projects/delta-star/skill.md"
   },

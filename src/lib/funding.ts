@@ -71,6 +71,12 @@ export interface ProjectFundingIndex {
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const RECORD_ID_PATTERN = /^fund_[a-z0-9](?:[a-z0-9_-]{6,79})$/u;
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
+const FUNDING_VERIFIER_BY_NETWORK = {
+  base: "funding-base-v1",
+  bitcoin: "funding-bitcoin-v1",
+  ethereum: "funding-ethereum-v1",
+  solana: "funding-solana-v1",
+} as const satisfies Record<FundingNetwork, string>;
 
 function object(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -330,11 +336,10 @@ export function assertProjectFundingRecord(
     if (Date.parse(checkedAt) < Date.parse(observedAt)) {
       throw new TypeError("funding record verification predates observation");
     }
-    if (
-      typeof verifier.version !== "string" ||
-      !/^funding-[a-z0-9-]+-v\d+$/u.test(verifier.version)
-    ) {
-      throw new TypeError("funding record verifier version is invalid");
+    if (verifier.version !== FUNDING_VERIFIER_BY_NETWORK[network]) {
+      throw new TypeError(
+        "funding record verifier version does not match its network",
+      );
     }
     if (
       verifier.evidenceUrl !==

@@ -28,6 +28,10 @@ import { createInstallCommand } from "./install-command";
 
 const packageRoot = resolve(import.meta.dirname, "..", "..");
 const repositoryRoot = packageRoot;
+const primaryInstallOptions = {
+  skillName: "contribute-to-eliza",
+  skillRepositoryPath: "skills/contribute-to-eliza",
+} as const;
 const normalizeArchive = join(
   packageRoot,
   "scripts",
@@ -164,7 +168,7 @@ function command(
   return createInstallCommand(
     pathToFileURL(artifactRoot).href.replace(/\/$/u, ""),
     `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
-    { testAuthority: authority },
+    { ...primaryInstallOptions, testAuthority: authority },
   );
 }
 
@@ -991,12 +995,14 @@ describe("authenticated skill installer lifecycle", () => {
     const production = createInstallCommand(
       "https://slop.cash",
       `\${HOME}/.codex/skills`,
+      primaryInstallOptions,
     );
     expect(production).toContain("'https://api.github.com'");
     expect(production).toContain("'https://raw.githubusercontent.com'");
     expect(production).not.toContain("GITHUB_API_ORIGIN");
     expect(() =>
       createInstallCommand("https://slop.cash", `\${HOME}/.codex/skills`, {
+        ...primaryInstallOptions,
         testAuthority: {
           apiOrigin: "https://attacker.example",
           rawOrigin: "https://attacker.example",
@@ -1009,6 +1015,7 @@ describe("authenticated skill installer lifecycle", () => {
     const production = createInstallCommand(
       "https://slop.cash",
       `\${HOME}/.codex/skills`,
+      primaryInstallOptions,
     );
 
     // GitHub reports elizaOS/slopdotcash in every API payload after the
@@ -1058,16 +1065,22 @@ describe("authenticated skill installer lifecycle", () => {
           rejectPromise(new Error(`unexpected lock holder output: ${value}`));
       });
     });
-    const locked = run(
-      command(lockedArtifact, lockedAuthority),
-      join(lockedRoot, "install"),
-    );
-    expect(locked.status).not.toBe(0);
-    expect(locked.stderr).toContain("concurrency lock");
-    holder.kill("SIGKILL");
-    await new Promise<void>((resolvePromise) =>
-      holder.once("close", () => resolvePromise()),
-    );
+    try {
+      const locked = run(
+        command(lockedArtifact, lockedAuthority),
+        join(lockedRoot, "install"),
+      );
+      expect(locked.status).not.toBe(0);
+      expect(locked.stderr).toContain("concurrency lock");
+    } finally {
+      if (holder.exitCode === null) {
+        const closed = new Promise<void>((resolvePromise) =>
+          holder.once("close", () => resolvePromise()),
+        );
+        holder.kill("SIGKILL");
+        await closed;
+      }
+    }
 
     const recovered = run(
       command(lockedArtifact, lockedAuthority),

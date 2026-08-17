@@ -620,7 +620,10 @@ function timestamp(value, field) {
   const result = text(value, field, {
     pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
   });
-  if (!Number.isFinite(Date.parse(result)))
+  if (
+    !Number.isFinite(Date.parse(result)) ||
+    new Date(result).toISOString() !== result
+  )
     throw new TypeError(`${field} is invalid`);
   return result;
 }
@@ -659,16 +662,10 @@ function validateRepository(value, index) {
 
 function validateSkill(value, field, expectedId, publicPath) {
   const skill = record(value, field);
-  const hasPublishAtRoot = Object.hasOwn(skill, "publishAtRoot");
   exactKeys(
     skill,
     publicPath
-      ? [
-          "id",
-          "publicPath",
-          ...(hasPublishAtRoot ? ["publishAtRoot"] : []),
-          "sourcePath",
-        ]
+      ? ["id", "publicPath", "publishAtRoot", "sourcePath"]
       : ["id", "sourcePath"],
     field,
   );
@@ -677,7 +674,7 @@ function validateSkill(value, field, expectedId, publicPath) {
     skill.sourcePath !== `skills/${expectedId}` ||
     (publicPath &&
       (skill.publicPath !== publicPath ||
-        (hasPublishAtRoot && typeof skill.publishAtRoot !== "boolean")))
+        typeof skill.publishAtRoot !== "boolean"))
   ) {
     throw new TypeError(`${field} does not match its project identity`);
   }
@@ -942,12 +939,13 @@ export function assertProjectRegistry(values) {
     throw new TypeError("project registry must contain 1 to 100 projects");
   }
   const projects = values.map(assertProjectDefinition);
-  for (const launchProject of ["eliza", "delta-star"]) {
-    if (!projects.some((project) => project.id === launchProject)) {
-      throw new TypeError(
-        `project registry is missing launch project ${launchProject}`,
-      );
-    }
+  if (
+    projects.filter((project) => project.skill.publishAtRoot === true)
+      .length !== 1
+  ) {
+    throw new TypeError(
+      "project registry must declare exactly one root-published contributor skill",
+    );
   }
   for (const [field, entries] of [
     ["ids", projects.map((project) => project.id)],

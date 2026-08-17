@@ -47,6 +47,10 @@ The exchange returns a contributor-only token valid for ten minutes. Operator
 status is never issued by this endpoint. Operator tokens must come from the
 separate operator identity path, and an operator claim is accepted only when
 the immutable GitHub numeric ID also appears in `OPERATOR_GITHUB_IDS`.
+This repository does not currently implement that separate operator issuer;
+therefore the operator grant, read, migration, and recovery routes must remain
+operationally unavailable. Never mint an operator token by hand or reuse the
+contributor assertion exchange as an operator issuer.
 
 The write flow is:
 
@@ -129,13 +133,21 @@ service = "slop-identity"
 ```
 
 Set `OPERATOR_GITHUB_IDS` to an explicit comma-separated list of numeric IDs.
-`TRACE_AUTH_SECRET` must be a random secret of at least 32 bytes and must never
-be configured as a checked-in `[vars]` value. Bind `SLOP_IDENTITY` to the
+`TRACE_AUTH_SECRET` must be a canonical base64url encoding of exactly 32 random
+bytes and must never be configured as a checked-in `[vars]` value. Generate it
+with `node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))'`.
+Bind `SLOP_IDENTITY` to the
 separately deployed OAuth/PKCE identity Worker; it must consume assertions once
 and return only the numeric GitHub actor ID and login for the
 `private-trace-api` audience. Bind `api.slop.cash` only after a deployment proves
 the D1 migration, private R2 access, limited identity exchange, and fail-closed
 behavior. Do not enable an R2 public domain or lifecycle expiry.
+
+The current API has strict body and capability bounds but no durable per-actor
+admission quota for run, event, intent, upload, or wallet writes. Production
+trace uploads must remain disabled until a reviewed D1-backed policy bounds
+authenticated storage and write amplification without relying on an
+eventually-consistent edge counter.
 
 The Cloudflare account and bucket permissions remain limited to designated
 Slop operators. Application authorization does not replace Cloudflare account

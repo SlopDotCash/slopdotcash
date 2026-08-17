@@ -151,8 +151,13 @@ function parseArguments(values: string[]): {
 } {
   let cycleId: string | undefined;
   let snapshotPath: string | undefined;
+  const seen = new Set<string>();
   for (let index = 0; index < values.length; index += 1) {
     const flag = values[index];
+    if (seen.has(flag)) {
+      throw new TypeError(`Repeated monthly reward argument: ${flag}`);
+    }
+    seen.add(flag);
     const next = values[index + 1];
     if (flag === "--cycle" || flag === "--snapshot") {
       if (!next || next.startsWith("--")) {

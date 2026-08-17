@@ -5,7 +5,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { link, mkdir, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
@@ -14,6 +14,11 @@ import { findProject, type ProjectId } from "../src/lib/projects.mjs";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import type { WalletProof } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
+import {
+  ExistingFileError,
+  writeNewFile,
+  writeNewJsonFile,
+} from "./write-new-file";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_SNAPSHOT_PATH = resolve(
@@ -51,8 +56,12 @@ export function parsePrepareRewardCycleArguments(
   let projectId: ProjectId | null = null;
   let cycleId: string | null = null;
   let snapshotPath = DEFAULT_SNAPSHOT_PATH;
+  const seen = new Set<string>();
   for (let index = 0; index < arguments_.length; index += 1) {
     const flag = arguments_[index];
+    if (seen.has(flag))
+      throw new TypeError(`Repeated reward-cycle argument: ${flag}`);
+    seen.add(flag);
     if (flag === "--project") {
       const value = requiredValue(arguments_, index, flag);
       const project = findProject(value);
@@ -113,47 +122,26 @@ async function writeNewFileAtomically(
   path: string,
   value: unknown,
 ): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    await Bun.write(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
-    try {
-      await link(temporaryPath, path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new Error(
-          `Refusing to replace ${path}; update the existing proposal through review`,
-          { cause: error },
-        );
-      }
-      throw error;
-    }
-  } finally {
-    await rm(temporaryPath, { force: true });
-  }
+  await writeNewJsonFile(
+    path,
+    value,
+    `Refusing to replace ${path}; update the existing proposal through review`,
+  );
 }
 
 async function writeImmutableBytes(path: string, bytes: Buffer): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   try {
-    await Bun.write(temporaryPath, bytes);
-    try {
-      await link(temporaryPath, path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    await writeNewFile(
+      path,
+      bytes,
+      `Refusing to replace immutable source snapshot ${path}`,
+    );
+  } catch (error) {
+    if (error instanceof ExistingFileError) {
       const existing = await readFile(path);
-      if (!existing.equals(bytes)) {
-        throw new Error(
-          `Refusing to replace immutable source snapshot ${path}`,
-          {
-            cause: error,
-          },
-        );
-      }
+      if (existing.equals(bytes)) return;
     }
-  } finally {
-    await rm(temporaryPath, { force: true });
+    throw error;
   }
 }
 

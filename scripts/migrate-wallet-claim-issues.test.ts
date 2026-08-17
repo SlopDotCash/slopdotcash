@@ -78,6 +78,47 @@ describe("wallet issue migration", () => {
     ).rejects.toThrow(/did not match/u);
   });
 
+  it("stops reading an oversized migration response", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024));
+        controller.enqueue(new Uint8Array(1));
+        controller.close();
+      },
+    });
+    await expect(
+      main(["--execute"], {
+        claims: [source],
+        fetch: async () => new Response(body, { status: 201 }),
+        tokenProvider: async () => "operator_test_bearer_token_value",
+      }),
+    ).rejects.toThrow(/exceeded its bound/u);
+  });
+
+  it("rejects non-canonical response lengths", async () => {
+    for (const invalidLength of [" 1", "1 ", "1e2", "+1"]) {
+      const body = new Response("{}").body;
+      await expect(
+        main(["--execute"], {
+          claims: [source],
+          fetch: async () =>
+            ({
+              body,
+              headers: {
+                get: (name: string) =>
+                  name.toLowerCase() === "content-length"
+                    ? invalidLength
+                    : null,
+              },
+              ok: true,
+              status: 201,
+            }) as Response,
+          tokenProvider: async () => "operator_test_bearer_token_value",
+        }),
+      ).rejects.toThrow(/invalid length/u);
+    }
+  });
+
   it("refuses closure if the issue changes after its D1 receipt is verified", async () => {
     const fetchMock = vi
       .fn()

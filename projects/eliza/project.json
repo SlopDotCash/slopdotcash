@@ -79,6 +79,7 @@
   ],
   "skill": {
     "id": "contribute-to-eliza",
+    "publishAtRoot": true,
     "sourcePath": "skills/contribute-to-eliza",
     "publicPath": "/projects/eliza/skill.md"
   },

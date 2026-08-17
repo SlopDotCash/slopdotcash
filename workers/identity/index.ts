@@ -17,6 +17,45 @@ type Env = {
   IDENTITY_ASSERTION_KEY: string;
 };
 
+export const MAX_GITHUB_RESPONSE_BYTES = 64 * 1024;
+
+export async function readBoundedGithubJson(
+  response: Response,
+): Promise<unknown> {
+  const declared = response.headers.get("content-length");
+  if (
+    declared !== null &&
+    (!/^\d+$/u.test(declared) || Number(declared) > MAX_GITHUB_RESPONSE_BYTES)
+  ) {
+    throw new RangeError("GitHub response exceeded its size limit");
+  }
+  if (!response.body) throw new TypeError("GitHub returned no readable body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > MAX_GITHUB_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new RangeError("GitHub response exceeded its size limit");
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+}
+
 function rateLimitKey(request: Request): string {
   const connectingIp = request.headers.get("cf-connecting-ip");
   return connectingIp !== null && connectingIp.length <= 64
@@ -76,7 +115,7 @@ export async function applyIdentityRateLimit(
   const url = new URL(request.url);
   if (
     url.protocol !== "https:" ||
-    url.hostname !== "identity.slop.cash" ||
+    url.host !== "identity.slop.cash" ||
     request.method !== "POST"
   ) {
     return null;
@@ -146,7 +185,7 @@ async function resolveGithubIdentity(
       },
     );
     if (!tokenResponse.ok) return null;
-    const tokenBody: unknown = await tokenResponse.json();
+    const tokenBody = await readBoundedGithubJson(tokenResponse);
     if (typeof tokenBody !== "object" || tokenBody === null) return null;
     const candidate = (tokenBody as { access_token?: unknown }).access_token;
     const tokenType = (tokenBody as { token_type?: unknown }).token_type;
@@ -170,7 +209,7 @@ async function resolveGithubIdentity(
     });
     accessToken = "";
     if (!userResponse.ok) return null;
-    const user: unknown = await userResponse.json();
+    const user = await readBoundedGithubJson(userResponse);
     if (typeof user !== "object" || user === null) return null;
     const id = (user as { id?: unknown }).id;
     const login = (user as { login?: unknown }).login;

@@ -4,7 +4,7 @@
  * earlier review evidence or a previously approved allocation.
  */
 
-import { link, mkdir, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -14,6 +14,7 @@ import {
 } from "../src/lib/projects.mjs";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import { validateCycleTransition } from "./sync-cycle-index";
+import { writeNewJsonFile } from "./write-new-file";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CYCLES_ROOT = resolve(REPOSITORY_ROOT, "cycles");
@@ -42,7 +43,12 @@ export function parseFinalizeArguments(
   let cycleId: string | null = null;
   let projectId: ProjectId | null = null;
   let approvedAt = now;
+  const seen = new Set<string>();
   for (let index = 0; index < values.length; index += 1) {
+    const flag = values[index];
+    if (seen.has(flag))
+      throw new TypeError(`Repeated finalize argument: ${flag}`);
+    seen.add(flag);
     if (values[index] === "--cycle") {
       cycleId = valueAfter(values, index, "--cycle");
       index += 1;
@@ -72,26 +78,6 @@ export function parseFinalizeArguments(
     outputPath: resolve(CYCLES_ROOT, projectId, cycleId, "allocation.json"),
     projectId,
   };
-}
-
-async function writeNewFile(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    await Bun.write(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
-    try {
-      await link(temporaryPath, path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new Error(`Refusing to replace approved allocation ${path}`, {
-          cause: error,
-        });
-      }
-      throw error;
-    }
-  } finally {
-    await rm(temporaryPath, { force: true });
-  }
 }
 
 export async function finalizeRewardCycle(
@@ -151,7 +137,15 @@ export async function finalizeRewardCycle(
       "Reward proposal project does not match its cycle path",
     );
   }
-  await (options.write ?? writeNewFile)(arguments_.outputPath, allocation);
+  await (
+    options.write ??
+    ((path, value) =>
+      writeNewJsonFile(
+        path,
+        value,
+        `Refusing to replace approved allocation ${path}`,
+      ))
+  )(arguments_.outputPath, allocation);
   return allocation;
 }
 

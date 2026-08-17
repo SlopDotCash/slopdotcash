@@ -84,6 +84,40 @@ describe("project terms preflight", () => {
     await expect(preflight("eliza")).rejects.toThrow(/drifted/u);
   });
 
+  it("rejects untrusted terms authorities and oversized responses", async () => {
+    const untrusted = structuredClone(policy);
+    untrusted.terms.repositoryLicense.url = "https://127.0.0.1/LICENSE";
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify(untrusted));
+    }) as typeof fetch;
+    await expect(preflight("eliza")).rejects.toThrow(
+      /authority is not allowed/u,
+    );
+    expect(calls).toBe(1);
+
+    globalThis.fetch = responses(
+      new Response("{}", {
+        headers: { "content-length": String(1024 * 1024 + 1) },
+      }),
+    );
+    await expect(preflight("eliza")).rejects.toThrow(/byte limit/u);
+
+    let cancelled = false;
+    const oversizedStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(600 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    globalThis.fetch = responses(new Response(oversizedStream));
+    await expect(preflight("eliza")).rejects.toThrow(/byte limit/u);
+    expect(cancelled).toBe(true);
+  });
+
   it("permits file authorities only through the explicit programmatic test option", async () => {
     await expect(
       preflight("eliza", { testAuthority: "https://example.com" }),

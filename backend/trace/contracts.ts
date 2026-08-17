@@ -87,6 +87,7 @@ export type AttachTraceInput = {
   runId: string;
   githubId: string;
   idempotencyKey: string;
+  intentConsumedAt: string;
   object: TraceObject;
 };
 
@@ -159,7 +160,7 @@ export interface TracePersistence {
   createUploadIntent(
     intent: TraceUploadIntent,
   ): Promise<PersistenceResult<TraceUploadIntent>>;
-  consumeUploadIntent(
+  getUploadIntent(
     tokenHash: string,
     now: string,
   ): Promise<TraceUploadIntent | null>;

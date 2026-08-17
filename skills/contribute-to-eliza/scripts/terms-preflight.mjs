@@ -3,6 +3,14 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+const MAX_POLICY_BYTES = 1024 * 1024;
+const MAX_TERMS_BYTES = 4 * 1024 * 1024;
+const ALLOWED_TERMS_HOSTS = new Set([
+  "github.com",
+  "proximityprize.org",
+  "raw.githubusercontent.com",
+]);
+
 function fail(message) {
   throw new TypeError(message);
 }
@@ -32,18 +40,67 @@ function rawUrl(value) {
     : value;
 }
 
-async function verifiedBytes(url, expected, field) {
+function allowedRemoteSource(value, field) {
+  const parsed = new URL(value);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port ||
+    parsed.hash ||
+    !ALLOWED_TERMS_HOSTS.has(parsed.hostname)
+  ) {
+    fail(`${field} authority is not allowed`);
+  }
+  return parsed.href;
+}
+
+async function boundedResponseBytes(response, limit, field) {
+  const declared = response.headers.get("content-length");
+  if (
+    declared !== null &&
+    (!/^\d+$/u.test(declared) || Number(declared) > limit)
+  ) {
+    fail(`${field} exceeds the byte limit`);
+  }
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        fail(`${field} exceeds the byte limit`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+async function verifiedBytes(url, expected, field, allowFile) {
   const source = rawUrl(url);
   let bytes;
   if (source.startsWith("file://")) {
+    if (!allowFile) fail(`${field} authority is not allowed`);
     bytes = await readFile(fileURLToPath(source));
+    if (bytes.byteLength > MAX_TERMS_BYTES) {
+      fail(`${field} exceeds the byte limit`);
+    }
   } else {
-    const response = await fetch(source, {
+    const response = await fetch(allowedRemoteSource(source, field), {
       headers: { accept: "application/octet-stream" },
       redirect: "error",
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) fail(`${field} could not be fetched`);
-    bytes = Buffer.from(await response.arrayBuffer());
+    bytes = await boundedResponseBytes(response, MAX_TERMS_BYTES, field);
   }
   if (digest(bytes) !== expected) fail(`${field} digest drifted`);
 }
@@ -75,14 +132,23 @@ export async function preflight(projectId, options = {}) {
   );
   let policy;
   if (policyUrl.protocol === "file:") {
-    policy = JSON.parse(await readFile(fileURLToPath(policyUrl), "utf8"));
+    const bytes = await readFile(fileURLToPath(policyUrl));
+    if (bytes.byteLength > MAX_POLICY_BYTES) {
+      fail("project terms exceeds the byte limit");
+    }
+    policy = JSON.parse(bytes.toString("utf8"));
   } else {
     const response = await fetch(policyUrl, {
       headers: { accept: "application/json" },
       redirect: "error",
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) fail("project terms could not be fetched");
-    policy = await response.json();
+    policy = JSON.parse(
+      (
+        await boundedResponseBytes(response, MAX_POLICY_BYTES, "project terms")
+      ).toString("utf8"),
+    );
   }
   exact(
     policy,
@@ -122,12 +188,14 @@ export async function preflight(projectId, options = {}) {
     policy.terms.repositoryLicense.url,
     policy.terms.repositoryLicense.fileSha256,
     "LICENSE",
+    options.testAuthority !== undefined,
   );
   if (policy.terms.inbound.fileSha256) {
     await verifiedBytes(
       policy.terms.inbound.termsUrl,
       policy.terms.inbound.fileSha256,
       "inbound terms",
+      options.testAuthority !== undefined,
     );
   }
   if (policy.terms.externalPrize?.rulesSha256) {
@@ -135,6 +203,7 @@ export async function preflight(projectId, options = {}) {
       policy.terms.externalPrize.rulesUrl,
       policy.terms.externalPrize.rulesSha256,
       "prize rules",
+      options.testAuthority !== undefined,
     );
   }
   return {

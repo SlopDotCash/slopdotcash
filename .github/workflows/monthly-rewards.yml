@@ -35,9 +35,22 @@ jobs:
       - name: Checkout trusted develop
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: develop
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: true
+
+      - name: Verify trusted develop checkout
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/develop" ]; then
+            echo "::error::Monthly rewards must run from refs/heads/develop."
+            exit 1
+          fi
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Monthly rewards checkout $checked_out_sha does not match event SHA $GITHUB_SHA."
+            exit 1
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -63,6 +76,7 @@ jobs:
           set -euo pipefail
           cycle="$REQUESTED_CYCLE"
           if [ -z "$cycle" ]; then
+            # shellcheck disable=SC2016
             cycle="$(node -e 'const now=new Date(); const prior=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-1,1)); process.stdout.write(`${prior.getUTCFullYear()}-${String(prior.getUTCMonth()+1).padStart(2,"0")}`)')"
           fi
           if ! [[ "$cycle" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]]; then

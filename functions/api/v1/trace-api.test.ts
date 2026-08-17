@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { signApiToken } from "../../../backend/trace/auth";
+import { signApiToken, verifyApiToken } from "../../../backend/trace/auth";
 import type {
   AttachTraceInput,
   AuditInput,
@@ -17,10 +17,13 @@ import {
   handleTraceApi,
   type TraceApiDependencies,
 } from "../../../backend/trace/handler";
-import { sha256Hex } from "../../../backend/trace/validation";
-import { onRequest as onPagesRequest } from "./[[path]]";
+import { readJsonObject, sha256Hex } from "../../../backend/trace/validation";
+import {
+  MAX_IDENTITY_RESPONSE_BYTES,
+  onRequest as onPagesRequest,
+} from "./[[path]]";
 
-const SECRET = "test-only-trace-auth-secret-at-least-32-bytes";
+const SECRET = "A".repeat(43);
 const NOW = new Date("2026-08-15T12:00:00.000Z");
 
 class MemoryPersistence implements TracePersistence {
@@ -39,6 +42,7 @@ class MemoryPersistence implements TracePersistence {
   readonly grants = new Map<string, CreateGrantInput & { consumed: boolean }>();
   readonly audits: AuditInput[] = [];
   readonly claims = new Map<string, WalletClaim>();
+  failNextPut = false;
 
   async createRun(input: CreateRunInput): Promise<PersistenceResult<TraceRun>> {
     const key = `${input.githubId}:${input.idempotencyKey}`;
@@ -95,14 +99,23 @@ class MemoryPersistence implements TracePersistence {
       ) {
         return { status: "conflict" };
       }
-      return { status: "existing", value: run };
+      return { status: "conflict" };
     }
     const run = this.runs.get(input.runId);
+    const intent = this.intents.get(input.idempotencyKey);
     if (
       run === undefined ||
       run.githubId !== input.githubId ||
       run.state === "finalized" ||
-      (run.traceSha256 !== null && run.traceSha256 !== input.object.sha256)
+      (run.traceSha256 !== null && run.traceSha256 !== input.object.sha256) ||
+      intent === undefined ||
+      intent.consumedAt !== null ||
+      intent.expiresAt <= input.intentConsumedAt ||
+      intent.runId !== input.runId ||
+      intent.githubId !== input.githubId ||
+      intent.sha256 !== input.object.sha256 ||
+      intent.sizeBytes !== input.object.sizeBytes ||
+      intent.contentType !== input.object.contentType
     ) {
       return { status: "conflict" };
     }
@@ -112,6 +125,10 @@ class MemoryPersistence implements TracePersistence {
       traceSha256: input.object.sha256,
     } as const;
     this.runs.set(run.id, updated);
+    this.intents.set(input.idempotencyKey, {
+      ...intent,
+      consumedAt: input.intentConsumedAt,
+    });
     this.objects.set(input.object.sha256, input.object);
     this.uploads.set(key, { runId: run.id, sha256: input.object.sha256 });
     return { status: "created", value: updated };
@@ -148,7 +165,12 @@ class MemoryPersistence implements TracePersistence {
       if (
         prior === undefined ||
         prior.runId !== event.runId ||
-        prior.kind !== event.kind
+        prior.kind !== event.kind ||
+        prior.occurredAt !== event.occurredAt ||
+        prior.source !== event.source ||
+        prior.githubObjectId !== event.githubObjectId ||
+        prior.githubUrl !== event.githubUrl ||
+        prior.headSha !== event.headSha
       ) {
         return { status: "conflict" };
       }
@@ -186,7 +208,7 @@ class MemoryPersistence implements TracePersistence {
     return { status: "created", value: intent };
   }
 
-  async consumeUploadIntent(
+  async getUploadIntent(
     tokenHash: string,
     now: string,
   ): Promise<TraceUploadIntent | null> {
@@ -197,12 +219,14 @@ class MemoryPersistence implements TracePersistence {
       intent.expiresAt <= now
     )
       return null;
-    const consumed = { ...intent, consumedAt: now };
-    this.intents.set(tokenHash, consumed);
-    return consumed;
+    return { ...intent };
   }
 
   async putTraceBytes(object: TraceObject, bytes: Uint8Array): Promise<void> {
+    if (this.failNextPut) {
+      this.failNextPut = false;
+      throw new Error("transient R2 failure");
+    }
     const existing = this.bytes.get(object.sha256);
     if (existing !== undefined) {
       expect(existing).toEqual(bytes);
@@ -455,6 +479,37 @@ describe("private trace API", () => {
     expect(await response.json()).toMatchObject({ error: "unauthorized" });
   });
 
+  it("cancels an oversized identity response before buffering it", async () => {
+    let cancelled = false;
+    const identityBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(MAX_IDENTITY_RESPONSE_BYTES / 2 + 1));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const response = await onPagesRequest({
+      request: new Request("https://api.slop.cash/api/v1/auth/session", {
+        method: "POST",
+        headers: {
+          "x-slop-identity-assertion": "valid_slop_identity_assertion_value",
+        },
+      }),
+      env: {
+        SLOP_DB: {} as never,
+        PRIVATE_TRACES: {} as never,
+        TRACE_AUTH_SECRET: SECRET,
+        SLOP_IDENTITY: {
+          fetch: async () => new Response(identityBody),
+        },
+      },
+    });
+    expect(response.status).toBe(500);
+    expect(cancelled).toBe(true);
+    expect(identityBody.locked).toBe(false);
+  });
+
   it("exchanges a limited identity assertion without granting operator access", async () => {
     const deps = dependencies();
     const response = await handleTraceApi(
@@ -481,7 +536,7 @@ describe("private trace API", () => {
     expect(denied.status).toBe(403);
   });
 
-  it("grants operator access only to an asserted actor in the configured set", async () => {
+  it("never upgrades a contributor assertion to operator authority", async () => {
     const deps = dependencies();
     deps.operatorGithubIds = new Set(["42"]);
     const response = await handleTraceApi(
@@ -495,7 +550,7 @@ describe("private trace API", () => {
     );
     expect(response.status).toBe(200);
     const body = (await response.json()) as { token: string };
-    const granted = await handleTraceApi(
+    const denied = await handleTraceApi(
       request(
         `operator/traces/${"a".repeat(64)}/grant`,
         "POST",
@@ -505,8 +560,147 @@ describe("private trace API", () => {
       ),
       deps,
     );
-    expect(granted.status).toBe(404);
-    expect(await granted.json()).toMatchObject({ error: "not_found" });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ error: "forbidden" });
+  });
+
+  it("rejects alternate HTTPS authorities", async () => {
+    for (const authority of ["slop.cash", "api.slop.cash:444"]) {
+      const response = await handleTraceApi(
+        new Request(
+          `https://${authority}/api/v1/wallet-claims/actors/42/current`,
+        ),
+        dependencies(),
+      );
+      expect(response.status).toBe(404);
+    }
+  });
+
+  it("rejects non-canonical body lengths and releases oversized streams", async () => {
+    for (const value of ["2e0", "+2"]) {
+      await expect(
+        readJsonObject(
+          new Request("https://api.slop.cash/api/v1/runs", {
+            method: "POST",
+            headers: { "content-length": value },
+            body: "{}",
+          }),
+        ),
+      ).rejects.toThrow(/Content-Length/u);
+    }
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(33 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(
+      readJsonObject(
+        new Request("https://api.slop.cash/api/v1/runs", {
+          method: "POST",
+          body,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" }),
+      ),
+    ).rejects.toThrow(/exceeds/u);
+    expect(cancelled).toBe(true);
+    expect(body.locked).toBe(false);
+
+    const malformedJson = await handleTraceApi(
+      request(
+        "runs",
+        "POST",
+        await token("42", "octocat", ["contributor"]),
+        "{",
+        {
+          "content-type": "application/json",
+          "idempotency-key": "malformed_json_key_0001",
+        },
+      ),
+      dependencies(),
+    );
+    expect(malformedJson.status).toBe(400);
+    expect(await malformedJson.json()).toMatchObject({
+      error: "invalid_request",
+    });
+
+    const tooLarge = await handleTraceApi(
+      new Request("https://api.slop.cash/api/v1/runs", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${await token("42", "octocat", ["contributor"])}`,
+          "content-length": "999999",
+          "content-type": "application/json",
+          "idempotency-key": "oversized_json_key_0001",
+        },
+        body: "{}",
+      }),
+      dependencies(),
+    );
+    expect(tooLarge.status).toBe(413);
+    expect(await tooLarge.json()).toMatchObject({ error: "payload_too_large" });
+  });
+
+  it("rejects malformed secrets, extra claims, and duplicate roles", async () => {
+    const now = Math.floor(NOW.getTime() / 1000);
+    const claims = {
+      iss: "slop.cash" as const,
+      aud: "private-trace-api" as const,
+      sub: "github:42" as const,
+      githubId: "42",
+      githubLogin: "octocat",
+      roles: ["contributor" as const],
+      iat: now,
+      exp: now + 600,
+      jti: "strict_claims_token_0001",
+    };
+    await expect(signApiToken(claims, "x".repeat(43))).rejects.toThrow(
+      /TRACE_AUTH_SECRET/u,
+    );
+    await expect(
+      signApiToken({ ...claims, extra: "not-authorized" } as never, SECRET),
+    ).rejects.toThrow(/claims/u);
+    await expect(
+      signApiToken(
+        { ...claims, roles: ["contributor", "contributor"] },
+        SECRET,
+      ),
+    ).rejects.toThrow(/claims/u);
+    await expect(
+      verifyApiToken({
+        authorization: `Bearer v1.${"A".repeat(4097)}.${"A".repeat(43)}`,
+        secret: SECRET,
+        operatorGithubIds: new Set(),
+        nowSeconds: now,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects contributor tokens longer than the documented ten minutes", async () => {
+    const now = Math.floor(NOW.getTime() / 1000);
+    const oversized = await signApiToken(
+      {
+        iss: "slop.cash",
+        aud: "private-trace-api",
+        sub: "github:42",
+        githubId: "42",
+        githubLogin: "octocat",
+        roles: ["contributor"],
+        iat: now,
+        exp: now + 601,
+        jti: "oversized_token_identifier",
+      },
+      SECRET,
+    );
+    const response = await createRun(
+      dependencies(),
+      oversized,
+      "oversized_token_run_key",
+    );
+    expect(response.status).toBe(401);
   });
 
   it("requires a valid trace before finalization and is write-only for contributors", async () => {
@@ -645,6 +839,38 @@ describe("private trace API", () => {
     expect(changed.status).toBe(409);
   });
 
+  it("rejects progress-event mutation under an idempotency key", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_event_run_key_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const post = (occurredAt: string) =>
+      handleTraceApi(
+        request(
+          `runs/${serverRunId}/events`,
+          "POST",
+          contributor,
+          JSON.stringify({ kind: "checkpoint", occurredAt, source: "agent" }),
+          {
+            "content-type": "application/json",
+            "idempotency-key": "progress_event_key_0001",
+          },
+        ),
+        deps,
+      );
+
+    expect((await post("2026-08-15T11:59:00.000Z")).status).toBe(201);
+    const mutated = await post("2026-08-15T11:59:01.000Z");
+    expect(mutated.status).toBe(409);
+    expect(await mutated.json()).toMatchObject({
+      error: "idempotency_conflict",
+    });
+  });
+
   it("rejects digest mismatches before retaining an object", async () => {
     const store = new MemoryPersistence();
     const deps = dependencies(store);
@@ -683,6 +909,98 @@ describe("private trace API", () => {
     expect(response.status).toBe(422);
     expect(store.bytes.size).toBe(0);
     expect(store.objects.size).toBe(0);
+  });
+
+  it("does not burn an upload capability on validation or transient storage failure", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_retry_run_key_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const bytes = new TextEncoder().encode("retryable private trace");
+    const digest = await sha256Hex(bytes);
+    const intent = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/trace-intents`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          sha256: digest,
+          sizeBytes: bytes.byteLength,
+          contentType: "text/plain",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "upload_retry_key_0001",
+        },
+      ),
+      deps,
+    );
+    const { uploadUrl } = (await intent.json()) as { uploadUrl: string };
+    const uploadRequest = (contentType = "text/plain") =>
+      new Request(uploadUrl, {
+        method: "PUT",
+        body: bytes.slice().buffer,
+        headers: { "content-type": contentType, digest: `sha-256=${digest}` },
+      });
+
+    expect(
+      (await handleTraceApi(uploadRequest("application/x-ndjson"), deps))
+        .status,
+    ).toBe(422);
+    store.failNextPut = true;
+    expect((await handleTraceApi(uploadRequest(), deps)).status).toBe(500);
+    expect((await handleTraceApi(uploadRequest(), deps)).status).toBe(201);
+  });
+
+  it("atomically permits only one concurrent upload capability consumer", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_concurrent_run_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const bytes = new TextEncoder().encode("one consumer only");
+    const digest = await sha256Hex(bytes);
+    const intent = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/trace-intents`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          sha256: digest,
+          sizeBytes: bytes.byteLength,
+          contentType: "text/plain",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "upload_concurrent_0001",
+        },
+      ),
+      deps,
+    );
+    const { uploadUrl } = (await intent.json()) as { uploadUrl: string };
+    const makeUpload = () =>
+      new Request(uploadUrl, {
+        method: "PUT",
+        body: bytes.slice().buffer,
+        headers: { "content-type": "text/plain", digest: `sha-256=${digest}` },
+      });
+    const responses = await Promise.all([
+      handleTraceApi(makeUpload(), deps),
+      handleTraceApi(makeUpload(), deps),
+    ]);
+    expect(responses.map(({ status }) => status).sort()).toEqual([201, 409]);
+    expect(store.uploads.size).toBe(1);
+    expect(store.objects.size).toBe(1);
+    expect((await handleTraceApi(makeUpload(), deps)).status).toBe(410);
   });
 
   it("allows one audited read only to a designated operator", async () => {

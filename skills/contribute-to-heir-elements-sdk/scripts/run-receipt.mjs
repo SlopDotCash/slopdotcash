@@ -45,6 +45,7 @@ const CCUSAGE_VERSION = "20.0.20";
 const CCUSAGE_VERSION_OUTPUT = `ccusage ${CCUSAGE_VERSION}`;
 const MAX_REPORT_BYTES = 32 * 1024 * 1024;
 const MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024;
+const MAX_HTTP_RESPONSE_BYTES = 64 * 1024;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const SHA_PATTERN = /^[0-9a-f]{64}$/u;
@@ -1161,6 +1162,41 @@ function exactObject(value, keys, field) {
   return value;
 }
 
+async function boundedResponseText(response, field) {
+  const declared = response.headers.get("content-length");
+  if (
+    declared !== null &&
+    (!/^\d+$/u.test(declared) || Number(declared) > MAX_HTTP_RESPONSE_BYTES)
+  ) {
+    fail(`${field} response exceeded its bound`);
+  }
+  if (!response.body) fail(`${field} response was empty`);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_HTTP_RESPONSE_BYTES) {
+        await reader.cancel();
+        fail(`${field} response exceeded its bound`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      Buffer.concat(chunks, total),
+    );
+  } catch {
+    fail(`${field} response was not UTF-8`);
+  }
+}
+
 async function jsonRequest(fetchImpl, url, options, keys, field) {
   let response;
   try {
@@ -1172,10 +1208,7 @@ async function jsonRequest(fetchImpl, url, options, keys, field) {
     fail(`${field} request failed`);
   }
   if (!response?.ok) fail(`${field} request returned HTTP ${response?.status}`);
-  const source = await response.text();
-  if (Buffer.byteLength(source) > 64 * 1024) {
-    fail(`${field} response exceeded its bound`);
-  }
+  const source = await boundedResponseText(response, field);
   let value;
   try {
     value = JSON.parse(source);
@@ -1258,10 +1291,7 @@ export async function slopIdentityAssertion(
     if (!response.ok) {
       fail(`Slop identity poll returned HTTP ${response.status}`);
     }
-    const source = await response.text();
-    if (Buffer.byteLength(source) > 64 * 1024) {
-      fail("Slop identity poll response exceeded its bound");
-    }
+    const source = await boundedResponseText(response, "Slop identity poll");
     let result;
     try {
       result = JSON.parse(source);

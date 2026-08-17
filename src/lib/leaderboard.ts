@@ -785,7 +785,15 @@ export function repositoryIdFromUrl(url: string): RepositoryId {
   }
   const segments = parsed.pathname.split("/").filter(Boolean);
   const repository =
-    parsed.hostname.toLowerCase() === "github.com" && segments.length >= 2
+    parsed.origin === "https://github.com" &&
+    !parsed.username &&
+    !parsed.password &&
+    !parsed.search &&
+    (!parsed.hash ||
+      /^#(?:issuecomment-|pullrequestreview-|discussion_r)[0-9]+$/iu.test(
+        parsed.hash,
+      )) &&
+    segments.length >= 2
       ? findTargetRepository(segments[0], segments[1])
       : null;
   if (!repository) {
@@ -3110,7 +3118,8 @@ function assertIsoTimestamp(
   assertString(value, path);
   if (
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) ||
-    !Number.isFinite(Date.parse(value))
+    !Number.isFinite(Date.parse(value)) ||
+    new Date(value).toISOString().slice(0, 19) !== value.slice(0, 19)
   ) {
     throw new Error(`${path} must be a UTC ISO-8601 timestamp`);
   }
@@ -4428,6 +4437,18 @@ export function assertLeaderboardSnapshot(
   }
 
   const evaluatedSources = new Set<string>();
+  const nonEvaluatedSourceIds = new Set<string>();
+  const nonEvaluatedSourceUrls = new Set<string>();
+  const eventsByActor = new Map<string, ScoreEvent[]>();
+  for (const event of validatedLedger) {
+    if (event.category !== "evaluated-contribution") {
+      nonEvaluatedSourceIds.add(`${event.repository}\0${event.source.id}`);
+      nonEvaluatedSourceUrls.add(`${event.repository}\0${event.source.url}`);
+    }
+    const events = eventsByActor.get(event.actor.id) ?? [];
+    events.push(event);
+    eventsByActor.set(event.actor.id, events);
+  }
   const mergedEventsByProjectMonth = new Map<string, ScoreEvent[]>();
   const projectCapUsage = new Map<
     string,
@@ -4474,14 +4495,8 @@ export function assertLeaderboardSnapshot(
       }
       evaluatedSources.add(sourceKey);
       if (
-        validatedLedger.some(
-          (other) =>
-            other !== event &&
-            other.repository === event.repository &&
-            other.category !== "evaluated-contribution" &&
-            (other.source.id === event.source.id ||
-              other.source.url === event.source.url),
-        )
+        nonEvaluatedSourceIds.has(sourceKey) ||
+        nonEvaluatedSourceUrls.has(`${event.repository}\0${event.source.url}`)
       ) {
         throw new Error(
           `snapshot.ledger evaluated event ${event.id} duplicates another score source`,
@@ -4529,9 +4544,7 @@ export function assertLeaderboardSnapshot(
     }
   }
   for (const leader of validatedLeaders) {
-    const events = validatedLedger.filter(
-      (event) => event.actor.id === leader.actor.id,
-    );
+    const events = eventsByActor.get(leader.actor.id) ?? [];
     const points = {
       mergedPullRequests: 0,
       resolvedIssues: 0,
@@ -4631,47 +4644,68 @@ export function assertLeaderboardSnapshot(
       receiptClaims.set(key, attribution.id);
     }
   }
-  for (const attribution of validatedAttributions) {
-    const hasCausalLedgerEvent = validatedLedger.some((event) => {
-      if (!sameActor(event.actor, attribution.actor)) {
-        return false;
-      }
-      if (
-        event.source.kind === "pull-request" &&
-        event.source.id === attribution.artifactId
-      ) {
-        return true;
-      }
-      if (
-        event.category === "substantive-review" &&
-        event.source.kind === "review" &&
-        event.source.id === attribution.sourceId
-      ) {
-        return true;
-      }
-      if (
-        event.category === "evaluated-contribution" &&
-        event.source.kind === "comment" &&
-        event.source.id === attribution.sourceId
-      ) {
-        return true;
-      }
-      return (
-        event.category === "resolved-issue" &&
-        event.id === `${event.source.id}:resolved-by:${attribution.artifactId}`
+  const causalAttributionKeys = new Set<string>();
+  const resolvedArtifactsByActor = new Set<string>();
+  for (const event of validatedLedger) {
+    if (event.source.kind === "pull-request") {
+      causalAttributionKeys.add(
+        `${event.actor.id}\0artifact\0${event.source.id}`,
       );
-    });
+    }
+    if (
+      event.category === "substantive-review" &&
+      event.source.kind === "review"
+    ) {
+      causalAttributionKeys.add(
+        `${event.actor.id}\0source\0${event.source.id}`,
+      );
+    }
+    if (
+      event.category === "evaluated-contribution" &&
+      event.source.kind === "comment"
+    ) {
+      causalAttributionKeys.add(
+        `${event.actor.id}\0source\0${event.source.id}`,
+      );
+    }
+    if (event.category === "resolved-issue") {
+      const separator = ":resolved-by:";
+      const separatorIndex = event.id.lastIndexOf(separator);
+      if (separatorIndex >= 0) {
+        resolvedArtifactsByActor.add(
+          `${event.actor.id}\0${event.id.slice(separatorIndex + separator.length)}`,
+        );
+      }
+    }
+  }
+  for (const attribution of validatedAttributions) {
+    const actorId = attribution.actor?.id;
+    const hasCausalLedgerEvent =
+      actorId !== undefined &&
+      (causalAttributionKeys.has(
+        `${actorId}\0artifact\0${attribution.artifactId}`,
+      ) ||
+        causalAttributionKeys.has(
+          `${actorId}\0source\0${attribution.sourceId}`,
+        ) ||
+        resolvedArtifactsByActor.has(`${actorId}\0${attribution.artifactId}`));
     if (!hasCausalLedgerEvent) {
       throw new Error(
         `snapshot attribution ${attribution.id} is not causally linked to a public ledger event by the same actor`,
       );
     }
   }
+  const reportedModelsByActor = new Map<string, Set<string>>();
+  for (const attribution of validatedAttributions) {
+    if (!attribution.actor) continue;
+    const identifiers =
+      reportedModelsByActor.get(attribution.actor.id) ?? new Set<string>();
+    identifiers.add(attribution.identifier);
+    reportedModelsByActor.set(attribution.actor.id, identifiers);
+  }
   for (const leader of validatedLeaders) {
     const reportedModels = uniqueSorted(
-      validatedAttributions
-        .filter((attribution) => attribution.actor?.id === leader.actor.id)
-        .map((attribution) => attribution.identifier),
+      reportedModelsByActor.get(leader.actor.id) ?? [],
     );
     if (
       reportedModels.length !== leader.reportedModels.length ||

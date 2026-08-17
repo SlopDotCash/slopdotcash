@@ -15,6 +15,8 @@ import {
 
 const MULTISIG = "11111111111111111111111111111111";
 const VAULT = "Vote111111111111111111111111111111111111111";
+const FUNDER_MEMBER = "Stake11111111111111111111111111111111111111";
+const STEWARD_MEMBER = "SysvarRent111111111111111111111111111111111";
 const DEPOSIT_SIGNATURE = "3".repeat(88);
 const RELEASE_SIGNATURE = "4".repeat(88);
 
@@ -25,6 +27,9 @@ function squadsInstrument(overrides: Record<string, unknown> = {}) {
     asset: "USDC",
     multisig: MULTISIG,
     vault: VAULT,
+    vaultIndex: 0,
+    funderMember: FUNDER_MEMBER,
+    stewardMember: STEWARD_MEMBER,
     funderActorId: "18633264",
     deadline: "2026-12-01T00:00:00.000Z",
     effectiveAt: "2026-08-01T00:00:00.000Z",
@@ -62,14 +67,20 @@ function record(overrides: Record<string, unknown> = {}) {
     event: "deposit",
     network: "solana",
     asset: "USDC",
-    instrument: { multisig: MULTISIG, vault: VAULT },
+    instrument: {
+      funderMember: FUNDER_MEMBER,
+      multisig: MULTISIG,
+      stewardMember: STEWARD_MEMBER,
+      vault: VAULT,
+      vaultIndex: 0,
+    },
     transactionId: DEPOSIT_SIGNATURE,
     amountMinor: "5000000",
     observedAt: "2026-08-02T00:00:00.000Z",
     state: "verified-on-chain",
     finality: { kind: "finalized" },
     verifier: {
-      version: "commitment-squads-v1",
+      version: "commitment-squads-v2",
       checkedAt: "2026-08-02T01:00:00.000Z",
       evidenceUrl: `https://solscan.io/tx/${DEPOSIT_SIGNATURE}`,
       reason: null,
@@ -92,6 +103,17 @@ describe("funding commitment instruments", () => {
     expect(() =>
       assertFundingCommitments([squadsInstrument({ vault: MULTISIG })]),
     ).toThrow(/must differ/u);
+    expect(() =>
+      assertFundingCommitments([squadsInstrument({ vaultIndex: -1 })]),
+    ).toThrow(/unsigned byte/u);
+    expect(() =>
+      assertFundingCommitments([squadsInstrument({ vaultIndex: 256 })]),
+    ).toThrow(/unsigned byte/u);
+    expect(() =>
+      assertFundingCommitments([
+        squadsInstrument({ stewardMember: FUNDER_MEMBER }),
+      ]),
+    ).toThrow(/members must be distinct/u);
     expect(() =>
       assertFundingCommitments([
         sablierInstrument({ contract: `0x${"9".repeat(40)}` }),
@@ -120,6 +142,15 @@ describe("funding commitment instruments", () => {
     ).toThrow(/at most 16/u);
     expect(() =>
       assertFundingCommitments([sablierInstrument(), sablierInstrument()]),
+    ).toThrow(/duplicate instrument/u);
+    expect(() =>
+      assertFundingCommitments([
+        squadsInstrument(),
+        squadsInstrument({
+          funderMember: STEWARD_MEMBER,
+          stewardMember: FUNDER_MEMBER,
+        }),
+      ]),
     ).toThrow(/duplicate instrument/u);
     expect(() =>
       assertFundingCommitments([
@@ -168,10 +199,42 @@ describe("project commitment records", () => {
     });
     expect(() =>
       assertProjectCommitmentRecord(
-        record({ instrument: { multisig: MULTISIG, vault: MULTISIG } }),
+        record({
+          instrument: {
+            ...record().instrument,
+            vault: MULTISIG,
+          },
+        }),
         instruments,
       ),
     ).toThrow(/not active at the manifest-bound observation time/u);
+    expect(() =>
+      assertProjectCommitmentRecord(
+        record({
+          instrument: {
+            ...record().instrument,
+            vaultIndex: 1,
+          },
+        }),
+        instruments,
+      ),
+    ).toThrow(/not active at the manifest-bound observation time/u);
+    expect(() =>
+      assertProjectCommitmentRecord(
+        record({
+          instrument: {
+            ...record().instrument,
+            stewardMember: FUNDER_MEMBER,
+          },
+        }),
+        instruments,
+      ),
+    ).toThrow(/members must be distinct/u);
+    const missingIndex = record();
+    delete (missingIndex.instrument as Record<string, unknown>).vaultIndex;
+    expect(() =>
+      assertProjectCommitmentRecord(missingIndex, instruments),
+    ).toThrow(/unexpected or missing fields/u);
     expect(() =>
       assertProjectCommitmentRecord(
         record({ observedAt: "2026-07-01T00:00:00.000Z" }),
@@ -200,7 +263,7 @@ describe("project commitment records", () => {
       assertProjectCommitmentRecord(
         record({
           verifier: {
-            version: "commitment-squads-v1",
+            version: "commitment-squads-v2",
             checkedAt: "2026-08-02T01:00:00.000Z",
             evidenceUrl: `https://attacker.example/tx/${DEPOSIT_SIGNATURE}`,
             reason: null,
@@ -213,7 +276,7 @@ describe("project commitment records", () => {
       assertProjectCommitmentRecord(
         record({
           verifier: {
-            version: "funding-solana-v1",
+            version: "commitment-sablier-v1",
             checkedAt: "2026-08-02T01:00:00.000Z",
             evidenceUrl: `https://solscan.io/tx/${DEPOSIT_SIGNATURE}`,
             reason: null,
@@ -221,7 +284,20 @@ describe("project commitment records", () => {
         }),
         instruments,
       ),
-    ).toThrow(/verifier version is invalid/u);
+    ).toThrow(/version does not match its instrument/u);
+    expect(() =>
+      assertProjectCommitmentRecord(
+        record({
+          verifier: {
+            version: "commitment-squads-v1",
+            checkedAt: "2026-08-02T01:00:00.000Z",
+            evidenceUrl: `https://solscan.io/tx/${DEPOSIT_SIGNATURE}`,
+            reason: null,
+          },
+        }),
+        instruments,
+      ),
+    ).toThrow(/version does not match its instrument/u);
     expect(
       assertProjectCommitmentRecord(
         record({
@@ -241,7 +317,7 @@ describe("project commitment records", () => {
       observedAt: "2026-08-03T00:00:00.000Z",
       state: "disputed",
       verifier: {
-        version: "commitment-squads-v1",
+        version: "commitment-squads-v2",
         checkedAt: "2026-08-03T00:00:00.000Z",
         evidenceUrl: `https://solscan.io/tx/${DEPOSIT_SIGNATURE}`,
         reason: "Deposit evidence was invalidated.",
@@ -284,7 +360,7 @@ describe("project commitment records", () => {
       amountMinor: "1000000",
       observedAt: "2026-08-04T00:00:00.000Z",
       verifier: {
-        version: "commitment-squads-v1",
+        version: "commitment-squads-v2",
         checkedAt: "2026-08-04T00:00:00.000Z",
         evidenceUrl: `https://solscan.io/tx/${RELEASE_SIGNATURE}`,
         reason: null,

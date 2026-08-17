@@ -12,8 +12,8 @@ interface TestAuthorityOrigins {
 }
 
 interface InstallCommandOptions {
-  skillName?: string;
-  skillRepositoryPath?: string;
+  skillName: string;
+  skillRepositoryPath: string;
   testAuthority?: TestAuthorityOrigins;
 }
 
@@ -63,13 +63,11 @@ function resolveAuthorityOrigins(
 export function createInstallCommand(
   origin: string,
   skillsRoot: string,
-  options: InstallCommandOptions = {},
+  options: InstallCommandOptions,
 ): string {
   const artifactOrigin = validateArtifactOrigin(origin);
   const authority = resolveAuthorityOrigins(options);
-  const skillName = options.skillName ?? "contribute-to-eliza";
-  const skillRepositoryPath =
-    options.skillRepositoryPath ?? "skills/contribute-to-eliza";
+  const { skillName, skillRepositoryPath } = options;
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(skillName)) {
     throw new TypeError("[Slop] skill name must be canonical kebab-case");
   }

@@ -182,6 +182,7 @@ export interface ProjectDefinition {
   }[];
   readonly skill: {
     readonly id: string;
+    readonly publishAtRoot: boolean;
     readonly sourcePath: string;
     readonly publicPath: string;
   };

@@ -1,9 +1,17 @@
 dist/
 node_modules/
 .wrangler/
+.DS_Store
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!.env.example
 *.tsbuildinfo
 *.tmp
+*.log
 __pycache__/
+coverage/
 playwright-report/
 test-results/
 evidence/

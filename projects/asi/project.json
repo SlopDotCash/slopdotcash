@@ -79,6 +79,7 @@
   ],
   "skill": {
     "id": "contribute-to-asi",
+    "publishAtRoot": false,
     "sourcePath": "skills/contribute-to-asi",
     "publicPath": "/projects/asi/skill.md"
   },

@@ -30,6 +30,16 @@ function resolveTarget(rel) {
   if (target === path.parse(target).root) {
     throw new Error(`Refusing to remove a filesystem root: ${rel}`);
   }
+  const relativeTarget = path.relative(cwd, target);
+  if (
+    relativeTarget.startsWith(`..${path.sep}`) ||
+    relativeTarget === ".." ||
+    path.isAbsolute(relativeTarget)
+  ) {
+    throw new Error(
+      `Refusing to remove a path outside the working tree: ${rel}`,
+    );
+  }
 
   return target;
 }

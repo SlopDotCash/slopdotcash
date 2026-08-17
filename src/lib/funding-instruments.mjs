@@ -70,11 +70,14 @@ function validateSquadsInstrument(candidate, field) {
       "deadline",
       "effectiveAt",
       "funderActorId",
+      "funderMember",
       "kind",
       "multisig",
       "network",
       "replacedAt",
+      "stewardMember",
       "vault",
+      "vaultIndex",
     ],
     field,
   );
@@ -91,10 +94,24 @@ function validateSquadsInstrument(candidate, field) {
     throw new TypeError(`${field} multisig and vault must differ`);
   }
   if (
+    !Number.isSafeInteger(candidate.vaultIndex) ||
+    candidate.vaultIndex < 0 ||
+    candidate.vaultIndex > 255
+  ) {
+    throw new TypeError(`${field}.vaultIndex must be an unsigned byte`);
+  }
+  if (
     typeof candidate.funderActorId !== "string" ||
     !/^[1-9]\d{0,19}$/u.test(candidate.funderActorId)
   ) {
     throw new TypeError(`${field}.funderActorId is invalid`);
+  }
+  if (
+    !isFundingAddress("solana", candidate.funderMember) ||
+    !isFundingAddress("solana", candidate.stewardMember) ||
+    candidate.funderMember === candidate.stewardMember
+  ) {
+    throw new TypeError(`${field} members must be distinct Solana public keys`);
   }
   const window = commitmentWindow(candidate, field);
   return {
@@ -103,7 +120,10 @@ function validateSquadsInstrument(candidate, field) {
     asset: "USDC",
     multisig: candidate.multisig,
     vault: candidate.vault,
+    vaultIndex: candidate.vaultIndex,
     funderActorId: candidate.funderActorId,
+    funderMember: candidate.funderMember,
+    stewardMember: candidate.stewardMember,
     ...window,
   };
 }
@@ -154,7 +174,7 @@ function validateSablierInstrument(candidate, field) {
 
 function instrumentIdentity(instrument) {
   return instrument.kind === "squads-v4-vault"
-    ? `${instrument.network}:${instrument.asset}:${instrument.vault}`
+    ? `${instrument.network}:${instrument.asset}:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`
     : `${instrument.network}:${instrument.asset}:${instrument.contract}:${instrument.streamId}`;
 }
 

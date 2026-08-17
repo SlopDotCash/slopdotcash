@@ -8,17 +8,27 @@ from pathlib import Path
 import yaml
 
 MAX_SKILL_NAME_LENGTH = 64
+MAX_SKILL_FILE_BYTES = 1024 * 1024
 
 
 def validate_skill(skill_path):
     """Basic validation of a skill"""
     skill_path = Path(skill_path)
+    if not skill_path.is_dir() or skill_path.is_symlink():
+        return False, "Skill path must be a real directory"
 
     skill_md = skill_path / "SKILL.md"
     if not skill_md.exists():
         return False, "SKILL.md not found"
+    if not skill_md.is_file() or skill_md.is_symlink():
+        return False, "SKILL.md must be a regular file"
+    if skill_md.stat().st_size > MAX_SKILL_FILE_BYTES:
+        return False, "SKILL.md exceeds the 1 MiB validation limit"
 
-    content = skill_md.read_text()
+    try:
+        content = skill_md.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return False, "SKILL.md must be valid UTF-8"
     if not content.startswith("---"):
         return False, "No YAML frontmatter found"
 
@@ -55,36 +65,38 @@ def validate_skill(skill_path):
     if not isinstance(name, str):
         return False, f"Name must be a string, got {type(name).__name__}"
     name = name.strip()
-    if name:
-        if not re.match(r"^[a-z0-9-]+$", name):
-            return (
-                False,
-                f"Name '{name}' should be hyphen-case (lowercase letters, digits, and hyphens only)",
-            )
-        if name.startswith("-") or name.endswith("-") or "--" in name:
-            return (
-                False,
-                f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens",
-            )
-        if len(name) > MAX_SKILL_NAME_LENGTH:
-            return (
-                False,
-                f"Name is too long ({len(name)} characters). "
-                f"Maximum is {MAX_SKILL_NAME_LENGTH} characters.",
-            )
+    if not name:
+        return False, "Name must not be empty"
+    if not re.fullmatch(r"[a-z0-9-]+", name):
+        return (
+            False,
+            f"Name '{name}' should be hyphen-case (lowercase letters, digits, and hyphens only)",
+        )
+    if name.startswith("-") or name.endswith("-") or "--" in name:
+        return (
+            False,
+            f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens",
+        )
+    if len(name) > MAX_SKILL_NAME_LENGTH:
+        return (
+            False,
+            f"Name is too long ({len(name)} characters). "
+            f"Maximum is {MAX_SKILL_NAME_LENGTH} characters.",
+        )
 
     description = frontmatter.get("description", "")
     if not isinstance(description, str):
         return False, f"Description must be a string, got {type(description).__name__}"
     description = description.strip()
-    if description:
-        if "<" in description or ">" in description:
-            return False, "Description cannot contain angle brackets (< or >)"
-        if len(description) > 1024:
-            return (
-                False,
-                f"Description is too long ({len(description)} characters). Maximum is 1024 characters.",
-            )
+    if not description:
+        return False, "Description must not be empty"
+    if "<" in description or ">" in description:
+        return False, "Description cannot contain angle brackets (< or >)"
+    if len(description) > 1024:
+        return (
+            False,
+            f"Description is too long ({len(description)} characters). Maximum is 1024 characters.",
+        )
 
     return True, "Skill is valid!"
 

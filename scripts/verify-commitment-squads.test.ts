@@ -1,55 +1,86 @@
-/** Proves the Squads commitment verifier needs quorum and fails closed. */
-
+/** Proves Squads evidence binds program-owned multisig, vault PDA, and USDC. */
 import { describe, expect, it } from "vitest";
 import { SOLANA_MAINNET_USDC_MINT } from "../src/lib/settlement-plan";
 import {
+  assertSquadsVaultIdentity,
   assertSquadsVaultUsdcState,
+  deriveSquadsVaultAddress,
   SPL_TOKEN_PROGRAM_ID,
+  SQUADS_V4_PROGRAM_ID,
 } from "../src/lib/squads-funding";
-import { verifyCommitmentSquads } from "./verify-commitment-squads";
+import {
+  parseCommitmentSquadsArguments,
+  verifyCommitmentSquads,
+} from "./verify-commitment-squads";
 
-const VAULT = "Vote111111111111111111111111111111111111111";
+// Published SDK-compatible pair; derivation is cluster-independent.
+const MULTISIG = "xmWqhNJwNL4z4BcDo1Yh7BbStLU7omVafZNmg91y2Vg";
+const VAULT = "FTK6ckiPWbe1jAiRtcPCz9sCrvCV6Y6hAJhAU5b9S3nv";
 const TOKEN_ACCOUNT = "11111111111111111111111111111111";
 const FUNDER = "Stake11111111111111111111111111111111111111";
 const RECIPIENT = "SysvarRent111111111111111111111111111111111";
 const SIGNATURE = "3".repeat(88);
+const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-interface AccountResultFixture {
-  context: { slot: number };
-  value: {
-    owner: string;
-    data: {
-      program: string;
-      parsed: {
-        type: string;
-        info: {
-          mint: string;
-          owner: string;
-          tokenAmount: { amount: string; decimals: number };
-        };
-      };
-    };
+function publicKeyBytes(value: string): Uint8Array {
+  const bytes: number[] = [0];
+  for (const character of value) {
+    let carry = BASE58.indexOf(character);
+    for (let index = 0; index < bytes.length; index += 1) {
+      carry += bytes[index] * 58;
+      bytes[index] = carry & 255;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 255);
+      carry >>= 8;
+    }
+  }
+  let zeroes = 0;
+  while (value[zeroes] === "1") zeroes += 1;
+  return Uint8Array.from([...new Array(zeroes).fill(0), ...bytes.reverse()]);
+}
+
+function multisigAccount(overrides: Record<string, unknown> = {}) {
+  const bytes = new Uint8Array(198);
+  bytes.set([224, 116, 121, 186, 68, 161, 79, 236]);
+  new DataView(bytes.buffer).setUint16(72, 2, true);
+  new DataView(bytes.buffer).setUint32(128, 2, true);
+  bytes.set(publicKeyBytes(FUNDER), 132);
+  bytes[164] = 7;
+  bytes.set(publicKeyBytes(RECIPIENT), 165);
+  bytes[197] = 7;
+  return {
+    executable: false,
+    owner: SQUADS_V4_PROGRAM_ID,
+    data: [btoa(String.fromCharCode(...bytes)), "base64"],
+    ...overrides,
   };
 }
 
-function accountResult(balance: string, slot = 500): AccountResultFixture {
+function tokenAccount(balance: string, owner = VAULT) {
   return {
-    context: { slot },
-    value: {
-      owner: SPL_TOKEN_PROGRAM_ID,
-      data: {
-        program: "spl-token",
-        parsed: {
-          type: "account",
-          info: {
-            mint: SOLANA_MAINNET_USDC_MINT,
-            owner: VAULT,
-            tokenAmount: { amount: balance, decimals: 6 },
-          },
+    owner: SPL_TOKEN_PROGRAM_ID,
+    data: {
+      program: "spl-token",
+      parsed: {
+        type: "account",
+        info: {
+          mint: SOLANA_MAINNET_USDC_MINT,
+          owner,
+          tokenAmount: { amount: balance, decimals: 6 },
         },
       },
     },
   };
+}
+
+function accountsResult(
+  balance: string,
+  slot = 500,
+  multisig = multisigAccount(),
+) {
+  return { context: { slot }, value: [multisig, tokenAccount(balance)] };
 }
 
 function tokenBalance(accountIndex: number, owner: string, amount: string) {
@@ -61,241 +92,319 @@ function tokenBalance(accountIndex: number, owner: string, amount: string) {
   };
 }
 
-function depositTransaction() {
+function transaction(mode: "deposit" | "release") {
+  const deposit = mode === "deposit";
+  const source = deposit ? FUNDER : VAULT;
+  const destination = deposit ? VAULT : RECIPIENT;
+  const amount = deposit ? "5000000" : "2000000";
+  const sourceBefore = deposit ? "9000000" : "5000000";
+  const sourceAfter = deposit ? "4000000" : "3000000";
   return {
-    slot: 700,
+    slot: deposit ? 700 : 800,
     blockTime: 1_786_000_000,
     meta: {
       err: null,
       preTokenBalances: [
-        tokenBalance(0, FUNDER, "9000000"),
-        tokenBalance(1, VAULT, "0"),
+        tokenBalance(0, source, sourceBefore),
+        tokenBalance(1, destination, "0"),
       ],
       postTokenBalances: [
-        tokenBalance(0, FUNDER, "4000000"),
-        tokenBalance(1, VAULT, "5000000"),
+        tokenBalance(0, source, sourceAfter),
+        tokenBalance(1, destination, amount),
       ],
     },
     transaction: { signatures: [SIGNATURE] },
   };
 }
 
-function releaseTransaction() {
-  return {
-    slot: 800,
-    blockTime: 1_786_100_000,
-    meta: {
-      err: null,
-      preTokenBalances: [
-        tokenBalance(0, VAULT, "5000000"),
-        tokenBalance(1, RECIPIENT, "0"),
-      ],
-      postTokenBalances: [
-        tokenBalance(0, VAULT, "3000000"),
-        tokenBalance(1, RECIPIENT, "2000000"),
-      ],
-    },
-    transaction: { signatures: [SIGNATURE] },
-  };
-}
-
-function fetchByAuthority(results: Record<string, unknown>) {
-  const queried: string[] = [];
+function fetchAuthorities(
+  state: Record<
+    string,
+    { balance?: string; error?: Error; transaction?: unknown }
+  >,
+) {
+  const methods: string[] = [];
   const fetchImpl = async (url: URL, init?: RequestInit) => {
-    queried.push(url.host);
-    const request = JSON.parse(String(init?.body)) as { id: string };
-    const result = results[url.host];
-    if (result instanceof Error) throw result;
+    const request = JSON.parse(String(init?.body)) as {
+      id: string;
+      method: string;
+    };
+    methods.push(request.method);
+    const authority = state[url.host];
+    if (authority.error) throw authority.error;
+    let result: unknown;
+    if (request.method === "getMultipleAccounts")
+      result = accountsResult(authority.balance ?? "5000000");
+    else if (request.method === "getAccountInfo")
+      result = { context: { slot: 600 }, value: multisigAccount() };
+    else result = authority.transaction;
     return new Response(
       JSON.stringify({ jsonrpc: "2.0", id: request.id, result }),
     );
   };
-  return { fetchImpl, queried };
+  return { fetchImpl, methods };
 }
 
-describe("Squads vault state assertions", () => {
-  it("accepts only the vault-owned canonical USDC token account", () => {
-    expect(
-      assertSquadsVaultUsdcState(
-        accountResult("5000000"),
+describe("Squads v4 identity assertions", () => {
+  it("derives the official vault PDA and accepts only an exact Squads 2-of-2", async () => {
+    await expect(deriveSquadsVaultAddress(MULTISIG, 0)).resolves.toBe(VAULT);
+    await expect(
+      assertSquadsVaultIdentity(
+        multisigAccount(),
+        MULTISIG,
         VAULT,
+        0,
+        FUNDER,
+        RECIPIENT,
+      ),
+    ).resolves.toEqual({
+      memberCount: 2,
+      funderMember: FUNDER,
+      multisig: MULTISIG,
+      stewardMember: RECIPIENT,
+      threshold: 2,
+      vault: VAULT,
+      vaultIndex: 0,
+    });
+    await expect(
+      assertSquadsVaultIdentity(
+        multisigAccount({ owner: SPL_TOKEN_PROGRAM_ID }),
+        MULTISIG,
+        VAULT,
+        0,
+        FUNDER,
+        RECIPIENT,
+      ),
+    ).rejects.toThrow(/Squads v4 program/u);
+    await expect(
+      assertSquadsVaultIdentity(
+        multisigAccount(),
+        MULTISIG,
+        VAULT,
+        1,
+        FUNDER,
+        RECIPIENT,
+      ),
+    ).rejects.toThrow(/canonical Squads PDA/u);
+    const oneOfTwo = multisigAccount();
+    const bytes = Uint8Array.from(
+      atob((oneOfTwo.data as string[])[0]),
+      (character) => character.charCodeAt(0),
+    );
+    new DataView(bytes.buffer).setUint16(72, 1, true);
+    oneOfTwo.data = [btoa(String.fromCharCode(...bytes)), "base64"];
+    await expect(
+      assertSquadsVaultIdentity(
+        oneOfTwo,
+        MULTISIG,
+        VAULT,
+        0,
+        FUNDER,
+        RECIPIENT,
+      ),
+    ).rejects.toThrow(/exact 2-of-2/u);
+    const configurable = multisigAccount();
+    const configurableBytes = Uint8Array.from(
+      atob((configurable.data as string[])[0]),
+      (character) => character.charCodeAt(0),
+    );
+    configurableBytes[40] = 1;
+    configurable.data = [
+      btoa(String.fromCharCode(...configurableBytes)),
+      "base64",
+    ];
+    await expect(
+      assertSquadsVaultIdentity(
+        configurable,
+        MULTISIG,
+        VAULT,
+        0,
+        FUNDER,
+        RECIPIENT,
+      ),
+    ).rejects.toThrow(/no config authority/u);
+    await expect(
+      assertSquadsVaultIdentity(
+        multisigAccount(),
+        MULTISIG,
+        VAULT,
+        0,
+        FUNDER,
         TOKEN_ACCOUNT,
       ),
-    ).toEqual({
+    ).rejects.toThrow(/exact two reviewed voting members/u);
+  });
+
+  it("binds multisig and token account in one finalized observation", async () => {
+    await expect(
+      assertSquadsVaultUsdcState(
+        accountsResult("5000000"),
+        MULTISIG,
+        VAULT,
+        0,
+        TOKEN_ACCOUNT,
+        FUNDER,
+        RECIPIENT,
+      ),
+    ).resolves.toMatchObject({
       balanceMinor: "5000000",
+      multisig: MULTISIG,
       slot: 500,
       tokenAccount: TOKEN_ACCOUNT,
       vault: VAULT,
+      vaultIndex: 0,
     });
-    const wrongMint = accountResult("5000000");
-    wrongMint.value.data.parsed.info.mint = TOKEN_ACCOUNT;
-    expect(() =>
-      assertSquadsVaultUsdcState(wrongMint, VAULT, TOKEN_ACCOUNT),
-    ).toThrow(/mint is not mainnet USDC/u);
-    const wrongOwner = accountResult("5000000");
-    wrongOwner.value.data.parsed.info.owner = FUNDER;
-    expect(() =>
-      assertSquadsVaultUsdcState(wrongOwner, VAULT, TOKEN_ACCOUNT),
-    ).toThrow(/owner is not the declared vault/u);
-    expect(() =>
+    await expect(
       assertSquadsVaultUsdcState(
-        { context: { slot: 1 }, value: null },
+        accountsResult(
+          "5000000",
+          500,
+          multisigAccount({ owner: SPL_TOKEN_PROGRAM_ID }),
+        ),
+        MULTISIG,
         VAULT,
+        0,
         TOKEN_ACCOUNT,
+        FUNDER,
+        RECIPIENT,
       ),
-    ).toThrow(/absent at finalized commitment/u);
-    const wrongBalance = accountResult("1.5");
-    expect(() =>
-      assertSquadsVaultUsdcState(wrongBalance, VAULT, TOKEN_ACCOUNT),
-    ).toThrow(/balance is not canonical/u);
+    ).rejects.toThrow(/Squads v4 program/u);
+    const wrongOwner = accountsResult("5000000");
+    wrongOwner.value[1] = tokenAccount("5000000", FUNDER);
+    await expect(
+      assertSquadsVaultUsdcState(
+        wrongOwner,
+        MULTISIG,
+        VAULT,
+        0,
+        TOKEN_ACCOUNT,
+        FUNDER,
+        RECIPIENT,
+      ),
+    ).rejects.toThrow(/declared vault/u);
   });
 });
 
 describe("Squads commitment verifier", () => {
-  it("verifies vault state only with two exactly agreeing authorities", async () => {
-    const { fetchImpl, queried } = fetchByAuthority({
-      "api.mainnet-beta.solana.com": accountResult("5000000", 501),
-      "solana-rpc.publicnode.com": accountResult("5000000", 502),
-      "solana.drpc.org": accountResult("4000000", 503),
+  it("requires two agreeing combined state observations", async () => {
+    const { fetchImpl, methods } = fetchAuthorities({
+      "api.mainnet-beta.solana.com": { balance: "5000000" },
+      "solana-rpc.publicnode.com": { balance: "5000000" },
+      "solana.drpc.org": { balance: "4000000" },
     });
-    const result = await verifyCommitmentSquads({
+    await expect(
+      verifyCommitmentSquads({
+        funderMember: FUNDER,
+        mode: "state",
+        multisig: MULTISIG,
+        vault: VAULT,
+        vaultIndex: 0,
+        tokenAccount: TOKEN_ACCOUNT,
+        stewardMember: RECIPIENT,
+        fetchImpl,
+      }),
+    ).resolves.toMatchObject({
       mode: "state",
-      vault: VAULT,
-      tokenAccount: TOKEN_ACCOUNT,
-      fetchImpl,
-    });
-    expect(queried).toHaveLength(3);
-    expect(result).toMatchObject({
-      mode: "state",
-      state: "verified-on-chain",
       balanceMinor: "5000000",
-      slot: 502,
-      verifier: {
-        version: "commitment-squads-v1",
-        evidenceUrl: `https://solscan.io/account/${VAULT}`,
-      },
+      multisig: MULTISIG,
+      vault: VAULT,
+      vaultIndex: 0,
+      verifier: { version: "commitment-squads-v2" },
     });
+    expect(methods).toEqual([
+      "getMultipleAccounts",
+      "getMultipleAccounts",
+      "getMultipleAccounts",
+    ]);
   });
 
-  it("refuses a state quorum when balances disagree", async () => {
-    const { fetchImpl } = fetchByAuthority({
-      "api.mainnet-beta.solana.com": accountResult("5000000"),
-      "solana-rpc.publicnode.com": accountResult("4000000"),
-      "solana.drpc.org": new Error("authority offline"),
+  it("validates multisig identity before every transaction authority", async () => {
+    const { fetchImpl, methods } = fetchAuthorities({
+      "api.mainnet-beta.solana.com": { transaction: transaction("deposit") },
+      "solana-rpc.publicnode.com": { transaction: transaction("deposit") },
+      "solana.drpc.org": { error: new Error("offline") },
     });
     await expect(
       verifyCommitmentSquads({
-        mode: "state",
+        mode: "deposit",
+        funderMember: FUNDER,
+        multisig: MULTISIG,
         vault: VAULT,
-        tokenAccount: TOKEN_ACCOUNT,
+        vaultIndex: 0,
+        signature: SIGNATURE,
+        stewardMember: RECIPIENT,
+        amountMinor: "5000000",
         fetchImpl,
       }),
-    ).rejects.toThrow(/did not reach commitment quorum/u);
-  });
-
-  it("verifies a finalized deposit credited exactly to the vault", async () => {
-    const { fetchImpl } = fetchByAuthority({
-      "api.mainnet-beta.solana.com": depositTransaction(),
-      "solana-rpc.publicnode.com": depositTransaction(),
-      "solana.drpc.org": null,
-    });
-    const result = await verifyCommitmentSquads({
-      mode: "deposit",
-      vault: VAULT,
-      signature: SIGNATURE,
-      amountMinor: "5000000",
-      fetchImpl,
-    });
-    expect(result).toMatchObject({
-      mode: "deposit",
+    ).resolves.toMatchObject({
       event: "deposit",
-      state: "verified-on-chain",
-      finality: { kind: "finalized" },
-      chainEvidence: { signature: SIGNATURE, slot: 700 },
-      verifier: { evidenceUrl: `https://solscan.io/tx/${SIGNATURE}` },
+      multisig: MULTISIG,
+      vaultIndex: 0,
+      chainEvidence: { slot: 700 },
     });
-    await expect(
-      verifyCommitmentSquads({
-        mode: "deposit",
-        vault: VAULT,
-        signature: SIGNATURE,
-        amountMinor: "4000000",
-        fetchImpl,
-      }),
-    ).rejects.toThrow(/quorum/u);
+    expect(
+      methods.filter((method) => method === "getAccountInfo"),
+    ).toHaveLength(3);
+    expect(
+      methods.filter((method) => method === "getTransaction"),
+    ).toHaveLength(2);
   });
 
-  it("verifies a release only against the explicit expected recipient", async () => {
-    const { fetchImpl } = fetchByAuthority({
-      "api.mainnet-beta.solana.com": releaseTransaction(),
-      "solana-rpc.publicnode.com": releaseTransaction(),
-      "solana.drpc.org": releaseTransaction(),
-    });
-    const result = await verifyCommitmentSquads({
-      mode: "release",
-      vault: VAULT,
-      recipient: RECIPIENT,
-      signature: SIGNATURE,
-      amountMinor: "2000000",
-      fetchImpl,
-    });
-    expect(result).toMatchObject({
-      mode: "release",
-      chainEvidence: { slot: 800 },
+  it("verifies release recipient and fails closed on invalid identity inputs", async () => {
+    const { fetchImpl } = fetchAuthorities({
+      "api.mainnet-beta.solana.com": { transaction: transaction("release") },
+      "solana-rpc.publicnode.com": { transaction: transaction("release") },
+      "solana.drpc.org": { transaction: transaction("release") },
     });
     await expect(
       verifyCommitmentSquads({
         mode: "release",
+        funderMember: FUNDER,
+        multisig: MULTISIG,
         vault: VAULT,
-        recipient: FUNDER,
+        vaultIndex: 0,
+        recipient: RECIPIENT,
         signature: SIGNATURE,
+        stewardMember: RECIPIENT,
         amountMinor: "2000000",
         fetchImpl,
       }),
-    ).rejects.toThrow(/quorum/u);
+    ).resolves.toMatchObject({ mode: "release", chainEvidence: { slot: 800 } });
+    await expect(
+      verifyCommitmentSquads({
+        mode: "state",
+        funderMember: FUNDER,
+        multisig: MULTISIG,
+        vault: VAULT,
+        vaultIndex: 256,
+        tokenAccount: TOKEN_ACCOUNT,
+        stewardMember: RECIPIENT,
+        fetchImpl,
+      }),
+    ).rejects.toThrow(/vault index/u);
   });
 
-  it("rejects invalid inputs before querying any authority", async () => {
-    let queried = false;
-    const fetchImpl = async () => {
-      queried = true;
-      return new Response();
-    };
-    await expect(
-      verifyCommitmentSquads({
-        mode: "state",
-        vault: "not-a-key",
-        tokenAccount: TOKEN_ACCOUNT,
-        fetchImpl,
-      }),
-    ).rejects.toThrow(/not a Solana public key/u);
-    await expect(
-      verifyCommitmentSquads({
-        mode: "release",
-        vault: VAULT,
-        signature: SIGNATURE,
-        amountMinor: "2000000",
-        fetchImpl,
-      }),
-    ).rejects.toThrow(/explicit recipient/u);
-    await expect(
-      verifyCommitmentSquads({
-        mode: "deposit",
-        vault: VAULT,
-        signature: SIGNATURE,
-        amountMinor: "1".repeat(41),
-        fetchImpl,
-      }),
-    ).rejects.toThrow(/signature or amount is invalid/u);
-    await expect(
-      verifyCommitmentSquads({
-        mode: "state",
-        vault: VAULT,
-        tokenAccount: TOKEN_ACCOUNT,
-        signature: SIGNATURE,
-        fetchImpl,
-      }),
-    ).rejects.toThrow(/state mode requires only/u);
-    expect(queried).toBe(false);
+  it("requires unambiguous CLI identity arguments", () => {
+    expect(
+      parseCommitmentSquadsArguments([
+        "--mode",
+        "state",
+        "--funder-member",
+        FUNDER,
+        "--multisig",
+        MULTISIG,
+        "--vault",
+        VAULT,
+        "--vault-index",
+        "0",
+        "--token-account",
+        TOKEN_ACCOUNT,
+        "--steward-member",
+        RECIPIENT,
+      ]),
+    ).toMatchObject({ multisig: MULTISIG, vaultIndex: "0" });
+    expect(() =>
+      parseCommitmentSquadsArguments(["--mode", "state", "--mode", "deposit"]),
+    ).toThrow(/Usage/u);
   });
 });

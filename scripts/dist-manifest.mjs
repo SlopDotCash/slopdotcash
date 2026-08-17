@@ -330,20 +330,34 @@ async function responseDigest(response, maximumBytes) {
   if (response.body === null) {
     throw new Error("published file response omitted its body");
   }
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (!/^\d+$/u.test(declaredLength) || !Number.isSafeInteger(parsedLength)) {
+      throw new TypeError("published file declared an invalid Content-Length");
+    }
+    if (parsedLength > maximumBytes) {
+      throw new RangeError("published file exceeded its expected byte count");
+    }
+  }
   const hash = createHash("sha256");
   const reader = response.body.getReader();
   let bytes = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      bytes += value.byteLength;
+      if (bytes > maximumBytes) {
+        await reader.cancel("published file exceeded its expected byte count");
+        throw new RangeError("published file exceeded its expected byte count");
+      }
+      hash.update(value);
     }
-    bytes += value.byteLength;
-    if (bytes > maximumBytes) {
-      await reader.cancel("published file exceeded its expected byte count");
-      throw new RangeError("published file exceeded its expected byte count");
-    }
-    hash.update(value);
+  } finally {
+    reader.releaseLock();
   }
   return { bytes, sha256: hash.digest("hex") };
 }

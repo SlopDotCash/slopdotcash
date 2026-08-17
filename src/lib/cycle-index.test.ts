@@ -127,12 +127,71 @@ describe("public cycle index", () => {
     );
   });
 
+  it("binds each lifecycle label to exact money and timestamp state", () => {
+    const premature = entry({
+      state: "payment-ready",
+      approvedAt: null,
+      files: {
+        ...entry().files,
+        allocation: {
+          sha256: DIGEST,
+          url: "/data/cycles/eliza/2026-07/allocation.json",
+        },
+      },
+    });
+    expect(() => assertCycleIndex(index([premature]))).toThrow(/state/u);
+
+    const fakePaid = entry({
+      state: "paid",
+      approvedAt: "2026-08-16T00:00:00.000Z",
+      settledAt: "2026-08-17T00:00:00.000Z",
+      reward: {
+        ...entry().reward,
+        approvedMinor: "10000000",
+        paidMinor: "1",
+        feeMinor: "100000",
+      },
+      contributors: [
+        {
+          ...entry().contributors[0],
+          state: "approved",
+          approvedMinor: "10000000",
+        },
+      ],
+      files: {
+        ...entry().files,
+        allocation: {
+          sha256: DIGEST,
+          url: "/data/cycles/eliza/2026-07/allocation.json",
+        },
+        executionPlan: {
+          sha256: DIGEST,
+          url: "/data/cycles/eliza/2026-07/execution-plan.json",
+        },
+        settlement: {
+          sha256: DIGEST,
+          url: "/data/cycles/eliza/2026-07/settlement.json",
+        },
+      },
+    });
+    expect(() => assertCycleIndex(index([fakePaid]))).toThrow(
+      /reconcile|payment state|state/u,
+    );
+  });
+
   it("rejects traversal URLs, overpayment, and duplicate project cycles", () => {
     const traversal = entry();
     traversal.files.proposal.url =
       "/data/cycles/eliza/2026-07/../attacker/proposal.json";
     expect(() => assertCycleIndex(index([traversal]))).toThrow(
-      "outside its cycle",
+      "canonical cycle artifact",
+    );
+
+    const mislabeled = entry();
+    mislabeled.files.proposal.url =
+      "/data/cycles/eliza/2026-07/source-snapshot.json";
+    expect(() => assertCycleIndex(index([mislabeled]))).toThrow(
+      "canonical cycle artifact",
     );
 
     const overpaid = entry();
@@ -152,6 +211,7 @@ describe("public cycle index", () => {
       projectId: "delta-star",
       kind: "external-prize-share",
       state: "external-provisional",
+      reviewEndsAt: null,
       reward: {
         currency: null,
         capMinor: "0",
@@ -189,6 +249,12 @@ describe("public cycle index", () => {
     });
 
     expect(() => assertCycleIndex(index([external]))).not.toThrow();
+    const dollarLarp = structuredClone(external);
+    dollarLarp.reward.currency = "USDC";
+    dollarLarp.reward.capMinor = "1";
+    expect(() => assertCycleIndex(index([dollarLarp]))).toThrow(
+      /project policy/u,
+    );
     external.files.allocation = {
       sha256: DIGEST,
       url: "/data/cycles/delta-star/2026-07/allocation.json",
@@ -218,5 +284,13 @@ describe("public cycle index", () => {
     expect(() => assertCycleIndex(index([empty]))).toThrow(
       /money totals|state/u,
     );
+  });
+
+  it("preserves an owner's valid zero-dollar approval", () => {
+    const zeroApproved = entry();
+    zeroApproved.reward.approvedMinor = "0";
+    zeroApproved.reward.feeMinor = "0";
+    zeroApproved.contributors[0].approvedMinor = "0";
+    expect(() => assertCycleIndex(index([zeroApproved]))).not.toThrow();
   });
 });

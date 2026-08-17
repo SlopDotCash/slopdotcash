@@ -58,4 +58,10 @@ describe("funding cycle reminders", () => {
       })?.kind,
     ).toBe("overdue");
   });
+
+  it("rejects malformed settlement timestamps instead of hiding reminders", () => {
+    expect(() =>
+      settlementReminder(close, "2026-08-02T00:00:00.000Z", "not-a-date"),
+    ).toThrow(/timestamps are invalid/u);
+  });
 });

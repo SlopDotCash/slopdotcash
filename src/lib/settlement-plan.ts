@@ -91,7 +91,8 @@ export function createSolanaPayTransferRequest(
 function exactUtc(value: string): string {
   if (
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||
-    !Number.isFinite(Date.parse(value))
+    !Number.isFinite(Date.parse(value)) ||
+    new Date(value).toISOString() !== value
   ) {
     throw new TypeError(
       "Settlement plan createdAt must be an exact UTC timestamp",

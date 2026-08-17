@@ -3,7 +3,7 @@
  * output contract so local convenience commands cannot become release paths.
  */
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -18,6 +18,21 @@ const transitionWorkflow = readFileSync(
   join(repositoryRoot, ".github", "workflows", "project-transitions.yml"),
   "utf8",
 );
+const monthlyRewardsWorkflow = readFileSync(
+  join(repositoryRoot, ".github", "workflows", "monthly-rewards.yml"),
+  "utf8",
+);
+const releaseLabelWorkflow = readFileSync(
+  join(repositoryRoot, ".github", "workflows", "release-label.yml"),
+  "utf8",
+);
+const workflowDirectory = join(repositoryRoot, ".github", "workflows");
+const allWorkflows = readdirSync(workflowDirectory)
+  .filter((name) => /\.ya?ml$/u.test(name))
+  .map((name) => ({
+    name,
+    source: readFileSync(join(workflowDirectory, name), "utf8"),
+  }));
 const packageManifest = JSON.parse(
   readFileSync(join(packageRoot, "package.json"), "utf8"),
 );
@@ -50,6 +65,10 @@ const playwrightConfiguration = readFileSync(
 );
 const e2eRunner = readFileSync(
   join(packageRoot, "scripts", "run-e2e.mjs"),
+  "utf8",
+);
+const evidenceRecorder = readFileSync(
+  join(packageRoot, "scripts", "record-evidence.mjs"),
   "utf8",
 );
 const qualityJob = workflow.slice(
@@ -138,11 +157,19 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain('JSON.stringify(value?.events) !== "[]"');
     expect(deployJob).toContain("https://api.slop.cash/api/v1/runs?verify=");
     expect(deployJob).toContain("timeout-minutes: 30");
-    expect(deployJob).toContain("- name: Ensure deck Pages custom domain");
+    expect(deployJob).toContain("- name: Require reviewed Pages project");
+    expect(deployJob).toContain(
+      "- name: Require reviewed deck Pages custom domain",
+    );
     expect(deployJob).toContain(
       "/pages/projects/eliza-computer/domains/deck.slop.cash",
     );
-    expect(deployJob).toContain('--data \'{"name":"deck.slop.cash"}\'');
+    expect(deployJob).not.toContain("wrangler pages project create");
+    expect(deployJob).not.toContain("--request POST");
+    expect(deployJob).not.toContain('--data \'{"name":"deck.slop.cash"}\'');
+    expect(deployJob).toContain(
+      "routine release code will not create or reconfigure it",
+    );
     expect(deployJob).toContain('value?.result?.status !== "active"');
     expect(deployJob).toContain(
       'require("node:dns").promises.lookup("deck.slop.cash", { all: true })',
@@ -150,9 +177,9 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain('"https://deck.slop.cash/?verify=');
     expect(deployJob).toContain("--tlsv1.3");
     expect(deployJob).toContain("cmp --silent dist/index.html");
-    expect(deployJob.indexOf("Ensure deck Pages custom domain")).toBeLessThan(
-      deployJob.indexOf("wrangler pages deploy \\"),
-    );
+    expect(
+      deployJob.indexOf("Require reviewed deck Pages custom domain"),
+    ).toBeLessThan(deployJob.indexOf("wrangler pages deploy \\"));
     expect(deployJob.indexOf("wrangler versions deploy \\")).toBeLessThan(
       deployJob.indexOf("wrangler pages deploy \\"),
     );
@@ -224,9 +251,35 @@ describe("slop.cash deployment contract", () => {
     }
     expect(e2eRunner).toContain('SLOP_E2E_SERVER: "preview"');
     expect(e2eRunner).toContain('SLOP_E2E_SERVER: "pages"');
+    expect(e2eRunner.match(/SLOP_E2E_FORCE_FRESH_SERVER: "1"/gu)).toHaveLength(
+      2,
+    );
+    expect(e2eRunner).toContain("childEnvironment()");
+    expect(e2eRunner).not.toContain("...process.env");
+    expect(evidenceRecorder.match(/env: childEnvironment\(\)/gu)).toHaveLength(
+      2,
+    );
+    expect(evidenceRecorder).not.toContain("env: process.env");
     expect(e2eRunner).toContain('"--grep-invert", artifactContract');
     expect(e2eRunner).toContain('"--grep",\n    artifactContract');
     expect(qualityJob).toContain("run: bun run test:e2e");
+    expect(qualityJob).toContain(
+      "- name: Generate live contribution data\n        # Pull-request code is untrusted",
+    );
+    expect(qualityJob).toContain(
+      "if: github.event_name != 'pull_request'\n        env:\n          GH_TOKEN:",
+    );
+    expect(qualityJob).toContain(
+      "run: ./node_modules/.bin/playwright install --with-deps chromium",
+    );
+    expect(qualityJob).not.toContain("bunx playwright install");
+    expect(qualityJob).toContain("bun test ./skill-tests");
+    expect(qualityJob).not.toContain("bun test skill-tests/*.test.ts");
+    expect(qualityJob).toContain("run: bun run cycles:check");
+    expect(qualityJob).toContain(
+      "- name: Validate finalized Solana evidence on trusted revisions",
+    );
+    expect(qualityJob).toContain("if: github.event_name != 'pull_request'");
   });
 
   it("keeps every release path restricted to develop", () => {
@@ -272,6 +325,20 @@ describe("slop.cash deployment contract", () => {
     );
   });
 
+  it("runs monthly rewards from the immutable trusted event SHA", () => {
+    expect(monthlyRewardsWorkflow).toContain(
+      "if: github.ref == 'refs/heads/develop'",
+    );
+    expect(monthlyRewardsWorkflow).toContain(`ref: ${"$"}{{ github.sha }}`);
+    expect(monthlyRewardsWorkflow).toContain(
+      'if [ "$GITHUB_REF" != "refs/heads/develop" ]; then',
+    );
+    expect(monthlyRewardsWorkflow).toContain(
+      'if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then',
+    );
+    expect(monthlyRewardsWorkflow).not.toContain("ref: develop");
+  });
+
   it("preserves an immutable-sha transition gate on trusted develop pushes", () => {
     const transitionGate = qualityJob.indexOf(
       'node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA" "$PROJECT_POLICY_HEAD_SHA"',
@@ -314,6 +381,37 @@ describe("slop.cash deployment contract", () => {
     expect(transitionWorkflow).not.toContain(
       `ref: ${"$"}{{ github.event.pull_request.head.sha }}`,
     );
+  });
+
+  it("invalidates release approval on every candidate head change without executing candidate code", () => {
+    expect(releaseLabelWorkflow).toContain("pull_request_target:");
+    expect(releaseLabelWorkflow).toContain("types: [synchronize]");
+    expect(releaseLabelWorkflow).toContain(
+      "permissions:\n  contents: read\n  pull-requests: write",
+    );
+    expect(releaseLabelWorkflow).toContain(
+      'target_label="slop-release-candidate"',
+    );
+    expect(releaseLabelWorkflow).toContain('"$EVENT_ACTION" != "synchronize"');
+    expect(releaseLabelWorkflow).toContain("--method DELETE");
+    expect(releaseLabelWorkflow).not.toContain("actions/checkout");
+    expect(releaseLabelWorkflow).not.toContain(
+      "github.event.pull_request.head",
+    );
+    expect(releaseLabelWorkflow).not.toContain("secrets.");
+  });
+
+  it("pins every third-party workflow action to an immutable commit", () => {
+    let actionCount = 0;
+    for (const { name, source } of allWorkflows) {
+      for (const match of source.matchAll(/^\s*uses:\s*([^\s#]+)\s*$/gmu)) {
+        actionCount += 1;
+        expect(match[1], `${name} contains an unpinned action`).toMatch(
+          /^[^@]+@[0-9a-f]{40}$/u,
+        );
+      }
+    }
+    expect(actionCount).toBeGreaterThan(0);
   });
 
   it("has no candidate-controlled production release path", () => {
@@ -364,11 +462,22 @@ describe("slop.cash deployment contract", () => {
     expect(verificationStep).toContain("https://slop.cash \\");
   });
 
+  it("bounds every trusted external response before buffering it", () => {
+    const curlCommands = workflow.match(/^\s*(?:if )?curl /gmu) ?? [];
+    const responseBounds = workflow.match(/^\s*--max-filesize /gmu) ?? [];
+    expect(curlCommands).toHaveLength(13);
+    expect(responseBounds).toHaveLength(curlCommands.length);
+    expect(workflow).toContain('--max-filesize "$(wc -c < dist/index.html)"');
+    expect(workflow).toContain('--max-filesize "$expected_bytes"');
+  });
+
   it("serves HTTPS policy and immutable hashed assets", () => {
     expect(pagesHeaders).toContain(
       "Strict-Transport-Security: max-age=31536000; includeSubDomains",
     );
     expect(pagesHeaders).toContain("style-src 'self';");
+    expect(pagesHeaders).toContain("img-src 'self' data:;");
+    expect(pagesHeaders).not.toContain("deck.eliza.app");
     expect(pagesHeaders).not.toContain("'unsafe-inline'");
     expect(pagesHeaders).toContain("/assets/*");
     expect(pagesHeaders).toContain(

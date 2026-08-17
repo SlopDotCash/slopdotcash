@@ -19,6 +19,17 @@ const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/u;
 
+class RequestBodyError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -82,16 +93,38 @@ export async function readJsonObject(
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
-    throw new Error("Request body must be valid UTF-8 JSON");
+    throw new RequestBodyError(
+      400,
+      "invalid_request",
+      "Request body must be valid UTF-8 JSON",
+    );
   }
-  if (!isRecord(value)) throw new Error("Request body must be a JSON object");
+  if (!isRecord(value))
+    throw new RequestBodyError(
+      400,
+      "invalid_request",
+      "Request body must be a JSON object",
+    );
   return value;
 }
 
 export async function readTraceBody(request: Request): Promise<Uint8Array> {
   const bytes = await readLimitedBody(request, MAX_TRACE_BYTES);
-  if (bytes.byteLength === 0) throw new Error("Trace body must not be empty");
-  new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (bytes.byteLength === 0)
+    throw new RequestBodyError(
+      400,
+      "invalid_request",
+      "Trace body must not be empty",
+    );
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new RequestBodyError(
+      400,
+      "invalid_request",
+      "Trace body must be valid UTF-8",
+    );
+  }
   return bytes;
 }
 
@@ -101,24 +134,42 @@ async function readLimitedBody(
 ): Promise<Uint8Array> {
   const declared = request.headers.get("content-length");
   if (declared !== null) {
-    const size = Number(declared);
-    if (!Number.isSafeInteger(size) || size < 0 || size > limit) {
-      throw new Error(`Request body exceeds ${limit} bytes`);
+    if (!/^\d+$/u.test(declared)) {
+      throw new RequestBodyError(
+        400,
+        "invalid_content_length",
+        "Content-Length must contain only decimal digits",
+      );
     }
+    const size = Number(declared);
+    if (!Number.isSafeInteger(size) || size > limit)
+      throw new RequestBodyError(
+        413,
+        "payload_too_large",
+        `Request body exceeds ${limit} bytes`,
+      );
   }
   if (request.body === null) return new Uint8Array();
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > limit) {
-      await reader.cancel("body too large");
-      throw new Error(`Request body exceeds ${limit} bytes`);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel("body too large");
+        throw new RequestBodyError(
+          413,
+          "payload_too_large",
+          `Request body exceeds ${limit} bytes`,
+        );
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } finally {
+    reader.releaseLock();
   }
   const result = new Uint8Array(total);
   let offset = 0;

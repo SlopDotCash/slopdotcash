@@ -186,6 +186,18 @@ describe("project funding records", () => {
     ).toThrow(/evidence/u);
     expect(() =>
       assertProjectFundingRecord(
+        {
+          ...verified,
+          verifier: {
+            ...(verified.verifier ?? {}),
+            version: "funding-bitcoin-v1",
+          },
+        },
+        routes,
+      ),
+    ).toThrow(/version does not match its network/u);
+    expect(() =>
+      assertProjectFundingRecord(
         record({ state: "verified-on-chain" }),
         routes,
       ),
@@ -329,11 +341,6 @@ describe("project funding records", () => {
       [record(), anonymous, otherDonor],
       routes,
     );
-    expect(
-      publicFundingRecordsForDonor(ledger, "MDQ6VXNlcjE4NjMzMjY0").map(
-        ({ recordId }) => recordId,
-      ),
-    ).toEqual(["fund_fixture_01"]);
     expect(
       publicFundingRecordsForDonor(ledger, "MDQ6VXNlcjE4NjMzMjY0").map(
         ({ recordId }) => recordId,

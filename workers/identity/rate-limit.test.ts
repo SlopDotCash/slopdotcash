@@ -289,4 +289,18 @@ describe("identity rate limits", () => {
     expect(poll.keys).toEqual([]);
     expect(env.exact.observedKeyHashes).toEqual([]);
   });
+
+  it("does not apply the public limiter to an alternate port", async () => {
+    const start = limiter(false);
+    const env = environment(start);
+    const response = await applyIdentityRateLimit(
+      new Request("https://identity.slop.cash:444/v1/oauth/start", {
+        method: "POST",
+      }),
+      env.value,
+    );
+    expect(response).toBeNull();
+    expect(start.keys).toEqual([]);
+    expect(env.exact.observedKeyHashes).toEqual([]);
+  });
 });

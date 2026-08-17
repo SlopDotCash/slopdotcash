@@ -235,4 +235,53 @@ describe("Cloudflare Pages deployment manifest", () => {
       }),
     ).rejects.toThrow(/options exceed their bounds/u);
   });
+
+  it("rejects non-canonical response lengths", async () => {
+    const root = await fixture();
+    await createDistManifest(root);
+    const body = new Response("unused").body;
+    let caught;
+    try {
+      await verifyPublishedBundle(root, "https://slop.cash", "release-5", {
+        fetchImpl: async () => ({
+          body,
+          headers: {
+            get: (name) =>
+              name.toLowerCase() === "content-length" ? "1e3" : null,
+          },
+          status: 200,
+        }),
+        retries: 1,
+        retryDelayMs: 0,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.cause).toHaveProperty(
+      "message",
+      "published file declared an invalid Content-Length",
+    );
+    expect(body.locked).toBe(false);
+  });
+
+  it("releases the response reader after rejecting oversized bytes", async () => {
+    const root = await fixture();
+    const manifest = await createDistManifest(root);
+    const canonicalManifest = Buffer.from(
+      `${JSON.stringify(manifest, null, 2)}\n`,
+    );
+    const response = new Response(
+      Buffer.concat([canonicalManifest, Buffer.from("x")]),
+    );
+
+    await expect(
+      verifyPublishedBundle(root, "https://slop.cash", "release-6", {
+        fetchImpl: async () => response,
+        retries: 1,
+        retryDelayMs: 0,
+      }),
+    ).rejects.toThrow(/did not match/u);
+    expect(response.body.locked).toBe(false);
+  });
 });

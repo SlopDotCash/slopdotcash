@@ -20,6 +20,35 @@ import {
 const NOW = "2026-08-20T00:00:00.000Z";
 
 describe("money-state command guards", () => {
+  it("rejects ambiguous repeated money-state arguments", () => {
+    expect(() =>
+      parseFinalizeArguments([
+        "--project",
+        "eliza",
+        "--cycle",
+        "2026-07",
+        "--cycle",
+        "2026-08",
+      ]),
+    ).toThrow(/Repeated finalize argument/u);
+    expect(() =>
+      parseSettlementPlanArguments([
+        "--project",
+        "eliza",
+        "--project",
+        "eliza",
+      ]),
+    ).toThrow(/Repeated settlement-plan argument/u);
+    expect(() =>
+      parseVerifySettlementArguments([
+        "--project",
+        "eliza",
+        "--project",
+        "eliza",
+      ]),
+    ).toThrow(/Repeated settlement verification argument/u);
+  });
+
   it("refuses allocation approval while project payments are disabled", async () => {
     const validate = vi.fn(async () => ({ state: "payment-ready" }));
     const write = vi.fn(async () => undefined);

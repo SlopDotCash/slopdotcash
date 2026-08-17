@@ -1237,6 +1237,11 @@ describe("live report parsing", () => {
       parseCliArguments(["--repo", "elizaOS/eliza", "--json"]),
       { repo: "elizaOS/eliza", json: true, help: false },
     );
+    assert.deepStrictEqual(parseCliArguments([]), {
+      repo: "elizaOS/eliza",
+      json: false,
+      help: false,
+    });
     assert.throws(
       () => parseCliArguments(["--repo", "invalid"]),
       /owner\/name/,

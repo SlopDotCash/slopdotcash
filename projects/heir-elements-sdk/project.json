@@ -73,6 +73,7 @@
   ],
   "skill": {
     "id": "contribute-to-heir-elements-sdk",
+    "publishAtRoot": false,
     "sourcePath": "skills/contribute-to-heir-elements-sdk",
     "publicPath": "/projects/heir-elements-sdk/skill.md"
   },
