@@ -660,21 +660,36 @@ function validateRepository(value, index) {
   return repository;
 }
 
-function validateSkill(value, field, expectedId, publicPath) {
+function validateSkill(
+  value,
+  field,
+  expectedId,
+  publicPath,
+  { allowLegacyMissingPublishAtRoot = false } = {},
+) {
   const skill = record(value, field);
+  const hasPublishAtRoot = Object.hasOwn(skill, "publishAtRoot");
   exactKeys(
     skill,
     publicPath
-      ? ["id", "publicPath", "publishAtRoot", "sourcePath"]
+      ? [
+          "id",
+          "publicPath",
+          ...(hasPublishAtRoot ? ["publishAtRoot"] : []),
+          "sourcePath",
+        ]
       : ["id", "sourcePath"],
     field,
   );
+  if (publicPath && !hasPublishAtRoot && !allowLegacyMissingPublishAtRoot) {
+    throw new TypeError(`${field}.publishAtRoot is required`);
+  }
   if (
     skill.id !== expectedId ||
     skill.sourcePath !== `skills/${expectedId}` ||
     (publicPath &&
       (skill.publicPath !== publicPath ||
-        typeof skill.publishAtRoot !== "boolean"))
+        (hasPublishAtRoot && typeof skill.publishAtRoot !== "boolean")))
   ) {
     throw new TypeError(`${field} does not match its project identity`);
   }
@@ -806,7 +821,10 @@ function validateFunding(value, projectId) {
 
 function validateProjectDefinition(
   value,
-  { allowLegacyUnsupportedOwnershipClaim = false } = {},
+  {
+    allowLegacyMissingPublishAtRoot = false,
+    allowLegacyUnsupportedOwnershipClaim = false,
+  } = {},
 ) {
   const project = record(value, "project");
   exactKeys(project, PROJECT_KEYS, "project");
@@ -846,6 +864,7 @@ function validateProjectDefinition(
     "project.skill",
     `contribute-to-${id}`,
     `/projects/${id}/skill.md`,
+    { allowLegacyMissingPublishAtRoot },
   );
   validateSkill(
     project.reviewSkill,
@@ -929,6 +948,7 @@ export function assertProjectDefinition(value) {
  */
 export function assertHistoricalProjectDefinition(value) {
   return validateProjectDefinition(value, {
+    allowLegacyMissingPublishAtRoot: true,
     allowLegacyUnsupportedOwnershipClaim: true,
   });
 }
