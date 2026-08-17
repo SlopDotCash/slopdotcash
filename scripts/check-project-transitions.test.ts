@@ -77,5 +77,9 @@ describe("project transition gate", () => {
     expect(() =>
       validateProjectTransitions(entries(previous), entries(multiple)),
     ).toThrow(/exactly one root publisher/u);
+
+    expect(() =>
+      validateProjectTransitions(entries(current), entries(previous)),
+    ).toThrow(/cannot remove publishAtRoot declarations/u);
   });
 });
