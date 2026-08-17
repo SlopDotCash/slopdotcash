@@ -556,6 +556,27 @@ function TypewriterHeroHeading() {
   );
 }
 
+function HomeStatusLine({ snapshot }: { snapshot: LeaderboardSnapshot }) {
+  const pausedProjects = PROJECTS.filter(
+    (project) => project.status === "paused",
+  ).length;
+  const disabledPayouts = PROJECTS.filter(
+    (project) => project.reward.paymentMode === "disabled",
+  ).length;
+  const disabledReceipts = PROJECTS.filter(
+    (project) => project.terms.receiptPolicy.state !== "active",
+  ).length;
+  const projectLabel = PROJECTS.length === 1 ? "project" : "projects";
+  return (
+    <p className="home-status-line" role="status">
+      {stale(snapshot) ? "Scoring data may be outdated" : "Scoring is live"} ·{" "}
+      {pausedProjects} of {PROJECTS.length} {projectLabel} paused · payouts
+      disabled for {disabledPayouts} · contribution receipts disabled for{" "}
+      {disabledReceipts}
+    </p>
+  );
+}
+
 function ProjectCard({ project }: { project: ProjectDefinition }) {
   const amount =
     project.reward.kind === "monthly-pool"
@@ -862,6 +883,9 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
       <section className="hero shell">
         <DataNotice state={state} retry={retry} />
         <TypewriterHeroHeading />
+        {state.status === "ready" ? (
+          <HomeStatusLine snapshot={state.snapshot} />
+        ) : null}
       </section>
 
       <section className="section shell home-projects-section" id="projects">
@@ -2681,6 +2705,11 @@ function ProjectProposalPage() {
         effectiveAt: new Date().toISOString(),
         paymentTransfersIp: false,
         retroactive: false,
+        receiptPolicy: {
+          state: "pending-authority-activation",
+          activatedAt: null,
+          bindings: [],
+        },
         copyright: {
           model: copyrightModel,
           claimedLegalHolder:
@@ -2730,6 +2759,7 @@ function ProjectProposalPage() {
       ],
       skill: {
         id: `contribute-to-${slug}`,
+        publishAtRoot: false,
         sourcePath: `skills/contribute-to-${slug}`,
         publicPath: `/projects/${slug}/skill.md`,
       },

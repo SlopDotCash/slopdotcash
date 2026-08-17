@@ -28,6 +28,7 @@ import {
 import { assertCycleIndex } from "../src/lib/cycle-index";
 import type { ProjectFundingRecord } from "../src/lib/funding";
 import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
+import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { createProjectView } from "../src/lib/project-view";
 import { PROJECTS } from "../src/lib/projects.mjs";
 import { cycleIndexFixture, snapshotFixture } from "./fixtures";
@@ -395,6 +396,11 @@ describe("discovery", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        /Scoring is live · 4 of 4 projects paused · payouts disabled for 4 · contribution receipts disabled for 4/u,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Public beta.")).not.toBeInTheDocument();
     expect(
@@ -1110,6 +1116,12 @@ describe("project proposals", () => {
       "href",
       expect.stringContaining("projects%2Fopen-protein%2Fproject.json"),
     );
+    const handoffUrl = new URL(handoff.getAttribute("href") ?? "");
+    const manifestValue = handoffUrl.searchParams.get("value");
+    expect(manifestValue).not.toBeNull();
+    expect(() =>
+      assertProjectDefinition(JSON.parse(manifestValue ?? "null")),
+    ).not.toThrow();
     expect(
       screen.getByText(/"monthlyCapMinor": "2500000000"/),
     ).toBeInTheDocument();

@@ -280,6 +280,11 @@ describe("slop.cash deployment contract", () => {
       "- name: Validate finalized Solana evidence on trusted revisions",
     );
     expect(qualityJob).toContain("if: github.event_name != 'pull_request'");
+    expect(qualityJob).toContain(
+      "- name: Load deployed public ledger for pull-request checks",
+    );
+    expect(qualityJob).toContain("if: github.event_name == 'pull_request'");
+    expect(qualityJob).toContain("https://slop.cash/data/leaderboard.json");
   });
 
   it("keeps every release path restricted to develop", () => {
@@ -465,7 +470,7 @@ describe("slop.cash deployment contract", () => {
   it("bounds every trusted external response before buffering it", () => {
     const curlCommands = workflow.match(/^\s*(?:if )?curl /gmu) ?? [];
     const responseBounds = workflow.match(/^\s*--max-filesize /gmu) ?? [];
-    expect(curlCommands).toHaveLength(13);
+    expect(curlCommands).toHaveLength(14);
     expect(responseBounds).toHaveLength(curlCommands.length);
     expect(workflow).toContain('--max-filesize "$(wc -c < dist/index.html)"');
     expect(workflow).toContain('--max-filesize "$expected_bytes"');
