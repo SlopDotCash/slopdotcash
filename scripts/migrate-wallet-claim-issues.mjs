@@ -7,7 +7,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { slopIdentityAssertion } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
+import { PROJECTS } from "../src/lib/projects.mjs";
 import { parsePublishedWallet } from "../src/lib/wallets.ts";
 
 const REPOSITORY = "elizaOS/slopdotcash";
@@ -100,19 +100,63 @@ function sameClaimSource(left, right) {
 }
 
 async function responseJson(response, field) {
-  const source = await response.text();
-  if (new TextEncoder().encode(source).byteLength > 64 * 1024) {
-    throw new Error(`${field} response exceeded its bound`);
+  const maximumBytes = 64 * 1024;
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (!/^\d+$/u.test(declaredLength) || !Number.isSafeInteger(parsedLength)) {
+      throw new Error(`${field} response declared an invalid length`);
+    }
+    if (parsedLength > maximumBytes) {
+      throw new Error(`${field} response exceeded its bound`);
+    }
   }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error(`${field} response omitted its body`);
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let byteLength = 0;
+  let source = "";
   try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      byteLength += chunk.value.byteLength;
+      if (byteLength > maximumBytes) {
+        await reader.cancel(`${field} response exceeded its bound`);
+        throw new Error(`${field} response exceeded its bound`);
+      }
+      source += decoder.decode(chunk.value, { stream: true });
+    }
+    source += decoder.decode();
     return JSON.parse(source);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && /exceeded its bound/u.test(error.message)) {
+      throw error;
+    }
     throw new Error(`${field} response was not JSON`);
+  } finally {
+    reader.releaseLock();
   }
 }
 
 async function operatorToken(fetchImpl) {
-  let assertion = await slopIdentityAssertion(fetchImpl);
+  const rootPublishedProjects = PROJECTS.filter(
+    (project) => project.skill.publishAtRoot,
+  );
+  if (rootPublishedProjects.length !== 1) {
+    throw new TypeError(
+      "Wallet migration requires exactly one root-published project skill",
+    );
+  }
+  const identityClient = await import(
+    `../${rootPublishedProjects[0].skill.sourcePath}/scripts/run-receipt.mjs`
+  );
+  if (typeof identityClient.slopIdentityAssertion !== "function") {
+    throw new TypeError(
+      "Root-published project skill omitted the Slop identity client",
+    );
+  }
+  let assertion = await identityClient.slopIdentityAssertion(fetchImpl);
   const response = await fetchImpl(`${API_ORIGIN}/api/v1/auth/session`, {
     method: "POST",
     headers: { "X-Slop-Identity-Assertion": assertion },

@@ -68,12 +68,38 @@ function html(status: number, title: string, message: string): Response {
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
   const declared = request.headers.get("content-length");
-  if (declared !== null && Number(declared) > 4096) {
+  if (
+    declared !== null &&
+    (!/^\d+$/u.test(declared) || Number(declared) > 4096)
+  ) {
     fail(413, "request_too_large", "Request body is too large");
   }
-  const bytes = new Uint8Array(await request.arrayBuffer());
-  if (bytes.byteLength > 4096)
-    fail(413, "request_too_large", "Request body is too large");
+  if (request.body === null) {
+    fail(400, "invalid_request", "Request body is required");
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > 4096) {
+        await reader.cancel("request body too large");
+        fail(413, "request_too_large", "Request body is too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -397,13 +423,13 @@ export async function handleIdentityRequest(
   if (url.protocol !== "https:") return json(400, { error: "https_required" });
   try {
     if (
-      url.hostname === IDENTITY_INTERNAL_HOST &&
+      url.host === IDENTITY_INTERNAL_HOST &&
       request.method === "POST" &&
       url.pathname === "/v1/assertions/consume"
     ) {
       return await consumeAssertion(request, deps);
     }
-    if (url.hostname !== new URL(IDENTITY_PUBLIC_ORIGIN).hostname) {
+    if (url.host !== new URL(IDENTITY_PUBLIC_ORIGIN).host) {
       return json(404, { error: "not_found" });
     }
     if (request.method === "POST" && url.pathname === "/v1/oauth/start") {

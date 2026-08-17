@@ -83,7 +83,7 @@ async function boundedBody(response: Response): Promise<string> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
-    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
+    if (!/^\d+$/u.test(declaredLength) || !Number.isSafeInteger(parsedLength)) {
       throw new TypeError("EVM RPC returned an invalid Content-Length");
     }
     if (parsedLength > MAX_EVM_COMMITMENT_RPC_BYTES) {
@@ -101,6 +101,7 @@ async function boundedBody(response: Response): Promise<string> {
       if (chunk.done) break;
       byteLength += chunk.value.byteLength;
       if (byteLength > MAX_EVM_COMMITMENT_RPC_BYTES) {
+        await reader.cancel("response exceeded size limit");
         throw new RangeError("EVM RPC response exceeded its size limit");
       }
       body += decoder.decode(chunk.value, { stream: true });
@@ -113,6 +114,8 @@ async function boundedBody(response: Response): Promise<string> {
       });
     }
     throw error;
+  } finally {
+    reader.releaseLock();
   }
   if (byteLength === 0) throw new RangeError("EVM RPC response is empty");
   return body;

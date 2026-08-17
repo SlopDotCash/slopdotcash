@@ -28,7 +28,10 @@ export default defineConfig({
   // workers. Keep one browser worker so the production-like server remains
   // available for the complete desktop/mobile matrix.
   workers: 1,
-  retries: process.env.CI ? 2 : 0,
+  // A retried browser failure cannot serve as binding release evidence: an
+  // intermittent console, network, accessibility, or rendering failure must
+  // fail the exact run instead of being converted into a flaky green result.
+  retries: 0,
   reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
   use: {
     baseURL: externalBaseUrl ?? "http://127.0.0.1:4466",
@@ -42,7 +45,11 @@ export default defineConfig({
     : {
         command: `${prebuiltSite ? "" : "bun run build && "}${localServerCommand}`,
         url: "http://127.0.0.1:4466",
-        reuseExistingServer: !process.env.CI,
+        // Evidence runs force a fresh server so a process already bound to the
+        // port cannot substitute stale bytes. Direct local Playwright use may
+        // still opt into its normal development convenience.
+        reuseExistingServer:
+          process.env.SLOP_E2E_FORCE_FRESH_SERVER !== "1" && !process.env.CI,
         timeout: 120_000,
       },
   projects: [

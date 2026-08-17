@@ -1626,10 +1626,14 @@ async function readResponsePrefix(response, signal, readLimit) {
       length += chunk.length;
     }
   } finally {
-    if (!complete) {
-      // Promise.race installs rejection handling on cancellation without
-      // letting a hostile response stream extend the request deadline.
-      await Promise.race([reader.cancel(), Promise.resolve()]);
+    try {
+      if (!complete) {
+        // Promise.race installs rejection handling on cancellation without
+        // letting a hostile response stream extend the request deadline.
+        await Promise.race([reader.cancel(), Promise.resolve()]);
+      }
+    } finally {
+      reader.releaseLock();
     }
   }
 
@@ -1640,7 +1644,7 @@ async function readResponsePrefix(response, signal, readLimit) {
     offset += chunk.length;
   }
   const parseByteCount = (value) => {
-    if (value === null || !/^(?:0|[1-9][0-9]*)$/.test(value.trim())) {
+    if (value === null || !/^\d+$/.test(value)) {
       return null;
     }
     const parsed = Number(value);

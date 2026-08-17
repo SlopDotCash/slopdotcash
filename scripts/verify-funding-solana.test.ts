@@ -2,11 +2,15 @@
 
 import { describe, expect, it } from "vitest";
 import { SOLANA_MAINNET_USDC_MINT } from "../src/lib/settlement-plan";
-import { verifyFundingSolana } from "./verify-funding-solana";
+import {
+  parseSolanaFundingArguments,
+  verifyFundingSolana,
+} from "./verify-funding-solana";
 
 const SOURCE = "Vote111111111111111111111111111111111111111";
 const RECIPIENT = "11111111111111111111111111111111";
 const SIGNATURE = "3".repeat(88);
+const MAX_TEST_RPC_BYTES = 8 * 1024 * 1024;
 
 function balance(accountIndex: number, owner: string, amount: string) {
   return {
@@ -46,7 +50,11 @@ describe("Solana funding verifier", () => {
       fetchImpl: async (_url, init) => {
         requestBody = JSON.parse(String(init?.body));
         return new Response(
-          JSON.stringify({ jsonrpc: "2.0", id: 1, result: rpcResult() }),
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: SIGNATURE,
+            result: rpcResult(),
+          }),
         );
       },
     });
@@ -73,9 +81,11 @@ describe("Solana funding verifier", () => {
         recipient: RECIPIENT,
         amountMinor: "1000000",
         fetchImpl: async () =>
-          new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: null })),
+          new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: SIGNATURE, result: null }),
+          ),
       }),
-    ).rejects.toThrow(/absent at finalized/u);
+    ).rejects.toThrow(/did not return a finalized transaction/u);
   });
 
   it("rejects an unbounded amount before querying an RPC", async () => {
@@ -92,5 +102,40 @@ describe("Solana funding verifier", () => {
       }),
     ).rejects.toThrow(/invalid/u);
     expect(queried).toBe(false);
+  });
+
+  it("rejects unknown, repeated, and valueless CLI arguments", () => {
+    expect(() =>
+      parseSolanaFundingArguments(["--signature", SIGNATURE, "--unknown", "x"]),
+    ).toThrow(/Usage/u);
+    expect(() =>
+      parseSolanaFundingArguments([
+        "--signature",
+        SIGNATURE,
+        "--signature",
+        SIGNATURE,
+      ]),
+    ).toThrow(/Usage/u);
+    expect(() => parseSolanaFundingArguments(["--recipient"])).toThrow(
+      /Usage/u,
+    );
+  });
+
+  it("rejects an oversized streamed RPC response before buffering it", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_TEST_RPC_BYTES));
+        controller.enqueue(new Uint8Array(1));
+        controller.close();
+      },
+    });
+    await expect(
+      verifyFundingSolana({
+        signature: SIGNATURE,
+        recipient: RECIPIENT,
+        amountMinor: "1000000",
+        fetchImpl: async () => new Response(body),
+      }),
+    ).rejects.toThrow(/size limit/u);
   });
 });

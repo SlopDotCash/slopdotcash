@@ -85,6 +85,7 @@ bun run build
 bun run test:e2e
 bun run test:e2e:record
 bun run test:e2e:record:production
+bun run verify
 ```
 
 `leaderboard:generate` reads GitHub through the authenticated `gh` CLI or

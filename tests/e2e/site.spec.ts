@@ -106,7 +106,9 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(footer.getByRole("link", { name: "Slop Git" })).toHaveCount(0);
   await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
   await expect(page.getByRole("link", { name: "Protocol" })).toHaveCount(0);
-  await expect(page.getByText("© 2026 slop.cash.")).toBeVisible();
+  await expect(
+    page.getByText(`© ${new Date().getUTCFullYear()} slop.cash.`),
+  ).toBeVisible();
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
     "content",
     "https://slop.cash/og-shipping-slop.png",
@@ -432,7 +434,11 @@ test("renders contributor and cycle records from validated public data", async (
   const actor =
     snapshot.leaders[0]?.actor ?? cycles.cycles[0]?.contributors[0]?.actor;
   if (!actor) {
-    test.skip(true, "The live ledger has no recorded contributor yet.");
+    await page.goto("/", { waitUntil: "networkidle" });
+    await expect(
+      page.getByText("No accepted outcomes in this project cycle yet."),
+    ).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
     return;
   }
 
@@ -821,19 +827,40 @@ test("serves byte-consistent install and read-only artifacts for every project",
 test("shows an explicit error for invalid data and retries", async ({
   page,
 }) => {
+  let attempts = 0;
+  let failSnapshot = true;
   await page.route("**/data/leaderboard.json?**", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({ schemaVersion: "forged" }),
-      contentType: "application/json",
-      status: 200,
-    });
+    attempts += 1;
+    if (failSnapshot) {
+      await route.fulfill({
+        body: JSON.stringify({ schemaVersion: "forged" }),
+        contentType: "application/json",
+        status: 200,
+      });
+      return;
+    }
+    await route.fallback();
   });
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
     "Live totals unavailable",
   );
+  const errorAccessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(
+    errorAccessibility.violations,
+    "data error state accessibility violations",
+  ).toEqual([]);
+  const failedAttempts = attempts;
+  expect(failedAttempts).toBeGreaterThan(1);
+  failSnapshot = false;
   await page.getByRole("button", { name: /Retry/u }).click();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { exact: true, name: "Leaderboard" }),
+  ).toBeVisible();
+  expect(attempts).toBe(failedAttempts + 1);
 });
 
 test("keeps primary routes accessible and inside the viewport", async ({

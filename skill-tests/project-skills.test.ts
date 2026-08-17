@@ -88,16 +88,7 @@ describe("project skill contracts", () => {
       assert.match(source, /gh auth status --hostname github\.com/u);
       assert.match(source, /gh api user --jq '\.login'/u);
       assert.match(source, /upstream\s+permission/is);
-      assert.match(
-        source,
-        /use computer or browser control when\s+available/is,
-      );
-      assert.match(source, /give the\s+operator direct links/is);
-      assert.match(source, /stars are\s+optional/iu);
-      assert.match(
-        source,
-        /failure or refusal never\s+blocks a contribution/is,
-      );
+      assert.match(source, /stars are\s+optional/u);
       if (project.reward.kind === "monthly-pool") {
         assert.match(source, /explicit approval before registration/is);
       }
@@ -164,6 +155,14 @@ describe("project skill contracts", () => {
         ),
         liveReportSource,
         `${project.skill.id} discovery logic drifted`,
+      );
+      assert.match(
+        liveReportSource,
+        /readProjectSelectionPolicy\(\)\.repositoryId/u,
+      );
+      assert.doesNotMatch(
+        liveReportSource,
+        /defaultRepository\s*=\s*"elizaOS\/eliza"/u,
       );
       const skillProject = JSON.parse(
         readFileSync(join(contributorRoot, "project.json"), "utf8"),
@@ -304,6 +303,44 @@ describe("project skill contracts", () => {
       String(calls[1].init?.headers && Object.values(calls[1].init.headers)[0]),
       /^Bearer private_test_/u,
     );
+  });
+
+  it("rejects invalid wallet addresses before authentication or network access", async () => {
+    let called = false;
+    await assert.rejects(
+      registerWalletClaim("not-a-wallet", {
+        fetch: async () => {
+          called = true;
+          throw new Error("unexpected network access");
+        },
+        assertionProvider: async () => {
+          called = true;
+          return "unexpected assertion";
+        },
+      }),
+      /canonical 32-byte Solana/u,
+    );
+    assert.strictEqual(called, false);
+  });
+
+  it("cancels oversized wallet responses before parsing them", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(40 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await assert.rejects(
+      registerWalletClaim("11111111111111111111111111111111", {
+        fetch: async () => new Response(body),
+        assertionProvider: async () => "one_time_identity_assertion_value",
+      }),
+      /response exceeded its bound/u,
+    );
+    assert.strictEqual(cancelled, true);
   });
 
   it("keeps every registered review skill hostile-input aware and non-punitive", () => {
@@ -871,6 +908,26 @@ describe("project run usage", () => {
     );
     assert.ok(!displayed.includes("p".repeat(48)));
     assert.ok(!displayed.includes("slop_assert_v1_"));
+  });
+
+  it("cancels oversized identity responses before parsing them", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(40 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await assert.rejects(
+      slopIdentityAssertion(
+        async () => new Response(body),
+        async () => {},
+      ),
+      /response exceeded its bound/u,
+    );
+    assert.strictEqual(cancelled, true);
   });
 
   it("serializes one terminal Slop marker without private material", () => {

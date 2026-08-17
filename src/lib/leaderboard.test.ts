@@ -32,6 +32,7 @@ import {
   parseEvidenceHeadOid,
   pullRequestTextSources,
   qualifiesResolvedIssue,
+  repositoryIdFromUrl,
   SCORE_CAPS,
   SCORE_RULE_VERSION,
   type ScoreEvent,
@@ -42,6 +43,31 @@ import { type ProjectRunReceipt, serializeRunMarker } from "./run-receipts";
 const NOW = "2026-07-30T12:00:00.000Z";
 const WINDOW_FROM = "2026-06-25T12:00:00.000Z";
 const VERIFICATION_FROM = "2026-06-25T12:00:00.000Z";
+
+describe("repository URL trust boundary", () => {
+  it("accepts only credential-free canonical HTTPS GitHub URLs", () => {
+    expect(repositoryIdFromUrl("https://github.com/elizaOS/eliza/pull/1")).toBe(
+      "elizaOS/eliza",
+    );
+    for (const url of [
+      "http://github.com/elizaOS/eliza/pull/1",
+      "https://github.com:444/elizaOS/eliza/pull/1",
+      "https://user:secret@github.com/elizaOS/eliza/pull/1",
+      "https://github.com/elizaOS/eliza/pull/1?redirect=evil",
+      "https://github.com/elizaOS/eliza/pull/1#unsupported-fragment",
+      "https://github.com.evil.example/elizaOS/eliza/pull/1",
+    ]) {
+      expect(() => repositoryIdFromUrl(url)).toThrow(
+        "outside the target repository registry",
+      );
+    }
+    expect(
+      repositoryIdFromUrl(
+        "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1",
+      ),
+    ).toBe("elizaOS/eliza");
+  });
+});
 
 function actor(login: string, kind: GitHubActor["kind"] = "User"): GitHubActor {
   return {

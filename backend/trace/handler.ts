@@ -378,11 +378,11 @@ async function exchangeIdentityAssertion(
   if (identity === null)
     fail(401, "unauthorized", "Identity authentication failed");
   const issuedAt = Math.floor(deps.now().getTime() / 1000);
-  const isOperator = deps.operatorGithubIds.has(identity.githubId);
-  const expiresAt = issuedAt + (isOperator ? 5 : 10) * 60;
-  const roles: ApiRole[] = isOperator
-    ? ["contributor", "operator"]
-    : ["contributor"];
+  const expiresAt = issuedAt + 10 * 60;
+  // Contributor OAuth assertions never confer operator authority. Operator
+  // tokens belong to the separate operator identity path and are additionally
+  // checked against operatorGithubIds when they are presented.
+  const roles: ApiRole[] = ["contributor"];
   const token = await signApiToken(
     {
       iss: "slop.cash",
@@ -547,7 +547,7 @@ async function uploadTraceCapability(
     fail(404, "not_found", "Upload capability not found");
   }
   const tokenHash = await sha256Hex(new TextEncoder().encode(capability));
-  const intent = await deps.persistence.consumeUploadIntent(
+  const intent = await deps.persistence.getUploadIntent(
     tokenHash,
     deps.now().toISOString(),
   );
@@ -605,10 +605,12 @@ async function uploadTraceCapability(
       createdAt: deps.now().toISOString(),
     } as const);
   await deps.persistence.putTraceBytes(object, bytes);
+  const intentConsumedAt = deps.now().toISOString();
   const result = await deps.persistence.attachTrace({
     runId: intent.runId,
     githubId: intent.githubId,
     idempotencyKey: tokenHash,
+    intentConsumedAt,
     object,
   });
   if (result.status === "conflict") {
@@ -816,8 +818,12 @@ export async function handleTraceApi(
   const requestUrl = new URL(request.url);
   const parts = pathParts(request);
   if (parts.length === 0) return json(404, { error: "not_found" });
-  if (requestUrl.protocol !== "https:" && requestUrl.hostname !== "localhost") {
+  const isLocal = requestUrl.hostname === "localhost";
+  if (requestUrl.protocol !== "https:" && !isLocal) {
     return json(400, { error: "https_required" });
+  }
+  if (requestUrl.host !== "api.slop.cash" && !isLocal) {
+    return json(404, { error: "not_found" });
   }
   try {
     if (
@@ -929,12 +935,27 @@ export async function handleTraceApi(
     // No contributor or project-owner read endpoint exists by design.
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error = caught as ApiError;
-    const status = error.status ?? 500;
-    if (status === 500) console.error("private trace API failure", error);
+    const error =
+      typeof caught === "object" && caught !== null
+        ? (caught as Partial<ApiError>)
+        : {};
+    const status =
+      Number.isSafeInteger(error.status) &&
+      Number(error.status) >= 400 &&
+      Number(error.status) <= 599
+        ? Number(error.status)
+        : 500;
+    if (status >= 500) console.error("private trace API failure");
     return json(status, {
-      error: error.code ?? "internal_error",
-      message: status === 500 ? "Internal error" : error.message,
+      error:
+        typeof error.code === "string" &&
+        /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
+          ? error.code
+          : "internal_error",
+      message:
+        status >= 500 || typeof error.message !== "string"
+          ? "Internal error"
+          : error.message,
     });
   }
 }

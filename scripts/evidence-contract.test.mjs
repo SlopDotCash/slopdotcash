@@ -300,5 +300,50 @@ describe("production artifact and network contract", () => {
           }),
       }),
     ).rejects.toThrow("expected text/html");
+
+    const oversizedBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(contents);
+        controller.enqueue(Buffer.from("extra"));
+        controller.close();
+      },
+    });
+    await expect(
+      verifyRemoteArtifacts({
+        artifacts: [{ contents, path: "index.html" }],
+        cacheKey: "revision",
+        fetchImpl: async () =>
+          new Response(oversizedBody, {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          }),
+      }),
+    ).rejects.toThrow("exceeded the verified artifact size");
+
+    for (const invalidLength of [" 15", "15 ", "1e2", "+15"]) {
+      const body = new Response(contents).body;
+      const response = {
+        body,
+        headers: {
+          get(name) {
+            if (name.toLowerCase() === "content-length") return invalidLength;
+            if (name.toLowerCase() === "content-type") {
+              return "text/html; charset=utf-8";
+            }
+            return null;
+          },
+        },
+        ok: true,
+        status: 200,
+      };
+      await expect(
+        verifyRemoteArtifacts({
+          artifacts: [{ contents, path: "index.html" }],
+          cacheKey: "revision",
+          fetchImpl: async () => response,
+        }),
+      ).rejects.toThrow("invalid Content-Length");
+      expect(body?.locked).toBe(false);
+    }
   });
 });

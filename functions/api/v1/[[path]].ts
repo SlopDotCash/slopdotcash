@@ -18,6 +18,43 @@ type PagesContext = {
   env: Env;
 };
 
+export const MAX_IDENTITY_RESPONSE_BYTES = 16 * 1024;
+
+async function readIdentityResponse(response: Response): Promise<unknown> {
+  const declared = response.headers.get("content-length");
+  if (
+    declared !== null &&
+    (!/^\d+$/u.test(declared) || Number(declared) > MAX_IDENTITY_RESPONSE_BYTES)
+  ) {
+    throw new Error("Identity response exceeds the allowed size");
+  }
+  if (response.body === null) throw new Error("Identity response is empty");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_IDENTITY_RESPONSE_BYTES) {
+        await reader.cancel("identity response too large");
+        throw new Error("Identity response exceeds the allowed size");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+}
+
 async function verifyIdentityAssertion(
   identityService: Env["SLOP_IDENTITY"],
   assertion: string,
@@ -33,7 +70,7 @@ async function verifyIdentityAssertion(
     }),
   );
   if (!response.ok) return null;
-  const body: unknown = await response.json();
+  const body = await readIdentityResponse(response);
   if (typeof body !== "object" || body === null) return null;
   const id = (body as { githubActorId?: unknown }).githubActorId;
   const login = (body as { githubLogin?: unknown }).githubLogin;

@@ -339,13 +339,21 @@ export function readProjectSelectionPolicy(scriptUrl = import.meta.url) {
     );
   }
   const record = asRecord(project, "skill project");
+  const repositoryId = asStringField(record, "repositoryId", "skill project");
+  if (!REPOSITORY_RE.test(repositoryId)) {
+    throw new TypeError(
+      "skill project.repositoryId must use the owner/name form",
+    );
+  }
   if (record.selection === undefined) {
     return {
+      repositoryId,
       eligibleIssueLabels: [...DEFAULT_CONTRIBUTOR_READY_LABELS],
     };
   }
   const selection = asRecord(record.selection, "skill project.selection");
   return {
+    repositoryId,
     eligibleIssueLabels: eligibleIssueLabels(
       selection.eligibleIssueLabels,
       "skill project.selection.eligibleIssueLabels",
@@ -1752,8 +1760,14 @@ export function renderMarkdown(report) {
   return lines.join("\n");
 }
 
-export function parseCliArguments(args) {
-  const options = { repo: "elizaOS/eliza", json: false, help: false };
+export function parseCliArguments(
+  args,
+  defaultRepository = readProjectSelectionPolicy().repositoryId,
+) {
+  if (!REPOSITORY_RE.test(defaultRepository)) {
+    throw new TypeError("default repository must use the owner/name form");
+  }
+  const options = { repo: defaultRepository, json: false, help: false };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") {
@@ -1784,14 +1798,15 @@ export function usage() {
 Read and paginate open GitHub issues and pull requests without changing them.
 
 Options:
-  --repo <owner/name>  Repository to inspect (default: elizaOS/eliza)
+  --repo <owner/name>  Repository to inspect (default: this skill's project)
   --json               Print stable machine-readable JSON
   --help, -h           Show this help
 `;
 }
 
 export function main(args = process.argv.slice(2)) {
-  const options = parseCliArguments(args);
+  const selectionPolicy = readProjectSelectionPolicy();
+  const options = parseCliArguments(args, selectionPolicy.repositoryId);
   if (options.help) {
     process.stdout.write(usage());
     return;
@@ -1801,7 +1816,6 @@ export function main(args = process.argv.slice(2)) {
     return readGhPages(endpoint, commandBudget.run);
   };
   const openActivity = readGhOpenActivity(options.repo, commandBudget.run);
-  const selectionPolicy = readProjectSelectionPolicy();
   const report = collectLiveReport(
     options.repo,
     boundedRead,
@@ -1835,7 +1849,7 @@ if (invokedDirectly) {
   } catch (error) {
     // error-policy:J1 The CLI boundary turns a failed read/audit into a non-zero exit.
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`contribute-to-eliza report failed: ${message}\n`);
+    process.stderr.write(`Slop live report failed: ${message}\n`);
     process.exitCode = 1;
   }
 }

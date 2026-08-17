@@ -42,7 +42,7 @@ async function boundedBody(
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
-    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
+    if (!/^\d+$/u.test(declaredLength) || !Number.isSafeInteger(parsedLength)) {
       throw new Error("Solana RPC returned an invalid Content-Length");
     }
     if (parsedLength > maxBytes) {
@@ -60,6 +60,7 @@ async function boundedBody(
       if (chunk.done) break;
       byteLength += chunk.value.byteLength;
       if (byteLength > maxBytes) {
+        await reader.cancel("response exceeded size limit");
         throw new RangeError("Solana RPC response exceeded its size limit");
       }
       body += decoder.decode(chunk.value, { stream: true });
@@ -72,6 +73,8 @@ async function boundedBody(
       });
     }
     throw error;
+  } finally {
+    reader.releaseLock();
   }
   return body;
 }

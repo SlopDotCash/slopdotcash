@@ -7,6 +7,7 @@ import {
   assertRewardSettlementManifest,
   feeForPrincipal,
   incrementalFeeForPrincipal,
+  type RewardAllocationManifest,
 } from "./rewards";
 
 const wallet = {
@@ -75,6 +76,12 @@ describe("reward manifests", () => {
     expect(feeForPrincipal("999", 300)).toBe("29");
     expect(incrementalFeeForPrincipal("99", "1", 100)).toBe("1");
     expect(incrementalFeeForPrincipal("0", "99", 100)).toBe("0");
+    expect(() => feeForPrincipal("-1", 100)).toThrow(/principal/u);
+    expect(() => feeForPrincipal("1", -1)).toThrow(/basis points/u);
+    expect(() => feeForPrincipal("1", 10_001)).toThrow(/basis points/u);
+    expect(() => incrementalFeeForPrincipal("1", "1", 0.5)).toThrow(
+      /basis points/u,
+    );
   });
 
   it("rejects cap overflow, silent reductions, and early approval", () => {
@@ -113,6 +120,26 @@ describe("reward manifests", () => {
 
     increased.allocations[0].adjustmentReason = null;
     expect(() => assertRewardAllocationManifest(increased)).toThrow(/reason/u);
+  });
+
+  it("requires an exact closed calendar-month contribution window", () => {
+    const partial = allocationManifest();
+    partial.contributionWindow.from = "2026-08-02T00:00:00.000Z";
+    expect(() => assertRewardAllocationManifest(partial)).toThrow(
+      /closed cycle/u,
+    );
+
+    const generatedEarly = allocationManifest();
+    generatedEarly.generatedAt = "2026-08-31T23:59:59.999Z";
+    expect(() => assertRewardAllocationManifest(generatedEarly)).toThrow(
+      /closed cycle/u,
+    );
+
+    const impossibleDate = allocationManifest();
+    impossibleDate.generatedAt = "2026-09-31T00:00:00.000Z";
+    expect(() => assertRewardAllocationManifest(impossibleDate)).toThrow(
+      /timestamp/u,
+    );
   });
 
   it("requires independent approval for owner payments", () => {
@@ -291,6 +318,19 @@ describe("reward manifests", () => {
     expect(assertRewardSettlementManifest(settlement, allocation).status).toBe(
       "paid",
     );
+
+    const proposed = allocationManifest() as RewardAllocationManifest;
+    proposed.status = "proposed";
+    proposed.approvedAt = null;
+    expect(() =>
+      assertRewardSettlementManifest(settlement, proposed as never),
+    ).toThrow(/approved allocation/u);
+
+    const predatesApproval = structuredClone(settlement);
+    predatesApproval.settledAt = "2026-09-15T23:59:59.999Z";
+    expect(() =>
+      assertRewardSettlementManifest(predatesApproval, allocation),
+    ).toThrow(/predates allocation approval/u);
 
     const reportedFee = structuredClone(settlement);
     reportedFee.status = "partially-paid";

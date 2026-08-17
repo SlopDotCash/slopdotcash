@@ -330,7 +330,8 @@ function isoTimestamp(value: unknown, path: string): string {
   if (
     typeof value !== "string" ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||
-    !Number.isFinite(Date.parse(value))
+    !Number.isFinite(Date.parse(value)) ||
+    new Date(value).toISOString() !== value
   ) {
     throw new TypeError(`${path} must be a canonical UTC ISO timestamp`);
   }

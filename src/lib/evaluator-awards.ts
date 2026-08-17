@@ -82,7 +82,10 @@ function iso(value: unknown, field: string): string {
     max: 24,
     pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
   });
-  if (!Number.isFinite(Date.parse(result))) {
+  if (
+    !Number.isFinite(Date.parse(result)) ||
+    new Date(result).toISOString() !== result
+  ) {
     throw new TypeError(`${field} is not a UTC timestamp`);
   }
   return result;

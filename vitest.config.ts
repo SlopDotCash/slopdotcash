@@ -9,7 +9,14 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
+    // Several contract suites intentionally rebuild the shared public tree or
+    // launch installer subprocesses. Running test files concurrently makes
+    // those integration checks contend with one another and hit Vitest's
+    // per-test timeout despite passing in isolation.
+    fileParallelism: false,
+    hookTimeout: 30_000,
     setupFiles: ["./tests/setup.ts"],
+    testTimeout: 15_000,
     include: [
       "functions/**/*.test.ts",
       "workers/**/*.test.ts",

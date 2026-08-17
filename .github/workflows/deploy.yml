@@ -103,7 +103,7 @@ jobs:
             test -d "$skill"
             python scripts/skill-validation/quick_validate.py "$skill"
           done
-          bun test skill-tests/*.test.ts
+          bun test ./skill-tests
 
       - name: Generate live contribution data
         # Pull-request code is untrusted, so this step never explicitly injects
@@ -157,7 +157,7 @@ jobs:
         run: bun run build
 
       - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
+        run: ./node_modules/.bin/playwright install --with-deps chromium
 
       - name: Run desktop and mobile browser tests
         run: bun run test:e2e
@@ -241,6 +241,9 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --silent --show-error \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --max-filesize 65536 \
             --header "Accept: application/vnd.github+json" \
             --header "User-Agent: slop-release-intake-check" \
             https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting |
@@ -305,7 +308,7 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure Pages project exists
+      - name: Require reviewed Pages project
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -316,32 +319,29 @@ jobs:
             curl --silent --show-error \
               --connect-timeout 10 \
               --max-time 30 \
+              --max-filesize 1048576 \
               --output "$response" \
               --write-out "%{http_code}" \
               --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer"
           )"
-          case "$status" in
-            200)
-              production_branch="$(
-                node -e 'const value=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); if (!value.result || typeof value.result.production_branch !== "string") throw new TypeError("Cloudflare project response omitted result.production_branch"); process.stdout.write(value.result.production_branch)' "$response"
-              )"
-              if [ "$production_branch" != "develop" ]; then
-                echo "::error::The existing eliza-computer Pages project uses production branch '$production_branch'; expected 'develop'."
-                exit 1
-              fi
-              ;;
-            404)
-              ./node_modules/.bin/wrangler pages project create eliza-computer \
-                --production-branch=develop
-              ;;
-            *)
-              echo "::error::Cloudflare Pages project lookup failed with HTTP $status."
-              exit 1
-              ;;
-          esac
+          if [ "$status" != "200" ]; then
+            echo "::error::The reviewed eliza-computer Pages project is unavailable (HTTP $status); routine release code will not create or reconfigure it."
+            exit 1
+          fi
+          node - "$response" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (
+            value?.success !== true ||
+            value?.result?.name !== "eliza-computer" ||
+            value?.result?.production_branch !== "develop"
+          ) {
+            throw new TypeError("the reviewed eliza-computer Pages project contract drifted");
+          }
+          NODE
 
-      - name: Ensure deck Pages custom domain
+      - name: Require reviewed deck Pages custom domain
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -353,36 +353,16 @@ jobs:
             curl --silent --show-error \
               --connect-timeout 10 \
               --max-time 30 \
+              --max-filesize 65536 \
               --output "$response" \
               --write-out "%{http_code}" \
               --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "$endpoint"
           )"
-          case "$status" in
-            200) ;;
-            404)
-              status="$(
-                curl --silent --show-error \
-                  --connect-timeout 10 \
-                  --max-time 30 \
-                  --output "$response" \
-                  --write-out "%{http_code}" \
-                  --request POST \
-                  --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-                  --header "Content-Type: application/json" \
-                  --data '{"name":"deck.slop.cash"}' \
-                  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer/domains"
-              )"
-              if [ "$status" != "200" ]; then
-                echo "::error::Creating the deck.slop.cash Pages domain failed with HTTP $status."
-                exit 1
-              fi
-              ;;
-            *)
-              echo "::error::Looking up the deck.slop.cash Pages domain failed with HTTP $status."
-              exit 1
-              ;;
-          esac
+          if [ "$status" != "200" ]; then
+            echo "::error::The reviewed deck.slop.cash Pages domain is unavailable (HTTP $status); routine release code will not create or reconfigure it."
+            exit 1
+          fi
           node - "$response" <<'NODE'
           const { readFileSync } = require("node:fs");
           const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
@@ -558,6 +538,7 @@ jobs:
             curl --silent --show-error \
               --connect-timeout 10 \
               --max-time 30 \
+              --max-filesize 65536 \
               --output "$identity_response" \
               --write-out "%{http_code}" \
               --header "Content-Type: application/json" \
@@ -592,6 +573,7 @@ jobs:
             curl --silent --show-error \
               --connect-timeout 10 \
               --max-time 30 \
+              --max-filesize 65536 \
               --output /dev/null \
               --dump-header "$authorization_headers" \
               --write-out "%{http_code}" \
@@ -631,6 +613,7 @@ jobs:
               curl --silent --show-error \
                 --connect-timeout 10 \
                 --max-time 30 \
+                --max-filesize 65536 \
                 --output "$repeated_response" \
                 --write-out "%{http_code}" \
                 --header "Content-Type: application/json" \
@@ -648,6 +631,7 @@ jobs:
             curl --silent --show-error \
               --connect-timeout 10 \
               --max-time 30 \
+              --max-filesize 65536 \
               --output "$limited_response" \
               --dump-header "$limited_headers" \
               --write-out "%{http_code}" \
@@ -752,6 +736,7 @@ jobs:
               curl --silent --show-error \
                 --connect-timeout 10 \
                 --max-time 30 \
+                --max-filesize 1048576 \
                 --output "$response" \
                 --write-out "%{http_code}" \
                 --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
@@ -799,6 +784,7 @@ jobs:
             curl --silent --show-error \
               --connect-timeout 10 \
               --max-time 30 \
+              --max-filesize 65536 \
               --output "$response" \
               --write-out "%{http_code}" \
               --header "Cache-Control: no-cache" \
@@ -831,6 +817,7 @@ jobs:
               curl --silent --show-error \
                 --connect-timeout 10 \
                 --max-time 30 \
+                --max-filesize 65536 \
                 --output "$domain_response" \
                 --write-out "%{http_code}" \
                 --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
@@ -865,6 +852,7 @@ jobs:
               --tlsv1.3 \
               --connect-timeout 10 \
               --max-time 30 \
+              --max-filesize "$(wc -c < dist/index.html)" \
               --header "Cache-Control: no-cache" \
               --dump-header "$headers" \
               "https://deck.slop.cash/?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$attempt" \
@@ -893,12 +881,15 @@ jobs:
             local expected="$2"
             local artifact="$3"
             local received
+            local expected_bytes
             local attempt=1
             received="$RUNNER_TEMP/slop-${artifact//\//-}"
+            expected_bytes="$(wc -c < "$expected")"
             while [ "$attempt" -le 3 ]; do
               if curl --fail --silent --show-error \
                 --connect-timeout 10 \
                 --max-time 30 \
+                --max-filesize "$expected_bytes" \
                 --header "Cache-Control: no-cache" \
                 --header "Pragma: no-cache" \
                 "https://slop.cash${remote_path}?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$attempt" \
@@ -949,6 +940,7 @@ jobs:
             curl --silent --show-error \
               --connect-timeout 10 \
               --max-time 30 \
+              --max-filesize 65536 \
               --output "$github_app_response" \
               --write-out "%{http_code}" \
               --header "Accept: application/vnd.github+json" \

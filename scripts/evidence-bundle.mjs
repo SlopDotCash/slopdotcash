@@ -24,6 +24,15 @@ const ARTIFACT_NAMES = [
   "walkthrough.mp4",
 ];
 const BUNDLE_NAMES = [...ARTIFACT_NAMES, "manifest.json"].sort();
+const MAXIMUM_ARTIFACT_BYTES = Object.freeze({
+  "after-desktop.jpg": 16 * 1024 * 1024,
+  "after-mobile.jpg": 16 * 1024 * 1024,
+  "browser-log.json": 4 * 1024 * 1024,
+  "manifest.json": 1024 * 1024,
+  "site-verification.json": 4 * 1024 * 1024,
+  "walkthrough.mp4": 128 * 1024 * 1024,
+});
+const MAXIMUM_BUNDLE_BYTES = 169 * 1024 * 1024;
 
 function sha256(contents) {
   return createHash("sha256").update(contents).digest("hex");
@@ -54,6 +63,10 @@ function assertRegularFile(path, context) {
 }
 
 export function validateEvidenceBundle(root, { buildFingerprint, mode }) {
+  const rootMetadata = lstatSync(root);
+  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
+    throw new TypeError("evidence bundle root must be a real directory");
+  }
   const entries = readdirSync(root, { withFileTypes: true });
   const names = entries.map((entry) => entry.name).sort();
   if (
@@ -64,6 +77,20 @@ export function validateEvidenceBundle(root, { buildFingerprint, mode }) {
     throw new TypeError(
       `evidence bundle must contain exactly: ${BUNDLE_NAMES.join(", ")}`,
     );
+  }
+  let totalBytes = 0;
+  for (const name of BUNDLE_NAMES) {
+    const size = assertRegularFile(
+      join(root, name),
+      `evidence artifact ${name}`,
+    );
+    if (size > MAXIMUM_ARTIFACT_BYTES[name]) {
+      throw new RangeError(`evidence artifact ${name} exceeds its size bound`);
+    }
+    totalBytes += size;
+    if (totalBytes > MAXIMUM_BUNDLE_BYTES) {
+      throw new RangeError("evidence bundle exceeds its aggregate size bound");
+    }
   }
 
   const manifest = asObject(
@@ -94,7 +121,6 @@ export function validateEvidenceBundle(root, { buildFingerprint, mode }) {
         throw new TypeError(`evidence manifest.artifacts[${index}] is invalid`);
       }
       const path = join(root, value.name);
-      assertRegularFile(path, `evidence artifact ${value.name}`);
       if (sha256(readFileSync(path)) !== value.sha256) {
         throw new TypeError(
           `evidence artifact ${value.name} does not match its digest`,

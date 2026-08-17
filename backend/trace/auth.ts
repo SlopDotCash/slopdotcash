@@ -13,9 +13,11 @@ export type ApiTokenClaims = {
 };
 
 const encoder = new TextEncoder();
-const CONTRIBUTOR_MAX_TTL_SECONDS = 60 * 60;
+const CONTRIBUTOR_MAX_TTL_SECONDS = 10 * 60;
 const OPERATOR_MAX_TTL_SECONDS = 5 * 60;
 const CLOCK_SKEW_SECONDS = 30;
+const MAX_TOKEN_PAYLOAD_CHARS = 4096;
+const HMAC_SHA256_BASE64URL_CHARS = 43;
 
 function encodeBase64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -39,10 +41,26 @@ function ownedBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
+function secretBytes(secret: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(secret)) {
+    throw new Error("TRACE_AUTH_SECRET must be canonical base64url");
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeBase64Url(secret);
+  } catch {
+    throw new Error("TRACE_AUTH_SECRET must be canonical base64url");
+  }
+  if (bytes.byteLength !== 32 || encodeBase64Url(bytes) !== secret) {
+    throw new Error("TRACE_AUTH_SECRET must decode to exactly 32 bytes");
+  }
+  return bytes;
+}
+
 async function hmacKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "raw",
-    encoder.encode(secret),
+    ownedBuffer(secretBytes(secret)),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"],
@@ -54,6 +72,8 @@ function validClaims(value: unknown): value is ApiTokenClaims {
   const claims = value as Partial<ApiTokenClaims>;
   const roles = claims.roles;
   return (
+    Object.keys(value).sort().join("\0") ===
+      "aud\0exp\0githubId\0githubLogin\0iat\0iss\0jti\0roles\0sub" &&
     claims.iss === "slop.cash" &&
     claims.aud === "private-trace-api" &&
     typeof claims.sub === "string" &&
@@ -64,6 +84,7 @@ function validClaims(value: unknown): value is ApiTokenClaims {
     /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u.test(claims.githubLogin) &&
     Array.isArray(roles) &&
     roles.length > 0 &&
+    new Set(roles).size === roles.length &&
     roles.every((role) =>
       ["contributor", "project_owner", "operator"].includes(role),
     ) &&
@@ -71,6 +92,7 @@ function validClaims(value: unknown): value is ApiTokenClaims {
     Number.isInteger(claims.iat) &&
     typeof claims.exp === "number" &&
     Number.isInteger(claims.exp) &&
+    claims.exp > claims.iat &&
     typeof claims.jti === "string" &&
     /^[A-Za-z0-9_-]{16,128}$/u.test(claims.jti)
   );
@@ -82,12 +104,26 @@ export async function verifyApiToken(input: {
   operatorGithubIds: ReadonlySet<string>;
   nowSeconds: number;
 }): Promise<AuthenticatedActor | null> {
-  if (input.secret.length < 32)
-    throw new Error("TRACE_AUTH_SECRET is too short");
+  secretBytes(input.secret);
+  if (
+    input.authorization === null ||
+    input.authorization.length >
+      "Bearer v1..".length +
+        MAX_TOKEN_PAYLOAD_CHARS +
+        HMAC_SHA256_BASE64URL_CHARS
+  ) {
+    return null;
+  }
   const match = /^Bearer v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/u.exec(
-    input.authorization ?? "",
+    input.authorization,
   );
-  if (match === null) return null;
+  if (
+    match === null ||
+    match[1].length > MAX_TOKEN_PAYLOAD_CHARS ||
+    match[2].length !== HMAC_SHA256_BASE64URL_CHARS
+  ) {
+    return null;
+  }
 
   let payloadBytes: Uint8Array;
   let signature: Uint8Array;
@@ -143,7 +179,7 @@ export async function signApiToken(
   claims: ApiTokenClaims,
   secret: string,
 ): Promise<string> {
-  if (secret.length < 32) throw new Error("TRACE_AUTH_SECRET is too short");
+  secretBytes(secret);
   if (!validClaims(claims)) throw new Error("Invalid API token claims");
   const payload = encodeBase64Url(encoder.encode(JSON.stringify(claims)));
   const signature = new Uint8Array(

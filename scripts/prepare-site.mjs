@@ -33,7 +33,19 @@ const protocolRoot = join(repositoryRoot, "protocol");
 const publicProtocolRoot = join(publicRoot, "protocol");
 const bootstrapSkillRoot = join(repositoryRoot, "skills", "slop");
 const bootstrapSkillSource = join(bootstrapSkillRoot, "SKILL.md");
-const skillRoot = join(repositoryRoot, "skills", "contribute-to-eliza");
+const rootPublishedProjects = PROJECTS.filter(
+  (project) => project.skill.publishAtRoot === true,
+);
+if (rootPublishedProjects.length !== 1) {
+  throw new TypeError(
+    "[Slop] project registry must select exactly one root-published skill",
+  );
+}
+const rootPublishedProject = rootPublishedProjects[0];
+const rootProjectId = rootPublishedProject.id;
+const rootSkillName = rootPublishedProject.skill.id;
+const skillRepositoryPath = rootPublishedProject.skill.sourcePath;
+const skillRoot = join(repositoryRoot, skillRepositoryPath);
 const skillSource = join(skillRoot, "SKILL.md");
 const repositoryContractPath = join(
   skillRoot,
@@ -62,9 +74,8 @@ const archiveNormalizer = join(
   "scripts",
   "normalize-skill-archive.py",
 );
-const archiveName = "contribute-to-eliza.skill";
+const archiveName = `${rootSkillName}.skill`;
 const archivePath = join(downloadsRoot, archiveName);
-const skillRepositoryPath = "skills/contribute-to-eliza";
 const sourcePath = `${skillRepositoryPath}/SKILL.md`;
 const publicSiteOrigin = "https://slop.cash";
 const sourceRepository = "elizaOS/slopdotcash";
@@ -136,7 +147,7 @@ function pythonCommand() {
 const python = pythonCommand();
 
 function runPython(args, cwd = repositoryRoot) {
-  run(python.executable, [...python.prefix, ...args], cwd);
+  run(python.executable, [...python.prefix, "-B", ...args], cwd);
 }
 
 function listRegularSkillFiles(root, prefix = "") {
@@ -331,7 +342,7 @@ run(process.execPath, [
 ]);
 
 const packagingRoot = mkdtempSync(join(tmpdir(), "slop-skill-package-"));
-const stagedSkillRoot = join(packagingRoot, "contribute-to-eliza");
+const stagedSkillRoot = join(packagingRoot, rootSkillName);
 const stagedDownloadsRoot = join(packagingRoot, "downloads");
 const stagedPublicArchive = join(
   downloadsRoot,
@@ -349,7 +360,7 @@ try {
     `${JSON.stringify(
       {
         schemaVersion: "1",
-        name: "contribute-to-eliza",
+        name: rootSkillName,
         repository: "elizaOS/slopdotcash",
         revision: sourceRevisionStatus === "committed" ? commit : null,
         revisionStatus: sourceRevisionStatus,
@@ -455,9 +466,9 @@ ${evidenceRubric}
 writeFileSync(join(publicRoot, "mission.md"), standaloneMission);
 
 const primaryGuideOptions = {
-  artifactOrigin: `${publicSiteOrigin}/projects/eliza`,
-  skillName: "contribute-to-eliza",
-  skillRepositoryPath: "skills/contribute-to-eliza",
+  artifactOrigin: `${publicSiteOrigin}/projects/${rootProjectId}`,
+  skillName: rootSkillName,
+  skillRepositoryPath,
 };
 const codexBootstrap = renderInstallGuide({
   ...primaryGuideOptions,
@@ -514,7 +525,7 @@ function guideRecord({
 
 const manifest = {
   schemaVersion: "1",
-  name: "contribute-to-eliza",
+  name: rootSkillName,
   repository: "elizaOS/slopdotcash",
   revision: commit,
   revisionStatus: sourceRevisionStatus,
@@ -522,7 +533,7 @@ const manifest = {
   source: {
     path: sourcePath,
     url: `https://github.com/elizaOS/slopdotcash/blob/${commit}/${sourcePath}`,
-    publicUrl: `${publicSiteOrigin}/projects/eliza/skill.md`,
+    publicUrl: `${publicSiteOrigin}/projects/${rootProjectId}/skill.md`,
     sha256: skillDigest,
   },
   archive: {
@@ -585,7 +596,7 @@ writeFileSync(
 );
 
 function publishPrimaryProjectAlias() {
-  const projectRoot = join(publicRoot, "projects", "eliza");
+  const projectRoot = join(publicRoot, "projects", rootProjectId);
   const projectDownloads = join(projectRoot, "downloads");
   mkdirSync(projectDownloads, { recursive: true });
   copyFileSync(skillSource, join(projectRoot, "skill.md"));
@@ -603,14 +614,14 @@ function publishPrimaryProjectAlias() {
   const manualGuide = manualBootstrap;
   writeFileSync(join(projectRoot, "manual.md"), manualGuide);
   const projectManifest = structuredClone(manifest);
-  projectManifest.source.publicUrl = `${publicSiteOrigin}/projects/eliza/skill.md`;
-  projectManifest.archive.url = `${publicSiteOrigin}/projects/eliza/downloads/${archiveName}`;
+  projectManifest.source.publicUrl = `${publicSiteOrigin}/projects/${rootProjectId}/skill.md`;
+  projectManifest.archive.url = `${publicSiteOrigin}/projects/${rootProjectId}/downloads/${archiveName}`;
   projectManifest.archive.checksumUrl = `${projectManifest.archive.url}.sha256`;
   projectManifest.guides = {
     codex: guideRecord({
       artifactOrigin: primaryGuideOptions.artifactOrigin,
       client: "codex",
-      publicUrl: `${publicSiteOrigin}/projects/eliza/codex.md`,
+      publicUrl: `${publicSiteOrigin}/projects/${rootProjectId}/codex.md`,
       skillName: primaryGuideOptions.skillName,
       skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
       source: codexGuide,
@@ -618,7 +629,7 @@ function publishPrimaryProjectAlias() {
     claude: guideRecord({
       artifactOrigin: primaryGuideOptions.artifactOrigin,
       client: "claude-code",
-      publicUrl: `${publicSiteOrigin}/projects/eliza/claude.md`,
+      publicUrl: `${publicSiteOrigin}/projects/${rootProjectId}/claude.md`,
       skillName: primaryGuideOptions.skillName,
       skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
       source: claudeGuide,
@@ -626,7 +637,7 @@ function publishPrimaryProjectAlias() {
     manual: guideRecord({
       artifactOrigin: primaryGuideOptions.artifactOrigin,
       client: "manual",
-      publicUrl: `${publicSiteOrigin}/projects/eliza/manual.md`,
+      publicUrl: `${publicSiteOrigin}/projects/${rootProjectId}/manual.md`,
       skillName: primaryGuideOptions.skillName,
       skillRepositoryPath: primaryGuideOptions.skillRepositoryPath,
       source: manualGuide,
@@ -872,7 +883,7 @@ function publishAdditionalProject({
 
 publishPrimaryProjectAlias();
 for (const project of PROJECTS) {
-  if (project.id !== "eliza") {
+  if (!project.skill.publishAtRoot) {
     publishAdditionalProject({
       id: project.id,
       name: project.skill.id,

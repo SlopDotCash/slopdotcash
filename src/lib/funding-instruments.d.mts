@@ -6,7 +6,10 @@ export interface SquadsV4VaultInstrument {
   readonly asset: "USDC";
   readonly multisig: string;
   readonly vault: string;
+  readonly vaultIndex: number;
   readonly funderActorId: string;
+  readonly funderMember: string;
+  readonly stewardMember: string;
   readonly deadline: string;
   readonly effectiveAt: string;
   readonly replacedAt: string | null;

@@ -14,6 +14,16 @@
 .deck * {
   box-sizing: border-box;
 }
+.deck-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .deck-stage {
   position: absolute;
   inset: 0;
@@ -182,18 +192,17 @@
   background: rgba(255, 255, 255, 0.16);
 }
 .deck-team-avatar {
-  display: block;
+  display: grid;
   width: clamp(92px, 10vw, 150px);
   aspect-ratio: 1;
-  overflow: hidden;
+  place-items: center;
   border: 2px solid var(--orange);
   border-radius: 50%;
   background: var(--orange);
-}
-.deck-team-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  color: #fff;
+  font-size: clamp(42px, 5vw, 76px);
+  font-weight: 800;
+  text-decoration: none;
 }
 .deck-team-identity h3 {
   margin: 0;
@@ -218,14 +227,13 @@
   overflow: hidden;
   border: 1px solid rgba(22, 19, 15, 0.14);
   border-radius: 10px;
+  padding: 24px;
   background: #0d1117;
-}
-.deck-team-contributions img {
-  display: block;
-  width: 100%;
-  height: 92px;
-  object-fit: cover;
-  object-position: right center;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-decoration: none;
 }
 
 /* 03 — mission */
@@ -706,9 +714,9 @@
   place-items: center;
   border-radius: 50%;
   background: conic-gradient(
-    var(--orange) 0 40%,
-    #bc3d13 40% 70%,
-    #f4a17c 70% 90%,
+    var(--orange) 0 55%,
+    #bc3d13 55% 75%,
+    #f4a17c 75% 90%,
     #d8d1c4 90% 100%
   );
 }
@@ -960,8 +968,8 @@
     margin-top: 5px;
     font-size: 9px;
   }
-  .deck-team-contributions img {
-    height: 62px;
+  .deck-team-contributions {
+    padding: 16px;
   }
   .deck-mission {
     grid-template-columns: 1fr;

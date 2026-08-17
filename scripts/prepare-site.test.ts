@@ -28,6 +28,16 @@ import { createInstallAuthorityFixture } from "../tests/install-authority-fixtur
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = packageRoot;
+const rootPublishedProject = PROJECTS.find(
+  (project) => project.skill.publishAtRoot,
+);
+if (!rootPublishedProject) {
+  throw new TypeError("test registry omitted its root-published project");
+}
+const primaryInstallOptions = {
+  skillName: rootPublishedProject.skill.id,
+  skillRepositoryPath: rootPublishedProject.skill.sourcePath,
+} as const;
 const skillRoot = join(repositoryRoot, "skills", "contribute-to-eliza");
 const publicRoot = join(packageRoot, "public");
 const archivePath = join(publicRoot, "downloads", "contribute-to-eliza.skill");
@@ -243,7 +253,7 @@ function installCommand(artifactRoot = installerArtifactRoot) {
   return createInstallCommand(
     pathToFileURL(artifactRoot).href.replace(/\/$/u, ""),
     `\${HOME}/.agents/skills`,
-    { testAuthority },
+    { ...primaryInstallOptions, testAuthority },
   );
 }
 
@@ -480,7 +490,7 @@ describe("contribution skill package", () => {
       stdio: "inherit",
     });
     expect(readFileSync(archivePath)).toEqual(firstArchive);
-  }, 15_000);
+  }, 30_000);
 
   it("contains every canonical dependency, no extra source, and bound provenance", () => {
     const archive = inspectArchive();
@@ -1003,7 +1013,7 @@ describe("contribution skill package", () => {
       const claudeCommand = createInstallCommand(
         pathToFileURL(installerArtifactRoot).href.replace(/\/$/u, ""),
         `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`,
-        { testAuthority },
+        { ...primaryInstallOptions, testAuthority },
       );
       const claudeInstall = runInstall(claudeCommand, claudeRoot);
       expect(claudeInstall.status, claudeInstall.stderr).toBe(0);
@@ -1141,7 +1151,7 @@ describe("contribution skill package", () => {
       rmSync(defaultRoot, { force: true, recursive: true });
       rmSync(claudeRoot, { force: true, recursive: true });
     }
-  });
+  }, 30_000);
 
   it("rejects unsafe archive paths, symlinks, and broken target symlinks", () => {
     const traversalRoot = mkdtempSync(

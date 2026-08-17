@@ -119,16 +119,14 @@ function Team() {
       role: "CEO",
       x: "https://x.com/shawmakesmagic",
       github: "https://github.com/lalalune",
-      portrait: "https://deck.eliza.app/team_shaw.jpg",
-      contributions: "https://deck.eliza.app/github_lalalune.svg",
+      mark: "S",
     },
     {
       name: "Nubs",
       role: "CTO",
       x: "https://x.com/nubsvault",
       github: "https://github.com/NubsCarson",
-      portrait: "https://deck.eliza.app/team_nubs.jpg",
-      contributions: "https://deck.eliza.app/github_nubscarson.svg",
+      mark: "N",
     },
   ];
   return (
@@ -144,7 +142,8 @@ function Team() {
               rel="noreferrer"
               aria-label={`${lead.name} on X`}
             >
-              <img src={lead.portrait} alt={lead.name} />
+              <span className="deck-visually-hidden">{lead.name} on X</span>
+              <span aria-hidden="true">{lead.mark}</span>
             </a>
             <div className="deck-team-identity">
               <h3>{lead.name}</h3>
@@ -157,10 +156,7 @@ function Team() {
               rel="noreferrer"
               aria-label={`${lead.name} on GitHub`}
             >
-              <img
-                src={lead.contributions}
-                alt={`${lead.name} GitHub contributions`}
-              />
+              View {lead.name}&apos;s public GitHub profile
             </a>
           </article>
         ))}
@@ -194,13 +190,16 @@ function Mission() {
           <article>
             <strong>Proximity Prize</strong>
             <span>
-              $1M to solve a major conjecture. A prize split fairly by
-              contribution.
+              A sponsor-run prize for a major conjecture. Slop publishes
+              provisional contribution shares; the sponsor controls payment.
             </span>
           </article>
           <article>
             <strong>“ASI” continual learning</strong>
-            <span>Novel IP built together—and owned collectively.</span>
+            <span>
+              Continual-learning work with ownership terms published before
+              contributions begin.
+            </span>
           </article>
         </div>
       </div>
@@ -230,7 +229,8 @@ function Flywheel() {
         </h2>
         <p>
           Projects publish valuable work. People and agents compete to solve it.
-          Maintainers verify the result. Contributors get paid.
+          Maintainers verify the result. Reviewed project policy determines
+          whether accepted contributors receive rewards.
         </p>
       </div>
       <div className="deck-flywheel" role="img" aria-label={stages.join(", ")}>
@@ -250,7 +250,7 @@ function GoToMarket() {
     {
       icon: <Users aria-hidden="true" />,
       title: "Hack traction.",
-      copy: "Turn open projects into public, fundable work.",
+      copy: "Turn reviewed public repositories into transparent contribution programs.",
     },
     {
       icon: <Cpu aria-hidden="true" />,
@@ -260,7 +260,7 @@ function GoToMarket() {
     {
       icon: <Megaphone aria-hidden="true" />,
       title: "Make support one click.",
-      copy: "Give anyone a simple path to donate, fund a task, or sponsor an outcome.",
+      copy: "Give supporters a direct path to fund a reviewed project or sponsor an outcome.",
     },
   ];
   return (
@@ -301,7 +301,7 @@ function Competition() {
         <h2>
           Built for open source.
           <br />
-          <em>Open to every kind of project.</em>
+          <em>Open to public GitHub projects.</em>
         </h2>
         <p className="deck-supporting">
           Slop starts where the work lives—GitHub—and lets anyone fund verified
@@ -319,10 +319,12 @@ function Competition() {
           ))}
         </div>
         <div className="deck-slop-position">
-          <strong>Why Slop wins</strong>
+          <strong>Slop's reviewed scope</strong>
           <p>
-            <b>Any project</b>
-            <span>Software, science, research, art, and beyond.</span>
+            <b>Manifest governed</b>
+            <span>
+              Each public repository declares its rules before work begins.
+            </span>
           </p>
           <p>
             <b>GitHub-native</b>
@@ -340,28 +342,29 @@ function Competition() {
 
 function Economics() {
   const projections = [
-    ["Year 1", "$2M", "$250K", "$0"],
-    ["Year 2", "$8M", "$500K", "+$150K"],
-    ["Year 3", "$20M", "$1.0M", "+$500K"],
+    ["Scenario 1", "$2M", "1%", "$20K"],
+    ["Scenario 2", "$8M", "1%", "$80K"],
+    ["Scenario 3", "$20M", "1%", "$200K"],
   ];
   return (
     <Frame
       index={6}
-      label="Revenue and token economics"
+      label="Transparent payout fee scenarios"
       className="deck-economics"
     >
       <div className="deck-economics-heading">
-        <h2>This can actually make a lot of money.</h2>
+        <h2>Transparent fee math.</h2>
         <p>
-          1% of payouts plus sponsorships, collaborations, and contributed
-          compute offset the network’s cost in year one.
+          When an enabled monthly pool is actually paid, Slop charges 1% of the
+          approved principal. These scenarios show fee revenue only—not profit,
+          sponsorship income, or a forecast.
         </p>
       </div>
       <div className="deck-economics-model">
         <div
           className="deck-profit-chart"
           role="img"
-          aria-label="Projected annual profit starts at break even in year one, then rises to positive 150 thousand dollars in year two and positive 500 thousand dollars in year three"
+          aria-label="Illustrative one percent payout fee scenarios: 20 thousand dollars at 2 million dollars of paid principal, 80 thousand dollars at 8 million, and 200 thousand dollars at 20 million"
         >
           <span className="deck-chart-zero">$0</span>
           <i aria-hidden="true" />
@@ -378,35 +381,37 @@ function Economics() {
             <circle cx="390" cy="126" r="8" />
             <circle cx="740" cy="40" r="8" />
           </svg>
-          <strong className="deck-chart-label deck-chart-label-one">$0</strong>
+          <strong className="deck-chart-label deck-chart-label-one">
+            $20K
+          </strong>
           <strong className="deck-chart-label deck-chart-label-two">
-            +$150K
+            $80K
           </strong>
           <strong className="deck-chart-label deck-chart-label-three">
-            +$500K
+            $200K
           </strong>
-          <span className="deck-chart-year deck-chart-year-one">Y1</span>
-          <span className="deck-chart-year deck-chart-year-two">Y2</span>
-          <span className="deck-chart-year deck-chart-year-three">Y3</span>
+          <span className="deck-chart-year deck-chart-year-one">S1</span>
+          <span className="deck-chart-year deck-chart-year-two">S2</span>
+          <span className="deck-chart-year deck-chart-year-three">S3</span>
         </div>
         <div className="deck-projections">
           <div className="deck-projection-labels">
             <span>Payout volume</span>
-            <span>Cash + offsets</span>
-            <span>Profit</span>
+            <span>Fee rate</span>
+            <span>Fee revenue</span>
           </div>
-          {projections.map(([period, payouts, revenue, profit]) => (
+          {projections.map(([period, payouts, rate, revenue]) => (
             <article key={period}>
               <span>{period}</span>
               <strong>{payouts}</strong>
+              <strong>{rate}</strong>
               <strong>{revenue}</strong>
-              <strong>{profit}</strong>
             </article>
           ))}
           <small>
-            Illustrative base case, not historical results. Year one assumes
-            $20K from 1% payout fees and $230K from sponsors, collaborations,
-            and contributed resources.
+            Pure scenario arithmetic, not historical results or a projection.
+            Unpaid, held, unclaimed, disabled, and external-prize amounts
+            produce no Slop payout fee.
           </small>
         </div>
       </div>
@@ -416,9 +421,9 @@ function Economics() {
 
 function Raise() {
   const allocation = [
-    ["40%", "$100K", "Team"],
-    ["30%", "$75K", "Bounties + incentives"],
-    ["20%", "$50K", "Marketing"],
+    ["55%", "$137.5K", "Contributor incentives"],
+    ["20%", "$50K", "Team"],
+    ["15%", "$37.5K", "Marketing"],
     ["10%", "$25K", "Legal"],
   ];
   return (
@@ -432,7 +437,7 @@ function Raise() {
         <div
           className="deck-allocation-pie"
           role="img"
-          aria-label="250 thousand dollar allocation: 40 percent team, 30 percent bounties and incentives, 20 percent marketing, and 10 percent legal"
+          aria-label="250 thousand dollar allocation: 55 percent contributor incentives, 20 percent team, 15 percent marketing, and 10 percent legal"
         >
           <div>
             <strong>$250K</strong>
@@ -461,7 +466,7 @@ function Close() {
         <GitBranch />
       </div>
       <h2>
-        When we build it, <em>we own it.</em>
+        When we build it, <em>the terms stay clear.</em>
       </h2>
       <p>Fund the people, agents, and compute accelerating open progress.</p>
       <div className="deck-close-links">

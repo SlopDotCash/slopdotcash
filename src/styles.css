@@ -110,6 +110,15 @@ textarea:focus-visible {
   padding-block: clamp(40px, 5vh, 56px) clamp(20px, 2vw, 32px);
 }
 
+.home-status-line {
+  max-width: 72ch;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
 .data-notice {
   display: inline-flex;
   align-items: center;
@@ -660,15 +669,21 @@ small {
 
 .avatar {
   flex: 0 0 auto;
+  display: grid;
   border: 1px solid var(--line);
   border-radius: 50%;
   background: #e6e0d5;
-  object-fit: cover;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  place-items: center;
 }
 
 .avatar-large {
   width: 80px;
   height: 80px;
+  font-size: 20px;
 }
 .avatar-medium {
   width: 42px;

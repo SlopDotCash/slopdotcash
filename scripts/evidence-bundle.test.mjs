@@ -10,6 +10,8 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -166,5 +168,36 @@ describe("evidence bundle transaction", () => {
       }),
     ).toThrow("does not match its digest");
     transaction.abort();
+  });
+
+  it("rejects oversized artifacts before reading them", () => {
+    const root = mkdtempSync(join(tmpdir(), "eliza-evidence-size-"));
+    roots.push(root);
+    writeValidBundle(root);
+    truncateSync(join(root, "manifest.json"), 1024 * 1024 + 1);
+
+    expect(() =>
+      validateEvidenceBundle(root, {
+        buildFingerprint: fingerprint,
+        mode: "local",
+      }),
+    ).toThrow("manifest.json exceeds its size bound");
+  });
+
+  it("rejects a symlinked bundle root", () => {
+    const root = mkdtempSync(join(tmpdir(), "eliza-evidence-link-"));
+    const bundle = join(root, "bundle");
+    const linkedBundle = join(root, "linked-bundle");
+    mkdirSync(bundle);
+    writeValidBundle(bundle);
+    symlinkSync(bundle, linkedBundle);
+    roots.push(root);
+
+    expect(() =>
+      validateEvidenceBundle(linkedBundle, {
+        buildFingerprint: fingerprint,
+        mode: "local",
+      }),
+    ).toThrow("root must be a real directory");
   });
 });

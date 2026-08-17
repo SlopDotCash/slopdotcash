@@ -13,6 +13,8 @@ import { dirname, join, resolve } from "node:path";
 import { connect as connectTls } from "node:tls";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { PROJECTS } from "../src/lib/projects.mjs";
+import { childEnvironment } from "./child-environment.mjs";
 import {
   beginEvidenceTransaction,
   validateEvidenceBundle,
@@ -37,13 +39,27 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = packageRoot;
 const distRoot = join(packageRoot, "dist");
 const finalEvidenceRoot = join(packageRoot, "evidence");
+const MAX_PREVIEW_MANIFEST_BYTES = 1024 * 1024;
 const mode = parseEvidenceMode(process.argv.slice(2));
+const rootPublishedProjects = PROJECTS.filter(
+  (project) => project.skill.publishAtRoot === true,
+);
+const externalPrizeProjects = PROJECTS.filter(
+  (project) => project.reward.kind === "external-prize-share",
+);
+if (rootPublishedProjects.length !== 1 || externalPrizeProjects.length === 0) {
+  throw new TypeError(
+    "evidence capture requires one root-published project and an external-prize project",
+  );
+}
+const rootPublishedProjectId = rootPublishedProjects[0].id;
+const representativeExternalPrizeProjectId = externalPrizeProjects[0].id;
 
 function run(command, args) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       cwd: packageRoot,
-      env: process.env,
+      env: childEnvironment(),
       stdio: "inherit",
     });
     child.once("error", reject);
@@ -166,7 +182,29 @@ async function waitForServer(baseUrl, server, state, expectedFingerprint) {
         `[Slop] owned preview returned ${response.status} for the build fingerprint`,
       );
     }
-    const servedFingerprint = hash(Buffer.from(await response.arrayBuffer()));
+    if (!response.body) {
+      throw new Error("[Slop] owned preview omitted the build fingerprint");
+    }
+    const reader = response.body.getReader();
+    const digest = createHash("sha256");
+    let receivedBytes = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        receivedBytes += chunk.value.byteLength;
+        if (receivedBytes > MAX_PREVIEW_MANIFEST_BYTES) {
+          await reader.cancel("preview manifest exceeded size limit");
+          throw new Error(
+            "[Slop] owned preview build fingerprint is oversized",
+          );
+        }
+        digest.update(chunk.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const servedFingerprint = digest.digest("hex");
     if (servedFingerprint !== expectedFingerprint) {
       throw new Error(
         "[Slop] preview served a build other than the selected dist",
@@ -284,7 +322,7 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
     );
   }
   const securityHeaders = assertSecurityHeaders(httpsResponse.headers);
-  await httpsResponse.arrayBuffer();
+  await httpsResponse.body?.cancel();
   const assetUrl = new URL(assetPath, PRODUCTION_ORIGIN);
   assetUrl.searchParams.set("verify", cacheKey);
   const assetResponse = await fetch(assetUrl, {
@@ -299,7 +337,7 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
     );
   }
   const assetCacheControl = assertImmutableAssetCache(assetResponse.headers);
-  await assetResponse.arrayBuffer();
+  await assetResponse.body?.cancel();
   return {
     asset: {
       cacheControl: assetCacheControl,
@@ -385,7 +423,7 @@ if (mode === "production") {
     ],
     {
       cwd: packageRoot,
-      env: process.env,
+      env: childEnvironment(),
       stdio: "inherit",
     },
   );
@@ -523,18 +561,22 @@ try {
       await page.locator("#leaderboard").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
 
-      await page.goto(`${baseUrl}/projects/eliza?evidence=${cacheKey}`, {
-        waitUntil: "networkidle",
-      });
+      await page.goto(
+        `${baseUrl}/projects/${rootPublishedProjectId}?evidence=${cacheKey}`,
+        {
+          waitUntil: "networkidle",
+        },
+      );
       await page.locator("h1").waitFor({ state: "visible" });
       await page.locator("#start").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
       await page.locator(".project-leader-section").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
 
-      await page.goto(`${baseUrl}/projects/delta-star?evidence=${cacheKey}`, {
-        waitUntil: "networkidle",
-      });
+      await page.goto(
+        `${baseUrl}/projects/${representativeExternalPrizeProjectId}?evidence=${cacheKey}`,
+        { waitUntil: "networkidle" },
+      );
       await page.locator("h1").waitFor({ state: "visible" });
       await page.waitForTimeout(900);
 

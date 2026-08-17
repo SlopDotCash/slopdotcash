@@ -145,7 +145,10 @@ function iso(value: unknown, field: string): string {
     field,
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
   );
-  if (!Number.isFinite(Date.parse(result))) {
+  if (
+    !Number.isFinite(Date.parse(result)) ||
+    new Date(result).toISOString() !== result
+  ) {
     throw new TypeError(`${field} is not a UTC timestamp`);
   }
   return result;
@@ -162,13 +165,13 @@ function minor(value: unknown, field: string): string {
 function fileReference(
   value: unknown,
   field: string,
-  prefix: string,
+  expectedUrl: string,
 ): CycleFileReference {
   const reference = record(value, field);
   exact(reference, ["sha256", "url"], field);
   const url = text(reference.url, `${field}.url`);
-  if (!url.startsWith(prefix) || !/\.json$/u.test(url) || url.includes("..")) {
-    throw new TypeError(`${field}.url is outside its cycle`);
+  if (url !== expectedUrl) {
+    throw new TypeError(`${field}.url is not the canonical cycle artifact`);
   }
   return {
     sha256: text(reference.sha256, `${field}.sha256`, /^[0-9a-f]{64}$/u),
@@ -179,9 +182,9 @@ function fileReference(
 function nullableFileReference(
   value: unknown,
   field: string,
-  prefix: string,
+  expectedUrl: string,
 ): CycleFileReference | null {
-  return value === null ? null : fileReference(value, field, prefix);
+  return value === null ? null : fileReference(value, field, expectedUrl);
 }
 
 function contributorWallet(
@@ -400,9 +403,15 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     from: iso(window.from, `${field}.contributionWindow.from`),
     to: iso(window.to, `${field}.contributionWindow.to`),
   };
+  const [cycleYear, cycleMonth] = cycleId.split("-").map(Number);
+  const expectedWindowFrom = Math.max(
+    Date.UTC(cycleYear, cycleMonth - 1, 1),
+    Date.parse(project.reward.rewardStartAt),
+  );
+  const expectedWindowTo = Date.UTC(cycleYear, cycleMonth, 1);
   if (
-    contributionWindow.from.slice(0, 7) !== cycleId ||
-    Date.parse(contributionWindow.to) <= Date.parse(contributionWindow.from)
+    Date.parse(contributionWindow.from) !== expectedWindowFrom ||
+    Date.parse(contributionWindow.to) !== expectedWindowTo
   ) {
     throw new TypeError(`${field}.contributionWindow is invalid`);
   }
@@ -574,6 +583,55 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       `${field}.contributors do not reconcile with reward totals`,
     );
   }
+  const isExternal = entry.kind === "external-prize-share";
+  const hasExternalMoney =
+    normalizedReward.currency !== null ||
+    normalizedReward.capMinor !== "0" ||
+    normalizedReward.suggestedMinor !== "0" ||
+    normalizedReward.approvedMinor !== "0" ||
+    normalizedReward.paidMinor !== "0" ||
+    normalizedReward.feeMinor !== "0";
+  const hasMonthlyPolicyMismatch =
+    normalizedReward.currency !== "USDC" ||
+    normalizedReward.capMinor !== project.reward.monthlyCapMinor ||
+    normalizedReward.sharePartsPerMillion !== null ||
+    BigInt(normalizedReward.feeMinor) !==
+      (BigInt(normalizedReward.approvedMinor) *
+        BigInt(project.reward.feeBasisPoints)) /
+        10_000n;
+  if (
+    (isExternal &&
+      (hasExternalMoney ||
+        contributors.some(
+          (contributor) => contributor.state !== "external-share",
+        ))) ||
+    (!isExternal &&
+      (hasMonthlyPolicyMismatch ||
+        contributors.some(
+          (contributor) =>
+            contributor.state === "external-share" ||
+            contributor.sharePartsPerMillion !== null,
+        )))
+  ) {
+    throw new TypeError(`${field}.reward differs from project policy`);
+  }
+  for (const contributor of contributors) {
+    const approved = BigInt(contributor.approvedMinor);
+    const paid = BigInt(contributor.paidMinor);
+    if (
+      (contributor.state === "paid" &&
+        (approved === 0n || paid !== approved)) ||
+      (contributor.state === "approved" && paid !== 0n) ||
+      (!(["approved", "paid"] as const).includes(
+        contributor.state as "approved" | "paid",
+      ) &&
+        (approved !== 0n || paid !== 0n))
+    ) {
+      throw new TypeError(
+        `${field}.contributors contain contradictory payment state`,
+      );
+    }
+  }
   const prefix = `/data/cycles/${projectId}/${cycleId}/`;
   const files = record(entry.files, `${field}.files`);
   exact(
@@ -585,23 +643,27 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     sourceSnapshot: fileReference(
       files.sourceSnapshot,
       `${field}.files.sourceSnapshot`,
-      prefix,
+      `${prefix}source-snapshot.json`,
     ),
-    proposal: fileReference(files.proposal, `${field}.files.proposal`, prefix),
+    proposal: fileReference(
+      files.proposal,
+      `${field}.files.proposal`,
+      `${prefix}proposal.json`,
+    ),
     allocation: nullableFileReference(
       files.allocation,
       `${field}.files.allocation`,
-      prefix,
+      `${prefix}allocation.json`,
     ),
     executionPlan: nullableFileReference(
       files.executionPlan,
       `${field}.files.executionPlan`,
-      prefix,
+      `${prefix}execution-plan.json`,
     ),
     settlement: nullableFileReference(
       files.settlement,
       `${field}.files.settlement`,
-      prefix,
+      `${prefix}settlement.json`,
     ),
   };
   const state = entry.state as CycleIndexState;
@@ -612,6 +674,37 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     normalizedReward.paidMinor === "0" &&
     normalizedReward.feeMinor === "0" &&
     (normalizedReward.sharePartsPerMillion ?? 0) === 0;
+  const generatedAt = iso(entry.generatedAt, `${field}.generatedAt`);
+  const reviewEndsAt = nullableIso(entry.reviewEndsAt, `${field}.reviewEndsAt`);
+  const approvedAt = nullableIso(entry.approvedAt, `${field}.approvedAt`);
+  const settledAt = nullableIso(entry.settledAt, `${field}.settledAt`);
+  const reviewStateInvalid =
+    state === "review" &&
+    (approvedAt !== null ||
+      settledAt !== null ||
+      normalizedReward.approvedMinor !== "0" ||
+      normalizedReward.paidMinor !== "0" ||
+      contributors.some(
+        (contributor) =>
+          contributor.state !== "proposed" && contributor.state !== "unclaimed",
+      ));
+  const approvalStateInvalid =
+    ["payment-ready", "settlement-planned", "paid"].includes(state) &&
+    (approvedAt === null ||
+      reviewEndsAt === null ||
+      Date.parse(approvedAt ?? "") < Date.parse(reviewEndsAt ?? ""));
+  const settlementStateInvalid =
+    (normalizedFiles.settlement === null) !== (settledAt === null) ||
+    (settledAt !== null &&
+      approvedAt !== null &&
+      Date.parse(settledAt) < Date.parse(approvedAt));
+  const paidStateInvalid =
+    state === "paid" &&
+    (normalizedReward.paidMinor !== normalizedReward.approvedMinor ||
+      contributors.some(
+        (contributor) =>
+          contributor.approvedMinor !== "0" && contributor.state !== "paid",
+      ));
   if (
     (isEmptyClose &&
       (contributors.length !== 0 ||
@@ -631,7 +724,14 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       !normalizedFiles.allocation) ||
     (["settlement-planned", "paid"].includes(state) &&
       !normalizedFiles.executionPlan) ||
-    (state === "paid" && !normalizedFiles.settlement)
+    (state === "paid" && !normalizedFiles.settlement) ||
+    reviewStateInvalid ||
+    approvalStateInvalid ||
+    settlementStateInvalid ||
+    paidStateInvalid ||
+    Date.parse(generatedAt) < Date.parse(contributionWindow.to) ||
+    (isExternal &&
+      (reviewEndsAt !== null || approvedAt !== null || settledAt !== null))
   ) {
     throw new TypeError(`${field}.state does not match its immutable files`);
   }
@@ -640,11 +740,11 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     cycleId,
     kind: entry.kind,
     state,
-    generatedAt: iso(entry.generatedAt, `${field}.generatedAt`),
+    generatedAt,
     contributionWindow,
-    reviewEndsAt: nullableIso(entry.reviewEndsAt, `${field}.reviewEndsAt`),
-    approvedAt: nullableIso(entry.approvedAt, `${field}.approvedAt`),
-    settledAt: nullableIso(entry.settledAt, `${field}.settledAt`),
+    reviewEndsAt,
+    approvedAt,
+    settledAt,
     reward: normalizedReward,
     contributors,
     files: normalizedFiles,
@@ -658,11 +758,18 @@ export function assertCycleIndex(value: unknown): asserts value is CycleIndex {
   if (index.schemaVersion !== CYCLE_INDEX_SCHEMA_VERSION) {
     throw new TypeError("cycle index schema version is invalid");
   }
-  iso(index.generatedAt, "cycle index.generatedAt");
+  const generatedAt = iso(index.generatedAt, "cycle index.generatedAt");
   if (!Array.isArray(index.cycles)) {
     throw new TypeError("cycle index.cycles must be an array");
   }
   const cycles = index.cycles.map(cycleEntry);
+  if (
+    cycles.some(
+      (entry) => Date.parse(entry.generatedAt) > Date.parse(generatedAt),
+    )
+  ) {
+    throw new TypeError("cycle index predates one of its cycle entries");
+  }
   const keys = cycles.map((entry) => `${entry.projectId}\0${entry.cycleId}`);
   if (new Set(keys).size !== keys.length) {
     throw new TypeError("cycle index repeats a project cycle");

@@ -22,7 +22,7 @@ async function boundedApiBody(response: Response): Promise<string> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
-    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
+    if (!/^\d+$/u.test(declaredLength) || !Number.isSafeInteger(parsedLength)) {
       throw new Error(
         "GitHub wallet lookup returned an invalid Content-Length",
       );
@@ -43,6 +43,7 @@ async function boundedApiBody(response: Response): Promise<string> {
       if (chunk.done) break;
       byteLength += chunk.value.byteLength;
       if (byteLength > MAX_API_RESPONSE_BYTES) {
+        await reader.cancel("response exceeded size limit");
         throw new RangeError(
           "GitHub wallet lookup response exceeded its size limit",
         );
@@ -57,6 +58,8 @@ async function boundedApiBody(response: Response): Promise<string> {
       });
     }
     throw error;
+  } finally {
+    reader.releaseLock();
   }
   return body;
 }

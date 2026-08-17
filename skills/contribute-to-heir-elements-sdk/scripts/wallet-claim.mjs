@@ -78,12 +78,37 @@ function argumentsFor(values) {
 }
 
 async function responseJson(response, field) {
-  const source = await response.text();
-  if (Buffer.byteLength(source) > MAX_RESPONSE_BYTES) {
+  const declared = response.headers.get("content-length");
+  if (
+    declared !== null &&
+    (!/^\d+$/u.test(declared) || Number(declared) > MAX_RESPONSE_BYTES)
+  ) {
     throw new Error(`${field} response exceeded its bound`);
   }
+  if (!response.body) throw new Error(`${field} response was not JSON`);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
   try {
-    return JSON.parse(source);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(`${field} response exceeded its bound`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.concat(chunks, total),
+      ),
+    );
   } catch {
     throw new Error(`${field} response was not JSON`);
   }
@@ -116,13 +141,12 @@ function claim(value, field) {
 }
 
 async function authenticate(fetchImpl, assertionProvider) {
-  let assertion = await assertionProvider(fetchImpl);
+  const assertion = await assertionProvider(fetchImpl);
   const response = await fetchImpl(`${API_ORIGIN}/api/v1/auth/session`, {
     method: "POST",
     headers: { "X-Slop-Identity-Assertion": assertion },
     signal: AbortSignal.timeout(30_000),
   });
-  assertion = "";
   if (!response.ok) {
     throw new Error(
       `Slop wallet authentication returned HTTP ${response.status}`,
@@ -152,7 +176,12 @@ export async function registerWalletClaim(
   if (typeof fetchImpl !== "function") {
     throw new Error("Slop wallet registry transport is unavailable");
   }
-  let token = await authenticate(fetchImpl, assertionProvider);
+  if (!isSolanaAddress(address)) {
+    throw new TypeError(
+      "Wallet address must be a canonical 32-byte Solana public key",
+    );
+  }
+  const token = await authenticate(fetchImpl, assertionProvider);
   const headers = { Authorization: `Bearer ${token}` };
   const currentResponse = await fetchImpl(
     `${API_ORIGIN}/api/v1/wallet-claims/current`,
@@ -161,7 +190,6 @@ export async function registerWalletClaim(
   let current = null;
   if (currentResponse.status !== 404) {
     if (!currentResponse.ok) {
-      token = "";
       throw new Error(
         `Current wallet claim returned HTTP ${currentResponse.status}`,
       );
@@ -172,7 +200,6 @@ export async function registerWalletClaim(
     );
   }
   if (current?.address === address) {
-    token = "";
     return current;
   }
   const created = await fetchImpl(`${API_ORIGIN}/api/v1/wallet-claims`, {
@@ -184,7 +211,6 @@ export async function registerWalletClaim(
     }),
     signal: AbortSignal.timeout(30_000),
   });
-  token = "";
   if (!created.ok) {
     throw new Error(`Wallet registration returned HTTP ${created.status}`);
   }

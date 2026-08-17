@@ -21,6 +21,7 @@ type D1Statement = {
 };
 
 export type D1Database = {
+  batch(statements: D1Statement[]): Promise<D1Result[]>;
   prepare(query: string): D1Statement;
 };
 
@@ -192,6 +193,19 @@ function mapUploadIntent(row: UploadIntentRow): TraceUploadIntent {
   };
 }
 
+function sameEvent(existing: EventRow, event: RunProgressEvent): boolean {
+  return (
+    existing.run_id === event.runId &&
+    existing.github_user_id === event.githubId &&
+    existing.kind === event.kind &&
+    existing.occurred_at === event.occurredAt &&
+    existing.source === event.source &&
+    existing.github_object_id === event.githubObjectId &&
+    existing.github_url === event.githubUrl &&
+    existing.head_sha === event.headSha
+  );
+}
+
 function sameCreate(existing: RunRow, input: CreateRunInput): boolean {
   return (
     existing.client_run_id === input.clientRunId &&
@@ -283,16 +297,7 @@ export class CloudflareTracePersistence implements TracePersistence {
       .bind(input.githubId, input.idempotencyKey)
       .first<{ run_id: string; trace_sha256: string }>();
     if (existing !== null) {
-      if (
-        existing.run_id !== input.runId ||
-        existing.trace_sha256 !== input.object.sha256
-      ) {
-        return { status: "conflict" };
-      }
-      const run = await this.getRun(input.runId);
-      if (run === null || run.traceSha256 !== input.object.sha256)
-        return { status: "conflict" };
-      return { status: "existing", value: run };
+      return { status: "conflict" };
     }
 
     const run = await this.getRun(input.runId);
@@ -304,11 +309,35 @@ export class CloudflareTracePersistence implements TracePersistence {
     ) {
       return { status: "conflict" };
     }
-    await this.db
+    const intentConsume = this.db
+      .prepare(
+        `UPDATE trace_upload_intents SET consumed_at = ?
+         WHERE token_hash = ? AND run_id = ? AND github_user_id = ?
+           AND trace_sha256 = ? AND size_bytes = ? AND content_type = ?
+           AND consumed_at IS NULL AND expires_at > ?`,
+      )
+      .bind(
+        input.intentConsumedAt,
+        input.idempotencyKey,
+        input.runId,
+        input.githubId,
+        input.object.sha256,
+        input.object.sizeBytes,
+        input.object.contentType,
+        input.intentConsumedAt,
+      );
+    const objectInsert = this.db
       .prepare(
         `INSERT INTO trace_objects (
           sha256, r2_key, size_bytes, content_type, created_by_github_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(sha256) DO NOTHING`,
+        ) SELECT ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM trace_upload_intents
+            WHERE token_hash = ? AND run_id = ? AND github_user_id = ?
+              AND trace_sha256 = ? AND size_bytes = ? AND content_type = ?
+              AND consumed_at = ?
+          )
+          ON CONFLICT(sha256) DO NOTHING`,
       )
       .bind(
         input.object.sha256,
@@ -317,40 +346,121 @@ export class CloudflareTracePersistence implements TracePersistence {
         input.object.contentType,
         input.object.createdByGithubId,
         input.object.createdAt,
+        input.idempotencyKey,
+        input.runId,
+        input.githubId,
+        input.object.sha256,
+        input.object.sizeBytes,
+        input.object.contentType,
+        input.intentConsumedAt,
+      );
+    const uploadInsert = this.db
+      .prepare(
+        `INSERT INTO trace_uploads (
+          github_user_id, idempotency_key, run_id, trace_sha256, created_at
+        ) SELECT ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM trace_objects
+            WHERE sha256 = ? AND r2_key = ? AND size_bytes = ?
+              AND content_type = ?
+          ) AND EXISTS (
+            SELECT 1 FROM trace_upload_intents
+            WHERE token_hash = ? AND run_id = ? AND github_user_id = ?
+              AND trace_sha256 = ? AND size_bytes = ? AND content_type = ?
+              AND consumed_at = ?
+          )`,
       )
-      .run();
-    try {
-      await this.db
-        .prepare(
-          `INSERT INTO trace_uploads (
-            github_user_id, idempotency_key, run_id, trace_sha256, created_at
-          ) VALUES (?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          input.githubId,
-          input.idempotencyKey,
-          input.runId,
-          input.object.sha256,
-          input.object.createdAt,
-        )
-        .run();
-    } catch {
-      return { status: "conflict" };
-    }
-    await this.db
+      .bind(
+        input.githubId,
+        input.idempotencyKey,
+        input.runId,
+        input.object.sha256,
+        input.object.createdAt,
+        input.object.sha256,
+        input.object.key,
+        input.object.sizeBytes,
+        input.object.contentType,
+        input.idempotencyKey,
+        input.runId,
+        input.githubId,
+        input.object.sha256,
+        input.object.sizeBytes,
+        input.object.contentType,
+        input.intentConsumedAt,
+      );
+    const runUpdate = this.db
       .prepare(
         `UPDATE trace_runs
          SET trace_sha256 = ?, state = 'trace_uploaded'
          WHERE id = ? AND github_user_id = ? AND state != 'finalized'
-           AND (trace_sha256 IS NULL OR trace_sha256 = ?)`,
+           AND (trace_sha256 IS NULL OR trace_sha256 = ?)
+           AND EXISTS (
+             SELECT 1 FROM trace_uploads
+             WHERE github_user_id = ? AND idempotency_key = ?
+               AND run_id = ? AND trace_sha256 = ?
+           ) AND EXISTS (
+             SELECT 1 FROM trace_upload_intents
+             WHERE token_hash = ? AND run_id = ? AND github_user_id = ?
+               AND trace_sha256 = ? AND size_bytes = ? AND content_type = ?
+               AND consumed_at = ?
+           )`,
       )
       .bind(
         input.object.sha256,
         input.runId,
         input.githubId,
         input.object.sha256,
+        input.githubId,
+        input.idempotencyKey,
+        input.runId,
+        input.object.sha256,
+        input.idempotencyKey,
+        input.runId,
+        input.githubId,
+        input.object.sha256,
+        input.object.sizeBytes,
+        input.object.contentType,
+        input.intentConsumedAt,
+      );
+    const commitInsert = this.db
+      .prepare(
+        `INSERT INTO trace_attachment_commits (
+          token_hash, run_id, github_user_id, trace_sha256, consumed_at
+        ) VALUES (?, ?, ?, ?, ?)`,
       )
-      .run();
+      .bind(
+        input.idempotencyKey,
+        input.runId,
+        input.githubId,
+        input.object.sha256,
+        input.intentConsumedAt,
+      );
+    try {
+      const results = await this.db.batch([
+        intentConsume,
+        objectInsert,
+        uploadInsert,
+        runUpdate,
+        commitInsert,
+      ]);
+      if (
+        results.length !== 5 ||
+        results.some((result) => !result.success) ||
+        (results[0].meta?.changes ?? 0) !== 1 ||
+        (results[2].meta?.changes ?? 0) !== 1 ||
+        (results[3].meta?.changes ?? 0) !== 1 ||
+        (results[4].meta?.changes ?? 0) !== 1
+      ) {
+        throw new Error("Atomic trace attachment did not update one run");
+      }
+    } catch (error) {
+      const stillAvailable = await this.getUploadIntent(
+        input.idempotencyKey,
+        input.intentConsumedAt,
+      );
+      if (stillAvailable === null) return { status: "conflict" };
+      throw error;
+    }
     const updated = await this.getRun(input.runId);
     if (updated === null || updated.traceSha256 !== input.object.sha256) {
       return { status: "conflict" };
@@ -384,7 +494,7 @@ export class CloudflareTracePersistence implements TracePersistence {
       .bind(event.githubId, event.idempotencyKey)
       .first<EventRow>();
     if (existing !== null) {
-      return existing.run_id === event.runId && existing.kind === event.kind
+      return sameEvent(existing, event)
         ? { status: "existing", value: mapEvent(existing) }
         : { status: "conflict" };
     }
@@ -468,21 +578,16 @@ export class CloudflareTracePersistence implements TracePersistence {
     return { status: "created", value: intent };
   }
 
-  async consumeUploadIntent(
+  async getUploadIntent(
     tokenHash: string,
     now: string,
   ): Promise<TraceUploadIntent | null> {
-    const result = await this.db
+    const row = await this.db
       .prepare(
-        `UPDATE trace_upload_intents SET consumed_at = ?
+        `SELECT * FROM trace_upload_intents
          WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
       )
-      .bind(now, tokenHash, now)
-      .run();
-    if ((result.meta?.changes ?? 0) !== 1) return null;
-    const row = await this.db
-      .prepare("SELECT * FROM trace_upload_intents WHERE token_hash = ?")
-      .bind(tokenHash)
+      .bind(tokenHash, now)
       .first<UploadIntentRow>();
     return row === null ? null : mapUploadIntent(row);
   }
@@ -496,6 +601,10 @@ export class CloudflareTracePersistence implements TracePersistence {
       ) {
         throw new Error("Immutable R2 trace object has conflicting metadata");
       }
+      const verified = await this.readTraceBytes(object);
+      if (verified === null) {
+        throw new Error("Immutable R2 trace object failed byte verification");
+      }
       return;
     }
     try {
@@ -508,14 +617,20 @@ export class CloudflareTracePersistence implements TracePersistence {
         onlyIf: { etagDoesNotMatch: "*" },
       });
     } catch {
-      const raced = await this.bucket.head(object.key);
-      if (
-        raced === null ||
-        raced.size !== object.sizeBytes ||
-        raced.customMetadata?.sha256 !== object.sha256
-      ) {
-        throw new Error("R2 trace write failed integrity verification");
-      }
+      // A conditional create can lose a race. The postcondition below decides
+      // whether the immutable object is acceptable in both success and race cases.
+    }
+    const stored = await this.bucket.head(object.key);
+    if (
+      stored === null ||
+      stored.size !== object.sizeBytes ||
+      stored.customMetadata?.sha256 !== object.sha256
+    ) {
+      throw new Error("R2 trace write failed integrity verification");
+    }
+    const verified = await this.readTraceBytes(object);
+    if (verified === null) {
+      throw new Error("R2 trace write failed byte verification");
     }
   }
 
@@ -565,7 +680,31 @@ export class CloudflareTracePersistence implements TracePersistence {
     ) {
       return null;
     }
-    const bytes = new Uint8Array(await new Response(value.body).arrayBuffer());
+    const response = new Response(value.body);
+    if (response.body === null) return null;
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        total += chunk.value.byteLength;
+        if (total > object.sizeBytes) {
+          await reader.cancel("R2 object exceeded immutable size");
+          return null;
+        }
+        chunks.push(chunk.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
     if (
       bytes.byteLength !== object.sizeBytes ||
       (await sha256Hex(bytes)) !== object.sha256

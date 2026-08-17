@@ -32,7 +32,12 @@ export function settlementReminder(
 ): SettlementReminder | null {
   const close = Date.parse(closesAt);
   const current = Date.parse(now);
-  if (!Number.isFinite(close) || !Number.isFinite(current)) {
+  const settled = settledAt === null ? null : Date.parse(settledAt);
+  if (
+    !Number.isFinite(close) ||
+    !Number.isFinite(current) ||
+    (settled !== null && !Number.isFinite(settled))
+  ) {
     throw new TypeError("settlement reminder timestamps are invalid");
   }
   if (settledAt !== null) return null;

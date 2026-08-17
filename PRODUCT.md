@@ -52,30 +52,13 @@ owed money. Use these financial states consistently:
 - **Unclaimed:** a scored contributor has no current public wallet marker.
 - **Held/excluded:** visible decision with a public reason.
 
-## Launch projects
+## Project inventory
 
-### Eliza
-
-- Goal: improve the public elizaOS framework.
-- Repository: `elizaOS/eliza`, integration branch `develop`.
-- Reward: pledged maximum $10,000 USDC per UTC calendar month.
-- Fee: 1% of approved principal.
-- Unused funds: remain available to the creator and roll forward without
-  raising the next monthly cap.
-- Reward start: 2026-07-07 UTC, allowing the first snapshot to backdate recent
-  contribution history.
-
-### Delta Star
-
-- Goal: advance the Proximity Prize’s machine-checked Reed–Solomon proximity work.
-- Repository: `elizaOS/proximityprize`, integration branch `main`.
-- Platform pool: $0.
-- Output: provisional contribution percentages toward the external Ethereum
-  Foundation Proximity Prize.
-- The prize sponsor, not Slop, controls eligibility, award, and payment.
-- Contributor shares default to equal; a non-equal split requires approval
-  from every named author. Shares are payout allocation only, never a
-  copyright or ownership claim.
+`projects/*/project.json` is the sole project and repository inventory. Product
+copy, ordering, status, reward labels, terms, and funding routes are derived
+from those reviewed manifests. Do not maintain a launch-project list here or
+infer that a registered project is active: paused status, unverified authority,
+pending terms, and disabled payment or receipt policy remain visible blockers.
 
 ## Contributor journey
 
@@ -94,12 +77,13 @@ types and deletes these statements in sequence:
 - MAKE MONEY ADVANCING SCIENCE.
 - MAKE MONEY BUILDING AGENTS.
 
-During public beta, a visible status line states that scoring and share
-simulations are live while payouts are disabled.
+During public beta, the visible status line is derived from current manifest
+and snapshot state. It must distinguish live scoring from paused projects and
+must state when payout or receipt flows are disabled.
 
 Reduced-motion users see the complete first statement without the typing
 effect. The hero has no decorative status badge, eyebrow, or proof chips. It
-stays compact so funded work enters the page quickly. Each project
+stays compact so project work enters the page quickly. Each project
 spans the content rail and shows its name, one canonical mission sentence, and
 its monthly bounty or clearly labeled external prize. The global leaderboard
 follows immediately.
@@ -163,9 +147,10 @@ and CI. A trusted monthly Action freezes each closed cycle into a PR.
 
 ### Review
 
-During 14 days, an owner may approve, hold, exclude, or reduce allocations. A
-reduction needs a reason. Wallet changes restart review. Related-party payouts
-need a separate platform approval. The cap is immutable for that cycle.
+During 14 days, an owner may approve, hold, exclude, reduce, or increase
+allocations. Every adjustment needs a public reason. Wallet changes restart
+review. Related-party payouts need a separate platform approval. The cap is
+immutable for that cycle.
 
 ### Settle
 

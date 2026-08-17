@@ -15,6 +15,7 @@ import {
   type VerifiedSolanaTransaction,
 } from "../src/lib/solana-settlement";
 import {
+  assertSquadsVaultIdentity,
   assertSquadsVaultUsdcState,
   COMMITMENT_SQUADS_VERIFIER_VERSION,
   type VerifiedSquadsVaultState,
@@ -39,23 +40,31 @@ export type CommitmentVerificationMode =
 export interface CommitmentSquadsInput {
   amountMinor?: string;
   fetchImpl?: FetchLike;
+  funderMember: string;
   mode: CommitmentVerificationMode;
   recipient?: string;
   signature?: string;
+  stewardMember: string;
   tokenAccount?: string;
+  multisig: string;
   vault: string;
+  vaultIndex: number;
 }
 
 const CLI_ARGUMENTS = new Set([
   "--mode",
+  "--funder-member",
+  "--multisig",
   "--vault",
+  "--vault-index",
   "--token-account",
   "--signature",
   "--recipient",
+  "--steward-member",
   "--amount-minor",
 ]);
 const CLI_USAGE =
-  "Usage: verify-commitment-squads.ts --mode state --vault <vault> --token-account <token-account> | --mode deposit --vault <vault> --signature <signature> --amount-minor <integer> | --mode <release|refund> --vault <vault> --recipient <owner> --signature <signature> --amount-minor <integer>";
+  "Usage: verify-commitment-squads.ts --mode state --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --token-account <token-account> | --mode deposit --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --signature <signature> --amount-minor <integer> | --mode <release|refund> --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --recipient <owner> --signature <signature> --amount-minor <integer>";
 
 export function parseCommitmentSquadsArguments(argv: readonly string[]) {
   const parsed = new Map<string, string>();
@@ -75,11 +84,15 @@ export function parseCommitmentSquadsArguments(argv: readonly string[]) {
   }
   return {
     mode: parsed.get("--mode") ?? null,
+    multisig: parsed.get("--multisig") ?? null,
     vault: parsed.get("--vault") ?? null,
+    vaultIndex: parsed.get("--vault-index") ?? null,
     tokenAccount: parsed.get("--token-account") ?? null,
     signature: parsed.get("--signature") ?? null,
     recipient: parsed.get("--recipient") ?? null,
     amountMinor: parsed.get("--amount-minor") ?? null,
+    funderMember: parsed.get("--funder-member") ?? null,
+    stewardMember: parsed.get("--steward-member") ?? null,
   };
 }
 
@@ -87,7 +100,7 @@ async function boundedBody(response: Response): Promise<string> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
-    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
+    if (!/^\d+$/u.test(declaredLength) || !Number.isSafeInteger(parsedLength)) {
       throw new TypeError("Solana RPC returned an invalid Content-Length");
     }
     if (parsedLength > MAX_SOLANA_COMMITMENT_RPC_BYTES) {
@@ -105,6 +118,7 @@ async function boundedBody(response: Response): Promise<string> {
       if (chunk.done) break;
       byteLength += chunk.value.byteLength;
       if (byteLength > MAX_SOLANA_COMMITMENT_RPC_BYTES) {
+        await reader.cancel("response exceeded size limit");
         throw new RangeError("Solana RPC response exceeded its size limit");
       }
       body += decoder.decode(chunk.value, { stream: true });
@@ -117,6 +131,8 @@ async function boundedBody(response: Response): Promise<string> {
       });
     }
     throw error;
+  } finally {
+    reader.releaseLock();
   }
   if (byteLength === 0) throw new RangeError("Solana RPC response is empty");
   return body;
@@ -222,21 +238,58 @@ function quorumGroups<Result>(
   return agreeing;
 }
 
+function finalizedAccountValue(resultValue: unknown): {
+  slot: number;
+  value: unknown;
+} {
+  if (
+    typeof resultValue !== "object" ||
+    resultValue === null ||
+    Array.isArray(resultValue)
+  ) {
+    throw new TypeError("Solana multisig account response is invalid");
+  }
+  const result = resultValue as Record<string, unknown>;
+  if (
+    typeof result.context !== "object" ||
+    result.context === null ||
+    Array.isArray(result.context)
+  ) {
+    throw new TypeError("Solana multisig account response context is invalid");
+  }
+  const observedSlot = (result.context as Record<string, unknown>).slot;
+  if (!Number.isSafeInteger(observedSlot) || Number(observedSlot) < 0) {
+    throw new TypeError("Solana multisig account response slot is invalid");
+  }
+  if (!("value" in result)) {
+    throw new TypeError("Solana multisig account response has no value");
+  }
+  return { slot: Number(observedSlot), value: result.value };
+}
+
 async function verifyVaultState(
+  funderMember: string,
+  multisig: string,
   vault: string,
+  vaultIndex: number,
   tokenAccount: string,
+  stewardMember: string,
   fetchImpl: FetchLike,
 ) {
   const settled = await Promise.allSettled(
     SOLANA_COMMITMENT_RPC_AUTHORITIES.map(async (authority, index) => {
       const { rpc, request } = authorityRequest(authority, index, fetchImpl);
-      const verified = assertSquadsVaultUsdcState(
-        await request("getAccountInfo", [
-          tokenAccount,
+      const verified = await assertSquadsVaultUsdcState(
+        await request("getMultipleAccounts", [
+          [multisig, tokenAccount],
           { commitment: "finalized", encoding: "jsonParsed" },
         ]),
+        multisig,
         vault,
+        vaultIndex,
         tokenAccount,
+        funderMember,
+        stewardMember,
       );
       return { authority: rpc.toString(), verified };
     }),
@@ -249,10 +302,14 @@ async function verifyVaultState(
   return {
     mode: "state" as const,
     state: "verified-on-chain" as const,
+    funderMember,
+    multisig,
     vault,
+    vaultIndex,
     tokenAccount,
     balanceMinor: agreeing[0].verified.balanceMinor,
     slot: Math.max(...agreeing.map(({ verified }) => verified.slot)),
+    stewardMember,
     verifier: {
       version: COMMITMENT_SQUADS_VERIFIER_VERSION,
       checkedAt,
@@ -270,15 +327,32 @@ async function verifyVaultTransaction(
   mode: "deposit" | "refund" | "release",
   input: {
     amountMinor: string;
+    funderMember: string;
+    multisig: string;
     recipient: string | null;
     signature: string;
+    stewardMember: string;
     vault: string;
+    vaultIndex: number;
   },
   fetchImpl: FetchLike,
 ) {
   const settled = await Promise.allSettled(
     SOLANA_COMMITMENT_RPC_AUTHORITIES.map(async (authority, index) => {
       const { rpc, request } = authorityRequest(authority, index, fetchImpl);
+      const multisigResult = await request("getAccountInfo", [
+        input.multisig,
+        { commitment: "finalized", encoding: "base64" },
+      ]);
+      const multisigEnvelope = finalizedAccountValue(multisigResult);
+      const identity = await assertSquadsVaultIdentity(
+        multisigEnvelope.value,
+        input.multisig,
+        input.vault,
+        input.vaultIndex,
+        input.funderMember,
+        input.stewardMember,
+      );
       const result = await request("getTransaction", [
         input.signature,
         {
@@ -292,7 +366,7 @@ async function verifyVaultTransaction(
           "Solana transaction is absent at finalized commitment",
         );
       }
-      const verified =
+      const transaction =
         mode === "deposit"
           ? assertFinalizedUsdcFundingTransfer(
               result,
@@ -306,35 +380,52 @@ async function verifyVaultTransaction(
                 recipientOwner: input.recipient as string,
               },
             ]);
-      return { authority: rpc.toString(), verified };
+      return { authority: rpc.toString(), verified: { identity, transaction } };
     }),
   );
-  const agreeing = quorumGroups<VerifiedSolanaTransaction>(
+  const agreeing = quorumGroups<{
+    identity: Awaited<ReturnType<typeof assertSquadsVaultIdentity>>;
+    transaction: VerifiedSolanaTransaction;
+  }>(
     settled,
     (verified) =>
-      `${verified.signature}:${verified.slot}:${verified.blockTime}`,
+      `${verified.identity.multisig}:${verified.identity.vaultIndex}:${verified.transaction.signature}:${verified.transaction.slot}:${verified.transaction.blockTime}`,
   );
   const checkedAt = new Date().toISOString();
   return {
     mode,
     event: mode,
     state: "verified-on-chain" as const,
+    funderMember: input.funderMember,
+    multisig: input.multisig,
+    vault: input.vault,
+    vaultIndex: input.vaultIndex,
     finality: { kind: "finalized" as const },
+    stewardMember: input.stewardMember,
     verifier: {
       version: COMMITMENT_SQUADS_VERIFIER_VERSION,
       checkedAt,
       evidenceUrl: `https://solscan.io/tx/${input.signature}`,
       reason: null,
     },
-    chainEvidence: agreeing[0].verified,
+    chainEvidence: agreeing[0].verified.transaction,
     authorities: agreeing.map(({ authority }) => ({ authority })),
   };
 }
 
 export async function verifyCommitmentSquads(input: CommitmentSquadsInput) {
   const fetchImpl = input.fetchImpl ?? fetch;
-  if (!isFundingAddress("solana", input.vault)) {
-    throw new TypeError("vault is not a Solana public key");
+  if (
+    !isFundingAddress("solana", input.multisig) ||
+    !isFundingAddress("solana", input.vault) ||
+    !isFundingAddress("solana", input.funderMember) ||
+    !isFundingAddress("solana", input.stewardMember) ||
+    input.funderMember === input.stewardMember ||
+    !Number.isInteger(input.vaultIndex) ||
+    input.vaultIndex < 0 ||
+    input.vaultIndex > 255
+  ) {
+    throw new TypeError("multisig, vault, or vault index is invalid");
   }
   if (input.mode === "state") {
     if (
@@ -343,11 +434,17 @@ export async function verifyCommitmentSquads(input: CommitmentSquadsInput) {
       input.amountMinor !== undefined ||
       !isFundingAddress("solana", input.tokenAccount)
     ) {
-      throw new TypeError("state mode requires only a vault token account");
+      throw new TypeError(
+        "state mode requires a vault token account and no transaction fields",
+      );
     }
     return verifyVaultState(
+      input.funderMember,
+      input.multisig,
       input.vault,
+      input.vaultIndex,
       input.tokenAccount as string,
+      input.stewardMember,
       fetchImpl,
     );
   }
@@ -384,9 +481,13 @@ export async function verifyCommitmentSquads(input: CommitmentSquadsInput) {
     input.mode,
     {
       amountMinor: input.amountMinor,
+      funderMember: input.funderMember,
+      multisig: input.multisig,
       recipient: input.recipient ?? null,
       signature: input.signature,
+      stewardMember: input.stewardMember,
       vault: input.vault,
+      vaultIndex: input.vaultIndex,
     },
     fetchImpl,
   );
@@ -396,7 +497,11 @@ if (import.meta.main) {
   const parsed = parseCommitmentSquadsArguments(process.argv.slice(2));
   if (
     !parsed.mode ||
+    !parsed.funderMember ||
+    !parsed.multisig ||
+    !parsed.stewardMember ||
     !parsed.vault ||
+    parsed.vaultIndex === null ||
     (parsed.mode === "state"
       ? !parsed.tokenAccount
       : !parsed.signature || !parsed.amountMinor)
@@ -407,9 +512,13 @@ if (import.meta.main) {
     `${JSON.stringify(
       await verifyCommitmentSquads({
         mode: parsed.mode as CommitmentVerificationMode,
+        funderMember: parsed.funderMember,
+        multisig: parsed.multisig,
         vault: parsed.vault,
+        vaultIndex: Number(parsed.vaultIndex),
         tokenAccount: parsed.tokenAccount ?? undefined,
         signature: parsed.signature ?? undefined,
+        stewardMember: parsed.stewardMember,
         recipient: parsed.recipient ?? undefined,
         amountMinor: parsed.amountMinor ?? undefined,
       }),

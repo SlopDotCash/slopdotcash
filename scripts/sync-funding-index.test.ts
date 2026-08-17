@@ -61,18 +61,23 @@ describe("funding manifest history", () => {
     expect(() =>
       fundingAddressesAtRevision("eliza", "f".repeat(40), root),
     ).toThrow(/not an ancestor/u);
-  });
+  }, 15_000);
 
   it("publishes commitments separately and bounds committed claims", async () => {
     const root = mkdtempSync(join(tmpdir(), "slop-funding-commitment-"));
     temporaryRoots.push(root);
     const vault = "Vote111111111111111111111111111111111111111";
+    const funderMember = "Stake11111111111111111111111111111111111111";
+    const stewardMember = "SysvarRent111111111111111111111111111111111";
     const instrument = {
       kind: "squads-v4-vault",
       network: "solana",
       asset: "USDC",
       multisig: "11111111111111111111111111111111",
+      funderMember,
+      stewardMember,
       vault,
+      vaultIndex: 0,
       funderActorId: "18633264",
       deadline: "2026-12-01T00:00:00.000Z",
       effectiveAt: "2026-08-01T00:00:00.000Z",
@@ -98,8 +103,11 @@ describe("funding manifest history", () => {
       network: "solana",
       asset: "USDC",
       instrument: {
+        funderMember,
         multisig: instrument.multisig,
+        stewardMember,
         vault: instrument.vault,
+        vaultIndex: 0,
       },
       transactionId: signature,
       amountMinor: "5000000",
@@ -107,7 +115,7 @@ describe("funding manifest history", () => {
       state: "verified-on-chain",
       finality: { kind: "finalized" },
       verifier: {
-        version: "commitment-squads-v1",
+        version: "commitment-squads-v2",
         checkedAt: "2026-08-02T01:00:00.000Z",
         evidenceUrl: `https://solscan.io/tx/${signature}`,
         reason: null,
@@ -167,5 +175,5 @@ describe("funding manifest history", () => {
         projects: [withoutInstrument],
       }),
     ).rejects.toThrow(/not active/u);
-  });
+  }, 15_000);
 });

@@ -620,7 +620,10 @@ function timestamp(value, field) {
   const result = text(value, field, {
     pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
   });
-  if (!Number.isFinite(Date.parse(result)))
+  if (
+    !Number.isFinite(Date.parse(result)) ||
+    new Date(result).toISOString() !== result
+  )
     throw new TypeError(`${field} is invalid`);
   return result;
 }
@@ -657,7 +660,13 @@ function validateRepository(value, index) {
   return repository;
 }
 
-function validateSkill(value, field, expectedId, publicPath) {
+function validateSkill(
+  value,
+  field,
+  expectedId,
+  publicPath,
+  { allowLegacyMissingPublishAtRoot = false } = {},
+) {
   const skill = record(value, field);
   const hasPublishAtRoot = Object.hasOwn(skill, "publishAtRoot");
   exactKeys(
@@ -672,6 +681,9 @@ function validateSkill(value, field, expectedId, publicPath) {
       : ["id", "sourcePath"],
     field,
   );
+  if (publicPath && !hasPublishAtRoot && !allowLegacyMissingPublishAtRoot) {
+    throw new TypeError(`${field}.publishAtRoot is required`);
+  }
   if (
     skill.id !== expectedId ||
     skill.sourcePath !== `skills/${expectedId}` ||
@@ -809,7 +821,10 @@ function validateFunding(value, projectId) {
 
 function validateProjectDefinition(
   value,
-  { allowLegacyUnsupportedOwnershipClaim = false } = {},
+  {
+    allowLegacyMissingPublishAtRoot = false,
+    allowLegacyUnsupportedOwnershipClaim = false,
+  } = {},
 ) {
   const project = record(value, "project");
   exactKeys(project, PROJECT_KEYS, "project");
@@ -849,6 +864,7 @@ function validateProjectDefinition(
     "project.skill",
     `contribute-to-${id}`,
     `/projects/${id}/skill.md`,
+    { allowLegacyMissingPublishAtRoot },
   );
   validateSkill(
     project.reviewSkill,
@@ -932,6 +948,7 @@ export function assertProjectDefinition(value) {
  */
 export function assertHistoricalProjectDefinition(value) {
   return validateProjectDefinition(value, {
+    allowLegacyMissingPublishAtRoot: true,
     allowLegacyUnsupportedOwnershipClaim: true,
   });
 }
@@ -942,12 +959,13 @@ export function assertProjectRegistry(values) {
     throw new TypeError("project registry must contain 1 to 100 projects");
   }
   const projects = values.map(assertProjectDefinition);
-  for (const launchProject of ["eliza", "delta-star"]) {
-    if (!projects.some((project) => project.id === launchProject)) {
-      throw new TypeError(
-        `project registry is missing launch project ${launchProject}`,
-      );
-    }
+  if (
+    projects.filter((project) => project.skill.publishAtRoot === true)
+      .length !== 1
+  ) {
+    throw new TypeError(
+      "project registry must declare exactly one root-published contributor skill",
+    );
   }
   for (const [field, entries] of [
     ["ids", projects.map((project) => project.id)],

@@ -2,10 +2,10 @@
 
 Changes to the slop.cash site, contributor skill, leaderboard pipeline, and
 deployment automation are developed in this repository. Product contributions
-that the leaderboard tracks belong in the target repository registry
-(`src/lib/repositories.mjs`) — currently
-[`elizaOS/eliza`](https://github.com/elizaOS/eliza) and
-[`elizaOS/proximityprize`](https://github.com/elizaOS/proximityprize).
+that the leaderboard tracks belong in a repository declared by a reviewed
+`projects/*/project.json` manifest. Those manifests are the source of truth;
+`src/lib/repositories.mjs` and the public registry are generated from them and
+must not be edited or documented as a separate list.
 
 Open an issue before non-trivial work. Branch from the latest `develop`, keep
 the change scoped, and open a pull request back to `develop`. Before requesting

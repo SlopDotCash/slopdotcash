@@ -10,6 +10,7 @@ import {
   handleIdentityRequest,
   type IdentityWorkerDependencies,
 } from "./handler";
+import { MAX_GITHUB_RESPONSE_BYTES, readBoundedGithubJson } from "./index";
 
 const NOW = new Date("2026-08-15T20:00:00.000Z");
 const STATE_SECRET = "A".repeat(43);
@@ -224,6 +225,47 @@ async function authorizeAndCallback(
 }
 
 describe("slop identity worker", () => {
+  it("cancels oversized GitHub responses without buffering the full body", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(MAX_GITHUB_RESPONSE_BYTES / 2 + 1));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(readBoundedGithubJson(new Response(body))).rejects.toThrow(
+      /size limit/u,
+    );
+    expect(cancelled).toBe(true);
+  });
+
+  it("cancels oversized request bodies before buffering the full body", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(2049));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const { deps } = dependencies();
+    const response = await handleIdentityRequest(
+      new Request("https://identity.slop.cash/v1/oauth/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+      deps,
+    );
+    expect(response.status).toBe(413);
+    expect(cancelled).toBe(true);
+    expect(body.locked).toBe(false);
+  });
+
   it("completes OAuth and returns a one-time audience-bound assertion by polling", async () => {
     const { deps, resolved, store } = dependencies();
     const flow = await start(deps);
@@ -409,6 +451,20 @@ describe("slop identity worker", () => {
       deps,
     );
     expect(unknownHost.status).toBe(404);
+    const publicAlternatePort = await handleIdentityRequest(
+      jsonRequest("identity.slop.cash:444", "/v1/oauth/start", {
+        audience: IDENTITY_AUDIENCE,
+      }),
+      deps,
+    );
+    expect(publicAlternatePort.status).toBe(404);
+    const internalAlternatePort = await handleIdentityRequest(
+      new Request("https://identity.internal:444/v1/assertions/consume", {
+        method: "POST",
+      }),
+      deps,
+    );
+    expect(internalAlternatePort.status).toBe(404);
   });
 
   it("rejects a wrong poll capability without disclosing flow state", async () => {

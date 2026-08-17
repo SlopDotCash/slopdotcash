@@ -27,42 +27,88 @@ import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
-  statSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPOSITORY_ROOT = resolve(__dirname, "..");
 const ASSETS_ROOT = resolve(__dirname, "..", "assets");
 const rmRecursiveScript = resolve(__dirname, "rm-path-recursive.mjs");
 
+function ensureRepositoryDirectory(dest) {
+  const relativeDestination = relative(REPOSITORY_ROOT, resolve(dest));
+  if (
+    relativeDestination === "" ||
+    relativeDestination === ".." ||
+    relativeDestination.startsWith(`..${sep}`) ||
+    isAbsolute(relativeDestination)
+  ) {
+    throw new TypeError(`asset destination is outside the repository: ${dest}`);
+  }
+  let current = REPOSITORY_ROOT;
+  for (const component of relativeDestination.split(sep)) {
+    current = join(current, component);
+    if (!existsSync(current)) mkdirSync(current);
+    const metadata = lstatSync(current);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new TypeError(
+        `asset destination must be a real directory: ${current}`,
+      );
+    }
+  }
+}
+
+function copyRegularFile(src, dest) {
+  const sourceMetadata = lstatSync(src);
+  if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink()) {
+    throw new TypeError(`brand assets must be regular files: ${src}`);
+  }
+  if (existsSync(dest)) {
+    const destinationMetadata = lstatSync(dest);
+    if (!destinationMetadata.isFile() || destinationMetadata.isSymbolicLink()) {
+      throw new TypeError(`asset destination must be a regular file: ${dest}`);
+    }
+  }
+  copyFileSync(src, dest);
+}
+
 function copyDir(src, dest) {
-  mkdirSync(dest, { recursive: true });
+  ensureRepositoryDirectory(dest);
   for (const entry of readdirSync(src)) {
     const srcPath = join(src, entry);
     const destPath = join(dest, entry);
-    const st = statSync(srcPath);
+    const st = lstatSync(srcPath);
+    if (st.isSymbolicLink()) {
+      throw new TypeError(`brand assets must not contain symlinks: ${srcPath}`);
+    }
     if (st.isDirectory()) {
       copyDir(srcPath, destPath);
+    } else if (st.isFile()) {
+      copyRegularFile(srcPath, destPath);
     } else {
-      copyFileSync(srcPath, destPath);
+      throw new TypeError(`brand assets must be regular files: ${srcPath}`);
     }
   }
 }
 
 function copyDirClean(src, dest, shouldCopy = () => true) {
   rmRecursive(dest);
-  mkdirSync(dest, { recursive: true });
+  ensureRepositoryDirectory(dest);
   for (const entry of readdirSync(src)) {
     const srcPath = join(src, entry);
     const destPath = join(dest, entry);
-    const st = statSync(srcPath);
+    const st = lstatSync(srcPath);
+    if (st.isSymbolicLink()) {
+      throw new TypeError(`brand assets must not contain symlinks: ${srcPath}`);
+    }
     if (st.isDirectory()) {
       copyDirClean(srcPath, destPath, shouldCopy);
     } else if (shouldCopy(entry, srcPath)) {
-      copyFileSync(srcPath, destPath);
+      copyRegularFile(srcPath, destPath);
     }
   }
 }

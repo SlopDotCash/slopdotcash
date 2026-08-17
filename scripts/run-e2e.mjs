@@ -9,13 +9,14 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { childEnvironment } from "./child-environment.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const playwright = join(packageRoot, "node_modules", ".bin", "playwright");
 const artifactContract =
   "serves byte-consistent install and read-only artifacts for every project";
 
-function run(command, args, env = process.env) {
+function run(command, args, env = childEnvironment()) {
   const result = spawnSync(command, args, {
     cwd: packageRoot,
     env,
@@ -31,8 +32,9 @@ run(
   playwright,
   ["test", "--grep-invert", artifactContract, ...process.argv.slice(2)],
   {
-    ...process.env,
+    ...childEnvironment(),
     SLOP_E2E_PREBUILT: "1",
+    SLOP_E2E_FORCE_FRESH_SERVER: "1",
     SLOP_E2E_SERVER: "preview",
   },
 );
@@ -47,8 +49,9 @@ run(
     ...process.argv.slice(2),
   ],
   {
-    ...process.env,
+    ...childEnvironment(),
     SLOP_E2E_PREBUILT: "1",
+    SLOP_E2E_FORCE_FRESH_SERVER: "1",
     SLOP_E2E_SERVER: "pages",
   },
 );

@@ -6,7 +6,7 @@
  * verified and self-reported amounts are never added into one number.
  */
 
-import { isSolanaTransactionId } from "./funding-address.mjs";
+import { isFundingAddress, isSolanaTransactionId } from "./funding-address.mjs";
 import type { FundingCommitmentInstrument } from "./funding-instruments.mjs";
 import {
   assertFundingCommitments,
@@ -43,7 +43,13 @@ export interface ProjectCommitmentRecord {
   network: CommitmentNetwork;
   asset: "USDC";
   instrument:
-    | { multisig: string; vault: string }
+    | {
+        funderMember: string;
+        multisig: string;
+        stewardMember: string;
+        vault: string;
+        vaultIndex: number;
+      }
     | { contract: string; streamId: string };
   transactionId: string;
   amountMinor: string;
@@ -65,7 +71,6 @@ export interface ProjectCommitmentRecord {
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const RECORD_ID_PATTERN = /^cmt_[a-z0-9](?:[a-z0-9_-]{6,79})$/u;
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
-const VERIFIER_VERSION_PATTERN = /^commitment-[a-z0-9-]+-v\d+$/u;
 
 function object(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -176,7 +181,10 @@ function matchesInstrument(
   if (candidate.kind === "squads-v4-vault") {
     return (
       identity.multisig === candidate.multisig &&
-      identity.vault === candidate.vault
+      identity.vault === candidate.vault &&
+      identity.vaultIndex === candidate.vaultIndex &&
+      identity.funderMember === candidate.funderMember &&
+      identity.stewardMember === candidate.stewardMember
     );
   }
   return (
@@ -256,9 +264,31 @@ export function assertProjectCommitmentRecord(
   const identity = object(record.instrument, "commitment record instrument");
   exactKeys(
     identity,
-    network === "solana" ? ["multisig", "vault"] : ["contract", "streamId"],
+    network === "solana"
+      ? ["funderMember", "multisig", "stewardMember", "vault", "vaultIndex"]
+      : ["contract", "streamId"],
     "commitment record instrument",
   );
+  if (
+    network === "solana" &&
+    (!Number.isSafeInteger(identity.vaultIndex) ||
+      Number(identity.vaultIndex) < 0 ||
+      Number(identity.vaultIndex) > 255)
+  ) {
+    throw new TypeError(
+      "commitment record vaultIndex must be an unsigned byte",
+    );
+  }
+  if (
+    network === "solana" &&
+    (!isFundingAddress("solana", identity.funderMember) ||
+      !isFundingAddress("solana", identity.stewardMember) ||
+      identity.funderMember === identity.stewardMember)
+  ) {
+    throw new TypeError(
+      "commitment record members must be distinct Solana public keys",
+    );
+  }
   if (
     record.supersedes !== null &&
     (typeof record.supersedes !== "string" ||
@@ -316,11 +346,14 @@ export function assertProjectCommitmentRecord(
         "commitment record verification predates observation",
       );
     }
-    if (
-      typeof verifier.version !== "string" ||
-      !VERIFIER_VERSION_PATTERN.test(verifier.version)
-    ) {
-      throw new TypeError("commitment record verifier version is invalid");
+    const expectedVerifierVersion =
+      instrument.kind === "squads-v4-vault"
+        ? "commitment-squads-v2"
+        : "commitment-sablier-v1";
+    if (verifier.version !== expectedVerifierVersion) {
+      throw new TypeError(
+        "commitment record verifier version does not match its instrument",
+      );
     }
     if (
       verifier.evidenceUrl !==
@@ -344,7 +377,7 @@ export function assertProjectCommitmentRecord(
 function instrumentIdentityKey(record: ProjectCommitmentRecord): string {
   const identity = record.instrument as Record<string, unknown>;
   return record.network === "solana"
-    ? `${identity.multisig}:${identity.vault}`
+    ? `${identity.multisig}:${identity.vaultIndex}:${identity.vault}:${identity.funderMember}:${identity.stewardMember}`
     : `${identity.contract}:${identity.streamId}`;
 }
 

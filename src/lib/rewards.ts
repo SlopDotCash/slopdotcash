@@ -193,7 +193,10 @@ function iso(value: unknown, path: string): string {
   const result = text(value, path, {
     pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
   });
-  if (!Number.isFinite(Date.parse(result))) {
+  if (
+    !Number.isFinite(Date.parse(result)) ||
+    new Date(result).toISOString() !== result
+  ) {
     throw new TypeError(`${path} is not a timestamp`);
   }
   return result;
@@ -235,6 +238,18 @@ export function feeForPrincipal(
   principalMinor: string,
   basisPoints: number,
 ): string {
+  if (!/^(?:0|[1-9]\d*)$/u.test(principalMinor)) {
+    throw new TypeError("principal must be canonical integer minor units");
+  }
+  if (
+    !Number.isSafeInteger(basisPoints) ||
+    basisPoints < 0 ||
+    basisPoints > 10_000
+  ) {
+    throw new TypeError(
+      "basis points must be an integer from 0 through 10,000",
+    );
+  }
   return ((BigInt(principalMinor) * BigInt(basisPoints)) / 10_000n).toString();
 }
 
@@ -251,6 +266,15 @@ export function incrementalFeeForPrincipal(
   const batch = BigInt(batchMinor);
   if (settledBefore < 0n || batch < 0n) {
     throw new RangeError("settled principal cannot be negative");
+  }
+  if (
+    !Number.isSafeInteger(basisPoints) ||
+    basisPoints < 0 ||
+    basisPoints > 10_000
+  ) {
+    throw new TypeError(
+      "basis points must be an integer from 0 through 10,000",
+    );
   }
   return (
     ((settledBefore + batch) * BigInt(basisPoints)) / 10_000n -
@@ -647,12 +671,21 @@ export function assertRewardAllocationManifest(
     contributionWindow.to,
     "allocation manifest.contributionWindow.to",
   );
+  const [cycleYear, cycleMonth] = cycleId.split("-").map(Number);
+  const calendarFrom = Date.UTC(cycleYear, cycleMonth - 1, 1);
+  const expectedFrom = Math.max(
+    calendarFrom,
+    Date.parse(project.reward.rewardStartAt),
+  );
+  const expectedTo = Date.UTC(cycleYear, cycleMonth, 1);
   if (
-    windowFrom.slice(0, 7) !== cycleId ||
-    Date.parse(windowTo) <= Date.parse(windowFrom) ||
-    Date.parse(windowFrom) < Date.parse(project.reward.rewardStartAt)
+    Date.parse(windowFrom) !== expectedFrom ||
+    Date.parse(windowTo) !== expectedTo ||
+    Date.parse(generatedAt) < expectedTo
   ) {
-    throw new TypeError("allocation contribution window is outside the cycle");
+    throw new TypeError(
+      "allocation contribution window or generation time is outside the closed cycle",
+    );
   }
   const review = record(manifest.review, "allocation manifest.review");
   exactKeys(
@@ -875,12 +908,21 @@ export function assertExternalContributionShareManifest(
     contributionWindow.to,
     "share manifest.contributionWindow.to",
   );
+  const generatedAt = iso(manifest.generatedAt, "share manifest.generatedAt");
+  const [cycleYear, cycleMonth] = cycleId.split("-").map(Number);
+  const expectedFrom = Math.max(
+    Date.UTC(cycleYear, cycleMonth - 1, 1),
+    Date.parse(project.reward.rewardStartAt),
+  );
+  const expectedTo = Date.UTC(cycleYear, cycleMonth, 1);
   if (
-    windowFrom.slice(0, 7) !== cycleId ||
-    Date.parse(windowTo) <= Date.parse(windowFrom) ||
-    Date.parse(windowFrom) < Date.parse(project.reward.rewardStartAt)
+    Date.parse(windowFrom) !== expectedFrom ||
+    Date.parse(windowTo) !== expectedTo ||
+    Date.parse(generatedAt) < expectedTo
   ) {
-    throw new TypeError("share contribution window is outside the cycle");
+    throw new TypeError(
+      "share contribution window or generation time is outside the closed cycle",
+    );
   }
   return {
     schemaVersion: REWARD_PROTOCOL_VERSION,
@@ -888,7 +930,7 @@ export function assertExternalContributionShareManifest(
     projectId: project.id,
     cycleId,
     status: "provisional",
-    generatedAt: iso(manifest.generatedAt, "share manifest.generatedAt"),
+    generatedAt,
     contributionWindow: { from: windowFrom, to: windowTo },
     scoringRuleVersion: text(
       manifest.scoringRuleVersion,
@@ -908,6 +950,9 @@ export function assertRewardSettlementManifest(
   value: unknown,
   allocation: RewardAllocationManifest,
 ): RewardSettlementManifest {
+  if (allocation.status !== "approved" || allocation.approvedAt === null) {
+    throw new TypeError("settlement requires an approved allocation");
+  }
   const manifest = record(value, "settlement manifest");
   exactKeys(
     manifest,
@@ -1191,6 +1236,10 @@ export function assertRewardSettlementManifest(
   ) {
     throw new TypeError("settlement totals do not reconcile");
   }
+  const settledAt = iso(manifest.settledAt, "settlement settledAt");
+  if (Date.parse(settledAt) < Date.parse(allocation.approvedAt)) {
+    throw new TypeError("settlement predates allocation approval");
+  }
   return {
     schemaVersion: REWARD_PROTOCOL_VERSION,
     kind: "reward-settlement",
@@ -1200,7 +1249,7 @@ export function assertRewardSettlementManifest(
       manifest.allocationSha256,
       "settlement allocationSha256",
     ),
-    settledAt: iso(manifest.settledAt, "settlement settledAt"),
+    settledAt,
     currency: "USDC",
     chain: "solana",
     status: expectedStatus,

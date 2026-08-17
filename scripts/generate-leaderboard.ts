@@ -1070,7 +1070,7 @@ async function readGraphqlResponseBody(response: Response): Promise<string> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
-    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
+    if (!/^\d+$/u.test(declaredLength) || !Number.isSafeInteger(parsedLength)) {
       throw new GraphqlResponseBoundaryError(
         "GitHub GraphQL returned an invalid Content-Length",
       );
@@ -1096,6 +1096,7 @@ async function readGraphqlResponseBody(response: Response): Promise<string> {
       if (chunk.done) break;
       byteLength += chunk.value.byteLength;
       if (byteLength > MAX_GRAPHQL_RESPONSE_BYTES) {
+        await reader.cancel("response exceeded size limit");
         throw new GraphqlResponseBoundaryError(
           `GitHub GraphQL response exceeds ${MAX_GRAPHQL_RESPONSE_BYTES} bytes`,
         );
@@ -1112,6 +1113,8 @@ async function readGraphqlResponseBody(response: Response): Promise<string> {
       );
     }
     throw error;
+  } finally {
+    reader.releaseLock();
   }
   return body;
 }

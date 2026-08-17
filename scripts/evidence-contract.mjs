@@ -6,6 +6,7 @@
 
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
+import { PROJECTS } from "../src/lib/projects.mjs";
 import {
   PRIMARY_REPOSITORY,
   TARGET_REPOSITORIES,
@@ -15,6 +16,16 @@ export const PRODUCTION_ORIGIN = "https://slop.cash";
 export const PRODUCTION_HOSTNAME = "slop.cash";
 export const LIVE_LEDGER_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+const rootPublishedProjects = PROJECTS.filter(
+  (project) => project.skill.publishAtRoot === true,
+);
+if (rootPublishedProjects.length !== 1) {
+  throw new TypeError(
+    "evidence contract requires exactly one root-published project skill",
+  );
+}
+const rootPublishedProject = rootPublishedProjects[0];
+const rootArchiveName = `${rootPublishedProject.skill.id}.skill`;
 
 export const REMOTE_ARTIFACT_PATHS = [
   "index.html",
@@ -23,14 +34,14 @@ export const REMOTE_ARTIFACT_PATHS = [
   ".well-known/agent-skills/slop/SKILL.md",
   ".well-known/slop/projects.json",
   "llms.txt",
-  "projects/eliza/skill.md",
+  `projects/${rootPublishedProject.id}/skill.md`,
   "mission.md",
   "codex.md",
   "claude.md",
   "claude-code.md",
   "skill-manifest.json",
-  "downloads/contribute-to-eliza.skill",
-  "downloads/contribute-to-eliza.skill.sha256",
+  `downloads/${rootArchiveName}`,
+  `downloads/${rootArchiveName}.sha256`,
   "data/leaderboard.json",
 ];
 
@@ -374,6 +385,50 @@ export function assertTlsSession(session, now = Date.now()) {
   };
 }
 
+async function readExactResponseBytes(response, expectedBytes, path) {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (!/^\d+$/u.test(declaredLength) || !Number.isSafeInteger(parsedLength)) {
+      throw new Error(`production ${path} declared an invalid Content-Length`);
+    }
+    if (parsedLength !== expectedBytes) {
+      throw new Error(
+        `production ${path} length does not match the verified artifact`,
+      );
+    }
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error(`production ${path} omitted its response body`);
+  const chunks = [];
+  let receivedBytes = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      receivedBytes += chunk.value.byteLength;
+      if (receivedBytes > expectedBytes) {
+        await reader.cancel("response exceeded verified artifact size");
+        throw new Error(
+          `production ${path} exceeded the verified artifact size`,
+        );
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (receivedBytes !== expectedBytes) {
+    throw new Error(
+      `production ${path} length does not match the verified artifact`,
+    );
+  }
+  return Buffer.concat(
+    chunks.map((chunk) => Buffer.from(chunk)),
+    receivedBytes,
+  );
+}
+
 export async function verifyRemoteArtifacts({
   artifacts,
   cacheKey,
@@ -420,7 +475,11 @@ export async function verifyRemoteArtifacts({
         `production ${artifact.path} returned ${contentType ?? "no Content-Type"}; expected ${expectedContentType}`,
       );
     }
-    const received = Buffer.from(await response.arrayBuffer());
+    const received = await readExactResponseBytes(
+      response,
+      artifact.contents.length,
+      artifact.path,
+    );
     const expectedDigest = sha256(artifact.contents);
     const receivedDigest = sha256(received);
     if (

@@ -34,52 +34,53 @@ describe("project transition gate", () => {
     ).toThrow(/not canonical/u);
   });
 
-  it("permits a boolean root-publication field to be added", () => {
-    const next = structuredClone(eliza) as unknown as {
+  it("rejects a non-boolean root-publication declaration", () => {
+    const malformed = structuredClone(eliza) as unknown as {
       id: string;
       skill: Record<string, unknown>;
     };
-    next.skill.publishAtRoot = true;
-
-    expect(validateProjectTransitions([entry(eliza)], [entry(next)])).toEqual({
-      previous: 1,
-      current: 1,
-    });
-    next.skill.publishAtRoot = "true";
+    malformed.skill.publishAtRoot = "true";
     expect(() =>
-      validateProjectTransitions([entry(eliza)], [entry(next)]),
+      validateProjectTransitions([entry(eliza)], [entry(malformed)]),
     ).toThrow(/project identity/u);
   });
 
   it("requires an atomic inventory migration with exactly one root", () => {
-    const previous = [eliza, asi, deltaStar, heirElementsSdk];
-    const current = previous.map((project, index) => {
-      const next = structuredClone(project) as typeof project & {
-        skill: Record<string, unknown>;
+    const current = [eliza, asi, deltaStar, heirElementsSdk];
+    const legacy = current.map((project) => {
+      const next = structuredClone(project) as unknown as {
+        id: string;
+        skill: { publishAtRoot?: unknown };
       };
-      next.skill.publishAtRoot = index === 0;
+      delete next.skill.publishAtRoot;
       return next;
     });
     const entries = (projects: Array<{ id: string }>) => projects.map(entry);
 
     expect(
-      validateProjectTransitions(entries(previous), entries(current)),
+      validateProjectTransitions(entries(legacy), entries(current)),
     ).toEqual({ previous: 4, current: 4 });
 
-    const partial = structuredClone(current);
+    const partial = structuredClone(current) as unknown as Array<{
+      id: string;
+      skill: { publishAtRoot?: unknown };
+    }>;
     delete partial[3].skill.publishAtRoot;
     expect(() =>
-      validateProjectTransitions(entries(previous), entries(partial)),
-    ).toThrow(/migrate publishAtRoot atomically/u);
+      validateProjectTransitions(entries(legacy), entries(partial)),
+    ).toThrow(/publishAtRoot/u);
 
-    const multiple = structuredClone(current);
+    const multiple = structuredClone(current) as unknown as Array<{
+      id: string;
+      skill: { publishAtRoot?: unknown };
+    }>;
     multiple[1].skill.publishAtRoot = true;
     expect(() =>
-      validateProjectTransitions(entries(previous), entries(multiple)),
+      validateProjectTransitions(entries(legacy), entries(multiple)),
     ).toThrow(/exactly one root publisher/u);
 
     expect(() =>
-      validateProjectTransitions(entries(current), entries(previous)),
-    ).toThrow(/cannot remove publishAtRoot declarations/u);
+      validateProjectTransitions(entries(current), entries(legacy)),
+    ).toThrow(/publishAtRoot/u);
   });
 });

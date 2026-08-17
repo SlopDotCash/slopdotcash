@@ -81,8 +81,9 @@ second required form on the page.
 Expose one compact prompt that discovers and installs the right project skill.
 The skill handles contribution, evidence, and optional payout registration.
 When payout is chosen, it asks only for a public Solana address, shows the exact
-GitHub claim issue before writing, and waits for approval. Never render a seed,
-private-key, wallet-connection, or transaction input.
+one-time GitHub authorization and append-only registry write before acting, and
+waits for approval. Never render a seed, private-key, wallet-connection, or
+transaction input.
 
 ### Leaderboards and profiles
 

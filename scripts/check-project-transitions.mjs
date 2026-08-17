@@ -88,11 +88,6 @@ export function validateProjectTransitions(previousEntries, currentEntries) {
     current,
     "current",
   );
-  if (previousPublishesAtRoot && !currentPublishesAtRoot) {
-    throw new TypeError(
-      "current project inventory cannot remove publishAtRoot declarations",
-    );
-  }
   for (const [projectId, prior] of previous) {
     const next = current.get(projectId);
     if (!next) {
@@ -101,6 +96,11 @@ export function validateProjectTransitions(previousEntries, currentEntries) {
       );
     }
     assertProjectPolicyTransition(prior, next);
+  }
+  if (previousPublishesAtRoot && !currentPublishesAtRoot) {
+    throw new TypeError(
+      "current project inventory cannot remove publishAtRoot declarations",
+    );
   }
   return { previous: previous.size, current: current.size };
 }
