@@ -280,6 +280,13 @@ describe("project proposal schema", () => {
   it("fails closed on inferred or mutable project authority", () => {
     const activeWithoutProof = structuredClone(eliza);
     activeWithoutProof.status = "active";
+    const unprovenAuthority = activeWithoutProof.authority as Record<
+      string,
+      unknown
+    >;
+    unprovenAuthority.state = "unverified";
+    unprovenAuthority.reason = "missing-repository-proof";
+    unprovenAuthority.proof = null;
     expect(() => assertProjectDefinition(activeWithoutProof)).toThrow(
       /verified repository authority/u,
     );

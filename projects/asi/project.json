@@ -20,12 +20,18 @@
     "website": null
   },
   "authority": {
-    "state": "unverified",
-    "reason": "missing-repository-proof",
+    "state": "verified",
+    "reason": null,
     "role": "project-steward",
     "repositoryId": "1332593244",
     "repositoryNodeId": "R_kgDOT23CXA",
-    "proof": null
+    "proof": {
+      "commitSha": "6417467dcd89cf1a6235066da99d464f96a44cfa",
+      "fileSha256": "7276dfcdc51635f5312afe8d879017503caeab5b237d3c676252dd148b198a02",
+      "policyRevision": "2026-08-16.3",
+      "url": "https://github.com/elizaOS/asi/blob/6417467dcd89cf1a6235066da99d464f96a44cfa/.github/slop-project.json",
+      "verifiedAt": "2026-08-17T00:52:03.000Z"
+    }
   },
   "terms": {
     "revision": "2026-08-16.3",
