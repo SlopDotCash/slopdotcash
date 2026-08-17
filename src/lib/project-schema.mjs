@@ -659,15 +659,25 @@ function validateRepository(value, index) {
 
 function validateSkill(value, field, expectedId, publicPath) {
   const skill = record(value, field);
+  const hasPublishAtRoot = Object.hasOwn(skill, "publishAtRoot");
   exactKeys(
     skill,
-    publicPath ? ["id", "publicPath", "sourcePath"] : ["id", "sourcePath"],
+    publicPath
+      ? [
+          "id",
+          "publicPath",
+          ...(hasPublishAtRoot ? ["publishAtRoot"] : []),
+          "sourcePath",
+        ]
+      : ["id", "sourcePath"],
     field,
   );
   if (
     skill.id !== expectedId ||
     skill.sourcePath !== `skills/${expectedId}` ||
-    (publicPath && skill.publicPath !== publicPath)
+    (publicPath &&
+      (skill.publicPath !== publicPath ||
+        (hasPublishAtRoot && typeof skill.publishAtRoot !== "boolean")))
   ) {
     throw new TypeError(`${field} does not match its project identity`);
   }

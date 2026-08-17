@@ -30,4 +30,20 @@ describe("project transition gate", () => {
       ),
     ).toThrow(/not canonical/u);
   });
+
+  it("permits a boolean root-publication field to be added", () => {
+    const next = structuredClone(eliza) as unknown as {
+      skill: Record<string, unknown>;
+    };
+    next.skill.publishAtRoot = true;
+
+    expect(validateProjectTransitions([entry(eliza)], [entry(next)])).toEqual({
+      previous: 1,
+      current: 1,
+    });
+    next.skill.publishAtRoot = "true";
+    expect(() =>
+      validateProjectTransitions([entry(eliza)], [entry(next)]),
+    ).toThrow(/project identity/u);
+  });
 });
