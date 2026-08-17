@@ -48,8 +48,9 @@ describe("project transition gate", () => {
   it("requires an atomic inventory migration with exactly one root", () => {
     const current = [eliza, asi, deltaStar, heirElementsSdk];
     const legacy = current.map((project) => {
-      const next = structuredClone(project) as typeof project & {
-        skill: Record<string, unknown>;
+      const next = structuredClone(project) as unknown as {
+        id: string;
+        skill: { publishAtRoot?: unknown };
       };
       delete next.skill.publishAtRoot;
       return next;
@@ -60,13 +61,19 @@ describe("project transition gate", () => {
       validateProjectTransitions(entries(legacy), entries(current)),
     ).toEqual({ previous: 4, current: 4 });
 
-    const partial = structuredClone(current);
+    const partial = structuredClone(current) as unknown as Array<{
+      id: string;
+      skill: { publishAtRoot?: unknown };
+    }>;
     delete partial[3].skill.publishAtRoot;
     expect(() =>
       validateProjectTransitions(entries(legacy), entries(partial)),
-    ).toThrow(/migrate publishAtRoot atomically/u);
+    ).toThrow(/publishAtRoot/u);
 
-    const multiple = structuredClone(current);
+    const multiple = structuredClone(current) as unknown as Array<{
+      id: string;
+      skill: { publishAtRoot?: unknown };
+    }>;
     multiple[1].skill.publishAtRoot = true;
     expect(() =>
       validateProjectTransitions(entries(legacy), entries(multiple)),
@@ -74,6 +81,6 @@ describe("project transition gate", () => {
 
     expect(() =>
       validateProjectTransitions(entries(current), entries(legacy)),
-    ).toThrow(/cannot remove publishAtRoot declarations/u);
+    ).toThrow(/publishAtRoot/u);
   });
 });

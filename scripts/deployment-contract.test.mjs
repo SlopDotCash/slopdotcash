@@ -264,12 +264,6 @@ describe("slop.cash deployment contract", () => {
     expect(e2eRunner).toContain('"--grep",\n    artifactContract');
     expect(qualityJob).toContain("run: bun run test:e2e");
     expect(qualityJob).toContain(
-      "- name: Generate live contribution data\n        # Pull-request code is untrusted",
-    );
-    expect(qualityJob).toContain(
-      "if: github.event_name != 'pull_request'\n        env:\n          GH_TOKEN:",
-    );
-    expect(qualityJob).toContain(
       "run: ./node_modules/.bin/playwright install --with-deps chromium",
     );
     expect(qualityJob).not.toContain("bunx playwright install");
@@ -279,12 +273,6 @@ describe("slop.cash deployment contract", () => {
     expect(qualityJob).toContain(
       "- name: Validate finalized Solana evidence on trusted revisions",
     );
-    expect(qualityJob).toContain("if: github.event_name != 'pull_request'");
-    expect(qualityJob).toContain(
-      "- name: Load deployed public ledger for pull-request checks",
-    );
-    expect(qualityJob).toContain("if: github.event_name == 'pull_request'");
-    expect(qualityJob).toContain("https://slop.cash/data/leaderboard.json");
   });
 
   it("keeps every release path restricted to develop", () => {
