@@ -40,6 +40,8 @@ export type TraceApiDependencies = {
 
 type ApiError = Error & { status?: number; code?: string };
 
+export const TRACE_API_CONTRACT_VERSION = "private-trace-v1-opaque-hmac-v1";
+
 function fail(status: number, code: string, message: string): never {
   const error: ApiError = new Error(message);
   error.status = status;
@@ -55,6 +57,7 @@ function json(status: number, body: Record<string, unknown>): Response {
       "content-type": "application/json; charset=utf-8",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
+      "x-slop-trace-api-contract": TRACE_API_CONTRACT_VERSION,
     },
   });
 }

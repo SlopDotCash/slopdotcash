@@ -780,34 +780,6 @@ jobs:
           echo "::error::Cloudflare did not report a new, successful, clean production deployment for commit $GITHUB_SHA."
           exit 1
 
-      - name: Verify private trace API fail-closed boundary
-        run: |
-          set -euo pipefail
-          response="$RUNNER_TEMP/slop-private-api-response.json"
-          status="$(
-            curl --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --max-filesize 65536 \
-              --output "$response" \
-              --write-out "%{http_code}" \
-              --header "Cache-Control: no-cache" \
-              --header "Content-Type: application/json" \
-              --data '{}' \
-              "https://api.slop.cash/api/v1/runs?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
-          )"
-          if [ "$status" != "401" ]; then
-            echo "::error::Private trace API returned HTTP $status without authentication; expected 401."
-            exit 1
-          fi
-          node - "$response" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          if (value?.error !== "unauthorized") {
-            throw new TypeError("private trace API returned an unexpected unauthenticated response");
-          }
-          NODE
-
       - name: Verify deck custom domain, DNS, TLS, and deployed bytes
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -929,6 +901,44 @@ jobs:
           # The inventory checks /index.html; this additional request proves the
           # public root route resolves to those same tested bytes.
           verify_download / dist/index.html index.html
+
+      - name: Verify active private trace API boundary
+        run: |
+          set -euo pipefail
+          response="$RUNNER_TEMP/slop-active-private-api-response.json"
+          headers="$RUNNER_TEMP/slop-active-private-api-response.headers"
+          for attempt in $(seq 1 18); do
+            status="$(
+              curl --silent --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --max-filesize 65536 \
+                --output "$response" \
+                --dump-header "$headers" \
+                --write-out "%{http_code}" \
+                --header "Cache-Control: no-cache" \
+                --header "Content-Type: application/json" \
+                --data '{}' \
+                "https://api.slop.cash/api/v1/runs?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-active-$attempt"
+            )"
+            if [ "$status" = "401" ] && node - "$response" "$headers" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const headers = readFileSync(process.argv[3], "utf8");
+          const contract = headers.match(/^x-slop-trace-api-contract:\s*([^\r\n]+)$/imu)?.[1]?.trim();
+          if (
+            value?.error !== "unauthorized" ||
+            contract !== "private-trace-v1-opaque-hmac-v1"
+          ) process.exit(1);
+          NODE
+            then
+              exit 0
+            fi
+            echo "::warning::Active private trace boundary returned HTTP $status (attempt $attempt/18)."
+            sleep 5
+          done
+          echo "::error::Active private trace API did not reach its fail-closed unauthenticated boundary."
+          exit 1
 
       - name: Require public identity OAuth app
         env:

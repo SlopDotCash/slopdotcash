@@ -42,19 +42,16 @@ function ownedBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 function secretBytes(secret: string): Uint8Array {
-  if (!/^[A-Za-z0-9_-]{43}$/u.test(secret)) {
-    throw new Error("TRACE_AUTH_SECRET must be canonical base64url");
+  // This secret was originally provisioned as opaque high-entropy text and
+  // used byte-for-byte as the HMAC key. Preserve that key material across the
+  // stricter validation rollout; decoding an existing base64-looking value
+  // silently changes the key and invalidates every token.
+  if (!/^[\x21-\x7e]{32,128}$/u.test(secret)) {
+    throw new Error(
+      "TRACE_AUTH_SECRET must be 32-128 printable ASCII characters",
+    );
   }
-  let bytes: Uint8Array;
-  try {
-    bytes = decodeBase64Url(secret);
-  } catch {
-    throw new Error("TRACE_AUTH_SECRET must be canonical base64url");
-  }
-  if (bytes.byteLength !== 32 || encodeBase64Url(bytes) !== secret) {
-    throw new Error("TRACE_AUTH_SECRET must decode to exactly 32 bytes");
-  }
-  return bytes;
+  return encoder.encode(secret);
 }
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
