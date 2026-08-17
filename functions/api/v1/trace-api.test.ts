@@ -15,6 +15,7 @@ import type {
 } from "../../../backend/trace/contracts";
 import {
   handleTraceApi,
+  TRACE_API_CONTRACT_VERSION,
   type TraceApiDependencies,
 } from "../../../backend/trace/handler";
 import { readJsonObject, sha256Hex } from "../../../backend/trace/validation";
@@ -476,6 +477,9 @@ describe("private trace API", () => {
       },
     });
     expect(response.status).toBe(401);
+    expect(response.headers.get("x-slop-trace-api-contract")).toBe(
+      TRACE_API_CONTRACT_VERSION,
+    );
     expect(await response.json()).toMatchObject({ error: "unauthorized" });
   });
 
@@ -657,9 +661,25 @@ describe("private trace API", () => {
       exp: now + 600,
       jti: "strict_claims_token_0001",
     };
-    await expect(signApiToken(claims, "x".repeat(43))).rejects.toThrow(
+    await expect(signApiToken(claims, "x".repeat(31))).rejects.toThrow(
       /TRACE_AUTH_SECRET/u,
     );
+    await expect(signApiToken(claims, `${"x".repeat(31)}\n`)).rejects.toThrow(
+      /TRACE_AUTH_SECRET/u,
+    );
+    await expect(signApiToken(claims, "x".repeat(129))).rejects.toThrow(
+      /TRACE_AUTH_SECRET/u,
+    );
+    const legacySecret = "x".repeat(32);
+    const legacyToken = await signApiToken(claims, legacySecret);
+    await expect(
+      verifyApiToken({
+        authorization: `Bearer ${legacyToken}`,
+        secret: legacySecret,
+        operatorGithubIds: new Set(),
+        nowSeconds: now,
+      }),
+    ).resolves.toMatchObject({ githubId: "42", roles: ["contributor"] });
     await expect(
       signApiToken({ ...claims, extra: "not-authorized" } as never, SECRET),
     ).rejects.toThrow(/claims/u);

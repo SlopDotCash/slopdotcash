@@ -133,8 +133,9 @@ service = "slop-identity"
 ```
 
 Set `OPERATOR_GITHUB_IDS` to an explicit comma-separated list of numeric IDs.
-`TRACE_AUTH_SECRET` must be a canonical base64url encoding of exactly 32 random
-bytes and must never be configured as a checked-in `[vars]` value. Generate it
+`TRACE_AUTH_SECRET` is opaque HMAC key material and must contain 32-128
+high-entropy printable ASCII characters. It must never be configured as a
+checked-in `[vars]` value. Generate a recommended 43-character base64url value
 with `node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))'`.
 Bind `SLOP_IDENTITY` to the
 separately deployed OAuth/PKCE identity Worker; it must consume assertions once

@@ -196,7 +196,22 @@ describe("slop.cash deployment contract", () => {
     );
     expect(
       deployJob.indexOf("Verify published skill and leaderboard"),
+    ).toBeLessThan(
+      deployJob.indexOf("Verify active private trace API boundary"),
+    );
+    expect(
+      deployJob.indexOf("Verify active private trace API boundary"),
     ).toBeLessThan(deployJob.indexOf("Require public identity OAuth app"));
+    expect(deployJob).toContain(
+      "Active private trace API did not reach its fail-closed unauthenticated boundary.",
+    );
+    expect(deployJob).toContain('--dump-header "$headers"');
+    expect(deployJob).toContain(
+      'contract !== "private-trace-v1-opaque-hmac-v1"',
+    );
+    expect(
+      deployJob.match(/https:\/\/api\.slop\.cash\/api\/v1\/runs\?verify=/gu),
+    ).toHaveLength(1);
     expect(deployJob).not.toContain("wrangler deploy \\");
     expect(deployJob).toContain("has no zone-level Workers Routes permission");
     expect(deployJob).not.toContain("working-directory:");
