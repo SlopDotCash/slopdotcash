@@ -438,7 +438,7 @@ jobs:
             --remote \
             --json \
             --config workers/identity/wrangler.toml \
-            --command "SELECT type, name FROM sqlite_schema WHERE name IN ('identity_assertions','identity_oauth_flows','identity_rate_limits','private_audit_events','run_progress_events','trace_objects','trace_read_grants','trace_runs','trace_upload_intents','trace_uploads','wallet_claims','wallet_claims_no_delete','wallet_claims_no_update','wallet_claims_one_root_per_actor','wallet_claims_one_successor') ORDER BY type, name" \
+            --command "SELECT type, name FROM sqlite_schema WHERE name IN ('identity_assertions','identity_oauth_flows','identity_rate_limits','private_audit_events','run_progress_events','trace_attachment_commit_validate','trace_attachment_commits','trace_attachment_commits_no_delete','trace_attachment_commits_no_update','trace_objects','trace_read_grants','trace_runs','trace_upload_intents','trace_uploads','wallet_claims','wallet_claims_no_delete','wallet_claims_no_update','wallet_claims_one_root_per_actor','wallet_claims_one_successor') ORDER BY type, name" \
             > "$schema_response"
           node - "$schema_response" <<'NODE'
           const { readFileSync } = require("node:fs");
@@ -451,12 +451,16 @@ jobs:
             "table:identity_rate_limits",
             "table:private_audit_events",
             "table:run_progress_events",
+            "table:trace_attachment_commits",
             "table:trace_objects",
             "table:trace_read_grants",
             "table:trace_runs",
             "table:trace_upload_intents",
             "table:trace_uploads",
             "table:wallet_claims",
+            "trigger:trace_attachment_commit_validate",
+            "trigger:trace_attachment_commits_no_delete",
+            "trigger:trace_attachment_commits_no_update",
             "trigger:wallet_claims_no_delete",
             "trigger:wallet_claims_no_update",
           ];

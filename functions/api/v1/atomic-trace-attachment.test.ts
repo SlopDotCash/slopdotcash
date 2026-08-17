@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
@@ -80,6 +80,31 @@ function attemptAttachment(db: DatabaseSync, updateRun: boolean): void {
 }
 
 describe("atomic trace attachment migration", () => {
+  it("keeps every migration compatible with the remote D1 trigger parser", () => {
+    const incompatibleCaseTerminator =
+      /\bCASE\b(?:(?!\bEND\b)[\s\S])*?\bEND\s*;/iu;
+    expect(
+      incompatibleCaseTerminator.test(
+        "CREATE TRIGGER example BEGIN SELECT CASE WHEN 1 THEN 1 END; END;",
+      ),
+    ).toBe(true);
+    const incompatible = readdirSync("migrations")
+      .filter((name) => name.endsWith(".sql"))
+      .filter((name) => {
+        const migration = readFileSync(`migrations/${name}`, "utf8");
+        // Remote D1 rejects a CASE whose own END is statement-terminating
+        // inside a trigger, even though local SQLite accepts it.
+        return incompatibleCaseTerminator.test(migration);
+      });
+    expect(incompatible).toEqual([]);
+
+    const migration = readFileSync(
+      "migrations/0005_atomic_trace_attachment.sql",
+      "utf8",
+    );
+    expect(migration.match(/^END;$/gmu)).toHaveLength(3);
+  });
+
   it("rolls back intent consumption when a later attachment invariant fails", () => {
     const db = database();
     expect(() => attemptAttachment(db, false)).toThrow(

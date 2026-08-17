@@ -12,7 +12,7 @@ CREATE TABLE trace_attachment_commits (
 CREATE TRIGGER trace_attachment_commit_validate
 BEFORE INSERT ON trace_attachment_commits
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'incomplete trace attachment') WHERE NOT EXISTS (
     SELECT 1
     FROM trace_upload_intents AS intent
     JOIN trace_uploads AS upload
@@ -33,7 +33,7 @@ BEGIN
       AND intent.consumed_at = NEW.consumed_at
       AND object.size_bytes = intent.size_bytes
       AND object.content_type = intent.content_type
-  ) THEN RAISE(ABORT, 'incomplete trace attachment') END;
+  );
 END;
 
 CREATE TRIGGER trace_attachment_commits_no_update

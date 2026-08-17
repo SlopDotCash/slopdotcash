@@ -131,6 +131,14 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler d1 execute slop-private \\",
     );
+    for (const schemaObject of [
+      "trace_attachment_commits",
+      "trace_attachment_commit_validate",
+      "trace_attachment_commits_no_delete",
+      "trace_attachment_commits_no_update",
+    ]) {
+      expect(deployJob).toContain(schemaObject);
+    }
     expect(deployJob).toContain('--tag="$GITHUB_SHA"');
     expect(deployJob).toContain('--version-id="$identity_version_id"');
     expect(deployJob).toContain("--percentage=100");
