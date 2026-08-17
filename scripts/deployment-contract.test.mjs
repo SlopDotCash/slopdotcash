@@ -254,6 +254,24 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain("name: eliza-army-production");
   });
 
+  it("keeps pull-request data checks live without exposing repository tokens", () => {
+    expect(qualityJob).toContain(
+      "- name: Generate live contribution data\n        # Pull-request code is untrusted",
+    );
+    expect(qualityJob).toContain(
+      "if: github.event_name != 'pull_request'\n        env:\n          GH_TOKEN:",
+    );
+    expect(qualityJob).toContain(
+      "- name: Load deployed public ledger for pull-request checks",
+    );
+    expect(qualityJob).toContain("if: github.event_name == 'pull_request'");
+    expect(qualityJob).toContain("--max-filesize 16777216");
+    expect(qualityJob).toContain("https://slop.cash/data/leaderboard.json");
+    expect(qualityJob).toContain(
+      "- name: Validate finalized Solana evidence on trusted revisions\n        if: github.event_name != 'pull_request'",
+    );
+  });
+
   it("preserves an immutable-sha transition gate on trusted develop pushes", () => {
     const transitionGate = qualityJob.indexOf(
       'node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA" "$PROJECT_POLICY_HEAD_SHA"',

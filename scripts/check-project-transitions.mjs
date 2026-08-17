@@ -56,9 +56,43 @@ function boundedProjectMap(entries, options) {
   return projects;
 }
 
+function assertRootPublisherInventory(projects, label) {
+  const declared = [...projects.values()].filter((project) =>
+    Object.hasOwn(project.skill, "publishAtRoot"),
+  );
+  if (declared.length === 0) return false;
+  if (declared.length !== projects.size) {
+    throw new TypeError(
+      `${label} project inventory must migrate publishAtRoot atomically`,
+    );
+  }
+  if (
+    declared.filter((project) => project.skill.publishAtRoot === true)
+      .length !== 1
+  ) {
+    throw new TypeError(
+      `${label} project inventory must declare exactly one root publisher`,
+    );
+  }
+  return true;
+}
+
 export function validateProjectTransitions(previousEntries, currentEntries) {
   const previous = boundedProjectMap(previousEntries, { historical: true });
   const current = boundedProjectMap(currentEntries);
+  const previousPublishesAtRoot = assertRootPublisherInventory(
+    previous,
+    "previous",
+  );
+  const currentPublishesAtRoot = assertRootPublisherInventory(
+    current,
+    "current",
+  );
+  if (previousPublishesAtRoot && !currentPublishesAtRoot) {
+    throw new TypeError(
+      "current project inventory cannot remove publishAtRoot declarations",
+    );
+  }
   for (const [projectId, prior] of previous) {
     const next = current.get(projectId);
     if (!next) {

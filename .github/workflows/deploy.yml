@@ -106,12 +106,38 @@ jobs:
           bun test skill-tests/*.test.ts
 
       - name: Generate live contribution data
+        # Pull-request code is untrusted, so this step never explicitly injects
+        # a repository-scoped token into it. Trusted develop runs refresh the
+        # ledger before producing a deployable build.
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bun run leaderboard:generate
 
-      - name: Validate reward lifecycle and finalized Solana evidence
+      - name: Load deployed public ledger for pull-request checks
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          mkdir -p public/data
+          ledger_file="$(mktemp "$RUNNER_TEMP/slop-ledger.XXXXXX")"
+          trap 'rm -f "$ledger_file"' EXIT
+          curl --fail --silent --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --connect-timeout 10 \
+            --max-time 60 \
+            --max-filesize 16777216 \
+            --output "$ledger_file" \
+            https://slop.cash/data/leaderboard.json
+          test -s "$ledger_file"
+          mv "$ledger_file" public/data/leaderboard.json
+
+      - name: Validate reward lifecycle
+        run: bun run cycles:check
+
+      - name: Validate finalized Solana evidence on trusted revisions
+        if: github.event_name != 'pull_request'
         env:
           SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
         run: bun run cycles:verify
