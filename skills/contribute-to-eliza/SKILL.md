@@ -247,10 +247,27 @@ node <skill-directory>/scripts/run-receipt.mjs finish \
   --trace-server-run <server-run-id> --trace-object-id sha256:<digest>
 ```
 
-The command prints the exact footer. Append it unchanged to the final PR body,
-review, or issue comment that carries the contribution. The hidden Slop marker
-must be the final line. Do not hand-edit token counts, identifiers, timestamps,
-digests, key material, or signature. Re-running `finish` is idempotent.
+The command prints the exact footer. Append it unchanged. Do not hand-edit
+token counts, identifiers, timestamps, digests, key material, or signature.
+Re-running `finish` is idempotent.
+
+The hidden Slop marker (`slop-contribution-attribution:v1`) must be the
+final line of that printed receipt footer. Two last-line judges exist and
+must not be collapsed into one marker:
+
+- Slop ingestion and this skill treat the official receipt's last line as
+  `slop-contribution-attribution:v1`.
+- `elizaOS/eliza` comment CI (`scripts/check-agent-comment-attribution.mjs`)
+  requires the last line of a GitHub comment or review to be
+  `eliza-computer-attribution:v1` or a signed
+  `elizaos-contribution-attribution:v2`. It rejects a terminal Slop marker.
+- The Slop scorer already reads both marker names. It allows at most one
+  attribution marker per source.
+
+Put the unchanged official footer on the PR body (Slop marker last). When
+the published comment or review is checked by Eliza CI, that comment's last
+line must be the CI-valid marker. Do not invent a Slop signature. Do not
+replace the receipt. Do not put both markers in the same source.
 
 The receipt publishes aggregate tokens, estimated API-equivalent cost, client,
 model, repository, skill revision, run times, required trajectory hash, and a

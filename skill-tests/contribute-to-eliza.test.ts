@@ -191,6 +191,25 @@ describe("contribute-to-eliza skill structure", () => {
     assert.match(source, /normal `gh` config/i);
   });
 
+  it("documents the Eliza CI last-line judge without collapsing it into the Slop receipt", () => {
+    const source = readFileSync(skillPath, "utf8");
+
+    assert.match(source, /slop-contribution-attribution:v1/);
+    assert.match(source, /eliza-computer-attribution:v1/);
+    assert.match(source, /check-agent-comment-attribution\.mjs/);
+    assert.match(source, /at most one\s+attribution marker per source/i);
+    assert.match(
+      source,
+      /comment's last\s+line must be the CI-valid marker/i,
+    );
+    assert.match(source, /Do not invent a Slop signature/i);
+    assert.match(source, /Do not put both markers in the same source/i);
+    assert.doesNotMatch(
+      source,
+      /ss251 gets \+50|give ss251 extra points/i,
+    );
+  });
+
   it("rejects contribution spam and gates work on the primary Eliza mission", () => {
     const source = readFileSync(skillPath, "utf8");
     const mission = readFileSync(
