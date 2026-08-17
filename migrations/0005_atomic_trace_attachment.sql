@@ -3,8 +3,8 @@
 -- JavaScript postcondition checks are not relied on for rollback.
 --
 -- Wrangler's statement splitter closes a trigger body at the first END
--- keyword, so trigger bodies here must not contain CASE ... END; the
--- validation predicate lives in the trigger WHEN clause instead. The first
+-- keyword, so trigger bodies here must not contain nested conditionals;
+-- the validation predicate lives in the trigger WHEN clause instead. The first
 -- deployment attempt applied the table before failing on the original
 -- trigger, so every statement is idempotent.
 CREATE TABLE IF NOT EXISTS trace_attachment_commits (

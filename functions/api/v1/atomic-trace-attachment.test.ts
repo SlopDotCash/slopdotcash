@@ -80,6 +80,38 @@ function attemptAttachment(db: DatabaseSync, updateRun: boolean): void {
 }
 
 describe("atomic trace attachment migration", () => {
+  it("converges after the table-only partial production apply", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(readFileSync("migrations/0001_private_trace_backend.sql", "utf8"));
+    const migration = readFileSync(
+      "migrations/0005_atomic_trace_attachment.sql",
+      "utf8",
+    );
+    const tableStatement = migration.match(
+      /CREATE TABLE IF NOT EXISTS trace_attachment_commits[\s\S]*?\) STRICT;/u,
+    )?.[0];
+    if (tableStatement === undefined) {
+      throw new Error("atomic trace attachment table statement is missing");
+    }
+    db.exec(tableStatement.replace(" IF NOT EXISTS", ""));
+
+    expect(() => db.exec(migration)).not.toThrow();
+    expect(() => db.exec(migration)).not.toThrow();
+    expect(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_schema
+           WHERE type = 'trigger' AND tbl_name = 'trace_attachment_commits'
+           ORDER BY name`,
+        )
+        .all(),
+    ).toEqual([
+      { name: "trace_attachment_commit_validate" },
+      { name: "trace_attachment_commits_no_delete" },
+      { name: "trace_attachment_commits_no_update" },
+    ]);
+  });
+
   it("keeps every migration compatible with the remote D1 trigger parser", () => {
     const incompatibleCaseTerminator =
       /\bCASE\b(?:(?!\bEND\b)[\s\S])*?\bEND\s*;/iu;
