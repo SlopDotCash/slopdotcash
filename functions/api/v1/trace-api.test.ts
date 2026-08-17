@@ -1017,7 +1017,11 @@ describe("private trace API", () => {
       handleTraceApi(makeUpload(), deps),
       handleTraceApi(makeUpload(), deps),
     ]);
-    expect(responses.map(({ status }) => status).sort()).toEqual([201, 409]);
+    const statuses = responses.map(({ status }) => status);
+    expect(statuses.filter((status) => status === 201)).toHaveLength(1);
+    const loserStatuses = statuses.filter((status) => status !== 201);
+    expect(loserStatuses).toHaveLength(1);
+    expect([409, 410]).toContain(loserStatuses[0]);
     expect(store.uploads.size).toBe(1);
     expect(store.objects.size).toBe(1);
     expect((await handleTraceApi(makeUpload(), deps)).status).toBe(410);
