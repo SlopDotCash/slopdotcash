@@ -679,7 +679,7 @@ describe("project routes", () => {
       "/projects/eliza/terms.json",
     );
     expect(
-      screen.queryByText(/temporarily not accepting new Slop runs/u),
+      screen.queryByText(/not accepting new Slop runs/u),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Home$/u })).toHaveAttribute(
       "href",
@@ -1150,7 +1150,7 @@ describe("project proposals", () => {
     expect(
       screen.getByText(/"address": "11111111111111111111111111111111"/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/"status": "active"/)).toBeInTheDocument();
+    expect(screen.getByText(/"status": "paused"/)).toBeInTheDocument();
     expect(screen.getByText(/"paymentTransfersIp": false/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
     await act(async () => Promise.resolve());

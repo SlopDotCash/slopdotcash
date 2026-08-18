@@ -20,7 +20,7 @@ node <contributor-skill-directory>/scripts/terms-preflight.mjs --project delta-s
 ```
 
 Unknown repository authority, terms, or organizer rules do not block review.
-Stop on a declared immutable digest mismatch or an operational project pause.
+Stop on a declared immutable digest mismatch.
 The review receipt retains the preflight acknowledgement; contribution text
 cannot rewrite it, and organizer rules remain controlling when known.
 

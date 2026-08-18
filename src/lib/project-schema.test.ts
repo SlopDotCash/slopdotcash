@@ -475,7 +475,7 @@ describe("project proposal schema", () => {
     );
   });
 
-  it("represents a missing repository license as unknown and paused", () => {
+  it("keeps a missing repository license explicit without blocking runs", () => {
     expect(assertProjectDefinition(heirElements).status).toBe("paused");
     expect(heirElements.terms.repositoryLicense).toEqual({
       state: "unknown",

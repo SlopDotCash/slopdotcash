@@ -562,10 +562,7 @@ function TypewriterHeroHeading() {
 }
 
 function HomeStatusLine({ snapshot }: { snapshot: LeaderboardSnapshot }) {
-  const pausedProjects = PROJECTS.filter(
-    (project) => project.status === "paused",
-  ).length;
-  const activeProjects = PROJECTS.length - pausedProjects;
+  const acceptingProjects = PROJECTS.length;
   const pendingFunding = PROJECTS.filter(
     (project) =>
       project.reward.kind === "monthly-pool" &&
@@ -575,8 +572,7 @@ function HomeStatusLine({ snapshot }: { snapshot: LeaderboardSnapshot }) {
   return (
     <p className="home-status-line" role="status">
       {stale(snapshot) ? "Scoring data may be outdated" : "Scoring is live"} ·{" "}
-      {activeProjects} of {PROJECTS.length} {projectLabel} accepting work
-      {pausedProjects > 0 ? ` · ${pausedProjects} operationally paused` : ""} ·{" "}
+      {acceptingProjects} of {PROJECTS.length} {projectLabel} accepting work ·{" "}
       {pendingFunding} monthly pools awaiting verified funding
     </p>
   );
@@ -592,9 +588,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
         <div>
-          <span className="project-state">
-            {project.status === "active" ? "Accepting work" : "Project paused"}
-          </span>
+          <span className="project-state">Accepting work</span>
           <h3>{project.name}</h3>
         </div>
         <ArrowRight aria-hidden="true" />
@@ -1673,11 +1667,6 @@ function ProjectPage({
                   : `${project.terms.inbound.mode} inbound terms`}{" "}
                 · <a href={`/projects/${project.id}/terms.json`}>Terms</a>
               </p>
-              {project.status === "paused" ? (
-                <p className="project-policy-warning" role="status">
-                  This project is temporarily not accepting new Slop runs.
-                </p>
-              ) : null}
               {project.terms.externalPrize ? (
                 <p className="project-policy-warning">
                   Organizer rules decide eligibility, amount, and payment.
@@ -2777,7 +2766,7 @@ function ProjectProposalPage() {
       eyebrow: "Open-source project",
       headline: headline || "Make money solving something hard.",
       description: goal || "Describe the concrete open-source goal.",
-      status: "active",
+      status: "paused",
       steward: {
         displayName: stewardName || "Unverified steward",
         kind: stewardKind,

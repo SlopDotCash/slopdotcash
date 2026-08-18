@@ -159,9 +159,6 @@ export async function preflight(projectId, options = {}) {
   if (policy.schemaVersion !== "1" || policy.projectId !== projectId) {
     fail("project policy identity is invalid");
   }
-  if (policy.status !== "active") {
-    fail("project is not accepting new Slop runs");
-  }
   if (policy.authority?.state === "verified") {
     if (policy.authority.proof?.policyRevision !== policy.terms?.revision) {
       fail("repository proof does not bind the current terms revision");
