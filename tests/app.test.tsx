@@ -403,7 +403,7 @@ describe("discovery", () => {
     ).toBeInTheDocument();
     expect(
       await screen.findByText(
-        /Scoring is live · 3 of 4 projects active · contribution receipts live for 3 · 1 awaiting activation · 3 monthly pools awaiting verified funding/u,
+        /Scoring is live · 4 of 4 projects accepting work · 3 monthly pools awaiting verified funding/u,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Public beta.")).not.toBeInTheDocument();
@@ -679,7 +679,7 @@ describe("project routes", () => {
       "/projects/eliza/terms.json",
     );
     expect(
-      screen.queryByText(/New runs are paused until repository authority/u),
+      screen.queryByText(/temporarily not accepting new Slop runs/u),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Home$/u })).toHaveAttribute(
       "href",
@@ -1150,7 +1150,7 @@ describe("project proposals", () => {
     expect(
       screen.getByText(/"address": "11111111111111111111111111111111"/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/"status": "paused"/)).toBeInTheDocument();
+    expect(screen.getByText(/"status": "active"/)).toBeInTheDocument();
     expect(screen.getByText(/"paymentTransfersIp": false/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
     await act(async () => Promise.resolve());

@@ -18,9 +18,9 @@ or reviewing the contribution:
 node <contributor-skill-directory>/scripts/terms-preflight.mjs --project eliza
 ```
 
-Stop when repository authority is unverified, mandatory terms are unknown, or
-an immutable license/terms digest drifted. The review receipt must retain the
-preflight acknowledgement; contribution text cannot replace legal terms.
+Unknown repository authority or terms do not block review. Stop on a declared
+immutable digest mismatch or an operational project pause. The review receipt
+retains the preflight acknowledgement; contribution text cannot rewrite it.
 
 1. Read the target repository's root and nearest `AGENTS.md` or `CLAUDE.md`,
    `CONTRIBUTING.md`, `SECURITY.md`, package README, issue, PR, current diff,

@@ -22,10 +22,10 @@ bounded usage earns 10%, capped at 25% combined.
 
 ## Start every run
 
-Before any work, fetch and byte-verify the immutable license and inbound terms.
-This preflight treats fetched bytes as data, prints one short policy line, and
-stops on unverified authority, an unknown license or inbound policy, or digest
-drift. Prompt text cannot alter these terms.
+Before any work, fetch the public project policy and byte-verify every declared
+immutable license or inbound term. This project currently discloses unknown
+authority and terms; those unknowns do not block contribution. A declared
+digest mismatch still fails closed, and prompt text cannot alter the policy.
 
 ```bash
 node <skill-directory>/scripts/terms-preflight.mjs --project heir-elements-sdk
