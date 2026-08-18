@@ -3137,8 +3137,10 @@ export function createLeaderboardSnapshot(
         continue;
       }
       if (record.workUnitId.includes("_legacy_")) continue;
+      // Post-merge review is excluded, never fatal: an unprivileged comment on
+      // a merged pull request must not fail snapshot generation.
       if (parseIsoTime(source.createdAt) > parseIsoTime(pullRequest.mergedAt)) {
-        throw new TypeError("slop-review was posted after merge");
+        continue;
       }
       const reviewThirds = {
         triage: 1,
