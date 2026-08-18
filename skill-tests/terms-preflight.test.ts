@@ -68,7 +68,7 @@ describe("project terms preflight", () => {
     });
   });
 
-  it("allows disclosed unknowns and stops on operational pause or byte drift", async () => {
+  it("allows disclosed unknowns and legacy paused status but stops on byte drift", async () => {
     const unknown = structuredClone(policy);
     unknown.authority = { state: "unverified", proof: null };
     unknown.terms.receiptPolicy = {
@@ -91,7 +91,11 @@ describe("project terms preflight", () => {
     const paused = structuredClone(unknown);
     paused.status = "paused";
     globalThis.fetch = responses(new Response(JSON.stringify(paused)));
-    await expect(preflight("eliza")).rejects.toThrow(/not accepting/u);
+    await expect(preflight("eliza")).resolves.toMatchObject({
+      policyRevision: "policy-2",
+      licenseSha256: null,
+      inboundTermsSha256: null,
+    });
 
     globalThis.fetch = responses(
       new Response(JSON.stringify(policy)),
