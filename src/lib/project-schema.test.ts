@@ -473,8 +473,8 @@ describe("project proposal schema", () => {
     );
   });
 
-  it("represents a missing repository license as unknown without blocking contribution", () => {
-    expect(assertProjectDefinition(heirElements).status).toBe("paused");
+  it("represents a missing repository license as unknown without pausing", () => {
+    expect(assertProjectDefinition(heirElements).status).toBe("active");
     expect(heirElements.terms.repositoryLicense).toEqual({
       state: "unknown",
       spdx: null,
@@ -482,9 +482,8 @@ describe("project proposal schema", () => {
       commitSha: null,
       fileSha256: null,
     });
-    const active = structuredClone(heirElements);
-    active.status = "active";
-    expect(assertProjectDefinition(active).status).toBe("active");
-    expect(assertProjectDefinition(active).authority.state).toBe("unverified");
+    expect(assertProjectDefinition(heirElements).authority.state).toBe(
+      "unverified",
+    );
   });
 });
