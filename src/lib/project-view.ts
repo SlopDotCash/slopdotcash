@@ -1,7 +1,8 @@
 /**
  * Derives one project's cycle leaderboard, bounded compute evidence, and reward
- * simulation from the canonical GitHub snapshot. Local usage receipts remain
- * diagnostic evidence and never alter rank or simulated allocation.
+ * simulation from the canonical GitHub snapshot. Finalized private traces and
+ * outcome-matched bounded usage earn a fixed evidence bonus; raw token volume
+ * never changes the bonus.
  */
 
 import type {
@@ -440,6 +441,33 @@ function usageForActor(
   return usage;
 }
 
+function evidenceBonusForActor(
+  actorId: string,
+  events: readonly ScoreEvent[],
+  runs: readonly UniqueRun[],
+): number {
+  const relevant = runs.filter(
+    (run) =>
+      run.attribution.actor?.id === actorId &&
+      events.some(
+        (event) =>
+          event.scoreThirds !== undefined && eventMatchesRun(event, run),
+      ),
+  );
+  const traceBonus = relevant.some((run) => run.receipt.traceUpload !== null)
+    ? 1_500
+    : 0;
+  const usageBonus = relevant.some(
+    (run) =>
+      (run.receipt.usage.confidence === "exact" ||
+        run.receipt.usage.confidence === "bounded") &&
+      run.receipt.usage.totalTokens > 0,
+  )
+    ? 1_000
+    : 0;
+  return traceBonus + usageBonus;
+}
+
 function aggregateUsage(
   entries: readonly ProjectContributor[],
 ): ProjectUsageSummary {
@@ -553,8 +581,15 @@ export function createProjectView(
   const leaders = [...actors.values()].map<ProjectContributor>((actor) => {
     const events = ledger.filter((event) => event.actor.id === actor.id);
     const usage = usageForActor(actor.id, events, runs);
-    const score = events.reduce((total, event) => total + event.points, 0);
-    const computeBonus = 0;
+    const rawThirds = events.reduce(
+      (total, event) => total + (event.scoreThirds ?? event.points * 3),
+      0,
+    );
+    const computeBonus = evidenceBonusForActor(actor.id, events, runs);
+    const weightedThirds = Math.floor(
+      (rawThirds * (10_000 + computeBonus)) / 10_000,
+    );
+    const score = Math.floor(weightedThirds / 3);
     const points = {
       "merged-pull-request": 0,
       "resolved-issue": 0,

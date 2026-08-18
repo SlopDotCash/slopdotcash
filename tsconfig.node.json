@@ -33,6 +33,7 @@
     "src/lib/reward-finalization.ts",
     "src/lib/rewards.ts",
     "src/lib/review-records.ts",
+    "src/lib/score-records.ts",
     "src/lib/run-receipts.ts",
     "src/lib/settlement-plan.ts",
     "src/lib/solana-settlement.ts",

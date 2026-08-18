@@ -85,6 +85,15 @@ blocking work. Funding, payout, and deployment states still require their own
 independent evidence. For the full review checklist, see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Score v2
+
+Accepted work from August 2026 uses integer-thirds effort tiers instead of
+account caps or diminishing merge credit. Claude review agents propose effort,
+complexity, impact, review load, and logical work-unit grouping; maintainers
+ratify the score in an immutable exact-head GitHub record. Valid private traces
+and outcome-matched bounded usage receive fixed evidence bonuses, never a bonus
+proportional to raw tokens. See [the complete score contract](protocol/scoring-v2.md).
+
 ## What the public record means
 
 Slop uses precise financial states:
@@ -94,7 +103,8 @@ Slop uses precise financial states:
 - **Approved** — immutable payout intents after public review.
 - **Scheduled** — an unsigned transfer plan exists.
 - **Paid** — finalized Solana evidence reconciles the exact transfers.
-- **Unclaimed / held / excluded** — visible unresolved states with reasons.
+- **Unclaimed / held / held below $2 / excluded** — visible unresolved states
+  with reasons; sub-$2 awards accrue instead of being discarded.
 
 Project owners keep control of their funds and sign payments outside Slop.
 Slop does not create wallets, custody assets, hold keys, or broadcast
