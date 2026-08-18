@@ -55,7 +55,7 @@ export interface ProjectRunReceipt {
   skillSha256: string;
   policyAcknowledgement?: {
     policyRevision: string;
-    licenseSha256: string;
+    licenseSha256: string | null;
     inboundTermsSha256: string | null;
     prizeRulesSha256: string | null;
     acknowledgedAt: string;
@@ -126,15 +126,28 @@ export function assertRunReceiptPolicyJoin(
     }
     return receipt;
   }
+  const acknowledgement = receipt.policyAcknowledgement;
   if (activation.state !== "active") {
-    throw new TypeError("v2 run receipt predates project policy activation");
+    if (
+      !acknowledgement ||
+      acknowledgement.policyRevision !== project.terms.revision ||
+      acknowledgement.licenseSha256 !==
+        project.terms.repositoryLicense.fileSha256 ||
+      acknowledgement.inboundTermsSha256 !== project.terms.inbound.fileSha256 ||
+      acknowledgement.prizeRulesSha256 !==
+        (project.terms.externalPrize?.rulesSha256 ?? null)
+    ) {
+      throw new TypeError(
+        "run receipt policy acknowledgement does not match the disclosed project policy",
+      );
+    }
+    return receipt;
   }
   if (Date.parse(receipt.startedAt) < Date.parse(activation.activatedAt)) {
     throw new TypeError(
       "v2 run receipt started before project policy activation",
     );
   }
-  const acknowledgement = receipt.policyAcknowledgement;
   const binding = activation.bindings.find(
     (entry) => entry.policyRevision === acknowledgement?.policyRevision,
   );
@@ -168,7 +181,7 @@ export interface RunReceiptMarker {
     skill_sha256: string;
     policy_acknowledgement?: {
       policy_revision: string;
-      license_sha256: string;
+      license_sha256: string | null;
       inbound_terms_sha256: string | null;
       prize_rules_sha256: string | null;
       acknowledged_at: string;
@@ -649,7 +662,7 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
     );
     policyAcknowledgement = {
       policyRevision,
-      licenseSha256: digest(
+      licenseSha256: optionalDigest(
         value.run.policy_acknowledgement.license_sha256,
         "run marker.policy_acknowledgement.license_sha256",
       ),
