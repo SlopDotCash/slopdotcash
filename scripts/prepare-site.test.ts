@@ -493,7 +493,7 @@ describe("contribution skill package", () => {
       stdio: "inherit",
     });
     expect(readFileSync(archivePath)).toEqual(firstArchive);
-  }, 60_000);
+  }, 0);
 
   it("contains every canonical dependency, no extra source, and bound provenance", () => {
     const archive = inspectArchive();

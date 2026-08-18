@@ -26,23 +26,23 @@
     "repositoryId": "826170402",
     "repositoryNodeId": "R_kgDOMT5cIg",
     "proof": {
-      "commitSha": "7e04c64c73f007610e5da4654803589fdee7c96d",
-      "fileSha256": "514e17e46a90da67d155d6755db7422020a895ec40add258a5bf2820d43b3606",
-      "policyRevision": "2026-08-16.3",
-      "url": "https://github.com/elizaOS/eliza/blob/7e04c64c73f007610e5da4654803589fdee7c96d/.github/slop-project.json",
-      "verifiedAt": "2026-08-17T00:52:03.000Z"
+      "commitSha": "aa6bb930db7e098ec478818ee456a85b9811b5a6",
+      "fileSha256": "70ec65f06600fef7c64a8e7e0e28d8dff7e1537f37fc54e78def1f2018d5449e",
+      "policyRevision": "2026-08-18.1",
+      "url": "https://github.com/elizaOS/eliza/blob/aa6bb930db7e098ec478818ee456a85b9811b5a6/.github/slop-project.json",
+      "verifiedAt": "2026-08-18T20:45:06.000Z"
     }
   },
   "terms": {
-    "revision": "2026-08-16.3",
-    "effectiveAt": "2026-08-16T21:45:00.000Z",
+    "revision": "2026-08-18.1",
+    "effectiveAt": "2026-08-18T20:45:06.000Z",
     "receiptPolicy": {
       "state": "active",
-      "activatedAt": "2026-08-17T00:52:03.000Z",
+      "activatedAt": "2026-08-18T20:45:06.000Z",
       "bindings": [
         {
-          "policyRevision": "2026-08-16.3",
-          "activatedAt": "2026-08-17T00:52:03.000Z",
+          "policyRevision": "2026-08-18.1",
+          "activatedAt": "2026-08-18T20:45:06.000Z",
           "licenseSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
           "inboundTermsSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
           "prizeRulesSha256": null
