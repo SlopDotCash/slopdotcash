@@ -73,6 +73,46 @@ describe("reward cycle proposals", () => {
     });
   });
 
+  it("carries a prior below-minimum accrual for a cycle-inactive actor", () => {
+    const base = {
+      cycleId: "2026-07",
+      generatedAt: "2026-08-02T00:00:00.000Z",
+      projectId: "eliza" as const,
+      snapshot: closedSnapshot(),
+      sourceSnapshotSha256: SOURCE_SHA,
+      priorAccruedMinor: new Map([["U_quiet", "1500000"]]),
+    };
+    expect(() => createRewardCycleProposal(base)).toThrow("has no prior login");
+
+    const proposal = createRewardCycleProposal({
+      ...base,
+      priorActorLogins: new Map([["U_quiet", "quiet-contributor"]]),
+      wallets: new Map([
+        [
+          "U_quiet",
+          {
+            ...wallet(),
+            sourceUrl: `https://github.com/quiet-contributor/quiet-contributor/blob/${PROFILE_COMMIT}/README.md`,
+          },
+        ],
+      ]),
+    });
+    if (proposal.kind !== "reward-allocation")
+      throw new Error("wrong proposal");
+    expect(proposal.carriedMinor).toBe("1500000");
+    const carried = proposal.allocations.find(
+      (allocation) => allocation.actor.id === "U_quiet",
+    );
+    expect(carried).toMatchObject({
+      actor: { id: "U_quiet", login: "quiet-contributor" },
+      score: 0,
+      accruedMinor: "1500000",
+      approvedMinor: "0",
+      state: "held-below-minimum",
+      evidenceEventIds: [],
+    });
+  });
+
   it("publishes Delta Star only as a provisional external-prize share", () => {
     const proposal = createRewardCycleProposal({
       cycleId: "2026-07",

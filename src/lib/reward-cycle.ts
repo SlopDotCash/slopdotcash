@@ -31,6 +31,7 @@ export interface CreateRewardCycleProposalInput {
   sourceSnapshotSha256: string;
   wallets?: ReadonlyMap<string, WalletProof>;
   priorAccruedMinor?: ReadonlyMap<string, string>;
+  priorActorLogins?: ReadonlyMap<string, string>;
 }
 
 function cycleBounds(cycleId: string): { from: number; to: number } {
@@ -136,22 +137,33 @@ export function createRewardCycleProposal(
     });
   }
 
-  const carriedMinor = view.leaders
-    .reduce(
+  // Accrual is a debt to the actor, not a reward for this cycle's activity:
+  // a positive prior balance must survive a quiet month, so carried-only
+  // actors get their own allocation rows after the leaders.
+  const leaderIds = new Set(view.leaders.map((leader) => leader.actor.id));
+  const carriedOnly = [...(input.priorAccruedMinor ?? [])]
+    .filter(([actorId, minor]) => !leaderIds.has(actorId) && BigInt(minor) > 0n)
+    .sort(([left], [right]) => left.localeCompare(right));
+  const carriedOnlyMinor = carriedOnly.reduce(
+    (total, [, minor]) => total + BigInt(minor),
+    0n,
+  );
+  const carriedMinor = (
+    view.leaders.reduce(
       (total, leader) =>
         total + BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0"),
       0n,
-    )
-    .toString();
-  const suggestedMinor = view.leaders
-    .reduce(
+    ) + carriedOnlyMinor
+  ).toString();
+  const suggestedMinor = (
+    view.leaders.reduce(
       (total, leader) =>
         total +
         BigInt(leader.projectedMinor ?? "0") +
         BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0"),
       0n,
-    )
-    .toString();
+    ) + carriedOnlyMinor
+  ).toString();
   const reviewEndsAt = new Date(
     Date.parse(input.generatedAt) + REVIEW_WINDOW_DAYS * 86_400_000,
   ).toISOString();
@@ -181,31 +193,63 @@ export function createRewardCycleProposal(
     feeBasisPoints: view.project.reward.feeBasisPoints,
     scoringRuleVersion: input.snapshot.ruleVersion,
     sourceSnapshotSha256: input.sourceSnapshotSha256,
-    allocations: view.leaders.map((leader, index) => {
-      const wallet = input.wallets?.get(leader.actor.id) ?? null;
-      const accruedMinor = (
-        BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
-        BigInt(leader.projectedMinor ?? "0")
-      ).toString();
-      return {
-        intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(leader.actor.id)}`,
-        actor: { id: leader.actor.id, login: leader.actor.login },
-        score: leader.score,
-        suggestedMinor: accruedMinor,
-        accruedMinor,
-        approvedMinor: "0",
-        state: wallet
-          ? BigInt(accruedMinor) < BigInt(MINIMUM_TRANSFER_MINOR)
-            ? "held-below-minimum"
-            : "proposed"
-          : "unclaimed",
-        wallet,
-        evidenceEventIds: leader.evidenceEventIds,
-        adjustmentReason: null,
-        relatedParty: input.relatedPartyActorIds?.has(leader.actor.id) ?? false,
-        platformApproval: null,
-      };
-    }),
+    allocations: view.leaders
+      .map((leader, index) => {
+        const wallet = input.wallets?.get(leader.actor.id) ?? null;
+        const accruedMinor = (
+          BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
+          BigInt(leader.projectedMinor ?? "0")
+        ).toString();
+        return {
+          intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(leader.actor.id)}`,
+          actor: { id: leader.actor.id, login: leader.actor.login },
+          score: leader.score,
+          suggestedMinor: accruedMinor,
+          accruedMinor,
+          approvedMinor: "0",
+          state: wallet
+            ? BigInt(accruedMinor) < BigInt(MINIMUM_TRANSFER_MINOR)
+              ? "held-below-minimum"
+              : "proposed"
+            : "unclaimed",
+          wallet,
+          evidenceEventIds: leader.evidenceEventIds,
+          adjustmentReason: null,
+          relatedParty:
+            input.relatedPartyActorIds?.has(leader.actor.id) ?? false,
+          platformApproval: null,
+        };
+      })
+      .concat(
+        carriedOnly.map(([actorId, minor], offset) => {
+          const login = input.priorActorLogins?.get(actorId);
+          if (!login) {
+            throw new TypeError(
+              `carried accrual for ${actorId} has no prior login; pass priorActorLogins from the prior manifest`,
+            );
+          }
+          const wallet = input.wallets?.get(actorId) ?? null;
+          const index = view.leaders.length + offset;
+          return {
+            intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(actorId)}`,
+            actor: { id: actorId, login },
+            score: 0,
+            suggestedMinor: minor,
+            accruedMinor: minor,
+            approvedMinor: "0",
+            state: wallet
+              ? BigInt(minor) < BigInt(MINIMUM_TRANSFER_MINOR)
+                ? ("held-below-minimum" as const)
+                : ("proposed" as const)
+              : ("unclaimed" as const),
+            wallet,
+            evidenceEventIds: [],
+            adjustmentReason: null,
+            relatedParty: input.relatedPartyActorIds?.has(actorId) ?? false,
+            platformApproval: null,
+          };
+        }),
+      ),
     totals: {
       suggestedMinor,
       approvedMinor: "0",
