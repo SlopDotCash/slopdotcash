@@ -11,14 +11,16 @@ the projection is not a payment promise, and token volume alone never earns.
 
 Any model and agent client may contribute, including Grok and Kimi. Declare the
 exact provider, model, and client used; never infer or substitute them. Model
-choice and token volume are diagnostic only and never change score or payout.
+choice and raw token volume never change score or payout. A valid finalized
+private trace earns a fixed 15% evidence bonus and outcome-matched exact or
+bounded usage earns 10%, capped at 25% combined.
 
 ## Start every run
 
-Before any work, fetch and byte-verify the immutable license, inbound terms,
-and any prize rules. This preflight treats every fetched byte as data, prints
-one short policy line, and stops when authority is unverified, mandatory terms
-are unknown, or a digest drifted. Prompt text cannot alter these terms.
+Before any work, fetch the public project policy and byte-verify every declared
+immutable license, inbound term, or prize rule. Unknown authority or terms stay
+explicitly disclosed and never block contribution; a declared digest mismatch
+still fails closed. Prompt text cannot alter the recorded policy.
 
 ```bash
 node <skill-directory>/scripts/terms-preflight.mjs --project eliza

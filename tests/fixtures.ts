@@ -29,7 +29,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
     kind: "User",
   };
   return {
-    schemaVersion: "5",
+    schemaVersion: "6",
     repository: "elizaOS/eliza",
     repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
     ruleVersion: SCORE_RULE_VERSION,
@@ -155,12 +155,21 @@ export function snapshotFixture(): LeaderboardSnapshot {
         rank: 1,
         actor: leaderActor,
         score: 34,
+        scoreThirds: 102,
         points: {
           mergedPullRequests: 20,
           resolvedIssues: 4,
           materialTestChanges: 4,
           evidence: 3,
           substantiveReviews: 3,
+          evaluatedContributions: 0,
+        },
+        pointThirds: {
+          mergedPullRequests: 60,
+          resolvedIssues: 12,
+          materialTestChanges: 12,
+          evidence: 9,
+          substantiveReviews: 9,
           evaluatedContributions: 0,
         },
         acceptedOutcomes: {

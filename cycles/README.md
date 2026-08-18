@@ -20,6 +20,13 @@ within the published cap. Every changed amount records a public reason. Wallet
 changes update `review.lastMaterialChangeAt` and reset `review.endsAt`. The
 normal progression then adds, without replacing earlier files:
 
+Transfers have a 2 USDC minimum. Smaller awards remain
+`held-below-minimum`, retain their exact integer micro-USDC amount, and accrue
+without being discarded or redistributed. A later proposal publishes the
+carried amount; settlement may proceed only when the combined approved intent
+is at least 2 USDC. The 1% fee applies only to principal actually approved for
+payment.
+
 - `allocation.json` — reviewed and approved payout intents;
 - `execution-plan.json` — an unsigned, exact Solana USDC transfer plan;
 - `transactions.json` — submitted public transaction signatures;

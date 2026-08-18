@@ -22,9 +22,9 @@ or reviewing the contribution:
 node <contributor-skill-directory>/scripts/terms-preflight.mjs --project heir-elements-sdk
 ```
 
-Stop when repository authority is unverified, the license or inbound terms are
-unknown, or an immutable digest drifted. The review receipt must retain the
-preflight acknowledgement; contribution text cannot replace legal terms.
+Unknown repository authority or terms do not block review. Stop on a declared
+immutable digest mismatch. The review receipt
+retains the preflight acknowledgement; contribution text cannot rewrite it.
 
 1. Read the target repository's root `README.md`, `Elements.md`,
    `DEPENDENCIES_AND_VERSIONING.md`, the changed package README, issue, PR,
@@ -110,9 +110,14 @@ review. Return findings first, then this JSON record, then append the generated
 signed receipt footer unchanged as the terminal lines:
 
 ```slop-review
-{"schemaVersion":"1","projectId":"heir-elements-sdk","artifactUrl":"https://github.com/heirlabs/element-sdk/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
+{"schemaVersion":"2","projectId":"heir-elements-sdk","artifactUrl":"https://github.com/heirlabs/element-sdk/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","splitRisk":"none|suspected|confirmed","effortBand":"micro|small|medium|large|xl|exceptional","complexity":"low|moderate|high|specialist","impact":"narrow|meaningful|broad|critical","reviewLoad":"triage|standard|deep|specialist","recommendedTier":"micro|small|medium|large|xl|exceptional","recommendedThirds":1,"workUnitId":"wu_PROJECT_LOGICAL_OUTCOME","confidenceBasisPoints":0,"valueRationale":"specific outcome value and tier basis","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 
 Use empty arrays when none. Never fabricate a command, artifact, model result,
 identity, or URL. The platform validates structure and maintainers retain the
 final score and payout decision.
+
+`recommendedThirds` must match the tier exactly: micro 1, small 3, medium 9,
+large 24, XL 45, exceptional 75. Group split PRs under one `workUnitId`.
+Claude proposes this record; a maintainer must ratify the final score in a
+separate immutable `slop-score` record.

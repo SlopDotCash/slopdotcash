@@ -159,38 +159,26 @@ export async function preflight(projectId, options = {}) {
   if (policy.schemaVersion !== "1" || policy.projectId !== projectId) {
     fail("project policy identity is invalid");
   }
-  if (policy.status !== "active" || policy.authority?.state !== "verified") {
-    fail("new runs are paused until repository authority is verified");
+  if (policy.authority?.state === "verified") {
+    if (policy.authority.proof?.policyRevision !== policy.terms?.revision) {
+      fail("repository proof does not bind the current terms revision");
+    }
+    if (
+      policy.terms?.receiptPolicy?.state !== "active" ||
+      policy.terms.receiptPolicy.activatedAt !==
+        policy.authority.proof?.verifiedAt
+    ) {
+      fail("receipt policy is not bound to authority activation");
+    }
   }
-  if (policy.authority.proof?.policyRevision !== policy.terms?.revision) {
-    fail("repository proof does not bind the current terms revision");
+  if (policy.terms?.repositoryLicense?.state === "verified") {
+    await verifiedBytes(
+      policy.terms.repositoryLicense.url,
+      policy.terms.repositoryLicense.fileSha256,
+      "LICENSE",
+      options.testAuthority !== undefined,
+    );
   }
-  if (
-    policy.terms?.receiptPolicy?.state !== "active" ||
-    policy.terms.receiptPolicy.activatedAt !==
-      policy.authority.proof?.verifiedAt
-  ) {
-    fail("receipt policy is not bound to authority activation");
-  }
-  if (policy.terms?.inbound?.mode === "unknown") {
-    fail("mandatory inbound terms are unknown");
-  }
-  if (policy.terms?.repositoryLicense?.state !== "verified") {
-    fail("mandatory repository license is unknown");
-  }
-  if (
-    policy.terms?.externalPrize &&
-    (policy.terms.externalPrize.version === "unknown" ||
-      !policy.terms.externalPrize.rulesSha256)
-  ) {
-    fail("external prize rules are not immutably verified");
-  }
-  await verifiedBytes(
-    policy.terms.repositoryLicense.url,
-    policy.terms.repositoryLicense.fileSha256,
-    "LICENSE",
-    options.testAuthority !== undefined,
-  );
   if (policy.terms.inbound.fileSha256) {
     await verifiedBytes(
       policy.terms.inbound.termsUrl,
@@ -233,7 +221,7 @@ if (direct) {
       process.stdout.write(`${JSON.stringify(acknowledgement)}\n`);
     } else {
       process.stdout.write(
-        `Terms verified: ${acknowledgement.policyRevision} · license ${acknowledgement.licenseSha256.slice(0, 12)} · acknowledgement recorded\n`,
+        `Project policy acknowledged: ${acknowledgement.policyRevision} · license ${acknowledgement.licenseSha256?.slice(0, 12) ?? "not declared"} · contributions open\n`,
       );
     }
   } catch (error) {
