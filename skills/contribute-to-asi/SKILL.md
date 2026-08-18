@@ -292,6 +292,10 @@ Bind it to the head you measured with a single marker, and attach artifacts as
 immutable GitHub attachment URLs — mutable release assets, inline text, and
 comment copies do not verify:
 
+Capture the marker value in the same run with `git rev-parse HEAD` and paste
+all 40 characters verbatim. Never reconstruct it from `git log --oneline`, a
+short SHA, memory, or model completion.
+
 ```text
 <!-- evidence-head:<40-character head SHA> -->
 <!-- evidence-row:logs -->

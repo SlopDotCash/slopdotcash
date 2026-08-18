@@ -201,7 +201,10 @@ details or secrets in public project data or a run receipt.
 5. Capture the applicable logs, screenshots, recording, live-model trajectory,
    and domain artifact. Open and inspect every artifact. Preserve every stable
    PR-template evidence row and use a specific `N/A - <reason>` only when the
-   repository allows it.
+   repository allows it. When the template requires an evidence-head marker,
+   capture it with `git rev-parse HEAD` in the same run and paste the complete
+   40-character output verbatim; never expand a short SHA or compose it from
+   memory.
 6. Open or update a PR against `develop`, link its issue, and leave final
    approval and merge to an independent maintainer. Never self-approve,
    self-merge, or represent an unmerged change as accepted.

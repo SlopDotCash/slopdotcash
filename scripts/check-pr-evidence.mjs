@@ -32,17 +32,57 @@ export const SURFACE_OCR_EVIDENCE_ROW = {
   label: "OCR visual text review",
 };
 
-export function hasMatchingEvidenceHead(body, headSha) {
-  if (!/^[a-f0-9]{40}$/i.test(String(headSha ?? ""))) return false;
+export function inspectEvidenceHead(body, headSha) {
+  const expected = String(headSha ?? "").toLowerCase();
+  if (!/^[a-f0-9]{40}$/i.test(expected)) {
+    return {
+      ok: false,
+      status: "head-mismatch",
+      detail: "current PR head SHA must be a complete 40-character SHA",
+    };
+  }
   const matches = [
     ...String(body ?? "").matchAll(
       /<!--\s*evidence-head:([a-f0-9]{40})\s*-->/gi,
     ),
   ];
-  return (
-    matches.length === 1 &&
-    matches[0][1].toLowerCase() === String(headSha).toLowerCase()
-  );
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      status: "head-mismatch",
+      detail:
+        "exactly one evidence-head marker must contain the current PR head SHA",
+    };
+  }
+
+  const observed = matches[0][1].toLowerCase();
+  if (observed === expected) return { ok: true, status: "ok", detail: "" };
+
+  let sharedPrefixLength = 0;
+  while (
+    sharedPrefixLength < expected.length &&
+    observed[sharedPrefixLength] === expected[sharedPrefixLength]
+  ) {
+    sharedPrefixLength += 1;
+  }
+  if (sharedPrefixLength >= 8) {
+    return {
+      ok: false,
+      status: "likely-short-sha-reconstruction",
+      detail:
+        "evidence-head marker shares a short prefix with the current head and appears reconstructed; re-capture the full value verbatim with git rev-parse HEAD",
+    };
+  }
+
+  return {
+    ok: false,
+    status: "head-mismatch",
+    detail: "evidence-head marker must match the current PR head SHA",
+  };
+}
+
+export function hasMatchingEvidenceHead(body, headSha) {
+  return inspectEvidenceHead(body, headSha).ok;
 }
 
 /**
@@ -2315,6 +2355,33 @@ export function runSelfTest() {
   const failures = [];
 
   {
+    const expected = "0835c66b420cebd18c693deb98d8b181c0a30faa";
+    const exact = inspectEvidenceHead(
+      `<!-- evidence-head:${expected} -->`,
+      expected,
+    );
+    const reconstructed = inspectEvidenceHead(
+      "<!-- evidence-head:0835c66b42b6a22fdfbf9fc7ea7d1be7b11d615f -->",
+      expected,
+    );
+    const unrelated = inspectEvidenceHead(
+      "<!-- evidence-head:ffffffffffffffffffffffffffffffffffffffff -->",
+      expected,
+    );
+    if (!exact.ok) failures.push("exact evidence head should pass");
+    if (reconstructed.status !== "likely-short-sha-reconstruction") {
+      failures.push(
+        "shared short-SHA prefix should receive a specific diagnostic",
+      );
+    }
+    if (unrelated.status !== "head-mismatch") {
+      failures.push(
+        "unrelated evidence head should retain the generic diagnostic",
+      );
+    }
+  }
+
+  {
     const { ok } = evaluatePrEvidence(buildFixtureBody());
     if (!ok) failures.push("all-filled fixture should pass");
   }
@@ -2557,7 +2624,7 @@ export function runSelfTest() {
     for (const failure of failures) console.error(`  - ${failure}`);
     process.exit(1);
   }
-  console.log("check-pr-evidence self-test passed (14 cases).");
+  console.log("check-pr-evidence self-test passed (15 cases).");
 }
 
 // The diagnostic for a PR body carrying NONE of the template's evidence-row
@@ -2614,13 +2681,17 @@ async function main() {
     evaluation.findings,
     verification.findings,
   );
-  const headOk = headSha === null || hasMatchingEvidenceHead(body, headSha);
+  const headInspection =
+    headSha === null
+      ? { ok: true, status: "ok", detail: "" }
+      : inspectEvidenceHead(body, headSha);
+  const headOk = headInspection.ok;
   if (!headOk) {
     findings.push({
       id: "evidence-head",
       label: "Evidence head SHA",
-      status: "head-mismatch",
-      detail: "evidence-head marker must match the current PR head SHA",
+      status: headInspection.status,
+      detail: headInspection.detail,
     });
   }
   const allOk =
