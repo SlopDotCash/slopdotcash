@@ -136,10 +136,23 @@ describe("project proposal schema", () => {
 
   it("rejects repository and skill collisions across project folders", () => {
     const copy = structuredClone(deltaStar);
+    copy.status = "paused";
     copy.repositories[0] = structuredClone(eliza.repositories[0]);
+    (copy as unknown as { authority: unknown }).authority = {
+      ...structuredClone(eliza.authority),
+      state: "unverified",
+      reason: "missing-repository-proof",
+      proof: null,
+    };
     copy.terms.repositoryLicense = structuredClone(
       eliza.terms.repositoryLicense,
     );
+    copy.terms.inbound = structuredClone(eliza.terms.inbound);
+    (copy.terms as unknown as { receiptPolicy: unknown }).receiptPolicy = {
+      state: "pending-authority-activation",
+      activatedAt: null,
+      bindings: [],
+    };
     expect(() => assertProjectRegistry([eliza, copy])).toThrow(
       /duplicate repositories/u,
     );
@@ -444,6 +457,19 @@ describe("project proposal schema", () => {
     );
     const inventedCapture = mutablePolicyFixture(deltaStar);
     inventedCapture.terms.externalPrize.rulesSha256 = "a".repeat(64);
+    (
+      inventedCapture.terms.externalPrize as { rulesCapturedAt?: string | null }
+    ).rulesCapturedAt = null;
+    (inventedCapture.terms.externalPrize as { version?: string }).version =
+      "unknown";
+    (inventedCapture as unknown as { status: string }).status = "paused";
+    (
+      inventedCapture as unknown as { terms: { receiptPolicy: unknown } }
+    ).terms.receiptPolicy = {
+      state: "pending-authority-activation",
+      activatedAt: null,
+      bindings: [],
+    };
     expect(() => assertProjectDefinition(inventedCapture)).toThrow(
       /unverified rules/u,
     );

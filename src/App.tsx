@@ -565,19 +565,22 @@ function HomeStatusLine({ snapshot }: { snapshot: LeaderboardSnapshot }) {
   const pausedProjects = PROJECTS.filter(
     (project) => project.status === "paused",
   ).length;
-  const disabledPayouts = PROJECTS.filter(
-    (project) => project.reward.paymentMode === "disabled",
+  const activeProjects = PROJECTS.length - pausedProjects;
+  const pendingFunding = PROJECTS.filter(
+    (project) =>
+      project.reward.kind === "monthly-pool" &&
+      project.reward.paymentMode !== "enabled",
   ).length;
-  const disabledReceipts = PROJECTS.filter(
-    (project) => project.terms.receiptPolicy.state !== "active",
+  const activeReceipts = PROJECTS.filter(
+    (project) => project.terms.receiptPolicy.state === "active",
   ).length;
   const projectLabel = PROJECTS.length === 1 ? "project" : "projects";
   return (
     <p className="home-status-line" role="status">
       {stale(snapshot) ? "Scoring data may be outdated" : "Scoring is live"} ·{" "}
-      {pausedProjects} of {PROJECTS.length} {projectLabel} paused · payouts
-      disabled for {disabledPayouts} · contribution receipts disabled for{" "}
-      {disabledReceipts}
+      {activeProjects} of {PROJECTS.length} {projectLabel} active · contribution
+      receipts live for {activeReceipts} · {pausedProjects} awaiting activation
+      · {pendingFunding} monthly pools awaiting verified funding
     </p>
   );
 }
@@ -1220,6 +1223,12 @@ function ProjectLeaderboard({
                   </td>
                   <td>
                     <strong>{leader.score}</strong>
+                    {leader.computeBonusBasisPoints > 0 ? (
+                      <small>
+                        +{leader.computeBonusBasisPoints / 100}% receipt
+                        evidence
+                      </small>
+                    ) : null}
                   </td>
                   <td>
                     <strong>

@@ -19,8 +19,10 @@ import {
   type TargetRepository,
 } from "./repositories.mjs";
 import {
+  assertReviewRecord,
   assertReviewRecordReceiptJoin,
   parseReviewRecordBlock,
+  type ReviewRecord,
 } from "./review-records";
 import {
   assertProjectRunReceipt,
@@ -28,6 +30,13 @@ import {
   assertRunReceiptPolicyJoin,
   type ProjectRunReceipt,
 } from "./run-receipts";
+import {
+  assertScoreApprovalRecord,
+  assertScoreRatificationContext,
+  parseScoreApprovalBlock,
+  parseScoreRatificationBlock,
+  type ScoreRatificationRecord,
+} from "./score-records";
 
 export {
   PRIMARY_REPOSITORY,
@@ -38,9 +47,10 @@ export {
 
 /** Backward-compatible alias for the primary registry repository. */
 export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY.id;
-export const LEADERBOARD_SCHEMA_VERSION = "5" as const;
+export const LEADERBOARD_SCHEMA_VERSION = "6" as const;
 export const PROFILE_OPPORTUNITY_LIMIT = 5 as const;
-export const SCORE_RULE_VERSION = "slop-score-v1" as const;
+export const SCORE_RULE_VERSION = "slop-score-v2" as const;
+export const SCORE_V2_EFFECTIVE_AT = "2026-08-01T00:00:00.000Z" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
 export const SCORE_WINDOW_DAYS = 35;
@@ -57,9 +67,6 @@ export const SCORE_CAPS = {
   evaluatedContributions: 3,
 } as const;
 export const DETAILED_MERGED_PULL_REQUESTS_PER_MONTH = 5;
-const MAX_PROJECT_CYCLE_BUCKETS =
-  new Set(TARGET_REPOSITORIES.map((repository) => repository.projectId)).size *
-  (Math.ceil(SCORE_WINDOW_DAYS / 28) + 1);
 
 /**
  * Gives every accepted merge positive credit while reducing the marginal
@@ -292,6 +299,9 @@ export interface ScoreEvent {
   actor: GitHubActor;
   category: ScoreCategory;
   points: number;
+  scoreThirds?: number;
+  workUnitId?: string;
+  scoreDecisionSourceId?: string;
   occurredAt: string;
   repository: RepositoryId;
   source: {
@@ -351,7 +361,16 @@ export interface LeaderboardEntry {
   rank: number;
   actor: GitHubActor;
   score: number;
+  scoreThirds: number;
   points: {
+    mergedPullRequests: number;
+    resolvedIssues: number;
+    materialTestChanges: number;
+    evidence: number;
+    substantiveReviews: number;
+    evaluatedContributions: number;
+  };
+  pointThirds: {
     mergedPullRequests: number;
     resolvedIssues: number;
     materialTestChanges: number;
@@ -636,7 +655,9 @@ const ATTRIBUTION_MARKER_LINE_PATTERN =
 interface MutableLeaderboardEntry {
   actor: GitHubActor;
   score: number;
+  scoreThirds: number;
   points: LeaderboardEntry["points"];
+  pointThirds: LeaderboardEntry["pointThirds"];
   acceptedOutcomes: LeaderboardEntry["acceptedOutcomes"];
   rawActivity: LeaderboardEntry["rawActivity"];
   models: Set<string>;
@@ -647,6 +668,7 @@ interface MutableLeaderboardEntry {
       evidencePoints: number;
     }
   >;
+  creditedWorkUnits: Set<string>;
 }
 
 interface AttributionDeclarationLine {
@@ -819,11 +841,11 @@ function compareCodeUnits(left: string, right: string): number {
 }
 
 function compareRankedEntries(
-  left: Pick<MutableLeaderboardEntry, "actor" | "score">,
-  right: Pick<MutableLeaderboardEntry, "actor" | "score">,
+  left: Pick<MutableLeaderboardEntry, "actor" | "scoreThirds">,
+  right: Pick<MutableLeaderboardEntry, "actor" | "scoreThirds">,
 ): number {
   return (
-    right.score - left.score ||
+    right.scoreThirds - left.scoreThirds ||
     compareCodeUnits(
       left.actor.login.toLowerCase(),
       right.actor.login.toLowerCase(),
@@ -1620,44 +1642,47 @@ function hasSubstantiveReviewBody(review: PullRequestReview): boolean {
 function methodology(): LeaderboardMethodology {
   return {
     summary:
-      "Slop rewards recent accepted outcomes and verified quality across every repository in the published project registry. A small, capped evaluated-contribution award can recognize useful work that did not merge, but only after its public award manifest is reviewed and merged into this repository.",
+      "Slop Score v2 groups accepted work into logical work units and stores credit in integer thirds. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the score on GitHub. Tiny accepted work starts at one third, and only the actor's aggregate is rounded down at cycle close.",
     scoringRules: [
       {
         id: "merged-pull-request",
-        points: "ceil(10 / sqrt(monthly accepted-merge ordinal)), minimum 1",
-        cap: "uncapped; every accepted merge receives positive credit",
+        points: "micro 1/3; small 1; medium 3; large 8; XL 15; exceptional 25",
+        cap: "uncapped; related or split pull requests share one workUnitId",
         qualification:
-          "Authored pull request merged during the rolling window.",
+          "Authored pull request merged during the rolling window. Unratified August work receives provisional micro credit; higher tiers require an immutable exact-head maintainer slop-score record.",
       },
       {
         id: "resolved-issue",
-        points: "4",
-        cap: `newest ${SCORE_CAPS.resolvedIssues} linked issue resolutions per contributor, project, and UTC calendar month`,
-        qualification: `One of the author's newest ${DETAILED_MERGED_PULL_REQUESTS_PER_MONTH} deep-inspected merged pull requests for the project and UTC month is recorded by GitHub as the closer of an issue in the 35-day verification window; issue authorship alone never scores.`,
+        points: "included in the ratified outcome tier",
+        cap: "no separate award",
+        qualification:
+          "Resolution value is evidence for the work-unit tier, not a second score.",
       },
       {
         id: "material-test-change",
-        points: "4",
-        cap: `newest ${SCORE_CAPS.materialTestChanges} qualifying merged pull requests per contributor, project, and UTC calendar month`,
-        qualification: `For the author's newest ${DETAILED_MERGED_PULL_REQUESTS_PER_MONTH} deep-inspected merged pull requests per project and UTC month, recognized test files add at least ${MATERIAL_TEST_ADDITIONS} lines and change at least ${MATERIAL_TEST_CHURN} total lines.`,
+        points: "included in the ratified outcome tier",
+        cap: "no separate award",
+        qualification:
+          "Test depth informs complexity and value but is not farmable additive credit.",
       },
       {
         id: "evidence",
-        points: "up to 6",
-        cap: `one award per evidence category per merged pull request, six per pull request, ${SCORE_CAPS.evidencePoints} evidence points per contributor, project, and UTC calendar month`,
+        points: "included in the ratified outcome tier",
+        cap: "no separate award",
         qualification: `For the author's newest ${DETAILED_MERGED_PULL_REQUESTS_PER_MONTH} deep-inspected merged pull requests per project and UTC month, contributor-authored proof is bound to the merged head via a single evidence-head marker, appears in a stable evidence row in the canonical PR body, uses an immutable GitHub attachment URL, and passes bounded remote byte and structure verification. Author post-merge body edits still void the package; a non-author post-merge body edit keeps the package only while the evidence-head still matches the merged OID. Mutable release assets, comment copies, inline text, N/A rows, unreachable artifacts, and third-party claims do not qualify.`,
       },
       {
         id: "substantive-review",
-        points: "3",
-        cap: `newest ${SCORE_CAPS.substantiveReviews} qualifying pull-request reviews per contributor, project, and UTC calendar month`,
+        points:
+          "triage 1/3; standard 1; deep reproduction 3; specialist 8; ratification 1/3",
+        cap: "uncapped; no self-review and no duplicate reviewer credit on one artifact",
         qualification:
           "Within the published deep-inspection set of human-authored pull requests, a pre-merge APPROVED or CHANGES_REQUESTED review has substantive text or inline discussion.",
       },
       {
         id: "evaluated-contribution",
-        points: "1 to 8",
-        cap: `newest ${SCORE_CAPS.evaluatedContributions} maintainer-approved awards per contributor, project, and UTC calendar month`,
+        points: "integer-thirds maintainer decision",
+        cap: "uncapped; cannot duplicate an ordinary source or work unit",
         qualification:
           "A public, strictly validated award manifest was reviewed and merged into elizaOS/slopdotcash for useful implementation, tests, review, diagnosis, or evidence that is not already rewarded as a merged outcome.",
       },
@@ -1691,7 +1716,7 @@ function methodology(): LeaderboardMethodology {
     ],
     provenancePolicy:
       "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
-    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID, every artifact keeps its repository attribution, and per-contributor limits apply independently to each project and UTC reward month. Every scalar merged outcome is collected over 35 days and receives uncapped diminishing base credit. Nested PR, review, file, evidence, and linked-issue inspection is limited to each actor's newest ${DETAILED_MERGED_PULL_REQUESTS_PER_MONTH} outcomes per project and UTC month as a deterministic API and evidence-verification budget; that technical limit never removes base merge credit. Project reward views exclude work before the published reward start. Score-bearing artifacts and open-PR evidence status are fetched with fixed per-source and snapshot source, artifact, concurrency, byte, redirect, and request-time limits. Over-limit sources remain explicitly unverified without erasing verified evidence from bounded sources; merged work receives verification capacity before untrusted open work. Open queues use complete, internally stable repository connections. Only open pull requests whose remote evidence bytes are consumed are re-collected when that evidence-bound revision changes; unrelated queue activity cannot starve accepted-score publication. Merged payout input is never sampled or downgraded. Issue candidates additionally require a maintainer-controlled contributor-ready label and bounded scope; public claim comments count only from owners, members, or collaborators. Candidate selection excludes bots, unknown authors, epics needing child issues, human-gated, untriaged or sensitive work, blocked work, durable claims, drafts, active review requests, approvals, and changes-requested decisions; excluded items retain machine-readable reasons.`,
+    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID and every artifact keeps its repository attribution. Score v2 applies to work from 2026-08-01 UTC. Every accepted merge receives at least provisional micro credit. Higher scores require an unedited maintainer-authored slop-score record bound to the PR node ID and exact head SHA; corrections append a successor. Proposal review records disclose exact provider, model, client, run, trace, effort, complexity, impact, review load, split risk, and confidence. XL and exceptional decisions require a second maintainer. Project reward views exclude work before the published reward start.`,
   };
 }
 
@@ -1699,7 +1724,16 @@ function newMutableEntry(actor: GitHubActor): MutableLeaderboardEntry {
   return {
     actor,
     score: 0,
+    scoreThirds: 0,
     points: {
+      mergedPullRequests: 0,
+      resolvedIssues: 0,
+      materialTestChanges: 0,
+      evidence: 0,
+      substantiveReviews: 0,
+      evaluatedContributions: 0,
+    },
+    pointThirds: {
       mergedPullRequests: 0,
       resolvedIssues: 0,
       materialTestChanges: 0,
@@ -1724,6 +1758,7 @@ function newMutableEntry(actor: GitHubActor): MutableLeaderboardEntry {
     },
     models: new Set<string>(),
     projectCapUsage: new Map(),
+    creditedWorkUnits: new Set(),
   };
 }
 
@@ -1770,6 +1805,74 @@ function addScore(
     },
     evidencePoints: 0,
   };
+  const v2 =
+    parseIsoTime(event.occurredAt) >= parseIsoTime(SCORE_V2_EFFECTIVE_AT);
+  if (v2) {
+    if (
+      event.category === "resolved-issue" ||
+      event.category === "material-test-change" ||
+      event.category === "evidence"
+    ) {
+      return false;
+    }
+    const scoreThirds =
+      event.scoreThirds ??
+      (event.category === "merged-pull-request"
+        ? 1
+        : event.category === "substantive-review"
+          ? 3
+          : Math.max(1, Math.round(event.points * 3)));
+    if (!Number.isSafeInteger(scoreThirds) || scoreThirds < 1) {
+      throw new TypeError("v2 scoreThirds must be a positive safe integer");
+    }
+    const workUnitId =
+      event.workUnitId ??
+      `wu_${projectId}_${event.source.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`;
+    const globalWorkUnitKey = `${projectId}\0${event.occurredAt.slice(0, 7)}\0${workUnitId}`;
+    if (entry.creditedWorkUnits.has(globalWorkUnitKey)) return false;
+    if (
+      event.category === "merged-pull-request" &&
+      ledger.some(
+        (existing) =>
+          existing.category === "merged-pull-request" &&
+          `${projectId}\0${existing.occurredAt.slice(0, 7)}\0${existing.workUnitId}` ===
+            globalWorkUnitKey,
+      )
+    ) {
+      return false;
+    }
+    const scoredEvent = {
+      ...event,
+      points: scoreThirds / 3,
+      scoreThirds,
+      workUnitId,
+      reason:
+        event.reason ||
+        "Accepted outcome scored in integer thirds under the ratified work-unit policy.",
+    };
+    entry.score += scoredEvent.points;
+    entry.scoreThirds += scoreThirds;
+    if (scoredEvent.category === "merged-pull-request") {
+      entry.points.mergedPullRequests += scoredEvent.points;
+      entry.pointThirds.mergedPullRequests += scoreThirds;
+      entry.acceptedOutcomes.mergedPullRequests += 1;
+      capUsage.acceptedOutcomes.mergedPullRequests += 1;
+    } else if (scoredEvent.category === "substantive-review") {
+      entry.points.substantiveReviews += scoredEvent.points;
+      entry.pointThirds.substantiveReviews += scoreThirds;
+      entry.acceptedOutcomes.substantiveReviews += 1;
+      capUsage.acceptedOutcomes.substantiveReviews += 1;
+    } else {
+      entry.points.evaluatedContributions += scoredEvent.points;
+      entry.pointThirds.evaluatedContributions += scoreThirds;
+      entry.acceptedOutcomes.evaluatedContributions += 1;
+      capUsage.acceptedOutcomes.evaluatedContributions += 1;
+    }
+    entry.creditedWorkUnits.add(globalWorkUnitKey);
+    entry.projectCapUsage.set(capKey, capUsage);
+    ledger.push(scoredEvent);
+    return true;
+  }
   const atCap =
     (event.category === "resolved-issue" &&
       capUsage.acceptedOutcomes.resolvedIssues >= SCORE_CAPS.resolvedIssues) ||
@@ -1799,29 +1902,36 @@ function addScore(
         }
       : event;
   entry.score += scoredEvent.points;
+  entry.scoreThirds += scoredEvent.points * 3;
   if (scoredEvent.category === "merged-pull-request") {
     entry.points.mergedPullRequests += scoredEvent.points;
+    entry.pointThirds.mergedPullRequests += scoredEvent.points * 3;
     entry.acceptedOutcomes.mergedPullRequests += 1;
     capUsage.acceptedOutcomes.mergedPullRequests += 1;
   } else if (scoredEvent.category === "resolved-issue") {
     entry.points.resolvedIssues += scoredEvent.points;
+    entry.pointThirds.resolvedIssues += scoredEvent.points * 3;
     entry.acceptedOutcomes.resolvedIssues += 1;
     capUsage.acceptedOutcomes.resolvedIssues += 1;
   } else if (scoredEvent.category === "material-test-change") {
     entry.points.materialTestChanges += scoredEvent.points;
+    entry.pointThirds.materialTestChanges += scoredEvent.points * 3;
     entry.acceptedOutcomes.materialTestChanges += 1;
     capUsage.acceptedOutcomes.materialTestChanges += 1;
   } else if (scoredEvent.category === "evidence") {
     entry.points.evidence += scoredEvent.points;
+    entry.pointThirds.evidence += scoredEvent.points * 3;
     entry.acceptedOutcomes.evidenceCategories += 1;
     capUsage.evidencePoints += scoredEvent.points;
     capUsage.acceptedOutcomes.evidenceCategories += 1;
   } else if (scoredEvent.category === "substantive-review") {
     entry.points.substantiveReviews += scoredEvent.points;
+    entry.pointThirds.substantiveReviews += scoredEvent.points * 3;
     entry.acceptedOutcomes.substantiveReviews += 1;
     capUsage.acceptedOutcomes.substantiveReviews += 1;
   } else {
     entry.points.evaluatedContributions += scoredEvent.points;
+    entry.pointThirds.evaluatedContributions += scoredEvent.points * 3;
     entry.acceptedOutcomes.evaluatedContributions += 1;
     capUsage.acceptedOutcomes.evaluatedContributions += 1;
   }
@@ -2690,16 +2800,133 @@ export function createLeaderboardSnapshot(
     }
   }
 
+  const scoreRatifications = new Map<
+    string,
+    { record: ScoreRatificationRecord; source: GitHubTextSource }
+  >();
+  for (const pullRequest of mergedPullRequests) {
+    const repository = findTargetRepositoryById(
+      repositoryIdFromUrl(pullRequest.url),
+    );
+    if (!repository)
+      throw new TypeError("score record repository is not registered");
+    const sources = pullRequestTextSources(pullRequest);
+    const sourceById = new Map(sources.map((source) => [source.id, source]));
+    let current: {
+      record: ScoreRatificationRecord;
+      source: GitHubTextSource;
+    } | null = null;
+    for (const source of sources
+      .filter((candidate) => candidate.kind === "comment")
+      .sort(
+        (left, right) =>
+          parseIsoTime(left.createdAt) - parseIsoTime(right.createdAt) ||
+          left.id.localeCompare(right.id),
+      )) {
+      const raw = parseScoreRatificationBlock(source.body);
+      if (raw === null) continue;
+      const record = assertScoreRatificationContext(raw, {
+        projectId: repository.projectId,
+        pullRequestNodeId: pullRequest.id,
+        headSha: pullRequest.headRefOid,
+        sourceNodeId: source.id,
+        authorAssociation: source.authorAssociation,
+        createdAt: source.createdAt,
+        updatedAt: source.updatedAt,
+      });
+      if (current === null && record.supersedes !== null) {
+        throw new TypeError(
+          "first slop-score record cannot supersede another record",
+        );
+      }
+      if (current !== null && record.supersedes !== current.source.id) {
+        throw new TypeError(
+          "slop-score correction must supersede the current record",
+        );
+      }
+      for (const reviewNodeId of record.proposalReviewNodeIds) {
+        const reviewSource = sourceById.get(reviewNodeId);
+        const proposal = reviewSource
+          ? parseReviewRecordBlock(reviewSource.body)
+          : null;
+        if (!reviewSource || proposal === null) {
+          throw new TypeError(
+            "slop-score proposal does not reference a review record on this pull request",
+          );
+        }
+        if (
+          typeof proposal !== "object" ||
+          proposal === null ||
+          (proposal as { schemaVersion?: unknown }).schemaVersion !== "2"
+        ) {
+          throw new TypeError(
+            "non-micro slop-score requires a v2 Claude review proposal",
+          );
+        }
+        const proposedReview = assertReviewRecord(proposal);
+        if (
+          proposedReview.securityRisk !== "none" &&
+          record.coRatifierNodeIds.length === 0
+        ) {
+          throw new TypeError(
+            "security-sensitive slop-score requires a co-ratifier",
+          );
+        }
+      }
+      for (const ratifierNodeId of record.coRatifierNodeIds) {
+        const ratifier = sourceById.get(ratifierNodeId);
+        if (
+          !ratifier ||
+          !["OWNER", "MEMBER", "COLLABORATOR"].includes(
+            ratifier.authorAssociation ?? "",
+          ) ||
+          ratifier.createdAt !== ratifier.updatedAt
+        ) {
+          throw new TypeError(
+            "slop-score co-ratifier is not an immutable maintainer comment",
+          );
+        }
+        if (sameActor(ratifier.author, source.author)) {
+          throw new TypeError(
+            "slop-score co-ratifier must be a second maintainer",
+          );
+        }
+        const approval = parseScoreApprovalBlock(ratifier.body);
+        if (approval === null) {
+          throw new TypeError(
+            "slop-score co-ratifier lacks a score approval record",
+          );
+        }
+        assertScoreApprovalRecord(approval, record);
+      }
+      current = { record, source };
+    }
+    if (current) scoreRatifications.set(pullRequest.id, current);
+  }
+
   for (const pullRequest of mergedPullRequestOutcomes) {
     if (pullRequest.author && !isBotActor(pullRequest.author)) {
       const authorEntry = actorEntry(entries, pullRequest.author);
       authorEntry.rawActivity.additions += pullRequest.additions;
       authorEntry.rawActivity.deletions += pullRequest.deletions;
+      const ratification = scoreRatifications.get(pullRequest.id);
       const scored = addScore(entries, ledger, {
         id: `${pullRequest.id}:merged`,
         actor: pullRequest.author,
         category: "merged-pull-request",
-        points: 10,
+        points: ratification ? ratification.record.scoreThirds / 3 : 1 / 3,
+        ...(parseIsoTime(pullRequest.mergedAt) >=
+        parseIsoTime(SCORE_V2_EFFECTIVE_AT)
+          ? {
+              scoreThirds: ratification?.record.scoreThirds ?? 1,
+              workUnitId:
+                ratification?.record.workUnitId ??
+                `wu_${repositoryIdFromUrl(pullRequest.url)
+                  .toLowerCase()
+                  .replace(/[^a-z0-9_-]+/gu, "_")}_pr_${pullRequest.number}`,
+              scoreDecisionSourceId: ratification?.source.id,
+            }
+          : {}),
         occurredAt: pullRequest.mergedAt,
         repository: repositoryIdFromUrl(pullRequest.url),
         source: {
@@ -2709,7 +2936,9 @@ export function createLeaderboardSnapshot(
           title: pullRequest.title,
           url: pullRequest.url,
         },
-        reason: "Pull request merged during the rolling window.",
+        reason: ratification
+          ? `Maintainer-ratified ${ratification.record.tier} accepted outcome: ${ratification.record.reason}`
+          : "Accepted outcome has provisional micro credit pending immutable maintainer ratification.",
       });
       if (scored) {
         recordScoredSources([pullRequestBodySource(pullRequest)]);
@@ -2797,6 +3026,94 @@ export function createLeaderboardSnapshot(
     }
 
     const awardedReviewers = new Set<string>();
+    for (const source of sources) {
+      let rawReview: unknown | null;
+      try {
+        rawReview = parseReviewRecordBlock(source.body);
+      } catch {
+        continue;
+      }
+      if (
+        rawReview === null ||
+        !source.author ||
+        sameActor(source.author, pullRequest.author)
+      )
+        continue;
+      const assessment = assessModelAttribution([source], {
+        requireEverySource: true,
+      });
+      const receipt = assessment.declarations[0]?.run ?? null;
+      if (receipt === null) continue;
+      let record: ReviewRecord;
+      try {
+        record = assertReviewRecordReceiptJoin(rawReview, receipt, {
+          artifactUrl: pullRequest.url,
+          headSha: pullRequest.headRefOid,
+        });
+      } catch {
+        continue;
+      }
+      if (record.workUnitId.includes("_legacy_")) continue;
+      if (parseIsoTime(source.createdAt) > parseIsoTime(pullRequest.mergedAt)) {
+        throw new TypeError("slop-review was posted after merge");
+      }
+      const reviewThirds = {
+        triage: 1,
+        standard: 3,
+        deep: 9,
+        specialist: 24,
+      }[record.reviewLoad];
+      awardedReviewers.add(source.author.id);
+      if (
+        addScore(entries, ledger, {
+          id: `${pullRequest.id}:automated-review:${source.id}`,
+          actor: source.author,
+          category: "substantive-review",
+          points: reviewThirds / 3,
+          scoreThirds: reviewThirds,
+          workUnitId: `${record.workUnitId}_review_${source.author.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
+          occurredAt: source.createdAt,
+          repository: repositoryIdFromUrl(pullRequest.url),
+          source: {
+            id: source.id,
+            kind: source.kind === "review" ? "review" : "comment",
+            number: pullRequest.number,
+            title: pullRequest.title,
+            url: source.url,
+          },
+          reason: `Automated ${record.reviewLoad} review with finalized private trace; maintainer scoring remains authoritative.`,
+        })
+      ) {
+        recordScoredSources([source]);
+      }
+    }
+
+    const ratification = scoreRatifications.get(pullRequest.id);
+    if (
+      ratification?.source.author &&
+      !sameActor(ratification.source.author, pullRequest.author) &&
+      !awardedReviewers.has(ratification.source.author.id)
+    ) {
+      addScore(entries, ledger, {
+        id: `${pullRequest.id}:ratifier:${ratification.source.id}`,
+        actor: ratification.source.author,
+        category: "substantive-review",
+        points: 1 / 3,
+        scoreThirds: 1,
+        workUnitId: `${ratification.record.workUnitId}_ratification`,
+        occurredAt: ratification.source.createdAt,
+        repository: repositoryIdFromUrl(pullRequest.url),
+        source: {
+          id: ratification.source.id,
+          kind: "comment",
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: ratification.source.url,
+        },
+        reason:
+          "Immutable maintainer score ratification for an accepted outcome.",
+      });
+    }
     for (const review of dedupeByNodeId(pullRequest.reviews).sort(
       (left, right) => {
         if (left.submittedAt === right.submittedAt) {
@@ -3005,8 +3322,17 @@ export function createLeaderboardSnapshot(
     .map<LeaderboardEntry>((entry, index) => ({
       rank: index + 1,
       actor: entry.actor,
-      score: entry.score,
-      points: { ...entry.points },
+      score: Math.floor(entry.scoreThirds / 3),
+      scoreThirds: entry.scoreThirds,
+      points: {
+        mergedPullRequests: entry.pointThirds.mergedPullRequests / 3,
+        resolvedIssues: entry.pointThirds.resolvedIssues / 3,
+        materialTestChanges: entry.pointThirds.materialTestChanges / 3,
+        evidence: entry.pointThirds.evidence / 3,
+        substantiveReviews: entry.pointThirds.substantiveReviews / 3,
+        evaluatedContributions: entry.pointThirds.evaluatedContributions / 3,
+      },
+      pointThirds: { ...entry.pointThirds },
       acceptedOutcomes: { ...entry.acceptedOutcomes },
       rawActivity: { ...entry.rawActivity },
       reportedModels: uniqueSorted(entry.models),
@@ -3570,9 +3896,14 @@ function assertLeaderValue(
     throw new Error(`${path}.rank is not contiguous`);
   }
   assertActorValue(entry.actor, `${path}.actor`);
-  assertPositiveInteger(entry.score, `${path}.score`);
+  assertNonNegativeInteger(entry.score, `${path}.score`);
+  assertNonNegativeInteger(entry.scoreThirds, `${path}.scoreThirds`);
+  if (Math.floor(Number(entry.scoreThirds) / 3) !== entry.score) {
+    throw new Error(`${path}.score does not equal rounded-down scoreThirds`);
+  }
 
   const points = assertObject(entry.points, `${path}.points`);
+  const pointThirds = assertObject(entry.pointThirds, `${path}.pointThirds`);
   const pointKeys = [
     "mergedPullRequests",
     "resolvedIssues",
@@ -3581,13 +3912,17 @@ function assertLeaderValue(
     "substantiveReviews",
     "evaluatedContributions",
   ] as const;
-  let scoreTotal = 0;
+  let scoreThirdsTotal = 0;
   for (const key of pointKeys) {
-    assertNonNegativeInteger(points[key], `${path}.points.${key}`);
-    scoreTotal += typeof points[key] === "number" ? points[key] : 0;
+    assertNonNegativeNumber(points[key], `${path}.points.${key}`);
+    assertNonNegativeInteger(pointThirds[key], `${path}.pointThirds.${key}`);
+    if (Math.abs(Number(points[key]) - Number(pointThirds[key]) / 3) > 1e-12) {
+      throw new Error(`${path}.points.${key} does not match integer thirds`);
+    }
+    scoreThirdsTotal += Number(pointThirds[key]);
   }
-  if (scoreTotal !== entry.score) {
-    throw new Error(`${path}.score does not equal its point breakdown`);
+  if (scoreThirdsTotal !== entry.scoreThirds) {
+    throw new Error(`${path}.scoreThirds does not equal its point breakdown`);
   }
 
   const acceptedOutcomes = assertObject(
@@ -3634,23 +3969,7 @@ function assertLeaderValue(
     acceptedEvaluatedContributions,
     `${path}.acceptedOutcomes.evaluatedContributions`,
   );
-  assertNonNegativeInteger(evidencePoints, `${path}.points.evidence`);
-  if (
-    acceptedResolvedIssues >
-      SCORE_CAPS.resolvedIssues * MAX_PROJECT_CYCLE_BUCKETS ||
-    acceptedMaterialTestChanges >
-      SCORE_CAPS.materialTestChanges * MAX_PROJECT_CYCLE_BUCKETS ||
-    acceptedSubstantiveReviews >
-      SCORE_CAPS.substantiveReviews * MAX_PROJECT_CYCLE_BUCKETS ||
-    acceptedEvaluatedContributions >
-      SCORE_CAPS.evaluatedContributions * MAX_PROJECT_CYCLE_BUCKETS ||
-    evidencePoints > SCORE_CAPS.evidencePoints * MAX_PROJECT_CYCLE_BUCKETS
-  ) {
-    throw new Error(
-      `${path} exceeds the published per-contributor, per-project score caps`,
-    );
-  }
-
+  assertNonNegativeNumber(evidencePoints, `${path}.points.evidence`);
   const rawActivity = assertObject(entry.rawActivity, `${path}.rawActivity`);
   for (const key of [
     "comments",
@@ -4024,8 +4343,20 @@ function assertLedgerValue(
   );
   assertNonNegativeNumber(event.points, `${path}.points`);
   const eventPoints = Number(event.points);
-  const validPoints =
-    (event.category === "merged-pull-request" &&
+  const isV2 =
+    typeof event.occurredAt === "string" &&
+    Date.parse(event.occurredAt) >= Date.parse(SCORE_V2_EFFECTIVE_AT);
+  const scoreThirds = event.scoreThirds;
+  const validV2 =
+    isV2 &&
+    Number.isSafeInteger(scoreThirds) &&
+    Number(scoreThirds) >= 1 &&
+    eventPoints === Number(scoreThirds) / 3 &&
+    typeof event.workUnitId === "string" &&
+    /^wu_[a-z0-9][a-z0-9_-]{2,255}$/u.test(event.workUnitId);
+  const validLegacy =
+    (!isV2 &&
+      event.category === "merged-pull-request" &&
       Number.isInteger(eventPoints) &&
       eventPoints >= 1 &&
       eventPoints <= 10) ||
@@ -4037,7 +4368,7 @@ function assertLedgerValue(
       eventPoints >= 1 &&
       eventPoints <= 8) ||
     (event.category === "evidence" && (eventPoints === 1 || eventPoints === 2));
-  if (!validPoints) {
+  if (!validV2 && !validLegacy) {
     throw new Error(`${path}.points does not match its scoring category`);
   }
   assertIsoTimestamp(event.occurredAt, `${path}.occurredAt`);
@@ -4503,12 +4834,15 @@ export function assertLeaderboardSnapshot(
         );
       }
     }
+    const legacyEvent =
+      parseIsoTime(event.occurredAt) < parseIsoTime(SCORE_V2_EFFECTIVE_AT);
     if (
-      usage.resolvedIssues > SCORE_CAPS.resolvedIssues ||
-      usage.materialTestChanges > SCORE_CAPS.materialTestChanges ||
-      usage.evidencePoints > SCORE_CAPS.evidencePoints ||
-      usage.substantiveReviews > SCORE_CAPS.substantiveReviews ||
-      usage.evaluatedContributions > SCORE_CAPS.evaluatedContributions
+      legacyEvent &&
+      (usage.resolvedIssues > SCORE_CAPS.resolvedIssues ||
+        usage.materialTestChanges > SCORE_CAPS.materialTestChanges ||
+        usage.evidencePoints > SCORE_CAPS.evidencePoints ||
+        usage.substantiveReviews > SCORE_CAPS.substantiveReviews ||
+        usage.evaluatedContributions > SCORE_CAPS.evaluatedContributions)
     ) {
       throw new Error(
         `snapshot.ledger actor ${event.actor.login} exceeds a per-project score cap`,
@@ -4517,7 +4851,11 @@ export function assertLeaderboardSnapshot(
     projectCapUsage.set(capKey, usage);
   }
   for (const events of mergedEventsByProjectMonth.values()) {
-    events
+    const legacyEvents = events.filter(
+      (event) =>
+        parseIsoTime(event.occurredAt) < parseIsoTime(SCORE_V2_EFFECTIVE_AT),
+    );
+    legacyEvents
       .sort(
         (left, right) =>
           right.occurredAt.localeCompare(left.occurredAt) ||
@@ -4545,7 +4883,7 @@ export function assertLeaderboardSnapshot(
   }
   for (const leader of validatedLeaders) {
     const events = eventsByActor.get(leader.actor.id) ?? [];
-    const points = {
+    const pointThirds = {
       mergedPullRequests: 0,
       resolvedIssues: 0,
       materialTestChanges: 0,
@@ -4562,38 +4900,44 @@ export function assertLeaderboardSnapshot(
       evaluatedContributions: 0,
     };
     for (const event of events) {
+      const eventThirds = event.scoreThirds ?? event.points * 3;
       if (event.category === "merged-pull-request") {
-        points.mergedPullRequests += event.points;
+        pointThirds.mergedPullRequests += eventThirds;
         outcomes.mergedPullRequests += 1;
       } else if (event.category === "resolved-issue") {
-        points.resolvedIssues += event.points;
+        pointThirds.resolvedIssues += eventThirds;
         outcomes.resolvedIssues += 1;
       } else if (event.category === "material-test-change") {
-        points.materialTestChanges += event.points;
+        pointThirds.materialTestChanges += eventThirds;
         outcomes.materialTestChanges += 1;
       } else if (event.category === "evidence") {
-        points.evidence += event.points;
+        pointThirds.evidence += eventThirds;
         outcomes.evidenceCategories += 1;
       } else if (event.category === "substantive-review") {
-        points.substantiveReviews += event.points;
+        pointThirds.substantiveReviews += eventThirds;
         outcomes.substantiveReviews += 1;
       } else {
-        points.evaluatedContributions += event.points;
+        pointThirds.evaluatedContributions += eventThirds;
         outcomes.evaluatedContributions += 1;
       }
     }
-    const ledgerScore = events.reduce(
-      (total, event) => total + event.points,
+    const ledgerThirds = events.reduce(
+      (total, event) => total + (event.scoreThirds ?? event.points * 3),
       0,
     );
     if (
-      ledgerScore !== leader.score ||
-      points.mergedPullRequests !== leader.points.mergedPullRequests ||
-      points.resolvedIssues !== leader.points.resolvedIssues ||
-      points.materialTestChanges !== leader.points.materialTestChanges ||
-      points.evidence !== leader.points.evidence ||
-      points.substantiveReviews !== leader.points.substantiveReviews ||
-      points.evaluatedContributions !== leader.points.evaluatedContributions ||
+      Math.floor(ledgerThirds / 3) !== leader.score ||
+      ledgerThirds !== leader.scoreThirds ||
+      pointThirds.mergedPullRequests !==
+        leader.pointThirds.mergedPullRequests ||
+      pointThirds.resolvedIssues !== leader.pointThirds.resolvedIssues ||
+      pointThirds.materialTestChanges !==
+        leader.pointThirds.materialTestChanges ||
+      pointThirds.evidence !== leader.pointThirds.evidence ||
+      pointThirds.substantiveReviews !==
+        leader.pointThirds.substantiveReviews ||
+      pointThirds.evaluatedContributions !==
+        leader.pointThirds.evaluatedContributions ||
       outcomes.mergedPullRequests !==
         leader.acceptedOutcomes.mergedPullRequests ||
       outcomes.resolvedIssues !== leader.acceptedOutcomes.resolvedIssues ||
