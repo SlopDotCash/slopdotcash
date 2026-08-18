@@ -1639,7 +1639,7 @@ function hasSubstantiveReviewBody(review: PullRequestReview): boolean {
   return substantiveBody.length >= 20 || review.inlineCommentCount > 0;
 }
 
-function methodology(): LeaderboardMethodology {
+export function leaderboardMethodology(): LeaderboardMethodology {
   return {
     summary:
       "Slop Score v2 groups accepted work into logical work units and stores credit in integer thirds. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the score on GitHub. Tiny accepted work starts at one third, and only the actor's aggregate is rounded down at cycle close.",
@@ -3351,7 +3351,7 @@ export function createLeaderboardSnapshot(
       from: input.windowFrom,
       to: input.windowTo,
     },
-    methodology: methodology(),
+    methodology: leaderboardMethodology(),
     source: {
       ...input.source,
       counts: {
