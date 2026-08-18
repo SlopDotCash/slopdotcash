@@ -2777,7 +2777,7 @@ function ProjectProposalPage() {
       eyebrow: "Open-source project",
       headline: headline || "Make money solving something hard.",
       description: goal || "Describe the concrete open-source goal.",
-      status: "active",
+      status: "paused",
       steward: {
         displayName: stewardName || "Unverified steward",
         kind: stewardKind,

@@ -403,7 +403,7 @@ describe("discovery", () => {
     ).toBeInTheDocument();
     expect(
       await screen.findByText(
-        /Scoring is live · 4 of 4 projects accepting work · 3 monthly pools awaiting verified funding/u,
+        /Scoring is live · 2 of 4 projects accepting work · 2 operationally paused · 3 monthly pools awaiting verified funding/u,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Public beta.")).not.toBeInTheDocument();
@@ -1150,7 +1150,7 @@ describe("project proposals", () => {
     expect(
       screen.getByText(/"address": "11111111111111111111111111111111"/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/"status": "active"/)).toBeInTheDocument();
+    expect(screen.getByText(/"status": "paused"/)).toBeInTheDocument();
     expect(screen.getByText(/"paymentTransfersIp": false/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
     await act(async () => Promise.resolve());
