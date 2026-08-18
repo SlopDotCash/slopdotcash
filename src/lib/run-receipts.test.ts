@@ -273,4 +273,33 @@ describe("project run receipt", () => {
       /pinned project policy/u,
     );
   });
+
+  it("accepts v2 receipts that bind an explicitly unknown project policy", () => {
+    const project = findProject("heir-elements-sdk");
+    if (!project) throw new Error("missing Heir fixture project");
+    const current: ProjectRunReceipt = {
+      ...receipt,
+      schemaVersion: "2",
+      projectId: "heir-elements-sdk",
+      repositoryId: "heirlabs/element-sdk",
+      skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-heir-elements-sdk`,
+      startedAt: "2026-08-18T00:00:00.000Z",
+      completedAt: "2026-08-18T01:00:00.000Z",
+      policyAcknowledgement: {
+        policyRevision: project.terms.revision,
+        licenseSha256: null,
+        inboundTermsSha256: null,
+        prizeRulesSha256: null,
+        acknowledgedAt: "2026-08-18T00:00:00.000Z",
+      },
+    };
+    expect(parseRunMarker(serializeRunMarker(current))).toEqual(current);
+    expect(assertRunReceiptPolicyJoin(current, project)).toBe(current);
+    const acknowledgement = current.policyAcknowledgement;
+    if (!acknowledgement) throw new Error("missing policy acknowledgement");
+    acknowledgement.licenseSha256 = "f".repeat(64);
+    expect(() => assertRunReceiptPolicyJoin(current, project)).toThrow(
+      /disclosed project policy/u,
+    );
+  });
 });

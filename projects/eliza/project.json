@@ -6,7 +6,7 @@
   "eyebrow": "Open-source agents",
   "headline": "Make money building agents.",
   "description": "Build and verify the elizaOS framework. Accepted outcomes share a monthly contributor pool.",
-  "status": "paused",
+  "status": "active",
   "steward": {
     "displayName": "Eliza Research",
     "kind": "organization",
@@ -26,20 +26,28 @@
     "repositoryId": "826170402",
     "repositoryNodeId": "R_kgDOMT5cIg",
     "proof": {
-      "commitSha": "7e04c64c73f007610e5da4654803589fdee7c96d",
-      "fileSha256": "514e17e46a90da67d155d6755db7422020a895ec40add258a5bf2820d43b3606",
-      "policyRevision": "2026-08-16.3",
-      "url": "https://github.com/elizaOS/eliza/blob/7e04c64c73f007610e5da4654803589fdee7c96d/.github/slop-project.json",
-      "verifiedAt": "2026-08-17T00:52:03.000Z"
+      "commitSha": "aa6bb930db7e098ec478818ee456a85b9811b5a6",
+      "fileSha256": "70ec65f06600fef7c64a8e7e0e28d8dff7e1537f37fc54e78def1f2018d5449e",
+      "policyRevision": "2026-08-18.1",
+      "url": "https://github.com/elizaOS/eliza/blob/aa6bb930db7e098ec478818ee456a85b9811b5a6/.github/slop-project.json",
+      "verifiedAt": "2026-08-18T20:45:06.000Z"
     }
   },
   "terms": {
-    "revision": "2026-08-16.3",
-    "effectiveAt": "2026-08-16T21:45:00.000Z",
+    "revision": "2026-08-18.1",
+    "effectiveAt": "2026-08-18T20:45:06.000Z",
     "receiptPolicy": {
-      "state": "pending-authority-activation",
-      "activatedAt": null,
-      "bindings": []
+      "state": "active",
+      "activatedAt": "2026-08-18T20:45:06.000Z",
+      "bindings": [
+        {
+          "policyRevision": "2026-08-18.1",
+          "activatedAt": "2026-08-18T20:45:06.000Z",
+          "licenseSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+          "inboundTermsSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+          "prizeRulesSha256": null
+        }
+      ]
     },
     "paymentTransfersIp": false,
     "retroactive": false,
@@ -58,12 +66,12 @@
       "fileSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d"
     },
     "inbound": {
-      "mode": "unknown",
-      "termsUrl": null,
-      "commitSha": null,
-      "fileSha256": null,
-      "version": null,
-      "acceptance": null
+      "mode": "license",
+      "termsUrl": "https://github.com/elizaOS/eliza/blob/5dd02983b41b2725ffca95d0718d65de0ab58e88/CONTRIBUTING.md",
+      "commitSha": "5dd02983b41b2725ffca95d0718d65de0ab58e88",
+      "fileSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+      "version": "2026-08-16.3",
+      "acceptance": "Pull-request contributions are licensed under the repository MIT license."
     },
     "assignment": null,
     "externalPrize": null

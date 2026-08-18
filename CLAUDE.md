@@ -114,8 +114,9 @@ Every project-skill contribution carries a
 timestamps, exact provider/model/client, skill revision and digest, aggregate
 pinned-ccusage figures, the private trace digest and upload identity, and an
 Ed25519 device signature. A device signature proves byte continuity—not
-provider billing truth. Token evidence is diagnostic and never changes score,
-rank, share, or payment.
+provider billing truth. Raw token volume never changes score. A finalized
+private trace adds a fixed 15% evidence bonus and outcome-matched exact or
+bounded usage adds 10%, capped at 25% combined.
 
 ## Private traces
 
@@ -145,8 +146,8 @@ human-gated work, and epics fail closed. Re-read live GitHub before acting.
 The rolling ledger covers a complete 35-day window, publishes exact bounds and
 record counts, and deduplicates immutable GitHub IDs. Exclude bots, self-review,
 post-merge review, and repeated low-value comments. Every accepted merge gets
-positive diminishing credit with no cap. Apply other limits per contributor,
-project, and UTC month without letting input order choose winners.
+at least one-third point. Group split or related pull requests into one work
+unit; do not apply account-level caps or diminishing credit.
 
 Unusual useful work may score only through a strict reviewed `evaluations/`
 manifest. Never double-score a source already rewarded by the ordinary ledger.

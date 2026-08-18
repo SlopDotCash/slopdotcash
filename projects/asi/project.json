@@ -6,7 +6,7 @@
   "eyebrow": "Continual reinforcement learning",
   "headline": "Make money advancing continual learning.",
   "description": "Hill-climb the benchmarks in ASI, a JAX continual-reinforcement-learning framework pursuing The Alberta Plan. Beat a recorded baseline, port a method from the literature, or fix what corrupts a measurement. Every accepted result ships a paired, seed-controlled comparison with published evidence.",
-  "status": "paused",
+  "status": "active",
   "steward": {
     "displayName": "$SLOP holder governance",
     "kind": "dao",
@@ -26,20 +26,28 @@
     "repositoryId": "1332593244",
     "repositoryNodeId": "R_kgDOT23CXA",
     "proof": {
-      "commitSha": "6417467dcd89cf1a6235066da99d464f96a44cfa",
-      "fileSha256": "7276dfcdc51635f5312afe8d879017503caeab5b237d3c676252dd148b198a02",
-      "policyRevision": "2026-08-16.3",
-      "url": "https://github.com/elizaOS/asi/blob/6417467dcd89cf1a6235066da99d464f96a44cfa/.github/slop-project.json",
-      "verifiedAt": "2026-08-17T00:52:03.000Z"
+      "commitSha": "82cec0c6d786b4b4ea22a9777e78c6a4bbb234f2",
+      "fileSha256": "f12a4a7d855f3a6894fbc88c3eb08771121e52837899dbba0a623aab7f9431ba",
+      "policyRevision": "2026-08-18.1",
+      "url": "https://github.com/elizaOS/asi/blob/82cec0c6d786b4b4ea22a9777e78c6a4bbb234f2/.github/slop-project.json",
+      "verifiedAt": "2026-08-18T05:23:40.000Z"
     }
   },
   "terms": {
-    "revision": "2026-08-16.3",
-    "effectiveAt": "2026-08-16T21:45:00.000Z",
+    "revision": "2026-08-18.1",
+    "effectiveAt": "2026-08-18T04:55:49.000Z",
     "receiptPolicy": {
-      "state": "pending-authority-activation",
-      "activatedAt": null,
-      "bindings": []
+      "state": "active",
+      "activatedAt": "2026-08-18T05:23:40.000Z",
+      "bindings": [
+        {
+          "policyRevision": "2026-08-18.1",
+          "activatedAt": "2026-08-18T05:23:40.000Z",
+          "licenseSha256": "4c8d5abe876de66bf1cfbb2e9f2c486b41e53602d072628d2de4630957202a61",
+          "inboundTermsSha256": "3302f9aa0da588c1c2f06e73af939af154466047346071b268e3b71bf6bb3443",
+          "prizeRulesSha256": null
+        }
+      ]
     },
     "paymentTransfersIp": false,
     "retroactive": false,
@@ -58,12 +66,12 @@
       "fileSha256": "4c8d5abe876de66bf1cfbb2e9f2c486b41e53602d072628d2de4630957202a61"
     },
     "inbound": {
-      "mode": "unknown",
-      "termsUrl": null,
-      "commitSha": null,
-      "fileSha256": null,
-      "version": null,
-      "acceptance": null
+      "mode": "license",
+      "termsUrl": "https://github.com/elizaOS/asi/blob/12b86613f3b2f270992d9a3444c46f20101769c2/CONTRIBUTING.md",
+      "commitSha": "12b86613f3b2f270992d9a3444c46f20101769c2",
+      "fileSha256": "3302f9aa0da588c1c2f06e73af939af154466047346071b268e3b71bf6bb3443",
+      "version": "2026-08-18.1",
+      "acceptance": "Pull-request contributions are licensed under the repository Apache-2.0 license."
     },
     "assignment": null,
     "externalPrize": null

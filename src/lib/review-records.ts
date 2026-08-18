@@ -11,7 +11,7 @@ const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u;
 
 export interface ReviewRecord {
-  schemaVersion: "1";
+  schemaVersion: "2";
   projectId: ProjectId;
   artifactUrl: string;
   headSha: string;
@@ -24,6 +24,22 @@ export interface ReviewRecord {
   reproduced: boolean;
   securityRisk: "none" | "suspected" | "confirmed";
   duplicateRisk: "none" | "suspected" | "confirmed";
+  splitRisk: "none" | "suspected" | "confirmed";
+  effortBand: "micro" | "small" | "medium" | "large" | "xl" | "exceptional";
+  complexity: "low" | "moderate" | "high" | "specialist";
+  impact: "narrow" | "meaningful" | "broad" | "critical";
+  reviewLoad: "triage" | "standard" | "deep" | "specialist";
+  recommendedTier:
+    | "micro"
+    | "small"
+    | "medium"
+    | "large"
+    | "xl"
+    | "exceptional";
+  recommendedThirds: 1 | 3 | 9 | 24 | 45 | 75;
+  workUnitId: string;
+  confidenceBasisPoints: number;
+  valueRationale: string;
   usefulArtifacts: string[];
   commands: string[];
   evidenceUrls: string[];
@@ -56,11 +72,35 @@ function boundedStrings(value: unknown, field: string): string[] {
 /** Validates the exact machine record emitted by project reviewer skills. */
 export function assertReviewRecord(value: unknown): ReviewRecord {
   if (!isRecord(value)) throw new TypeError("review record must be an object");
+  const v1Expected = [
+    "artifactUrl",
+    "commands",
+    "duplicateRisk",
+    "evidenceUrls",
+    "headSha",
+    "projectId",
+    "recommendation",
+    "reproduced",
+    "schemaVersion",
+    "securityRisk",
+    "summary",
+    "usefulArtifacts",
+  ].sort();
   const expected = [
     "artifactUrl",
     "client",
     "commands",
     "duplicateRisk",
+    "splitRisk",
+    "effortBand",
+    "complexity",
+    "impact",
+    "reviewLoad",
+    "recommendedTier",
+    "recommendedThirds",
+    "workUnitId",
+    "confidenceBasisPoints",
+    "valueRationale",
     "evidenceUrls",
     "headSha",
     "model",
@@ -75,10 +115,17 @@ export function assertReviewRecord(value: unknown): ReviewRecord {
     "traceSha256",
     "usefulArtifacts",
   ].sort();
-  if (Object.keys(value).sort().join("\0") !== expected.join("\0")) {
-    throw new TypeError("review record has unexpected or missing fields");
+  const legacy = value.schemaVersion === "1";
+  const actualKeys = Object.keys(value).sort();
+  if (
+    (legacy && v1Expected.some((key) => !actualKeys.includes(key))) ||
+    (!legacy && actualKeys.join("\0") !== expected.join("\0"))
+  ) {
+    throw new TypeError(
+      `review record has unexpected or missing fields: ${actualKeys.join(",")}`,
+    );
   }
-  if (value.schemaVersion !== "1") {
+  if (value.schemaVersion !== "2" && !legacy) {
     throw new TypeError("review record schemaVersion is unsupported");
   }
   const project =
@@ -99,13 +146,22 @@ export function assertReviewRecord(value: unknown): ReviewRecord {
   ) {
     throw new TypeError("review record artifactUrl is outside the project");
   }
-  if (!isExactProviderIdentifier(value.provider)) {
+  if (
+    (!legacy || value.provider !== undefined) &&
+    !isExactProviderIdentifier(value.provider)
+  ) {
     throw new TypeError("review record provider is not exact");
   }
-  if (!isExactModelIdentifier(value.model)) {
+  if (
+    (!legacy || value.model !== undefined) &&
+    !isExactModelIdentifier(value.model)
+  ) {
     throw new TypeError("review record model is not exact");
   }
-  if (!isExactClientIdentifier(value.client)) {
+  if (
+    (!legacy || value.client !== undefined) &&
+    !isExactClientIdentifier(value.client)
+  ) {
     throw new TypeError("review record client is not exact");
   }
   if (
@@ -114,12 +170,17 @@ export function assertReviewRecord(value: unknown): ReviewRecord {
   ) {
     throw new TypeError("review record headSha is invalid");
   }
-  if (typeof value.runId !== "string" || !RUN_ID_PATTERN.test(value.runId)) {
+  if (
+    (!legacy || value.runId !== undefined) &&
+    (typeof value.runId !== "string" || !RUN_ID_PATTERN.test(value.runId))
+  ) {
     throw new TypeError("review record runId is invalid");
   }
   if (
-    typeof value.traceSha256 !== "string" ||
-    !SHA256_PATTERN.test(value.traceSha256)
+    ((!legacy || value.traceSha256 !== undefined) &&
+      typeof value.traceSha256 !== "string") ||
+    ((!legacy || value.traceSha256 !== undefined) &&
+      !SHA256_PATTERN.test(String(value.traceSha256)))
   ) {
     throw new TypeError("review record traceSha256 is invalid");
   }
@@ -143,6 +204,93 @@ export function assertReviewRecord(value: unknown): ReviewRecord {
     }
   }
   if (
+    !legacy &&
+    !(["none", "suspected", "confirmed"] as const).includes(
+      value.splitRisk as never,
+    )
+  ) {
+    throw new TypeError("review record splitRisk is invalid");
+  }
+  const tiers = [
+    "micro",
+    "small",
+    "medium",
+    "large",
+    "xl",
+    "exceptional",
+  ] as const;
+  if (
+    !legacy &&
+    (!tiers.includes(value.effortBand as never) ||
+      !tiers.includes(value.recommendedTier as never))
+  ) {
+    throw new TypeError("review record effort tier is invalid");
+  }
+  const tierThirds = {
+    micro: 1,
+    small: 3,
+    medium: 9,
+    large: 24,
+    xl: 45,
+    exceptional: 75,
+  } as const;
+  if (
+    !legacy &&
+    value.recommendedThirds !==
+      tierThirds[value.recommendedTier as keyof typeof tierThirds]
+  ) {
+    throw new TypeError(
+      "review record recommendedThirds does not match its tier",
+    );
+  }
+  if (
+    !legacy &&
+    !(["low", "moderate", "high", "specialist"] as const).includes(
+      value.complexity as never,
+    )
+  ) {
+    throw new TypeError("review record complexity is invalid");
+  }
+  if (
+    !legacy &&
+    !(["narrow", "meaningful", "broad", "critical"] as const).includes(
+      value.impact as never,
+    )
+  ) {
+    throw new TypeError("review record impact is invalid");
+  }
+  if (
+    !legacy &&
+    !(["triage", "standard", "deep", "specialist"] as const).includes(
+      value.reviewLoad as never,
+    )
+  ) {
+    throw new TypeError("review record reviewLoad is invalid");
+  }
+  if (
+    !legacy &&
+    (typeof value.workUnitId !== "string" ||
+      !/^wu_[a-z0-9][a-z0-9_-]{2,127}$/u.test(value.workUnitId))
+  ) {
+    throw new TypeError("review record workUnitId is invalid");
+  }
+  if (
+    !legacy &&
+    (!Number.isSafeInteger(value.confidenceBasisPoints) ||
+      Number(value.confidenceBasisPoints) < 0 ||
+      Number(value.confidenceBasisPoints) > 10_000)
+  ) {
+    throw new TypeError("review record confidenceBasisPoints is invalid");
+  }
+  if (
+    !legacy &&
+    (typeof value.valueRationale !== "string" ||
+      value.valueRationale.length < 12 ||
+      value.valueRationale.length > 4096)
+  ) {
+    throw new TypeError("review record valueRationale is invalid");
+  }
+  if (
     typeof value.summary !== "string" ||
     value.summary.length < 1 ||
     value.summary.length > 4096
@@ -150,19 +298,45 @@ export function assertReviewRecord(value: unknown): ReviewRecord {
     throw new TypeError("review record summary is invalid");
   }
   return {
-    schemaVersion: "1",
+    schemaVersion: "2",
     projectId: project.id,
     artifactUrl: artifact.href,
     headSha: value.headSha,
-    provider: value.provider,
-    model: value.model,
-    client: value.client,
-    runId: value.runId,
-    traceSha256: value.traceSha256,
+    provider: typeof value.provider === "string" ? value.provider : "",
+    model: typeof value.model === "string" ? value.model : "",
+    client: typeof value.client === "string" ? value.client : "",
+    runId: typeof value.runId === "string" ? value.runId : "",
+    traceSha256: typeof value.traceSha256 === "string" ? value.traceSha256 : "",
     recommendation: value.recommendation as ReviewRecord["recommendation"],
     reproduced: value.reproduced,
     securityRisk: value.securityRisk as ReviewRecord["securityRisk"],
     duplicateRisk: value.duplicateRisk as ReviewRecord["duplicateRisk"],
+    splitRisk: legacy ? "none" : (value.splitRisk as ReviewRecord["splitRisk"]),
+    effortBand: legacy
+      ? "small"
+      : (value.effortBand as ReviewRecord["effortBand"]),
+    complexity: legacy
+      ? "moderate"
+      : (value.complexity as ReviewRecord["complexity"]),
+    impact: legacy ? "meaningful" : (value.impact as ReviewRecord["impact"]),
+    reviewLoad: legacy
+      ? "standard"
+      : (value.reviewLoad as ReviewRecord["reviewLoad"]),
+    recommendedTier: legacy
+      ? "small"
+      : (value.recommendedTier as ReviewRecord["recommendedTier"]),
+    recommendedThirds: legacy
+      ? 3
+      : (value.recommendedThirds as ReviewRecord["recommendedThirds"]),
+    workUnitId: legacy
+      ? `wu_${project.id}_legacy_${String(value.runId ?? artifact.pathname)
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/gu, "_")}`
+      : String(value.workUnitId),
+    confidenceBasisPoints: legacy ? 5000 : Number(value.confidenceBasisPoints),
+    valueRationale: legacy
+      ? String(value.summary)
+      : String(value.valueRationale),
     usefulArtifacts: boundedStrings(value.usefulArtifacts, "usefulArtifacts"),
     commands: boundedStrings(value.commands, "commands"),
     evidenceUrls: boundedStrings(value.evidenceUrls, "evidenceUrls"),
@@ -205,11 +379,12 @@ export function assertReviewRecordReceiptJoin(
   }
   if (
     record.projectId !== receipt.projectId ||
-    record.runId !== receipt.runId ||
-    record.traceSha256 !== receipt.traceUpload.sha256 ||
-    record.provider !== receipt.provider ||
-    record.model !== receipt.model ||
-    record.client !== receipt.client
+    (record.runId !== "" && record.runId !== receipt.runId) ||
+    (record.traceSha256 !== "" &&
+      record.traceSha256 !== receipt.traceUpload.sha256) ||
+    (record.provider !== "" && record.provider !== receipt.provider) ||
+    (record.model !== "" && record.model !== receipt.model) ||
+    (record.client !== "" && record.client !== receipt.client)
   ) {
     throw new TypeError("slop-review record does not match its run receipt");
   }
@@ -223,5 +398,12 @@ export function assertReviewRecordReceiptJoin(
   ) {
     throw new TypeError("slop-review record does not match its artifact head");
   }
-  return record;
+  return {
+    ...record,
+    provider: receipt.provider,
+    model: receipt.model,
+    client: receipt.client,
+    runId: receipt.runId,
+    traceSha256: receipt.traceUpload.sha256,
+  };
 }

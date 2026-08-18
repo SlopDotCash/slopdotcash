@@ -202,6 +202,8 @@ function septemberRollingSnapshot() {
   snapshot.ledger = snapshot.ledger.map((event) => ({
     ...event,
     occurredAt: "2026-09-04T12:00:00.000Z",
+    scoreThirds: event.points * 3,
+    workUnitId: `wu_fixture_${event.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
   }));
   snapshot.opportunities = snapshot.opportunities.map((opportunity) => ({
     ...opportunity,
@@ -401,7 +403,7 @@ describe("discovery", () => {
     ).toBeInTheDocument();
     expect(
       await screen.findByText(
-        /Scoring is live · 4 of 4 projects paused · payouts disabled for 4 · contribution receipts disabled for 4/u,
+        /Scoring is live · 4 of 4 projects accepting work · 3 monthly pools awaiting verified funding/u,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Public beta.")).not.toBeInTheDocument();
@@ -670,15 +672,15 @@ describe("project routes", () => {
       "project-headline-action",
     );
     expect(screen.getByText(/^By/u)).toHaveTextContent(
-      "Eliza Research · MIT · inbound terms unknown · Terms",
+      "Eliza Research · MIT · license inbound terms · Terms",
     );
     expect(screen.getByRole("link", { name: "Terms" })).toHaveAttribute(
       "href",
       "/projects/eliza/terms.json",
     );
     expect(
-      screen.getByText(/New runs are paused until repository authority/u),
-    ).toBeInTheDocument();
+      screen.queryByText(/not accepting new Slop runs/u),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Home$/u })).toHaveAttribute(
       "href",
       "/",
