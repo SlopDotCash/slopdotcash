@@ -1312,6 +1312,7 @@ export function assessModelAttribution(
   const validSourceIds = new Set<string>();
   const invalidSourceIds = new Set<string>();
   const humanOnlySourceIds = new Set<string>();
+  const receiptArtifactMismatchSourceIds = new Set<string>();
 
   for (const source of eligibleSources) {
     if (hasMarkdownLine(source.body, HUMAN_ONLY_PATTERN)) {
@@ -1419,6 +1420,21 @@ export function assessModelAttribution(
           continue;
         }
       }
+      if (
+        verifiedRun !== null &&
+        source.artifactUrl !== undefined &&
+        verifiedRun.repositoryId !== repositoryIdFromUrl(source.artifactUrl)
+      ) {
+        invalidSourceIds.add(source.id);
+        receiptArtifactMismatchSourceIds.add(source.id);
+        invalidMarkers.push({
+          sourceId: source.id,
+          sourceUrl: source.url,
+          reason: "run receipt repository does not match its GitHub artifact",
+        });
+        markerIndex += 1;
+        continue;
+      }
       const identifier = exactIdentifier(marker.provider, marker.model);
       validSourceIds.add(source.id);
       markerIdentifiers.add(identifier.toLowerCase());
@@ -1440,7 +1456,11 @@ export function assessModelAttribution(
       markerIndex += 1;
     }
 
-    if (reviewRecord !== null && invalidSourceIds.has(source.id)) {
+    if (
+      (reviewRecord !== null ||
+        receiptArtifactMismatchSourceIds.has(source.id)) &&
+      invalidSourceIds.has(source.id)
+    ) {
       continue;
     }
 
@@ -1563,7 +1583,7 @@ export function issueTextSources(issue: IssueRecord): GitHubTextSource[] {
     {
       id: `${issue.id}:body`,
       artifactId: issue.id,
-      kind: "body",
+      kind: "body" as const,
       body: issue.body,
       url: issue.url,
       createdAt: issue.createdAt,
@@ -1571,7 +1591,7 @@ export function issueTextSources(issue: IssueRecord): GitHubTextSource[] {
       author: issue.author,
     },
     ...issue.comments,
-  ]);
+  ]).map((source) => ({ ...source, artifactUrl: issue.url }));
 }
 
 export function qualifiesResolvedIssue(issue: IssueRecord): boolean {
@@ -2094,6 +2114,7 @@ function pullRequestBodySource(
         ? (pullRequest.lastEditedAt ?? pullRequest.createdAt)
         : pullRequest.updatedAt,
     author: pullRequest.author,
+    artifactUrl: pullRequest.url,
   };
 }
 

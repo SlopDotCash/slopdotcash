@@ -567,6 +567,37 @@ describe("score v2 work units", () => {
       "has no exact receipt for its evidence bonus",
     );
   });
+
+  it("rejects a signed receipt replayed onto an outcome in another repository", () => {
+    const body = reviewAttribution({
+      projectId: "asi",
+      repositoryId: "elizaOS/asi",
+      skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-asi`,
+    }).replace(/^Findings: none\.\n\n```slop-review\n[^\n]+\n```\n\n/u, "");
+    const pr = pullRequest({
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T03:00:00.000Z",
+      mergedAt: "2026-08-18T03:00:00.000Z",
+      body,
+    });
+
+    const snapshot = createLeaderboardSnapshot({
+      ...v2Input([pr]),
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+
+    expect(snapshot.ledger[0]).toMatchObject({
+      repository: "elizaOS/eliza",
+      evidenceBonusBasisPoints: 0,
+    });
+    expect(snapshot.attributions).toEqual([]);
+    expect(snapshot.invalidAttributionMarkers).toContainEqual(
+      expect.objectContaining({
+        sourceId: `${pr.id}:body`,
+        reason: "run receipt repository does not match its GitHub artifact",
+      }),
+    );
+  });
 });
 
 describe("model attribution", () => {
