@@ -20,16 +20,22 @@
     "website": "https://proximityprize.org"
   },
   "authority": {
-    "state": "unverified",
-    "reason": "missing-repository-proof",
+    "state": "verified",
+    "reason": null,
     "role": "project-steward",
     "repositoryId": "1334780197",
     "repositoryNodeId": "R_kgDOT48hJQ",
-    "proof": null
+    "proof": {
+      "commitSha": "983069a332de36fd3d6ef6f33fccadafa01b0ff5",
+      "fileSha256": "abdb52a7d55de5b84252b8ce70a6d1bf57030cfa66dc509a5b44fe813edc3447",
+      "policyRevision": "2026-08-18.1",
+      "url": "https://github.com/elizaOS/proximityprize/blob/983069a332de36fd3d6ef6f33fccadafa01b0ff5/.github/slop-project.json",
+      "verifiedAt": "2026-08-18T22:43:17.000Z"
+    }
   },
   "terms": {
-    "revision": "2026-08-16.3",
-    "effectiveAt": "2026-08-16T21:45:00.000Z",
+    "revision": "2026-08-18.1",
+    "effectiveAt": "2026-08-18T22:43:17.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
       "activatedAt": null,
