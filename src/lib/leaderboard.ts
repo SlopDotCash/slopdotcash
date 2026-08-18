@@ -2866,6 +2866,16 @@ export function createLeaderboardSnapshot(
           "slop-score correction must supersede the current record",
         );
       }
+      // Related-party scoring requires a second maintainer regardless of tier:
+      // a ratifier must never be the sole authority over their own outcome.
+      if (
+        sameActor(source.author, pullRequest.author) &&
+        record.coRatifierNodeIds.length === 0
+      ) {
+        throw new TypeError(
+          "self slop-score requires a second maintainer co-ratifier",
+        );
+      }
       for (const reviewNodeId of record.proposalReviewNodeIds) {
         const reviewSource = sourceById.get(reviewNodeId);
         const proposal = reviewSource
