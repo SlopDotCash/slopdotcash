@@ -139,7 +139,7 @@ describe("project policy transitions", () => {
     const rewritten = structuredClone(payment);
     rewritten.terms.revision = `${eliza.terms.revision}-mutated`;
     expect(() => assertPaymentDoesNotMutateTerms(eliza, rewritten)).toThrow(
-      /cannot mutate/u,
+      /latest binding|cannot mutate/u,
     );
   });
 
@@ -238,7 +238,7 @@ describe("project policy transitions", () => {
       bindings: [],
     };
     expect(() => assertProjectPolicyTransition(previous, reverted)).toThrow(
-      /cannot revert/u,
+      /cannot revert|receipt cutover/u,
     );
 
     const movedCutover = structuredClone(previous);
@@ -246,7 +246,7 @@ describe("project policy transitions", () => {
     movedCutover.terms.receiptPolicy.bindings[0].activatedAt =
       "2026-08-17T00:00:01.000Z";
     expect(() => assertProjectPolicyTransition(previous, movedCutover)).toThrow(
-      /activation is immutable/u,
+      /activation is immutable|receipt cutover/u,
     );
 
     const deleted = structuredClone(previous);
@@ -280,6 +280,12 @@ describe("project policy transitions", () => {
   it("rejects fabricated activation history and multi-binding appends", () => {
     const activated = activePolicyFixture();
     const pending = structuredClone(eliza);
+    pending.status = "paused";
+    (pending.terms as unknown as { receiptPolicy: unknown }).receiptPolicy = {
+      state: "pending-authority-activation",
+      activatedAt: null,
+      bindings: [],
+    };
     expect(() => assertProjectPolicyTransition(pending, activated)).toThrow(
       /exactly one first binding/u,
     );

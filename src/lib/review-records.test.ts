@@ -7,7 +7,7 @@ import {
 import type { ProjectRunReceipt } from "./run-receipts";
 
 const record = {
-  schemaVersion: "1",
+  schemaVersion: "2",
   projectId: "eliza",
   artifactUrl: "https://github.com/elizaOS/eliza/pull/123",
   headSha: "a".repeat(40),
@@ -20,6 +20,17 @@ const record = {
   reproduced: true,
   securityRisk: "none",
   duplicateRisk: "none",
+  splitRisk: "none",
+  effortBand: "medium",
+  complexity: "moderate",
+  impact: "meaningful",
+  reviewLoad: "deep",
+  recommendedTier: "medium",
+  recommendedThirds: 9,
+  workUnitId: "wu_eliza_pr_123",
+  confidenceBasisPoints: 8500,
+  valueRationale:
+    "This fixes the observed regression and adds focused coverage.",
   usefulArtifacts: [],
   commands: ["bun test"],
   evidenceUrls: [],

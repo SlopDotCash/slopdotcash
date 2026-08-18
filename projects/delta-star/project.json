@@ -6,7 +6,7 @@
   "eyebrow": "Machine-checked mathematics",
   "headline": "Make money solving math.",
   "description": "Advance machine-checked Reed–Solomon proximity work in the dedicated Proximity Prize repository.",
-  "status": "paused",
+  "status": "active",
   "steward": {
     "displayName": "Proximity Prize contributors",
     "kind": "collective",
@@ -20,20 +20,34 @@
     "website": "https://proximityprize.org"
   },
   "authority": {
-    "state": "unverified",
-    "reason": "missing-repository-proof",
+    "state": "verified",
+    "reason": null,
     "role": "project-steward",
     "repositoryId": "1334780197",
     "repositoryNodeId": "R_kgDOT48hJQ",
-    "proof": null
+    "proof": {
+      "commitSha": "fd1323dd5c4bd293c1d3fb2f4343025e01c8dc51",
+      "fileSha256": "15407ac4fad871b262beb3926157bf1b74898145d236527ab93aecea275672e1",
+      "policyRevision": "2026-08-16.3",
+      "url": "https://github.com/elizaOS/proximityprize/blob/fd1323dd5c4bd293c1d3fb2f4343025e01c8dc51/.github/slop-project.json",
+      "verifiedAt": "2026-08-18T04:52:20.000Z"
+    }
   },
   "terms": {
     "revision": "2026-08-16.3",
     "effectiveAt": "2026-08-16T21:45:00.000Z",
     "receiptPolicy": {
-      "state": "pending-authority-activation",
-      "activatedAt": null,
-      "bindings": []
+      "state": "active",
+      "activatedAt": "2026-08-18T04:52:20.000Z",
+      "bindings": [
+        {
+          "policyRevision": "2026-08-16.3",
+          "activatedAt": "2026-08-18T04:52:20.000Z",
+          "licenseSha256": "c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851",
+          "inboundTermsSha256": "fad3aeadb9876d459b7a3826ead096ed3619921820d76b9a4f75439c677a3d75",
+          "prizeRulesSha256": "82618a3f0e407bef82e7e591cc316c89713c7fa2f48cdbc35bc2e6f589b7e5de"
+        }
+      ]
     },
     "paymentTransfersIp": false,
     "retroactive": false,
@@ -52,21 +66,21 @@
       "fileSha256": "c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851"
     },
     "inbound": {
-      "mode": "unknown",
-      "termsUrl": null,
-      "commitSha": null,
-      "fileSha256": null,
-      "version": null,
-      "acceptance": null
+      "mode": "license",
+      "termsUrl": "https://github.com/elizaOS/proximityprize/blob/e674f4fdfc5bf00cbfff45217aea949ee6264a4e/CONTRIBUTING.md",
+      "commitSha": "e674f4fdfc5bf00cbfff45217aea949ee6264a4e",
+      "fileSha256": "fad3aeadb9876d459b7a3826ead096ed3619921820d76b9a4f75439c677a3d75",
+      "version": "2026-08-16.3",
+      "acceptance": "Pull-request contributions are licensed under the repository Apache-2.0 license."
     },
     "assignment": null,
     "externalPrize": {
       "organizer": "Ethereum Foundation Proximity Prize",
       "rulesUrl": "https://proximityprize.org/",
-      "rulesSha256": null,
-      "rulesCapturedAt": null,
-      "version": "unknown",
-      "eligibility": "Organizer controlled; immutable captured rules are not yet supplied.",
+      "rulesSha256": "82618a3f0e407bef82e7e591cc316c89713c7fa2f48cdbc35bc2e6f589b7e5de",
+      "rulesCapturedAt": "2026-08-18T04:52:20.000Z",
+      "version": "preliminary-2026-08-18",
+      "eligibility": "Organizer controlled; the captured public page is preliminary and may change.",
       "allocationAuthority": "Final author-approved allocation, subject to organizer rules.",
       "defaultContributorAllocation": "Equal shares for all named authors by default; a non-equal split requires approval from every named author. Organizer rules remain controlling. Shares are payout allocation only, never a copyright or ownership claim.",
       "ipTerms": "Unknown until immutable organizer rules are captured."
