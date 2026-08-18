@@ -484,8 +484,11 @@ function Header({ isHome }: { isHome: boolean }) {
         <nav className={open ? "nav-links nav-links-open" : "nav-links"}>
           {!isHome ? <Link href="/">Home</Link> : null}
           <Link href="/#projects">Projects</Link>
+          <Link href="/#how-it-works">How it works</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
-          <Link href="/projects/new">Add project</Link>
+          <Link className="nav-cta" href="/projects/new">
+            Add a project
+          </Link>
         </nav>
       </div>
     </header>
@@ -499,12 +502,14 @@ function Footer() {
       <div className="shell footer-grid">
         <div>
           <div className="wordmark footer-wordmark">{domain}</div>
-          <p>Accepted work. Public evidence. Cash rewards.</p>
+          <p className="footer-tagline">make money shipping open source</p>
           <p className="footer-copyright">
             © {new Date().getUTCFullYear()} slop.cash.
           </p>
         </div>
         <div className="footer-links">
+          <Link href="/#projects">Projects</Link>
+          <Link href="/projects/new">Add a project</Link>
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
           </ExternalLinkAnchor>
@@ -549,9 +554,9 @@ function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
 
 function TypewriterHeroHeading() {
   return (
-    <h1 aria-label="MAKE MONEY SHIPPING SLOP.">
+    <h1 aria-label="MAKE MONEY SHIPPING OPEN SOURCE.">
       MAKE MONEY
-      <span className="hero-action">SHIPPING SLOP.</span>
+      <span className="hero-action">SHIPPING OPEN SOURCE.</span>
     </h1>
   );
 }
@@ -586,7 +591,12 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
-        <h3>{project.name}</h3>
+        <div>
+          <span className="project-state">
+            {project.status === "active" ? "Accepting work" : "Project paused"}
+          </span>
+          <h3>{project.name}</h3>
+        </div>
         <ArrowRight aria-hidden="true" />
       </div>
       <div className="project-card-content">
@@ -882,18 +892,104 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
     <main>
       <section className="hero shell">
         <DataNotice state={state} retry={retry} />
+        <p className="hero-eyebrow">Open-source incentives, built on GitHub</p>
         <TypewriterHeroHeading />
+        <p className="hero-copy">
+          Pick valuable public work. Give it to your best coding agent. Ship an
+          accepted result and build a contributor record anyone can verify.
+        </p>
+        <div className="hero-actions">
+          <Link className="button primary-button" href="/#projects">
+            Explore projects <ArrowRight aria-hidden="true" />
+          </Link>
+          <Link className="button secondary-button" href="/projects/new">
+            Fund a project
+          </Link>
+        </div>
+        <ol aria-label="How Slop works" className="hero-proof">
+          <li>
+            <strong>01</strong> Choose reviewed work
+          </li>
+          <li>
+            <strong>02</strong> Ship on GitHub
+          </li>
+          <li>
+            <strong>03</strong> Build a public record
+          </li>
+        </ol>
         {state.status === "ready" ? (
           <HomeStatusLine snapshot={state.snapshot} />
         ) : null}
       </section>
 
       <section className="section shell home-projects-section" id="projects">
-        <h2 className="home-section-title">Projects</h2>
+        <div className="home-section-heading">
+          <div>
+            <p className="eyebrow">Open work</p>
+            <h2 className="home-section-title">Projects worth shipping.</h2>
+          </div>
+          <p>
+            Every listing is backed by a public repository, reviewed policy, and
+            visible acceptance history. Check live status before starting.
+          </p>
+        </div>
         <div className="project-grid">
           {PROJECTS.map((project) => (
             <ProjectCard key={project.id} project={project} />
           ))}
+        </div>
+      </section>
+      <section className="how-section" id="how-it-works">
+        <div className="shell">
+          <div className="home-section-heading inverse-heading">
+            <div>
+              <p className="eyebrow">One public loop</p>
+              <h2 className="home-section-title">Work in. Proof out.</h2>
+            </div>
+            <p>
+              GitHub stays the source of truth. Slop makes the opportunity,
+              accepted result, review state, and reward history legible.
+            </p>
+          </div>
+          <div className="how-grid">
+            <article>
+              <span>01</span>
+              <h3>Choose the mission.</h3>
+              <p>
+                Read the repository, reward terms, and live work queue. There
+                are no platform reservations or hidden tasks.
+              </p>
+            </article>
+            <article>
+              <span>02</span>
+              <h3>Ship the outcome.</h3>
+              <p>
+                Use any agent or model. The project skill guides scope, tests,
+                evidence, and exact attribution.
+              </p>
+            </article>
+            <article>
+              <span>03</span>
+              <h3>Earn the record.</h3>
+              <p>
+                Maintainers accept the work. Slop publishes score, review, and
+                verified payment state without rewarding busywork.
+              </p>
+            </article>
+          </div>
+          <div className="owner-callout">
+            <div>
+              <p className="eyebrow">For maintainers and funders</p>
+              <h3>Turn your roadmap into an open invitation.</h3>
+              <p>
+                Draft the project on Slop, then open a GitHub pull request for
+                public review. Your repository remains the authority.
+              </p>
+            </div>
+            <Link className="button inverse-button" href="/projects/new">
+              Add your project <ArrowRight aria-hidden="true" />
+            </Link>
+          </div>
         </div>
       </section>
       {state.status === "ready" ? (
@@ -2919,10 +3015,28 @@ ${manifestText}`;
         <span>/</span>Add a project
       </p>
       <section className="proposal-intro">
+        <p className="eyebrow">Project onboarding</p>
         <h1>Add a project.</h1>
         <p>
-          Draft without signing in. GitHub sign-in and immutable repository
-          proof are required before activation.
+          Describe the work and its public authority here. Slop will generate a
+          project manifest and an agent-ready proposal, then send you to GitHub
+          for the reviewable pull request.
+        </p>
+        <ol className="proposal-steps" aria-label="Project onboarding steps">
+          <li>
+            <strong>1</strong> Draft the project
+          </li>
+          <li>
+            <strong>2</strong> Continue on GitHub
+          </li>
+          <li>
+            <strong>3</strong> Pass review and verification
+          </li>
+        </ol>
+        <p className="proposal-note">
+          Drafting does not list or activate a project. New projects remain
+          paused until repository identity, stewardship, policy, skills, tests,
+          and production paths are independently verified.
         </p>
       </section>
       <div className="proposal-grid">

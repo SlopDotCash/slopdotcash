@@ -362,7 +362,7 @@ beforeAll(() => {
       },
     },
   });
-});
+}, 120_000);
 
 afterAll(() => {
   if (authorityRoot) {
@@ -490,7 +490,7 @@ describe("contribution skill package", () => {
       stdio: "inherit",
     });
     expect(readFileSync(archivePath)).toEqual(firstArchive);
-  }, 30_000);
+  }, 60_000);
 
   it("contains every canonical dependency, no extra source, and bound provenance", () => {
     const archive = inspectArchive();

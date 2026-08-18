@@ -8,8 +8,8 @@ type SocialMetadata = {
   domain: PublicDomain;
   origin: `https://${PublicDomain}`;
   imageUrl:
-    | "https://slop.cash/og-shipping-slop.png"
-    | "https://slop.tech/og-shipping-slop-tech.png";
+    | "https://slop.cash/og-open-source.png"
+    | "https://slop.tech/og-open-source.png";
 };
 
 type PagesContext = {
@@ -29,8 +29,8 @@ export function publicSocialMetadata(hostname: string): SocialMetadata {
     origin: `https://${domain}`,
     imageUrl:
       domain === TECH_DOMAIN
-        ? "https://slop.tech/og-shipping-slop-tech.png"
-        : "https://slop.cash/og-shipping-slop.png",
+        ? "https://slop.tech/og-open-source.png"
+        : "https://slop.cash/og-open-source.png",
   };
 }
 
@@ -61,7 +61,7 @@ export function renderSocialMetadata(
     ['content="slop.cash"', `content="${metadata.domain}"`, 1],
     ['content="https://slop.cash/"', `content="${metadata.origin}/"`, 1],
     [
-      'content="https://slop.cash/og-shipping-slop.png"',
+      'content="https://slop.cash/og-open-source.png"',
       `content="${metadata.imageUrl}"`,
       2,
     ],
