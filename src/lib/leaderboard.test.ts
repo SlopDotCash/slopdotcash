@@ -408,99 +408,6 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
   };
 }
 
-function v2Input(pullRequests: PullRequestRecord[]): LeaderboardInput {
-  return input({
-    generatedAt: "2026-08-18T05:00:00.000Z",
-    windowFrom: "2026-07-14T05:00:00.000Z",
-    windowTo: "2026-08-18T05:00:00.000Z",
-    sourceUpdatedAt: "2026-08-18T05:00:00.000Z",
-    verificationWindowFrom: "2026-07-14T05:00:00.000Z",
-    source: {
-      ...input().source,
-      fetchedAt: "2026-08-18T05:00:00.000Z",
-      cutoffAt: "2026-08-18T05:00:00.000Z",
-      verificationWindow: {
-        days: 35,
-        from: "2026-07-14T05:00:00.000Z",
-        to: "2026-08-18T05:00:00.000Z",
-      },
-    },
-    mergedPullRequests: pullRequests,
-  });
-}
-
-describe("score v2 work units", () => {
-  it("aggregates micro thirds before rounding down", () => {
-    const pullRequests = [1, 2, 3].map((number) =>
-      pullRequest({
-        id: `PR_V2_${number}`,
-        number,
-        createdAt: "2026-08-17T08:00:00.000Z",
-        updatedAt: "2026-08-18T03:00:00.000Z",
-        mergedAt: "2026-08-18T03:00:00.000Z",
-      }),
-    );
-    const snapshot = createLeaderboardSnapshot(v2Input(pullRequests));
-    expect(snapshot.ledger.map((event) => event.scoreThirds)).toEqual([
-      1, 1, 1,
-    ]);
-    expect(snapshot.leaders[0]).toMatchObject({
-      score: 1,
-      points: { mergedPullRequests: 1 },
-      acceptedOutcomes: { mergedPullRequests: 3 },
-    });
-  });
-
-  it("credits a shared work unit only once", () => {
-    const maintainer = actor("maintainer");
-    const pullRequests = [1, 2].map((number) => {
-      const pr = pullRequest({
-        id: `PR_SPLIT_${number}`,
-        number,
-        headRefOid: String(number).repeat(40),
-        createdAt: "2026-08-17T08:00:00.000Z",
-        updatedAt: `2026-08-18T0${number + 2}:00:00.000Z`,
-        mergedAt: `2026-08-18T0${number + 2}:00:00.000Z`,
-      });
-      const record = {
-        schemaVersion: "1",
-        ruleVersion: "slop-score-v2",
-        projectId: "eliza",
-        pullRequestNodeId: pr.id,
-        headSha: pr.headRefOid,
-        workUnitId: "wu_shared_split_outcome",
-        tier: "micro",
-        scoreThirds: 1,
-        proposalReviewNodeIds: [],
-        coRatifierNodeIds: [],
-        reason: "These split pull requests implement one logical outcome.",
-        supersedes: null,
-      };
-      pr.comments = [
-        {
-          ...textSource(
-            `COMMENT_SCORE_${number}`,
-            `\`\`\`slop-score\n${JSON.stringify(record)}\n\`\`\``,
-            maintainer,
-          ),
-          artifactId: pr.id,
-          url: `https://github.com/elizaOS/eliza/pull/${number}#issuecomment-${100 + number}`,
-          createdAt: `2026-08-18T0${number}:00:00.000Z`,
-          updatedAt: `2026-08-18T0${number}:00:00.000Z`,
-          authorAssociation: "MEMBER",
-        },
-      ];
-      return pr;
-    });
-    const snapshot = createLeaderboardSnapshot(v2Input(pullRequests));
-    expect(
-      snapshot.ledger.filter(
-        (event) => event.category === "merged-pull-request",
-      ),
-    ).toHaveLength(1);
-  });
-});
-
 describe("model attribution", () => {
   it("ingests a review record only when it joins its finalized terminal receipt", () => {
     const source = {
@@ -3501,7 +3408,7 @@ describe("deduplication and public schema", () => {
     badModels.leaders[0].reportedModels = ["openai/unreported-model"];
 
     expect(() => assertLeaderboardSnapshot(badScore)).toThrow(
-      "score does not equal rounded-down scoreThirds",
+      "score does not equal its point breakdown",
     );
     expect(() => assertLeaderboardSnapshot(badCoverage)).toThrow(
       "source counts are internally inconsistent",

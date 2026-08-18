@@ -424,9 +424,6 @@ describe("contribution skill package", () => {
     ).toEqual(
       readFileSync(join(repositoryRoot, "protocol", "private-trace-v1.md")),
     );
-    expect(readFileSync(join(publicRoot, "protocol", "scoring-v2.md"))).toEqual(
-      readFileSync(join(repositoryRoot, "protocol", "scoring-v2.md")),
-    );
     expect(source.toString()).toContain("--allow-local-usage");
 
     const projectDiscovery = parseJsonRecord(
@@ -493,7 +490,7 @@ describe("contribution skill package", () => {
       stdio: "inherit",
     });
     expect(readFileSync(archivePath)).toEqual(firstArchive);
-  }, 0);
+  }, 60_000);
 
   it("contains every canonical dependency, no extra source, and bound provenance", () => {
     const archive = inspectArchive();
@@ -791,7 +788,7 @@ describe("contribution skill package", () => {
       ).toEqual({
         schemaVersion: "1",
         projectId: project.id,
-        status: "active",
+        status: project.status,
         steward: project.steward,
         authority: project.authority,
         terms: project.terms,

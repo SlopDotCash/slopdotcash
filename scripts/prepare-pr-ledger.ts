@@ -1,7 +1,7 @@
 /**
- * Adapts the currently deployed public ledger for untrusted pull-request
- * browser checks when a schema migration has landed in code before production.
- * Trusted develop builds always regenerate from GitHub and never call this.
+ * Adapts a deployed schema-6 ledger to the fail-closed schema-5 contract used
+ * by this pull request. This runs only for untrusted PR browser checks. Trusted
+ * develop builds always regenerate the ledger from GitHub.
  */
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -10,12 +10,11 @@ import {
   assertPublishableLeaderboardSnapshot,
   LEADERBOARD_SCHEMA_VERSION,
   type LeaderboardEntry,
-  type LeaderboardSnapshot,
   leaderboardMethodology,
+  mergedPullRequestPoints,
+  SCORE_CAPS,
   SCORE_RULE_VERSION,
-  SCORE_V2_EFFECTIVE_AT,
   type ScoreEvent,
-  TARGET_REPOSITORIES,
 } from "../src/lib/leaderboard";
 
 type JsonRecord = Record<string, unknown>;
@@ -32,274 +31,240 @@ function array(value: unknown, field: string): unknown[] {
   return value;
 }
 
-function actorId(value: unknown): string {
-  const actor = record(value, "actor");
-  if (typeof actor.id !== "string" || actor.id.length === 0) {
-    throw new TypeError("actor.id must be a non-empty string");
+function text(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${field} must be a non-empty string`);
   }
-  return actor.id;
+  return value;
 }
 
-function codeUnitCompare(left: string, right: string): number {
+function eventGroup(event: ScoreEvent): string {
+  return `${event.actor.id}\0${event.repository}\0${event.occurredAt.slice(0, 7)}`;
+}
+
+function newest(left: ScoreEvent, right: ScoreEvent): number {
+  return (
+    right.occurredAt.localeCompare(left.occurredAt) ||
+    right.source.number - left.source.number ||
+    left.id.localeCompare(right.id)
+  );
+}
+
+function codeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function eventThirds(event: ScoreEvent): number {
-  return event.scoreThirds ?? event.points * 3;
-}
-
-function v2WorkUnit(event: ScoreEvent): string {
-  const repository = TARGET_REPOSITORIES.find(
-    (candidate) => candidate.id === event.repository,
-  );
-  if (!repository)
-    throw new TypeError(`unknown repository ${event.repository}`);
-  return `wu_${repository.projectId}_${event.source.id
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/gu, "_")}`;
-}
-
-function migrateEvent(value: unknown): ScoreEvent | null {
-  const event = record(value, "ledger event") as unknown as ScoreEvent;
-  if (
-    typeof event.occurredAt !== "string" ||
-    Date.parse(event.occurredAt) < Date.parse(SCORE_V2_EFFECTIVE_AT)
-  ) {
-    return event;
-  }
-  if (
-    event.category !== "merged-pull-request" &&
-    event.category !== "evaluated-contribution"
-  ) {
-    return null;
-  }
-  const scoreThirds =
-    event.category === "merged-pull-request"
-      ? 1
-      : Math.max(1, Math.round(event.points * 3));
-  return {
-    ...event,
-    points: scoreThirds / 3,
-    scoreThirds,
-    workUnitId: v2WorkUnit(event),
-    reason:
+function adaptLedger(values: unknown[]): ScoreEvent[] {
+  const merged = new Map<string, ScoreEvent[]>();
+  const evaluated = new Map<string, ScoreEvent[]>();
+  for (const [index, value] of values.entries()) {
+    const event = record(value, `ledger[${index}]`) as unknown as ScoreEvent;
+    text(event.id, `ledger[${index}].id`);
+    text(event.occurredAt, `ledger[${index}].occurredAt`);
+    const destination =
       event.category === "merged-pull-request"
-        ? "Accepted outcome has provisional micro credit pending immutable maintainer ratification."
-        : "Reviewed evaluated contribution migrated to integer-thirds credit.",
-  };
+        ? merged
+        : event.category === "evaluated-contribution"
+          ? evaluated
+          : null;
+    if (destination === null) continue;
+    const group = destination.get(eventGroup(event)) ?? [];
+    group.push(event);
+    destination.set(eventGroup(event), group);
+  }
+
+  const output: ScoreEvent[] = [];
+  for (const events of merged.values()) {
+    events.sort(newest).forEach((event, index) => {
+      output.push({
+        ...event,
+        points: mergedPullRequestPoints(index + 1),
+        reason:
+          "Pull request merged during the rolling window; uncapped diminishing credit applies within its project and UTC month.",
+      });
+    });
+  }
+
+  const evaluatedSources = new Set<string>();
+  for (const events of evaluated.values()) {
+    for (const event of events.sort(newest)) {
+      if (
+        events.indexOf(event) >= SCORE_CAPS.evaluatedContributions ||
+        event.source.kind !== "comment"
+      ) {
+        continue;
+      }
+      const sourceKey = `${event.repository}\0${event.source.id}`;
+      if (evaluatedSources.has(sourceKey)) continue;
+      evaluatedSources.add(sourceKey);
+      output.push({
+        ...event,
+        points: Math.max(1, Math.min(8, Math.round(event.points))),
+      });
+    }
+  }
+  return output;
+}
+
+function causalAttributions(
+  values: unknown[],
+  ledger: ScoreEvent[],
+): JsonRecord[] {
+  const artifactKeys = new Set(
+    ledger
+      .filter((event) => event.source.kind === "pull-request")
+      .map((event) => `${event.actor.id}\0${event.source.id}`),
+  );
+  const sourceKeys = new Set(
+    ledger
+      .filter(
+        (event) =>
+          event.category === "evaluated-contribution" &&
+          event.source.kind === "comment",
+      )
+      .map((event) => `${event.actor.id}\0${event.source.id}`),
+  );
+  return values
+    .map((value, index) => record(value, `attributions[${index}]`))
+    .filter((attribution) => {
+      const actor = record(attribution.actor, "attribution.actor");
+      const actorId = text(actor.id, "attribution.actor.id");
+      return (
+        artifactKeys.has(`${actorId}\0${String(attribution.artifactId)}`) ||
+        sourceKeys.has(`${actorId}\0${String(attribution.sourceId)}`)
+      );
+    });
 }
 
 function rebuildLeaders(
-  legacyLeaders: unknown[],
+  legacyValues: unknown[],
   ledger: ScoreEvent[],
-  attributions: unknown[],
+  attributions: JsonRecord[],
 ): LeaderboardEntry[] {
   const legacyByActor = new Map(
-    legacyLeaders.map((value) => {
-      const leader = record(value, "legacy leader");
-      return [actorId(leader.actor), leader];
+    legacyValues.map((value, index) => {
+      const leader = record(value, `leaders[${index}]`);
+      const actor = record(leader.actor, `leaders[${index}].actor`);
+      return [text(actor.id, `leaders[${index}].actor.id`), leader];
     }),
   );
-  const eventsByActor = new Map<string, ScoreEvent[]>();
+  const modelsByActor = new Map<string, Set<string>>();
+  for (const attribution of attributions) {
+    const actor = record(attribution.actor, "attribution.actor");
+    const actorId = text(actor.id, "attribution.actor.id");
+    const models = modelsByActor.get(actorId) ?? new Set<string>();
+    models.add(text(attribution.identifier, "attribution.identifier"));
+    modelsByActor.set(actorId, models);
+  }
+
+  const entries = new Map<string, Omit<LeaderboardEntry, "rank">>();
   for (const event of ledger) {
-    const id = actorId(event.actor);
-    const events = eventsByActor.get(id) ?? [];
-    events.push(event);
-    eventsByActor.set(id, events);
-  }
-  const reportedModelsByActor = new Map<string, Set<string>>();
-  for (const value of attributions) {
-    const attribution = record(value, "attribution");
-    if (attribution.actor === null) continue;
-    const id = actorId(attribution.actor);
-    if (typeof attribution.identifier !== "string") {
-      throw new TypeError("attribution.identifier must be a string");
+    const prior = entries.get(event.actor.id);
+    const legacy = legacyByActor.get(event.actor.id);
+    const entry =
+      prior ??
+      ({
+        actor: event.actor,
+        score: 0,
+        points: {
+          mergedPullRequests: 0,
+          resolvedIssues: 0,
+          materialTestChanges: 0,
+          evidence: 0,
+          substantiveReviews: 0,
+          evaluatedContributions: 0,
+        },
+        acceptedOutcomes: {
+          mergedPullRequests: 0,
+          resolvedIssues: 0,
+          materialTestChanges: 0,
+          evidenceCategories: 0,
+          substantiveReviews: 0,
+          evaluatedContributions: 0,
+        },
+        rawActivity: record(
+          legacy?.rawActivity,
+          "leader.rawActivity",
+        ) as LeaderboardEntry["rawActivity"],
+        reportedModels: [],
+      } satisfies Omit<LeaderboardEntry, "rank">);
+    entry.score += event.points;
+    if (event.category === "merged-pull-request") {
+      entry.points.mergedPullRequests += event.points;
+      entry.acceptedOutcomes.mergedPullRequests += 1;
+    } else {
+      entry.points.evaluatedContributions += event.points;
+      entry.acceptedOutcomes.evaluatedContributions += 1;
     }
-    const identifiers = reportedModelsByActor.get(id) ?? new Set<string>();
-    identifiers.add(attribution.identifier);
-    reportedModelsByActor.set(id, identifiers);
+    entries.set(event.actor.id, entry);
   }
-  const leaders = [...eventsByActor.entries()].map(([id, events]) => {
-    const legacy = legacyByActor.get(id);
-    if (!legacy) throw new TypeError(`ledger actor ${id} has no legacy leader`);
-    const pointThirds: LeaderboardEntry["pointThirds"] = {
-      mergedPullRequests: 0,
-      resolvedIssues: 0,
-      materialTestChanges: 0,
-      evidence: 0,
-      substantiveReviews: 0,
-      evaluatedContributions: 0,
-    };
-    const acceptedOutcomes: LeaderboardEntry["acceptedOutcomes"] = {
-      mergedPullRequests: 0,
-      resolvedIssues: 0,
-      materialTestChanges: 0,
-      evidenceCategories: 0,
-      substantiveReviews: 0,
-      evaluatedContributions: 0,
-    };
-    for (const event of events) {
-      const thirds = eventThirds(event);
-      if (event.category === "merged-pull-request") {
-        pointThirds.mergedPullRequests += thirds;
-        acceptedOutcomes.mergedPullRequests += 1;
-      } else if (event.category === "resolved-issue") {
-        pointThirds.resolvedIssues += thirds;
-        acceptedOutcomes.resolvedIssues += 1;
-      } else if (event.category === "material-test-change") {
-        pointThirds.materialTestChanges += thirds;
-        acceptedOutcomes.materialTestChanges += 1;
-      } else if (event.category === "evidence") {
-        pointThirds.evidence += thirds;
-        acceptedOutcomes.evidenceCategories += 1;
-      } else if (event.category === "substantive-review") {
-        pointThirds.substantiveReviews += thirds;
-        acceptedOutcomes.substantiveReviews += 1;
-      } else {
-        pointThirds.evaluatedContributions += thirds;
-        acceptedOutcomes.evaluatedContributions += 1;
-      }
-    }
-    const scoreThirds = Object.values(pointThirds).reduce(
-      (total, thirds) => total + thirds,
-      0,
-    );
-    return {
-      rank: 0,
-      actor: legacy.actor as LeaderboardEntry["actor"],
-      score: Math.floor(scoreThirds / 3),
-      scoreThirds,
-      points: {
-        mergedPullRequests: pointThirds.mergedPullRequests / 3,
-        resolvedIssues: pointThirds.resolvedIssues / 3,
-        materialTestChanges: pointThirds.materialTestChanges / 3,
-        evidence: pointThirds.evidence / 3,
-        substantiveReviews: pointThirds.substantiveReviews / 3,
-        evaluatedContributions: pointThirds.evaluatedContributions / 3,
-      },
-      pointThirds,
-      acceptedOutcomes,
-      rawActivity: legacy.rawActivity as LeaderboardEntry["rawActivity"],
-      reportedModels: [...(reportedModelsByActor.get(id) ?? [])].sort(
+
+  return [...entries.values()]
+    .map((entry) => ({
+      ...entry,
+      reportedModels: [...(modelsByActor.get(entry.actor.id) ?? [])].sort(
         (left, right) => left.localeCompare(right),
       ),
-    };
-  });
-  leaders.sort(
-    (left, right) =>
-      right.scoreThirds - left.scoreThirds ||
-      codeUnitCompare(
-        left.actor.login.toLowerCase(),
-        right.actor.login.toLowerCase(),
-      ) ||
-      codeUnitCompare(left.actor.login, right.actor.login) ||
-      codeUnitCompare(left.actor.id, right.actor.id),
-  );
-  leaders.forEach((leader, index) => {
-    leader.rank = index + 1;
-  });
-  return leaders;
-}
-
-function retainCausalAttributions(
-  values: unknown[],
-  ledger: ScoreEvent[],
-): unknown[] {
-  const causalKeys = new Set<string>();
-  const resolvedArtifacts = new Set<string>();
-  for (const event of ledger) {
-    const id = actorId(event.actor);
-    if (event.source.kind === "pull-request") {
-      causalKeys.add(`${id}\0artifact\0${event.source.id}`);
-    }
-    if (
-      (event.category === "substantive-review" &&
-        event.source.kind === "review") ||
-      (event.category === "evaluated-contribution" &&
-        event.source.kind === "comment")
-    ) {
-      causalKeys.add(`${id}\0source\0${event.source.id}`);
-    }
-    if (event.category === "resolved-issue") {
-      const separator = ":resolved-by:";
-      const index = event.id.lastIndexOf(separator);
-      if (index >= 0) {
-        resolvedArtifacts.add(
-          `${id}\0${event.id.slice(index + separator.length)}`,
-        );
-      }
-    }
-  }
-  return values.filter((value) => {
-    const attribution = record(value, "attribution");
-    if (attribution.actor === null) return false;
-    const id = actorId(attribution.actor);
-    return (
-      causalKeys.has(`${id}\0artifact\0${String(attribution.artifactId)}`) ||
-      causalKeys.has(`${id}\0source\0${String(attribution.sourceId)}`) ||
-      resolvedArtifacts.has(`${id}\0${String(attribution.artifactId)}`)
-    );
-  });
-}
-
-export function preparePullRequestLedger(value: unknown): LeaderboardSnapshot {
-  const candidate = record(value, "snapshot");
-  if (candidate.schemaVersion === LEADERBOARD_SCHEMA_VERSION) {
-    assertPublishableLeaderboardSnapshot(candidate);
-    return candidate as unknown as LeaderboardSnapshot;
-  }
-  if (candidate.schemaVersion !== "5") {
-    throw new TypeError("deployed ledger is not schema 5 or 6");
-  }
-  const ledger = array(candidate.ledger, "snapshot.ledger")
-    .map(migrateEvent)
-    .filter((event): event is ScoreEvent => event !== null)
+    }))
     .sort(
       (left, right) =>
-        right.points - left.points ||
-        left.source.number - right.source.number ||
-        left.id.localeCompare(right.id),
-    );
-  const attributions = retainCausalAttributions(
-    array(candidate.attributions, "snapshot.attributions"),
-    ledger,
-  );
-  const snapshot = {
-    ...candidate,
-    schemaVersion: LEADERBOARD_SCHEMA_VERSION,
-    ruleVersion: SCORE_RULE_VERSION,
-    methodology: leaderboardMethodology(),
-    leaders: rebuildLeaders(
-      array(candidate.leaders, "snapshot.leaders"),
-      ledger,
-      attributions,
-    ),
-    ledger,
-    attributions,
-  };
-  assertPublishableLeaderboardSnapshot(snapshot);
-  return snapshot as unknown as LeaderboardSnapshot;
+        right.score - left.score ||
+        codeUnits(
+          left.actor.login.toLowerCase(),
+          right.actor.login.toLowerCase(),
+        ) ||
+        codeUnits(left.actor.login, right.actor.login) ||
+        codeUnits(left.actor.id, right.actor.id),
+    )
+    .map((entry, index) => ({ rank: index + 1, ...entry }));
 }
 
-async function main(): Promise<void> {
-  if (process.argv.length !== 4) {
-    throw new TypeError("Usage: prepare-pr-ledger.ts <input> <output>");
+export async function preparePrLedger(inputPath: string, outputPath: string) {
+  const input = record(
+    JSON.parse(await readFile(resolve(inputPath), "utf8")),
+    "snapshot",
+  );
+  if (input.schemaVersion !== "5" && input.schemaVersion !== "6") {
+    throw new TypeError("deployed PR ledger must use schema 5 or 6");
   }
-  const input = resolve(process.argv[2]);
-  const output = resolve(process.argv[3]);
-  const parsed: unknown = JSON.parse(await readFile(input, "utf8"));
-  const snapshot = preparePullRequestLedger(parsed);
-  await mkdir(dirname(output), { recursive: true });
-  const temporary = `${output}.tmp-${process.pid}`;
-  await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, {
+  const output =
+    input.schemaVersion === "5"
+      ? input
+      : (() => {
+          const ledger = adaptLedger(array(input.ledger, "snapshot.ledger"));
+          const attributions = causalAttributions(
+            array(input.attributions, "snapshot.attributions"),
+            ledger,
+          );
+          return {
+            ...input,
+            schemaVersion: LEADERBOARD_SCHEMA_VERSION,
+            ruleVersion: SCORE_RULE_VERSION,
+            methodology: leaderboardMethodology(),
+            ledger,
+            attributions,
+            leaders: rebuildLeaders(
+              array(input.leaders, "snapshot.leaders"),
+              ledger,
+              attributions,
+            ),
+          };
+        })();
+  assertPublishableLeaderboardSnapshot(output);
+  const destination = resolve(outputPath);
+  const temporary = `${destination}.tmp-${process.pid}`;
+  await mkdir(dirname(destination), { recursive: true });
+  await writeFile(temporary, `${JSON.stringify(output, null, 2)}\n`, {
     flag: "wx",
   });
-  await rename(temporary, output);
-  process.stdout.write(
-    `[Slop] prepared schema ${snapshot.schemaVersion} pull-request ledger from deployed public data\n`,
-  );
+  await rename(temporary, destination);
 }
 
 if (import.meta.main) {
-  await main();
+  if (process.argv.length !== 4) {
+    throw new TypeError(
+      "Usage: bun scripts/prepare-pr-ledger.ts <input> <output>",
+    );
+  }
+  await preparePrLedger(process.argv[2], process.argv[3]);
 }

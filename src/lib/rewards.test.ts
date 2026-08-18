@@ -66,46 +66,6 @@ function allocationManifest() {
 }
 
 describe("reward manifests", () => {
-  it("holds sub-$2 awards without discarding or redistributing them", () => {
-    const manifest = allocationManifest() as ReturnType<
-      typeof allocationManifest
-    > & {
-      carriedMinor: string;
-      minimumTransferMinor: string;
-    };
-    manifest.status = "proposed";
-    (manifest as unknown as { approvedAt: string | null }).approvedAt = null;
-    manifest.carriedMinor = "0";
-    manifest.minimumTransferMinor = "2000000";
-    const allocation = manifest
-      .allocations[0] as (typeof manifest.allocations)[number] & {
-      accruedMinor: string;
-    };
-    allocation.accruedMinor = "1000000";
-    allocation.approvedMinor = "0";
-    allocation.state = "held-below-minimum";
-    manifest.totals.approvedMinor = "0";
-    manifest.totals.feeMinor = "0";
-
-    expect(
-      assertRewardAllocationManifest(manifest).allocations[0],
-    ).toMatchObject({
-      state: "held-below-minimum",
-      accruedMinor: "1000000",
-      approvedMinor: "0",
-    });
-
-    allocation.state = "approved";
-    allocation.approvedMinor = "1000000";
-    manifest.status = "approved";
-    manifest.approvedAt = "2026-09-16T00:00:00.000Z";
-    manifest.totals.approvedMinor = "1000000";
-    manifest.totals.feeMinor = "10000";
-    expect(() => assertRewardAllocationManifest(manifest)).toThrow(
-      /below the \$2 minimum/u,
-    );
-  });
-
   it("validates an approved allocation and exact fee", () => {
     const manifest = assertRewardAllocationManifest(allocationManifest());
     expect(manifest.totals).toEqual({

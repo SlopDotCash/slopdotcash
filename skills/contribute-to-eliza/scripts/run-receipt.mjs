@@ -140,8 +140,7 @@ function validatePolicyAcknowledgement(value) {
     ]) ||
     typeof value.policyRevision !== "string" ||
     value.policyRevision.length === 0 ||
-    (value.licenseSha256 !== null &&
-      !SHA_PATTERN.test(value.licenseSha256 ?? "")) ||
+    !SHA_PATTERN.test(value.licenseSha256 ?? "") ||
     (value.inboundTermsSha256 !== null &&
       !SHA_PATTERN.test(value.inboundTermsSha256 ?? "")) ||
     (value.prizeRulesSha256 !== null &&

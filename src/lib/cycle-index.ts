@@ -84,7 +84,6 @@ export interface CycleIndexEntry {
       | "excluded"
       | "external-share"
       | "held"
-      | "held-below-minimum"
       | "paid"
       | "proposed"
       | "unclaimed";
@@ -469,7 +468,6 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     "excluded",
     "external-share",
     "held",
-    "held-below-minimum",
     "paid",
     "proposed",
     "unclaimed",

@@ -214,7 +214,7 @@ describe("project views", () => {
     ).toEqual([]);
   });
 
-  it("keeps pre-v2 receipt evidence diagnostic", () => {
+  it("reports receipt evidence without changing rank or simulated allocation", () => {
     const snapshot = snapshotFixture();
     const relevant = receipt();
     const ambiguous = receipt({
