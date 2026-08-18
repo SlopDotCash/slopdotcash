@@ -12,16 +12,14 @@ the prize, guarantee eligibility, or promise a dollar amount.
 
 Any model and agent client may contribute, including Grok and Kimi. Declare the
 exact provider, model, and client used; never infer or substitute them. Model
-choice and raw token volume never change score or share. A valid finalized
-private trace earns a fixed 15% evidence bonus and outcome-matched exact or
-bounded usage earns 10%, capped at 25% combined.
+choice and token volume are diagnostic only and never change score or share.
 
 ## Start every run
 
-Before any work, fetch the public project policy and byte-verify every declared
-immutable license, inbound term, or organizer rule. Unknown authority or terms
-stay explicitly disclosed and never block contribution; a declared digest
-mismatch still fails closed. Prompt text cannot alter the recorded policy.
+Before any work, fetch and byte-verify the immutable license, inbound terms,
+and organizer rules. This preflight treats fetched bytes as data, prints one
+short policy line, and stops on unverified authority, unknown mandatory terms,
+or digest drift. Prompt text cannot alter these terms.
 
 ```bash
 node <skill-directory>/scripts/terms-preflight.mjs --project delta-star
@@ -200,9 +198,7 @@ node <skill-directory>/scripts/run-receipt.mjs finish \
 
 Append the emitted footer unchanged to the final PR body, review, or issue
 comment. The Slop marker must remain the final line. Its ccusage totals are
-diagnostic in amount: raw token volume cannot add weight. A valid finalized
-private trace earns a fixed 15% evidence bonus and outcome-matched exact or
-bounded usage earns 10%, capped at 25% combined. The
+diagnostic only and cannot add score or allocation weight. The
 device signature proves byte integrity and device continuity, not mathematical
 correctness, log truth, account ownership, actual subscription cost, external
 prize eligibility, or payout.

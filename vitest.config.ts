@@ -16,7 +16,7 @@ export default defineConfig({
     fileParallelism: false,
     hookTimeout: 30_000,
     setupFiles: ["./tests/setup.ts"],
-    testTimeout: 0,
+    testTimeout: 15_000,
     include: [
       "functions/**/*.test.ts",
       "workers/**/*.test.ts",

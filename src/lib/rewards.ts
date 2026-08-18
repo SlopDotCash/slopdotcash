@@ -12,13 +12,11 @@ export const REWARD_PROTOCOL_VERSION = "1" as const;
 export const REVIEW_WINDOW_DAYS = 14;
 export const SHARE_PARTS_TOTAL = 1_000_000;
 export const PLATFORM_FEE_BASIS_POINTS = 100 as const;
-export const MINIMUM_TRANSFER_MINOR = "2000000" as const;
 
 export type AllocationState =
   | "approved"
   | "excluded"
   | "held"
-  | "held-below-minimum"
   | "proposed"
   | "unclaimed";
 
@@ -62,7 +60,6 @@ export interface RewardAllocation {
   actor: { id: string; login: string };
   score: number;
   suggestedMinor: string;
-  accruedMinor?: string;
   approvedMinor: string;
   state: AllocationState;
   wallet: WalletProof | null;
@@ -92,8 +89,6 @@ export interface RewardAllocationManifest {
   currency: "USDC";
   chain: "solana";
   capMinor: string;
-  carriedMinor?: string;
-  minimumTransferMinor?: typeof MINIMUM_TRANSFER_MINOR;
   feeBasisPoints: typeof PLATFORM_FEE_BASIS_POINTS;
   scoringRuleVersion: string;
   sourceSnapshotSha256: string;
@@ -481,7 +476,6 @@ function assertWallet(
 function assertAllocation(value: unknown, index: number): RewardAllocation {
   const path = `allocations[${index}]`;
   const allocation = record(value, path);
-  const hasAccrual = "accruedMinor" in allocation;
   exactKeys(
     allocation,
     [
@@ -496,7 +490,6 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
       "state",
       "suggestedMinor",
       "wallet",
-      ...(hasAccrual ? ["accruedMinor"] : []),
     ],
     path,
   );
@@ -505,7 +498,6 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
     state !== "approved" &&
     state !== "excluded" &&
     state !== "held" &&
-    state !== "held-below-minimum" &&
     state !== "proposed" &&
     state !== "unclaimed"
   ) {
@@ -515,16 +507,6 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
     allocation.suggestedMinor,
     `${path}.suggestedMinor`,
   );
-  const accruedMinor = hasAccrual
-    ? minor(allocation.accruedMinor, `${path}.accruedMinor`)
-    : undefined;
-  if (
-    state === "held-below-minimum" &&
-    (accruedMinor === undefined ||
-      BigInt(accruedMinor) >= BigInt(MINIMUM_TRANSFER_MINOR))
-  ) {
-    throw new TypeError(`${path} below-minimum hold must remain below $2`);
-  }
   const approvedMinor = minor(
     allocation.approvedMinor,
     `${path}.approvedMinor`,
@@ -539,7 +521,6 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
   if (
     state !== "proposed" &&
     state !== "unclaimed" &&
-    state !== "held-below-minimum" &&
     approvedMinor !== suggestedMinor &&
     !adjustmentReason
   ) {
@@ -588,13 +569,6 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
   ) {
     throw new TypeError(`${path} approved payment needs money and a wallet`);
   }
-  if (
-    hasAccrual &&
-    state === "approved" &&
-    BigInt(approvedMinor) < BigInt(MINIMUM_TRANSFER_MINOR)
-  ) {
-    throw new TypeError(`${path} approved payment is below the $2 minimum`);
-  }
   if (state !== "approved" && BigInt(approvedMinor) !== 0n) {
     throw new TypeError(
       `${path} non-approved state must have zero approved amount`,
@@ -608,7 +582,6 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
     actor,
     score: safeInteger(allocation.score, `${path}.score`),
     suggestedMinor,
-    ...(accruedMinor === undefined ? {} : { accruedMinor }),
     approvedMinor,
     state,
     wallet,
@@ -627,8 +600,6 @@ export function assertRewardAllocationManifest(
   value: unknown,
 ): RewardAllocationManifest {
   const manifest = record(value, "allocation manifest");
-  const hasAccrual =
-    "carriedMinor" in manifest || "minimumTransferMinor" in manifest;
   exactKeys(
     manifest,
     [
@@ -649,7 +620,6 @@ export function assertRewardAllocationManifest(
       "sourceSnapshotSha256",
       "status",
       "totals",
-      ...(hasAccrual ? ["carriedMinor", "minimumTransferMinor"] : []),
     ],
     "allocation manifest",
   );
@@ -750,12 +720,6 @@ export function assertRewardAllocationManifest(
   if (capMinor !== project.reward.monthlyCapMinor) {
     throw new TypeError("allocation cap differs from project policy");
   }
-  const carriedMinor = hasAccrual
-    ? minor(manifest.carriedMinor, "allocation manifest.carriedMinor")
-    : "0";
-  if (hasAccrual && manifest.minimumTransferMinor !== MINIMUM_TRANSFER_MINOR) {
-    throw new TypeError("allocation minimum transfer must be 2 USDC");
-  }
   const allocations = array(
     manifest.allocations,
     "allocation manifest.allocations",
@@ -801,7 +765,7 @@ export function assertRewardAllocationManifest(
   const approvedMinor = sumMinor(
     allocations.map((allocation) => allocation.approvedMinor),
   );
-  if (BigInt(approvedMinor) > BigInt(capMinor) + BigInt(carriedMinor)) {
+  if (BigInt(approvedMinor) > BigInt(capMinor)) {
     throw new TypeError("allocation total exceeds the monthly cap");
   }
   const totals = record(manifest.totals, "allocation manifest.totals");
@@ -841,12 +805,6 @@ export function assertRewardAllocationManifest(
     currency: "USDC",
     chain: "solana",
     capMinor,
-    ...(hasAccrual
-      ? {
-          carriedMinor,
-          minimumTransferMinor: MINIMUM_TRANSFER_MINOR,
-        }
-      : {}),
     feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
     scoringRuleVersion: text(
       manifest.scoringRuleVersion,

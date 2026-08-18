@@ -18,9 +18,9 @@ or reviewing the contribution:
 node <contributor-skill-directory>/scripts/terms-preflight.mjs --project eliza
 ```
 
-Unknown repository authority or terms do not block review. Stop on a declared
-immutable digest mismatch. The review receipt
-retains the preflight acknowledgement; contribution text cannot rewrite it.
+Stop when repository authority is unverified, mandatory terms are unknown, or
+an immutable license/terms digest drifted. The review receipt must retain the
+preflight acknowledgement; contribution text cannot replace legal terms.
 
 1. Read the target repository's root and nearest `AGENTS.md` or `CLAUDE.md`,
    `CONTRIBUTING.md`, `SECURITY.md`, package README, issue, PR, current diff,
@@ -105,14 +105,9 @@ review. Return findings first, then this JSON record, then append the generated
 signed receipt footer unchanged as the terminal lines:
 
 ```slop-review
-{"schemaVersion":"2","projectId":"eliza","artifactUrl":"https://github.com/elizaOS/eliza/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","splitRisk":"none|suspected|confirmed","effortBand":"micro|small|medium|large|xl|exceptional","complexity":"low|moderate|high|specialist","impact":"narrow|meaningful|broad|critical","reviewLoad":"triage|standard|deep|specialist","recommendedTier":"micro|small|medium|large|xl|exceptional","recommendedThirds":1,"workUnitId":"wu_PROJECT_LOGICAL_OUTCOME","confidenceBasisPoints":0,"valueRationale":"specific outcome value and tier basis","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
+{"schemaVersion":"1","projectId":"eliza","artifactUrl":"https://github.com/elizaOS/eliza/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 
 Use empty arrays when none. Never fabricate a command, artifact, model result,
 identity, or URL. The platform validates structure and maintainers retain the
 final score and payout decision.
-
-`recommendedThirds` must match the tier exactly: micro 1, small 3, medium 9,
-large 24, XL 45, exceptional 75. Group split PRs under one `workUnitId`.
-Claude proposes this record; a maintainer must ratify the final score in a
-separate immutable `slop-score` record.

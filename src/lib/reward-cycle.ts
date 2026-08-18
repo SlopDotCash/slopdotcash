@@ -12,7 +12,6 @@ import {
   assertRewardAllocationManifest,
   type ExternalContributionShareManifest,
   feeForPrincipal,
-  MINIMUM_TRANSFER_MINOR,
   REVIEW_WINDOW_DAYS,
   type RewardAllocationManifest,
   type WalletProof,
@@ -30,7 +29,6 @@ export interface CreateRewardCycleProposalInput {
   snapshot: LeaderboardSnapshot;
   sourceSnapshotSha256: string;
   wallets?: ReadonlyMap<string, WalletProof>;
-  priorAccruedMinor?: ReadonlyMap<string, string>;
 }
 
 function cycleBounds(cycleId: string): { from: number; to: number } {
@@ -136,21 +134,8 @@ export function createRewardCycleProposal(
     });
   }
 
-  const carriedMinor = view.leaders
-    .reduce(
-      (total, leader) =>
-        total + BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0"),
-      0n,
-    )
-    .toString();
   const suggestedMinor = view.leaders
-    .reduce(
-      (total, leader) =>
-        total +
-        BigInt(leader.projectedMinor ?? "0") +
-        BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0"),
-      0n,
-    )
+    .reduce((total, leader) => total + BigInt(leader.projectedMinor ?? "0"), 0n)
     .toString();
   const reviewEndsAt = new Date(
     Date.parse(input.generatedAt) + REVIEW_WINDOW_DAYS * 86_400_000,
@@ -176,29 +161,18 @@ export function createRewardCycleProposal(
     currency: "USDC",
     chain: "solana",
     capMinor: view.project.reward.monthlyCapMinor,
-    carriedMinor,
-    minimumTransferMinor: MINIMUM_TRANSFER_MINOR,
     feeBasisPoints: view.project.reward.feeBasisPoints,
     scoringRuleVersion: input.snapshot.ruleVersion,
     sourceSnapshotSha256: input.sourceSnapshotSha256,
     allocations: view.leaders.map((leader, index) => {
       const wallet = input.wallets?.get(leader.actor.id) ?? null;
-      const accruedMinor = (
-        BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
-        BigInt(leader.projectedMinor ?? "0")
-      ).toString();
       return {
         intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(leader.actor.id)}`,
         actor: { id: leader.actor.id, login: leader.actor.login },
         score: leader.score,
-        suggestedMinor: accruedMinor,
-        accruedMinor,
+        suggestedMinor: leader.projectedMinor ?? "0",
         approvedMinor: "0",
-        state: wallet
-          ? BigInt(accruedMinor) < BigInt(MINIMUM_TRANSFER_MINOR)
-            ? "held-below-minimum"
-            : "proposed"
-          : "unclaimed",
+        state: wallet ? "proposed" : "unclaimed",
         wallet,
         evidenceEventIds: leader.evidenceEventIds,
         adjustmentReason: null,

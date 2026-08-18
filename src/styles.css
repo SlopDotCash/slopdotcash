@@ -1260,14 +1260,6 @@ small {
   grid-template-columns: 62px minmax(190px, 1.4fr) 0.5fr 0.8fr;
 }
 
-.project-leader-row td > small {
-  display: block;
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.25;
-}
-
 .global-leader-head,
 .global-leader-row {
   grid-template-columns: 72px minmax(220px, 1.5fr) 0.6fr 0.8fr;

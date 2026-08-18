@@ -183,11 +183,6 @@ copyFileSync(
   privateTraceContractPath,
   join(publicProtocolRoot, "private-trace-v1.md"),
 );
-const scoringContractPath = join(protocolRoot, "scoring-v2.md");
-if (!existsSync(scoringContractPath)) {
-  throw new TypeError("[Slop] score v2 contract is missing");
-}
-copyFileSync(scoringContractPath, join(publicProtocolRoot, "scoring-v2.md"));
 const identityRecordPath = join(protocolRoot, "identity-v1.json");
 if (existsSync(identityRecordPath)) {
   readIdentityRecord(identityRecordPath);
@@ -591,7 +586,7 @@ const manifest = {
   telemetry: {
     source: "ccusage@20.0.20",
     policy:
-      "Every agent run permanently uploads its contributor-inspected, minimized run trace under https://slop.cash/protocol/private-trace-v1.md before submission; the uploader performs no automatic redaction. Public receipts contain aggregate locally reported usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Fixed evidence bonuses follow https://slop.cash/protocol/scoring-v2.md; raw token volume never changes weight. Unsupported usage adapters never block participation.",
+      "Every agent run permanently uploads its contributor-inspected, minimized run trace under https://slop.cash/protocol/private-trace-v1.md before submission; the uploader performs no automatic redaction. Public receipts contain aggregate locally reported diagnostic usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Unsupported usage adapters never block participation.",
   },
 };
 
@@ -866,7 +861,7 @@ function publishAdditionalProject({
     telemetry: {
       source: "ccusage@20.0.20",
       policy:
-        "Every agent run permanently uploads its contributor-inspected, minimized run trace under https://slop.cash/protocol/private-trace-v1.md before submission; the uploader performs no automatic redaction. Public receipts contain only aggregate locally reported usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Fixed evidence bonuses follow https://slop.cash/protocol/scoring-v2.md; raw token volume never changes weight. Unsupported usage adapters never block participation.",
+        "Every agent run permanently uploads its contributor-inspected, minimized run trace under https://slop.cash/protocol/private-trace-v1.md before submission; the uploader performs no automatic redaction. Public receipts contain only aggregate locally reported diagnostic usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. Unsupported usage adapters never block participation.",
     },
     ...(publicationPrefix
       ? {
@@ -909,7 +904,7 @@ for (const project of PROJECTS) {
       {
         schemaVersion: "1",
         projectId: project.id,
-        status: "active",
+        status: project.status,
         steward: project.steward,
         authority: project.authority,
         terms: project.terms,

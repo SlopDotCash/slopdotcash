@@ -2335,7 +2335,7 @@ describe("run receipt CLI", () => {
   });
 
   it("starts and finishes a measured run without passing --project to ccusage", {
-    timeout: 0,
+    timeout: 15_000,
   }, async () => {
     const fixtureRoot = realpathSync(
       mkdtempSync(join(tmpdir(), "contribute-to-eliza-start-")),

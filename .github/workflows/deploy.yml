@@ -131,8 +131,7 @@ jobs:
             --output "$ledger_file" \
             https://slop.cash/data/leaderboard.json
           test -s "$ledger_file"
-          bun scripts/prepare-pr-ledger.ts \
-            "$ledger_file" public/data/leaderboard.json
+          mv "$ledger_file" public/data/leaderboard.json
 
       - name: Validate reward lifecycle
         run: bun run cycles:check
