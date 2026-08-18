@@ -14,6 +14,8 @@ import { findProject, type ProjectId } from "../src/lib/projects.mjs";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import type { WalletProof } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
+import type { PriorCycleAccrual } from "./prior-cycle-accrual";
+import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
 import {
   ExistingFileError,
   writeNewFile,
@@ -150,6 +152,12 @@ export async function prepareRewardCycle(
   options: {
     generatedAt?: string;
     githubToken?: string;
+    loadPriorAccrual?: (input: {
+      asOf: string;
+      cycleId: string;
+      cyclesRoot: string;
+      projectId: ProjectId;
+    }) => Promise<PriorCycleAccrual>;
     observeWallet?: (
       actorId: string,
       login: string,
@@ -199,6 +207,19 @@ export async function prepareRewardCycle(
   const project = findProject(arguments_.projectId);
   if (!project) throw new TypeError(`Unknown project: ${arguments_.projectId}`);
 
+  const priorAccrual =
+    project.reward.kind === "monthly-pool"
+      ? await (options.loadPriorAccrual ?? loadPriorCycleAccrual)({
+          asOf: generatedAt,
+          cycleId: arguments_.cycleId,
+          cyclesRoot: CYCLES_ROOT,
+          projectId: arguments_.projectId,
+        })
+      : {
+          actorLogins: new Map<string, string>(),
+          accruedMinor: new Map<string, string>(),
+        };
+
   const wallets = new Map<string, WalletProof>();
   if (project.reward.kind === "monthly-pool") {
     const projectLeaders = createProjectView(
@@ -206,7 +227,13 @@ export async function prepareRewardCycle(
       arguments_.projectId,
       arguments_.cycleId,
     ).leaders;
-    if (projectLeaders.length > MAX_WALLET_LOOKUPS) {
+    const actors = new Map(
+      projectLeaders.map((leader) => [leader.actor.id, leader.actor.login]),
+    );
+    for (const [actorId, login] of priorAccrual.actorLogins) {
+      if (!actors.has(actorId)) actors.set(actorId, login);
+    }
+    if (actors.size > MAX_WALLET_LOOKUPS) {
       throw new RangeError(
         "Reward cycle exceeds the bounded wallet lookup limit",
       );
@@ -218,11 +245,11 @@ export async function prepareRewardCycle(
           token: options.githubToken,
         }));
     const observations = await mapWithConcurrency(
-      projectLeaders,
+      [...actors],
       WALLET_LOOKUP_CONCURRENCY,
-      async (leader) => ({
-        actorId: leader.actor.id,
-        wallet: await observe(leader.actor.id, leader.actor.login, generatedAt),
+      async ([actorId, login]) => ({
+        actorId,
+        wallet: await observe(actorId, login, generatedAt),
       }),
     );
     for (const observation of observations) {
@@ -240,6 +267,8 @@ export async function prepareRewardCycle(
       .update(sourceBytes)
       .digest("hex"),
     wallets,
+    priorAccruedMinor: priorAccrual.accruedMinor,
+    priorActorLogins: priorAccrual.actorLogins,
   });
   await (options.writeSnapshot ?? writeImmutableBytes)(
     arguments_.snapshotArchivePath,
