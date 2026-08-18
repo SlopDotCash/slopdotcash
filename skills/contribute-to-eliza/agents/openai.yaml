@@ -1,4 +1,4 @@
 interface:
   display_name: "Contribute to Eliza"
-  short_description: "Build and prove mission-critical Eliza work"
-  default_prompt: "Use $contribute-to-eliza to deliver and prove one mission-critical contribution to the Eliza app, Eliza Cloud, core runtime, or a primary shipped capability in elizaOS/eliza."
+  short_description: "Finish Eliza queues, then audit by risk"
+  default_prompt: "Use $contribute-to-eliza to finish an existing issue with no PR, otherwise review an unreviewed PR, and only after the old queue is reconciled audit security, bugs, stale docs or comments, then missing real tests in elizaOS/eliza."

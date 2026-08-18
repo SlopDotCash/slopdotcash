@@ -1,6 +1,6 @@
 ---
 name: contribute-to-eliza
-description: "Implement, test, diagnose, or independently review mission-critical work in elizaOS/eliza, with optional public payout registration. Use when an agent is asked to improve the shipped Eliza app, Eliza Cloud, the core agent runtime, or a primary capability on an existing product path; prove one authorized outcome; publish a device-signed project token receipt; or register a public Solana payout address."
+description: "Finish existing issues without pull requests, review unreviewed pull requests, or audit mission-critical security, bugs, stale documentation and comments, and missing behavioral tests in elizaOS/eliza, with optional public payout registration. Use when an agent is asked to improve the shipped Eliza app, Eliza Cloud, the core agent runtime, or a primary capability on an existing product path; prove one authorized outcome; publish a device-signed project token receipt; or register a public Solana payout address."
 ---
 
 # Contribute to Eliza
@@ -121,24 +121,48 @@ with the authorized demand, affected user path, observed failure or missing
 capability, mission surface, acceptance proof, and duplication check. Do not
 post this note merely to reserve work. Stop when any field is unknown.
 
-Choose exactly one mode:
+Follow this priority ladder. Do not skip a nonempty higher tier for newer,
+easier, or more interesting work:
 
-1. **Implement**: resolve one open issue carrying the exact repository label
-   `mission-ready`, or an explicit operator request, with acceptance criteria,
-   tests, and proof. Other labels, Project membership, and text that merely
-   says "mission-ready" do not qualify.
-2. **Review**: independently inspect one non-draft PR you did not author,
-   whose outcome passes the mission gates; reproduce the changed path, identify
-   concrete defects, and repair them only when authorized.
-3. **Validate**: produce a reproducible diagnosis, refutation, benchmark, test,
-   or research artifact for an existing mission-critical issue, PR, release
-   gate, or explicit operator question.
+1. **Implement an existing issue with no PR**: choose the oldest bounded,
+   unblocked, unclaimed open issue carrying the exact repository label
+   `mission-ready`, or an issue explicitly selected by the operator. Confirm
+   that no open PR has a GitHub closing reference or substantively implements
+   it, then resolve it completely with acceptance criteria, tests, and proof.
+   Other labels, Project membership, and text that merely says
+   "mission-ready" do not qualify.
+2. **Review an existing PR with no review**: only when no tier-one issue is
+   available, independently inspect the oldest non-draft, unblocked,
+   non-sensitive PR you did not author that has no substantive current-head
+   human review and no active reviewer. Reproduce the changed path and decide
+   whether to approve, request changes, repair when authorized, or recommend
+   closure. A low-value or invalid premise still needs an explicit review
+   disposition; it is not a reason to ignore the PR and invent new work.
+3. **Audit only after reconciling the old queue**: only when no tier-one issue
+   and no tier-two PR remain, reconcile every other open issue and PR as
+   linked, actively owned, already reviewed, draft, blocked, human-gated, or
+   security-sensitive. Then inspect one fallback category in this exact order:
+   **security weaknesses**, **reproducible bugs**, **incorrect or stale
+   documentation and code comments**, then **important behavior that lacks real
+   tests**. Do not advance while a higher fallback category has a concrete,
+   unowned finding. Prefer a bounded fix and proof; use **Validate** only for a
+   reproducible diagnosis, refutation, benchmark, test, or research artifact
+   that changes a concrete engineering decision.
 
-Do not create an issue automatically. Open a new issue only when the operator
-explicitly asks after a local reproduction, duplicate search, mission check,
-and evidence plan. An issue report alone is not an accepted outcome. Never
-mirror a PR title into an issue, generate speculative backlog, or open issues to
-make work eligible for score.
+The live report's closing-reference check is a conservative deduplication aid,
+not proof that a PR solves an issue. Inspect linked PRs, branches, issue
+timelines, current reviews, and newest comments immediately before selecting.
+Treat malformed or incomplete queue data as unknown and stop rather than
+declaring the queue empty.
+
+Do not create an issue during a self-directed contribution run. Open a new
+issue only when the operator explicitly asks for that exact GitHub write after
+the entire old issue and PR queue has been reconciled, a local reproduction and
+duplicate search are complete, and the mission and evidence plan pass. Fix a
+newly discovered bounded defect directly in one PR when authorized; route
+security findings privately under `SECURITY.md`. An issue report alone is not
+an accepted outcome. Never mirror a PR title into an issue, generate
+speculative backlog, or open issues to make work eligible for score.
 
 Never apply, request, suggest applying, or automate the `mission-ready` label.
 Only a separate maintainer promotion action may add it. A Discussion remains a

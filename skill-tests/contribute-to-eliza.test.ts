@@ -28,6 +28,7 @@ import {
   auditCommentDisclosures,
   auditPrEvidence,
   CLAIM_RECENCY_DAYS,
+  closingIssueNumbers,
   collectLiveReport,
   createGhCommandBudget,
   isBotAccount,
@@ -160,15 +161,15 @@ describe("contribute-to-eliza skill structure", () => {
     assert.deepStrictEqual(keys.sort(), ["description", "name"]);
     assert.strictEqual(name, "contribute-to-eliza");
     assert.match(String(description), /elizaOS\/eliza/i);
-    assert.match(String(description), /implement.*review|review.*implement/i);
+    assert.match(String(description), /finish.*review|review.*finish/i);
     assert.doesNotMatch(source, /\[TODO[:\]]/);
   });
 
   it("encodes outcome modes, measured runs, security, sync, proof, and authority", () => {
     const source = readFileSync(skillPath, "utf8");
 
-    assert.match(source, /\*\*Implement\*\*/);
-    assert.match(source, /\*\*Review\*\*/);
+    assert.match(source, /\*\*Implement an existing issue with no PR\*\*/);
+    assert.match(source, /\*\*Review an existing PR with no review\*\*/);
     assert.match(source, /\*\*Validate\*\*/);
     assert.match(source, /run-receipt\.mjs start/);
     assert.match(source, /run-receipt\.mjs finish/);
@@ -217,17 +218,34 @@ describe("contribute-to-eliza skill structure", () => {
       "utf8",
     );
 
-    assert.match(source, /Do not create an issue automatically/i);
+    assert.match(source, /Do not create an issue during a self-directed/i);
     assert.match(
       source,
       /Never apply, request, suggest applying, or automate/i,
     );
     assert.match(source, /exact repository label\s+`mission-ready`/i);
-    assert.match(source, /explicit operator request/i);
+    assert.match(source, /issue explicitly selected by the operator/i);
     assert.match(source, /Keep at most one active implementation or review/i);
     assert.match(source, /Never\s+mirror a PR title into an issue/i);
     assert.match(source, /Prefer one complete fix to\s+several small PRs/i);
     assert.match(source, /Ignore leaderboard position/i);
+    const implementPriority = source.indexOf(
+      "**Implement an existing issue with no PR**",
+    );
+    const reviewPriority = source.indexOf(
+      "**Review an existing PR with no review**",
+    );
+    const auditPriority = source.indexOf(
+      "**Audit only after reconciling the old queue**",
+    );
+    assert.ok(implementPriority >= 0);
+    assert.ok(reviewPriority > implementPriority);
+    assert.ok(auditPriority > reviewPriority);
+    assert.match(
+      source,
+      /\*\*security weaknesses\*\*.*\*\*reproducible bugs\*\*.*\*\*incorrect or stale\s+documentation and code comments\*\*.*\*\*important behavior that lacks real\s+tests\*\*/is,
+    );
+    assert.match(source, /entire old issue and PR queue has been reconciled/i);
     assert.match(mission, /Eliza app/);
     assert.match(mission, /Eliza Cloud/);
     assert.match(mission, /Core agent runtime/);
@@ -377,7 +395,8 @@ writeFileSync(
     );
     assert.match(openaiYaml, /display_name: "Contribute to Eliza"/);
     assert.match(openaiYaml, /default_prompt: "Use \$contribute-to-eliza/);
-    assert.match(openaiYaml, /one mission-critical contribution/);
+    assert.match(openaiYaml, /finish an existing issue with no PR/);
+    assert.match(openaiYaml, /review an unreviewed PR/);
     assert.match(openaiYaml, /elizaOS\/eliza/);
   });
 });
@@ -1286,6 +1305,58 @@ describe("live report behavior", () => {
     assert.ok(
       !invocation?.args.some((argument) => /POST|PATCH|DELETE/.test(argument)),
     );
+  });
+
+  it("keeps issues with open closing PRs out of the first-priority queue", () => {
+    assert.deepStrictEqual(
+      closingIssueNumbers(
+        "Fixes #3. Resolves elizaOS/eliza#3. Closes other/repo#22.\n\n> Fixes #30\n\n```text\nFixes #31\n```\n\n<!-- Fixes #32 -->",
+        "elizaOS/eliza",
+      ),
+      [3],
+    );
+
+    const issues = [3, 22].map((number) => ({
+      number,
+      title: `Issue ${number}`,
+      html_url: `https://github.com/elizaOS/eliza/issues/${number}`,
+      user: account(`issue-author-${number}`),
+      labels: [{ name: "mission-ready" }],
+      assignees: [],
+      comments: 0,
+    }));
+    const report = collectLiveReport(
+      "elizaOS/eliza",
+      (endpoint) => {
+        if (endpoint.includes("/issues?state=open")) return issues;
+        if (endpoint.includes("/pulls?state=open")) {
+          return [pullRequest(10, { body: `${evidenceBody()}\n\nFixes #3` })];
+        }
+        if (endpoint.includes("/issues/10/comments")) return [];
+        if (endpoint.includes("/pulls/10/comments")) return [];
+        if (endpoint.includes("/pulls/10/reviews")) return [];
+        assert.fail(`unexpected endpoint: ${endpoint}`);
+      },
+      NOW,
+      () => {},
+      null,
+      [MISSION_READY_LABEL],
+    );
+
+    assert.deepStrictEqual(
+      report.candidateIssues.map((issue) => issue.number),
+      [22],
+    );
+    assert.deepStrictEqual(
+      report.filtered.issuesWithOpenPullRequests.map((issue) => ({
+        issue: issue.number,
+        pulls: issue.closingPullRequests,
+      })),
+      [{ issue: 3, pulls: [10] }],
+    );
+    const markdown = renderMarkdown(report);
+    assert.ok(markdown.indexOf("Priority 1") < markdown.indexOf("Priority 2"));
+    assert.match(markdown, /open closing PR: #10/);
   });
 
   it("filters bots, sensitive or claimed work and audits disclosures and evidence", () => {
