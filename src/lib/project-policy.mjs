@@ -111,9 +111,11 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
   }
   const previousReceiptPolicy = previous.terms.receiptPolicy;
   const nextReceiptPolicy = next.terms.receiptPolicy;
-  if (
+  const initialReceiptActivation =
     previousReceiptPolicy.state === "pending-authority-activation" &&
-    nextReceiptPolicy.state === "active" &&
+    nextReceiptPolicy.state === "active";
+  if (
+    initialReceiptActivation &&
     (next.authority.state !== "verified" ||
       nextReceiptPolicy.bindings.length !== 1 ||
       nextReceiptPolicy.activatedAt !== next.authority.proof.verifiedAt)
@@ -162,14 +164,22 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
       );
     }
   }
+  const { receiptPolicy: _previousReceiptPolicy, ...previousMaterialTerms } =
+    previous.terms;
+  const { receiptPolicy: _nextReceiptPolicy, ...nextMaterialTerms } =
+    next.terms;
   const materialBefore = canonical({
     steward: previous.steward,
-    terms: previous.terms,
+    terms: previousMaterialTerms,
   });
-  const materialAfter = canonical({ steward: next.steward, terms: next.terms });
+  const materialAfter = canonical({
+    steward: next.steward,
+    terms: nextMaterialTerms,
+  });
   if (
     materialBefore !== materialAfter &&
-    previous.terms.revision === next.terms.revision
+    previous.terms.revision === next.terms.revision &&
+    !initialReceiptActivation
   ) {
     throw new TypeError("material terms drift requires a new revision");
   }
