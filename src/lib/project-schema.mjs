@@ -890,30 +890,16 @@ function validateProjectDefinition(
     project.steward,
     { allowLegacyUnsupportedOwnershipClaim },
   );
-  if (project.status === "active" && project.authority.state !== "verified") {
-    throw new TypeError(
-      "active projects require verified repository authority",
-    );
-  }
-  if (project.status === "active") {
-    if (
-      project.terms.receiptPolicy.state !== "active" ||
-      project.terms.receiptPolicy.activatedAt !==
-        project.authority.proof.verifiedAt
-    ) {
-      throw new TypeError(
-        "active projects require receipt cutover at the immutable authority activation",
-      );
-    }
-  }
   if (
     project.status === "active" &&
-    (project.terms.inbound.mode === "unknown" ||
-      project.terms.repositoryLicense.state === "unknown" ||
-      (project.reward.kind === "external-prize-share" &&
-        project.terms.externalPrize?.version === "unknown"))
+    project.authority.state === "verified" &&
+    (project.terms.receiptPolicy.state !== "active" ||
+      project.terms.receiptPolicy.activatedAt !==
+        project.authority.proof.verifiedAt)
   ) {
-    throw new TypeError("active projects require known mandatory terms");
+    throw new TypeError(
+      "verified project authority requires its immutable receipt cutover",
+    );
   }
   const modelPolicy = record(project.modelPolicy, "project.modelPolicy");
   exactKeys(modelPolicy, ["disclosureRequired", "mode"], "project.modelPolicy");
