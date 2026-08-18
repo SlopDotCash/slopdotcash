@@ -316,4 +316,19 @@ describe("project policy transitions", () => {
       /at most one binding/u,
     );
   });
+
+  it("activates a proof-bound receipt policy without rewriting legal terms", () => {
+    const activated = structuredClone(eliza);
+    const pending = structuredClone(activated);
+    pending.status = "paused";
+    (pending.terms as unknown as { receiptPolicy: unknown }).receiptPolicy = {
+      state: "pending-authority-activation",
+      activatedAt: null,
+      bindings: [],
+    };
+
+    expect(assertProjectPolicyTransition(pending, activated)).toEqual(
+      activated,
+    );
+  });
 });
