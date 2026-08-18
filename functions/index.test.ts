@@ -17,7 +17,7 @@ describe("hostname-aware social metadata", () => {
     expect(publicSocialMetadata("slop.cash")).toEqual({
       domain: "slop.cash",
       origin: "https://slop.cash",
-      imageUrl: "https://slop.cash/og-shipping-slop.png",
+      imageUrl: "https://slop.cash/og-open-source.png",
     });
     expect(renderSocialMetadata(indexHtml, "slop.cash")).toBe(indexHtml);
   });
@@ -26,7 +26,7 @@ describe("hostname-aware social metadata", () => {
     expect(publicSocialMetadata("www.slop.tech")).toEqual({
       domain: "slop.tech",
       origin: "https://slop.tech",
-      imageUrl: "https://slop.tech/og-shipping-slop-tech.png",
+      imageUrl: "https://slop.tech/og-open-source.png",
     });
 
     const rendered = renderSocialMetadata(indexHtml, "slop.tech");
@@ -34,7 +34,7 @@ describe("hostname-aware social metadata", () => {
     expect(rendered).toContain('content="slop.tech"');
     expect(rendered).toContain('content="https://slop.tech/"');
     expect(
-      rendered.match(/https:\/\/slop\.tech\/og-shipping-slop-tech\.png/gu),
+      rendered.match(/https:\/\/slop\.tech\/og-open-source\.png/gu),
     ).toHaveLength(2);
     expect(rendered).not.toContain("https://slop.cash/");
   });
@@ -43,7 +43,7 @@ describe("hostname-aware social metadata", () => {
     expect(publicSocialMetadata("attacker.slop.tech")).toEqual({
       domain: "slop.cash",
       origin: "https://slop.cash",
-      imageUrl: "https://slop.cash/og-shipping-slop.png",
+      imageUrl: "https://slop.cash/og-open-source.png",
     });
   });
 
@@ -57,7 +57,7 @@ describe("hostname-aware social metadata", () => {
     });
 
     expect(await response.text()).toContain(
-      'content="https://slop.tech/og-shipping-slop-tech.png"',
+      'content="https://slop.tech/og-open-source.png"',
     );
     expect(response.headers.get("vary")).toBe("Host");
     expect(response.headers.get("cache-control")).toBe("no-transform");

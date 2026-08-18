@@ -114,6 +114,7 @@ describe("Cloudflare Pages redirect contract", () => {
       "/robots.txt",
       "/site.webmanifest",
       "/slop-mark.svg",
+      "/og-open-source.png",
       "/og-shipping-slop.png",
       "/brand/elizaos-mark.svg",
       "/downloads/eliza.skill",

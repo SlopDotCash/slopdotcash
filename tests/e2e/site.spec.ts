@@ -89,7 +89,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", {
       exact: true,
-      name: "MAKE MONEY SHIPPING SLOP.",
+      name: "MAKE MONEY SHIPPING OPEN SOURCE.",
     }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Slop home" })).toHaveText(
@@ -111,12 +111,12 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   ).toBeVisible();
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
     "content",
-    "https://slop.cash/og-shipping-slop.png",
+    "https://slop.cash/og-open-source.png",
   );
   await expect(
     page.getByRole("heading", {
       exact: true,
-      name: "Projects",
+      name: "Projects worth shipping.",
     }),
   ).toBeVisible();
   await expect(
@@ -181,13 +181,18 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("columnheader", { name: "Simulated share" }),
   ).toBeAttached();
-  await page.getByText("How it works").click();
+  await page
+    .locator(".leaderboard-methodology")
+    .getByText("How it works")
+    .click();
   await expect(page.getByText(/Payouts are off during beta/u)).toBeVisible();
   await expect(page.getByRole("link", { name: "View more" })).toHaveAttribute(
     "href",
     "/projects/eliza",
   );
-  await expect(page.locator(".hero-action")).toHaveText("SHIPPING SLOP.");
+  await expect(page.locator(".hero-action")).toHaveText(
+    "SHIPPING OPEN SOURCE.",
+  );
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();
@@ -879,7 +884,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
       await expect(
         page.getByRole("heading", {
           exact: true,
-          name: "MAKE MONEY SHIPPING SLOP.",
+          name: "MAKE MONEY SHIPPING OPEN SOURCE.",
         }),
       ).toBeVisible();
     }

@@ -395,7 +395,9 @@ describe("discovery", () => {
       screen.getByText(`© ${new Date().getUTCFullYear()} slop.cash.`),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "MAKE MONEY SHIPPING SLOP." }),
+      screen.getByRole("heading", {
+        name: "MAKE MONEY SHIPPING OPEN SOURCE.",
+      }),
     ).toBeInTheDocument();
     expect(
       await screen.findByText(
@@ -439,7 +441,9 @@ describe("discovery", () => {
         name: "Paid to date",
       }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("How it works")).toBeInTheDocument();
+    expect(
+      screen.getByText("How it works", { selector: "summary" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Payouts are off during beta/u),
     ).toBeInTheDocument();
@@ -448,19 +452,31 @@ describe("discovery", () => {
       "/projects/eliza",
     );
     expect(
-      screen.getByRole("heading", { name: "Projects" }),
+      screen.getByRole("heading", { name: "Projects worth shipping." }),
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Eliza" })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Delta Star" }),
     ).toBeInTheDocument();
-    const elizaCard = screen.getByRole("link", { name: /^Eliza /u });
+    const elizaCard = screen
+      .getByRole("heading", {
+        name: "Eliza",
+      })
+      .closest("a");
+    expect(elizaCard).not.toBeNull();
+    if (!elizaCard) throw new Error("Eliza project card is missing");
     expect(within(elizaCard).getByText("$10,000")).toBeInTheDocument();
     expect(within(elizaCard).getByText("/ month")).toBeInTheDocument();
     expect(
       within(elizaCard).getByText(/Build and verify the elizaOS framework/u),
     ).toBeInTheDocument();
-    const deltaCard = screen.getByRole("link", { name: /^Delta Star /u });
+    const deltaCard = screen
+      .getByRole("heading", {
+        name: "Delta Star",
+      })
+      .closest("a");
+    expect(deltaCard).not.toBeNull();
+    if (!deltaCard) throw new Error("Delta Star project card is missing");
     expect(within(deltaCard).getByText("$1,000,000")).toBeInTheDocument();
     expect(within(deltaCard).getByText("external prize")).toBeInTheDocument();
     expect(
