@@ -6,6 +6,12 @@ this gate before claiming, implementing, reviewing, or validating work.
 
 ## Pass all three gates
 
+Apply the gates inside the queue-first order in `SKILL.md`. Existing authorized
+issues without PRs come first, then PRs without substantive current-head human
+review. Only after the old queue is reconciled may self-directed inspection
+move through security, bugs, incorrect or stale documentation and code
+comments, and missing meaningful behavioral tests, in that order.
+
 ### 1. Authorized demand
 
 Proceed only when at least one source authorizes the outcome:
@@ -13,7 +19,10 @@ Proceed only when at least one source authorizes the outcome:
 - the operator explicitly requests it;
 - an open issue carries the exact `mission-ready` repository label; or
 - the operator explicitly identifies a maintainer-owned release or verification
-  gate and the failing behavior to address.
+  gate and the failing behavior to address; or
+- the operator requests a queue-cleared repository audit in the fallback order
+  above and the agent locally reproduces a concrete material defect before any
+  branch or public write.
 
 An unlabeled issue, Project card, other label, PR-title mirror, agent-generated
 backlog item, speculative idea, or self-authored issue is not authorization by
@@ -60,7 +69,8 @@ must have observable acceptance criteria and a real verification path.
 Reject work whose primary value is any of the following:
 
 - formatting, renaming, comment churn, generic cleanup, or style-only changes;
-- documentation that does not unblock a real user or operator path;
+- documentation or comments that are merely old rather than demonstrably
+  wrong, misleading, or harmful to a real user, contributor, or operator path;
 - tests that only increase counts or restate implementation details;
 - speculative refactors, abstractions, migrations, or performance work without
   a reproduced problem and measurable target;
@@ -95,3 +105,26 @@ is open. For a mission-relevant PR, determine whether it solves the authorized
 need completely, adds unrelated scope, or creates activity without product
 value. Recommend closure rather than repairs when the premise fails the mission
 gate.
+
+## Queue-cleared audit order
+
+Do not use discovery to manufacture backlog. After the live issue and PR queue
+is reconciled, inspect exactly one tier at a time:
+
+1. **Security**: authorization, secret handling, injection, unsafe execution,
+   supply chain, privacy, tenant isolation, and trust-boundary failures. Follow
+   `SECURITY.md`; keep exploit detail private.
+2. **Bugs**: reproduce incorrect runtime, app, cloud, integration, build, or
+   release behavior on a primary path before changing code.
+3. **Wrong documentation or comments**: prove that instructions, contracts,
+   examples, links, names, or code comments contradict current behavior or
+   preserve obsolete migration/history narration that misdirects present work.
+   Remove or correct the smallest coherent surface; do not perform prose churn.
+4. **Missing real tests**: identify material behavior whose regression would
+   escape existing coverage. Add tests against the real contract and important
+   success, failure, authorization, concurrency, or adversarial paths; do not
+   mock away the system under test or add coverage solely to raise a number.
+
+If a concrete higher-tier finding exists, finish it before moving down. If no
+finding survives reproduction and duplication checks, record that privately
+and continue to the next tier without opening an issue.
