@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -216,8 +217,10 @@ export async function preflight(projectId, options = {}) {
 }
 
 const direct =
-  process.argv[1] &&
-  import.meta.url === new URL(`file://${process.argv[1]}`).href;
+  typeof process.argv[1] === "string" &&
+  existsSync(process.argv[1]) &&
+  realpathSync(fileURLToPath(import.meta.url)) ===
+    realpathSync(process.argv[1]);
 if (direct) {
   try {
     const projectIndex = process.argv.indexOf("--project");
