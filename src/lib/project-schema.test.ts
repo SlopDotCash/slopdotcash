@@ -295,7 +295,7 @@ describe("project proposal schema", () => {
     );
   });
 
-  it("fails closed on inferred or mutable project authority", () => {
+  it("discloses unverified authority without blocking contribution", () => {
     const activeWithoutProof = structuredClone(eliza);
     activeWithoutProof.status = "active";
     const unprovenAuthority = activeWithoutProof.authority as Record<
@@ -305,9 +305,7 @@ describe("project proposal schema", () => {
     unprovenAuthority.state = "unverified";
     unprovenAuthority.reason = "missing-repository-proof";
     unprovenAuthority.proof = null;
-    expect(() => assertProjectDefinition(activeWithoutProof)).toThrow(
-      /verified repository authority/u,
-    );
+    expect(assertProjectDefinition(activeWithoutProof).status).toBe("active");
 
     const loginAsIdentity = structuredClone(eliza);
     loginAsIdentity.steward.github.actorId = "elizaOS";
@@ -449,7 +447,7 @@ describe("project proposal schema", () => {
     );
   });
 
-  it("represents a missing repository license as unknown and paused", () => {
+  it("represents a missing repository license as unknown without blocking contribution", () => {
     expect(assertProjectDefinition(heirElements).status).toBe("paused");
     expect(heirElements.terms.repositoryLicense).toEqual({
       state: "unknown",
@@ -460,8 +458,7 @@ describe("project proposal schema", () => {
     });
     const active = structuredClone(heirElements);
     active.status = "active";
-    expect(() => assertProjectDefinition(active)).toThrow(
-      /verified repository authority/u,
-    );
+    expect(assertProjectDefinition(active).status).toBe("active");
+    expect(assertProjectDefinition(active).authority.state).toBe("unverified");
   });
 });
