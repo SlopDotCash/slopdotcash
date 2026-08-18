@@ -567,6 +567,56 @@ describe("score v2 work units", () => {
       "has no exact receipt for its evidence bonus",
     );
   });
+
+  it("excludes a slop-review posted after merge without failing the snapshot", () => {
+    const reviewer = actor("reviewer");
+    const body = reviewAttribution(
+      {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        client: "codex",
+      },
+      {
+        schemaVersion: "2",
+        splitRisk: "none",
+        effortBand: "small",
+        complexity: "moderate",
+        impact: "meaningful",
+        reviewLoad: "standard",
+        recommendedTier: "small",
+        recommendedThirds: 3,
+        workUnitId: "wu_eliza_post_merge_review",
+        confidenceBasisPoints: 9_000,
+        valueRationale:
+          "The review arrived after merge and must be excluded, not fatal.",
+      },
+    );
+    const source = {
+      ...textSource("COMMENT_V2_LATE_REVIEW", body, reviewer),
+      createdAt: "2026-08-18T04:00:00.000Z",
+      updatedAt: "2026-08-18T04:00:00.000Z",
+    };
+    const pr = pullRequest({
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T03:00:00.000Z",
+      mergedAt: "2026-08-18T03:00:00.000Z",
+      comments: [source],
+    });
+    const snapshot = createLeaderboardSnapshot({
+      ...v2Input([pr]),
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      snapshot.ledger.filter(
+        (event) => event.category === "substantive-review",
+      ),
+    ).toEqual([]);
+    expect(
+      snapshot.ledger.filter(
+        (event) => event.category === "merged-pull-request",
+      ),
+    ).toHaveLength(1);
+  });
 });
 
 describe("model attribution", () => {
