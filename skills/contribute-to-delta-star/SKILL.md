@@ -155,7 +155,10 @@ proof is blocked.
    relevant checks.
 6. Capture the exact Lean commands, checked declarations, assumption audit,
    logs, counterexample or research artifact, and live-model trajectory. Open
-   and inspect each artifact.
+   and inspect each artifact. When the repository template requires an
+   evidence-head marker, capture it with `git rev-parse HEAD` in the same run
+   and paste the complete 40-character output verbatim; never expand a short
+   SHA or compose it from memory.
 7. Open or update a focused PR using the repository's title convention, link the issue
    or frontier lane, state the verified head SHA, and explain both progress and
    remaining residuals. Leave acceptance and merge to independent maintainers.

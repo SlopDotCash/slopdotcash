@@ -174,7 +174,10 @@ data or a run receipt.
 4. Run focused package checks, then repository `npm run build` and
    `npm run test`. Rebase again before final proof.
 5. Capture validator output, failing-then-passing tests, and any sandbox or
-   permission proof. Open and inspect every artifact.
+   permission proof. Open and inspect every artifact. When the repository
+   template requires an evidence-head marker, capture it with
+   `git rev-parse HEAD` in the same run and paste the complete 40-character
+   output verbatim; never expand a short SHA or compose it from memory.
 6. Open or update a PR against `main`, link its issue, and leave final
    approval and merge to `main` by `awidearray`. Never self-approve,
    self-merge, or represent an unmerged change as accepted.
