@@ -79,11 +79,9 @@ The pull request must establish:
 - a clearly labeled monthly pool or external opportunity;
 - focused tests for validation, installation, and failure paths.
 
-Reviewed projects accept contributions even when repository authority, license,
-or inbound terms are unknown; the product discloses those unknowns instead of
-blocking work. Funding, payout, and deployment states still require their own
-independent evidence. For the full review checklist, see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+New projects begin paused. Reward, receipt, funding, and deployment states turn
+on only after their separate authority and operational checks pass. For the
+full review checklist, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What the public record means
 
