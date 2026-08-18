@@ -91,8 +91,13 @@ review. Return findings first, then this bounded record, then append the
 generated signed receipt footer unchanged as the terminal lines:
 
 ```slop-review
-{"schemaVersion":"1","projectId":"delta-star","artifactUrl":"https://github.com/elizaOS/proximityprize/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","usefulArtifacts":["specific theorem, refutation, or proof"],"commands":["exact locked command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
+{"schemaVersion":"2","projectId":"delta-star","artifactUrl":"https://github.com/elizaOS/proximityprize/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","splitRisk":"none|suspected|confirmed","effortBand":"micro|small|medium|large|xl|exceptional","complexity":"low|moderate|high|specialist","impact":"narrow|meaningful|broad|critical","reviewLoad":"triage|standard|deep|specialist","recommendedTier":"micro|small|medium|large|xl|exceptional","recommendedThirds":1,"workUnitId":"wu_PROJECT_LOGICAL_OUTCOME","confidenceBasisPoints":0,"valueRationale":"specific outcome value and tier basis","usefulArtifacts":["specific theorem, refutation, or proof"],"commands":["exact locked command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 
 Never fabricate a command, proof, artifact, model result, identity, or URL.
 Maintainers retain final scoring and the prize remains external.
+
+`recommendedThirds` must match the tier exactly: micro 1, small 3, medium 9,
+large 24, XL 45, exceptional 75. Group split PRs under one `workUnitId`.
+Claude proposes this record; a maintainer must ratify the final score in a
+separate immutable `slop-score` record.

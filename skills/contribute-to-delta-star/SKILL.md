@@ -12,7 +12,9 @@ the prize, guarantee eligibility, or promise a dollar amount.
 
 Any model and agent client may contribute, including Grok and Kimi. Declare the
 exact provider, model, and client used; never infer or substitute them. Model
-choice and token volume are diagnostic only and never change score or share.
+choice and raw token volume never change score or share. A valid finalized
+private trace earns a fixed 15% evidence bonus and outcome-matched exact or
+bounded usage earns 10%, capped at 25% combined.
 
 ## Start every run
 
@@ -198,7 +200,9 @@ node <skill-directory>/scripts/run-receipt.mjs finish \
 
 Append the emitted footer unchanged to the final PR body, review, or issue
 comment. The Slop marker must remain the final line. Its ccusage totals are
-diagnostic only and cannot add score or allocation weight. The
+diagnostic in amount: raw token volume cannot add weight. A valid finalized
+private trace earns a fixed 15% evidence bonus and outcome-matched exact or
+bounded usage earns 10%, capped at 25% combined. The
 device signature proves byte integrity and device continuity, not mathematical
 correctness, log truth, account ownership, actual subscription cost, external
 prize eligibility, or payout.

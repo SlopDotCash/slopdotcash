@@ -16,7 +16,9 @@ maintainers review allocations and the projection is not a payment promise.
 
 Any model and agent client may contribute, including Grok and Kimi. Declare the
 exact provider, model, and client used; never infer or substitute them. Model
-choice and token volume are diagnostic only and never change score or payout.
+choice and raw token volume never change score or payout. A valid finalized
+private trace earns a fixed 15% evidence bonus and outcome-matched exact or
+bounded usage earns 10%, capped at 25% combined.
 
 ## Start every run
 
