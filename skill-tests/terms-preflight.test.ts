@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { preflight } from "../skills/contribute-to-eliza/scripts/terms-preflight.mjs";
@@ -139,5 +142,32 @@ describe("project terms preflight", () => {
     );
     expect(direct.status).toBe(1);
     expect(direct.stderr).toMatch(/authority overrides are forbidden/u);
+  });
+
+  it("detects direct invocation through a symlinked script path", () => {
+    const script = fileURLToPath(
+      new URL(
+        "../skills/contribute-to-eliza/scripts/terms-preflight.mjs",
+        import.meta.url,
+      ),
+    );
+    const linkRoot = mkdtempSync(join(tmpdir(), "terms-preflight-link-"));
+    const link = join(linkRoot, "terms-preflight.mjs");
+    try {
+      symlinkSync(script, link);
+      // Spawn node explicitly: node resolves the entry module to its realpath,
+      // so import.meta.url and a symlinked argv[1] diverge — the case that made
+      // the old comparison silently classify a direct CLI run as an import.
+      // (bun preserves the symlinked path, so bun cannot reproduce the bug.)
+      const viaSymlink = spawnSync(
+        "node",
+        [link, "--project", "eliza", "--authority", "file:///tmp/"],
+        { encoding: "utf8" },
+      );
+      expect(viaSymlink.status).toBe(1);
+      expect(viaSymlink.stderr).toMatch(/authority overrides are forbidden/u);
+    } finally {
+      rmSync(linkRoot, { recursive: true, force: true });
+    }
   });
 });
