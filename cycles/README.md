@@ -27,6 +27,13 @@ carried amount; settlement may proceed only when the combined approved intent
 is at least 2 USDC. The 1% fee applies only to principal actually approved for
 payment.
 
+The next proposal derives carry only from the immediately preceding reviewed
+cycle. `held-below-minimum` and `unclaimed` balances carry even when the actor
+did no new work; approved payout intents stay in their original cycle, while
+excluded and manually held rows never become new payment proposals
+automatically. An unfinished review or unresolved proposed row fails the next
+cycle closed instead of guessing what is owed.
+
 - `allocation.json` — reviewed and approved payout intents;
 - `execution-plan.json` — an unsigned, exact Solana USDC transfer plan;
 - `transactions.json` — submitted public transaction signatures;

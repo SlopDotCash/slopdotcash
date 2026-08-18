@@ -27,7 +27,7 @@ import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "../src/lib/leaderboard";
-import { findProject } from "../src/lib/projects.mjs";
+import { findProject, type ProjectId } from "../src/lib/projects.mjs";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import {
@@ -42,6 +42,7 @@ import {
   type SettlementExecutionPlan,
 } from "../src/lib/settlement-plan";
 import { verifyRewardSettlementOnchain } from "../src/lib/solana-settlement";
+import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
 import {
   DEFAULT_SOLANA_RPC_URL,
   fetchFinalizedSolanaTransaction,
@@ -137,17 +138,25 @@ async function jsonFile(
   };
 }
 
-function verifyProposalAgainstSnapshot(
+async function verifyProposalAgainstSnapshot(
   proposal: RewardAllocationManifest,
   snapshot: LeaderboardSnapshot,
   snapshotDigest: string,
-): void {
+): Promise<void> {
+  const priorAccrual = await loadPriorCycleAccrual({
+    asOf: proposal.generatedAt,
+    cycleId: proposal.cycleId,
+    cyclesRoot: CYCLES_ROOT,
+    projectId: proposal.projectId as ProjectId,
+  });
   const baseline = createRewardCycleProposal({
     cycleId: proposal.cycleId,
     generatedAt: proposal.generatedAt,
     projectId: proposal.projectId,
     snapshot,
     sourceSnapshotSha256: snapshotDigest,
+    priorAccruedMinor: priorAccrual.accruedMinor,
+    priorActorLogins: priorAccrual.actorLogins,
   });
   if (baseline.kind !== "reward-allocation") {
     throw new TypeError("Monthly proposal regenerated as an external share");
@@ -335,7 +344,7 @@ async function buildCycle(
       "Reward proposal does not match its cycle path or state",
     );
   }
-  verifyProposalAgainstSnapshot(proposal, snapshot, snapshotFile.digest);
+  await verifyProposalAgainstSnapshot(proposal, snapshot, snapshotFile.digest);
 
   const allocationFile = loaded.get("allocation.json") ?? null;
   let allocation: RewardAllocationManifest | null = null;
