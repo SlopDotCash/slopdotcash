@@ -77,11 +77,9 @@ skills/contribute-to-<project-id>/
 skills/review-<project-id>-contributions/
 ```
 
-Once reviewed and merged, new projects accept contributions. Verify immutable
-repository and actor IDs, repository license facts, GitHub stewardship,
-integration branch, reward policy, and failure paths when evidence is available;
-publish unknown authority or terms explicitly without blocking work.
-Stewardship is a GitHub identity only.
+New projects begin paused. Verify immutable repository and actor IDs, repository
+license facts, GitHub stewardship, integration branch, reward policy, and
+failure paths before activation. Stewardship is a GitHub identity only.
 
 The contributor skill must inspect live GitHub, select bounded unblocked work,
 follow the target repository’s rules, test the result, prepare evidence, and
