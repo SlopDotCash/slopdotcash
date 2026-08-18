@@ -91,6 +91,8 @@ const NA_WITH_REASON_RE =
 const CLAIM_WINDOW_MS = CLAIM_RECENCY_DAYS * 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const FULL_COMMIT_RE = /^[a-f0-9]{40}$/i;
+const CLOSING_REFERENCE_RE =
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>[1-9]\d*)\b/gi;
 const DOMAIN_ARTIFACT_HOSTS = new Set([
   "arbiscan.io",
   "basescan.org",
@@ -367,6 +369,33 @@ function compareByNumber(left, right) {
 
 function compareComment(left, right) {
   return left.id - right.id || left.url.localeCompare(right.url);
+}
+
+/** Returns same-repository issues an open PR body explicitly closes. */
+export function closingIssueNumbers(body, repo) {
+  const text = nullableText(body, "pull request body").replace(
+    /<!--[\s\S]*?-->/g,
+    "",
+  );
+  if (!REPOSITORY_RE.test(repo)) {
+    throw new TypeError("Repository must use the owner/name form");
+  }
+  const numbers = new Set();
+  for (const line of declarationLines(text)) {
+    for (const match of line.matchAll(CLOSING_REFERENCE_RE)) {
+      const owner = match.groups?.owner;
+      const name = match.groups?.name;
+      if (
+        owner !== undefined &&
+        name !== undefined &&
+        `${owner}/${name}`.toLowerCase() !== repo.toLowerCase()
+      ) {
+        continue;
+      }
+      numbers.add(Number(match.groups?.number));
+    }
+  }
+  return [...numbers].sort((left, right) => left - right);
 }
 
 export function parsePaginatedJson(output, endpoint = "GitHub endpoint") {
@@ -1427,6 +1456,14 @@ export function collectLiveReport(
   const pullItems = listPages(pullEndpoint)
     .map((value, index) => asRecord(value, `pulls[${index}]`))
     .sort((left, right) => left.number - right.number);
+  const openPullsByClosingIssue = new Map();
+  for (const item of pullItems) {
+    for (const issueNumber of closingIssueNumbers(item.body, repo)) {
+      const pullNumbers = openPullsByClosingIssue.get(issueNumber) ?? [];
+      pullNumbers.push(item.number);
+      openPullsByClosingIssue.set(issueNumber, pullNumbers);
+    }
+  }
   if (issueItems.length > MAX_OPEN_ITEMS || pullItems.length > MAX_OPEN_ITEMS) {
     throw new RangeError(
       `Live discovery exceeds the ${MAX_OPEN_ITEMS}-item per-kind safety bound`,
@@ -1458,6 +1495,7 @@ export function collectLiveReport(
   const sensitiveIssues = [];
   const untriagedIssues = [];
   const claimedIssues = [];
+  const issuesWithOpenPullRequests = [];
   const issueCommentAudits = [];
 
   for (const [index, item] of issueItems.entries()) {
@@ -1530,6 +1568,17 @@ export function collectLiveReport(
     );
     if (reasons.length > 0) {
       claimedIssues.push({ ...summary, claimReasons: reasons });
+      continue;
+    }
+    const closingPullRequests =
+      openPullsByClosingIssue.get(summary.number) ?? [];
+    if (closingPullRequests.length > 0) {
+      issuesWithOpenPullRequests.push({
+        ...summary,
+        closingPullRequests: [...closingPullRequests].sort(
+          (left, right) => left - right,
+        ),
+      });
       continue;
     }
     candidateIssues.push(summary);
@@ -1667,6 +1716,8 @@ export function collectLiveReport(
       sensitiveIssues: sensitiveIssues.sort(compareByNumber),
       untriagedIssues: untriagedIssues.sort(compareByNumber),
       claimedIssues: claimedIssues.sort(compareByNumber),
+      issuesWithOpenPullRequests:
+        issuesWithOpenPullRequests.sort(compareByNumber),
       botPullRequests: botPullRequests.sort(compareByNumber),
       unknownAuthorPullRequests:
         unknownAuthorPullRequests.sort(compareByNumber),
@@ -1689,10 +1740,18 @@ function markdownItems(items) {
   return items
     .map((item) => {
       const staleRequests = item.reviewState?.staleRequests ?? [];
-      const suffix =
-        staleRequests.length === 0
-          ? ""
-          : ` — stale review request: ${staleRequests.join(", ")} (reconfirm live state)`;
+      const suffixes = [];
+      if (staleRequests.length > 0) {
+        suffixes.push(
+          `stale review request: ${staleRequests.join(", ")} (reconfirm live state)`,
+        );
+      }
+      if (item.closingPullRequests?.length > 0) {
+        suffixes.push(
+          `open closing PR${item.closingPullRequests.length === 1 ? "" : "s"}: ${item.closingPullRequests.map((number) => `#${number}`).join(", ")}`,
+        );
+      }
+      const suffix = suffixes.length === 0 ? "" : ` — ${suffixes.join("; ")}`;
       return `- [#${item.number}](${item.url}) ${item.title}${suffix}`;
     })
     .join("\n");
@@ -1709,13 +1768,17 @@ export function renderMarkdown(report) {
     `Open issues: ${report.totals.openIssues}; unclaimed candidates: ${report.totals.candidateIssues}.`,
     `Open PRs: ${report.totals.openPullRequests}; reviewable candidates: ${report.totals.reviewablePullRequests}.`,
     "",
-    "## Unclaimed issue candidates",
+    "## Priority 1: unclaimed issue candidates with no open closing PR",
     "",
     markdownItems(report.candidateIssues),
     "",
-    "## Reviewable pull requests",
+    "## Priority 2: pull requests with no current-head review",
     "",
     markdownItems(report.reviewablePullRequests),
+    "",
+    "## Issues already represented by an open pull request",
+    "",
+    markdownItems(report.filtered.issuesWithOpenPullRequests),
     "",
     "## Open issues awaiting maintainer triage",
     "",
