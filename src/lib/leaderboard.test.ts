@@ -593,7 +593,7 @@ describe("score v2 work units", () => {
     ).toHaveLength(1);
   });
 
-  it("awards automated review credit only after receipt signature verification", () => {
+  it("awards automated review credit only after signature verification and maintainer ratification", () => {
     const reviewer = actor("reviewer");
     const body = reviewAttribution(
       {
@@ -640,6 +640,42 @@ describe("score v2 work units", () => {
       ),
     ).toEqual([]);
 
+    const unratified = createLeaderboardSnapshot({
+      ...v2Input([pr]),
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      unratified.ledger.filter(
+        (event) => event.category === "substantive-review",
+      ),
+    ).toEqual([]);
+
+    const maintainer = actor("maintainer");
+    const ratification = {
+      schemaVersion: "1",
+      ruleVersion: "slop-score-v2",
+      projectId: "eliza",
+      pullRequestNodeId: pr.id,
+      headSha: pr.headRefOid,
+      workUnitId: "wu_eliza_verified_review",
+      tier: "small",
+      scoreThirds: 3,
+      proposalReviewNodeIds: [source.id],
+      coRatifierNodeIds: [],
+      reason: "Maintainer reviewed and ratified the signed review proposal.",
+      supersedes: null,
+    };
+    pr.comments.push({
+      ...textSource(
+        "COMMENT_V2_RATIFICATION",
+        `\`\`\`slop-score\n${JSON.stringify(ratification)}\n\`\`\``,
+        maintainer,
+      ),
+      artifactId: pr.id,
+      createdAt: "2026-08-18T02:30:00.000Z",
+      updatedAt: "2026-08-18T02:30:00.000Z",
+      authorAssociation: "MEMBER",
+    });
     const accepted = createLeaderboardSnapshot({
       ...v2Input([pr]),
       verifyRunReceipt: (value) => value as ProjectRunReceipt,

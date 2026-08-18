@@ -3115,6 +3115,7 @@ export function createLeaderboardSnapshot(
       }
     }
 
+    const ratification = scoreRatifications.get(pullRequest.id);
     const awardedReviewers = new Set<string>();
     for (const source of sources) {
       let rawReview: unknown | null;
@@ -3147,6 +3148,9 @@ export function createLeaderboardSnapshot(
         continue;
       }
       if (record.workUnitId.includes("_legacy_")) continue;
+      if (!ratification?.record.proposalReviewNodeIds.includes(source.id)) {
+        continue;
+      }
       // Post-merge review is excluded, never fatal: an unprivileged comment on
       // a merged pull request must not fail snapshot generation.
       if (parseIsoTime(source.createdAt) > parseIsoTime(pullRequest.mergedAt)) {
@@ -3188,7 +3192,6 @@ export function createLeaderboardSnapshot(
       }
     }
 
-    const ratification = scoreRatifications.get(pullRequest.id);
     if (
       ratification?.source.author &&
       !sameActor(ratification.source.author, pullRequest.author) &&
@@ -5360,7 +5363,7 @@ export function assertLeaderboardSnapshot(
       )
       .map((event) =>
         event.category === "substantive-review"
-          ? event.id.split(":reviewer:")[0]
+          ? event.id.split(/:(?:automated-review|ratifier|reviewer):/u)[0]
           : event.source.id,
       ),
   );
