@@ -147,7 +147,9 @@ describe("project proposal schema", () => {
     copy.terms.repositoryLicense = structuredClone(
       eliza.terms.repositoryLicense,
     );
-    copy.terms.inbound = structuredClone(eliza.terms.inbound);
+    (copy.terms as unknown as { inbound: unknown }).inbound = structuredClone(
+      eliza.terms.inbound,
+    );
     (copy.terms as unknown as { receiptPolicy: unknown }).receiptPolicy = {
       state: "pending-authority-activation",
       activatedAt: null,
