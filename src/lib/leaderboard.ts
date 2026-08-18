@@ -277,6 +277,11 @@ export interface AttributionAssessment {
   coverage: AttributionCoverage;
 }
 
+export interface AttributionAssessmentOptions {
+  requireEverySource?: boolean;
+  verifyRunReceipt?: (value: unknown) => ProjectRunReceipt;
+}
+
 export interface AttributionCoverage {
   status: "complete" | "partial" | "missing" | "invalid";
   eligibleSourceCount: number;
@@ -300,6 +305,7 @@ export interface ScoreEvent {
   category: ScoreCategory;
   points: number;
   scoreThirds?: number;
+  evidenceBonusBasisPoints?: 0 | 1_000 | 1_500 | 2_500;
   workUnitId?: string;
   scoreDecisionSourceId?: string;
   occurredAt: string;
@@ -564,6 +570,7 @@ export interface LeaderboardInput {
   verificationWindowFrom: string;
   verifiedEvidence: VerifiedEvidenceArtifact[];
   evaluatedContributions?: ScoreEvent[];
+  verifyRunReceipt?: (value: unknown) => ProjectRunReceipt;
 }
 
 const EVIDENCE_WEIGHTS: Record<EvidenceCategory, number> = {
@@ -1288,7 +1295,7 @@ function markerFooterError(
 
 export function assessModelAttribution(
   sources: GitHubTextSource[],
-  options: { requireEverySource?: boolean } = {},
+  options: AttributionAssessmentOptions = {},
 ): AttributionAssessment {
   const declarations: ModelAttribution[] = [];
   const invalidMarkers: InvalidAttributionMarker[] = [];
@@ -1397,6 +1404,21 @@ export function assessModelAttribution(
           continue;
         }
       }
+      let verifiedRun = marker.run;
+      if (options.verifyRunReceipt) {
+        try {
+          verifiedRun = options.verifyRunReceipt(marker.run);
+        } catch (error: unknown) {
+          invalidSourceIds.add(source.id);
+          invalidMarkers.push({
+            sourceId: source.id,
+            sourceUrl: source.url,
+            reason: `run receipt excluded: ${error instanceof Error ? error.message : "signature verification failed"}`,
+          });
+          markerIndex += 1;
+          continue;
+        }
+      }
       const identifier = exactIdentifier(marker.provider, marker.model);
       validSourceIds.add(source.id);
       markerIdentifiers.add(identifier.toLowerCase());
@@ -1411,7 +1433,7 @@ export function assessModelAttribution(
         identifier,
         client: marker.client,
         skillRevision: marker.skillRevision,
-        run: marker.run,
+        run: verifiedRun,
         format: "machine-marker",
         status: "self-reported",
       });
@@ -2864,6 +2886,17 @@ export function createLeaderboardSnapshot(
           );
         }
         const proposedReview = assertReviewRecord(proposal);
+        const proposalAssessment = assessModelAttribution([reviewSource], {
+          requireEverySource: true,
+          verifyRunReceipt: input.verifyRunReceipt,
+        });
+        const proposalReceipt = input.verifyRunReceipt
+          ? (proposalAssessment.declarations[0]?.run ?? null)
+          : null;
+        assertReviewRecordReceiptJoin(proposedReview, proposalReceipt, {
+          artifactUrl: pullRequest.url,
+          headSha: pullRequest.headRefOid,
+        });
         if (
           proposedReview.securityRisk !== "none" &&
           record.coRatifierNodeIds.length === 0
@@ -2910,6 +2943,27 @@ export function createLeaderboardSnapshot(
       authorEntry.rawActivity.additions += pullRequest.additions;
       authorEntry.rawActivity.deletions += pullRequest.deletions;
       const ratification = scoreRatifications.get(pullRequest.id);
+      const contributionAssessment = assessModelAttribution(
+        [pullRequestBodySource(pullRequest)],
+        {
+          requireEverySource: true,
+          verifyRunReceipt: input.verifyRunReceipt,
+        },
+      );
+      const contributionRun = input.verifyRunReceipt
+        ? contributionAssessment.declarations.find(
+            (declaration) =>
+              declaration.actor?.id === pullRequest.author?.id &&
+              declaration.artifactId === pullRequest.id,
+          )?.run
+        : null;
+      const contributionBonus = contributionRun
+        ? (contributionRun.traceUpload ? 1_500 : 0) +
+          (["exact", "bounded"].includes(contributionRun.usage.confidence) &&
+          contributionRun.usage.totalTokens > 0
+            ? 1_000
+            : 0)
+        : 0;
       const scored = addScore(entries, ledger, {
         id: `${pullRequest.id}:merged`,
         actor: pullRequest.author,
@@ -2919,6 +2973,11 @@ export function createLeaderboardSnapshot(
         parseIsoTime(SCORE_V2_EFFECTIVE_AT)
           ? {
               scoreThirds: ratification?.record.scoreThirds ?? 1,
+              evidenceBonusBasisPoints: contributionBonus as
+                | 0
+                | 1_000
+                | 1_500
+                | 2_500,
               workUnitId:
                 ratification?.record.workUnitId ??
                 `wu_${repositoryIdFromUrl(pullRequest.url)
@@ -3041,8 +3100,11 @@ export function createLeaderboardSnapshot(
         continue;
       const assessment = assessModelAttribution([source], {
         requireEverySource: true,
+        verifyRunReceipt: input.verifyRunReceipt,
       });
-      const receipt = assessment.declarations[0]?.run ?? null;
+      const receipt = input.verifyRunReceipt
+        ? (assessment.declarations[0]?.run ?? null)
+        : null;
       if (receipt === null) continue;
       let record: ReviewRecord;
       try {
@@ -3071,6 +3133,11 @@ export function createLeaderboardSnapshot(
           category: "substantive-review",
           points: reviewThirds / 3,
           scoreThirds: reviewThirds,
+          evidenceBonusBasisPoints: ((receipt.traceUpload ? 1_500 : 0) +
+            (["exact", "bounded"].includes(receipt.usage.confidence) &&
+            receipt.usage.totalTokens > 0
+              ? 1_000
+              : 0)) as 0 | 1_000 | 1_500 | 2_500,
           workUnitId: `${record.workUnitId}_review_${source.author.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
           occurredAt: source.createdAt,
           repository: repositoryIdFromUrl(pullRequest.url),
@@ -3307,7 +3374,10 @@ export function createLeaderboardSnapshot(
   );
   const overallAttribution = assessModelAttribution(
     [...scoredAttributionSources.values()],
-    { requireEverySource: true },
+    {
+      requireEverySource: true,
+      verifyRunReceipt: input.verifyRunReceipt,
+    },
   );
   const attributions = overallAttribution.declarations;
   for (const attribution of attributions) {
@@ -4354,6 +4424,17 @@ function assertLedgerValue(
     eventPoints === Number(scoreThirds) / 3 &&
     typeof event.workUnitId === "string" &&
     /^wu_[a-z0-9][a-z0-9_-]{2,255}$/u.test(event.workUnitId);
+  if (
+    "evidenceBonusBasisPoints" in event &&
+    (!isV2 ||
+      ![0, 1_000, 1_500, 2_500].includes(
+        Number(event.evidenceBonusBasisPoints),
+      ))
+  ) {
+    throw new Error(
+      `${path}.evidenceBonusBasisPoints must be an allowed v2 outcome bonus`,
+    );
+  }
   const validLegacy =
     (!isV2 &&
       event.category === "merged-pull-request" &&
@@ -4998,7 +5079,7 @@ export function assertLeaderboardSnapshot(
     }
     if (
       event.category === "substantive-review" &&
-      event.source.kind === "review"
+      (event.source.kind === "review" || event.source.kind === "comment")
     ) {
       causalAttributionKeys.add(
         `${event.actor.id}\0source\0${event.source.id}`,
@@ -5036,6 +5117,29 @@ export function assertLeaderboardSnapshot(
     if (!hasCausalLedgerEvent) {
       throw new Error(
         `snapshot attribution ${attribution.id} is not causally linked to a public ledger event by the same actor`,
+      );
+    }
+  }
+  for (const event of validatedLedger) {
+    const publishedBonus = event.evidenceBonusBasisPoints ?? 0;
+    if (publishedBonus === 0) continue;
+    const matchingRun = validatedAttributions.find(
+      (attribution) =>
+        attribution.actor?.id === event.actor.id &&
+        (attribution.artifactId === event.source.id ||
+          attribution.sourceId === event.source.id) &&
+        attribution.run !== null,
+    )?.run;
+    const expectedBonus = matchingRun
+      ? (matchingRun.traceUpload ? 1_500 : 0) +
+        (["exact", "bounded"].includes(matchingRun.usage.confidence) &&
+        matchingRun.usage.totalTokens > 0
+          ? 1_000
+          : 0)
+      : 0;
+    if (publishedBonus !== expectedBonus) {
+      throw new Error(
+        `snapshot.ledger event ${event.id} has no exact receipt for its evidence bonus`,
       );
     }
   }

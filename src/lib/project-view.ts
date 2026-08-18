@@ -441,33 +441,6 @@ function usageForActor(
   return usage;
 }
 
-function evidenceBonusForActor(
-  actorId: string,
-  events: readonly ScoreEvent[],
-  runs: readonly UniqueRun[],
-): number {
-  const relevant = runs.filter(
-    (run) =>
-      run.attribution.actor?.id === actorId &&
-      events.some(
-        (event) =>
-          event.scoreThirds !== undefined && eventMatchesRun(event, run),
-      ),
-  );
-  const traceBonus = relevant.some((run) => run.receipt.traceUpload !== null)
-    ? 1_500
-    : 0;
-  const usageBonus = relevant.some(
-    (run) =>
-      (run.receipt.usage.confidence === "exact" ||
-        run.receipt.usage.confidence === "bounded") &&
-      run.receipt.usage.totalTokens > 0,
-  )
-    ? 1_000
-    : 0;
-  return traceBonus + usageBonus;
-}
-
 function aggregateUsage(
   entries: readonly ProjectContributor[],
 ): ProjectUsageSummary {
@@ -585,11 +558,18 @@ export function createProjectView(
       (total, event) => total + (event.scoreThirds ?? event.points * 3),
       0,
     );
-    const computeBonus = evidenceBonusForActor(actor.id, events, runs);
-    const weightedThirds = Math.floor(
-      (rawThirds * (10_000 + computeBonus)) / 10_000,
+    const weightedThirdBasisPoints = events.reduce(
+      (total, event) =>
+        total +
+        (event.scoreThirds ?? event.points * 3) *
+          (10_000 + (event.evidenceBonusBasisPoints ?? 0)),
+      0,
     );
-    const score = Math.floor(weightedThirds / 3);
+    const computeBonus =
+      rawThirds === 0
+        ? 0
+        : Math.floor(weightedThirdBasisPoints / rawThirds) - 10_000;
+    const score = Math.floor(rawThirds / 3);
     const points = {
       "merged-pull-request": 0,
       "resolved-issue": 0,
@@ -603,7 +583,7 @@ export function createProjectView(
       rank: 0,
       actor,
       score,
-      adjustedWeight: score * 10_000,
+      adjustedWeight: Math.floor(weightedThirdBasisPoints / 3),
       computeBonusBasisPoints: computeBonus,
       points,
       acceptedOutcomeCount: events.length,

@@ -2855,20 +2855,8 @@ export async function generateLeaderboardFromGitHub(
     verificationWindowFrom: verificationWindowFrom.toISOString(),
     verifiedEvidence: evidenceVerification.artifacts,
     evaluatedContributions: options.evaluatedContributions ?? [],
+    verifyRunReceipt: verifyRunReceiptSignature,
   });
-  for (const attribution of snapshot.attributions) {
-    if (attribution.run === null) continue;
-    try {
-      verifyRunReceiptSignature(attribution.run);
-    } catch (error: unknown) {
-      snapshot.invalidAttributionMarkers.push({
-        sourceId: attribution.sourceId,
-        sourceUrl: attribution.sourceUrl,
-        reason: `run receipt excluded: ${error instanceof Error ? error.message : "signature verification failed"}`,
-      });
-      attribution.run = null;
-    }
-  }
   return snapshot;
 }
 
