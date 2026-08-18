@@ -499,6 +499,74 @@ describe("score v2 work units", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("awards automated review credit only after receipt signature verification", () => {
+    const reviewer = actor("reviewer");
+    const body = reviewAttribution(
+      {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        client: "codex",
+      },
+      {
+        schemaVersion: "2",
+        splitRisk: "none",
+        effortBand: "small",
+        complexity: "moderate",
+        impact: "meaningful",
+        reviewLoad: "standard",
+        recommendedTier: "small",
+        recommendedThirds: 3,
+        workUnitId: "wu_eliza_verified_review",
+        confidenceBasisPoints: 9_000,
+        valueRationale:
+          "The review reproduced the change and checked the important failure paths.",
+      },
+    );
+    const source = {
+      ...textSource("COMMENT_V2_REVIEW", body, reviewer),
+      createdAt: "2026-08-18T02:00:00.000Z",
+      updatedAt: "2026-08-18T02:00:00.000Z",
+    };
+    const pr = pullRequest({
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T03:00:00.000Z",
+      mergedAt: "2026-08-18T03:00:00.000Z",
+      comments: [source],
+    });
+
+    const rejected = createLeaderboardSnapshot({
+      ...v2Input([pr]),
+      verifyRunReceipt: () => {
+        throw new TypeError("test signature is invalid");
+      },
+    });
+    expect(
+      rejected.ledger.filter(
+        (event) => event.category === "substantive-review",
+      ),
+    ).toEqual([]);
+
+    const accepted = createLeaderboardSnapshot({
+      ...v2Input([pr]),
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      accepted.ledger.find((event) => event.category === "substantive-review"),
+    ).toMatchObject({
+      scoreThirds: 3,
+      evidenceBonusBasisPoints: 1_500,
+    });
+    const detached = structuredClone(accepted);
+    const detachedReview = detached.ledger.find(
+      (event) => event.category === "substantive-review",
+    );
+    if (!detachedReview) throw new Error("expected a scored review fixture");
+    detachedReview.evidenceBonusBasisPoints = 2_500;
+    expect(() => assertLeaderboardSnapshot(detached)).toThrow(
+      "has no exact receipt for its evidence bonus",
+    );
+  });
 });
 
 describe("model attribution", () => {

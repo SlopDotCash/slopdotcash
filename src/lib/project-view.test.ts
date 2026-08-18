@@ -251,6 +251,27 @@ describe("project views", () => {
     expect(view.leaders[0].adjustedWeight).toBe(240_000);
   });
 
+  it("binds a compute bonus to its exact scored outcome", () => {
+    const snapshot = snapshotFixture();
+    const event = snapshot.ledger[0];
+    const baseline = createProjectView(snapshot, "eliza", "2026-07");
+    event.scoreThirds = event.points * 3;
+    event.workUnitId = "wu_eliza_exact_bonus_outcome";
+    event.evidenceBonusBasisPoints = 2_500;
+
+    const view = createProjectView(snapshot, "eliza", "2026-07");
+    expect(view.leaders[0].adjustedWeight).toBe(
+      baseline.leaders[0].adjustedWeight + event.points * 2_500,
+    );
+    expect(view.leaders[0].computeBonusBasisPoints).toBe(
+      Math.floor((event.points * 3 * 2_500) / (baseline.leaders[0].score * 3)),
+    );
+    expect(view.leaders[0].score).toBe(baseline.leaders[0].score);
+    expect(view.leaders[0].adjustedWeight).not.toBe(
+      baseline.leaders[0].adjustedWeight,
+    );
+  });
+
   it("drops copied run receipts instead of crediting either identity", () => {
     const snapshot = snapshotFixture();
     const shared = receipt();
