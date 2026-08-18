@@ -500,7 +500,100 @@ describe("score v2 work units", () => {
     ).toHaveLength(1);
   });
 
-  it("awards automated review credit only after receipt signature verification", () => {
+  it("rejects a self slop-score without a second maintainer co-ratifier", () => {
+    const author = actor("author");
+    const pr = pullRequest({
+      id: "PR_SELF_SCORE",
+      number: 9,
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T03:00:00.000Z",
+      mergedAt: "2026-08-18T03:00:00.000Z",
+      author,
+    });
+    const record = {
+      schemaVersion: "1",
+      ruleVersion: "slop-score-v2",
+      projectId: "eliza",
+      pullRequestNodeId: pr.id,
+      headSha: pr.headRefOid,
+      workUnitId: "wu_self_scored_outcome",
+      tier: "micro",
+      scoreThirds: 1,
+      proposalReviewNodeIds: [],
+      coRatifierNodeIds: [],
+      reason: "Scoring my own accepted outcome without a second maintainer.",
+      supersedes: null,
+    };
+    pr.comments = [
+      {
+        ...textSource(
+          "COMMENT_SELF_SCORE",
+          `\`\`\`slop-score\n${JSON.stringify(record)}\n\`\`\``,
+          author,
+        ),
+        artifactId: pr.id,
+        url: "https://github.com/elizaOS/eliza/pull/9#issuecomment-901",
+        createdAt: "2026-08-18T04:00:00.000Z",
+        updatedAt: "2026-08-18T04:00:00.000Z",
+        authorAssociation: "MEMBER",
+      },
+    ];
+    expect(() => createLeaderboardSnapshot(v2Input([pr]))).toThrow(
+      "self slop-score requires a second maintainer co-ratifier",
+    );
+
+    const coRatifier = actor("co-ratifier");
+    const approval = {
+      schemaVersion: "1",
+      ruleVersion: "slop-score-v2",
+      decision: "approve",
+      projectId: "eliza",
+      pullRequestNodeId: pr.id,
+      headSha: pr.headRefOid,
+      workUnitId: record.workUnitId,
+      tier: record.tier,
+      reason: "Independently reviewed the outcome and the proposed tier.",
+    };
+    const approvalComment = {
+      ...textSource(
+        "COMMENT_SELF_SCORE_APPROVAL",
+        `\`\`\`slop-score-approval\n${JSON.stringify(approval)}\n\`\`\``,
+        coRatifier,
+      ),
+      artifactId: pr.id,
+      url: "https://github.com/elizaOS/eliza/pull/9#issuecomment-902",
+      createdAt: "2026-08-18T04:30:00.000Z",
+      updatedAt: "2026-08-18T04:30:00.000Z",
+      authorAssociation: "MEMBER",
+    };
+    const ratified = {
+      ...record,
+      coRatifierNodeIds: ["COMMENT_SELF_SCORE_APPROVAL"],
+    };
+    pr.comments = [
+      {
+        ...textSource(
+          "COMMENT_SELF_SCORE_2",
+          `\`\`\`slop-score\n${JSON.stringify(ratified)}\n\`\`\``,
+          author,
+        ),
+        artifactId: pr.id,
+        url: "https://github.com/elizaOS/eliza/pull/9#issuecomment-903",
+        createdAt: "2026-08-18T05:00:00.000Z",
+        updatedAt: "2026-08-18T05:00:00.000Z",
+        authorAssociation: "MEMBER",
+      },
+      approvalComment,
+    ];
+    const snapshot = createLeaderboardSnapshot(v2Input([pr]));
+    expect(
+      snapshot.ledger.filter(
+        (event) => event.category === "merged-pull-request",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("awards automated review credit only after signature verification and maintainer ratification", () => {
     const reviewer = actor("reviewer");
     const body = reviewAttribution(
       {
@@ -547,6 +640,42 @@ describe("score v2 work units", () => {
       ),
     ).toEqual([]);
 
+    const unratified = createLeaderboardSnapshot({
+      ...v2Input([pr]),
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      unratified.ledger.filter(
+        (event) => event.category === "substantive-review",
+      ),
+    ).toEqual([]);
+
+    const maintainer = actor("maintainer");
+    const ratification = {
+      schemaVersion: "1",
+      ruleVersion: "slop-score-v2",
+      projectId: "eliza",
+      pullRequestNodeId: pr.id,
+      headSha: pr.headRefOid,
+      workUnitId: "wu_eliza_verified_review",
+      tier: "small",
+      scoreThirds: 3,
+      proposalReviewNodeIds: [source.id],
+      coRatifierNodeIds: [],
+      reason: "Maintainer reviewed and ratified the signed review proposal.",
+      supersedes: null,
+    };
+    pr.comments.push({
+      ...textSource(
+        "COMMENT_V2_RATIFICATION",
+        `\`\`\`slop-score\n${JSON.stringify(ratification)}\n\`\`\``,
+        maintainer,
+      ),
+      artifactId: pr.id,
+      createdAt: "2026-08-18T02:30:00.000Z",
+      updatedAt: "2026-08-18T02:30:00.000Z",
+      authorAssociation: "MEMBER",
+    });
     const accepted = createLeaderboardSnapshot({
       ...v2Input([pr]),
       verifyRunReceipt: (value) => value as ProjectRunReceipt,
@@ -597,6 +726,56 @@ describe("score v2 work units", () => {
         reason: "run receipt repository does not match its GitHub artifact",
       }),
     );
+  });
+
+  it("excludes a slop-review posted after merge without failing the snapshot", () => {
+    const reviewer = actor("reviewer");
+    const body = reviewAttribution(
+      {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        client: "codex",
+      },
+      {
+        schemaVersion: "2",
+        splitRisk: "none",
+        effortBand: "small",
+        complexity: "moderate",
+        impact: "meaningful",
+        reviewLoad: "standard",
+        recommendedTier: "small",
+        recommendedThirds: 3,
+        workUnitId: "wu_eliza_post_merge_review",
+        confidenceBasisPoints: 9_000,
+        valueRationale:
+          "The review arrived after merge and must be excluded, not fatal.",
+      },
+    );
+    const source = {
+      ...textSource("COMMENT_V2_LATE_REVIEW", body, reviewer),
+      createdAt: "2026-08-18T04:00:00.000Z",
+      updatedAt: "2026-08-18T04:00:00.000Z",
+    };
+    const pr = pullRequest({
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T03:00:00.000Z",
+      mergedAt: "2026-08-18T03:00:00.000Z",
+      comments: [source],
+    });
+    const snapshot = createLeaderboardSnapshot({
+      ...v2Input([pr]),
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      snapshot.ledger.filter(
+        (event) => event.category === "substantive-review",
+      ),
+    ).toEqual([]);
+    expect(
+      snapshot.ledger.filter(
+        (event) => event.category === "merged-pull-request",
+      ),
+    ).toHaveLength(1);
   });
 });
 

@@ -2887,6 +2887,16 @@ export function createLeaderboardSnapshot(
           "slop-score correction must supersede the current record",
         );
       }
+      // Related-party scoring requires a second maintainer regardless of tier:
+      // a ratifier must never be the sole authority over their own outcome.
+      if (
+        sameActor(source.author, pullRequest.author) &&
+        record.coRatifierNodeIds.length === 0
+      ) {
+        throw new TypeError(
+          "self slop-score requires a second maintainer co-ratifier",
+        );
+      }
       for (const reviewNodeId of record.proposalReviewNodeIds) {
         const reviewSource = sourceById.get(reviewNodeId);
         const proposal = reviewSource
@@ -3105,6 +3115,7 @@ export function createLeaderboardSnapshot(
       }
     }
 
+    const ratification = scoreRatifications.get(pullRequest.id);
     const awardedReviewers = new Set<string>();
     for (const source of sources) {
       let rawReview: unknown | null;
@@ -3137,8 +3148,13 @@ export function createLeaderboardSnapshot(
         continue;
       }
       if (record.workUnitId.includes("_legacy_")) continue;
+      if (!ratification?.record.proposalReviewNodeIds.includes(source.id)) {
+        continue;
+      }
+      // Post-merge review is excluded, never fatal: an unprivileged comment on
+      // a merged pull request must not fail snapshot generation.
       if (parseIsoTime(source.createdAt) > parseIsoTime(pullRequest.mergedAt)) {
-        throw new TypeError("slop-review was posted after merge");
+        continue;
       }
       const reviewThirds = {
         triage: 1,
@@ -3176,7 +3192,6 @@ export function createLeaderboardSnapshot(
       }
     }
 
-    const ratification = scoreRatifications.get(pullRequest.id);
     if (
       ratification?.source.author &&
       !sameActor(ratification.source.author, pullRequest.author) &&
@@ -5348,7 +5363,7 @@ export function assertLeaderboardSnapshot(
       )
       .map((event) =>
         event.category === "substantive-review"
-          ? event.id.split(":reviewer:")[0]
+          ? event.id.split(/:(?:automated-review|ratifier|reviewer):/u)[0]
           : event.source.id,
       ),
   );
