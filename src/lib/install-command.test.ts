@@ -177,8 +177,9 @@ function run(
   installationRoot: string,
   environment: Record<string, string> = {},
 ) {
-  return spawnSync("bash", ["-c", script], {
+  return spawnSync("bash", process.platform === "win32" ? [] : ["-c", script], {
     encoding: "utf8",
+    input: process.platform === "win32" ? script : undefined,
     env: {
       ...process.env,
       CODEX_HOME: join(installationRoot, "codex"),
@@ -189,7 +190,9 @@ function run(
 }
 
 function currentLink(root: string): string {
-  return readlinkSync(join(root, "codex", "skills", "contribute-to-eliza"));
+  return readlinkSync(
+    join(root, "codex", "skills", "contribute-to-eliza"),
+  ).replaceAll("\\", "/");
 }
 
 function versionPath(root: string, revision: string): string {
@@ -252,6 +255,11 @@ describe("authenticated skill installer lifecycle", () => {
     expect(currentLink(installRoot)).toBe(
       `.contribute-to-eliza-versions/${revisionA}`,
     );
+    expect(
+      readFileSync(
+        join(installRoot, "codex", "skills", "contribute-to-eliza", "SKILL.md"),
+      ),
+    ).toEqual(filesA["SKILL.md"]);
     expect(
       readFileSync(join(versionPath(installRoot, revisionA), "SKILL.md")),
     ).toEqual(filesA["SKILL.md"]);
@@ -1048,15 +1056,36 @@ describe("authenticated skill installer lifecycle", () => {
     );
     mkdirSync(dirname(lock), { recursive: true });
     writeFileSync(lock, "");
-    const holder = spawn(
-      "python3",
-      [
-        "-c",
-        "import fcntl,sys,time; f=open(sys.argv[1],'a+b'); fcntl.flock(f,fcntl.LOCK_EX); print('locked',flush=True); time.sleep(60)",
-        lock,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const lockHolderScript =
+      process.platform === "win32"
+        ? `
+import msvcrt
+import os
+import sys
+import time
+
+lock_file = open(sys.argv[1], "a+b")
+if os.fstat(lock_file.fileno()).st_size == 0:
+    lock_file.write(bytes([0]))
+    lock_file.flush()
+lock_file.seek(0)
+msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+print("locked", flush=True)
+time.sleep(60)
+`
+        : `
+import fcntl
+import sys
+import time
+
+lock_file = open(sys.argv[1], "a+b")
+fcntl.flock(lock_file, fcntl.LOCK_EX)
+print("locked", flush=True)
+time.sleep(60)
+`;
+    const holder = spawn("python3", ["-c", lockHolderScript, lock], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     await new Promise<void>((resolvePromise, rejectPromise) => {
       holder.once("error", rejectPromise);
       holder.stdout.once("data", (value) => {
