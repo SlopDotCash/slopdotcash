@@ -458,13 +458,7 @@ describe("live report parsing", () => {
     ];
     const commands = [
       ["doctor", ...identity],
-      [
-        "start",
-        ...identity,
-        "--lane",
-        "parser-test",
-        "--allow-local-usage",
-      ],
+      ["start", ...identity, "--lane", "parser-test", "--allow-local-usage"],
       [
         "finish",
         ...identity,
@@ -482,9 +476,13 @@ describe("live report parsing", () => {
     ];
 
     for (const command of commands) {
-      const missing = spawnSync(process.execPath, [runReceiptPath, ...command], {
-        encoding: "utf8",
-      });
+      const missing = spawnSync(
+        process.execPath,
+        [runReceiptPath, ...command],
+        {
+          encoding: "utf8",
+        },
+      );
       assert.strictEqual(missing.status, 1);
       assert.match(missing.stderr, /requires exactly one of/u);
 
@@ -2719,11 +2717,7 @@ try {
         ],
         { encoding: "utf8", env: environment },
       );
-      assert.strictEqual(
-        unavailableDoctor.status,
-        0,
-        unavailableDoctor.stderr,
-      );
+      assert.strictEqual(unavailableDoctor.status, 0, unavailableDoctor.stderr);
       const unavailableDoctorReport = JSON.parse(unavailableDoctor.stdout);
       assert.strictEqual(unavailableDoctorReport.ok, true);
       assert.deepStrictEqual(unavailableDoctorReport.ccusage, {
@@ -2771,12 +2765,7 @@ try {
 
       const unavailableStarted = spawnSync(
         process.execPath,
-        [
-          entrypoint,
-          "start",
-          ...unavailableArguments,
-          "--usage-unavailable",
-        ],
+        [entrypoint, "start", ...unavailableArguments, "--usage-unavailable"],
         { encoding: "utf8", env: environment },
       );
       assert.strictEqual(
@@ -2864,12 +2853,7 @@ try {
 
       const missingConsent = spawnSync(
         process.execPath,
-        [
-          entrypoint,
-          "start",
-          ...cliArguments,
-          "--allow-package-execution",
-        ],
+        [entrypoint, "start", ...cliArguments, "--allow-package-execution"],
         { encoding: "utf8", env: environment },
       );
       assert.strictEqual(missingConsent.status, 1, missingConsent.stdout);
@@ -3135,10 +3119,7 @@ try {
         readFileSync(runnerLog, "utf8"),
         runnerLogBeforeDowngrade,
       );
-      assert.strictEqual(
-        readFileSync(argsLog, "utf8"),
-        argsLogBeforeDowngrade,
-      );
+      assert.strictEqual(readFileSync(argsLog, "utf8"), argsLogBeforeDowngrade);
       rmSync(
         join(
           stateRoot,
@@ -3151,12 +3132,7 @@ try {
       const argsLogBeforeUnavailable = readFileSync(argsLog, "utf8");
       const unavailableRestarted = spawnSync(
         process.execPath,
-        [
-          entrypoint,
-          "start",
-          ...unavailableArguments,
-          "--usage-unavailable",
-        ],
+        [entrypoint, "start", ...unavailableArguments, "--usage-unavailable"],
         { encoding: "utf8", env: environment },
       );
       assert.strictEqual(
@@ -3209,11 +3185,7 @@ try {
         ],
         { encoding: "utf8", env: environment },
       );
-      assert.strictEqual(
-        unavailableReplay.status,
-        0,
-        unavailableReplay.stderr,
-      );
+      assert.strictEqual(unavailableReplay.status, 0, unavailableReplay.stderr);
       assert.strictEqual(
         JSON.parse(unavailableReplay.stdout).footer,
         unavailableFinishReport.footer,

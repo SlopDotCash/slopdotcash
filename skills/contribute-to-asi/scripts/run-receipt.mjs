@@ -2065,9 +2065,7 @@ function parseArguments(args) {
       "finish requires finalized --trace-server-run and --trace-object-id evidence",
     );
   }
-  const measuredAction = ["doctor", "finish", "start"].includes(
-    options.action,
-  );
+  const measuredAction = ["doctor", "finish", "start"].includes(options.action);
   const usageAdapter = usageAdapterFor(options.client);
   if (options.allowPackageExecution && options.usageUnavailable) {
     fail(
@@ -2296,10 +2294,9 @@ function startRun(options, testOptions) {
     {
       runId,
       message: `Project run started. Keep this id: ${runId}`,
-      usageStatus:
-        options.usageUnavailable
-          ? "unavailable"
-          : usageAdapter === null
+      usageStatus: options.usageUnavailable
+        ? "unavailable"
+        : usageAdapter === null
           ? "unsupported"
           : state.baseline === null
             ? "unavailable"
