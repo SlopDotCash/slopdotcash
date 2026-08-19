@@ -600,6 +600,17 @@ describe("score v2 work units", () => {
         provider: "openai",
         model: "gpt-5.6-sol",
         client: "codex",
+        usage: {
+          source: "ccusage-session-v20",
+          confidence: "exact",
+          inputTokens: 900_000,
+          outputTokens: 100_000,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          totalTokens: 1_000_000,
+          costMicroUsd: "5000000",
+          sessionCount: 1,
+        },
       },
       {
         schemaVersion: "2",
@@ -676,8 +687,11 @@ describe("score v2 work units", () => {
       updatedAt: "2026-08-18T02:30:00.000Z",
       authorAssociation: "MEMBER",
     });
+    const postUsageBonusInput = v2Input([pr]);
+    postUsageBonusInput.generatedAt = "2026-08-19T00:01:00.000Z";
+    postUsageBonusInput.source.fetchedAt = postUsageBonusInput.generatedAt;
     const accepted = createLeaderboardSnapshot({
-      ...v2Input([pr]),
+      ...postUsageBonusInput,
       verifyRunReceipt: (value) => value as ProjectRunReceipt,
     });
     expect(
@@ -686,6 +700,16 @@ describe("score v2 work units", () => {
       scoreThirds: 3,
       evidenceBonusBasisPoints: 1_500,
     });
+    const legacy = structuredClone(accepted);
+    legacy.generatedAt = "2026-08-18T05:00:00.000Z";
+    legacy.source.fetchedAt = legacy.generatedAt;
+    const legacyReview = legacy.ledger.find(
+      (event) => event.category === "substantive-review",
+    );
+    if (!legacyReview) throw new Error("expected a legacy review fixture");
+    legacyReview.evidenceBonusBasisPoints = 2_500;
+    expect(() => assertLeaderboardSnapshot(legacy)).not.toThrow();
+
     const detached = structuredClone(accepted);
     const detachedReview = detached.ledger.find(
       (event) => event.category === "substantive-review",

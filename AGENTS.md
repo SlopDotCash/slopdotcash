@@ -114,9 +114,9 @@ Every project-skill contribution carries a
 timestamps, exact provider/model/client, skill revision and digest, aggregate
 pinned-ccusage figures, the private trace digest and upload identity, and an
 Ed25519 device signature. A device signature proves byte continuity—not
-provider billing truth. Raw token volume never changes score. A finalized
-private trace adds a fixed 15% evidence bonus and outcome-matched exact or
-bounded usage adds 10%, capped at 25% combined.
+provider billing truth. Token evidence is diagnostic and never changes score,
+rank, share, or payment. A finalized private trace adds a fixed 15% evidence
+bonus.
 
 ## Private traces
 

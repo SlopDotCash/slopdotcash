@@ -51,6 +51,7 @@ export const LEADERBOARD_SCHEMA_VERSION = "6" as const;
 export const PROFILE_OPPORTUNITY_LIMIT = 5 as const;
 export const SCORE_RULE_VERSION = "slop-score-v2" as const;
 export const SCORE_V2_EFFECTIVE_AT = "2026-08-01T00:00:00.000Z" as const;
+const USAGE_NEUTRAL_EVIDENCE_POLICY_AT = "2026-08-19T00:00:00.000Z" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
 export const SCORE_WINDOW_DAYS = 35;
@@ -2988,13 +2989,7 @@ export function createLeaderboardSnapshot(
               declaration.artifactId === pullRequest.id,
           )?.run
         : null;
-      const contributionBonus = contributionRun
-        ? (contributionRun.traceUpload ? 1_500 : 0) +
-          (["exact", "bounded"].includes(contributionRun.usage.confidence) &&
-          contributionRun.usage.totalTokens > 0
-            ? 1_000
-            : 0)
-        : 0;
+      const contributionBonus = contributionRun?.traceUpload ? 1_500 : 0;
       const scored = addScore(entries, ledger, {
         id: `${pullRequest.id}:merged`,
         actor: pullRequest.author,
@@ -3170,11 +3165,7 @@ export function createLeaderboardSnapshot(
           category: "substantive-review",
           points: reviewThirds / 3,
           scoreThirds: reviewThirds,
-          evidenceBonusBasisPoints: ((receipt.traceUpload ? 1_500 : 0) +
-            (["exact", "bounded"].includes(receipt.usage.confidence) &&
-            receipt.usage.totalTokens > 0
-              ? 1_000
-              : 0)) as 0 | 1_000 | 1_500 | 2_500,
+          evidenceBonusBasisPoints: receipt.traceUpload ? 1_500 : 0,
           workUnitId: `${record.workUnitId}_review_${source.author.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
           occurredAt: source.createdAt,
           repository: repositoryIdFromUrl(pullRequest.url),
@@ -5166,9 +5157,13 @@ export function assertLeaderboardSnapshot(
           attribution.sourceId === event.source.id) &&
         attribution.run !== null,
     )?.run;
+    const legacyUsageBonusPolicy =
+      Date.parse(snapshot.generatedAt) <
+      Date.parse(USAGE_NEUTRAL_EVIDENCE_POLICY_AT);
     const expectedBonus = matchingRun
       ? (matchingRun.traceUpload ? 1_500 : 0) +
-        (["exact", "bounded"].includes(matchingRun.usage.confidence) &&
+        (legacyUsageBonusPolicy &&
+        ["exact", "bounded"].includes(matchingRun.usage.confidence) &&
         matchingRun.usage.totalTokens > 0
           ? 1_000
           : 0)

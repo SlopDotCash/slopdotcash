@@ -1,8 +1,7 @@
 /**
- * Derives one project's cycle leaderboard, bounded compute evidence, and reward
- * simulation from the canonical GitHub snapshot. Finalized private traces and
- * outcome-matched bounded usage earn a fixed evidence bonus; raw token volume
- * never changes the bonus.
+ * Derives one project's cycle leaderboard, diagnostic compute evidence, and
+ * reward simulation from the canonical GitHub snapshot. A finalized private
+ * trace can earn a fixed evidence bonus; token usage never changes scoring.
  */
 
 import type {
