@@ -40,4 +40,5 @@ jobs:
 
       - name: Exercise install, update, rollback, active reads, and locking
         shell: bash
-        run: bun test src/lib/install-command.test.ts --timeout 60000
+        # Bun's default is a five-second per-test ceiling; zero disables it.
+        run: bun test src/lib/install-command.test.ts --timeout 0
