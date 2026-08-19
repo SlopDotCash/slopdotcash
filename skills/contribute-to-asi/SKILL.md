@@ -86,6 +86,15 @@ clients continue with usage marked unavailable and omit
 `--allow-package-execution`. The receipt creates a local Ed25519 device key only
 when the run finishes.
 
+If the operator does not authorize package execution, use
+`--usage-unavailable` instead of `--allow-package-execution` for `doctor`,
+`start`, and `finish`; also omit `--allow-local-usage` from `start`. This mode
+invokes no package manager, reads no usage logs, and records signed
+zero/unavailable usage. Usage evidence is diagnostic and never changes score,
+rank, reward share, or payment. Policy preflight
+and trace networking still run. Because receipts bind the exact skill revision,
+restart any active run created before this option was installed.
+
 6. Build the bounded, read-only inventory of live work before choosing:
 
 ```bash
@@ -402,6 +411,9 @@ node <skill-directory>/scripts/run-receipt.mjs finish \
   --run <run-id> --allow-package-execution --trajectory <path> \
   --trace-server-run <server-run-id> --trace-object-id sha256:<digest>
 ```
+
+For an unavailable-mode run, replace `--allow-package-execution` with
+`--usage-unavailable`.
 
 Append the emitted footer unchanged to the final pull request body, review, or
 issue comment. The hidden Slop marker must remain the final line. Do not
