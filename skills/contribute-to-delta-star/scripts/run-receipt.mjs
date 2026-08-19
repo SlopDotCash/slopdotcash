@@ -91,7 +91,7 @@ Commands:
   preview  Show local reads, writes, network access, and public receipt fields
   doctor   Verify repository, skill provenance, declarations, and local runners
   status   List this project's local active and completed measured runs
-  start    Capture a local ccusage baseline after explicit usage consent
+  start    Capture a local ccusage baseline or record usage as unavailable
   trace    Permanently upload this run's private trace and finalize it
   finish   Close a measured run and print its device-signed GitHub footer
 
@@ -103,13 +103,17 @@ Common options:
   --client-version <version>  Exact declared agent/client version
   --json              Emit machine-readable JSON
 
-Start and finish also require --lane <public-lane>. Start requires
---allow-local-usage after preview. Finish requires --run <run-id> and accepts
-a required --trajectory <path>, --trace-server-run <id>, and
---trace-object-id sha256:<digest> returned by the finalized private Slop trace
-upload. Publish only this upload evidence and digest. Supported usage adapters
-also require --allow-package-execution after preview because package-manager
-resolution may fetch code and write caches.
+Start and finish also require --lane <public-lane>. Finish requires --run
+<run-id> and accepts a required --trajectory <path>, --trace-server-run <id>,
+and --trace-object-id sha256:<digest> returned by the finalized private Slop
+trace upload. Publish only this upload evidence and digest.
+
+For a configured usage adapter, doctor, start, and finish require exactly one:
+  --allow-package-execution  Resolve the pinned adapter and measure usage
+  --usage-unavailable       Skip package execution and all usage-log reads
+
+Measured starts also require --allow-local-usage after preview. Unavailable
+starts omit it and produce a signed zero-usage receipt without the usage bonus.
 `;
 
 function fail(message) {
@@ -432,6 +436,12 @@ function unavailableUsage(source = "ccusage-session-v20") {
   };
 }
 
+function usageAdapterFor(client) {
+  return Object.hasOwn(PROJECT.usageAdapters, client)
+    ? PROJECT.usageAdapters[client]
+    : null;
+}
+
 function commandExists(command, executionRoot) {
   return (
     spawnSync(command, ["--version"], {
@@ -548,7 +558,7 @@ function inspectCcusageRunner() {
 }
 
 function collectUsage(client, repositoryRoot) {
-  const ccusageSource = PROJECT.usageAdapters[client];
+  const ccusageSource = usageAdapterFor(client);
   if (!ccusageSource) return null;
   return withPackageExecution((executionRoot) => {
     for (const runner of ccusageRunners(executionRoot)) {
@@ -1904,6 +1914,7 @@ function parseArguments(args) {
     traceObjectId: null,
     traceServerRun: null,
     trajectory: null,
+    usageUnavailable: false,
   };
   for (let index = 1; index < args.length; index += 1) {
     const argument = args[index];
@@ -1912,6 +1923,8 @@ function parseArguments(args) {
     if (argument === "--json") options.json = true;
     else if (argument === "--allow-package-execution") {
       options.allowPackageExecution = true;
+    } else if (argument === "--usage-unavailable") {
+      options.usageUnavailable = true;
     } else if (argument === "--allow-local-usage") {
       options.allowLocalUsage = true;
     } else if (
@@ -1964,6 +1977,7 @@ function parseArguments(args) {
       "--model",
       "--provider",
       "--repo-root",
+      "--usage-unavailable",
     ]),
     finish: new Set([
       "--allow-package-execution",
@@ -1977,6 +1991,7 @@ function parseArguments(args) {
       "--trace-object-id",
       "--trace-server-run",
       "--trajectory",
+      "--usage-unavailable",
     ]),
     help: new Set(),
     preview: new Set(["--client", "--json", "--repo-root"]),
@@ -1989,6 +2004,7 @@ function parseArguments(args) {
       "--model",
       "--provider",
       "--repo-root",
+      "--usage-unavailable",
     ]),
     status: new Set(["--json"]),
     trace: new Set([
@@ -2049,31 +2065,51 @@ function parseArguments(args) {
       "finish requires finalized --trace-server-run and --trace-object-id evidence",
     );
   }
-  if (options.action === "start" && !options.allowLocalUsage) {
+  const measuredAction = ["doctor", "finish", "start"].includes(
+    options.action,
+  );
+  const usageAdapter = usageAdapterFor(options.client);
+  if (options.allowPackageExecution && options.usageUnavailable) {
+    fail(
+      "choose exactly one of --allow-package-execution or --usage-unavailable",
+    );
+  }
+  if (
+    measuredAction &&
+    usageAdapter &&
+    !options.allowPackageExecution &&
+    !options.usageUnavailable
+  ) {
+    fail(
+      `${options.action} requires exactly one of --allow-package-execution or --usage-unavailable after reviewing the preview output`,
+    );
+  }
+  if ((!measuredAction || !usageAdapter) && options.allowPackageExecution) {
+    fail(
+      "--allow-package-execution is valid only for a supported usage adapter",
+    );
+  }
+  if ((!measuredAction || !usageAdapter) && options.usageUnavailable) {
+    fail("--usage-unavailable is valid only for a supported usage adapter");
+  }
+  if (
+    options.action === "start" &&
+    !options.usageUnavailable &&
+    !options.allowLocalUsage
+  ) {
     fail(
       "start requires --allow-local-usage after reviewing the preview output",
     );
   }
+  if (
+    options.action === "start" &&
+    options.usageUnavailable &&
+    options.allowLocalUsage
+  ) {
+    fail("--allow-local-usage is not valid with --usage-unavailable");
+  }
   if (options.action !== "start" && options.allowLocalUsage) {
     fail("--allow-local-usage is valid only with start");
-  }
-  if (
-    ["doctor", "finish", "start"].includes(options.action) &&
-    PROJECT.usageAdapters[options.client] &&
-    !options.allowPackageExecution
-  ) {
-    fail(
-      `${options.action} requires --allow-package-execution after reviewing the preview output`,
-    );
-  }
-  if (
-    (!["doctor", "finish", "start"].includes(options.action) ||
-      !PROJECT.usageAdapters[options.client]) &&
-    options.allowPackageExecution
-  ) {
-    fail(
-      "--allow-package-execution is valid only for a supported usage adapter",
-    );
   }
   return options;
 }
@@ -2088,7 +2124,7 @@ function previewRun(options) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
   const stateRoot = configurationRoot();
-  const usageAdapter = PROJECT.usageAdapters[options.client] ?? null;
+  const usageAdapter = usageAdapterFor(options.client);
   const result = {
     projectId: PROJECT.projectId,
     repositoryId: PROJECT.repositoryId,
@@ -2106,10 +2142,11 @@ function previewRun(options) {
       join(stateRoot, "device-ed25519.pem"),
     ],
     packageManagerCacheWrites: [
-      "Bun or npm package cache and diagnostic logs during doctor/start/finish",
+      "Bun or npm package cache and diagnostic logs only with --allow-package-execution; none with --usage-unavailable",
     ],
     network: [
-      `Resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
+      `With --allow-package-execution, resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
+      `On start and finish, fetch current project terms from https://slop.cash/projects/${PROJECT.projectId}/terms.json and any digest-bound LICENSE, inbound terms, or prize rules from github.com, raw.githubusercontent.com, or proximityprize.org as named by that policy`,
       `Verify the public private-request intake gate at ${PRIVATE_REQUEST_INTAKE_STATUS}; trace upload remains blocked unless it reports enabled`,
       `After a local byte/digest disclosure, authenticate with GitHub and permanently upload the inspected trace through ${TRACE_AUTHORITY} under ${TRACE_PRIVACY_CONTRACT}`,
     ],
@@ -2132,6 +2169,9 @@ function previewRun(options) {
     ],
     consentFlag: "--allow-local-usage",
     packageExecutionConsentFlag: "--allow-package-execution",
+    usageUnavailableFlag: "--usage-unavailable",
+    usageReadDisclosure:
+      "--usage-unavailable invokes no package manager and reads no usage logs, but policy checks and trace networking remain; it records signed zero/unavailable usage and forfeits the usage evidence bonus.",
     localStateDisclosure:
       "Active baselines retain aggregate counters and SHA-256 session identifiers until finish.",
     linkabilityDisclosure:
@@ -2147,8 +2187,8 @@ function previewRun(options) {
         `Local usage reads: ${result.localReads.join(", ") || "none; this client has no usage adapter"}`,
         `Local state: ${stateRoot}`,
         "Automatic uploads: none.",
-        `Doctor only after consent with ${result.packageExecutionConsentFlag}.`,
-        `Start only after consent with ${result.consentFlag}.`,
+        `For configured adapters, choose ${result.packageExecutionConsentFlag} or ${result.usageUnavailableFlag}.`,
+        `Measured starts require ${result.consentFlag}; unavailable starts omit it.`,
       ].join("\n"),
     },
     options.json,
@@ -2158,12 +2198,16 @@ function previewRun(options) {
 function doctorRun(options) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
-  const usageAdapter = PROJECT.usageAdapters[options.client] ?? null;
-  const probe = usageAdapter
-    ? inspectCcusageRunner()
-    : { runner: null, status: "unsupported", version: null };
+  const usageAdapter = usageAdapterFor(options.client);
+  const probe = options.usageUnavailable
+    ? { runner: null, status: "intentional-unavailable", version: null }
+    : usageAdapter
+      ? inspectCcusageRunner()
+      : { runner: null, status: "unsupported", version: null };
   const result = {
-    ok: probe.status === "available" || probe.status === "unsupported",
+    ok: ["available", "intentional-unavailable", "unsupported"].includes(
+      probe.status,
+    ),
     projectId: PROJECT.projectId,
     repositoryId: PROJECT.repositoryId,
     repositoryRoot,
@@ -2186,7 +2230,9 @@ function doctorRun(options) {
     {
       ...result,
       message: result.ok
-        ? `Slop receipt doctor passed for ${result.repositoryId}; no usage logs were read${usageAdapter ? "." : "; this client has no usage adapter, so usage will be unavailable."}`
+        ? options.usageUnavailable
+          ? `Slop receipt doctor passed for ${result.repositoryId}; package execution and local usage-log reads are disabled, so usage will be unavailable.`
+          : `Slop receipt doctor passed for ${result.repositoryId}; no usage logs were read${usageAdapter ? "." : "; this client has no usage adapter, so usage will be unavailable."}`
         : `Slop receipt doctor failed: exact ccusage@${CCUSAGE_VERSION} could not be executed.`,
     },
     options.json,
@@ -2225,7 +2271,7 @@ function statusRun(options) {
 function startRun(options, testOptions) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
-  const usageAdapter = PROJECT.usageAdapters[options.client] ?? null;
+  const usageAdapter = usageAdapterFor(options.client);
   const runId = createRunId();
   const state = validateActiveRecord({
     schemaVersion: "2",
@@ -2238,7 +2284,9 @@ function startRun(options, testOptions) {
     model: options.model,
     lane: options.lane,
     startedAt: canonicalIso(),
-    baseline: collectUsage(options.client, repositoryRoot),
+    baseline: options.usageUnavailable
+      ? null
+      : collectUsage(options.client, repositoryRoot),
     policyAcknowledgement: projectPolicyPreflight(testOptions),
     ...provenance,
   });
@@ -2249,7 +2297,9 @@ function startRun(options, testOptions) {
       runId,
       message: `Project run started. Keep this id: ${runId}`,
       usageStatus:
-        usageAdapter === null
+        options.usageUnavailable
+          ? "unavailable"
+          : usageAdapter === null
           ? "unsupported"
           : state.baseline === null
             ? "unavailable"
@@ -2363,13 +2413,15 @@ function finishRun(options, testOptions) {
   if (Date.parse(completedAt) + CLOCK_SKEW_MS < Date.parse(state.startedAt)) {
     fail("system clock moved backward during the run");
   }
-  const usage = PROJECT.usageAdapters[options.client]
-    ? usageDelta(
-        state.baseline,
-        collectUsage(options.client, repositoryRoot),
-        options.client,
-      )
-    : unavailableUsage("none");
+  const usage = options.usageUnavailable
+    ? unavailableUsage()
+    : usageAdapterFor(options.client)
+      ? usageDelta(
+          state.baseline,
+          collectUsage(options.client, repositoryRoot),
+          options.client,
+        )
+      : unavailableUsage("none");
   const key = deviceKey();
   const trajectorySha256 = trajectoryDigest(options.trajectory);
   const currentPolicy = projectPolicyPreflight(testOptions);

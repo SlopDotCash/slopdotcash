@@ -429,7 +429,10 @@ describe("live report parsing", () => {
       ["start", "--run", `run_${"0".repeat(26)}`],
       ["doctor", "--lane", "ignored-lane"],
       ["preview", "--model", "ignored-model"],
+      ["preview", "--usage-unavailable"],
       ["status", "--repo-root", "/tmp"],
+      ["status", "--usage-unavailable"],
+      ["trace", "--usage-unavailable"],
     ];
     for (const argumentsValue of cases) {
       const result = spawnSync(
@@ -439,6 +442,64 @@ describe("live report parsing", () => {
       );
       assert.strictEqual(result.status, 1);
       assert.match(result.stderr, /is not valid with/u);
+    }
+  });
+
+  it("requires one explicit usage mode for every measured command", () => {
+    const identity = [
+      "--repo-root",
+      ".",
+      "--client",
+      "codex",
+      "--provider",
+      "openai",
+      "--model",
+      "gpt-5.6-sol",
+    ];
+    const commands = [
+      ["doctor", ...identity],
+      [
+        "start",
+        ...identity,
+        "--lane",
+        "parser-test",
+        "--allow-local-usage",
+      ],
+      [
+        "finish",
+        ...identity,
+        "--lane",
+        "parser-test",
+        "--run",
+        `run_${"0".repeat(26)}`,
+        "--trajectory",
+        "proof.json",
+        "--trace-server-run",
+        "server_parser_test",
+        "--trace-object-id",
+        `sha256:${"0".repeat(64)}`,
+      ],
+    ];
+
+    for (const command of commands) {
+      const missing = spawnSync(process.execPath, [runReceiptPath, ...command], {
+        encoding: "utf8",
+      });
+      assert.strictEqual(missing.status, 1);
+      assert.match(missing.stderr, /requires exactly one of/u);
+
+      const ambiguous = spawnSync(
+        process.execPath,
+        [
+          runReceiptPath,
+          ...command,
+          "--allow-package-execution",
+          "--usage-unavailable",
+        ],
+        { encoding: "utf8" },
+      );
+      assert.strictEqual(ambiguous.status, 1);
+      assert.match(ambiguous.stderr, /choose exactly one/u);
     }
   });
 
@@ -2465,13 +2526,16 @@ describe("run receipt CLI", () => {
       const shimDir = join(fixtureRoot, "bin");
       mkdirSync(shimDir);
       const argsLog = join(fixtureRoot, "ccusage-args.log");
+      const runnerLog = join(fixtureRoot, "package-runner.log");
       const fixturePayload = join(fixtureRoot, "ccusage-report.json");
       const failureFlag = join(fixtureRoot, "ccusage-fail");
       const quotedArgsLog = `'${argsLog.replaceAll("'", `'"'"'`)}'`;
+      const quotedRunnerLog = `'${runnerLog.replaceAll("'", `'"'"'`)}'`;
       const quotedFixture = `'${fixturePayload.replaceAll("'", `'"'"'`)}'`;
       const quotedFailureFlag = `'${failureFlag.replaceAll("'", `'"'"'`)}'`;
       const shimSource = [
         "#!/bin/sh",
+        `printf '%s\\n' "bun $*" >> ${quotedRunnerLog}`,
         'if [ "$1" = "--version" ]; then',
         "  echo 1.3.14",
         "  exit 0",
@@ -2490,6 +2554,16 @@ describe("run receipt CLI", () => {
       ].join("\n");
       writeFileSync(join(shimDir, "bun"), shimSource);
       chmodSync(join(shimDir, "bun"), 0o755);
+      writeFileSync(
+        join(shimDir, "npx"),
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' "npx $*" >> ${quotedRunnerLog}`,
+          "exit 97",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(join(shimDir, "npx"), 0o755);
 
       const encodedRepo = encodedDirectoryName(repoRoot);
       const environment = {
@@ -2530,6 +2604,23 @@ try {
         "skill-tests",
         "--json",
       ];
+      const unavailableIdentityArguments = [
+        "--repo-root",
+        repoRoot,
+        "--client",
+        "codex",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-5.6-sol",
+        "--json",
+      ];
+      const unavailableArguments = [
+        ...unavailableIdentityArguments,
+        "--lane",
+        "skill-tests-unavailable",
+      ];
+      const stateRoot = join(environment.XDG_CONFIG_HOME, "slop", "runs");
 
       const preview = spawnSync(
         process.execPath,
@@ -2556,9 +2647,26 @@ try {
         previewReport.packageExecutionConsentFlag,
         "--allow-package-execution",
       );
+      assert.strictEqual(
+        previewReport.usageUnavailableFlag,
+        "--usage-unavailable",
+      );
+      assert.match(
+        previewReport.usageReadDisclosure,
+        /invokes no package manager.*reads no usage logs.*signed zero.*forfeits.*bonus/u,
+      );
+      assert.match(
+        previewReport.network.join("\n"),
+        /https:\/\/slop\.cash\/projects\/eliza\/terms\.json.*digest-bound LICENSE.*raw\.githubusercontent\.com/su,
+      );
+      assert.match(
+        previewReport.usageReadDisclosure,
+        /policy checks and trace networking remain/u,
+      );
       assert.match(previewReport.linkabilityDisclosure, /link receipts/u);
       assert.match(previewReport.localReads.join("\n"), /claude.*projects/is);
       assert.strictEqual(existsSync(argsLog), false);
+      assert.strictEqual(existsSync(runnerLog), false);
       assert.strictEqual(existsSync(join(fixtureRoot, "config")), false);
 
       const missingDoctorConsent = spawnSync(
@@ -2581,9 +2689,148 @@ try {
       assert.strictEqual(missingDoctorConsent.status, 1);
       assert.match(
         missingDoctorConsent.stderr,
-        /requires --allow-package-execution/u,
+        /requires exactly one of --allow-package-execution or --usage-unavailable/u,
       );
       assert.strictEqual(existsSync(argsLog), false);
+      assert.strictEqual(existsSync(runnerLog), false);
+
+      const ambiguousDoctor = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "doctor",
+          ...unavailableIdentityArguments,
+          "--allow-package-execution",
+          "--usage-unavailable",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(ambiguousDoctor.status, 1);
+      assert.match(ambiguousDoctor.stderr, /choose exactly one/u);
+      assert.strictEqual(existsSync(runnerLog), false);
+
+      const unavailableDoctor = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "doctor",
+          ...unavailableIdentityArguments,
+          "--usage-unavailable",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(
+        unavailableDoctor.status,
+        0,
+        unavailableDoctor.stderr,
+      );
+      const unavailableDoctorReport = JSON.parse(unavailableDoctor.stdout);
+      assert.strictEqual(unavailableDoctorReport.ok, true);
+      assert.deepStrictEqual(unavailableDoctorReport.ccusage, {
+        expectedVersion: "20.0.20",
+        version: null,
+        runner: null,
+        status: "intentional-unavailable",
+        logsRead: false,
+      });
+      assert.match(
+        unavailableDoctorReport.message,
+        /package execution and local usage-log reads are disabled/u,
+      );
+      assert.strictEqual(existsSync(runnerLog), false);
+
+      for (const unsupportedClient of [
+        "custom-agent",
+        "constructor",
+        "toString",
+      ]) {
+        const unsupportedUnavailableDoctor = spawnSync(
+          process.execPath,
+          [
+            entrypoint,
+            "doctor",
+            "--repo-root",
+            repoRoot,
+            "--client",
+            unsupportedClient,
+            "--provider",
+            "custom-provider",
+            "--model",
+            "custom-model",
+            "--usage-unavailable",
+          ],
+          { encoding: "utf8", env: environment },
+        );
+        assert.strictEqual(unsupportedUnavailableDoctor.status, 1);
+        assert.match(
+          unsupportedUnavailableDoctor.stderr,
+          /valid only for a supported usage adapter/u,
+        );
+        assert.strictEqual(existsSync(runnerLog), false);
+      }
+
+      const unavailableStarted = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "start",
+          ...unavailableArguments,
+          "--usage-unavailable",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(
+        unavailableStarted.status,
+        0,
+        unavailableStarted.stderr,
+      );
+      const unavailableStartReport = JSON.parse(unavailableStarted.stdout);
+      assert.strictEqual(unavailableStartReport.usageStatus, "unavailable");
+      const unavailableActivePath = join(
+        stateRoot,
+        "active",
+        `${unavailableStartReport.runId}.json`,
+      );
+      assert.strictEqual(
+        JSON.parse(readFileSync(unavailableActivePath, "utf8")).baseline,
+        null,
+      );
+      assert.strictEqual(existsSync(runnerLog), false);
+      rmSync(unavailableActivePath);
+
+      const unavailableWithLocalConsent = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "start",
+          ...unavailableArguments,
+          "--usage-unavailable",
+          "--allow-local-usage",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(unavailableWithLocalConsent.status, 1);
+      assert.match(
+        unavailableWithLocalConsent.stderr,
+        /--allow-local-usage is not valid with --usage-unavailable/u,
+      );
+      assert.strictEqual(existsSync(runnerLog), false);
+
+      const ambiguousStart = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "start",
+          ...unavailableArguments,
+          "--allow-package-execution",
+          "--usage-unavailable",
+          "--allow-local-usage",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(ambiguousStart.status, 1);
+      assert.match(ambiguousStart.stderr, /choose exactly one/u);
+      assert.strictEqual(existsSync(runnerLog), false);
 
       const doctor = spawnSync(
         process.execPath,
@@ -2603,7 +2850,11 @@ try {
         ],
         { encoding: "utf8", env: environment },
       );
-      assert.strictEqual(doctor.status, 0, doctor.stderr);
+      assert.strictEqual(
+        doctor.status,
+        0,
+        `${doctor.stderr}\n${doctor.stdout}`,
+      );
       const doctorReport = JSON.parse(doctor.stdout);
       assert.strictEqual(doctorReport.ccusage.version, "20.0.20");
       assert.strictEqual(doctorReport.ccusage.logsRead, false);
@@ -2613,7 +2864,12 @@ try {
 
       const missingConsent = spawnSync(
         process.execPath,
-        [entrypoint, "start", ...cliArguments],
+        [
+          entrypoint,
+          "start",
+          ...cliArguments,
+          "--allow-package-execution",
+        ],
         { encoding: "utf8", env: environment },
       );
       assert.strictEqual(missingConsent.status, 1, missingConsent.stdout);
@@ -2623,7 +2879,6 @@ try {
         1,
       );
 
-      const stateRoot = join(environment.XDG_CONFIG_HOME, "slop", "runs");
       writeFileSync(
         fixturePayload,
         JSON.stringify({
@@ -2806,6 +3061,173 @@ try {
         "--trace-object-id",
         `sha256:${trajectorySha256}`,
       ];
+      const expectedUnavailableUsage = {
+        source: "ccusage-session-v20",
+        confidence: "unavailable",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        totalTokens: 0,
+        costMicroUsd: "0",
+        sessionCount: 0,
+      };
+      const measuredBeforeUnavailableFinish = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "start",
+          ...cliArguments,
+          "--allow-package-execution",
+          "--allow-local-usage",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(
+        measuredBeforeUnavailableFinish.status,
+        0,
+        measuredBeforeUnavailableFinish.stderr,
+      );
+      const measuredBeforeUnavailableFinishId = JSON.parse(
+        measuredBeforeUnavailableFinish.stdout,
+      ).runId;
+      const measuredBeforeUnavailableFinishState = JSON.parse(
+        readFileSync(
+          join(
+            stateRoot,
+            "active",
+            `${measuredBeforeUnavailableFinishId}.json`,
+          ),
+          "utf8",
+        ),
+      );
+      assert.notStrictEqual(
+        measuredBeforeUnavailableFinishState.baseline,
+        null,
+      );
+      const runnerLogBeforeDowngrade = readFileSync(runnerLog, "utf8");
+      const argsLogBeforeDowngrade = readFileSync(argsLog, "utf8");
+      const unavailableDowngrade = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...cliArguments,
+          "--run",
+          measuredBeforeUnavailableFinishId,
+          "--trajectory",
+          trajectoryPath,
+          ...traceArguments,
+          "--usage-unavailable",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(
+        unavailableDowngrade.status,
+        0,
+        unavailableDowngrade.stderr,
+      );
+      assert.deepStrictEqual(
+        JSON.parse(unavailableDowngrade.stdout).receipt.usage,
+        expectedUnavailableUsage,
+      );
+      assert.strictEqual(
+        readFileSync(runnerLog, "utf8"),
+        runnerLogBeforeDowngrade,
+      );
+      assert.strictEqual(
+        readFileSync(argsLog, "utf8"),
+        argsLogBeforeDowngrade,
+      );
+      rmSync(
+        join(
+          stateRoot,
+          "completed",
+          `${measuredBeforeUnavailableFinishId}.json`,
+        ),
+      );
+
+      const runnerLogBeforeUnavailable = readFileSync(runnerLog, "utf8");
+      const argsLogBeforeUnavailable = readFileSync(argsLog, "utf8");
+      const unavailableRestarted = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "start",
+          ...unavailableArguments,
+          "--usage-unavailable",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(
+        unavailableRestarted.status,
+        0,
+        unavailableRestarted.stderr,
+      );
+      const unavailableRunId = JSON.parse(unavailableRestarted.stdout).runId;
+      const unavailableFinished = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...unavailableArguments,
+          "--run",
+          unavailableRunId,
+          "--trajectory",
+          trajectoryPath,
+          ...traceArguments,
+          "--usage-unavailable",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(
+        unavailableFinished.status,
+        0,
+        unavailableFinished.stderr,
+      );
+      const unavailableFinishReport = JSON.parse(unavailableFinished.stdout);
+      assert.deepStrictEqual(
+        unavailableFinishReport.receipt.usage,
+        expectedUnavailableUsage,
+      );
+      assert.match(
+        unavailableFinishReport.footer,
+        /Compute receipt: 0 project-attributed tokens \(unavailable;/u,
+      );
+      const unavailableReplay = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...unavailableArguments,
+          "--run",
+          unavailableRunId,
+          "--trajectory",
+          trajectoryPath,
+          ...traceArguments,
+          "--usage-unavailable",
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(
+        unavailableReplay.status,
+        0,
+        unavailableReplay.stderr,
+      );
+      assert.strictEqual(
+        JSON.parse(unavailableReplay.stdout).footer,
+        unavailableFinishReport.footer,
+      );
+      assert.strictEqual(
+        readFileSync(runnerLog, "utf8"),
+        runnerLogBeforeUnavailable,
+      );
+      assert.strictEqual(
+        readFileSync(argsLog, "utf8"),
+        argsLogBeforeUnavailable,
+      );
+      rmSync(join(stateRoot, "completed", `${unavailableRunId}.json`));
+
       const finished = spawnSync(
         process.execPath,
         [
@@ -3217,6 +3639,7 @@ try {
       );
       const npxShimSource = [
         "#!/bin/sh",
+        `printf '%s\\n' "npx $*" >> ${quotedRunnerLog}`,
         'if [ "$1" = "--version" ]; then',
         "  echo 11.0.0",
         "  exit 0",
