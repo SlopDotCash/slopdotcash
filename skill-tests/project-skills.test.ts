@@ -78,6 +78,11 @@ describe("project skill contracts", () => {
       assert.match(source, /run-receipt\.mjs preview/u);
       assert.match(source, /run-receipt\.mjs doctor/u);
       assert.match(source, /--allow-local-usage/u);
+      assert.match(source, /--usage-unavailable/u);
+      assert.match(
+        source,
+        /invokes no package manager.*reads no usage logs.*usage evidence is diagnostic.*never changes score/is,
+      );
       assert.match(source, /--trajectory <path>/u);
       assert.match(source, /permanent\s+private\s+upload/u);
       assert.match(
@@ -386,6 +391,15 @@ describe("project skill contracts", () => {
           project.skill.id,
         );
         assert.match(result.stdout, /preview[\s\S]+doctor[\s\S]+status/u);
+        assert.match(result.stdout, /--usage-unavailable/u);
+        assert.match(
+          result.stdout,
+          /exactly one:[\s\S]+--allow-package-execution[\s\S]+--usage-unavailable/u,
+        );
+        assert.match(
+          result.stdout,
+          /signed zero-usage receipt; usage never affects scoring/u,
+        );
         const reportResult = spawnSync(
           process.execPath,
           [join(installedSkill, "scripts", "live-report.mjs"), "--help"],
