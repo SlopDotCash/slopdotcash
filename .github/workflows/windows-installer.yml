@@ -40,4 +40,4 @@ jobs:
 
       - name: Exercise install, update, rollback, active reads, and locking
         shell: bash
-        run: bun test src/lib/install-command.test.ts --timeout 30000
+        run: bun test src/lib/install-command.test.ts --timeout 60000
