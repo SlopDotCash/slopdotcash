@@ -1,0 +1,44 @@
+name: Windows installer contract
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - ".github/workflows/windows-installer.yml"
+      - "src/lib/install-command.ts"
+      - "src/lib/install-command.test.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    name: Native Windows installer lifecycle
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pull request revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install frozen dependencies without lifecycle scripts
+        shell: bash
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Exercise install, update, rollback, active reads, and locking
+        shell: bash
+        # Bun's default is a five-second per-test ceiling; zero disables it.
+        run: bun test src/lib/install-command.test.ts --timeout 0

@@ -92,6 +92,7 @@ export function createInstallCommand(
   trap 'exit 1' HUP INT TERM
   python3 - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} <<'PY'
 import binascii
+import ctypes
 import hashlib
 import io
 import json
@@ -109,7 +110,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 import zlib
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path = sys.argv[1:]
 repository = "elizaOS/slopdotcash"
@@ -852,7 +853,7 @@ def current_install():
     if not os.path.islink(target_path):
         raise ValueError("existing skill target is not an installer-managed symlink")
     link = os.readlink(target_path)
-    parts = PurePosixPath(link).parts
+    parts = Path(link).parts
     if len(parts) != 2 or parts[0] != versions_name:
         raise ValueError("existing skill target points outside the managed version store")
     revision = require_sha(parts[1], "installed skill link revision")
@@ -864,15 +865,98 @@ def current_install():
     return revision, version_path
 
 
+def replace_symlink_atomically(source, destination):
+    if os.name != "nt":
+        os.replace(source, destination)
+        return
+
+    # os.replace cannot replace an existing directory symlink on Windows.
+    # FileRenameInfoEx with replace and POSIX semantics keeps the name switch
+    # atomic while preserving already-open handles to the prior link.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
+    create_file.restype = ctypes.c_void_p
+    set_information = kernel32.SetFileInformationByHandle
+    set_information.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    ]
+    set_information.restype = ctypes.c_int
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [ctypes.c_void_p]
+    close_handle.restype = ctypes.c_int
+
+    delete_access = 0x00010000
+    share_read_write_delete = 0x00000001 | 0x00000002 | 0x00000004
+    open_existing = 3
+    open_reparse_point = 0x00200000
+    backup_semantics = 0x02000000
+    handle = create_file(
+        source,
+        delete_access,
+        share_read_write_delete,
+        None,
+        open_existing,
+        open_reparse_point | backup_semantics,
+        None,
+    )
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        encoded_destination = os.path.abspath(destination).encode("utf-16-le")
+        root_offset = 8 if ctypes.sizeof(ctypes.c_void_p) == 8 else 4
+        name_length_offset = root_offset + ctypes.sizeof(ctypes.c_void_p)
+        header_size = name_length_offset + 4
+        information = ctypes.create_string_buffer(
+            header_size + len(encoded_destination) + 2
+        )
+        file_rename_replace_if_exists = 0x00000001
+        file_rename_posix_semantics = 0x00000002
+        struct.pack_into(
+            "I",
+            information,
+            0,
+            file_rename_replace_if_exists | file_rename_posix_semantics,
+        )
+        struct.pack_into("P", information, root_offset, 0)
+        struct.pack_into("I", information, name_length_offset, len(encoded_destination))
+        ctypes.memmove(
+            ctypes.addressof(information) + header_size,
+            encoded_destination,
+            len(encoded_destination),
+        )
+        file_rename_info_ex = 22
+        if not set_information(
+            handle,
+            file_rename_info_ex,
+            information,
+            len(information),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        close_handle(handle)
+
+
 def activate(revision):
-    relative_target = f"{versions_name}/{revision}"
+    relative_target = os.path.join(versions_name, revision)
     temporary_link = os.path.join(
         skills_root,
         f".{skill_name}-link-{secrets.token_hex(8)}",
     )
-    os.symlink(relative_target, temporary_link)
+    os.symlink(relative_target, temporary_link, target_is_directory=True)
     try:
-        os.replace(temporary_link, target_path)
+        replace_symlink_atomically(temporary_link, target_path)
     finally:
         if os.path.lexists(temporary_link):
             os.unlink(temporary_link)
@@ -942,6 +1026,12 @@ def install_or_update():
         else:
             os.replace(staged_skill, version_path)
         activate(revision)
+        activated = current_install()
+        if activated is None:
+            raise ValueError("activated skill target is missing")
+        if activated[0] != revision:
+            raise ValueError("activated skill target has the wrong revision")
+        verify_local_version(activated[1], revision, canonical_files)
         action = "Installed" if installed is None else "Updated"
         print(f"{action} {skill_name} at verified revision {revision}.")
     finally:
@@ -966,6 +1056,12 @@ def rollback():
         print(f"{skill_name} is already verified at {revision}; no changes made.")
         return
     activate(revision)
+    activated = current_install()
+    if activated is None:
+        raise ValueError("activated rollback target is missing")
+    if activated[0] != revision:
+        raise ValueError("activated rollback target has the wrong revision")
+    verify_local_version(activated[1], revision, retained_files)
     print(f"Rolled back {skill_name} to currently authorized retained revision {revision}.")
 
 
