@@ -37,9 +37,17 @@
     "revision": "2026-08-18.1",
     "effectiveAt": "2026-08-18T22:43:17.000Z",
     "receiptPolicy": {
-      "state": "pending-authority-activation",
-      "activatedAt": null,
-      "bindings": []
+      "state": "active",
+      "activatedAt": "2026-08-18T22:43:17.000Z",
+      "bindings": [
+        {
+          "policyRevision": "2026-08-18.1",
+          "activatedAt": "2026-08-18T22:43:17.000Z",
+          "licenseSha256": "c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851",
+          "inboundTermsSha256": null,
+          "prizeRulesSha256": null
+        }
+      ]
     },
     "paymentTransfersIp": false,
     "retroactive": false,
