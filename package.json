@@ -37,10 +37,10 @@
     "test:e2e": "node scripts/run-e2e.mjs",
     "test:e2e:record": "node scripts/record-evidence.mjs --local",
     "test:e2e:record:production": "node scripts/record-evidence.mjs --production",
-    "lint": "bunx @biomejs/biome check --write --unsafe .",
-    "lint:check": "bunx @biomejs/biome check .",
-    "format": "bunx @biomejs/biome format --write .",
-    "format:check": "bunx @biomejs/biome format .",
+    "lint": "bun x @biomejs/biome check --write --unsafe .",
+    "lint:check": "bun x @biomejs/biome check .",
+    "format": "bun x @biomejs/biome format --write .",
+    "format:check": "bun x @biomejs/biome format .",
     "clean": "node scripts/rm-path-recursive.mjs dist"
   },
   "dependencies": {
