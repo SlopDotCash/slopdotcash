@@ -113,7 +113,7 @@ For a configured usage adapter, doctor, start, and finish require exactly one:
   --usage-unavailable       Skip package execution and all usage-log reads
 
 Measured starts also require --allow-local-usage after preview. Unavailable
-starts omit it and produce a signed zero-usage receipt without the usage bonus.
+starts omit it and produce a signed zero-usage receipt; usage never affects scoring.
 `;
 
 function fail(message) {
@@ -2169,7 +2169,7 @@ function previewRun(options) {
     packageExecutionConsentFlag: "--allow-package-execution",
     usageUnavailableFlag: "--usage-unavailable",
     usageReadDisclosure:
-      "--usage-unavailable invokes no package manager and reads no usage logs, but policy checks and trace networking remain; it records signed zero/unavailable usage and forfeits the usage evidence bonus.",
+      "--usage-unavailable invokes no package manager and reads no usage logs, but policy checks and trace networking remain; it records signed zero/unavailable usage, and usage never affects scoring.",
     localStateDisclosure:
       "Active baselines retain aggregate counters and SHA-256 session identifiers until finish.",
     linkabilityDisclosure:

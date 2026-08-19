@@ -81,7 +81,7 @@ describe("project skill contracts", () => {
       assert.match(source, /--usage-unavailable/u);
       assert.match(
         source,
-        /invokes no package manager.*reads no usage logs.*forfeits the usage evidence bonus/is,
+        /invokes no package manager.*reads no usage logs.*usage evidence is diagnostic.*never changes score/is,
       );
       assert.match(source, /--trajectory <path>/u);
       assert.match(source, /permanent\s+private\s+upload/u);
@@ -398,7 +398,7 @@ describe("project skill contracts", () => {
         );
         assert.match(
           result.stdout,
-          /signed zero-usage receipt without the usage bonus/u,
+          /signed zero-usage receipt; usage never affects scoring/u,
         );
         const reportResult = spawnSync(
           process.execPath,

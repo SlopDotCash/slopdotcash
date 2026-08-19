@@ -2651,7 +2651,7 @@ try {
       );
       assert.match(
         previewReport.usageReadDisclosure,
-        /invokes no package manager.*reads no usage logs.*signed zero.*forfeits.*bonus/u,
+        /invokes no package manager.*reads no usage logs.*signed zero.*usage never affects scoring/u,
       );
       assert.match(
         previewReport.network.join("\n"),
