@@ -40,7 +40,7 @@ function receipt(
     provider: "openai",
     model: "gpt-5.6-sol",
     client: "codex",
-    skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
+    skillRevision: `SlopDotCash/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
     skillSha256: "b".repeat(64),
     usage: {
       source: "ccusage-session-v20",
@@ -155,7 +155,7 @@ describe("project views", () => {
           kind: "pull-request",
           number: 99,
           title: "Proximity Prize open checklist",
-          url: "https://github.com/elizaOS/proximityprize/pull/99",
+          url: "https://github.com/SlopDotCash/proximityprize/pull/99",
         },
         reason:
           "Open pull request evidence is partial with 2 of 6 points verified.",
@@ -328,8 +328,8 @@ describe("project views", () => {
     const deltaRun = receipt({
       runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAW",
       projectId: "delta-star",
-      repositoryId: "elizaOS/proximityprize",
-      skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-delta-star`,
+      repositoryId: "SlopDotCash/proximityprize",
+      skillRevision: `SlopDotCash/slopdotcash@${"a".repeat(40)}:skills/contribute-to-delta-star`,
       deviceSignature: "g".repeat(86),
     });
     snapshot.attributions.push(

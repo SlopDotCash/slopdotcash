@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const REPOSITORY = "elizaOS/slopdotcash";
+const REPOSITORY = "SlopDotCash/slopdotcash";
 const SKILL_PATH = "skills/contribute-to-eliza";
 
 export interface AuthorityRevision {

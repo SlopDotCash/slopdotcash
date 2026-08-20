@@ -213,7 +213,7 @@ function reviewAttribution(
     provider: "x-ai/hosted+edge",
     model: "accounts/x/models/grok-4.5+reasoning",
     client: "grok-build+acp",
-    skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
+    skillRevision: `SlopDotCash/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
     skillSha256: "c".repeat(64),
     usage: {
       source: "none",
@@ -732,8 +732,8 @@ describe("score v2 work units", () => {
   it("rejects a signed receipt replayed onto an outcome in another repository", () => {
     const body = reviewAttribution({
       projectId: "asi",
-      repositoryId: "elizaOS/asi",
-      skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-asi`,
+      repositoryId: "SlopDotCash/asi",
+      skillRevision: `SlopDotCash/slopdotcash@${"a".repeat(40)}:skills/contribute-to-asi`,
     }).replace(/^Findings: none\.\n\n```slop-review\n[^\n]+\n```\n\n/u, "");
     const pr = pullRequest({
       createdAt: "2026-08-17T08:00:00.000Z",
@@ -1859,7 +1859,7 @@ describe("scoring and limits", () => {
       evaluation: {
         reviewer: "maintainer",
         reviewedAt: "2026-07-29T10:00:00.000Z",
-        decisionUrl: "https://github.com/elizaOS/army/pull/99",
+        decisionUrl: "https://github.com/SlopDotCash/slopdotcash/pull/99",
         manifestPath: `evaluations/eliza/award-partial-${index}.json`,
         manifestSha256: String(index).padStart(64, "a"),
       },
@@ -2408,7 +2408,7 @@ describe("scoring and limits", () => {
         number: 700 + index,
         author: contributor,
         mergedAt: "2026-07-30T11:00:00.000Z",
-        url: `https://github.com/elizaOS/proximityprize/pull/${700 + index}`,
+        url: `https://github.com/SlopDotCash/proximityprize/pull/${700 + index}`,
       }),
     );
 
@@ -2450,7 +2450,7 @@ describe("scoring and limits", () => {
       closedAt: null,
       stateReason: null,
       labels: [{ id: "LABEL_READY", name: "help wanted", color: "fff" }],
-      url: "https://github.com/elizaOS/proximityprize/issues/12",
+      url: "https://github.com/SlopDotCash/proximityprize/issues/12",
     });
     const snapshot = createLeaderboardSnapshot(
       input({

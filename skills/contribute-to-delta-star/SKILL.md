@@ -48,7 +48,7 @@ acknowledgement after a policy change. Organizer rules remain controlling.
    access, reuse their existing fork or obtain explicit authorization before
    creating one. Do not fork when an upstream branch is authorized. A
    contributor may manually star `SlopDotCash/proximityprize` and
-   `elizaOS/slopdotcash` if they genuinely want to support them; stars are
+   `SlopDotCash/slopdotcash` if they genuinely want to support them; stars are
    optional, never automated, never verified, and never scored or paid.
 3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)
    before choosing a proof or validation strategy.

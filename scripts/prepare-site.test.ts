@@ -311,7 +311,7 @@ beforeAll(() => {
       {
         schemaVersion: "1",
         name: "contribute-to-eliza",
-        repository: "elizaOS/slopdotcash",
+        repository: "SlopDotCash/slopdotcash",
         revision,
         revisionStatus: "committed",
         source: {
@@ -530,7 +530,7 @@ describe("contribution skill package", () => {
     expect(archive.provenance).toMatchObject({
       schemaVersion: "1",
       name: "contribute-to-eliza",
-      repository: "elizaOS/slopdotcash",
+      repository: "SlopDotCash/slopdotcash",
       revision: sourceStatus.length === 0 ? head : null,
       revisionStatus: sourceStatus.length === 0 ? "committed" : "working-tree",
       source: {
@@ -615,12 +615,12 @@ describe("contribution skill package", () => {
     expect(manifest).toMatchObject({
       schemaVersion: "1",
       name: "contribute-to-eliza",
-      repository: "elizaOS/slopdotcash",
+      repository: "SlopDotCash/slopdotcash",
       archive: { sha256: sha256(archive) },
       source: {
         sha256: sha256(skill),
         path: "skills/contribute-to-eliza/SKILL.md",
-        url: `https://github.com/elizaOS/slopdotcash/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
+        url: `https://github.com/SlopDotCash/slopdotcash/blob/${head}/skills/contribute-to-eliza/SKILL.md`,
         publicUrl: "https://slop.cash/projects/eliza/skill.md",
       },
       provenance: {
@@ -650,7 +650,7 @@ describe("contribution skill package", () => {
     const rendererCommitted = rendererSourceStatus.length === 0;
     const expectedRenderer = {
       entrypoint: "scripts/render-install-guide.mjs",
-      repository: "elizaOS/slopdotcash",
+      repository: "SlopDotCash/slopdotcash",
       revision: rendererCommitted ? head : null,
       revisionStatus: rendererCommitted ? "committed" : "working-tree",
       paths: ["scripts/render-install-guide.mjs", "src/lib/install-command.ts"],
@@ -832,7 +832,7 @@ describe("contribution skill package", () => {
         }
         expect(renderer).toMatchObject({
           entrypoint: "scripts/render-install-guide.mjs",
-          repository: "elizaOS/slopdotcash",
+          repository: "SlopDotCash/slopdotcash",
           paths: [
             "scripts/render-install-guide.mjs",
             "src/lib/install-command.ts",
@@ -906,7 +906,7 @@ describe("contribution skill package", () => {
       );
       expect(reviewManifest).toMatchObject({
         name: project.reviewSkill.id,
-        repository: "elizaOS/slopdotcash",
+        repository: "SlopDotCash/slopdotcash",
         source: { path: `${project.reviewSkill.sourcePath}/SKILL.md` },
         review: {
           policy:
@@ -1300,7 +1300,7 @@ provenance = (
         {
             "schemaVersion": "1",
             "name": "contribute-to-eliza",
-            "repository": "elizaOS/slopdotcash",
+            "repository": "SlopDotCash/slopdotcash",
             "revision": None,
             "revisionStatus": "working-tree",
             "source": {

@@ -133,7 +133,7 @@ function validProofReview(review, config) {
     marker.run?.signature_algorithm === "ed25519" &&
     typeof marker.run?.device_public_key === "string" &&
     typeof marker.run?.device_signature === "string" &&
-    marker.skill_revision?.startsWith("elizaOS/slopdotcash@")
+    marker.skill_revision?.startsWith("SlopDotCash/slopdotcash@")
   );
 }
 

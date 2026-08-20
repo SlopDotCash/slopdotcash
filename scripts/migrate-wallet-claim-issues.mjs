@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { PROJECTS } from "../src/lib/projects.mjs";
 import { parsePublishedWallet } from "../src/lib/wallets.ts";
 
-const REPOSITORY = "elizaOS/slopdotcash";
+const REPOSITORY = "SlopDotCash/slopdotcash";
 const API_ORIGIN = "https://api.slop.cash";
 const TITLE = "Slop wallet claim";
 const MAX_CLAIMS = 100;

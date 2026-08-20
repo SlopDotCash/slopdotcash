@@ -52,7 +52,7 @@ acknowledgement after a policy change.
    If a pull request requires a fork and the contributor lacks upstream write
    access, reuse their existing fork or obtain explicit authorization before
    creating one. Do not fork when an upstream branch is authorized. A
-   contributor may manually star `heirlabs/element-sdk` and `elizaOS/slopdotcash`
+   contributor may manually star `heirlabs/element-sdk` and `SlopDotCash/slopdotcash`
    if they genuinely want to support them; stars are optional, never automated,
    never verified, and never scored or paid.
 3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)

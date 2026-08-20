@@ -30,7 +30,7 @@ function fixture() {
       },
       installerAuthorization: {
         legacy: ".gitarmy-authorization.json@elizaOS/army",
-        slop: ".slop-authorization.json@elizaOS/slopdotcash",
+        slop: ".slop-authorization.json@SlopDotCash/slopdotcash",
       },
       localRunState: { legacy: "gitarmy", slop: "slop" },
       releaseLabel: {
@@ -41,7 +41,7 @@ function fixture() {
       scoreRule: { legacy: "gitarmy-v1", slop: "slop-score-v1" },
       sourceRepository: {
         legacy: "elizaOS/army",
-        slop: "elizaOS/slopdotcash",
+        slop: "SlopDotCash/slopdotcash",
       },
       walletMarker: {
         legacy: "gitarmy-wallet:v1",

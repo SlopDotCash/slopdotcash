@@ -11,11 +11,11 @@
     "displayName": "Proximity Prize contributors",
     "kind": "collective",
     "github": {
-      "actorId": "186240462",
-      "nodeId": "O_kgDOCxnNzg",
-      "login": "elizaOS",
+      "actorId": "318901292",
+      "nodeId": "O_kgDOEwIMLA",
+      "login": "SlopDotCash",
       "type": "Organization",
-      "profileUrl": "https://github.com/elizaOS"
+      "profileUrl": "https://github.com/SlopDotCash"
     },
     "website": "https://proximityprize.org"
   },
@@ -26,16 +26,16 @@
     "repositoryId": "1334780197",
     "repositoryNodeId": "R_kgDOT48hJQ",
     "proof": {
-      "commitSha": "983069a332de36fd3d6ef6f33fccadafa01b0ff5",
-      "fileSha256": "abdb52a7d55de5b84252b8ce70a6d1bf57030cfa66dc509a5b44fe813edc3447",
-      "policyRevision": "2026-08-18.1",
-      "url": "https://github.com/elizaOS/proximityprize/blob/983069a332de36fd3d6ef6f33fccadafa01b0ff5/.github/slop-project.json",
+      "commitSha": "acfa4f072d0c7fe8e706c80d8e21cb5b083f73a6",
+      "fileSha256": "0e963b4212a6330f2aad0ccd43730485704b1494bf40ff00b469671426c87774",
+      "policyRevision": "2026-08-20.1",
+      "url": "https://github.com/SlopDotCash/proximityprize/blob/acfa4f072d0c7fe8e706c80d8e21cb5b083f73a6/.github/slop-project.json",
       "verifiedAt": "2026-08-18T22:43:17.000Z"
     }
   },
   "terms": {
-    "revision": "2026-08-18.1",
-    "effectiveAt": "2026-08-18T22:43:17.000Z",
+    "revision": "2026-08-20.1",
+    "effectiveAt": "2026-08-20T09:17:02.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
       "activatedAt": null,
@@ -53,7 +53,7 @@
     "repositoryLicense": {
       "state": "verified",
       "spdx": "Apache-2.0",
-      "url": "https://github.com/elizaOS/proximityprize/blob/b72890393a68745ecc43f6b39470509b630c7192/LICENSE",
+      "url": "https://github.com/SlopDotCash/proximityprize/blob/b72890393a68745ecc43f6b39470509b630c7192/LICENSE",
       "commitSha": "b72890393a68745ecc43f6b39470509b630c7192",
       "fileSha256": "c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851"
     },

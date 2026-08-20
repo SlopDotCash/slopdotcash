@@ -89,7 +89,7 @@ describe("project skill contracts", () => {
         source,
         /https:\/\/slop\.cash\/protocol\/private-trace-v1\.md/u,
       );
-      assert.match(source, /elizaOS\/slopdotcash/u);
+      assert.match(source, /SlopDotCash\/slopdotcash/u);
       assert.match(source, /gh auth status --hostname github\.com/u);
       assert.match(source, /gh api user --jq '\.login'/u);
       assert.match(source, /upstream\s+permission/is);
@@ -255,7 +255,10 @@ describe("project skill contracts", () => {
         readFileSync(join(contributorRoot, "project.json"), "utf8"),
       );
       assert.strictEqual(skillProject.projectId, project.id);
-      assert.strictEqual(skillProject.repositoryId, project.repositories[0].id);
+      assert.strictEqual(
+        skillProject.repositoryId,
+        new URL(project.repositories[0].githubUrl).pathname.replace(/^\//u, ""),
+      );
       assert.strictEqual(skillProject.skillName, project.skill.id);
       assert.strictEqual(skillProject.policyAuthority, "https://slop.cash");
       if (project.id === "eliza") {
@@ -836,7 +839,7 @@ describe("project run usage", () => {
       );
       assert.strictEqual(
         calls[0].url,
-        "https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting",
+        "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
       );
       assert.strictEqual(calls[0].options.method, "GET");
       assert.strictEqual(
@@ -895,7 +898,7 @@ describe("project run usage", () => {
       );
       assert.strictEqual(authorizationStarted, false);
       assert.deepStrictEqual(requests, [
-        "https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting",
+        "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
       ]);
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });

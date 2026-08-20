@@ -304,7 +304,8 @@ async function createFallbackWalletClaim(
   const source =
     body.source === "github_issue" ? "github_issue" : "d1_registry";
   const issueRepository =
-    source === "github_issue" && body.issueRepository === "elizaOS/slopdotcash"
+    source === "github_issue" &&
+    body.issueRepository === "SlopDotCash/slopdotcash"
       ? body.issueRepository
       : null;
   const issueNumber =

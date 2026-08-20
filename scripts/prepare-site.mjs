@@ -78,7 +78,7 @@ const archiveName = `${rootSkillName}.skill`;
 const archivePath = join(downloadsRoot, archiveName);
 const sourcePath = `${skillRepositoryPath}/SKILL.md`;
 const publicSiteOrigin = "https://slop.cash";
-const sourceRepository = "elizaOS/slopdotcash";
+const sourceRepository = "SlopDotCash/slopdotcash";
 
 function sha256(contents) {
   return createHash("sha256").update(contents).digest("hex");
@@ -366,7 +366,7 @@ try {
       {
         schemaVersion: "1",
         name: rootSkillName,
-        repository: "elizaOS/slopdotcash",
+        repository: "SlopDotCash/slopdotcash",
         revision: sourceRevisionStatus === "committed" ? commit : null,
         revisionStatus: sourceRevisionStatus,
         source: {
@@ -531,13 +531,13 @@ function guideRecord({
 const manifest = {
   schemaVersion: "1",
   name: rootSkillName,
-  repository: "elizaOS/slopdotcash",
+  repository: "SlopDotCash/slopdotcash",
   revision: commit,
   revisionStatus: sourceRevisionStatus,
   generatedAt: new Date().toISOString(),
   source: {
     path: sourcePath,
-    url: `https://github.com/elizaOS/slopdotcash/blob/${commit}/${sourcePath}`,
+    url: `https://github.com/SlopDotCash/slopdotcash/blob/${commit}/${sourcePath}`,
     publicUrl: `${publicSiteOrigin}/projects/${rootProjectId}/skill.md`,
     sha256: skillDigest,
   },
@@ -741,7 +741,7 @@ function publishAdditionalProject({
         {
           schemaVersion: "1",
           name,
-          repository: "elizaOS/slopdotcash",
+          repository: "SlopDotCash/slopdotcash",
           revision: revisionStatus === "committed" ? commit : null,
           revisionStatus,
           source: { path: sourcePath, sha256: sha256(skillBytes) },
@@ -810,13 +810,13 @@ function publishAdditionalProject({
   const additionalManifest = {
     schemaVersion: "1",
     name,
-    repository: "elizaOS/slopdotcash",
+    repository: "SlopDotCash/slopdotcash",
     revision: commit,
     revisionStatus,
     generatedAt: new Date().toISOString(),
     source: {
       path: sourcePath,
-      url: `https://github.com/elizaOS/slopdotcash/blob/${commit}/${sourcePath}`,
+      url: `https://github.com/SlopDotCash/slopdotcash/blob/${commit}/${sourcePath}`,
       publicUrl: `${publicSiteOrigin}/projects/${id}/${publicationPrefix}skill.md`,
       sha256: sha256(skillBytes),
     },

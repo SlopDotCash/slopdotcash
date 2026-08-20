@@ -47,7 +47,7 @@ acknowledgement time. Never reuse an acknowledgement after a policy change.
    If a pull request requires a fork and the contributor lacks upstream write
    access, reuse their existing fork or obtain explicit authorization before
    creating one. Do not fork when an upstream branch is authorized. A
-   contributor may manually star `elizaOS/eliza` and `elizaOS/slopdotcash` if
+   contributor may manually star `elizaOS/eliza` and `SlopDotCash/slopdotcash` if
    they genuinely want to support them; stars are optional, never automated,
    never verified, and never scored or paid.
 3. Read [mission-priorities.md](references/mission-priorities.md) and reject

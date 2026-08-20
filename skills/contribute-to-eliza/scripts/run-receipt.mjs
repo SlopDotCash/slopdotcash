@@ -83,7 +83,7 @@ const TRACE_AUTHORITY = "https://api.slop.cash";
 const IDENTITY_AUTHORITY = "https://identity.slop.cash";
 const TRACE_PRIVACY_CONTRACT = "https://slop.cash/protocol/private-trace-v1.md";
 const PRIVATE_REQUEST_INTAKE_STATUS =
-  "https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting";
+  "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting";
 
 const HELP = `Usage: node scripts/run-receipt.mjs <command> [options]
 
@@ -819,7 +819,7 @@ function validateActiveRecord(value) {
     canonicalIso(value.startedAt) !== value.startedAt ||
     !/^[0-9a-f]{40}$/u.test(value.revision ?? "") ||
     value.skillRevision !==
-      `elizaOS/slopdotcash@${value.revision}:${PROJECT.skillSourcePath}` ||
+      `SlopDotCash/slopdotcash@${value.revision}:${PROJECT.skillSourcePath}` ||
     !SHA_PATTERN.test(value.skillSha256 ?? "")
   ) {
     fail("active run state has an invalid identity");
@@ -937,7 +937,7 @@ function resolveSkillProvenance() {
     if (
       provenance?.schemaVersion !== "1" ||
       provenance?.name !== PROJECT.skillName ||
-      provenance?.repository !== "elizaOS/slopdotcash" ||
+      provenance?.repository !== "SlopDotCash/slopdotcash" ||
       provenance?.revisionStatus !== "committed" ||
       !/^[0-9a-f]{40}$/u.test(provenance?.revision) ||
       provenance?.source?.path !== `${PROJECT.skillSourcePath}/SKILL.md` ||
@@ -991,7 +991,7 @@ function resolveSkillProvenance() {
     }
     return {
       revision: provenance.revision,
-      skillRevision: `elizaOS/slopdotcash@${provenance.revision}:${PROJECT.skillSourcePath}`,
+      skillRevision: `SlopDotCash/slopdotcash@${provenance.revision}:${PROJECT.skillSourcePath}`,
       skillSha256: digest,
     };
   }
@@ -1023,7 +1023,7 @@ function resolveSkillProvenance() {
   ]);
   return {
     revision,
-    skillRevision: `elizaOS/slopdotcash@${revision}:${relativeSkill}`,
+    skillRevision: `SlopDotCash/slopdotcash@${revision}:${relativeSkill}`,
     skillSha256: digest,
   };
 }
@@ -1049,7 +1049,7 @@ function validateAuthorizationReceipt(revision) {
   }
   if (
     receipt?.schemaVersion !== "1" ||
-    receipt?.repository !== "elizaOS/slopdotcash" ||
+    receipt?.repository !== "SlopDotCash/slopdotcash" ||
     receipt?.revision !== revision ||
     !receipt.authorization ||
     typeof receipt.authorization !== "object" ||
@@ -1077,7 +1077,7 @@ function validateAuthorizationReceipt(revision) {
   const expectedReceipt = expectedAuthorization
     ? {
         schemaVersion: "1",
-        repository: "elizaOS/slopdotcash",
+        repository: "SlopDotCash/slopdotcash",
         revision,
         authorization: expectedAuthorization,
       }
@@ -1791,7 +1791,7 @@ function validateCompletedRecord(value) {
       }
     })() ||
     !new RegExp(
-      `^elizaOS/(?:slopdotcash|army)@[0-9a-f]{40}:${PROJECT.skillSourcePath.replaceAll("/", "\\/")}$`,
+      `^SlopDotCash/slopdotcash@[0-9a-f]{40}:${PROJECT.skillSourcePath.replaceAll("/", "\\/")}$`,
       "u",
     ).test(receipt.skillRevision ?? "") ||
     canonicalIso(receipt.startedAt) !== receipt.startedAt ||
