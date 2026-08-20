@@ -122,9 +122,7 @@ describe("project skill contracts", () => {
     assert.match(delta, /does not.*guarantee.*dollar/is);
   });
 
-  it("finishes valid issue queues before new work and rejects trivial output", {
-    timeout: 15_000,
-  }, () => {
+  it("finishes valid issue queues before new work and rejects trivial output", () => {
     for (const { project, contributorRoot, reviewerRoot } of projectPackages) {
       const contributor = readFileSync(
         join(contributorRoot, "SKILL.md"),
