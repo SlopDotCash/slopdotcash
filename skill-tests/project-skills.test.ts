@@ -115,12 +115,25 @@ describe("project skill contracts", () => {
       join(root, "skills", "contribute-to-asi", "SKILL.md"),
       "utf8",
     );
+    const asiReview = readFileSync(
+      join(root, "skills", "review-asi-contributions", "SKILL.md"),
+      "utf8",
+    );
+    const deltaReview = readFileSync(
+      join(root, "skills", "review-delta-star-contributions", "SKILL.md"),
+      "utf8",
+    );
     assert.match(eliza, /elizaOS\/eliza/u);
     assert.match(eliza, /review-preflight\.mjs/u);
     assert.match(eliza, /supported-with-documentation-drift/u);
     assert.doesNotMatch(eliza, /lalalune\/ArkLib/u);
     assert.match(asi, /SlopDotCash\/asi/u);
     assert.match(delta, /SlopDotCash\/proximityprize/u);
+    assert.match(asiReview, /github\.com\/SlopDotCash\/asi\/pull\/NUMBER/u);
+    assert.match(
+      deltaReview,
+      /github\.com\/SlopDotCash\/proximityprize\/pull\/NUMBER/u,
+    );
     assert.doesNotMatch(delta, /lalalune\/ArkLib/u);
     assert.match(delta, /sorry.*admit.*axiom/is);
     assert.match(delta, /external Proximity Prize/u);
