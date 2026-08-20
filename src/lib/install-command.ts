@@ -115,6 +115,7 @@ from pathlib import Path, PurePosixPath
 artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path = sys.argv[1:]
 repository = "SlopDotCash/slopdotcash"
 github_repository = "SlopDotCash/slopdotcash"
+legacy_repository = "elizaOS/slopdotcash"
 source_path = f"{skill_repository_path}/SKILL.md"
 release_label = "slop-release-candidate"
 target_path = os.path.join(skills_root, skill_name)
@@ -466,7 +467,9 @@ def remote_skill_bytes(revision):
     return result
 
 
-def validate_provenance(provenance, revision, canonical_files):
+def validate_provenance(
+    provenance, revision, canonical_files, expected_repository=repository
+):
     if not isinstance(provenance, dict) or set(provenance) != {
         "schemaVersion", "name", "repository", "revision", "revisionStatus", "source", "files"
     }:
@@ -474,7 +477,7 @@ def validate_provenance(provenance, revision, canonical_files):
     if (
         provenance.get("schemaVersion") != "1"
         or provenance.get("name") != skill_name
-        or provenance.get("repository") != repository
+        or provenance.get("repository") != expected_repository
         or provenance.get("revisionStatus") != "committed"
         or provenance.get("revision") != revision
     ):
@@ -507,11 +510,13 @@ def validate_provenance(provenance, revision, canonical_files):
         raise ValueError("skill source digest disagrees with GitHub source bytes")
 
 
-def canonical_provenance_bytes(revision, canonical_files):
+def canonical_provenance_bytes(
+    revision, canonical_files, repository_identity=repository
+):
     provenance = {
         "schemaVersion": "1",
         "name": skill_name,
-        "repository": repository,
+        "repository": repository_identity,
         "revision": revision,
         "revisionStatus": "committed",
         "source": {
@@ -526,7 +531,9 @@ def canonical_provenance_bytes(revision, canonical_files):
     return (json.dumps(provenance, indent=2) + "\\n").encode("utf-8")
 
 
-def canonical_authorization_receipt_bytes(revision, authorization):
+def canonical_authorization_receipt_bytes(
+    revision, authorization, repository_identity=repository
+):
     kind = authorization.get("kind") if isinstance(authorization, dict) else None
     develop = authorization.get("develop") if isinstance(authorization, dict) else None
     require_sha(develop, "authorization receipt develop revision")
@@ -548,7 +555,7 @@ def canonical_authorization_receipt_bytes(revision, authorization):
         raise ValueError("authorization receipt has an invalid kind")
     receipt = {
         "schemaVersion": "1",
-        "repository": repository,
+        "repository": repository_identity,
         "revision": revision,
         "authorization": recorded_authorization,
     }
@@ -774,7 +781,7 @@ def read_provenance(path):
         raise ValueError("installed skill provenance is missing or invalid") from error
 
 
-def read_authorization_receipt(path, revision):
+def read_authorization_receipt(path, revision, expected_repository):
     receipt_path = os.path.join(path, authorization_receipt_name)
     try:
         with open(receipt_path, "rb") as source:
@@ -788,13 +795,15 @@ def read_authorization_receipt(path, revision):
         not isinstance(receipt, dict)
         or set(receipt) != {"schemaVersion", "repository", "revision", "authorization"}
         or receipt.get("schemaVersion") != "1"
-        or receipt.get("repository") != repository
+        or receipt.get("repository") != expected_repository
         or receipt.get("revision") != revision
         or not isinstance(receipt.get("authorization"), dict)
     ):
         raise ValueError("installed authorization receipt has an invalid identity")
     authorization = receipt["authorization"]
-    if contents != canonical_authorization_receipt_bytes(revision, authorization):
+    if contents != canonical_authorization_receipt_bytes(
+        revision, authorization, expected_repository
+    ):
         raise ValueError("installed authorization receipt bytes are not canonical")
     return authorization
 
@@ -823,8 +832,17 @@ def verify_local_version(path, revision, canonical_files=None):
         raise ValueError("retained skill version is not a real directory")
     files = canonical_files if canonical_files is not None else remote_skill_bytes(revision)
     provenance_contents, provenance = read_provenance(path)
-    authorization = read_authorization_receipt(path, revision)
-    validate_provenance(provenance, revision, files)
+    installed_repository = (
+        provenance.get("repository") if isinstance(provenance, dict) else None
+    )
+    if installed_repository not in (repository, legacy_repository):
+        raise ValueError("installed skill provenance has an invalid identity")
+    authorization = read_authorization_receipt(
+        path, revision, installed_repository
+    )
+    validate_provenance(
+        provenance, revision, files, installed_repository
+    )
     expected_paths = sorted([*files, provenance_name, authorization_receipt_name])
     expected_directories = sorted({
         parent
@@ -838,7 +856,9 @@ def verify_local_version(path, revision, canonical_files=None):
     local_files, local_directories = list_local_tree(path)
     if local_files != expected_paths or local_directories != expected_directories:
         raise ValueError("installed skill has modified, missing, or extra files")
-    if provenance_contents != canonical_provenance_bytes(revision, files):
+    if provenance_contents != canonical_provenance_bytes(
+        revision, files, installed_repository
+    ):
         raise ValueError("installed skill provenance bytes are not canonical")
     for relative_path, expected in files.items():
         with open(os.path.join(path, *PurePosixPath(relative_path).parts), "rb") as source:
