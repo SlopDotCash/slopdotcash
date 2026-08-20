@@ -61,7 +61,7 @@ describe("funding manifest history", () => {
     expect(() =>
       fundingAddressesAtRevision("eliza", "f".repeat(40), root),
     ).toThrow(/not an ancestor/u);
-  }, 15_000);
+  });
 
   it("publishes commitments separately and bounds committed claims", async () => {
     const root = mkdtempSync(join(tmpdir(), "slop-funding-commitment-"));
@@ -175,5 +175,5 @@ describe("funding manifest history", () => {
         projects: [withoutInstrument],
       }),
     ).rejects.toThrow(/not active/u);
-  }, 15_000);
+  });
 });

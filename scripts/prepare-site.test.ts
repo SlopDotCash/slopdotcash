@@ -362,7 +362,7 @@ beforeAll(() => {
       },
     },
   });
-}, 120_000);
+});
 
 afterAll(() => {
   if (authorityRoot) {
@@ -1154,7 +1154,7 @@ describe("contribution skill package", () => {
       rmSync(defaultRoot, { force: true, recursive: true });
       rmSync(claudeRoot, { force: true, recursive: true });
     }
-  }, 30_000);
+  });
 
   it("rejects unsafe archive paths, symlinks, and broken target symlinks", () => {
     const traversalRoot = mkdtempSync(

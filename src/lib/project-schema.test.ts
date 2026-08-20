@@ -477,6 +477,85 @@ describe("project proposal schema", () => {
     );
   });
 
+  it("rejects receipt activation before every contributor term is immutable", () => {
+    const missingInbound = structuredClone(deltaStar) as unknown as {
+      terms: {
+        receiptPolicy: unknown;
+        inbound: {
+          acceptance: string | null;
+          commitSha: string | null;
+          fileSha256: string | null;
+          mode: string;
+          termsUrl: string | null;
+          version: string | null;
+        };
+        externalPrize: {
+          rulesCapturedAt: string | null;
+          rulesSha256: string | null;
+          version: string;
+        };
+        repositoryLicense: { fileSha256: string | null; state: string };
+        revision: string;
+      };
+    };
+    missingInbound.terms.receiptPolicy = {
+      state: "active",
+      activatedAt: "2026-08-19T00:00:00.000Z",
+      bindings: [
+        {
+          activatedAt: "2026-08-19T00:00:00.000Z",
+          policyRevision: missingInbound.terms.revision,
+          licenseSha256: missingInbound.terms.repositoryLicense.fileSha256,
+          inboundTermsSha256: null,
+          prizeRulesSha256: null,
+        },
+      ],
+    };
+    expect(() => assertProjectDefinition(missingInbound)).toThrow(
+      /requires immutable inbound terms/u,
+    );
+
+    const missingPrizeRules = structuredClone(missingInbound);
+    const inboundCommit = "e".repeat(40);
+    missingPrizeRules.terms.inbound = {
+      mode: "license",
+      termsUrl: `https://github.com/elizaOS/proximityprize/blob/${inboundCommit}/CONTRIBUTING.md`,
+      commitSha: inboundCommit,
+      fileSha256: "d".repeat(64),
+      version: "2026-08-19.1",
+      acceptance:
+        "Inbound contributions follow the immutable repository terms.",
+    };
+    (
+      missingPrizeRules.terms.receiptPolicy as {
+        bindings: Array<{ inboundTermsSha256: string | null }>;
+      }
+    ).bindings[0].inboundTermsSha256 = "d".repeat(64);
+    expect(() => assertProjectDefinition(missingPrizeRules)).toThrow(
+      /requires immutable external prize rules/u,
+    );
+
+    const missingLicense = structuredClone(heirElements) as unknown as {
+      terms: { receiptPolicy: unknown; revision: string };
+    };
+    missingLicense.terms.receiptPolicy = {
+      state: "active",
+      activatedAt: "2026-08-19T00:00:00.000Z",
+      bindings: [
+        {
+          activatedAt: "2026-08-19T00:00:00.000Z",
+          policyRevision: missingLicense.terms.revision,
+          licenseSha256: "a".repeat(64),
+          inboundTermsSha256: null,
+          prizeRulesSha256: null,
+        },
+      ],
+    };
+    expect(() => assertProjectDefinition(missingLicense)).toThrow(
+      /requires a verified repository license/u,
+    );
+  });
+
   it("keeps a missing repository license explicit without blocking runs", () => {
     expect(assertProjectDefinition(heirElements).status).toBe("paused");
     expect(heirElements.terms.repositoryLicense).toEqual({

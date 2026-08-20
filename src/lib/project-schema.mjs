@@ -547,6 +547,26 @@ function validateTerms(
     );
   }
   if (receiptPolicy.state === "active") {
+    if (license.state !== "verified" || license.fileSha256 === null) {
+      throw new TypeError(
+        `${field}.receiptPolicy active state requires a verified repository license`,
+      );
+    }
+    if (inbound.mode === "unknown" || inbound.fileSha256 === null) {
+      throw new TypeError(
+        `${field}.receiptPolicy active state requires immutable inbound terms`,
+      );
+    }
+    if (
+      terms.externalPrize !== null &&
+      (terms.externalPrize.rulesSha256 === null ||
+        terms.externalPrize.rulesCapturedAt === null ||
+        terms.externalPrize.version === "unknown")
+    ) {
+      throw new TypeError(
+        `${field}.receiptPolicy active state requires immutable external prize rules`,
+      );
+    }
     const revisions = new Set();
     let previousActivation = -Infinity;
     const bindings = receiptPolicy.bindings.map((value, index) => {

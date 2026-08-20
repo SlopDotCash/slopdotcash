@@ -88,9 +88,10 @@ full review checklist, see [CONTRIBUTING.md](CONTRIBUTING.md).
 Accepted work from August 2026 uses integer-thirds effort tiers instead of
 account caps or diminishing merge credit. Claude review agents propose effort,
 complexity, impact, review load, and logical work-unit grouping; maintainers
-ratify the score in an immutable exact-head GitHub record. Valid private traces
-and outcome-matched bounded usage receive fixed evidence bonuses, never a bonus
-proportional to raw tokens. See [the complete score contract](protocol/scoring-v2.md).
+ratify the score in an immutable exact-head GitHub record. A valid finalized
+private trace receives a fixed evidence bonus. Usage remains diagnostic and
+never changes score, rank, reward share, or payment. See
+[the complete score contract](protocol/scoring-v2.md).
 
 ## What the public record means
 

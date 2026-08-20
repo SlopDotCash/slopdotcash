@@ -40,11 +40,11 @@ private trace. Maintainers remain the sole scoring authority.
 ## Evidence bonuses
 
 A valid signed receipt with an outcome-matched finalized private trace adds a
-fixed 15% weight. Outcome-matched exact or bounded usage adds 10%. The combined
-bonus is capped at 25%; raw tokens, cost, lines, commits, and account count
-never increase it. Missing pre-activation August traces do not reduce base
-credit. Runs after a project's receipt cutover must satisfy its active receipt
-policy or remain held.
+fixed 15% weight. Usage evidence remains diagnostic: token volume, confidence,
+cost, lines, commits, and account count never change score, rank, reward share,
+or payment. Missing pre-activation August traces do not reduce base credit. Runs
+after a project's receipt cutover must satisfy its active receipt policy or
+remain held.
 
 ## August migration
 
