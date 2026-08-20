@@ -115,7 +115,7 @@ describe("project skill contracts", () => {
     assert.match(eliza, /review-preflight\.mjs/u);
     assert.match(eliza, /supported-with-documentation-drift/u);
     assert.doesNotMatch(eliza, /lalalune\/ArkLib/u);
-    assert.match(delta, /elizaOS\/proximityprize/u);
+    assert.match(delta, /SlopDotCash\/proximityprize/u);
     assert.doesNotMatch(delta, /lalalune\/ArkLib/u);
     assert.match(delta, /sorry.*admit.*axiom/is);
     assert.match(delta, /external Proximity Prize/u);

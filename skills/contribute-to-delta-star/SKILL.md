@@ -1,11 +1,11 @@
 ---
 name: contribute-to-delta-star
-description: "Finish mission-aligned open issues in elizaOS/proximityprize, then advance, test, refute, or independently review machine-checked Delta Star work. Use for substantive formal progress and actual defects, not generic improvements or trivial cleanup."
+description: "Finish mission-aligned open issues in SlopDotCash/proximityprize, then advance, test, refute, or independently review machine-checked Delta Star work. Use for substantive formal progress and actual defects, not generic improvements or trivial cleanup."
 ---
 
 # Contribute to Delta Star
 
-Produce one reviewable outcome in `elizaOS/proximityprize` toward the Delta Star
+Produce one reviewable outcome in `SlopDotCash/proximityprize` toward the Delta Star
 proximity-gap programme. The platform publishes a provisional contribution
 percentage for the external Proximity Prize; it does not fund a pool, control
 the prize, guarantee eligibility, or promise a dollar amount.
@@ -47,7 +47,7 @@ acknowledgement after a policy change. Organizer rules remain controlling.
    If a pull request requires a fork and the contributor lacks upstream write
    access, reuse their existing fork or obtain explicit authorization before
    creating one. Do not fork when an upstream branch is authorized. A
-   contributor may manually star `elizaOS/proximityprize` and
+   contributor may manually star `SlopDotCash/proximityprize` and
    `elizaOS/slopdotcash` if they genuinely want to support them; stars are
    optional, never automated, never verified, and never scored or paid.
 3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)
@@ -92,7 +92,7 @@ restart any active run created before this option was installed.
 Build the bounded, read-only live inventory before selecting work:
 
 ```bash
-node <skill-directory>/scripts/live-report.mjs --repo elizaOS/proximityprize
+node <skill-directory>/scripts/live-report.mjs --repo SlopDotCash/proximityprize
 ```
 
 The report batches open activity, prints progress, and fails closed if a

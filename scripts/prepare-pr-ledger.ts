@@ -32,6 +32,56 @@ function array(value: unknown, field: string): unknown[] {
   return value;
 }
 
+function currentRegistryFields() {
+  return TARGET_REPOSITORIES.map(
+    ({ aliases: _aliases, expectedNodeId: _expectedNodeId, ...repository }) =>
+      repository,
+  );
+}
+
+function normalizeTransferredRepositories(candidate: JsonRecord): JsonRecord {
+  const repositories = array(
+    candidate.repositories,
+    "snapshot.repositories",
+  ).map((value, index) => {
+    const published = record(value, `snapshot.repositories[${index}]`);
+    const registered = TARGET_REPOSITORIES[index];
+    if (!registered || published.id !== registered.id) {
+      throw new TypeError(
+        `snapshot.repositories[${index}].id does not match the stable repository registry`,
+      );
+    }
+    for (const key of [
+      "description",
+      "integrationBranch",
+      "projectId",
+      "role",
+    ] as const) {
+      if (published[key] !== registered[key]) {
+        throw new TypeError(
+          `snapshot.repositories[${index}].${key} does not match the repository registry`,
+        );
+      }
+    }
+    const identity = `${String(published.owner)}/${String(published.name)}`;
+    const allowedIdentities = new Set([
+      registered.id.toLowerCase(),
+      ...registered.aliases.map((alias) => alias.toLowerCase()),
+    ]);
+    if (
+      !allowedIdentities.has(identity.toLowerCase()) ||
+      published.githubUrl !== `https://github.com/${identity}` ||
+      published.displayName !== identity
+    ) {
+      throw new TypeError(
+        `snapshot.repositories[${index}] is not a registered repository identity`,
+      );
+    }
+    return currentRegistryFields()[index];
+  });
+  return { ...candidate, repositories };
+}
+
 function actorId(value: unknown): string {
   const actor = record(value, "actor");
   if (typeof actor.id !== "string" || actor.id.length === 0) {
@@ -245,8 +295,9 @@ function retainCausalAttributions(
 export function preparePullRequestLedger(value: unknown): LeaderboardSnapshot {
   const candidate = record(value, "snapshot");
   if (candidate.schemaVersion === LEADERBOARD_SCHEMA_VERSION) {
-    assertPublishableLeaderboardSnapshot(candidate);
-    return candidate as unknown as LeaderboardSnapshot;
+    const normalized = normalizeTransferredRepositories(candidate);
+    assertPublishableLeaderboardSnapshot(normalized);
+    return normalized as unknown as LeaderboardSnapshot;
   }
   if (candidate.schemaVersion !== "5") {
     throw new TypeError("deployed ledger is not schema 5 or 6");

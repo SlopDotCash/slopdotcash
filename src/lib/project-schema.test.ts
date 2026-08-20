@@ -118,7 +118,10 @@ describe("project proposal schema", () => {
       .repositories[0] as (typeof duplicateAlias.repositories)[number] & {
       aliases: string[];
     };
-    duplicateRepository.aliases = ["elizaOS/proximityprize"];
+    duplicateRepository.aliases = [
+      ...(duplicateRepository.aliases ?? []),
+      "elizaOS/proximityprize",
+    ];
     expect(() => assertProjectDefinition(duplicateAlias)).toThrow(
       /duplicate repository identities/u,
     );
@@ -128,7 +131,10 @@ describe("project proposal schema", () => {
       .repositories[0] as (typeof crossProjectAlias.repositories)[number] & {
       aliases: string[];
     };
-    collidingRepository.aliases = ["elizaOS/eliza"];
+    collidingRepository.aliases = [
+      ...(collidingRepository.aliases ?? []),
+      "elizaOS/eliza",
+    ];
     expect(() => assertProjectRegistry([eliza, crossProjectAlias])).toThrow(
       /duplicate repositories/u,
     );
@@ -157,7 +163,10 @@ describe("project proposal schema", () => {
   it("rejects repository and skill collisions across project folders", () => {
     const copy = structuredClone(deltaStar);
     copy.status = "paused";
-    copy.repositories[0] = structuredClone(eliza.repositories[0]);
+    copy.repositories[0] = {
+      ...structuredClone(eliza.repositories[0]),
+      aliases: [],
+    };
     (copy as unknown as { authority: unknown }).authority = {
       ...structuredClone(eliza.authority),
       state: "unverified",
