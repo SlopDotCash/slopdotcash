@@ -100,6 +100,16 @@ describe("project proposal schema", () => {
     expect(assertProjectDefinition(eliza).reviewSkill.id).toBe(
       "review-eliza-contributions",
     );
+    expect(assertProjectDefinition(deltaStar).repositories[0]).toMatchObject({
+      id: "elizaOS/proximityprize",
+      aliases: ["SlopDotCash/proximityprize"],
+      githubUrl: "https://github.com/SlopDotCash/proximityprize",
+    });
+    expect(assertProjectDefinition(asi).repositories[0]).toMatchObject({
+      id: "elizaOS/asi",
+      aliases: ["SlopDotCash/asi"],
+      githubUrl: "https://github.com/SlopDotCash/asi",
+    });
   });
 
   it("rejects executable extras, identity mismatch, and fake commitment", () => {
@@ -128,7 +138,10 @@ describe("project proposal schema", () => {
       .repositories[0] as (typeof crossProjectAlias.repositories)[number] & {
       aliases: string[];
     };
-    collidingRepository.aliases = ["elizaOS/eliza"];
+    collidingRepository.aliases = [
+      "SlopDotCash/proximityprize",
+      "elizaOS/eliza",
+    ];
     expect(() => assertProjectRegistry([eliza, crossProjectAlias])).toThrow(
       /duplicate repositories/u,
     );
@@ -157,7 +170,9 @@ describe("project proposal schema", () => {
   it("rejects repository and skill collisions across project folders", () => {
     const copy = structuredClone(deltaStar);
     copy.status = "paused";
-    copy.repositories[0] = structuredClone(eliza.repositories[0]);
+    copy.repositories[0] = structuredClone(
+      eliza.repositories[0],
+    ) as unknown as (typeof copy.repositories)[number];
     (copy as unknown as { authority: unknown }).authority = {
       ...structuredClone(eliza.authority),
       state: "unverified",

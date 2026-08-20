@@ -81,8 +81,9 @@
   "repositories": [
     {
       "id": "elizaOS/proximityprize",
-      "displayName": "elizaOS/proximityprize",
-      "githubUrl": "https://github.com/elizaOS/proximityprize",
+      "aliases": ["SlopDotCash/proximityprize"],
+      "displayName": "SlopDotCash/proximityprize",
+      "githubUrl": "https://github.com/SlopDotCash/proximityprize",
       "description": "Machine-checked Reed–Solomon proximity work in Lean 4.",
       "integrationBranch": "main"
     }
@@ -127,9 +128,9 @@
     "disclosureRequired": true
   },
   "links": {
-    "repository": "https://github.com/elizaOS/proximityprize",
-    "issues": "https://github.com/elizaOS/proximityprize/issues",
-    "discussions": "https://github.com/elizaOS/proximityprize/discussions",
+    "repository": "https://github.com/SlopDotCash/proximityprize",
+    "issues": "https://github.com/SlopDotCash/proximityprize/issues",
+    "discussions": "https://github.com/SlopDotCash/proximityprize/discussions",
     "mission": "https://deltastar.computer/",
     "prize": "https://proximityprize.org/"
   }

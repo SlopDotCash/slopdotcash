@@ -20,6 +20,18 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
+const PUBLISHED_REPOSITORY_KEYS = [
+  "id",
+  "owner",
+  "name",
+  "displayName",
+  "githubUrl",
+  "description",
+  "integrationBranch",
+  "projectId",
+  "role",
+] as const;
+
 function record(value: unknown, field: string): JsonRecord {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError(`${field} must be an object`);
@@ -30,6 +42,65 @@ function record(value: unknown, field: string): JsonRecord {
 function array(value: unknown, field: string): unknown[] {
   if (!Array.isArray(value)) throw new TypeError(`${field} must be an array`);
   return value;
+}
+
+function currentPublishedRepositories(): Array<Record<string, unknown>> {
+  return TARGET_REPOSITORIES.map(
+    ({ aliases: _aliases, expectedNodeId: _expectedNodeId, ...repository }) =>
+      repository,
+  );
+}
+
+function rebindTransferredRepositoryPresentation(
+  candidate: JsonRecord,
+): JsonRecord {
+  const repositories = array(candidate.repositories, "snapshot.repositories");
+  if (repositories.length !== TARGET_REPOSITORIES.length) {
+    throw new TypeError(
+      "snapshot.repositories does not match the target repository inventory",
+    );
+  }
+  let changed = false;
+  repositories.forEach((value, index) => {
+    const path = `snapshot.repositories[${index}]`;
+    const deployed = record(value, path);
+    const current = TARGET_REPOSITORIES[index];
+    if (
+      Object.keys(deployed).length !== PUBLISHED_REPOSITORY_KEYS.length ||
+      PUBLISHED_REPOSITORY_KEYS.some((key) => !Object.hasOwn(deployed, key))
+    ) {
+      throw new TypeError(`${path} must publish exactly the registry fields`);
+    }
+    for (const key of [
+      "id",
+      "description",
+      "integrationBranch",
+      "projectId",
+      "role",
+    ] as const) {
+      if (deployed[key] !== current[key]) {
+        throw new TypeError(`${path}.${key} cannot change during a transfer`);
+      }
+    }
+    const deployedIdentity = `${String(deployed.owner)}/${String(deployed.name)}`;
+    if (
+      ![current.id, ...current.aliases].some(
+        (identity) => identity.toLowerCase() === deployedIdentity.toLowerCase(),
+      ) ||
+      deployed.displayName !== deployedIdentity ||
+      deployed.githubUrl !== `https://github.com/${deployedIdentity}`
+    ) {
+      throw new TypeError(
+        `${path} is not a registered stable repository identity or alias`,
+      );
+    }
+    changed ||= PUBLISHED_REPOSITORY_KEYS.some(
+      (key) => deployed[key] !== current[key],
+    );
+  });
+  return changed
+    ? { ...candidate, repositories: currentPublishedRepositories() }
+    : candidate;
 }
 
 function actorId(value: unknown): string {
@@ -243,7 +314,9 @@ function retainCausalAttributions(
 }
 
 export function preparePullRequestLedger(value: unknown): LeaderboardSnapshot {
-  const candidate = record(value, "snapshot");
+  const candidate = rebindTransferredRepositoryPresentation(
+    record(value, "snapshot"),
+  );
   if (candidate.schemaVersion === LEADERBOARD_SCHEMA_VERSION) {
     assertPublishableLeaderboardSnapshot(candidate);
     return candidate as unknown as LeaderboardSnapshot;
