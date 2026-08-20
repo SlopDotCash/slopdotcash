@@ -5,6 +5,8 @@ on:
     branches: [develop]
     paths:
       - ".github/workflows/windows-installer.yml"
+      - "skill-tests/contribute-to-eliza.test.ts"
+      - "skills/contribute-to-*/scripts/run-receipt.mjs"
       - "src/lib/install-command.ts"
       - "src/lib/install-command.test.ts"
   workflow_dispatch:
@@ -42,3 +44,10 @@ jobs:
         shell: bash
         # Bun's default is a five-second per-test ceiling; zero disables it.
         run: bun test src/lib/install-command.test.ts --timeout 0
+
+      - name: Exercise receipt repository-root canonicalization
+        shell: bash
+        run: >-
+          bun test skill-tests/contribute-to-eliza.test.ts
+          --test-name-pattern
+          "accepts the repository root without comparing path spellings"

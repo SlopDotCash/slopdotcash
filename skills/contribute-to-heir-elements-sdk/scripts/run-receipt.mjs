@@ -897,9 +897,14 @@ function git(repositoryRoot, args) {
   return result.stdout.trim();
 }
 
+export function isRepositoryRoot(repositoryRoot) {
+  const root = realpathSync(resolve(repositoryRoot));
+  return git(root, ["rev-parse", "--show-prefix"]) === "";
+}
+
 function requireRepository(repositoryRoot) {
   const root = realpathSync(resolve(repositoryRoot));
-  if (git(root, ["rev-parse", "--show-toplevel"]) !== root) {
+  if (!isRepositoryRoot(root)) {
     fail("--repo-root must be the Git repository root");
   }
   const remote = git(root, ["remote", "get-url", "origin"]);

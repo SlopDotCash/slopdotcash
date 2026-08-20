@@ -44,6 +44,7 @@ import {
   renderMarkdown,
 } from "../skills/contribute-to-eliza/scripts/live-report.mjs";
 import {
+  isRepositoryRoot,
   normalizeSessionReport,
   usageDelta,
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
@@ -2211,6 +2212,18 @@ describe("live report behavior", () => {
 });
 
 describe("run receipt CLI", () => {
+  it("accepts the repository root without comparing path spellings", () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-windows-repo-root-"));
+    const repositoryRoot = join(fixtureRoot, "repo");
+    try {
+      mkdirSync(repositoryRoot);
+      runGit(repositoryRoot, ["init", "--quiet"]);
+      assert.strictEqual(isRepositoryRoot(repositoryRoot), true);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   function runGit(cwd: string, args: string[]) {
     const result = spawnSync("git", args, { cwd, encoding: "utf8" });
     assert.strictEqual(result.status, 0, result.stderr);
