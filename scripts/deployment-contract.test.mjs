@@ -106,7 +106,7 @@ describe("slop.cash deployment contract", () => {
       "- name: Require public private-request intake",
     );
     expect(deployJob).toContain(
-      "https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting",
+      "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
     );
     expect(deployJob).toContain("value?.enabled !== true");
     expect(
@@ -237,7 +237,15 @@ describe("slop.cash deployment contract", () => {
     expect(
       deployJob.match(/diff --quiet "\$GITHUB_SHA" "\$live_develop" -- \./g),
     ).toHaveLength(3);
-    expect(deployJob).toContain("https://github.com/elizaOS/slopdotcash.git");
+    expect(deployJob).toContain(
+      "https://github.com/SlopDotCash/slopdotcash.git",
+    );
+    expect(deployJob).not.toContain(
+      "https://api.github.com/repos/elizaOS/slopdotcash",
+    );
+    expect(deployJob).not.toContain(
+      "https://github.com/elizaOS/slopdotcash.git",
+    );
     expect(wranglerConfiguration).toContain(
       'pages_build_output_dir = "./dist"',
     );
