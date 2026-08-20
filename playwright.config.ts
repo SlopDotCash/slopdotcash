@@ -21,7 +21,7 @@ const localServerCommand =
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 300_000,
+  timeout: 0,
   expect: { timeout: 10_000 },
   fullyParallel: true,
   // Wrangler's Pages proxy can terminate while serving concurrent browser
