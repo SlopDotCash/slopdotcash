@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1",
+  "schemaVersion": "2",
   "artifact": "pull-request-review",
   "repositoryId": "elizaOS/eliza",
   "integrationBranch": "develop",
@@ -11,6 +11,7 @@
     "pullRequest": 19560,
     "reviewId": 4936838769,
     "commitId": "65455082b87f12ddf5ea4a40e4e8734dbae9e961",
+    "skillRevision": "elizaOS/slopdotcash@1bde21d6d8229678f20bbd450f8e49f9fd95f989:skills/contribute-to-eliza",
     "url": "https://github.com/elizaOS/eliza/pull/19560#pullrequestreview-4936838769"
   }
 }

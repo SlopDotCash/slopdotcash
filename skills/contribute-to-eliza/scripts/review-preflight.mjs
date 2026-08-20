@@ -73,7 +73,7 @@ function validateConfiguration(value = CONFIG) {
     "review compatibility configuration",
   );
   if (
-    config.schemaVersion !== "1" ||
+    config.schemaVersion !== "2" ||
     config.artifact !== "pull-request-review" ||
     config.repositoryId !== "elizaOS/eliza" ||
     config.integrationBranch !== "develop" ||
@@ -87,7 +87,7 @@ function validateConfiguration(value = CONFIG) {
   const proof = record(config.forwardProof, "forward proof");
   exactKeys(
     proof,
-    ["commitId", "pullRequest", "reviewId", "url"],
+    ["commitId", "pullRequest", "reviewId", "skillRevision", "url"],
     "forward proof",
   );
   if (
@@ -96,6 +96,9 @@ function validateConfiguration(value = CONFIG) {
     !Number.isSafeInteger(proof.reviewId) ||
     proof.reviewId <= 0 ||
     !SHA_RE.test(proof.commitId) ||
+    !/^(?:elizaOS|SlopDotCash)\/slopdotcash@[0-9a-f]{40}:skills\/contribute-to-eliza$/u.test(
+      proof.skillRevision,
+    ) ||
     proof.url !==
       `https://github.com/${config.repositoryId}/pull/${proof.pullRequest}#pullrequestreview-${proof.reviewId}`
   ) {
@@ -133,7 +136,7 @@ function validProofReview(review, config) {
     marker.run?.signature_algorithm === "ed25519" &&
     typeof marker.run?.device_public_key === "string" &&
     typeof marker.run?.device_signature === "string" &&
-    marker.skill_revision?.startsWith("SlopDotCash/slopdotcash@")
+    marker.skill_revision === config.forwardProof.skillRevision
   );
 }
 
