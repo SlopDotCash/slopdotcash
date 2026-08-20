@@ -113,6 +113,26 @@ describe("project proposal schema", () => {
       /does not match/u,
     );
 
+    const duplicateAlias = structuredClone(deltaStar);
+    const duplicateRepository = duplicateAlias
+      .repositories[0] as (typeof duplicateAlias.repositories)[number] & {
+      aliases: string[];
+    };
+    duplicateRepository.aliases = ["elizaOS/proximityprize"];
+    expect(() => assertProjectDefinition(duplicateAlias)).toThrow(
+      /duplicate repository identities/u,
+    );
+
+    const crossProjectAlias = structuredClone(deltaStar);
+    const collidingRepository = crossProjectAlias
+      .repositories[0] as (typeof crossProjectAlias.repositories)[number] & {
+      aliases: string[];
+    };
+    collidingRepository.aliases = ["elizaOS/eliza"];
+    expect(() => assertProjectRegistry([eliza, crossProjectAlias])).toThrow(
+      /duplicate repositories/u,
+    );
+
     const fakeCommitment = structuredClone(eliza);
     fakeCommitment.reward.committedMinor = "1000000";
     expect(() => assertProjectDefinition(fakeCommitment)).toThrow(

@@ -1671,7 +1671,13 @@ describe("current-head review selection", () => {
       },
     ]);
     expect(snapshot.repositories).toEqual(
-      TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
+      TARGET_REPOSITORIES.map(
+        ({
+          aliases: _aliases,
+          expectedNodeId: _expectedNodeId,
+          ...repository
+        }) => repository,
+      ),
     );
     const staleItem = snapshot.workQueue.pullRequests.find(
       (item) => item.id === "PR_STALE",

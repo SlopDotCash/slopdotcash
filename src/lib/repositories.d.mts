@@ -8,6 +8,8 @@ export interface TargetRepository {
   readonly id: RepositoryId;
   readonly owner: string;
   readonly name: string;
+  readonly aliases: readonly RepositoryId[];
+  readonly expectedNodeId: string | null;
   readonly displayName: string;
   readonly githubUrl: string;
   readonly description: string;

@@ -175,6 +175,7 @@ export interface ProjectDefinition {
   };
   readonly repositories: readonly {
     readonly id: string;
+    readonly aliases?: readonly string[];
     readonly displayName: string;
     readonly githubUrl: string;
     readonly description: string;

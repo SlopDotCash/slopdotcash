@@ -87,6 +87,59 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 
+function assertRepositoryTransition(previousRepositories, nextRepositories) {
+  if (previousRepositories.length !== nextRepositories.length) {
+    throw new TypeError("repository inventory cannot change");
+  }
+  for (let index = 0; index < previousRepositories.length; index += 1) {
+    const previous = previousRepositories[index];
+    const next = nextRepositories[index];
+    const previousAliases = previous.aliases ?? [];
+    const nextAliases = next.aliases ?? [];
+    if (
+      previous.id !== next.id ||
+      previous.integrationBranch !== next.integrationBranch ||
+      previous.description !== next.description
+    ) {
+      throw new TypeError(
+        "repository transfer, rename, or integration-branch drift requires a new project review",
+      );
+    }
+    if (
+      nextAliases.length < previousAliases.length ||
+      nextAliases.length > previousAliases.length + 1 ||
+      previousAliases.some(
+        (alias, aliasIndex) =>
+          alias.toLowerCase() !== nextAliases[aliasIndex]?.toLowerCase(),
+      )
+    ) {
+      throw new TypeError(
+        "repository aliases must remain an append-only prefix with at most one transfer per review",
+      );
+    }
+    if (nextAliases.length === previousAliases.length) {
+      if (canonical(previous) !== canonical(next)) {
+        throw new TypeError(
+          "repository metadata may change only with an appended transfer alias",
+        );
+      }
+      continue;
+    }
+    const alias = nextAliases.at(-1);
+    const currentPath = new URL(next.githubUrl).pathname
+      .replace(/^\//u, "")
+      .replace(/\/$/u, "");
+    if (
+      alias.toLowerCase() !== currentPath.toLowerCase() ||
+      next.displayName.toLowerCase() !== alias.toLowerCase()
+    ) {
+      throw new TypeError(
+        "a repository transfer must publish its appended alias as the current repository identity",
+      );
+    }
+  }
+}
+
 /**
  * Refuses identity drift and silent material-policy edits. Historical records
  * remain valid because callers receive a new revision rather than mutating an
@@ -102,13 +155,13 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
   );
   if (
     previous.authority.repositoryId !== next.authority.repositoryId ||
-    previous.authority.repositoryNodeId !== next.authority.repositoryNodeId ||
-    canonical(previous.repositories) !== canonical(next.repositories)
+    previous.authority.repositoryNodeId !== next.authority.repositoryNodeId
   ) {
     throw new TypeError(
       "repository transfer, rename, or integration-branch drift requires a new project review",
     );
   }
+  assertRepositoryTransition(previous.repositories, next.repositories);
   const previousReceiptPolicy = previous.terms.receiptPolicy;
   const nextReceiptPolicy = next.terms.receiptPolicy;
   const initialReceiptActivation =

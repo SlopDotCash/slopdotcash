@@ -651,25 +651,58 @@ function timestamp(value, field) {
 function validateRepository(value, index) {
   const field = `project.repositories[${index}]`;
   const repository = record(value, field);
-  exactKeys(
-    repository,
-    ["description", "displayName", "githubUrl", "id", "integrationBranch"],
-    field,
-  );
+  const requiredKeys = [
+    "description",
+    "displayName",
+    "githubUrl",
+    "id",
+    "integrationBranch",
+  ];
+  const actualKeys = Object.keys(repository).sort().join("\0");
+  if (
+    actualKeys !== [...requiredKeys].sort().join("\0") &&
+    actualKeys !== [...requiredKeys, "aliases"].sort().join("\0")
+  ) {
+    throw new TypeError(`${field} has unexpected or missing fields`);
+  }
   const id = text(repository.id, `${field}.id`, {
     max: 201,
     pattern: /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u,
   });
+  const aliases = repository.aliases ?? [];
+  if (!Array.isArray(aliases) || aliases.length > 10) {
+    throw new TypeError(`${field}.aliases must contain at most 10 entries`);
+  }
+  const repositoryIds = [
+    id,
+    ...aliases.map((alias, aliasIndex) =>
+      text(alias, `${field}.aliases[${aliasIndex}]`, {
+        max: 201,
+        pattern: /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u,
+      }),
+    ),
+  ];
+  if (
+    new Set(repositoryIds.map((repositoryId) => repositoryId.toLowerCase()))
+      .size !== repositoryIds.length
+  ) {
+    throw new TypeError(`${field} contains duplicate repository identities`);
+  }
   const githubUrl = url(
     repository.githubUrl,
     `${field}.githubUrl`,
     "https://github.com",
   );
   if (
-    new URL(githubUrl).pathname.replace(/\/$/u, "").toLowerCase() !==
-    `/${id}`.toLowerCase()
+    !repositoryIds.some(
+      (repositoryId) =>
+        new URL(githubUrl).pathname.replace(/\/$/u, "").toLowerCase() ===
+        `/${repositoryId}`.toLowerCase(),
+    )
   ) {
-    throw new TypeError(`${field}.githubUrl does not match its repository id`);
+    throw new TypeError(
+      `${field}.githubUrl does not match a registered repository identity`,
+    );
   }
   text(repository.displayName, `${field}.displayName`, { max: 201 });
   text(repository.description, `${field}.description`, { max: 500, min: 12 });
@@ -994,7 +1027,11 @@ export function assertProjectRegistry(values) {
     [
       "repositories",
       projects.flatMap((project) =>
-        project.repositories.map((repository) => repository.id.toLowerCase()),
+        project.repositories.flatMap((repository) =>
+          [repository.id, ...(repository.aliases ?? [])].map((repositoryId) =>
+            repositoryId.toLowerCase(),
+          ),
+        ),
       ),
     ],
   ]) {

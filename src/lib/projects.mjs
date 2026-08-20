@@ -43,10 +43,12 @@ const PROJECTS_BY_ID = new Map(
 );
 const PROJECTS_BY_REPOSITORY = new Map(
   PROJECTS.flatMap((project) =>
-    project.repositories.map(({ id: repositoryId }) => [
-      repositoryId.toLowerCase(),
-      project,
-    ]),
+    project.repositories.flatMap((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].map((repositoryId) => [
+        repositoryId.toLowerCase(),
+        project,
+      ]),
+    ),
   ),
 );
 
