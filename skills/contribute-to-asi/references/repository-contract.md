@@ -6,7 +6,7 @@ below.
 
 | Parameter | Value |
 | --- | --- |
-| Repository | `elizaOS/asi` |
+| Repository | `SlopDotCash/asi` |
 | Integration branch | `main` |
 | Toolchain | Python 3.12+, JAX 0.4+ |
 | Environment | the project venv: `.venv/bin/python` |

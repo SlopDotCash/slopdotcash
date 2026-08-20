@@ -1,6 +1,6 @@
 ---
 name: review-delta-star-contributions
-description: "Independently evaluate an elizaOS/proximityprize Delta Star implementation, Lean proof, test, refutation, diagnosis, or evidence artifact for correctness, security, duplication, provenance, and contribution credit. Use in project CI or maintainer review before publishing a Proximity Prize contribution share."
+description: "Independently evaluate an SlopDotCash/proximityprize Delta Star implementation, Lean proof, test, refutation, diagnosis, or evidence artifact for correctness, security, duplication, provenance, and contribution credit. Use in project CI or maintainer review before publishing a Proximity Prize contribution share."
 ---
 
 # Review Delta Star Contributions
@@ -100,7 +100,7 @@ review. Return findings first, then this bounded record, then append the
 generated signed receipt footer unchanged as the terminal lines:
 
 ```slop-review
-{"schemaVersion":"2","projectId":"delta-star","artifactUrl":"https://github.com/elizaOS/proximityprize/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","splitRisk":"none|suspected|confirmed","effortBand":"micro|small|medium|large|xl|exceptional","complexity":"low|moderate|high|specialist","impact":"narrow|meaningful|broad|critical","reviewLoad":"triage|standard|deep|specialist","recommendedTier":"micro|small|medium|large|xl|exceptional","recommendedThirds":1,"workUnitId":"wu_PROJECT_LOGICAL_OUTCOME","confidenceBasisPoints":0,"valueRationale":"specific outcome value and tier basis","usefulArtifacts":["specific theorem, refutation, or proof"],"commands":["exact locked command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
+{"schemaVersion":"2","projectId":"delta-star","artifactUrl":"https://github.com/SlopDotCash/proximityprize/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","splitRisk":"none|suspected|confirmed","effortBand":"micro|small|medium|large|xl|exceptional","complexity":"low|moderate|high|specialist","impact":"narrow|meaningful|broad|critical","reviewLoad":"triage|standard|deep|specialist","recommendedTier":"micro|small|medium|large|xl|exceptional","recommendedThirds":1,"workUnitId":"wu_PROJECT_LOGICAL_OUTCOME","confidenceBasisPoints":0,"valueRationale":"specific outcome value and tier basis","usefulArtifacts":["specific theorem, refutation, or proof"],"commands":["exact locked command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 
 Never fabricate a command, proof, artifact, model result, identity, or URL.

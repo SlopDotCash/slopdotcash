@@ -5,7 +5,7 @@ frontier documents first. They are authoritative.
 
 | Parameter | Value |
 | --- | --- |
-| Repository | `elizaOS/proximityprize` |
+| Repository | `SlopDotCash/proximityprize` |
 | Integration branch | `main` |
 | Toolchain | pinned Lean 4 and Lake from `lean-toolchain` |
 | Cold cache | `./scripts/lake-locked.sh exe cache get` |

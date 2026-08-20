@@ -6,7 +6,48 @@ import { preparePullRequestLedger } from "./prepare-pr-ledger";
 describe("pull-request ledger schema bridge", () => {
   it("accepts an already-current public ledger unchanged", () => {
     const snapshot = snapshotFixture();
-    expect(preparePullRequestLedger(snapshot)).toBe(snapshot);
+    expect(preparePullRequestLedger(snapshot)).toEqual(snapshot);
+  });
+
+  it("migrates registered repository transfers without rewriting stable ids", () => {
+    const snapshot = structuredClone(snapshotFixture());
+    for (const repository of snapshot.repositories) {
+      if (repository.id === "elizaOS/asi") {
+        Object.assign(repository, {
+          owner: "elizaOS",
+          name: "asi",
+          displayName: "elizaOS/asi",
+          githubUrl: "https://github.com/elizaOS/asi",
+        });
+      }
+      if (repository.id === "elizaOS/proximityprize") {
+        Object.assign(repository, {
+          owner: "elizaOS",
+          name: "proximityprize",
+          displayName: "elizaOS/proximityprize",
+          githubUrl: "https://github.com/elizaOS/proximityprize",
+        });
+      }
+    }
+
+    const migrated = preparePullRequestLedger(snapshot);
+    expect(migrated.repositories).toEqual(snapshotFixture().repositories);
+    expect(migrated.repositories[1].id).toBe("elizaOS/asi");
+    expect(migrated.repositories[1].owner).toBe("SlopDotCash");
+  });
+
+  it("rejects an unregistered repository identity during transfer migration", () => {
+    const snapshot = structuredClone(snapshotFixture());
+    Object.assign(snapshot.repositories[1], {
+      owner: "attacker",
+      name: "asi",
+      displayName: "attacker/asi",
+      githubUrl: "https://github.com/attacker/asi",
+    });
+
+    expect(() => preparePullRequestLedger(snapshot)).toThrow(
+      "is not a registered repository identity",
+    );
   });
 
   it("migrates deployed schema 5 data without inventing additive August activity", () => {
