@@ -1353,6 +1353,34 @@ function parseIsoDate(value: Date, path: string): Date {
   return new Date(Math.floor(value.getTime() / 1000) * 1000);
 }
 
+export function parseGenerationArguments(
+  values: string[],
+  currentTime = new Date(),
+): Pick<GenerateOptions, "now"> {
+  if (values.length === 0) return {};
+  if (values.length !== 2 || values[0] !== "--cutoff") {
+    throw new TypeError(
+      "Usage: generate-leaderboard.ts [--cutoff YYYY-MM-DDTHH:mm:ss.sssZ]",
+    );
+  }
+  const cutoffText = values[1];
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(cutoffText)) {
+    throw new TypeError("--cutoff must be an exact UTC timestamp");
+  }
+  const cutoff = new Date(cutoffText);
+  if (
+    !Number.isFinite(cutoff.getTime()) ||
+    cutoff.toISOString() !== cutoffText
+  ) {
+    throw new TypeError("--cutoff must be an exact UTC timestamp");
+  }
+  const validCurrentTime = parseIsoDate(currentTime, "currentTime");
+  if (cutoff.getTime() > validCurrentTime.getTime()) {
+    throw new RangeError("--cutoff cannot be in the future");
+  }
+  return { now: cutoff };
+}
+
 function searchRange(from: Date, to: Date): string {
   const inclusiveEnd = new Date(to.getTime() - 1000);
   return `${from.toISOString()}..${inclusiveEnd.toISOString()}`;
@@ -2911,8 +2939,10 @@ function progressLine(progress: GenerationProgress): string {
 }
 
 if (import.meta.main) {
+  const arguments_ = parseGenerationArguments(process.argv.slice(2));
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
+    ...arguments_,
     evaluatedContributions: loadEvaluatorAwardEvents(),
     onProgress: (progress) => {
       const phaseChanged = progress.phase !== lastProgressPhase;

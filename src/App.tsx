@@ -561,23 +561,6 @@ function TypewriterHeroHeading() {
   );
 }
 
-function HomeStatusLine({ snapshot }: { snapshot: LeaderboardSnapshot }) {
-  const acceptingProjects = PROJECTS.length;
-  const pendingFunding = PROJECTS.filter(
-    (project) =>
-      project.reward.kind === "monthly-pool" &&
-      project.reward.paymentMode !== "enabled",
-  ).length;
-  const projectLabel = PROJECTS.length === 1 ? "project" : "projects";
-  return (
-    <p className="home-status-line" role="status">
-      {stale(snapshot) ? "Scoring data may be outdated" : "Scoring is live"} ·{" "}
-      {acceptingProjects} of {PROJECTS.length} {projectLabel} accepting work ·{" "}
-      {pendingFunding} monthly pools awaiting verified funding
-    </p>
-  );
-}
-
 function ProjectCard({ project }: { project: ProjectDefinition }) {
   const amount =
     project.reward.kind === "monthly-pool"
@@ -588,7 +571,6 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
         <div>
-          <span className="project-state">Accepting work</span>
           <h3>{project.name}</h3>
         </div>
         <ArrowRight aria-hidden="true" />
@@ -616,6 +598,18 @@ function Avatar({
   size?: "large" | "medium" | "small";
 }) {
   const label = actor.login.slice(0, 2).toUpperCase();
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (failedUrl !== actor.avatarUrl) {
+    return (
+      <img
+        alt=""
+        aria-hidden="true"
+        className={`avatar avatar-${size}`}
+        onError={() => setFailedUrl(actor.avatarUrl)}
+        src={actor.avatarUrl}
+      />
+    );
+  }
   return (
     <span aria-hidden="true" className={`avatar avatar-${size}`}>
       {label}
@@ -882,11 +876,16 @@ function GlobalLeaderboard({
 
 function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   const views = state.status === "ready" ? state.views : [];
+  const featuredProjects = PROJECTS.filter(
+    (project) => project.listingTier === "featured",
+  );
+  const communityProjects = PROJECTS.filter(
+    (project) => project.listingTier === "community",
+  );
   return (
     <main>
       <section className="hero shell">
         <DataNotice state={state} retry={retry} />
-        <p className="hero-eyebrow">Open-source incentives, built on GitHub</p>
         <TypewriterHeroHeading />
         <p className="hero-copy">
           Pick valuable public work. Give it to your best coding agent. Ship an
@@ -911,39 +910,37 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             <strong>03</strong> Build a public record
           </li>
         </ol>
-        {state.status === "ready" ? (
-          <HomeStatusLine snapshot={state.snapshot} />
-        ) : null}
       </section>
 
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
           <div>
-            <p className="eyebrow">Open work</p>
             <h2 className="home-section-title">Projects worth shipping.</h2>
           </div>
-          <p>
-            Every listing is backed by a public repository, reviewed policy, and
-            visible acceptance history. Check live status before starting.
-          </p>
         </div>
-        <div className="project-grid">
-          {PROJECTS.map((project) => (
-            <ProjectCard key={project.id} project={project} />
-          ))}
-        </div>
+        <section className="project-tier" aria-labelledby="featured-projects">
+          <h3 id="featured-projects">Featured</h3>
+          <div className="project-grid">
+            {featuredProjects.map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        </section>
+        <section className="project-tier" aria-labelledby="community-projects">
+          <h3 id="community-projects">Community</h3>
+          <div className="project-grid">
+            {communityProjects.map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        </section>
       </section>
       <section className="how-section" id="how-it-works">
         <div className="shell">
           <div className="home-section-heading inverse-heading">
             <div>
-              <p className="eyebrow">One public loop</p>
               <h2 className="home-section-title">Work in. Proof out.</h2>
             </div>
-            <p>
-              GitHub stays the source of truth. Slop makes the opportunity,
-              accepted result, review state, and reward history legible.
-            </p>
           </div>
           <div className="how-grid">
             <article>
@@ -973,7 +970,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
           </div>
           <div className="owner-callout">
             <div>
-              <p className="eyebrow">For maintainers and funders</p>
               <h3>Turn your roadmap into an open invitation.</h3>
               <p>
                 Draft the project on Slop, then open a GitHub pull request for
@@ -2766,6 +2762,7 @@ function ProjectProposalPage() {
       eyebrow: "Open-source project",
       headline: headline || "Make money solving something hard.",
       description: goal || "Describe the concrete open-source goal.",
+      listingTier: "community",
       status: "paused",
       steward: {
         displayName: stewardName || "Unverified steward",

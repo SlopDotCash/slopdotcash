@@ -594,6 +594,17 @@ p {
   gap: 16px;
 }
 
+.project-tier + .project-tier {
+  margin-top: 48px;
+}
+
+.project-tier > h3 {
+  margin: 0 0 18px;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+
 .project-card {
   min-height: 190px;
   display: grid;
@@ -882,6 +893,7 @@ small {
   font-weight: 800;
   letter-spacing: -0.04em;
   place-items: center;
+  object-fit: cover;
 }
 
 .avatar-large {
@@ -1413,10 +1425,9 @@ small {
 
 .profile-projects > a,
 .profile-projects > .profile-project-block > a {
-  grid-template-columns: minmax(160px, 1fr) minmax(130px, 0.6fr) minmax(
-      120px,
-      0.5fr
-    ) auto;
+  grid-template-columns:
+    minmax(160px, 1fr) minmax(130px, 0.6fr) minmax(120px, 0.5fr)
+    auto;
 }
 
 .profile-projects > a > span,

@@ -126,6 +126,17 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     }),
   ).toBeVisible();
   await expect(
+    page.getByRole("heading", { exact: true, name: "Featured" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { exact: true, name: "Community" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(
+      '.project-tier[aria-labelledby="community-projects"] a.project-card[href="/projects/heir-elements-sdk"]',
+    ),
+  ).toBeVisible();
+  await expect(
     page.getByRole("heading", { exact: true, name: "Delta Star" }),
   ).toBeVisible();
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
@@ -145,7 +156,11 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     deltaCard.getByText(/Advance machine-checked Reed–Solomon/u),
   ).toBeVisible();
   const [gridBox, elizaBox, deltaBox] = await Promise.all([
-    page.locator(".project-grid").boundingBox(),
+    page
+      .locator(
+        '.project-tier[aria-labelledby="featured-projects"] .project-grid',
+      )
+      .boundingBox(),
     elizaCard.boundingBox(),
     deltaCard.boundingBox(),
   ]);
