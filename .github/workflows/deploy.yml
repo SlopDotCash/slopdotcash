@@ -258,7 +258,7 @@ jobs:
             --max-filesize 65536 \
             --header "Accept: application/vnd.github+json" \
             --header "User-Agent: slop-release-intake-check" \
-            https://api.github.com/repos/elizaOS/slopdotcash/private-vulnerability-reporting |
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/private-vulnerability-reporting" |
             node -e '
               let source = "";
               process.stdin.setEncoding("utf8");
@@ -295,7 +295,7 @@ jobs:
           set -euo pipefail
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
-              https://github.com/elizaOS/slopdotcash.git refs/heads/develop |
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" refs/heads/develop |
               awk 'NR == 1 { print $1 }'
           )"
           if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
@@ -394,7 +394,7 @@ jobs:
           set -euo pipefail
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
-              https://github.com/elizaOS/slopdotcash.git refs/heads/develop |
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" refs/heads/develop |
               awk 'NR == 1 { print $1 }'
           )"
           if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
@@ -707,7 +707,7 @@ jobs:
 
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
-              https://github.com/elizaOS/slopdotcash.git refs/heads/develop |
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" refs/heads/develop |
               awk 'NR == 1 { print $1 }'
           )"
           if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
