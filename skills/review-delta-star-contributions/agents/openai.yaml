@@ -1,4 +1,4 @@
 interface:
   display_name: "Review Delta Star Contributions"
   short_description: "Reproduce and red-team Delta Star proofs"
-  default_prompt: "Use $review-delta-star-contributions to independently reproduce and assess this Proximity Prize contribution."
+  default_prompt: "Use $review-delta-star-contributions to reproduce this Proximity Prize contribution and reject trivial work that does not materially advance the Delta Star frontier."

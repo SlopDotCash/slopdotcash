@@ -1,6 +1,6 @@
 ---
 name: review-asi-contributions
-description: "Independently evaluate an elizaOS/asi benchmark result, ported method, measurement fix, or refutation for reproducibility, statistical honesty, security, duplication, and contribution credit. Use in project CI or maintainer review before accepting work or changing a public reward allocation."
+description: "Independently evaluate whether an elizaOS/asi contribution delivers a reproducible hill climb, measured research advancement or refutation, or an actual reproduced bug fix. Reject generic improvements, cleanup, and trivial work."
 ---
 
 # Review ASI Contributions
@@ -71,6 +71,18 @@ Answer these separately:
   reproduced or its failure reported?
 
 A green test suite does not prove a measurement means what the summary says.
+
+## Enforce mission and materiality
+
+Accept only a reproducible benchmark hill climb, a measured port or decisive
+experimental advancement/refutation, or a fix for an actual reproduced
+runtime, harness, metric, validator, or test-system defect. An issue label,
+large diff, plausible cleanup rationale, or green tests cannot substitute for
+that outcome. Recommend `reject` for trivial fixes, generic improvements,
+opportunistic refactors, renames, formatting, comment or documentation cleanup,
+speculative abstractions, unused configuration, and tests with no demonstrated
+behavioral risk. If the PR claims a bug fix, require the pre-fix failure and the
+post-fix behavior at the reachable production or measurement boundary.
 
 ## Adversarial review
 

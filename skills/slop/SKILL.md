@@ -131,8 +131,11 @@ After installation:
    limitations, and any older duplicate skill location. Never delete or alter
    an older install without separate approval.
 5. Invoke the installed project skill explicitly and follow it for one bounded
-   contribution. Its measured `start` command requires the local-usage consent
-   flag `--allow-local-usage` shown by `preview`.
+   contribution. Require it to finish mission-aligned open issues without PRs
+   before selecting new work, and to reject trivial fixes, cosmetic cleanup,
+   speculative refactors, and generic improvements. Its measured `start`
+   command requires the local-usage consent flag `--allow-local-usage` shown by
+   `preview`.
 
 The model identifier and aggregate usage remain locally reported evidence.
 Device signatures prove byte continuity, not provider billing, model execution,

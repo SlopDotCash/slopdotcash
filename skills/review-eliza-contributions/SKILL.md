@@ -56,6 +56,16 @@ Separate these questions:
   authentic, current, relevant, and attributable to this head revision?
 - Is the author receiving credit for work actually used by the project?
 
+## Enforce mission and materiality
+
+Require a reproduced user, runtime, security, documentation-correctness, or
+behavioral-test outcome on an authorized Eliza path. Recommend `reject` for
+trivial fixes, cosmetic cleanup, generic improvements, opportunistic
+refactors, comment-only churn, speculative abstractions, and tests with no
+demonstrated behavioral risk. An old issue, large diff, or green suite does not
+make low-value work material. For a claimed bug fix, require the pre-fix
+failure and post-fix behavior at a reachable production boundary.
+
 ## Adversarial review
 
 Search the repository, closed and open PRs, earlier issues, and commit history

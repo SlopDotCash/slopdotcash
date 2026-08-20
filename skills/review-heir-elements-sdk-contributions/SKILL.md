@@ -60,6 +60,16 @@ Separate these questions:
   current, relevant, and attributable to this head revision?
 - Has the work merged to `main` by `awidearray`, or is it still only proposed?
 
+## Enforce mission and materiality
+
+Require a concrete sandbox or permission hardening, a reproduced SDK defect
+fix, or a failure-sensitive validator or test for demonstrated unsafe
+behavior. Recommend `reject` for trivial fixes, formatting, renames,
+comment-only cleanup, generic improvements, speculative abstractions, and
+tests with no demonstrated behavioral risk. An old issue, large diff, or green
+suite does not make low-value work material. For a claimed bug fix, require the
+pre-fix failure and post-fix behavior at the reachable SDK boundary.
+
 ## Adversarial review
 
 Search the repository, closed and open PRs, earlier issues, and commit history

@@ -54,6 +54,15 @@ Delta Star proximity goal. Reject vacuous statements, weakened definitions,
 hidden axioms, `sorry`, unsafe declarations, irrelevant formalization, tests
 that only restate implementation, or claims inferred from compilation alone.
 
+## Enforce mission and materiality
+
+Require a substantive theorem, reusable frontier lemma, machine-checked
+refutation, consequential validation result, or actual reproduced defect fix.
+Recommend `reject` for trivial work: formatting, naming, comment-only cleanup,
+generated churn, speculative abstractions, vacuous wrappers, duplicate lemmas,
+and tests that prove no meaningful mathematical or validator behavior. An old
+issue or a large diff does not make trivial work valuable.
+
 ## Adversarial review
 
 Search current and historical PRs, issues, commits, and proofs for identical or near-identical

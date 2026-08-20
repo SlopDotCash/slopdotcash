@@ -1,6 +1,6 @@
 ---
 name: contribute-to-asi
-description: "Hill-climb the benchmarks in elizaOS/asi, a JAX continual-reinforcement-learning framework, with optional public payout registration. Use when an agent is asked to improve a measured result, port a method from the literature, fix something that corrupts measurement, decisively close a research direction with paired evidence, or register a public Solana payout address."
+description: "Finish mission-aligned open issues in elizaOS/asi, then hill-climb its continual-RL benchmarks, produce measured research advancement, or fix a reproduced bug that corrupts execution or measurement, with optional public payout registration. Do not use for generic improvements, cleanup, or speculative polish."
 ---
 
 # Contribute to ASI
@@ -104,6 +104,40 @@ node <skill-directory>/scripts/live-report.mjs --repo elizaOS/asi
 Re-read the chosen issue, discussion, or pull request immediately before
 acting — someone may already be running your experiment.
 
+## Finish the existing queue before inventing work
+
+Use the live report as a filter, then inspect GitHub directly. Follow this
+priority order without skipping a nonempty higher tier for easier, newer, or
+more interesting work:
+
+1. **Finish an existing issue with no PR.** Choose the oldest bounded,
+   unblocked, unclaimed open issue that fits the measured ASI mission. Confirm
+   no open PR has a closing reference or substantively implements it, then
+   resolve the issue completely with the required paired evidence. An issue
+   asking for cleanup, generic improvement, or unmeasured polish is not made
+   valid merely because it is old; give it an explicit out-of-scope
+   disposition instead of implementing it.
+2. **Review an existing PR with no review.** Only when no qualifying issue is
+   available, independently reproduce the oldest non-draft, unblocked,
+   non-sensitive PR you did not author that lacks a substantive current-head
+   human review and active reviewer. Approve, request changes, repair only when
+   authorized, or recommend closure.
+3. **Advance the research only after the old queue is reconciled.** New work
+   must be a benchmark hill climb, a measured port or decisive experimental
+   advancement/refutation, or a fix for an actual reproduced runtime,
+   harness, metric, validator, or test-system bug. Do not make random
+   improvements, opportunistic refactors, speculative abstractions, cosmetic
+   or trivial fixes, documentation-only edits, or tests with no demonstrated
+   behavioral risk.
+
+The closing-reference check is only a deduplication aid. Re-read linked PRs,
+issue timelines, reviews, and current heads before declaring an issue
+uncovered or a PR unreviewed. Treat incomplete queue data as unknown and stop.
+Do not create an issue or discussion during a self-directed run. A new one
+requires the operator to request that exact write after the existing issue and
+PR queue has been reconciled and the measured mission gate has passed. Route
+security findings privately under repository policy.
+
 ## What counts as work here
 
 Exactly four outcomes. Pick one:
@@ -111,9 +145,11 @@ Exactly four outcomes. Pick one:
 1. **Climb** — beat a recorded baseline on a named benchmark metric.
 2. **Port** — implement a method from the literature and measure it against
    that baseline on this repository's lanes.
-3. **Fix** — repair something that blocks or corrupts measurement: a broken
-   harness, an unsound metric, a failing or flaky test, a validator that
-   accepts what it should reject.
+3. **Fix** — repair an actual reproduced defect that blocks or corrupts
+   execution or measurement: a broken harness, an unsound metric, a validator
+   that accepts what it should reject, or test infrastructure that demonstrably
+   produces false results. A test that merely looks weak, stale, or flaky is
+   not enough without a reproduced behavioral failure.
 4. **Close** — refute a direction decisively enough that nobody spends compute
    on it again, and record it in `NEGATIVE_RESULTS_LEDGER.md`.
 
@@ -199,19 +235,21 @@ Plan line of work itself.
   rather than quietly tuning until it does.
 - A published claim is not evidence for this repository. Nothing enters
   `RESEARCH_STATUS.md` on a citation; it enters on a measurement made here.
-- Bring the idea even when you cannot finish it: open a discussion with the
-  paper, the mechanism, and how it would be measured on a named lane.
+- Do not create a speculative discussion merely because you cannot finish an
+  idea. After the old queue is reconciled, the operator may explicitly
+  authorize a discussion that names the paper, mechanism, and measurement lane.
 
 ## Collaborate in the open
 
-Novel research direction is a conversation, not a surprise pull request.
+Novel research direction is a conversation, not a surprise pull request, but
+it comes only after existing issues and unreviewed PRs are reconciled.
 
-- **Discussions** (`Ideas` category) — propose a direction, a paper worth
-  porting, a benchmark that seems mismeasured, or a result you cannot explain.
-  Use this before large or speculative work so someone else does not spend the
-  same compute.
-- **Issues** — one bounded, measurable piece of work with a named lane, metric,
-  and baseline. This is where a pre-registration lives.
+- **Discussions** (`Ideas` category) — when explicitly authorized after queue
+  reconciliation, propose a direction, a paper worth porting, a benchmark that
+  seems mismeasured, or a result you cannot explain before spending compute.
+- **Issues** — only when explicitly authorized after queue reconciliation, one
+  bounded, measurable piece of work with a named lane, metric, and baseline.
+  This is where a pre-registration lives.
 - **Pull requests** — the change plus its evidence. Link the issue or
   discussion it came from.
 
