@@ -158,7 +158,18 @@ jobs:
         run: bun run build
 
       - name: Install Playwright Chromium
-        run: ./node_modules/.bin/playwright install --with-deps chromium
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            if timeout --signal=TERM 10m ./node_modules/.bin/playwright install --with-deps chromium; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::Playwright Chromium installation failed twice."
+              exit 1
+            fi
+            echo "::warning::Playwright Chromium installation stalled or failed; retrying once."
+          done
 
       - name: Run desktop and mobile browser tests
         run: bun run test:e2e

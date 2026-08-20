@@ -54,6 +54,10 @@ successor records capture higher tiers, holds, exclusions, and work-unit
 grouping. The frozen August snapshot binds this rule version and then enters
 the ordinary 14-day public allocation review.
 
+Usage-derived bonuses shown in provisional snapshots before the
+2026-08-19 00:00:00 UTC cutover are void when August is frozen for settlement;
+the underlying accepted outcome and any finalized private-trace bonus remain.
+
 No KYC is required. Abuse resistance comes from immutable GitHub actor and
 artifact IDs, work-unit grouping, exact-head decisions, public human authority,
 and append-only corrections—not identity documents.
