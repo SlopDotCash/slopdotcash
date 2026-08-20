@@ -14,7 +14,7 @@ export default defineConfig({
     // those integration checks contend with one another and hit Vitest's
     // per-test timeout despite passing in isolation.
     fileParallelism: false,
-    hookTimeout: 300_000,
+    hookTimeout: 0,
     setupFiles: ["./tests/setup.ts"],
     testTimeout: 0,
     include: [
