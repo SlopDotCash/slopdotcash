@@ -507,7 +507,9 @@ describe("slop.cash deployment contract", () => {
       "Strict-Transport-Security: max-age=31536000; includeSubDomains",
     );
     expect(pagesHeaders).toContain("style-src 'self';");
-    expect(pagesHeaders).toContain("img-src 'self' data:;");
+    expect(pagesHeaders).toContain(
+      "img-src 'self' data: https://avatars.githubusercontent.com;",
+    );
     expect(pagesHeaders).not.toContain("deck.eliza.app");
     expect(pagesHeaders).not.toContain("'unsafe-inline'");
     expect(pagesHeaders).toContain("/assets/*");

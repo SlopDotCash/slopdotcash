@@ -37,7 +37,7 @@ function compareActors(left: GitHubActor, right: GitHubActor): number {
 function actorFromCycle(actor: { id: string; login: string }): GitHubActor {
   return {
     ...actor,
-    avatarUrl: `https://github.com/${encodeURIComponent(actor.login)}.png?size=96`,
+    avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(actor.login)}?size=96`,
     url: `https://github.com/${encodeURIComponent(actor.login)}`,
     kind: "User",
   };
