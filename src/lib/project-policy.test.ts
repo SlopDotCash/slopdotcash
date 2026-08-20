@@ -130,6 +130,39 @@ describe("project policy transitions", () => {
     );
   });
 
+  it("allows one identity-preserving transfer alias and rejects alias drift", () => {
+    const previous = structuredClone(eliza);
+    const transferred = structuredClone(eliza);
+    const transferredRepository = transferred
+      .repositories[0] as (typeof transferred.repositories)[number] & {
+      aliases: string[];
+    };
+    transferredRepository.aliases = ["SlopDotCash/eliza"];
+    transferredRepository.githubUrl = "https://github.com/SlopDotCash/eliza";
+    transferredRepository.displayName = "SlopDotCash/eliza";
+    expect(assertProjectPolicyTransition(previous, transferred)).toEqual(
+      transferred,
+    );
+
+    const rewritten = structuredClone(transferred);
+    const rewrittenRepository = rewritten
+      .repositories[0] as (typeof rewritten.repositories)[number] & {
+      aliases: string[];
+    };
+    rewrittenRepository.aliases[0] = "attacker/eliza";
+    rewritten.repositories[0].githubUrl = "https://github.com/attacker/eliza";
+    rewritten.repositories[0].displayName = "attacker/eliza";
+    expect(() => assertProjectPolicyTransition(transferred, rewritten)).toThrow(
+      /append-only/u,
+    );
+
+    const branch = structuredClone(transferred);
+    branch.repositories[0].integrationBranch = "main";
+    expect(() => assertProjectPolicyTransition(transferred, branch)).toThrow(
+      /drift/u,
+    );
+  });
+
   it("keeps payment transitions from rewriting IP state", () => {
     const payment = structuredClone(eliza);
     payment.reward.monthlyCapMinor = "20000000000";

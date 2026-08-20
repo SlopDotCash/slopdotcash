@@ -532,7 +532,7 @@ export interface LeaderboardSourceMetadata {
 export interface LeaderboardSnapshot {
   schemaVersion: typeof LEADERBOARD_SCHEMA_VERSION;
   repository: typeof LEADERBOARD_REPOSITORY;
-  repositories: TargetRepository[];
+  repositories: Omit<TargetRepository, "aliases" | "expectedNodeId">[];
   ruleVersion: typeof SCORE_RULE_VERSION;
   generatedAt: string;
   sourceUpdatedAt: string;
@@ -3438,7 +3438,10 @@ export function createLeaderboardSnapshot(
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
     repository: LEADERBOARD_REPOSITORY,
-    repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
+    repositories: TARGET_REPOSITORIES.map(
+      ({ aliases: _aliases, expectedNodeId: _expectedNodeId, ...repository }) =>
+        repository,
+    ),
     ruleVersion: SCORE_RULE_VERSION,
     generatedAt: input.generatedAt,
     sourceUpdatedAt: latestSourceUpdate(input),
@@ -4548,14 +4551,14 @@ function assertLedgerValue(
   );
   if (
     decisionUrl.hostname !== "github.com" ||
-    !/^\/elizaOS\/(?:slopdotcash|army)\/pull\/[1-9]\d*$/iu.test(
+    !/^\/(?:elizaOS\/(?:slopdotcash|army)|SlopDotCash\/slopdotcash)\/pull\/[1-9]\d*$/iu.test(
       decisionUrl.pathname,
     ) ||
     decisionUrl.search ||
     decisionUrl.hash
   ) {
     throw new Error(
-      `${path}.evaluation.decisionUrl must be an elizaOS/slopdotcash pull request`,
+      `${path}.evaluation.decisionUrl must be a Slop review pull request`,
     );
   }
   assertString(evaluation.manifestSha256, `${path}.evaluation.manifestSha256`);

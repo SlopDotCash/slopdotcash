@@ -9,11 +9,18 @@ import { PROJECTS } from "./projects.mjs";
 export const TARGET_REPOSITORIES = Object.freeze(
   PROJECTS.flatMap((project, projectIndex) =>
     project.repositories.map((metadata, repositoryIndex) => {
-      const [owner, name] = metadata.id.split("/");
+      const canonicalUrl = new URL(metadata.githubUrl);
+      const [owner, name] = canonicalUrl.pathname.split("/").filter(Boolean);
+      const currentIdentity = `${owner}/${name}`;
       return Object.freeze({
         ...metadata,
+        aliases: metadata.aliases ?? [],
         owner,
         name,
+        expectedNodeId:
+          currentIdentity.toLowerCase() === metadata.id.toLowerCase()
+            ? null
+            : project.authority.repositoryNodeId,
         projectId: project.id,
         role:
           projectIndex === 0 && repositoryIndex === 0 ? "primary" : "member",
@@ -25,10 +32,12 @@ export const TARGET_REPOSITORIES = Object.freeze(
 export const PRIMARY_REPOSITORY = TARGET_REPOSITORIES[0];
 
 const REPOSITORIES_BY_LOWERCASE_ID = new Map(
-  TARGET_REPOSITORIES.map((repository) => [
-    repository.id.toLowerCase(),
-    repository,
-  ]),
+  TARGET_REPOSITORIES.flatMap((repository) =>
+    [repository.id, ...(repository.aliases ?? [])].map((repositoryId) => [
+      repositoryId.toLowerCase(),
+      repository,
+    ]),
+  ),
 );
 
 /**

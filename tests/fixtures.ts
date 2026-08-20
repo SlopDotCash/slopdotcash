@@ -31,7 +31,10 @@ export function snapshotFixture(): LeaderboardSnapshot {
   return {
     schemaVersion: "6",
     repository: "elizaOS/eliza",
-    repositories: TARGET_REPOSITORIES.map((repository) => ({ ...repository })),
+    repositories: TARGET_REPOSITORIES.map(
+      ({ aliases: _aliases, expectedNodeId: _expectedNodeId, ...repository }) =>
+        repository,
+    ),
     ruleVersion: SCORE_RULE_VERSION,
     generatedAt,
     sourceUpdatedAt: generatedAt,

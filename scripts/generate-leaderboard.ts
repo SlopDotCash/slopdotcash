@@ -1419,6 +1419,15 @@ async function preflightRepository(
     name: targetRepository.name,
   });
   const repository = child(data, "repository", "data");
+  const repositoryNodeId = asString(repository.id, "data.repository.id");
+  if (
+    targetRepository.expectedNodeId !== null &&
+    repositoryNodeId !== targetRepository.expectedNodeId
+  ) {
+    throw new Error(
+      `Repository alias ${targetRepository.owner}/${targetRepository.name} resolved to ${repositoryNodeId}, expected immutable node ${targetRepository.expectedNodeId}`,
+    );
+  }
   if (options.requireStartingBudget) {
     const rateLimit = client.getRateLimit();
     const requiredRemaining = Math.min(
@@ -1432,7 +1441,7 @@ async function preflightRepository(
     }
   }
   return {
-    id: asString(repository.id, "data.repository.id"),
+    id: repositoryNodeId,
     updatedAt: asString(repository.updatedAt, "data.repository.updatedAt"),
   };
 }
@@ -1447,7 +1456,7 @@ export async function collectSearchReferences(
   expectedKind: NodeReference["kind"],
   stats: { searchSliceCount: number },
 ): Promise<NodeReference[]> {
-  const searchQuery = `repo:${repository.id} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
+  const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
   const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
     searchQuery,
@@ -1530,7 +1539,7 @@ async function countSearchResults(
   expectedKind: NodeReference["kind"],
   stats: { searchSliceCount: number },
 ): Promise<number> {
-  const searchQuery = `repo:${repository.id} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
+  const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
   const data = await client.execute(SEARCH_REFERENCES_QUERY, {
     searchQuery,

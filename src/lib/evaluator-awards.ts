@@ -94,7 +94,7 @@ function iso(value: unknown, field: string): string {
 function githubUrl(
   value: unknown,
   field: string,
-  expectedPath: string,
+  expectedPath: string | readonly string[],
   expectedHash?: RegExp,
 ): string {
   const result = text(value, field, { max: 512 });
@@ -107,7 +107,9 @@ function githubUrl(
   if (
     parsed.protocol !== "https:" ||
     parsed.hostname !== "github.com" ||
-    parsed.pathname.toLowerCase() !== expectedPath.toLowerCase() ||
+    !(Array.isArray(expectedPath) ? expectedPath : [expectedPath]).some(
+      (path) => parsed.pathname.toLowerCase() === path.toLowerCase(),
+    ) ||
     parsed.search ||
     (expectedHash ? !expectedHash.test(parsed.hash) : parsed.hash !== "") ||
     parsed.username ||
@@ -176,14 +178,14 @@ function review(value: unknown, field: string): EvaluatorAwardReview {
   if (
     parsed.protocol !== "https:" ||
     parsed.hostname !== "github.com" ||
-    !/^\/elizaOS\/(?:slopdotcash|army)\/pull\/[1-9]\d*$/iu.test(
+    !/^\/(?:elizaOS\/(?:slopdotcash|army)|SlopDotCash\/slopdotcash)\/pull\/[1-9]\d*$/iu.test(
       parsed.pathname,
     ) ||
     parsed.search ||
     parsed.hash
   ) {
     throw new TypeError(
-      `${field}.decisionUrl must be an elizaOS/slopdotcash pull request`,
+      `${field}.decisionUrl must be a Slop review pull request`,
     );
   }
   return {
@@ -259,11 +261,16 @@ export function assertEvaluatorAwardManifest(
   const sourceKind = source.kind as ScoreEvent["source"]["kind"];
   const pathKind =
     sourceKind === "issue" || sourceKind === "comment" ? "issues" : "pull";
-  const normalizedRepository = repository.split("/");
+  const repositoryIdentities = [
+    registeredRepository.id,
+    ...(registeredRepository.aliases ?? []),
+  ];
   const sourceUrl = githubUrl(
     source.url,
     "evaluator award.source.url",
-    `/${normalizedRepository[0]}/${normalizedRepository[1]}/${pathKind}/${number}`,
+    repositoryIdentities.map(
+      (repositoryIdentity) => `/${repositoryIdentity}/${pathKind}/${number}`,
+    ),
     sourceKind === "review"
       ? /^#(?:pullrequestreview-|discussion_r)\d+$/iu
       : sourceKind === "comment"
