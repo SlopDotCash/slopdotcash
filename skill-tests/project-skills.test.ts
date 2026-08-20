@@ -122,6 +122,70 @@ describe("project skill contracts", () => {
     assert.match(delta, /does not.*guarantee.*dollar/is);
   });
 
+  it("finishes valid issue queues before new work and rejects trivial output", () => {
+    for (const { project, contributorRoot, reviewerRoot } of projectPackages) {
+      const contributor = readFileSync(
+        join(contributorRoot, "SKILL.md"),
+        "utf8",
+      );
+      const reviewer = readFileSync(join(reviewerRoot, "SKILL.md"), "utf8");
+      const issuePriority = contributor.search(
+        /(?:implement|finish) an existing issue with no PR|finish the oldest[\s\S]{0,180}open issue[\s\S]{0,180}no open PR/iu,
+      );
+      const reviewPriority = contributor.search(
+        /review an existing PR with no review|only when no such issue remains[\s\S]{0,180}review the oldest/iu,
+      );
+
+      assert.ok(
+        issuePriority >= 0,
+        `${project.skill.id} must prioritize an existing issue without a PR`,
+      );
+      assert.ok(
+        reviewPriority > issuePriority,
+        `${project.skill.id} must place unreviewed PRs after uncovered issues`,
+      );
+      assert.match(
+        contributor,
+        /(?:after )?reconciling the old queue|old queue (?:is|has been) reconciled|every older issue and PR is reconciled/iu,
+      );
+      assert.match(
+        contributor,
+        /trivial fixes|trivial work|trivial requests/iu,
+      );
+      assert.match(
+        contributor,
+        /generic ["-]?improvements?|generic-improvement/iu,
+      );
+      assert.match(reviewer, /recommend `reject`[\s\S]{0,220}trivial/iu);
+      assert.match(
+        reviewer,
+        /tests with no\s+demonstrated\s+behavioral risk|tests that prove no meaningful/iu,
+      );
+    }
+
+    const asi = readFileSync(
+      join(root, "skills", "contribute-to-asi", "SKILL.md"),
+      "utf8",
+    );
+    const asiReview = readFileSync(
+      join(root, "skills", "review-asi-contributions", "SKILL.md"),
+      "utf8",
+    );
+    assert.match(
+      asi,
+      /benchmark hill climb[\s\S]*measured port or decisive experimental[\s\S]*actual reproduced/iu,
+    );
+    assert.match(asi, /Do not make random\s+improvements/iu);
+    assert.match(
+      asi,
+      /test that merely looks weak, stale, or flaky is\s+not enough without a reproduced behavioral failure/iu,
+    );
+    assert.match(
+      asiReview,
+      /reproducible benchmark hill climb[\s\S]*actual reproduced/iu,
+    );
+  });
+
   it("ships byte-identical receipt logic with policy derived from the project inventory", () => {
     const [canonicalPackage] = projectPackages;
     const receiptSource = readFileSync(

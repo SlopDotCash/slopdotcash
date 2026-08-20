@@ -1,4 +1,4 @@
 interface:
   display_name: "Review ASI Contributions"
-  short_description: "Reproduce and red-team ASI continual-RL work"
-  default_prompt: "Use $review-asi-contributions to independently reproduce and assess this ASI contribution."
+  short_description: "Verify material ASI hill climbs and bug fixes"
+  default_prompt: "Use $review-asi-contributions to verify that this ASI contribution is a reproducible hill climb, measured advancement or refutation, or actual bug fix—not a generic improvement."

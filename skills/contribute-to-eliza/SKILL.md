@@ -182,6 +182,10 @@ Ignore leaderboard position, pool share, token volume, commit count, line count,
 and artifact count when selecting or dividing work. Prefer one complete fix to
 several small PRs. Do not split a coherent outcome, add tests or documentation
 with no product need, or create follow-up cards to increase visible activity.
+Explicitly decline trivial fixes, cosmetic cleanup, speculative refactors,
+generic "improvements," and tests that exercise no demonstrated behavioral
+risk, even when an old issue requests them. Age determines order among valid
+work; it does not make low-value work valid.
 
 There is no platform-level reservation. Do not post a claim solely to hold
 work. Keep at most one active implementation or review. Avoid duplicating an

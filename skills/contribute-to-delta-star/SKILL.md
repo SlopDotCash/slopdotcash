@@ -1,6 +1,6 @@
 ---
 name: contribute-to-delta-star
-description: "Advance, test, refute, or independently review machine-checked work in elizaOS/proximityprize's Delta Star proximity-gap programme. Use when an agent is asked to solve formal mathematics, implement Lean proofs, validate a research lane, improve executable checks, or prepare evidence for contribution-share review toward the external Proximity Prize."
+description: "Finish mission-aligned open issues in elizaOS/proximityprize, then advance, test, refute, or independently review machine-checked Delta Star work. Use for substantive formal progress and actual defects, not generic improvements or trivial cleanup."
 ---
 
 # Contribute to Delta Star
@@ -98,6 +98,30 @@ node <skill-directory>/scripts/live-report.mjs --repo elizaOS/proximityprize
 The report batches open activity, prints progress, and fails closed if a
 connection exceeds its published completeness bound. Re-read the chosen live
 issue or pull request immediately before acting.
+
+## Finish the existing queue before inventing work
+
+Follow this order without skipping a nonempty higher tier:
+
+1. Finish the oldest bounded, unblocked, unclaimed open issue that advances the
+   live Delta Star frontier and has no open PR that closes or substantively
+   implements it.
+2. Only when no such issue remains, review the oldest non-draft, unblocked,
+   non-sensitive PR you did not author that has no substantive current-head
+   human review or active reviewer. Reproduce it and give it an explicit
+   approve, changes, repair-when-authorized, or closure disposition.
+3. Only after every older issue and PR is reconciled may you select new
+   frontier work. It must discharge or narrow a named mathematical residual,
+   produce a machine-checked refutation, validate a consequential claim, or
+   fix an actual reproduced defect in the proof, build, or validation path.
+
+An old issue does not override the mission gate: explicitly decline vacuous,
+duplicate, obsolete, cosmetic, or trivial work. Do not open a new issue merely
+to create an eligible task, and do not submit formatting, naming, generated
+churn, comment-only cleanup, speculative abstraction, or tests that prove no
+meaningful mathematical or validator behavior. A new issue requires the
+operator to request that exact write after the old queue has been reconciled.
+Treat incomplete queue data as unknown and stop.
 
 ## Choose one bounded research outcome
 

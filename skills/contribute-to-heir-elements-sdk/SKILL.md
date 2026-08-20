@@ -1,6 +1,6 @@
 ---
 name: contribute-to-heir-elements-sdk
-description: "Harden, test, diagnose, or independently review the public HEIR Elements SDK in heirlabs/element-sdk, with optional public payout registration. Use when an agent is asked to strengthen the sandboxed element runtime, validator, CLI, types, or React bindings for intelligent inheritance applications; prove one accepted outcome; publish a device-signed project token receipt; or register a public Solana payout address."
+description: "Finish mission-aligned open issues in heirlabs/element-sdk, then harden inheritance applications, fix reproduced SDK defects, strengthen sandbox and validator behavior, or review unreviewed pull requests. Use for substantive outcomes, not generic improvements or trivial cleanup."
 ---
 
 # Contribute to Heir Elements SDK
@@ -103,6 +103,30 @@ node <skill-directory>/scripts/live-report.mjs --repo heirlabs/element-sdk
 ```
 
 Re-read the chosen issue or pull request immediately before acting.
+
+## Finish the existing queue before inventing work
+
+Follow this order without skipping a nonempty higher tier:
+
+1. Finish the oldest bounded, unblocked, unclaimed open issue that fits the
+   inheritance SDK mission and has no open PR that closes or substantively
+   implements it.
+2. Only when no such issue remains, review the oldest non-draft, unblocked,
+   non-sensitive PR you did not author that has no substantive current-head
+   human review or active reviewer. Reproduce it and give it an explicit
+   approve, changes, repair-when-authorized, or closure disposition.
+3. Only after every older issue and PR is reconciled may you find new work. It
+   must close a concrete sandbox or permission hole, fix an actual reproduced
+   SDK defect, or add a failure-sensitive validator or test for demonstrated
+   unsafe behavior.
+
+An old issue does not override the mission gate: explicitly decline duplicate,
+obsolete, cosmetic, generic-improvement, or trivial requests. Do not open a
+new issue merely to create work, and do not submit formatting, renames,
+comment-only cleanup, speculative abstractions, or tests with no demonstrated
+behavioral risk. A new issue requires the operator to request that exact write
+after the old queue has been reconciled. Treat incomplete queue data as unknown
+and stop.
 
 ## What counts as work here
 
