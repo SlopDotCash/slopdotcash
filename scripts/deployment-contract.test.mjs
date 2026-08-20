@@ -287,7 +287,11 @@ describe("slop.cash deployment contract", () => {
     expect(e2eRunner).toContain('"--grep",\n    artifactContract');
     expect(qualityJob).toContain("run: bun run test:e2e");
     expect(qualityJob).toContain(
-      "run: ./node_modules/.bin/playwright install --with-deps chromium",
+      "timeout --signal=TERM 10m ./node_modules/.bin/playwright install --with-deps chromium",
+    );
+    expect(qualityJob).toContain("for attempt in 1 2; do");
+    expect(qualityJob).toContain(
+      "Playwright Chromium installation failed twice.",
     );
     expect(qualityJob).not.toContain("bunx playwright install");
     expect(qualityJob).toContain("bun test ./skill-tests");
