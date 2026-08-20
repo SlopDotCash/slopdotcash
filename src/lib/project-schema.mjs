@@ -18,6 +18,7 @@ const PROJECT_KEYS = [
   "headline",
   "id",
   "links",
+  "listingTier",
   "modelPolicy",
   "name",
   "repositories",
@@ -880,7 +881,14 @@ function validateProjectDefinition(
   } = {},
 ) {
   const project = record(value, "project");
-  exactKeys(project, PROJECT_KEYS, "project");
+  const hasListingTier = Object.hasOwn(project, "listingTier");
+  exactKeys(
+    project,
+    hasListingTier
+      ? PROJECT_KEYS
+      : PROJECT_KEYS.filter((key) => key !== "listingTier"),
+    "project",
+  );
   if (project.schemaVersion !== "1")
     throw new TypeError("project schemaVersion is unsupported");
   const id = text(project.id, "project.id", {
@@ -893,6 +901,13 @@ function validateProjectDefinition(
   text(project.eyebrow, "project.eyebrow", { max: 80, min: 3 });
   text(project.headline, "project.headline", { max: 120, min: 8 });
   text(project.description, "project.description", { max: 600, min: 24 });
+  if (
+    hasListingTier &&
+    project.listingTier !== "featured" &&
+    project.listingTier !== "community"
+  ) {
+    throw new TypeError("project.listingTier is invalid");
+  }
   if (project.status !== "active" && project.status !== "paused") {
     throw new TypeError("project.status is invalid");
   }

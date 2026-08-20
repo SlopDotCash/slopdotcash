@@ -48,6 +48,7 @@ export interface ProjectDefinition {
   readonly eyebrow: string;
   readonly headline: string;
   readonly description: string;
+  readonly listingTier?: "featured" | "community";
   readonly status: ProjectStatus;
   readonly steward: {
     readonly displayName: string;

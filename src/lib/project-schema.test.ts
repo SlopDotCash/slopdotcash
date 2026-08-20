@@ -100,6 +100,12 @@ describe("project proposal schema", () => {
     expect(assertProjectDefinition(eliza).reviewSkill.id).toBe(
       "review-eliza-contributions",
     );
+    expect(assertProjectDefinition(eliza).listingTier).toBeUndefined();
+    const featured = { ...structuredClone(eliza), listingTier: "featured" };
+    expect(assertProjectDefinition(featured).listingTier).toBe("featured");
+    expect(() =>
+      assertProjectDefinition({ ...featured, listingTier: "sponsored" }),
+    ).toThrow(/listingTier/u);
     expect(assertProjectDefinition(deltaStar).repositories[0]).toMatchObject({
       id: "elizaOS/proximityprize",
       aliases: ["SlopDotCash/proximityprize"],
