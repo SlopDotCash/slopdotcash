@@ -1,6 +1,6 @@
 ---
 name: review-delta-star-contributions
-description: "Independently evaluate an elizaOS/proximityprize Delta Star implementation, Lean proof, test, refutation, diagnosis, or evidence artifact for correctness, security, duplication, provenance, and contribution credit. Use in project CI or maintainer review before publishing a Proximity Prize contribution share."
+description: "Independently evaluate a SlopDotCash/proximityprize Delta Star implementation, Lean proof, test, refutation, diagnosis, or evidence artifact for correctness, security, duplication, provenance, and contribution credit. Use in project CI or maintainer review before publishing a Proximity Prize contribution share."
 ---
 
 # Review Delta Star Contributions

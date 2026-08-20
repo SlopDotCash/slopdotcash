@@ -166,6 +166,31 @@ describe("evaluator award protocol", () => {
     }
   });
 
+  it("preserves an exact award source across a repository transfer", () => {
+    const source = {
+      id: "IC_transferred_comment_1",
+      kind: "comment",
+      number: 1,
+      title: "Transferred repository contribution",
+      url: "https://github.com/SlopDotCash/proximityprize/issues/1#issuecomment-170",
+    };
+    const transferred = assertEvaluatorAwardManifest(
+      award({
+        projectId: "delta-star",
+        repository: "elizaOS/proximityprize",
+        source,
+        review: {
+          reviewer: "maintainer",
+          reviewedAt: "2026-07-22T10:00:00.000Z",
+          decisionUrl: "https://github.com/SlopDotCash/slopdotcash/pull/99",
+        },
+      }),
+    );
+
+    expect(transferred.repository).toBe("elizaOS/proximityprize");
+    expect(transferred.source).toEqual(source);
+  });
+
   it("rejects duplicate source credit even when award ids differ", () => {
     const root = fixtureRoot();
     writeFileSync(

@@ -9,6 +9,43 @@ describe("pull-request ledger schema bridge", () => {
     expect(preparePullRequestLedger(snapshot)).toBe(snapshot);
   });
 
+  it("rebinds only a registered pre-transfer repository presentation", () => {
+    const deployed = structuredClone(snapshotFixture());
+    const asi = deployed.repositories.find(
+      (repository) => repository.id === "elizaOS/asi",
+    ) as unknown as {
+      owner: string;
+      name: string;
+      displayName: string;
+      githubUrl: string;
+    };
+    if (!asi) throw new Error("missing ASI fixture repository");
+    asi.owner = "elizaOS";
+    asi.name = "asi";
+    asi.displayName = "elizaOS/asi";
+    asi.githubUrl = "https://github.com/elizaOS/asi";
+
+    const rebound = preparePullRequestLedger(deployed);
+    expect(rebound).not.toBe(deployed);
+    expect(
+      rebound.repositories.find(
+        (repository) => repository.id === "elizaOS/asi",
+      ),
+    ).toMatchObject({
+      owner: "SlopDotCash",
+      name: "asi",
+      displayName: "SlopDotCash/asi",
+      githubUrl: "https://github.com/SlopDotCash/asi",
+    });
+
+    asi.owner = "attacker";
+    asi.displayName = "attacker/asi";
+    asi.githubUrl = "https://github.com/attacker/asi";
+    expect(() => preparePullRequestLedger(deployed)).toThrow(
+      /not a registered/u,
+    );
+  });
+
   it("migrates deployed schema 5 data without inventing additive August activity", () => {
     const legacy = structuredClone(snapshotFixture()) as unknown as Record<
       string,

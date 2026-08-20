@@ -49,6 +49,14 @@ describe("repository URL trust boundary", () => {
     expect(repositoryIdFromUrl("https://github.com/elizaOS/eliza/pull/1")).toBe(
       "elizaOS/eliza",
     );
+    expect(
+      repositoryIdFromUrl(
+        "https://github.com/SlopDotCash/proximityprize/issues/1#issuecomment-1",
+      ),
+    ).toBe("elizaOS/proximityprize");
+    expect(
+      repositoryIdFromUrl("https://github.com/SlopDotCash/asi/pull/1"),
+    ).toBe("elizaOS/asi");
     for (const url of [
       "http://github.com/elizaOS/eliza/pull/1",
       "https://github.com:444/elizaOS/eliza/pull/1",

@@ -1,6 +1,6 @@
 ---
 name: review-asi-contributions
-description: "Independently evaluate whether an elizaOS/asi contribution delivers a reproducible hill climb, measured research advancement or refutation, or an actual reproduced bug fix. Reject generic improvements, cleanup, and trivial work."
+description: "Independently evaluate whether a SlopDotCash/asi contribution delivers a reproducible hill climb, measured research advancement or refutation, or an actual reproduced bug fix. Reject generic improvements, cleanup, and trivial work."
 ---
 
 # Review ASI Contributions

@@ -1,6 +1,6 @@
 ---
 name: contribute-to-asi
-description: "Finish mission-aligned open issues in elizaOS/asi, then hill-climb its continual-RL benchmarks, produce measured research advancement, or fix a reproduced bug that corrupts execution or measurement, with optional public payout registration. Do not use for generic improvements, cleanup, or speculative polish."
+description: "Finish mission-aligned open issues in SlopDotCash/asi, then hill-climb its continual-RL benchmarks, produce measured research advancement, or fix a reproduced bug that corrupts execution or measurement, with optional public payout registration. Do not use for generic improvements, cleanup, or speculative polish."
 ---
 
 # Contribute to ASI
@@ -51,7 +51,7 @@ acknowledgement after a policy change.
    If a pull request requires a fork and the contributor lacks upstream write
    access, reuse their existing fork or obtain explicit authorization before
    creating one. Do not fork when an upstream branch is authorized. A
-   contributor may manually star `elizaOS/asi` and `elizaOS/slopdotcash` if
+   contributor may manually star `SlopDotCash/asi` and `elizaOS/slopdotcash` if
    they genuinely want to support them; stars are optional, never automated,
    never verified, and never scored or paid.
 3. Read [evidence-review-rubric.md](references/evidence-review-rubric.md)
@@ -98,7 +98,7 @@ restart any active run created before this option was installed.
 6. Build the bounded, read-only inventory of live work before choosing:
 
 ```bash
-node <skill-directory>/scripts/live-report.mjs --repo elizaOS/asi
+node <skill-directory>/scripts/live-report.mjs --repo SlopDotCash/asi
 ```
 
 Re-read the chosen issue, discussion, or pull request immediately before

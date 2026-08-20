@@ -1545,9 +1545,9 @@ describe("current-head review selection", () => {
           typeof variables?.name === "string" ? variables.name : null;
         const repositoryNodeId =
           repositoryName === "proximityprize"
-            ? "REPOSITORY_PROXIMITY_PRIZE"
+            ? "R_kgDOT48hJQ"
             : repositoryName === "asi"
-              ? "REPOSITORY_ASI"
+              ? "R_kgDOT23CXA"
               : repositoryName === "element-sdk"
                 ? "REPOSITORY_ELEMENT_SDK"
                 : "REPOSITORY_ELIZA";
@@ -1660,14 +1660,14 @@ describe("current-head review selection", () => {
     const snapshot = await generateLeaderboardFromGitHub(client, { now });
     expect(snapshot.source.repositories).toEqual([
       { id: "elizaOS/eliza", repositoryId: "REPOSITORY_ELIZA" },
-      { id: "elizaOS/asi", repositoryId: "REPOSITORY_ASI" },
+      { id: "elizaOS/asi", repositoryId: "R_kgDOT23CXA" },
       {
         id: "heirlabs/element-sdk",
         repositoryId: "REPOSITORY_ELEMENT_SDK",
       },
       {
         id: "elizaOS/proximityprize",
-        repositoryId: "REPOSITORY_PROXIMITY_PRIZE",
+        repositoryId: "R_kgDOT48hJQ",
       },
     ]);
     expect(snapshot.repositories).toEqual(
