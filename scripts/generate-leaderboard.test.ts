@@ -26,6 +26,7 @@ import {
   generateLeaderboardFromGitHub,
   LEADERBOARD_QUERY_DOCUMENTS,
   OpenSetChangedError,
+  parseGenerationArguments,
   resolveGitHubToken,
   retrySlopSnapshot,
   runGenerator,
@@ -34,6 +35,29 @@ import {
   selectDetailedMergedPullRequestIds,
   verifyPullRequestEvidence,
 } from "./generate-leaderboard";
+
+describe("generation arguments", () => {
+  it("pins delayed monthly retries to their historical cutoff", () => {
+    expect(
+      parseGenerationArguments(
+        ["--cutoff", "2026-08-01T00:00:00.000Z"],
+        new Date("2026-08-20T12:00:00.000Z"),
+      ).now?.toISOString(),
+    ).toBe("2026-08-01T00:00:00.000Z");
+  });
+
+  it("rejects malformed and future cutoffs", () => {
+    expect(() => parseGenerationArguments(["--cutoff", "2026-08-01"])).toThrow(
+      /exact UTC timestamp/u,
+    );
+    expect(() =>
+      parseGenerationArguments(
+        ["--cutoff", "2026-09-01T00:00:00.000Z"],
+        new Date("2026-08-20T12:00:00.000Z"),
+      ),
+    ).toThrow(/future/u);
+  });
+});
 
 function actor(login: string, kind: GitHubActor["kind"] = "User"): GitHubActor {
   return {

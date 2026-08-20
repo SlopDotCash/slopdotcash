@@ -401,11 +401,7 @@ describe("discovery", () => {
         name: "MAKE MONEY SHIPPING OPEN SOURCE.",
       }),
     ).toBeInTheDocument();
-    expect(
-      await screen.findByText(
-        /Scoring is live · 4 of 4 projects accepting work · 3 monthly pools awaiting verified funding/u,
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Scoring is live/u)).not.toBeInTheDocument();
     expect(screen.queryByText("Public beta.")).not.toBeInTheDocument();
     expect(
       screen.queryByText(/Rankings are live. Payouts are off/u),
@@ -455,6 +451,12 @@ describe("discovery", () => {
     );
     expect(
       screen.getByRole("heading", { name: "Projects worth shipping." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Featured" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Community" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Eliza" })).toBeInTheDocument();
     expect(
@@ -892,7 +894,11 @@ describe("public records", () => {
     expect(
       await screen.findByRole("heading", { name: "open-only" }),
     ).toBeInTheDocument();
-    expect(document.querySelector(".avatar-large")).toHaveTextContent("OP");
+    expect(document.querySelector(".avatar-large")?.tagName).toBe("IMG");
+    expect(document.querySelector(".avatar-large")).toHaveAttribute(
+      "src",
+      openOnly.avatarUrl,
+    );
     expect(document.querySelector(".avatar-large")).toHaveAttribute(
       "aria-hidden",
       "true",

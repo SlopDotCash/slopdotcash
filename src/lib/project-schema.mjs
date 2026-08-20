@@ -889,17 +889,17 @@ function validateFunding(value, projectId) {
 function validateProjectDefinition(
   value,
   {
+    allowLegacyMissingListingTier = false,
     allowLegacyMissingPublishAtRoot = false,
     allowLegacyUnsupportedOwnershipClaim = false,
   } = {},
 ) {
   const project = record(value, "project");
-  const hasListingTier = Object.hasOwn(project, "listingTier");
   exactKeys(
     project,
-    hasListingTier
-      ? PROJECT_KEYS
-      : PROJECT_KEYS.filter((key) => key !== "listingTier"),
+    allowLegacyMissingListingTier && !("listingTier" in project)
+      ? PROJECT_KEYS.filter((key) => key !== "listingTier")
+      : PROJECT_KEYS,
     "project",
   );
   if (project.schemaVersion !== "1")
@@ -915,7 +915,7 @@ function validateProjectDefinition(
   text(project.headline, "project.headline", { max: 120, min: 8 });
   text(project.description, "project.description", { max: 600, min: 24 });
   if (
-    hasListingTier &&
+    !(allowLegacyMissingListingTier && !("listingTier" in project)) &&
     project.listingTier !== "featured" &&
     project.listingTier !== "community"
   ) {
@@ -1029,6 +1029,7 @@ export function assertProjectDefinition(value) {
  */
 export function assertHistoricalProjectDefinition(value) {
   return validateProjectDefinition(value, {
+    allowLegacyMissingListingTier: true,
     allowLegacyMissingPublishAtRoot: true,
     allowLegacyUnsupportedOwnershipClaim: true,
   });

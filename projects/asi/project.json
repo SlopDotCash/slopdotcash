@@ -6,6 +6,7 @@
   "eyebrow": "Continual reinforcement learning",
   "headline": "Make money advancing continual learning.",
   "description": "Hill-climb the benchmarks in ASI, a JAX continual-reinforcement-learning framework pursuing The Alberta Plan. Beat a recorded baseline, port a method from the literature, or fix what corrupts a measurement. Every accepted result ships a paired, seed-controlled comparison with published evidence.",
+  "listingTier": "featured",
   "status": "active",
   "steward": {
     "displayName": "$SLOP holder governance",

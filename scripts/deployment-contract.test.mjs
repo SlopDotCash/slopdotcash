@@ -365,6 +365,9 @@ describe("slop.cash deployment contract", () => {
       'if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then',
     );
     expect(monthlyRewardsWorkflow).not.toContain("ref: develop");
+    expect(monthlyRewardsWorkflow).toContain(
+      `bun run leaderboard:generate -- --cutoff "${"$"}{{ steps.cycle.outputs.cutoff }}"`,
+    );
   });
 
   it("preserves an immutable-sha transition gate on trusted develop pushes", () => {

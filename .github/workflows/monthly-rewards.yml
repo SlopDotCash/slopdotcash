@@ -84,17 +84,23 @@ jobs:
             exit 1
           fi
           printf 'cycle=%s\n' "$cycle" >> "$GITHUB_OUTPUT"
+          cutoff="$(CYCLE="$cycle" node -e 'const [year,month]=process.env.CYCLE.split("-").map(Number); process.stdout.write(new Date(Date.UTC(year,month,1)).toISOString())')"
+          if [ "$(node -e 'process.stdout.write(String(Date.parse(process.argv[1]) <= Date.now()))' "$cutoff")" != "true" ]; then
+            echo "::error::Cycle $cycle has not closed."
+            exit 1
+          fi
+          printf 'cutoff=%s\n' "$cutoff" >> "$GITHUB_OUTPUT"
 
       - name: Validate registry and evaluator awards
         run: |
           bun run projects:check
           bun run evaluations:check
 
-      - name: Generate complete live ledger
+      - name: Generate complete cycle ledger
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: bun run leaderboard:generate
+        run: bun run leaderboard:generate -- --cutoff "${{ steps.cycle.outputs.cutoff }}"
 
       - name: Freeze source and prepare every project
         env:
