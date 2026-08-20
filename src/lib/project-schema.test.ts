@@ -133,6 +133,15 @@ describe("project proposal schema", () => {
       /duplicate repository identities/u,
     );
 
+    const unregisteredProofIdentity = structuredClone(deltaStar);
+    if (unregisteredProofIdentity.authority.proof === null) {
+      throw new Error("Delta Star fixture must carry verified authority");
+    }
+    unregisteredProofIdentity.authority.proof.url = `https://github.com/attacker/proximityprize/blob/${unregisteredProofIdentity.authority.proof.commitSha}/.github/slop-project.json`;
+    expect(() => assertProjectDefinition(unregisteredProofIdentity)).toThrow(
+      /immutable repository URL/u,
+    );
+
     const crossProjectAlias = structuredClone(deltaStar);
     const collidingRepository = crossProjectAlias
       .repositories[0] as (typeof crossProjectAlias.repositories)[number] & {
@@ -554,7 +563,7 @@ describe("project proposal schema", () => {
     const inboundCommit = "e".repeat(40);
     missingPrizeRules.terms.inbound = {
       mode: "license",
-      termsUrl: `https://github.com/elizaOS/proximityprize/blob/${inboundCommit}/CONTRIBUTING.md`,
+      termsUrl: `https://github.com/SlopDotCash/proximityprize/blob/${inboundCommit}/CONTRIBUTING.md`,
       commitSha: inboundCommit,
       fileSha256: "d".repeat(64),
       version: "2026-08-19.1",

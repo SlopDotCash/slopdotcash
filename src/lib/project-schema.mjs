@@ -113,21 +113,33 @@ function numericId(value, field) {
   return text(value, field, { max: 40, pattern: /^[1-9]\d*$/u });
 }
 
-function immutableGithubUrl(value, field, repositoryId, commitSha, path) {
+function repositoryIdentities(repository) {
+  return [repository.id, ...(repository.aliases ?? [])];
+}
+
+function immutableGithubUrl(value, field, repositoryIds, commitSha, path) {
   const result = url(value, field, "https://github.com");
+  const pathname = new URL(result).pathname;
   if (
-    new URL(result).pathname !== `/${repositoryId}/blob/${commitSha}/${path}`
+    !repositoryIds.some(
+      (repositoryId) =>
+        pathname === `/${repositoryId}/blob/${commitSha}/${path}`,
+    )
   ) {
     throw new TypeError(`${field} must be an immutable repository URL`);
   }
   return result;
 }
 
-function immutableGithubCommitUrl(value, field, repositoryId, commitSha) {
+function immutableGithubCommitUrl(value, field, repositoryIds, commitSha) {
   const result = url(value, field, "https://github.com");
-  const prefix = `/${repositoryId}/blob/${commitSha}/`;
   const pathname = new URL(result).pathname;
-  if (!pathname.startsWith(prefix) || pathname.length === prefix.length) {
+  if (
+    !repositoryIds.some((repositoryId) => {
+      const prefix = `/${repositoryId}/blob/${commitSha}/`;
+      return pathname.startsWith(prefix) && pathname.length > prefix.length;
+    })
+  ) {
     throw new TypeError(
       `${field} must bind its repository, commit, and non-empty path`,
     );
@@ -224,7 +236,7 @@ function validateAuthority(value, repository) {
   immutableGithubUrl(
     proof.url,
     `${field}.proof.url`,
-    repository.id,
+    repositoryIdentities(repository),
     commitSha,
     ".github/slop-project.json",
   );
@@ -233,12 +245,13 @@ function validateAuthority(value, repository) {
 
 function validateTerms(
   value,
-  repositoryId,
+  repository,
   reward,
   steward,
   { allowLegacyUnsupportedOwnershipClaim = false } = {},
 ) {
   const field = "project.terms";
+  const repositoryIds = repositoryIdentities(repository);
   const terms = record(value, field);
   exactKeys(
     terms,
@@ -414,7 +427,7 @@ function validateTerms(
     immutableGithubUrl(
       license.url,
       `${field}.repositoryLicense.url`,
-      repositoryId,
+      repositoryIds,
       licenseCommit,
       "LICENSE",
     );
@@ -459,7 +472,7 @@ function validateTerms(
     immutableGithubCommitUrl(
       inbound.termsUrl,
       `${field}.inbound.termsUrl`,
-      repositoryId,
+      repositoryIds,
       inboundCommit,
     );
   }
@@ -938,7 +951,7 @@ function validateProjectDefinition(
   validateAuthority(project.authority, repositories[0]);
   validateTerms(
     project.terms,
-    repositories[0].id,
+    repositories[0],
     project.reward,
     project.steward,
     { allowLegacyUnsupportedOwnershipClaim },

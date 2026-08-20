@@ -383,7 +383,7 @@ describe("discovery", () => {
     const footer = screen.getByRole("contentinfo");
     expect(
       within(footer).getByRole("link", { name: "GitHub" }),
-    ).toHaveAttribute("href", "https://github.com/elizaOS/slopdotcash");
+    ).toHaveAttribute("href", "https://github.com/SlopDotCash/slopdotcash");
     expect(
       within(footer).queryByRole("link", { name: "Slop Git" }),
     ).not.toBeInTheDocument();
@@ -1128,7 +1128,7 @@ describe("project proposals", () => {
     const handoff = screen.getByRole("link", { name: /continue on github/i });
     expect(handoff).toHaveAttribute(
       "href",
-      expect.stringContaining("github.com/elizaOS/slopdotcash/new/develop"),
+      expect.stringContaining("github.com/SlopDotCash/slopdotcash/new/develop"),
     );
     expect(handoff).toHaveAttribute(
       "href",

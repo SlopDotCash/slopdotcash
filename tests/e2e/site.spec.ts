@@ -101,7 +101,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   const footer = page.locator(".site-footer");
   await expect(footer.getByRole("link", { name: "GitHub" })).toHaveAttribute(
     "href",
-    "https://github.com/elizaOS/slopdotcash",
+    "https://github.com/SlopDotCash/slopdotcash",
   );
   await expect(footer.getByRole("link", { name: "Slop Git" })).toHaveCount(0);
   await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
@@ -555,7 +555,7 @@ test("creates a valid GitHub-native project handoff", async ({
   const handoff = page.getByRole("link", { name: /Continue on GitHub/u });
   await expect(handoff).toHaveAttribute(
     "href",
-    /github\.com\/elizaOS\/slopdotcash\/new\/develop/u,
+    /github\.com\/SlopDotCash\/slopdotcash\/new\/develop/u,
   );
   await expect(page.locator(".manifest-preview")).toContainText(
     '"monthlyCapMinor": "2500000000"',

@@ -2497,7 +2497,7 @@ describe("run receipt CLI", () => {
           {
             schemaVersion: "1",
             name: "contribute-to-eliza",
-            repository: "elizaOS/slopdotcash",
+            repository: "SlopDotCash/slopdotcash",
             revision: sourceRevision,
             revisionStatus: "committed",
             source: {
@@ -2522,7 +2522,7 @@ describe("run receipt CLI", () => {
         `${JSON.stringify(
           {
             schemaVersion: "1",
-            repository: "elizaOS/slopdotcash",
+            repository: "SlopDotCash/slopdotcash",
             revision: sourceRevision,
             authorization: {
               kind: "develop",
@@ -3006,7 +3006,7 @@ try {
         ["provider", "evil"],
         [
           "skillRevision",
-          `elizaOS/slopdotcash@${"b".repeat(40)}:skills/contribute-to-eliza`,
+          `SlopDotCash/slopdotcash@${"b".repeat(40)}:skills/contribute-to-eliza`,
         ],
         ["skillSha256", "b".repeat(64)],
       ]) {

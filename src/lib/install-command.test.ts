@@ -102,7 +102,7 @@ function writeArtifact(
       {
         schemaVersion: "1",
         name: "contribute-to-eliza",
-        repository: "elizaOS/slopdotcash",
+        repository: "SlopDotCash/slopdotcash",
         revision:
           options.provenanceRevision === undefined
             ? revision
@@ -210,9 +210,9 @@ function candidatePull(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    base: { ref: "develop", repo: { full_name: "elizaOS/slopdotcash" } },
+    base: { ref: "develop", repo: { full_name: "SlopDotCash/slopdotcash" } },
     draft: false,
-    head: { repo: { full_name: "elizaOS/slopdotcash" }, sha: revision },
+    head: { repo: { full_name: "SlopDotCash/slopdotcash" }, sha: revision },
     labels: [{ name: "slop-release-candidate" }],
     number: 17424,
     state: "open",
@@ -406,7 +406,10 @@ describe("authenticated skill installer lifecycle", () => {
       [
         "wrong head",
         {
-          head: { repo: { full_name: "elizaOS/slopdotcash" }, sha: revisionB },
+          head: {
+            repo: { full_name: "SlopDotCash/slopdotcash" },
+            sha: revisionB,
+          },
         },
       ],
     ] as const;
@@ -700,7 +703,7 @@ describe("authenticated skill installer lifecycle", () => {
       },
       developHead: revisionA,
       responseOverrides: {
-        "/repos/elizaOS/slopdotcash/git/ref/heads/develop": {
+        "/repos/SlopDotCash/slopdotcash/git/ref/heads/develop": {
           object: { sha: revisionA, type: "commit" },
           ref: "refs/heads/not-develop",
         },
@@ -974,7 +977,7 @@ describe("authenticated skill installer lifecycle", () => {
     const symlinkRoot = freshRoot("source-symlink");
     const symlinkArtifact = writeArtifact(symlinkRoot, revisionA, archiveFiles);
     const contentsKey =
-      "/repos/elizaOS/slopdotcash/contents/skills/contribute-to-eliza" +
+      "/repos/SlopDotCash/slopdotcash/contents/skills/contribute-to-eliza" +
       `?ref=${revisionA}`;
     const symlinkAuthority = configureAuthority(symlinkRoot, {
       developHead: revisionA,
@@ -1026,16 +1029,18 @@ describe("authenticated skill installer lifecycle", () => {
       primaryInstallOptions,
     );
 
-    // GitHub reports elizaOS/slopdotcash in every API payload after the
+    // GitHub reports SlopDotCash/slopdotcash in every API payload after the
     // rename, so an authority comparison pinned to the old name matches
     // nothing and refuses every install. The old name is also re-registrable,
     // so it must never be what a release candidate is checked against.
-    expect(production).toContain('github_repository = "elizaOS/slopdotcash"');
+    expect(production).toContain(
+      'github_repository = "SlopDotCash/slopdotcash"',
+    );
     expect(production).not.toMatch(/\/repos\/elizaOS\/army\//u);
     expect(production).not.toContain('full_name") == repository');
 
     // PROVENANCE.json and the authorization receipt keep the historical
-    expect(production).toContain('repository = "elizaOS/slopdotcash"');
+    expect(production).toContain('repository = "SlopDotCash/slopdotcash"');
     expect(production).toContain('"repository": repository');
   });
 

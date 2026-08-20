@@ -8,7 +8,7 @@ const source = {
   issueNumber: 50,
   observedAt: "2026-08-15T00:00:00.000Z",
   sourceBodySha256: "a".repeat(64),
-  sourceUrl: "https://github.com/elizaOS/slopdotcash/issues/50",
+  sourceUrl: "https://github.com/SlopDotCash/slopdotcash/issues/50",
 };
 
 const receipt = {
@@ -18,7 +18,7 @@ const receipt = {
   githubLogin: source.githubLogin,
   address: source.address,
   source: "github_issue",
-  issueRepository: "elizaOS/slopdotcash",
+  issueRepository: "SlopDotCash/slopdotcash",
   issueNumber: source.issueNumber,
   sourceBodySha256: source.sourceBodySha256,
   observedAt: source.observedAt,

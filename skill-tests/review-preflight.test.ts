@@ -11,7 +11,7 @@ const marker = {
   provider: "openai",
   model: "gpt-5.6-sol",
   client: "codex",
-  skill_revision: `elizaOS/slopdotcash@${"2".repeat(40)}:skills/contribute-to-eliza`,
+  skill_revision: `SlopDotCash/slopdotcash@${"2".repeat(40)}:skills/contribute-to-eliza`,
   run: {
     schema_version: "1",
     run_id: "run_01M001JJ3EJEXAR11GKPE15MXM",

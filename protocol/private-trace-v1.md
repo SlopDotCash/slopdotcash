@@ -92,7 +92,7 @@ limited to designated operators.
 
 For a privacy, security, or data-subject request, use the repository's enabled
 private GitHub security-advisory intake at
-<https://github.com/elizaOS/slopdotcash/security/advisories/new>. It accepts a
+<https://github.com/SlopDotCash/slopdotcash/security/advisories/new>. It accepts a
 private report from a signed-in GitHub user without publishing the report as an
 issue. Do not put private data, trace contents, or request details in a public
 issue.

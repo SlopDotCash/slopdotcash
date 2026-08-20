@@ -6,7 +6,7 @@
 
 export const WALLET_MARKER_VERSION = "1" as const;
 export const WALLET_MARKER_PREFIX = "slop-wallet:v1" as const;
-export const WALLET_CLAIM_REPOSITORY = "elizaOS/slopdotcash" as const;
+export const WALLET_CLAIM_REPOSITORY = "SlopDotCash/slopdotcash" as const;
 export const WALLET_CLAIM_TITLE = "Slop wallet claim" as const;
 
 export interface PublishedWallet {

@@ -218,7 +218,7 @@ describe("reward manifests", () => {
       sourceIssueId: "I_wallet_claim",
       sourceIssueNumber: 42,
       sourceUpdatedAt: "2026-08-09T00:00:00.000Z",
-      sourceUrl: "https://github.com/elizaOS/slopdotcash/issues/42",
+      sourceUrl: "https://github.com/SlopDotCash/slopdotcash/issues/42",
     };
     expect(() => assertRewardAllocationManifest(manifest)).not.toThrow();
 

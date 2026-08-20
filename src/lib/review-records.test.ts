@@ -47,7 +47,7 @@ const receipt: ProjectRunReceipt = {
   provider: record.provider,
   model: record.model,
   client: record.client,
-  skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
+  skillRevision: `SlopDotCash/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
   skillSha256: "c".repeat(64),
   usage: {
     source: "none",

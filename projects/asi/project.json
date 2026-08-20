@@ -11,11 +11,11 @@
     "displayName": "$SLOP holder governance",
     "kind": "dao",
     "github": {
-      "actorId": "186240462",
-      "nodeId": "O_kgDOCxnNzg",
-      "login": "elizaOS",
+      "actorId": "318901292",
+      "nodeId": "O_kgDOEwIMLA",
+      "login": "SlopDotCash",
       "type": "Organization",
-      "profileUrl": "https://github.com/elizaOS"
+      "profileUrl": "https://github.com/SlopDotCash"
     },
     "website": null
   },
@@ -26,16 +26,16 @@
     "repositoryId": "1332593244",
     "repositoryNodeId": "R_kgDOT23CXA",
     "proof": {
-      "commitSha": "82cec0c6d786b4b4ea22a9777e78c6a4bbb234f2",
-      "fileSha256": "f12a4a7d855f3a6894fbc88c3eb08771121e52837899dbba0a623aab7f9431ba",
-      "policyRevision": "2026-08-18.1",
-      "url": "https://github.com/elizaOS/asi/blob/82cec0c6d786b4b4ea22a9777e78c6a4bbb234f2/.github/slop-project.json",
+      "commitSha": "7a863d0e81ad7f27069b9dd8d62c36c7fd533be9",
+      "fileSha256": "11509c50f21bf65c441ec60b04b66cc2cb17c86c270c3ffee913b546225fd807",
+      "policyRevision": "2026-08-20.1",
+      "url": "https://github.com/SlopDotCash/asi/blob/7a863d0e81ad7f27069b9dd8d62c36c7fd533be9/.github/slop-project.json",
       "verifiedAt": "2026-08-18T05:23:40.000Z"
     }
   },
   "terms": {
-    "revision": "2026-08-18.1",
-    "effectiveAt": "2026-08-18T04:55:49.000Z",
+    "revision": "2026-08-20.1",
+    "effectiveAt": "2026-08-20T06:38:22.000Z",
     "receiptPolicy": {
       "state": "active",
       "activatedAt": "2026-08-18T05:23:40.000Z",
@@ -43,6 +43,13 @@
         {
           "policyRevision": "2026-08-18.1",
           "activatedAt": "2026-08-18T05:23:40.000Z",
+          "licenseSha256": "4c8d5abe876de66bf1cfbb2e9f2c486b41e53602d072628d2de4630957202a61",
+          "inboundTermsSha256": "3302f9aa0da588c1c2f06e73af939af154466047346071b268e3b71bf6bb3443",
+          "prizeRulesSha256": null
+        },
+        {
+          "policyRevision": "2026-08-20.1",
+          "activatedAt": "2026-08-20T06:38:22.000Z",
           "licenseSha256": "4c8d5abe876de66bf1cfbb2e9f2c486b41e53602d072628d2de4630957202a61",
           "inboundTermsSha256": "3302f9aa0da588c1c2f06e73af939af154466047346071b268e3b71bf6bb3443",
           "prizeRulesSha256": null
@@ -61,13 +68,13 @@
     "repositoryLicense": {
       "state": "verified",
       "spdx": "Apache-2.0",
-      "url": "https://github.com/elizaOS/asi/blob/ffaf532b73c8d9db879692313161e30d19e90a50/LICENSE",
+      "url": "https://github.com/SlopDotCash/asi/blob/ffaf532b73c8d9db879692313161e30d19e90a50/LICENSE",
       "commitSha": "ffaf532b73c8d9db879692313161e30d19e90a50",
       "fileSha256": "4c8d5abe876de66bf1cfbb2e9f2c486b41e53602d072628d2de4630957202a61"
     },
     "inbound": {
       "mode": "license",
-      "termsUrl": "https://github.com/elizaOS/asi/blob/12b86613f3b2f270992d9a3444c46f20101769c2/CONTRIBUTING.md",
+      "termsUrl": "https://github.com/SlopDotCash/asi/blob/12b86613f3b2f270992d9a3444c46f20101769c2/CONTRIBUTING.md",
       "commitSha": "12b86613f3b2f270992d9a3444c46f20101769c2",
       "fileSha256": "3302f9aa0da588c1c2f06e73af939af154466047346071b268e3b71bf6bb3443",
       "version": "2026-08-18.1",

@@ -21,7 +21,7 @@ function signedReceipt(): ProjectRunReceipt {
     provider: "openai",
     model: "gpt-5.6-sol",
     client: "codex",
-    skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
+    skillRevision: `SlopDotCash/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
     skillSha256: "b".repeat(64),
     usage: {
       source: "ccusage-session-v20",

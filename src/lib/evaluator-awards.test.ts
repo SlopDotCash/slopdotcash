@@ -50,7 +50,7 @@ function award(
     review: {
       reviewer: "maintainer",
       reviewedAt: "2026-07-22T10:00:00.000Z",
-      decisionUrl: "https://github.com/elizaOS/army/pull/99",
+      decisionUrl: "https://github.com/SlopDotCash/slopdotcash/pull/99",
     },
     ...overrides,
   };

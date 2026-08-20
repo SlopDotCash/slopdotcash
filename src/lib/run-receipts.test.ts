@@ -21,7 +21,7 @@ const receipt: ProjectRunReceipt = {
   provider: "openai",
   model: "gpt-5.6-sol",
   client: "codex",
-  skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
+  skillRevision: `SlopDotCash/slopdotcash@${"a".repeat(40)}:skills/contribute-to-eliza`,
   skillSha256: "b".repeat(64),
   usage: {
     source: "ccusage-session-v20",
@@ -56,7 +56,7 @@ describe("project run receipt", () => {
 
   it("rejects repository and project mismatches", () => {
     const marker = runReceiptMarker(receipt);
-    marker.run.repository = "elizaOS/proximityprize";
+    marker.run.repository = "SlopDotCash/proximityprize";
     expect(() => assertRunReceiptMarker(marker)).toThrow(
       /does not belong to the project/u,
     );
@@ -282,7 +282,7 @@ describe("project run receipt", () => {
       schemaVersion: "2",
       projectId: "heir-elements-sdk",
       repositoryId: "heirlabs/element-sdk",
-      skillRevision: `elizaOS/slopdotcash@${"a".repeat(40)}:skills/contribute-to-heir-elements-sdk`,
+      skillRevision: `SlopDotCash/slopdotcash@${"a".repeat(40)}:skills/contribute-to-heir-elements-sdk`,
       startedAt: "2026-08-18T00:00:00.000Z",
       completedAt: "2026-08-18T01:00:00.000Z",
       policyAcknowledgement: {

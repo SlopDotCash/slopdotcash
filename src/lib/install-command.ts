@@ -113,8 +113,8 @@ import zlib
 from pathlib import Path, PurePosixPath
 
 artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path = sys.argv[1:]
-repository = "elizaOS/slopdotcash"
-github_repository = "elizaOS/slopdotcash"
+repository = "SlopDotCash/slopdotcash"
+github_repository = "SlopDotCash/slopdotcash"
 source_path = f"{skill_repository_path}/SKILL.md"
 release_label = "slop-release-candidate"
 target_path = os.path.join(skills_root, skill_name)
