@@ -5,6 +5,7 @@ import {
   isExactClientVersion,
   isExactModelIdentifier,
   isExactProviderIdentifier,
+  isExactProviderModelIdentifier,
 } from "./model-identity";
 import { MODEL_IDENTITY_CONFORMANCE_CASES } from "./model-identity-corpus";
 
@@ -36,6 +37,20 @@ describe("exact model identity", () => {
         client: "kimi-cli",
       }),
     ).not.toThrow();
+  });
+
+  it("validates combined identities across nested slash boundaries", () => {
+    expect(
+      isExactProviderModelIdentifier(
+        "x-ai/hosted+edge/accounts/x/models/grok-4.5+reasoning",
+      ),
+    ).toBe(true);
+    expect(isExactProviderModelIdentifier("~local/@scope/model+fast")).toBe(
+      true,
+    );
+    expect(isExactProviderModelIdentifier("provider/model")).toBe(false);
+    expect(isExactProviderModelIdentifier("OpenAI/unknown")).toBe(false);
+    expect(isExactProviderModelIdentifier("missing-separator")).toBe(false);
   });
 
   it.each([

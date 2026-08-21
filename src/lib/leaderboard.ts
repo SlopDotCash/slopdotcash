@@ -8,6 +8,7 @@ import {
   isExactClientIdentifier,
   isExactModelIdentifier,
   isExactProviderIdentifier,
+  isExactProviderModelIdentifier,
 } from "./model-identity";
 import { findProject } from "./projects.mjs";
 import {
@@ -4085,11 +4086,7 @@ function assertLeaderValue(
     `${path}.reportedModels`,
   );
   models.forEach((identifier, index) => {
-    if (
-      !/^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(
-        identifier,
-      )
-    ) {
+    if (!isExactProviderModelIdentifier(identifier)) {
       throw new Error(
         `${path}.reportedModels[${index}] must be an exact provider/model identifier`,
       );
@@ -4380,11 +4377,7 @@ function assertWorkItemValue(
     `${path}.model.identifiers`,
   );
   identifiers.forEach((identifier, index) => {
-    if (
-      !/^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(
-        identifier,
-      )
-    ) {
+    if (!isExactProviderModelIdentifier(identifier)) {
       throw new Error(
         `${path}.model.identifiers[${index}] must be an exact provider/model identifier`,
       );

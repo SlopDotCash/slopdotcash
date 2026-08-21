@@ -59,6 +59,30 @@ export function isExactModelIdentifier(value: unknown): value is string {
   return exactIdentity(value, 128, MODEL_PLACEHOLDERS);
 }
 
+/**
+ * Validates the public `provider/model` form without assuming that the first
+ * slash is the separator. Exact provider and model identifiers may themselves
+ * contain slashes, so every possible boundary must be considered.
+ */
+export function isExactProviderModelIdentifier(
+  value: unknown,
+): value is string {
+  if (typeof value !== "string") return false;
+  for (
+    let index = value.indexOf("/");
+    index >= 0;
+    index = value.indexOf("/", index + 1)
+  ) {
+    if (
+      isExactProviderIdentifier(value.slice(0, index)) &&
+      isExactModelIdentifier(value.slice(index + 1))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function isExactClientIdentifier(value: unknown): value is string {
   return exactIdentity(value, 64, CLIENT_PLACEHOLDERS);
 }
