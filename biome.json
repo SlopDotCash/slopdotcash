@@ -9,7 +9,14 @@
   "files": {
     "ignoreUnknown": true,
     "maxSize": 1048576,
-    "includes": ["**", "!**/dist", "!**/node_modules", "!**/public", "!assets"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/public",
+      "!assets",
+      "!cycles"
+    ]
   },
   "formatter": {
     "enabled": true,
