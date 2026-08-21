@@ -33,6 +33,7 @@ import {
   SEARCH_SAFE_RESULT_LIMIT,
   sameReferenceSet,
   selectDetailedMergedPullRequestIds,
+  selectEvaluatedContributionsForWindow,
   verifyPullRequestEvidence,
 } from "./generate-leaderboard";
 
@@ -56,6 +57,74 @@ describe("generation arguments", () => {
         new Date("2026-08-20T12:00:00.000Z"),
       ),
     ).toThrow(/future/u);
+  });
+});
+
+describe("historical evaluator awards", () => {
+  it("selects only awards in the cutoff's rolling window", () => {
+    const events = [
+      {
+        category: "evaluated-contribution" as const,
+        occurredAt: "2026-06-26T00:00:00.000Z",
+        id: "before",
+      },
+      {
+        category: "evaluated-contribution" as const,
+        occurredAt: "2026-06-27T00:00:00.000Z",
+        id: "first",
+      },
+      {
+        category: "evaluated-contribution" as const,
+        occurredAt: "2026-07-31T23:59:59.999Z",
+        id: "last",
+      },
+      {
+        category: "evaluated-contribution" as const,
+        occurredAt: "2026-08-01T00:00:00.000Z",
+        id: "after",
+      },
+    ];
+
+    expect(
+      selectEvaluatedContributionsForWindow(
+        events,
+        new Date("2026-06-27T00:00:00.000Z"),
+        new Date("2026-08-01T00:00:00.000Z"),
+        new Date("2026-08-20T00:00:00.000Z"),
+      ).map((event) => event.id),
+    ).toEqual(["first", "last"]);
+  });
+
+  it("rejects malformed evaluator timestamps instead of silently dropping them", () => {
+    expect(() =>
+      selectEvaluatedContributionsForWindow(
+        [
+          {
+            category: "evaluated-contribution" as const,
+            occurredAt: "not-a-time",
+          },
+        ],
+        new Date("2026-06-27T00:00:00.000Z"),
+        new Date("2026-08-01T00:00:00.000Z"),
+        new Date("2026-08-20T00:00:00.000Z"),
+      ),
+    ).toThrow(/exact UTC timestamp/u);
+  });
+
+  it("rejects awards beyond actual time instead of hiding them behind a historical cutoff", () => {
+    expect(() =>
+      selectEvaluatedContributionsForWindow(
+        [
+          {
+            category: "evaluated-contribution" as const,
+            occurredAt: "2026-09-01T00:00:00.000Z",
+          },
+        ],
+        new Date("2026-06-27T00:00:00.000Z"),
+        new Date("2026-08-01T00:00:00.000Z"),
+        new Date("2026-08-20T00:00:00.000Z"),
+      ),
+    ).toThrow(/cannot be in the future/u);
   });
 });
 

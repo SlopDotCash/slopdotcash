@@ -191,6 +191,7 @@ export interface GenerationProgress {
 
 export interface GenerateOptions {
   now?: Date;
+  actualNow?: Date;
   onProgress?: (progress: GenerationProgress) => void;
   evidenceFetch?: FetchLike;
   evidenceToken?: string;
@@ -1379,6 +1380,47 @@ export function parseGenerationArguments(
     throw new RangeError("--cutoff cannot be in the future");
   }
   return { now: cutoff };
+}
+
+export function selectEvaluatedContributionsForWindow<
+  T extends Pick<ScoreEvent, "category" | "occurredAt">,
+>(
+  events: readonly T[],
+  windowFrom: Date,
+  windowTo: Date,
+  actualNow: Date,
+): T[] {
+  const from = parseIsoDate(windowFrom, "evaluationWindowFrom").getTime();
+  const to = parseIsoDate(windowTo, "evaluationWindowTo").getTime();
+  const observedAt = parseIsoDate(actualNow, "evaluationActualNow").getTime();
+  if (from >= to) {
+    throw new RangeError("evaluation window must have positive duration");
+  }
+  if (to > observedAt) {
+    throw new RangeError("evaluation window cannot end in the future");
+  }
+  return events.filter((event, index) => {
+    if (event.category !== "evaluated-contribution") {
+      throw new TypeError(
+        `evaluatedContributions[${index}] must use the evaluated-contribution category`,
+      );
+    }
+    const occurredAt = Date.parse(event.occurredAt);
+    if (
+      !Number.isFinite(occurredAt) ||
+      new Date(occurredAt).toISOString() !== event.occurredAt
+    ) {
+      throw new TypeError(
+        `evaluatedContributions[${index}].occurredAt must be an exact UTC timestamp`,
+      );
+    }
+    if (occurredAt > observedAt) {
+      throw new RangeError(
+        `evaluatedContributions[${index}].occurredAt cannot be in the future`,
+      );
+    }
+    return occurredAt >= from && occurredAt < to;
+  });
 }
 
 function searchRange(from: Date, to: Date): string {
@@ -2642,6 +2684,7 @@ export async function generateLeaderboardFromGitHub(
   options: GenerateOptions = {},
 ): Promise<LeaderboardSnapshot> {
   const now = parseIsoDate(options.now ?? new Date(), "now");
+  const actualNow = parseIsoDate(options.actualNow ?? new Date(), "actualNow");
   const windowFrom = new Date(
     now.getTime() - SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
@@ -2891,7 +2934,12 @@ export async function generateLeaderboardFromGitHub(
     openPullRequests,
     verificationWindowFrom: verificationWindowFrom.toISOString(),
     verifiedEvidence: evidenceVerification.artifacts,
-    evaluatedContributions: options.evaluatedContributions ?? [],
+    evaluatedContributions: selectEvaluatedContributionsForWindow(
+      options.evaluatedContributions ?? [],
+      windowFrom,
+      now,
+      actualNow,
+    ),
     verifyRunReceipt: verifyRunReceiptSignature,
   });
   return snapshot;

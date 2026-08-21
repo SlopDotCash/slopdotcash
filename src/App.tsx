@@ -1858,7 +1858,7 @@ function ProfilePage({
     opportunityActor ?? {
       id: historicalActor?.id ?? `historical:${login.toLowerCase()}`,
       login: historicalActor?.login ?? login,
-      avatarUrl: `https://github.com/${encodeURIComponent(login)}.png?size=160`,
+      avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?size=160`,
       url: `https://github.com/${encodeURIComponent(login)}`,
       kind: "User",
     };
