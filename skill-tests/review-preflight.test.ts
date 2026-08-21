@@ -7,11 +7,22 @@ import { assessReviewCompatibility } from "../skills/contribute-to-eliza/scripts
 
 const branchSha = "1".repeat(40);
 const commitId = "65455082b87f12ddf5ea4a40e4e8734dbae9e961";
+const configuration = JSON.parse(
+  readFileSync(
+    new URL(
+      "../skills/contribute-to-eliza/review-compatibility.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+const proofSkillRevision =
+  "elizaOS/slopdotcash@1bde21d6d8229678f20bbd450f8e49f9fd95f989:skills/contribute-to-eliza";
 const marker = {
   provider: "openai",
   model: "gpt-5.6-sol",
   client: "codex",
-  skill_revision: `SlopDotCash/slopdotcash@${"2".repeat(40)}:skills/contribute-to-eliza`,
+  skill_revision: proofSkillRevision,
   run: {
     schema_version: "1",
     run_id: "run_01M001JJ3EJEXAR11GKPE15MXM",
@@ -171,6 +182,28 @@ describe("Eliza review compatibility preflight", () => {
     assert.equal(result.status, "unknown");
     assert.equal(result.safeToPublish, false);
     assert.equal(result.forwardProof.valid, false);
+  });
+
+  it("fails closed when the proof marker names a different skill revision", () => {
+    const input = fixture();
+    const mismatchedMarker = {
+      ...marker,
+      skill_revision: `elizaOS/slopdotcash@${"2".repeat(40)}:skills/contribute-to-eliza`,
+    };
+    input.proofReview.body = `Verified review\n<!-- slop-contribution-attribution:v1 ${JSON.stringify(mismatchedMarker)} -->`;
+    const result = assessReviewCompatibility(input);
+    assert.equal(result.status, "unknown");
+    assert.equal(result.safeToPublish, false);
+    assert.equal(result.forwardProof.valid, false);
+  });
+
+  it("rejects an unregistered repository identity in proof configuration", () => {
+    const invalidConfiguration = structuredClone(configuration);
+    invalidConfiguration.forwardProof.skillRevision = `example/slopdotcash@${"2".repeat(40)}:skills/contribute-to-eliza`;
+    assert.throws(
+      () => assessReviewCompatibility(fixture(), invalidConfiguration),
+      /forward proof has an invalid identity/u,
+    );
   });
 
   it("rejects unbounded or malformed workflow inventories", () => {
