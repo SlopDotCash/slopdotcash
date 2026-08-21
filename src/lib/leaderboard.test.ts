@@ -2636,6 +2636,24 @@ describe("scoring and limits", () => {
 });
 
 describe("work queue claims and prioritization", () => {
+  it("publishes exact compound model identifiers accepted by attribution parsing", () => {
+    const openPullRequest = pullRequest({
+      id: "PR_NESTED_MODEL_IDENTITY",
+      number: 99,
+      mergedAt: null,
+      body: machineAttribution("xAI", "grok-4.6+zai/glm-5.2"),
+    });
+
+    const snapshot = createLeaderboardSnapshot(
+      input({ openPullRequests: [openPullRequest] }),
+    );
+
+    expect(snapshot.workQueue.pullRequests[0].model).toMatchObject({
+      status: "complete",
+      identifiers: ["xai/grok-4.6+zai/glm-5.2"],
+    });
+  });
+
   it("marks only safe, unclaimed issue and review candidates", () => {
     const issueCandidate = issue({
       id: "ISSUE_CANDIDATE",
