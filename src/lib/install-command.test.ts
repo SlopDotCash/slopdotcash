@@ -205,6 +205,26 @@ function versionPath(root: string, revision: string): string {
   );
 }
 
+function rewriteInstalledRepositoryIdentity(
+  root: string,
+  revision: string,
+  repository: string,
+  files: Array<"PROVENANCE.json" | ".slop-authorization.json"> = [
+    "PROVENANCE.json",
+    ".slop-authorization.json",
+  ],
+): void {
+  for (const file of files) {
+    const path = join(versionPath(root, revision), file);
+    const record = JSON.parse(readFileSync(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    record.repository = repository;
+    writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+  }
+}
+
 function candidatePull(
   revision: string,
   overrides: Record<string, unknown> = {},
@@ -309,6 +329,155 @@ describe("authenticated skill installer lifecycle", () => {
     );
     expect(existsSync(versionPath(installRoot, revisionA))).toBe(true);
     expect(existsSync(versionPath(installRoot, revisionB))).toBe(true);
+  });
+
+  it("advances from the exact pre-transfer repository identity without modifying the retained version", () => {
+    const root = freshRoot("legacy-repository-advance");
+    const installRoot = join(root, "install");
+    const filesA = baseFiles("legacy-repository");
+    const filesB = baseFiles("current-repository");
+    const artifactA = writeArtifact(root, revisionA, filesA);
+    const artifactB = writeArtifact(root, revisionB, filesB);
+    let authority = configureAuthority(root, {
+      developHead: revisionA,
+      revisions: { [revisionA]: { files: filesA } },
+    });
+    expect(run(command(artifactA, authority), installRoot).status).toBe(0);
+
+    rewriteInstalledRepositoryIdentity(
+      installRoot,
+      revisionA,
+      "elizaOS/slopdotcash",
+    );
+    const retainedProvenance = readFileSync(
+      join(versionPath(installRoot, revisionA), "PROVENANCE.json"),
+    );
+    const retainedAuthorization = readFileSync(
+      join(versionPath(installRoot, revisionA), ".slop-authorization.json"),
+    );
+    authority = configureAuthority(root, {
+      comparisons: {
+        [`${revisionA}...${revisionB}`]: aheadComparison(revisionA, revisionB),
+      },
+      developHead: revisionB,
+      revisions: {
+        [revisionA]: { files: filesA },
+        [revisionB]: { files: filesB },
+      },
+    });
+
+    const update = run(command(artifactB, authority), installRoot);
+
+    expect(update.status, update.stderr).toBe(0);
+    expect(currentLink(installRoot)).toBe(
+      `.contribute-to-eliza-versions/${revisionB}`,
+    );
+    expect(
+      readFileSync(
+        join(versionPath(installRoot, revisionA), "PROVENANCE.json"),
+      ),
+    ).toEqual(retainedProvenance);
+    expect(
+      readFileSync(
+        join(versionPath(installRoot, revisionA), ".slop-authorization.json"),
+      ),
+    ).toEqual(retainedAuthorization);
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(versionPath(installRoot, revisionB), ".slop-authorization.json"),
+          "utf8",
+        ),
+      ),
+    ).toMatchObject({ repository: "SlopDotCash/slopdotcash" });
+  });
+
+  it("rejects unregistered and divergent retained repository identities", () => {
+    for (const scenario of ["unregistered", "divergent"] as const) {
+      const root = freshRoot(`legacy-repository-${scenario}`);
+      const installRoot = join(root, "install");
+      const filesA = baseFiles("legacy-repository");
+      const filesB = baseFiles("current-repository");
+      const artifactA = writeArtifact(root, revisionA, filesA);
+      const artifactB = writeArtifact(root, revisionB, filesB);
+      let authority = configureAuthority(root, {
+        developHead: revisionA,
+        revisions: { [revisionA]: { files: filesA } },
+      });
+      expect(run(command(artifactA, authority), installRoot).status).toBe(0);
+      rewriteInstalledRepositoryIdentity(
+        installRoot,
+        revisionA,
+        scenario === "unregistered"
+          ? "attacker/slopdotcash"
+          : "elizaOS/slopdotcash",
+        scenario === "divergent" ? ["PROVENANCE.json"] : undefined,
+      );
+      authority = configureAuthority(root, {
+        comparisons: {
+          [`${revisionA}...${revisionB}`]: aheadComparison(
+            revisionA,
+            revisionB,
+          ),
+        },
+        developHead: revisionB,
+        revisions: {
+          [revisionA]: { files: filesA },
+          [revisionB]: { files: filesB },
+        },
+      });
+
+      const update = run(command(artifactB, authority), installRoot);
+
+      expect(update.status).not.toBe(0);
+      expect(update.stderr).toContain("invalid identity");
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionA}`,
+      );
+      expect(existsSync(versionPath(installRoot, revisionB))).toBe(false);
+    }
+  });
+
+  it("rejects modified canonical bytes under the registered legacy identity", () => {
+    const root = freshRoot("legacy-repository-modified");
+    const installRoot = join(root, "install");
+    const filesA = baseFiles("legacy-repository");
+    const filesB = baseFiles("current-repository");
+    const artifactA = writeArtifact(root, revisionA, filesA);
+    const artifactB = writeArtifact(root, revisionB, filesB);
+    let authority = configureAuthority(root, {
+      developHead: revisionA,
+      revisions: { [revisionA]: { files: filesA } },
+    });
+    expect(run(command(artifactA, authority), installRoot).status).toBe(0);
+    rewriteInstalledRepositoryIdentity(
+      installRoot,
+      revisionA,
+      "elizaOS/slopdotcash",
+    );
+    const receiptPath = join(
+      versionPath(installRoot, revisionA),
+      ".slop-authorization.json",
+    );
+    writeFileSync(receiptPath, `${readFileSync(receiptPath, "utf8")} `);
+    authority = configureAuthority(root, {
+      comparisons: {
+        [`${revisionA}...${revisionB}`]: aheadComparison(revisionA, revisionB),
+      },
+      developHead: revisionB,
+      revisions: {
+        [revisionA]: { files: filesA },
+        [revisionB]: { files: filesB },
+      },
+    });
+
+    const update = run(command(artifactB, authority), installRoot);
+
+    expect(update.status).not.toBe(0);
+    expect(update.stderr).toContain("bytes are not canonical");
+    expect(currentLink(installRoot)).toBe(
+      `.contribute-to-eliza-versions/${revisionA}`,
+    );
   });
 
   it("rejects a downgrade or divergent update and leaves the active symlink untouched", () => {
