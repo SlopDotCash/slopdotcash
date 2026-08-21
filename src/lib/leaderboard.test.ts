@@ -3649,6 +3649,32 @@ describe("work queue claims and prioritization", () => {
     });
     expect(snapshot.leaders).toEqual([]);
   });
+
+  it("uses the canonical field validators for combined queue model identifiers", () => {
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        mergedPullRequests: [
+          pullRequest({
+            body: machineAttribution("OpenAI", "@gpt-5.6-sol"),
+          }),
+        ],
+        openIssues: [
+          issue({
+            id: "ISSUE_PREFIXED_MODEL",
+            closedAt: null,
+            stateReason: null,
+            body: "AI provider/model: OpenAI / @gpt-5.6-sol",
+            labels: [],
+          }),
+        ],
+      }),
+    );
+
+    expect(snapshot.workQueue.issues[0].model.identifiers).toEqual([
+      "OpenAI/@gpt-5.6-sol",
+    ]);
+    expect(snapshot.leaders[0].reportedModels).toEqual(["openai/@gpt-5.6-sol"]);
+  });
 });
 
 describe("deduplication and public schema", () => {

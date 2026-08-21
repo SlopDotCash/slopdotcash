@@ -1171,6 +1171,22 @@ function exactIdentifier(provider: string, model: string): string {
     : `${provider}/${model}`;
 }
 
+function isExactProviderModelIdentifier(identifier: string): boolean {
+  for (
+    let index = identifier.indexOf("/");
+    index !== -1;
+    index = identifier.indexOf("/", index + 1)
+  ) {
+    if (
+      isExactProviderIdentifier(identifier.slice(0, index)) &&
+      isExactModelIdentifier(identifier.slice(index + 1))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function attributionLineValues(body: string, label: string): string[] {
   const expression = new RegExp(`^${label}\\s*:\\s*(.+?)\\s*$`, "i");
   return attributionDeclarationLines(body)
