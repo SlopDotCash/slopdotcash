@@ -1170,6 +1170,22 @@ function exactIdentifier(provider: string, model: string): string {
     : `${provider}/${model}`;
 }
 
+function isExactProviderModelIdentifier(identifier: string): boolean {
+  for (
+    let index = identifier.indexOf("/");
+    index !== -1;
+    index = identifier.indexOf("/", index + 1)
+  ) {
+    if (
+      isExactProviderIdentifier(identifier.slice(0, index)) &&
+      isExactModelIdentifier(identifier.slice(index + 1))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function attributionLineValues(body: string, label: string): string[] {
   const expression = new RegExp(`^${label}\\s*:\\s*(.+?)\\s*$`, "i");
   return attributionDeclarationLines(body)
@@ -4085,11 +4101,7 @@ function assertLeaderValue(
     `${path}.reportedModels`,
   );
   models.forEach((identifier, index) => {
-    if (
-      !/^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(
-        identifier,
-      )
-    ) {
+    if (!isExactProviderModelIdentifier(identifier)) {
       throw new Error(
         `${path}.reportedModels[${index}] must be an exact provider/model identifier`,
       );
@@ -4380,11 +4392,7 @@ function assertWorkItemValue(
     `${path}.model.identifiers`,
   );
   identifiers.forEach((identifier, index) => {
-    if (
-      !/^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(
-        identifier,
-      )
-    ) {
+    if (!isExactProviderModelIdentifier(identifier)) {
       throw new Error(
         `${path}.model.identifiers[${index}] must be an exact provider/model identifier`,
       );
