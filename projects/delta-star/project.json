@@ -109,7 +109,7 @@
     "monthlyCapDisplay": "$0 platform pool",
     "committedMinor": "0",
     "paymentMode": "disabled",
-    "feeBasisPoints": 100,
+    "feeBasisPoints": 1000,
     "unusedFunds": "not-applicable",
     "fundingState": "external-opportunity",
     "externalOpportunity": {

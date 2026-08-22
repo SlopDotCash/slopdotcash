@@ -878,17 +878,7 @@ export function dedupeByNodeId<T extends { id: string }>(records: T[]): T[] {
 }
 
 export function isBotActor(actor: GitHubActor | null): boolean {
-  if (!actor) {
-    return false;
-  }
-  if (actor.kind === "Bot") {
-    return true;
-  }
-  return (
-    /\[bot\]$/i.test(actor.login) ||
-    /(?:^|[-_])bot$/i.test(actor.login) ||
-    /^(?:dependabot|github-actions|renovate)$/i.test(actor.login)
-  );
+  return actor?.kind === "Bot";
 }
 
 export function isRecognizedTestFile(path: string): boolean {
@@ -1681,6 +1671,12 @@ function hasSubstantiveReviewBody(review: PullRequestReview): boolean {
     .replace(/[#*_>`~[\]()!-]/g, "")
     .trim();
   return substantiveBody.length >= 20 || review.inlineCommentCount > 0;
+}
+
+function requiresExplicitPrizeAcceptance(repositoryId: string): boolean {
+  const repository = findTargetRepositoryById(repositoryId);
+  const project = repository ? findProject(repository.projectId) : null;
+  return project?.reward.kind === "external-prize-share";
 }
 
 export function leaderboardMethodology(): LeaderboardMethodology {
@@ -2971,11 +2967,16 @@ export function createLeaderboardSnapshot(
   }
 
   for (const pullRequest of mergedPullRequestOutcomes) {
-    if (pullRequest.author && !isBotActor(pullRequest.author)) {
+    const repositoryId = repositoryIdFromUrl(pullRequest.url);
+    const ratification = scoreRatifications.get(pullRequest.id);
+    if (
+      pullRequest.author &&
+      !isBotActor(pullRequest.author) &&
+      (!requiresExplicitPrizeAcceptance(repositoryId) || ratification)
+    ) {
       const authorEntry = actorEntry(entries, pullRequest.author);
       authorEntry.rawActivity.additions += pullRequest.additions;
       authorEntry.rawActivity.deletions += pullRequest.deletions;
-      const ratification = scoreRatifications.get(pullRequest.id);
       const contributionAssessment = assessModelAttribution(
         [pullRequestBodySource(pullRequest)],
         {
@@ -3014,7 +3015,7 @@ export function createLeaderboardSnapshot(
             }
           : {}),
         occurredAt: pullRequest.mergedAt,
-        repository: repositoryIdFromUrl(pullRequest.url),
+        repository: repositoryId,
         source: {
           id: pullRequest.id,
           kind: "pull-request",
@@ -3039,12 +3040,18 @@ export function createLeaderboardSnapshot(
       );
     }
     const sources = pullRequestTextSources(pullRequest);
+    const repositoryId = repositoryIdFromUrl(pullRequest.url);
+    const explicitPrizeAcceptance =
+      requiresExplicitPrizeAcceptance(repositoryId);
     recordTextActivity(entries, sources);
 
     if (pullRequest.author && !isBotActor(pullRequest.author)) {
       const authorEntry = actorEntry(entries, pullRequest.author);
       authorEntry.rawActivity.commits += pullRequest.commitCount;
-      if (hasMaterialTestChange(pullRequest.files)) {
+      if (
+        !explicitPrizeAcceptance &&
+        hasMaterialTestChange(pullRequest.files)
+      ) {
         const scored = addScore(entries, ledger, {
           id: `${pullRequest.id}:tests`,
           actor: pullRequest.author,
@@ -3229,6 +3236,7 @@ export function createLeaderboardSnapshot(
       if (
         !review.author ||
         awardedReviewers.has(review.author.id) ||
+        explicitPrizeAcceptance ||
         !isSubstantiveReview(review, pullRequest)
       ) {
         continue;

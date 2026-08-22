@@ -1689,7 +1689,7 @@ function ProjectPage({
               <p>
                 {project.reward.kind === "monthly-pool"
                   ? "Up to this amount is allocated each month. Unused funding rolls forward without raising the cap."
-                  : "The platform publishes contribution percentages only. The prize sponsor controls eligibility and payment."}
+                  : "10% of an award actually received is allocated to Slop Cash; the remaining 90% is shared among accepted contributors. The prize sponsor controls eligibility and payment."}
               </p>
               <div>
                 {project.reward.kind === "external-prize-share" ? (

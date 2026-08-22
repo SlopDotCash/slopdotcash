@@ -72,10 +72,17 @@ that only restate implementation, or claims inferred from compilation alone.
 
 Require a substantive theorem, reusable frontier lemma, machine-checked
 refutation, consequential validation result, or actual reproduced defect fix.
+Require the contribution to state and prove a causal chain from its artifact,
+through a named theorem/residual/check, to an official Proximity Prize claim.
+Tests, validator fixes, build fixes, and underlying lemmas are eligible only
+when the reviewer reproduces the exact downstream proof path they enable or
+protect. Repository relevance, an issue number, green CI, or a large diff is
+not enough.
 Recommend `reject` for trivial work: formatting, naming, comment-only cleanup,
 generated churn, speculative abstractions, vacuous wrappers, duplicate lemmas,
-and tests that prove no meaningful mathematical or validator behavior. An old
-issue or a large diff does not make trivial work valuable.
+generic infrastructure or dependency churn, and tests that prove no meaningful
+prize-related mathematical or validator behavior. An old issue or a large diff
+does not make unrelated work valuable.
 
 ## Adversarial review
 

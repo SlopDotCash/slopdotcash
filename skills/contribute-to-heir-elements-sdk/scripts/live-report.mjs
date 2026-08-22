@@ -878,15 +878,11 @@ export function parseModelDisclosure(text) {
 export function isBotAccount(account) {
   if (account === null) return false;
   const record = asRecord(account, "account");
-  const login = asStringField(record, "login", "account");
+  asStringField(record, "login", "account");
   if (record.type !== undefined && typeof record.type !== "string") {
     throw new TypeError("account.type must be a string when present");
   }
-  return (
-    String(record.type).toLowerCase() === "bot" ||
-    /\[bot\]$|(?:^|[-_])bot$/i.test(login) ||
-    /^(?:dependabot|github-actions|renovate)(?:\[bot\])?$/i.test(login)
-  );
+  return String(record.type).toLowerCase() === "bot";
 }
 
 export function isKnownHumanAccount(account) {

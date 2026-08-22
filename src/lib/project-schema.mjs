@@ -798,11 +798,12 @@ function validateReward(value, field) {
   }
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
-  const validFeeBasisPoints =
-    reward.kind === "external-prize-share"
-      ? reward.feeBasisPoints === 100 || reward.feeBasisPoints === 1000
-      : reward.feeBasisPoints === 100;
-  if (reward.cycle !== "calendar-month-utc" || !validFeeBasisPoints) {
+  const expectedFeeBasisPoints =
+    reward.kind === "external-prize-share" ? 1000 : 100;
+  if (
+    reward.cycle !== "calendar-month-utc" ||
+    reward.feeBasisPoints !== expectedFeeBasisPoints
+  ) {
     throw new TypeError(`${field} cycle or fee policy is invalid`);
   }
   if (reward.kind === "monthly-pool") {

@@ -269,16 +269,18 @@ describe("reward manifests", () => {
       },
       scoringRuleVersion: "gitarmy-v1",
       sourceSnapshotSha256: "b".repeat(64),
+      platformSharePartsPerMillion: 100_000,
       entries: [
         {
           actor: { id: "U_1", login: "mathematician" },
           score: 10,
-          sharePartsPerMillion: 1_000_000,
+          sharePartsPerMillion: 900_000,
           evidenceEventIds: ["proof_1"],
         },
       ],
     });
-    expect(manifest.entries[0].sharePartsPerMillion).toBe(1_000_000);
+    expect(manifest.platformSharePartsPerMillion).toBe(100_000);
+    expect(manifest.entries[0].sharePartsPerMillion).toBe(900_000);
     expect(manifest).not.toHaveProperty("currency");
   });
 
@@ -309,6 +311,7 @@ describe("reward manifests", () => {
       },
       scoringRuleVersion: "gitarmy-v1",
       sourceSnapshotSha256: "b".repeat(64),
+      platformSharePartsPerMillion: 100_000,
       entries: [],
     });
     expect(share.entries).toEqual([]);

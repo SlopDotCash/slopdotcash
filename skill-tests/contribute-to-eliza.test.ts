@@ -1317,9 +1317,10 @@ describe("live report parsing", () => {
 
   it("classifies bot accounts and parses only supported CLI arguments", () => {
     assert.strictEqual(isBotAccount(account("dependabot[bot]", "Bot")), true);
-    assert.strictEqual(isBotAccount(account("release-bot")), true);
-    assert.strictEqual(isBotAccount(account("github-actions")), true);
-    assert.strictEqual(isBotAccount(account("renovate")), true);
+    assert.strictEqual(isBotAccount(account("release-bot")), false);
+    assert.strictEqual(isBotAccount(account("MLuber-bot")), false);
+    assert.strictEqual(isBotAccount(account("github-actions", "Bot")), true);
+    assert.strictEqual(isBotAccount(account("renovate", "Bot")), true);
     assert.strictEqual(isBotAccount(account("octocat")), false);
     assert.deepStrictEqual(
       parseCliArguments(["--repo", "elizaOS/eliza", "--json"]),
@@ -2117,7 +2118,7 @@ describe("live report behavior", () => {
 
     assert.deepStrictEqual(
       report.reviewablePullRequests.map((pull) => pull.number),
-      [34, 36, 43, 46, 47, 48, 49, 51, 52],
+      [34, 36, 46, 47, 48, 49, 51, 52],
     );
     assert.deepStrictEqual(
       report.filtered.claimedPullRequests.map((pull) => pull.number),
@@ -2129,7 +2130,7 @@ describe("live report behavior", () => {
     );
     assert.deepStrictEqual(
       report.filtered.changesRequestedPullRequests.map((pull) => pull.number),
-      [33, 42, 45, 53],
+      [33, 42, 43, 45, 53],
     );
     assert.deepStrictEqual(
       report.filtered.claimedPullRequests.find((pull) => pull.number === 31)

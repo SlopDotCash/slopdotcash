@@ -128,6 +128,10 @@ export function createRewardCycleProposal(
       },
       scoringRuleVersion: input.snapshot.ruleVersion,
       sourceSnapshotSha256: input.sourceSnapshotSha256,
+      platformSharePartsPerMillion:
+        view.reward.kind === "external-prize-share"
+          ? view.reward.platformSharePartsPerMillion
+          : 0,
       entries: view.leaders.map((leader) => ({
         actor: { id: leader.actor.id, login: leader.actor.login },
         score: leader.score,
