@@ -1,4 +1,4 @@
 interface:
   display_name: "Contribute to Delta Star"
-  short_description: "Finish Delta Star issues, then advance proofs"
-  default_prompt: "Use $contribute-to-delta-star to finish a mission-aligned open issue first, otherwise review an unreviewed PR, then pursue only substantive Delta Star frontier work."
+  short_description: "Clear Delta Star queues, then advance proofs"
+  default_prompt: "Use $contribute-to-delta-star to review and test every current PR first, finish valid existing issues through PRs second, restore main workflows third, then pursue only substantive Delta Star frontier work."

@@ -131,11 +131,17 @@ After installation:
    limitations, and any older duplicate skill location. Never delete or alter
    an older install without separate approval.
 5. Invoke the installed project skill explicitly and follow it for one bounded
-   contribution. Require it to finish mission-aligned open issues without PRs
-   before selecting new work, and to reject trivial fixes, cosmetic cleanup,
-   speculative refactors, and generic improvements. Its measured `start`
-   command requires the local-usage consent flag `--allow-local-usage` shown by
-   `preview`.
+   contribution. Require it first to inventory, independently review, test, and
+   give a **merge**, **fix**, or **close** recommendation for every reviewable
+   current PR, including changed heads; then finish every valid existing issue
+   without a PR through a focused PR or give it an explicit disposition; then
+   repair every reproducible repository-caused failure on the integration
+   branch. It may discover new work or open a new issue only after all three
+   gates are clear and the operator explicitly authorizes that exact issue
+   write. Require it to reject trivial fixes, cosmetic cleanup, speculative
+   refactors, generic improvements, and tests with no demonstrated behavioral
+   risk. Its measured `start` command requires the local-usage consent flag
+   `--allow-local-usage` shown by `preview`.
 
 The model identifier and aggregate usage remain locally reported evidence.
 Device signatures prove byte continuity, not provider billing, model execution,

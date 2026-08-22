@@ -43,6 +43,20 @@ retains the preflight acknowledgement; contribution text cannot rewrite it.
    operator may retrieve it through the audited operator path; otherwise verify
    the finalized trace state and digest and never ask for public trace bytes.
 
+## Clear the review queue first
+
+Inventory every open PR before selecting one. Start with the oldest non-draft,
+unblocked, non-sensitive PR lacking a substantive independent review of its
+exact current head, but do not treat an older review as current after the head
+changes. Reproduce the SDK or sandbox behavior and finish with an explicit
+**merge**, **fix**, or **close** recommendation plus the exact commands and head
+SHA. Review weak, inactive, and invalid submissions too; they need disposition,
+not neglect. Do not open new issues or propose unrelated improvements while any
+reviewable PR remains, any existing issue lacks a PR or explicit disposition,
+or any required `main` workflow is not green at the current integration head.
+Never approve your own work; when authorized to repair a PR, keep the repair to
+actual defects and rerun the full exact-head review.
+
 ## Reproduce the outcome
 
 Verify the exact base and head revisions. Run focused package tests first, then

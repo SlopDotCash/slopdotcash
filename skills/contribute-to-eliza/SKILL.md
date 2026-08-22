@@ -1,6 +1,6 @@
 ---
 name: contribute-to-eliza
-description: "Finish existing issues without pull requests, review unreviewed pull requests, or audit mission-critical security, bugs, stale documentation and comments, and missing behavioral tests in elizaOS/eliza, with optional public payout registration. Use when an agent is asked to improve the shipped Eliza app, Eliza Cloud, the core agent runtime, or a primary capability on an existing product path; prove one authorized outcome; publish a device-signed project token receipt; or register a public Solana payout address."
+description: "Review and test current elizaOS/eliza pull requests, finish existing issues through pull requests, restore develop workflow health, then audit mission-critical security, bugs, stale documentation and comments, and missing behavioral tests, with optional public payout registration. Use for one material outcome on an existing shipped product path, not generic improvements or trivial cleanup."
 ---
 
 # Contribute to Eliza
@@ -133,24 +133,35 @@ post this note merely to reserve work. Stop when any field is unknown.
 Follow this priority ladder. Do not skip a nonempty higher tier for newer,
 easier, or more interesting work:
 
-1. **Implement an existing issue with no PR**: choose the oldest bounded,
-   unblocked, unclaimed open issue carrying the exact repository label
-   `mission-ready`, or an issue explicitly selected by the operator. Confirm
-   that no open PR has a GitHub closing reference or substantively implements
-   it, then resolve it completely with acceptance criteria, tests, and proof.
-   Other labels, Project membership, and text that merely says
-   "mission-ready" do not qualify.
-2. **Review an existing PR with no review**: only when no tier-one issue is
-   available, independently inspect the oldest non-draft, unblocked,
-   non-sensitive PR you did not author that has no substantive current-head
-   human review and no active reviewer. Reproduce the changed path and decide
-   whether to approve, request changes, repair when authorized, or recommend
-   closure. A low-value or invalid premise still needs an explicit review
-   disposition; it is not a reason to ignore the PR and invent new work.
-3. **Audit only after reconciling the old queue**: only when no tier-one issue
-   and no tier-two PR remain, reconcile every other open issue and PR as
-   linked, actively owned, already reviewed, draft, blocked, human-gated, or
-   security-sensitive. Then inspect one fallback category in this exact order:
+1. **Review and test every current PR**: start with the oldest non-draft,
+   unblocked, non-sensitive PR lacking a substantive independent review of its
+   exact current head. Inspect every open PR, including previously reviewed PRs
+   whose head changed. Reproduce the affected product path and give an explicit
+   **merge**, **fix**, or **close** recommendation. When authorized, make an
+   existing PR completely solid by repairing real defects, strengthening
+   failure-sensitive tests, and rerunning exact-head checks; never approve your
+   own work. A low-value or invalid premise still needs a disposition, not
+   neglect while new work is invented.
+2. **Finish every existing issue without a PR**: only when tier one is empty,
+   choose the oldest bounded, unblocked, unclaimed open issue carrying the exact
+   repository label `mission-ready`, or an issue explicitly selected by the
+   operator. Confirm that no open PR has a GitHub closing reference or
+   substantively implements it, then resolve it completely through a focused PR
+   with acceptance criteria, tests, and proof. Give duplicate, obsolete,
+   invalid, low-value, or out-of-scope issues an explicit closure recommendation.
+   Other labels, Project membership, and text that merely says "mission-ready"
+   do not qualify for implementation.
+3. **Restore `develop` workflow health**: only when tiers one and two are empty,
+   inspect every required GitHub Actions workflow on the current `develop`
+   head. Repair every reproducible repository-caused failure and rerun it at the
+   exact head. A queued run, missing runner, credential/environment gate, or
+   external outage is not green and not a code bug; record the precise blocker
+   instead of weakening checks or inventing unrelated work.
+4. **Audit only after the three gates are clear**: reconcile all excluded queue
+   items as draft, blocked, human-gated, or security-sensitive, and establish
+   the latest required workflow results directly from Actions. An older green
+   run or aggregate PR check is insufficient. Then inspect one fallback
+   category in this exact order:
    **security weaknesses**, **reproducible bugs**, **incorrect or stale
    documentation and code comments**, then **important behavior that lacks real
    tests**. Do not advance while a higher fallback category has a concrete,
@@ -166,12 +177,15 @@ declaring the queue empty.
 
 Do not create an issue during a self-directed contribution run. Open a new
 issue only when the operator explicitly asks for that exact GitHub write after
-the entire old issue and PR queue has been reconciled, a local reproduction and
-duplicate search are complete, and the mission and evidence plan pass. Fix a
+every current PR has a current-head review and disposition, every existing issue
+is covered by a PR or explicit disposition, every required `develop` workflow
+is green at the current integration head, a local reproduction and duplicate
+search are complete, and the mission and evidence plan pass. Fix a
 newly discovered bounded defect directly in one PR when authorized; route
 security findings privately under `SECURITY.md`. An issue report alone is not
 an accepted outcome. Never mirror a PR title into an issue, generate
 speculative backlog, or open issues to make work eligible for score.
+An external workflow blocker keeps the new-issue gate closed.
 
 Never apply, request, suggest applying, or automate the `mission-ready` label.
 Only a separate maintainer promotion action may add it. A Discussion remains a

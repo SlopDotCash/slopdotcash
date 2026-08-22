@@ -1,4 +1,4 @@
 interface:
   display_name: "Review Heir Elements SDK Contributions"
   short_description: "Reproduce, red-team, and assess Elements SDK work"
-  default_prompt: "Use $review-heir-elements-sdk-contributions to reproduce this Heir Elements SDK contribution and reject trivial work without a demonstrated hardening, bug, or validator outcome."
+  default_prompt: "Use $review-heir-elements-sdk-contributions to clear current-head PR reviews first, reproduce the SDK contribution, and give a merge, fix, or close recommendation; reject trivial work without a demonstrated hardening, bug, or validator outcome."
