@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_neutize_review_23364",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "MDQ6VXNlcjM4OTkxMjQz",
+    "login": "Neutize",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/38991243?v=4",
+    "url": "https://github.com/Neutize",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-21T06:52:26.000Z",
+  "points": 8,
+  "source": {
+    "id": "PRR_kwDOMT5cIs8AAAABKXVPDg",
+    "kind": "review",
+    "number": 23364,
+    "title": "fix(lifeops): close definition authorization gaps",
+    "url": "https://github.com/elizaOS/eliza/pull/23364#pullrequestreview-4990521102"
+  },
+  "reason": "The superseding exact-head review reproduced a distinct cross-owner reminder-review lease and starvation defect with a disposable two-owner PGlite assertion. It showed that claiming before owner and domain authorization mutated a hidden row, consumed the caller's limit, and prevented the rightful owner from immediately claiming it; the concurrent occurrence-scope repair did not affect this path, and the pull request merged without the requested query scoping or regression test.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-08-22T19:50:18.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/228"
+  }
+}
