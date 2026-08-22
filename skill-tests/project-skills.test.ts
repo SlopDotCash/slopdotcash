@@ -140,31 +140,64 @@ describe("project skill contracts", () => {
     assert.match(delta, /does not.*guarantee.*dollar/is);
   });
 
-  it("finishes valid issue queues before new work and rejects trivial output", () => {
+  it("clears PRs, issues, and workflows before new work", {
+    timeout: 30_000,
+  }, () => {
     for (const { project, contributorRoot, reviewerRoot } of projectPackages) {
       const contributor = readFileSync(
         join(contributorRoot, "SKILL.md"),
         "utf8",
       );
       const reviewer = readFileSync(join(reviewerRoot, "SKILL.md"), "utf8");
+      const contributorLauncher = readFileSync(
+        join(contributorRoot, "agents", "openai.yaml"),
+        "utf8",
+      );
+      const reviewerLauncher = readFileSync(
+        join(reviewerRoot, "agents", "openai.yaml"),
+        "utf8",
+      );
       const issuePriority = contributor.search(
-        /(?:implement|finish) an existing issue with no PR|finish the oldest[\s\S]{0,180}open issue[\s\S]{0,180}no open PR/iu,
+        /finish every existing issue without a PR|finish the oldest[\s\S]{0,220}open issue/iu,
       );
       const reviewPriority = contributor.search(
-        /review an existing PR with no review|only when no such issue remains[\s\S]{0,180}review the oldest/iu,
+        /review and test every current PR/iu,
+      );
+      const workflowPriority = contributor.search(
+        /restore (?:`develop`|integration-branch) workflow health|inspect every required GitHub Actions\s+workflow/iu,
       );
 
       assert.ok(
-        issuePriority >= 0,
-        `${project.skill.id} must prioritize an existing issue without a PR`,
+        reviewPriority >= 0,
+        `${project.skill.id} must prioritize current-head PR review`,
       );
       assert.ok(
-        reviewPriority > issuePriority,
-        `${project.skill.id} must place unreviewed PRs after uncovered issues`,
+        issuePriority > reviewPriority,
+        `${project.skill.id} must place uncovered issues after PR review`,
+      );
+      assert.ok(
+        workflowPriority > issuePriority,
+        `${project.skill.id} must place workflow repair after the issue queue`,
       );
       assert.match(
         contributor,
-        /(?:after )?reconciling the old queue|old queue (?:is|has been) reconciled|every older issue and PR is reconciled/iu,
+        /\*\*merge\*\*, \*\*fix\*\*, or \*\*close\*\*/iu,
+      );
+      assert.match(contributor, /exact current head|exact-head/iu);
+      const newIssueGate = contributor.search(
+        /(?:a new (?:issue|one)\s+requires|open a new\s+issue only)/iu,
+      );
+      assert.ok(newIssueGate >= 0);
+      const gateText = contributor.slice(newIssueGate, newIssueGate + 900);
+      assert.match(gateText, /every current PR/iu);
+      assert.match(gateText, /every existing\s+issue/iu);
+      assert.match(
+        gateText,
+        /workflow[\s\S]{0,100}green[\s\S]{0,100}current\s+integration head/iu,
+      );
+      assert.match(
+        gateText,
+        /external[\s\S]{0,80}blocker\s+keeps[\s\S]{0,80}gate closed/iu,
       );
       assert.match(
         contributor,
@@ -179,6 +212,18 @@ describe("project skill contracts", () => {
         reviewer,
         /tests with no\s+demonstrated\s+behavioral risk|tests that prove no meaningful/iu,
       );
+      assert.match(reviewer, /## Clear the review queue first/iu);
+      assert.match(reviewer, /\*\*merge\*\*, \*\*fix\*\*, or \*\*close\*\*/iu);
+      assert.match(
+        reviewer,
+        /Do not open new issues[\s\S]{0,320}reviewable PR remains[\s\S]{0,320}existing issue lacks a PR[\s\S]{0,320}workflow/iu,
+      );
+      assert.match(
+        contributorLauncher,
+        /review and test every current PR first[\s\S]*existing issues through PRs second[\s\S]*workflows third/iu,
+      );
+      assert.match(reviewerLauncher, /current-head PR reviews first/iu);
+      assert.match(reviewerLauncher, /merge, fix, or close recommendation/iu);
     }
 
     const asi = readFileSync(

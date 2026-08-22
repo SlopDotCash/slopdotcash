@@ -35,4 +35,22 @@ describe("Slop bootstrap revision authorization", () => {
     assert.match(source, /any missing or extra path/u);
     assert.match(source, /any byte difference/u);
   });
+
+  it("bootstraps the universal queue-first priority gates", () => {
+    const reviews = source.search(
+      /review, test, and[\s\S]{0,80}recommendation/iu,
+    );
+    const issues = source.search(/finish every valid existing issue/iu);
+    const workflows = source.search(
+      /repair every reproducible[\s\S]{0,80}failure/iu,
+    );
+    assert.ok(reviews >= 0);
+    assert.ok(issues > reviews);
+    assert.ok(workflows > issues);
+    assert.match(source, /only after all three\s+gates are clear/iu);
+    assert.match(
+      source,
+      /operator explicitly authorizes that exact issue\s+write/iu,
+    );
+  });
 });

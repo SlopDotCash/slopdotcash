@@ -1,4 +1,4 @@
 interface:
   display_name: "Contribute to Heir Elements SDK"
-  short_description: "Finish SDK issues, then harden real behavior"
-  default_prompt: "Use $contribute-to-heir-elements-sdk to finish a mission-aligned open issue first, otherwise review an unreviewed PR, then pursue only reproduced hardening, bug, or validator outcomes."
+  short_description: "Clear SDK queues, then harden real behavior"
+  default_prompt: "Use $contribute-to-heir-elements-sdk to review and test every current PR first, finish valid existing issues through PRs second, restore main workflows third, then pursue only reproduced hardening, bug, or validator outcomes."

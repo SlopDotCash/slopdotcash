@@ -1,4 +1,4 @@
 interface:
   display_name: "Review Eliza Contributions"
   short_description: "Reproduce, red-team, and assess Eliza work"
-  default_prompt: "Use $review-eliza-contributions to independently reproduce this Eliza contribution and reject trivial, cosmetic, or generic-improvement work."
+  default_prompt: "Use $review-eliza-contributions to clear current-head PR reviews first, independently reproduce the Eliza contribution, and give a merge, fix, or close recommendation; reject trivial, cosmetic, or generic-improvement work."

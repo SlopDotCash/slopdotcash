@@ -1,4 +1,4 @@
 interface:
   display_name: "Contribute to Eliza"
-  short_description: "Finish Eliza queues, then audit by risk"
-  default_prompt: "Use $contribute-to-eliza to finish an existing issue with no PR, otherwise review an unreviewed PR, and only after the old queue is reconciled audit security, bugs, stale docs or comments, then missing real tests in elizaOS/eliza."
+  short_description: "Clear Eliza queues, then audit by risk"
+  default_prompt: "Use $contribute-to-eliza to review and test every current PR first, finish valid existing issues through PRs second, restore develop workflows third, then audit security, bugs, stale docs or comments, and missing real tests in elizaOS/eliza."

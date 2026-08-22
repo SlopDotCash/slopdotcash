@@ -1,6 +1,6 @@
 ---
 name: contribute-to-asi
-description: "Finish mission-aligned open issues in SlopDotCash/asi, then hill-climb its continual-RL benchmarks, produce measured research advancement, or fix a reproduced bug that corrupts execution or measurement, with optional public payout registration. Do not use for generic improvements, cleanup, or speculative polish."
+description: "Review and test current SlopDotCash/asi pull requests, finish mission-aligned open issues through pull requests, restore main workflow health, then hill-climb continual-RL benchmarks, produce measured research advancement, or fix a reproduced bug. Do not use for generic improvements, cleanup, or speculative polish."
 ---
 
 # Contribute to ASI
@@ -104,25 +104,35 @@ node <skill-directory>/scripts/live-report.mjs --repo SlopDotCash/asi
 Re-read the chosen issue, discussion, or pull request immediately before
 acting — someone may already be running your experiment.
 
-## Finish the existing queue before inventing work
+## Finish the existing queue and workflows before inventing work
 
 Use the live report as a filter, then inspect GitHub directly. Follow this
 priority order without skipping a nonempty higher tier for easier, newer, or
 more interesting work:
 
-1. **Finish an existing issue with no PR.** Choose the oldest bounded,
-   unblocked, unclaimed open issue that fits the measured ASI mission. Confirm
-   no open PR has a closing reference or substantively implements it, then
-   resolve the issue completely with the required paired evidence. An issue
-   asking for cleanup, generic improvement, or unmeasured polish is not made
-   valid merely because it is old; give it an explicit out-of-scope
-   disposition instead of implementing it.
-2. **Review an existing PR with no review.** Only when no qualifying issue is
-   available, independently reproduce the oldest non-draft, unblocked,
-   non-sensitive PR you did not author that lacks a substantive current-head
-   human review and active reviewer. Approve, request changes, repair only when
-   authorized, or recommend closure.
-3. **Advance the research only after the old queue is reconciled.** New work
+1. **Review and test every current PR.** Start with the oldest non-draft,
+   unblocked, non-sensitive PR lacking a substantive independent review of its
+   exact current head. Inspect every open PR, including previously reviewed PRs
+   whose head changed. Independently reproduce the claimed outcome and give an
+   explicit **merge**, **fix**, or **close** recommendation. When authorized,
+   make an existing PR completely solid by repairing real defects, strengthening
+   failure-sensitive tests, and rerunning exact-head checks; never approve your
+   own work. Do not leave any reviewable PR without a current-head test and
+   disposition merely because its premise is weak or its author is inactive.
+2. **Finish every existing issue without a PR.** Only after tier one is empty,
+   choose the oldest bounded, unblocked, unclaimed open issue that fits the
+   measured ASI mission. Confirm no open PR has a closing reference or
+   substantively implements it, then resolve it completely through a focused PR
+   with the required paired evidence. Give duplicate, obsolete, invalid, or
+   out-of-scope issues an explicit closure recommendation instead of turning
+   them into cleanup work.
+3. **Restore integration-branch workflow health.** Only after tiers one and two
+   are empty, inspect every required GitHub Actions workflow on `main`. Repair
+   every reproducible repository-caused failure and rerun it at the exact head.
+   A queued run, missing runner, credential/environment gate, or external outage
+   is not green and not a code bug; record the precise blocker instead of
+   weakening checks or inventing unrelated work.
+4. **Advance the research only after all three gates are clear.** New work
    must be a benchmark hill climb, a measured port or decisive experimental
    advancement/refutation, or a fix for an actual reproduced runtime,
    harness, metric, validator, or test-system bug. Do not make random
@@ -130,12 +140,19 @@ more interesting work:
    or trivial fixes, documentation-only edits, or tests with no demonstrated
    behavioral risk.
 
+Before declaring tier three clear, query Actions directly and establish the
+latest required `main` result at the current integration head; do not infer
+workflow health from a PR check summary or an older green run.
+
 The closing-reference check is only a deduplication aid. Re-read linked PRs,
 issue timelines, reviews, and current heads before declaring an issue
 uncovered or a PR unreviewed. Treat incomplete queue data as unknown and stop.
 Do not create an issue or discussion during a self-directed run. A new one
-requires the operator to request that exact write after the existing issue and
-PR queue has been reconciled and the measured mission gate has passed. Route
+requires the operator to request that exact write after every current PR has a
+current-head review and disposition, every existing issue is covered by a PR
+or explicit disposition, all required `main` workflows are green at the current
+integration head, and the measured mission gate has passed. An external blocker
+keeps this gate closed. Route
 security findings privately under repository policy.
 
 ## What counts as work here
@@ -236,18 +253,19 @@ Plan line of work itself.
 - A published claim is not evidence for this repository. Nothing enters
   `RESEARCH_STATUS.md` on a citation; it enters on a measurement made here.
 - Do not create a speculative discussion merely because you cannot finish an
-  idea. After the old queue is reconciled, the operator may explicitly
+  idea. After the PR, issue, and workflow gates are clear, the operator may explicitly
   authorize a discussion that names the paper, mechanism, and measurement lane.
 
 ## Collaborate in the open
 
 Novel research direction is a conversation, not a surprise pull request, but
-it comes only after existing issues and unreviewed PRs are reconciled.
+it comes only after current-head PR reviews, uncovered issues, and required
+`main` workflows are reconciled.
 
-- **Discussions** (`Ideas` category) — when explicitly authorized after queue
+- **Discussions** (`Ideas` category) — when explicitly authorized after all gate
   reconciliation, propose a direction, a paper worth porting, a benchmark that
   seems mismeasured, or a result you cannot explain before spending compute.
-- **Issues** — only when explicitly authorized after queue reconciliation, one
+- **Issues** — only when explicitly authorized after all gate reconciliation, one
   bounded, measurable piece of work with a named lane, metric, and baseline.
   This is where a pre-registration lives.
 - **Pull requests** — the change plus its evidence. Link the issue or

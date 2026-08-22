@@ -1,4 +1,4 @@
 interface:
   display_name: "Contribute to ASI"
-  short_description: "Finish ASI issues, then advance measured research"
-  default_prompt: "Use $contribute-to-asi to finish a mission-aligned open issue first, then pursue a proven hill climb, measured advancement or refutation, or an actual reproduced bug fix—never a random improvement."
+  short_description: "Clear ASI queues, then advance measured research"
+  default_prompt: "Use $contribute-to-asi to review and test every current PR first, finish valid existing issues through PRs second, restore main workflows third, then pursue a proven hill climb, measured advancement or refutation, or an actual reproduced bug fix—never a random improvement."

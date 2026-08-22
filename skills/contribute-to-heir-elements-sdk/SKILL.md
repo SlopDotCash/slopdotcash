@@ -1,6 +1,6 @@
 ---
 name: contribute-to-heir-elements-sdk
-description: "Finish mission-aligned open issues in heirlabs/element-sdk, then harden inheritance applications, fix reproduced SDK defects, strengthen sandbox and validator behavior, or review unreviewed pull requests. Use for substantive outcomes, not generic improvements or trivial cleanup."
+description: "Review and test current heirlabs/element-sdk pull requests, finish mission-aligned issues through pull requests, restore main workflow health, then harden inheritance applications or fix reproduced SDK defects. Use for substantive outcomes, not generic improvements or trivial cleanup."
 ---
 
 # Contribute to Heir Elements SDK
@@ -104,29 +104,45 @@ node <skill-directory>/scripts/live-report.mjs --repo heirlabs/element-sdk
 
 Re-read the chosen issue or pull request immediately before acting.
 
-## Finish the existing queue before inventing work
+## Finish the existing queue and workflows before inventing work
 
 Follow this order without skipping a nonempty higher tier:
 
-1. Finish the oldest bounded, unblocked, unclaimed open issue that fits the
-   inheritance SDK mission and has no open PR that closes or substantively
-   implements it.
-2. Only when no such issue remains, review the oldest non-draft, unblocked,
-   non-sensitive PR you did not author that has no substantive current-head
-   human review or active reviewer. Reproduce it and give it an explicit
-   approve, changes, repair-when-authorized, or closure disposition.
-3. Only after every older issue and PR is reconciled may you find new work. It
+1. Review and test every current PR, starting with the oldest non-draft,
+   unblocked, non-sensitive PR lacking a substantive independent review of its
+   exact current head. Reproduce the SDK behavior and give an explicit
+   **merge**, **fix**, or **close** recommendation. When authorized, repair real
+   defects and rerun exact-head checks so an existing PR is completely solid;
+   never approve your own work or leave a reviewable PR undisposed.
+2. Only when tier one is empty, finish the oldest bounded, unblocked, unclaimed
+   open issue that fits the inheritance SDK mission and has no open PR that
+   closes or substantively implements it. Complete it through a focused PR, or
+   give duplicate, obsolete, invalid, and out-of-scope issues an explicit
+   closure recommendation.
+3. Only when tiers one and two are empty, inspect every required GitHub Actions
+   workflow on `main`. Repair every reproducible repository-caused failure and
+   rerun it at the exact head. Treat queued runs, missing runners,
+   credential/environment gates, and external outages as precise blockers, not
+   green results or reasons to weaken validation.
+4. Only after every PR, issue, and fixable workflow failure is reconciled may
+   you find new work. It
    must close a concrete sandbox or permission hole, fix an actual reproduced
    SDK defect, or add a failure-sensitive validator or test for demonstrated
    unsafe behavior.
+
+Before declaring tier three clear, query Actions directly and establish the
+latest required `main` result at the current integration head; an older green
+run or aggregate PR check is insufficient.
 
 An old issue does not override the mission gate: explicitly decline duplicate,
 obsolete, cosmetic, generic-improvement, or trivial requests. Do not open a
 new issue merely to create work, and do not submit formatting, renames,
 comment-only cleanup, speculative abstractions, or tests with no demonstrated
 behavioral risk. A new issue requires the operator to request that exact write
-after the old queue has been reconciled. Treat incomplete queue data as unknown
-and stop.
+after every current PR has a current-head review and disposition, every existing
+issue is covered by a PR or explicit disposition, and all required `main`
+workflows are green at the current integration head. An external blocker keeps
+this gate closed. Treat incomplete queue data as unknown and stop.
 
 ## What counts as work here
 

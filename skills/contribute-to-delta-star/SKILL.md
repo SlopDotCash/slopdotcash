@@ -1,6 +1,6 @@
 ---
 name: contribute-to-delta-star
-description: "Finish mission-aligned open issues in SlopDotCash/proximityprize, then advance, test, refute, or independently review machine-checked Delta Star work. Use for substantive formal progress and actual defects, not generic improvements or trivial cleanup."
+description: "Review and test current SlopDotCash/proximityprize pull requests, finish mission-aligned issues through pull requests, restore main workflow health, then advance, test, or refute machine-checked Delta Star work. Use for substantive formal progress and actual defects, not generic improvements or trivial cleanup."
 ---
 
 # Contribute to Delta Star
@@ -99,28 +99,45 @@ The report batches open activity, prints progress, and fails closed if a
 connection exceeds its published completeness bound. Re-read the chosen live
 issue or pull request immediately before acting.
 
-## Finish the existing queue before inventing work
+## Finish the existing queue and workflows before inventing work
 
 Follow this order without skipping a nonempty higher tier:
 
-1. Finish the oldest bounded, unblocked, unclaimed open issue that advances the
-   live Delta Star frontier and has no open PR that closes or substantively
-   implements it.
-2. Only when no such issue remains, review the oldest non-draft, unblocked,
-   non-sensitive PR you did not author that has no substantive current-head
-   human review or active reviewer. Reproduce it and give it an explicit
-   approve, changes, repair-when-authorized, or closure disposition.
-3. Only after every older issue and PR is reconciled may you select new
+1. Review and test every current PR, starting with the oldest non-draft,
+   unblocked, non-sensitive PR lacking a substantive independent review of its
+   exact current head. Reproduce the proof or claim and give an explicit
+   **merge**, **fix**, or **close** recommendation. When authorized, repair real
+   defects and rerun exact-head checks so an existing PR is completely solid;
+   never approve your own work or leave a reviewable PR undisposed.
+2. Only when tier one is empty, finish the oldest bounded, unblocked, unclaimed
+   open issue that advances the live Delta Star frontier and has no open PR that
+   closes or substantively implements it. Complete it through a focused PR, or
+   give duplicate, obsolete, invalid, and out-of-scope issues an explicit
+   closure recommendation.
+3. Only when tiers one and two are empty, inspect every required GitHub Actions
+   workflow on `main`. Repair every reproducible repository-caused failure and
+   rerun it at the exact head. Treat queued runs, missing runners,
+   credential/environment gates, and external outages as precise blockers, not
+   green results or reasons to weaken validation.
+4. Only after every PR, issue, and fixable workflow failure is reconciled may
+   you select new
    frontier work. It must discharge or narrow a named mathematical residual,
    produce a machine-checked refutation, validate a consequential claim, or
    fix an actual reproduced defect in the proof, build, or validation path.
+
+Before declaring tier three clear, query Actions directly and establish the
+latest required `main` result at the current integration head; an older green
+run or aggregate PR check is insufficient.
 
 An old issue does not override the mission gate: explicitly decline vacuous,
 duplicate, obsolete, cosmetic, or trivial work. Do not open a new issue merely
 to create an eligible task, and do not submit formatting, naming, generated
 churn, comment-only cleanup, speculative abstraction, or tests that prove no
-meaningful mathematical or validator behavior. A new issue requires the
-operator to request that exact write after the old queue has been reconciled.
+   meaningful mathematical or validator behavior. A new issue requires the
+   operator to request that exact write after every current PR has a current-head
+   review and disposition, every existing issue is covered by a PR or explicit
+   disposition, and all required `main` workflows are green at the current
+   integration head. An external blocker keeps this gate closed.
 Treat incomplete queue data as unknown and stop.
 
 ## Choose one bounded research outcome

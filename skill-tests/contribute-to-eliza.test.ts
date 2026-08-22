@@ -169,8 +169,9 @@ describe("contribute-to-eliza skill structure", () => {
   it("encodes outcome modes, measured runs, security, sync, proof, and authority", () => {
     const source = readFileSync(skillPath, "utf8");
 
-    assert.match(source, /\*\*Implement an existing issue with no PR\*\*/);
-    assert.match(source, /\*\*Review an existing PR with no review\*\*/);
+    assert.match(source, /\*\*Review and test every current PR\*\*/);
+    assert.match(source, /\*\*Finish every existing issue without a PR\*\*/);
+    assert.match(source, /\*\*Restore `develop` workflow health\*\*/);
     assert.match(source, /\*\*Validate\*\*/);
     assert.match(source, /run-receipt\.mjs start/);
     assert.match(source, /run-receipt\.mjs finish/);
@@ -224,29 +225,36 @@ describe("contribute-to-eliza skill structure", () => {
       source,
       /Never apply, request, suggest applying, or automate/i,
     );
-    assert.match(source, /exact repository label\s+`mission-ready`/i);
-    assert.match(source, /issue explicitly selected by the operator/i);
+    assert.match(source, /exact\s+repository label `mission-ready`/i);
+    assert.match(source, /issue explicitly selected by the\s+operator/i);
     assert.match(source, /Keep at most one active implementation or review/i);
     assert.match(source, /Never\s+mirror a PR title into an issue/i);
     assert.match(source, /Prefer one complete fix to\s+several small PRs/i);
     assert.match(source, /Ignore leaderboard position/i);
-    const implementPriority = source.indexOf(
-      "**Implement an existing issue with no PR**",
-    );
     const reviewPriority = source.indexOf(
-      "**Review an existing PR with no review**",
+      "**Review and test every current PR**",
+    );
+    const implementPriority = source.indexOf(
+      "**Finish every existing issue without a PR**",
+    );
+    const workflowPriority = source.indexOf(
+      "**Restore `develop` workflow health**",
     );
     const auditPriority = source.indexOf(
-      "**Audit only after reconciling the old queue**",
+      "**Audit only after the three gates are clear**",
     );
-    assert.ok(implementPriority >= 0);
-    assert.ok(reviewPriority > implementPriority);
-    assert.ok(auditPriority > reviewPriority);
+    assert.ok(reviewPriority >= 0);
+    assert.ok(implementPriority > reviewPriority);
+    assert.ok(workflowPriority > implementPriority);
+    assert.ok(auditPriority > workflowPriority);
     assert.match(
       source,
       /\*\*security weaknesses\*\*.*\*\*reproducible bugs\*\*.*\*\*incorrect or stale\s+documentation and code comments\*\*.*\*\*important behavior that lacks real\s+tests\*\*/is,
     );
-    assert.match(source, /entire old issue and PR queue has been reconciled/i);
+    assert.match(
+      source,
+      /every current PR has a current-head review and disposition[\s\S]*every existing issue[\s\S]*every required `develop` workflow/iu,
+    );
     assert.match(mission, /Eliza app/);
     assert.match(mission, /Eliza Cloud/);
     assert.match(mission, /Core agent runtime/);
@@ -396,8 +404,9 @@ writeFileSync(
     );
     assert.match(openaiYaml, /display_name: "Contribute to Eliza"/);
     assert.match(openaiYaml, /default_prompt: "Use \$contribute-to-eliza/);
-    assert.match(openaiYaml, /finish an existing issue with no PR/);
-    assert.match(openaiYaml, /review an unreviewed PR/);
+    assert.match(openaiYaml, /review and test every current PR first/);
+    assert.match(openaiYaml, /existing issues through PRs second/);
+    assert.match(openaiYaml, /develop workflows third/);
     assert.match(openaiYaml, /elizaOS\/eliza/);
   });
 });
