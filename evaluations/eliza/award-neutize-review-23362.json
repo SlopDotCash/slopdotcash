@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_neutize_review_23362",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "MDQ6VXNlcjM4OTkxMjQz",
+    "login": "Neutize",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/38991243?v=4",
+    "url": "https://github.com/Neutize",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-21T05:55:46.000Z",
+  "points": 4,
+  "source": {
+    "id": "PRR_kwDOMT5cIs8AAAABKW5gxw",
+    "kind": "review",
+    "number": 23362,
+    "title": "fix(security): make object-path mutation accessor-free",
+    "url": "https://github.com/elizaOS/eliza/pull/23362#pullrequestreview-4990066887"
+  },
+  "reason": "The exact-head review independently verified the accessor-free plain-data boundary with all 18 pull-request tests, five additional adversarial probes, and a 23-test synthetic current-base integration, plus owning-package typechecks, lint, build, and diff checks. It found no source defect but correctly withheld merge readiness because the branch and hosted checks were stale, establishing the current-SHA release evidence still required before the later synchronized merge.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-08-22T19:50:18.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/227"
+  }
+}
