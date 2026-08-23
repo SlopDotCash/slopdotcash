@@ -500,6 +500,22 @@ describe("project proposal schema", () => {
 
   it("keeps external prize rules outside platform settlement", () => {
     expect(deltaStar.reward.paymentMode).toBe("disabled");
+    const migratedFee = structuredClone(deltaStar) as unknown as {
+      reward: { feeBasisPoints: number };
+    };
+    migratedFee.reward.feeBasisPoints = 1000;
+    expect(assertProjectDefinition(migratedFee).reward.feeBasisPoints).toBe(
+      1000,
+    );
+    migratedFee.reward.feeBasisPoints = 999;
+    expect(() => assertProjectDefinition(migratedFee)).toThrow(/fee policy/u);
+    const invalidPoolFee = structuredClone(eliza) as unknown as {
+      reward: { feeBasisPoints: number };
+    };
+    invalidPoolFee.reward.feeBasisPoints = 1000;
+    expect(() => assertProjectDefinition(invalidPoolFee)).toThrow(
+      /fee policy/u,
+    );
     expect(deltaStar.terms.externalPrize?.allocationAuthority).toMatch(
       /author-approved/u,
     );
