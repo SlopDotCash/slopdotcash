@@ -763,7 +763,11 @@ function validateSkill(
   return skill;
 }
 
-function validateReward(value, field) {
+function validateReward(
+  value,
+  field,
+  { allowLegacyExternalPrizeFee = false } = {},
+) {
   const reward = record(value, field);
   const hasExternal = Object.hasOwn(reward, "externalOpportunity");
   exactKeys(
@@ -800,9 +804,14 @@ function validateReward(value, field) {
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
   const expectedFeeBasisPoints =
     reward.kind === "external-prize-share" ? 1000 : 100;
+  const hasLegacyExternalPrizeFee =
+    allowLegacyExternalPrizeFee &&
+    reward.kind === "external-prize-share" &&
+    reward.feeBasisPoints === 100;
   if (
     reward.cycle !== "calendar-month-utc" ||
-    reward.feeBasisPoints !== expectedFeeBasisPoints
+    (reward.feeBasisPoints !== expectedFeeBasisPoints &&
+      !hasLegacyExternalPrizeFee)
   ) {
     throw new TypeError(`${field} cycle or fee policy is invalid`);
   }
@@ -896,6 +905,7 @@ function validateProjectDefinition(
   {
     allowLegacyMissingListingTier = false,
     allowLegacyMissingPublishAtRoot = false,
+    allowLegacyExternalPrizeFee = false,
     allowLegacyUnsupportedOwnershipClaim = false,
   } = {},
 ) {
@@ -957,7 +967,9 @@ function validateProjectDefinition(
     "project.reviewSkill",
     `review-${id}-contributions`,
   );
-  validateReward(project.reward, "project.reward");
+  validateReward(project.reward, "project.reward", {
+    allowLegacyExternalPrizeFee,
+  });
   validateFunding(project.funding, id);
   if (
     project.reward.fundingState === "committed" &&
@@ -1036,6 +1048,7 @@ export function assertHistoricalProjectDefinition(value) {
   return validateProjectDefinition(value, {
     allowLegacyMissingListingTier: true,
     allowLegacyMissingPublishAtRoot: true,
+    allowLegacyExternalPrizeFee: true,
     allowLegacyUnsupportedOwnershipClaim: true,
   });
 }
