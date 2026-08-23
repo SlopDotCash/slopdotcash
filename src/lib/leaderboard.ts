@@ -3704,6 +3704,13 @@ function assertNullableActor(
   }
 }
 
+function actorAvatarIdentity(avatarUrl: string): string {
+  const identity = new URL(avatarUrl);
+  identity.search = "";
+  identity.hash = "";
+  return identity.href;
+}
+
 function assertActorCoherence(actors: GitHubActor[]): void {
   const byId = new Map<string, GitHubActor>();
   const idByLogin = new Map<string, string>();
@@ -3712,7 +3719,8 @@ function assertActorCoherence(actors: GitHubActor[]): void {
     if (
       previous &&
       (previous.login !== actor.login ||
-        previous.avatarUrl !== actor.avatarUrl ||
+        actorAvatarIdentity(previous.avatarUrl) !==
+          actorAvatarIdentity(actor.avatarUrl) ||
         previous.url !== actor.url ||
         previous.kind !== actor.kind)
     ) {

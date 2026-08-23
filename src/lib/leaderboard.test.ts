@@ -3812,6 +3812,35 @@ describe("deduplication and public schema", () => {
     );
   });
 
+  it("accepts GitHub avatar revision drift for the same actor ID", () => {
+    const snapshot = createLeaderboardSnapshot(
+      input({ mergedPullRequests: [pullRequest()] }),
+    );
+    snapshot.leaders[0].actor.avatarUrl =
+      "https://avatars.githubusercontent.com/u/38991243?v=4";
+    snapshot.ledger[0].actor = {
+      ...snapshot.leaders[0].actor,
+      avatarUrl:
+        "https://avatars.githubusercontent.com/u/38991243?u=5884a38e5f489400941246854be4d9b7c51a1030&v=4",
+    };
+
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+  });
+
+  it("rejects avatar resource drift for the same actor ID", () => {
+    const snapshot = createLeaderboardSnapshot(
+      input({ mergedPullRequests: [pullRequest()] }),
+    );
+    snapshot.ledger[0].actor = {
+      ...snapshot.leaders[0].actor,
+      avatarUrl: "https://avatars.githubusercontent.com/u/99999999?v=4",
+    };
+
+    expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+      "changes identity inside the snapshot",
+    );
+  });
+
   it("rejects leader arrays whose ranks disguise the published ordering", () => {
     const snapshot = createLeaderboardSnapshot(
       input({
