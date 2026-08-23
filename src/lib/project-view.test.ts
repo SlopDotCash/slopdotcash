@@ -112,11 +112,12 @@ describe("project views", () => {
       score: 10,
       projectedMinor: null,
       projectedDisplayMinor: null,
-      projectedSharePartsPerMillion: 1_000_000,
+      projectedSharePartsPerMillion: 900_000,
     });
     expect(delta.reward).toMatchObject({
       kind: "external-prize-share",
-      totalSharePartsPerMillion: 1_000_000,
+      totalSharePartsPerMillion: 900_000,
+      platformSharePartsPerMillion: 100_000,
     });
   });
 

@@ -790,7 +790,10 @@ describe("project routes", () => {
     expect(
       screen.getByText("No platform pool · no dollar projection"),
     ).toBeInTheDocument();
-    expect(screen.getByText("100.00% share")).toBeInTheDocument();
+    expect(screen.getByText("90.00% share")).toBeInTheDocument();
+    expect(
+      screen.getByText(/10% of an award actually received is allocated/u),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/The prize sponsor controls eligibility and payment/i),
     ).toBeInTheDocument();

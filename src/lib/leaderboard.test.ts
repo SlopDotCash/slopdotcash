@@ -20,6 +20,7 @@ import {
   type GitHubTextSource,
   hasMaterialTestChange,
   type IssueRecord,
+  isBotActor,
   isExpandableReviewOpportunity,
   isMergedPullRequestBodyEligibleForEvidence,
   isNearMaterialTestChange,
@@ -86,6 +87,15 @@ function actor(login: string, kind: GitHubActor["kind"] = "User"): GitHubActor {
     kind,
   };
 }
+
+describe("GitHub actor classification", () => {
+  it("accepts user accounts regardless of bot-pattern login", () => {
+    expect(isBotActor(actor("MLuber-bot"))).toBe(false);
+    expect(isBotActor(actor("release-bot"))).toBe(false);
+    expect(isBotActor(actor("github-actions"))).toBe(false);
+    expect(isBotActor(actor("dependabot[bot]", "Bot"))).toBe(true);
+  });
+});
 
 function textSource(
   id: string,
@@ -438,6 +448,69 @@ function v2Input(pullRequests: PullRequestRecord[]): LeaderboardInput {
 }
 
 describe("score v2 work units", () => {
+  it("requires explicit maintainer acceptance for external prize work", () => {
+    const unratified = pullRequest({
+      id: "PR_DELTA_UNRATIFIED",
+      number: 44,
+      url: "https://github.com/SlopDotCash/proximityprize/pull/44",
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T03:00:00.000Z",
+      mergedAt: "2026-08-18T03:00:00.000Z",
+      files: [{ path: "tests/proximity.test.ts", additions: 20, deletions: 5 }],
+    });
+    const snapshot = createLeaderboardSnapshot(v2Input([unratified]));
+    expect(
+      snapshot.ledger.filter(
+        (event) => event.repository === "elizaOS/proximityprize",
+      ),
+    ).toEqual([]);
+
+    const maintainer = actor("proximity-maintainer");
+    const ratification = {
+      schemaVersion: "1",
+      ruleVersion: "slop-score-v2",
+      projectId: "delta-star",
+      pullRequestNodeId: unratified.id,
+      headSha: unratified.headRefOid,
+      workUnitId: "wu_proximity_prize_claim_44",
+      tier: "micro",
+      scoreThirds: 1,
+      proposalReviewNodeIds: [],
+      coRatifierNodeIds: [],
+      reason:
+        "Maintainer verified that this exact head materially advances a named Proximity Prize proof path.",
+      supersedes: null,
+    };
+    unratified.comments = [
+      {
+        ...textSource(
+          "COMMENT_DELTA_RATIFICATION",
+          `\`\`\`slop-score\n${JSON.stringify(ratification)}\n\`\`\``,
+          maintainer,
+        ),
+        artifactId: unratified.id,
+        url: "https://github.com/SlopDotCash/proximityprize/pull/44#issuecomment-4401",
+        createdAt: "2026-08-18T04:00:00.000Z",
+        updatedAt: "2026-08-18T04:00:00.000Z",
+        authorAssociation: "MEMBER",
+      },
+    ];
+    const accepted = createLeaderboardSnapshot(v2Input([unratified]));
+    const acceptedEvents = accepted.ledger.filter(
+      (event) => event.repository === "elizaOS/proximityprize",
+    );
+    expect(
+      acceptedEvents.find((event) => event.category === "merged-pull-request"),
+    ).toMatchObject({
+      scoreThirds: 1,
+      workUnitId: "wu_proximity_prize_claim_44",
+    });
+    expect(acceptedEvents.map((event) => event.category)).toEqual([
+      "merged-pull-request",
+      "substantive-review",
+    ]);
+  });
+
   it("aggregates micro thirds before rounding down", () => {
     const pullRequests = [1, 2, 3].map((number) =>
       pullRequest({
@@ -2392,7 +2465,7 @@ describe("scoring and limits", () => {
     ).toEqual([107, 106, 105, 104, 103]);
   });
 
-  it("keeps contributor caps independent across registered projects", () => {
+  it("does not treat an external-prize merge as accepted without ratification", () => {
     const contributor = actor("cross-repo-author");
     const elizaPullRequests = Array.from({ length: 4 }, (_, index) =>
       pullRequest({
@@ -2428,18 +2501,15 @@ describe("scoring and limits", () => {
     );
 
     expect(entry).toMatchObject({
-      score: 53,
-      acceptedOutcomes: { mergedPullRequests: 7 },
+      score: 29,
+      acceptedOutcomes: { mergedPullRequests: 4 },
     });
-    expect(mergedEvents).toHaveLength(7);
+    expect(mergedEvents).toHaveLength(4);
     expect(mergedEvents.map((event) => event.repository).sort()).toEqual([
       "elizaOS/eliza",
       "elizaOS/eliza",
       "elizaOS/eliza",
       "elizaOS/eliza",
-      "elizaOS/proximityprize",
-      "elizaOS/proximityprize",
-      "elizaOS/proximityprize",
     ]);
   });
 
@@ -2692,7 +2762,7 @@ describe("work queue claims and prioritization", () => {
       closedAt: null,
       stateReason: null,
       labels: [{ id: "LABEL_READY_4", name: "help wanted", color: "fff" }],
-      author: actor("renovate"),
+      author: actor("renovate", "Bot"),
     });
     const untriagedIssue = issue({
       id: "ISSUE_UNTRIAGED",

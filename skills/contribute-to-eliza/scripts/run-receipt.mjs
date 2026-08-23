@@ -84,6 +84,16 @@ const IDENTITY_AUTHORITY = "https://identity.slop.cash";
 const TRACE_PRIVACY_CONTRACT = "https://slop.cash/protocol/private-trace-v1.md";
 const PRIVATE_REQUEST_INTAKE_STATUS =
   "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting";
+const LEGACY_V1_RECEIPT_IDENTITIES = new Map([
+  [
+    "delta-star",
+    [
+      ["lalalune/arklib", "elizaOS/army"],
+      ["lalalune/arklib", "elizaOS/slopdotcash"],
+      ["elizaOS/proximityprize", "elizaOS/slopdotcash"],
+    ],
+  ],
+]);
 
 const HELP = `Usage: node scripts/run-receipt.mjs <command> [options]
 
@@ -1715,6 +1725,28 @@ function completedLane(value, receipt) {
   return lanes[0];
 }
 
+export function completedIdentityIsValid(receipt, wrapperIsLegacy) {
+  const currentSkillRevision = new RegExp(
+    `^SlopDotCash/slopdotcash@[0-9a-f]{40}:${PROJECT.skillSourcePath.replaceAll("/", "\\/")}$`,
+    "u",
+  );
+  if (
+    receipt.repositoryId === PROJECT.repositoryId &&
+    currentSkillRevision.test(receipt.skillRevision ?? "")
+  ) {
+    return true;
+  }
+  if (!wrapperIsLegacy || receipt.schemaVersion !== "1") return false;
+  return (LEGACY_V1_RECEIPT_IDENTITIES.get(PROJECT.projectId) ?? []).some(
+    ([repositoryId, skillRepository]) =>
+      receipt.repositoryId === repositoryId &&
+      new RegExp(
+        `^${skillRepository.replaceAll("/", "\\/")}@[0-9a-f]{40}:skills/contribute-to-delta-star$`,
+        "u",
+      ).test(receipt.skillRevision ?? ""),
+  );
+}
+
 function validateCompletedRecord(value) {
   const receipt = value?.receipt;
   const hasPolicyAcknowledgement = Object.hasOwn(
@@ -1778,7 +1810,7 @@ function validateCompletedRecord(value) {
     !["1", "2"].includes(receipt.schemaVersion) ||
     (receipt.schemaVersion === "2") !== hasPolicyAcknowledgement ||
     receipt.projectId !== PROJECT.projectId ||
-    receipt.repositoryId !== PROJECT.repositoryId ||
+    !completedIdentityIsValid(receipt, wrapperIsLegacy) ||
     !RUN_ID_PATTERN.test(receipt.runId ?? "") ||
     (() => {
       try {
@@ -1790,10 +1822,6 @@ function validateCompletedRecord(value) {
         return true;
       }
     })() ||
-    !new RegExp(
-      `^SlopDotCash/slopdotcash@[0-9a-f]{40}:${PROJECT.skillSourcePath.replaceAll("/", "\\/")}$`,
-      "u",
-    ).test(receipt.skillRevision ?? "") ||
     canonicalIso(receipt.startedAt) !== receipt.startedAt ||
     canonicalIso(receipt.completedAt) !== receipt.completedAt ||
     Date.parse(receipt.completedAt) < Date.parse(receipt.startedAt) ||

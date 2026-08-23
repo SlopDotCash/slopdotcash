@@ -83,4 +83,25 @@ describe("project transition gate", () => {
       validateProjectTransitions(entries(current), entries(legacy)),
     ).toThrow(/publishAtRoot/u);
   });
+
+  it("accepts the historical one-percent external-prize fee only on the prior side", () => {
+    const legacy = structuredClone(deltaStar) as unknown as {
+      id: string;
+      reward: { feeBasisPoints: number };
+    };
+    legacy.reward.feeBasisPoints = 100;
+
+    expect(
+      validateProjectTransitions(
+        [entry(eliza), entry(legacy)],
+        [entry(eliza), entry(deltaStar)],
+      ),
+    ).toEqual({ previous: 2, current: 2 });
+    expect(() =>
+      validateProjectTransitions(
+        [entry(eliza), entry(deltaStar)],
+        [entry(eliza), entry(legacy)],
+      ),
+    ).toThrow(/fee policy/u);
+  });
 });

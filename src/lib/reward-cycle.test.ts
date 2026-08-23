@@ -124,7 +124,8 @@ describe("reward cycle proposals", () => {
     expect(proposal).toMatchObject({
       kind: "external-contribution-share",
       status: "provisional",
-      entries: [{ sharePartsPerMillion: 1_000_000 }],
+      platformSharePartsPerMillion: 100_000,
+      entries: [{ sharePartsPerMillion: 900_000 }],
     });
     expect(proposal).not.toHaveProperty("currency");
   });

@@ -25,7 +25,10 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { declaredIdentity as asiDeclaredIdentity } from "../skills/contribute-to-asi/scripts/run-receipt.mjs";
-import { declaredIdentity as deltaDeclaredIdentity } from "../skills/contribute-to-delta-star/scripts/run-receipt.mjs";
+import {
+  completedIdentityIsValid as deltaCompletedIdentityIsValid,
+  declaredIdentity as deltaDeclaredIdentity,
+} from "../skills/contribute-to-delta-star/scripts/run-receipt.mjs";
 import {
   disclosePrivateTrace,
   declaredIdentity as elizaDeclaredIdentity,
@@ -331,6 +334,60 @@ describe("project skill contracts", () => {
     assert.match(
       receiptSource,
       /refusing a non-regular or symlinked device key/u,
+    );
+  });
+
+  it("accepts only exact signed Delta Star migration-era receipt identities", () => {
+    const sha = "a".repeat(40);
+    for (const [repositoryId, skillRepository] of [
+      ["lalalune/arklib", "elizaOS/army"],
+      ["lalalune/arklib", "elizaOS/slopdotcash"],
+      ["elizaOS/proximityprize", "elizaOS/slopdotcash"],
+    ]) {
+      assert.strictEqual(
+        deltaCompletedIdentityIsValid(
+          {
+            repositoryId,
+            schemaVersion: "1",
+            skillRevision: `${skillRepository}@${sha}:skills/contribute-to-delta-star`,
+          },
+          true,
+        ),
+        true,
+      );
+    }
+    assert.strictEqual(
+      deltaCompletedIdentityIsValid(
+        {
+          repositoryId: "lalalune/arklib",
+          schemaVersion: "1",
+          skillRevision: `attacker/slopdotcash@${sha}:skills/contribute-to-delta-star`,
+        },
+        true,
+      ),
+      false,
+    );
+    assert.strictEqual(
+      deltaCompletedIdentityIsValid(
+        {
+          repositoryId: "lalalune/arklib",
+          schemaVersion: "2",
+          skillRevision: `elizaOS/slopdotcash@${sha}:skills/contribute-to-delta-star`,
+        },
+        true,
+      ),
+      false,
+    );
+    assert.strictEqual(
+      deltaCompletedIdentityIsValid(
+        {
+          repositoryId: "elizaOS/proximityprize",
+          schemaVersion: "1",
+          skillRevision: `elizaOS/slopdotcash@${sha}:skills/contribute-to-delta-star`,
+        },
+        false,
+      ),
+      false,
     );
   });
 

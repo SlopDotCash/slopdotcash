@@ -77,6 +77,7 @@ export type ProjectRewardProjection =
       opportunityName: string;
       advertisedAmountDisplay: string;
       totalSharePartsPerMillion: number;
+      platformSharePartsPerMillion: number;
       status: "provisional-share-only";
     };
 
@@ -661,8 +662,12 @@ export function createProjectView(
       status: "simulation",
     };
   } else {
+    const platformSharePartsPerMillion =
+      (SHARE_PARTS_PER_MILLION * project.reward.feeBasisPoints) / 10_000;
+    const contributorSharePartsPerMillion =
+      SHARE_PARTS_PER_MILLION - platformSharePartsPerMillion;
     const shares = allocateIntegerTotal(
-      BigInt(SHARE_PARTS_PER_MILLION),
+      BigInt(contributorSharePartsPerMillion),
       leaders,
     );
     for (const entry of leaders) {
@@ -681,6 +686,7 @@ export function createProjectView(
         (total, share) => total + Number(share),
         0,
       ),
+      platformSharePartsPerMillion,
       status: "provisional-share-only",
     };
   }

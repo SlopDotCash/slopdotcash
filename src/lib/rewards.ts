@@ -115,6 +115,7 @@ export interface ExternalContributionShareManifest {
   contributionWindow: { from: string; to: string };
   scoringRuleVersion: string;
   sourceSnapshotSha256: string;
+  platformSharePartsPerMillion: number;
   entries: Array<{
     actor: { id: string; login: string };
     score: number;
@@ -875,6 +876,7 @@ export function assertExternalContributionShareManifest(
       "entries",
       "generatedAt",
       "kind",
+      "platformSharePartsPerMillion",
       "projectId",
       "schemaVersion",
       "scoringRuleVersion",
@@ -894,6 +896,17 @@ export function assertExternalContributionShareManifest(
   const project = findProject(manifest.projectId);
   if (project?.reward.kind !== "external-prize-share") {
     throw new TypeError("share manifest project has no external opportunity");
+  }
+  const platformSharePartsPerMillion = safeInteger(
+    manifest.platformSharePartsPerMillion,
+    "share manifest.platformSharePartsPerMillion",
+  );
+  const expectedPlatformShare =
+    (SHARE_PARTS_TOTAL * project.reward.feeBasisPoints) / 10_000;
+  if (platformSharePartsPerMillion !== expectedPlatformShare) {
+    throw new TypeError(
+      "share manifest platform share differs from project policy",
+    );
   }
   const entries = array(manifest.entries, "share manifest.entries").map(
     (value, index) => {
@@ -923,7 +936,8 @@ export function assertExternalContributionShareManifest(
     "share actor ids",
   );
   if (
-    entries.reduce((total, entry) => total + entry.sharePartsPerMillion, 0) !==
+    entries.reduce((total, entry) => total + entry.sharePartsPerMillion, 0) +
+      (entries.length === 0 ? 0 : platformSharePartsPerMillion) !==
     (entries.length === 0 ? 0 : SHARE_PARTS_TOTAL)
   ) {
     throw new TypeError(
@@ -983,6 +997,7 @@ export function assertExternalContributionShareManifest(
       manifest.sourceSnapshotSha256,
       "share manifest.sourceSnapshotSha256",
     ),
+    platformSharePartsPerMillion,
     entries,
   };
 }

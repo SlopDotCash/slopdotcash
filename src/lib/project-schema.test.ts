@@ -456,10 +456,28 @@ describe("project proposal schema", () => {
     expect(() => assertProjectDefinition(dao)).toThrow(/legal capacity/u);
   });
 
+  it("accepts bounded SPDX license expressions and rejects prose", () => {
+    const dualLicensed = mutablePolicyFixture(eliza);
+    const repositoryLicense = (
+      dualLicensed.terms as unknown as {
+        repositoryLicense: { spdx: string };
+      }
+    ).repositoryLicense;
+    repositoryLicense.spdx = "Apache-2.0 AND MIT";
+    expect(
+      assertProjectDefinition(dualLicensed).terms.repositoryLicense.spdx,
+    ).toBe("Apache-2.0 AND MIT");
+
+    repositoryLicense.spdx = "MIT or anything else";
+    expect(() => assertProjectDefinition(dualLicensed)).toThrow(/spdx/u);
+  });
+
   it("treats null-claim unknown and mixed copyright as terminal and activation-ready", () => {
     for (const manifest of [asi, deltaStar, eliza, heirElements]) {
       const project = assertProjectDefinition(manifest);
-      expect(["unknown", "mixed"]).toContain(project.terms.copyright.model);
+      expect(["unknown", "mixed", "contributor-retained"]).toContain(
+        project.terms.copyright.model,
+      );
       expect(project.terms.copyright.claimedLegalHolder).toBeNull();
       expect(project.terms.copyright.legalCapacity).toBeNull();
       expect(project.terms.copyright.governanceResolution).toBeNull();
@@ -536,10 +554,13 @@ describe("project proposal schema", () => {
       /author-approved/u,
     );
     expect(deltaStar.terms.externalPrize?.defaultContributorAllocation).toMatch(
-      /^Equal shares for all named authors by default/u,
+      /contributor 90%/u,
     );
     expect(deltaStar.terms.externalPrize?.defaultContributorAllocation).toMatch(
-      /approval from every named author/u,
+      /Historical authors must affirm/u,
+    );
+    expect(deltaStar.terms.externalPrize?.defaultContributorAllocation).toMatch(
+      /final named-author approval/u,
     );
     const inventedCapture = mutablePolicyFixture(deltaStar);
     inventedCapture.terms.externalPrize.rulesSha256 = "a".repeat(64);
@@ -582,6 +603,14 @@ describe("project proposal schema", () => {
         revision: string;
       };
     };
+    missingInbound.terms.inbound = {
+      mode: "unknown",
+      termsUrl: null,
+      commitSha: null,
+      fileSha256: null,
+      version: null,
+      acceptance: null,
+    };
     missingInbound.terms.receiptPolicy = {
       state: "active",
       activatedAt: "2026-08-19T00:00:00.000Z",
@@ -615,6 +644,9 @@ describe("project proposal schema", () => {
         bindings: Array<{ inboundTermsSha256: string | null }>;
       }
     ).bindings[0].inboundTermsSha256 = "d".repeat(64);
+    missingPrizeRules.terms.externalPrize.rulesSha256 = null;
+    missingPrizeRules.terms.externalPrize.rulesCapturedAt = null;
+    missingPrizeRules.terms.externalPrize.version = "unknown";
     expect(() => assertProjectDefinition(missingPrizeRules)).toThrow(
       /requires immutable external prize rules/u,
     );

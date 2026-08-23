@@ -733,13 +733,14 @@ test("serves byte-consistent install and read-only artifacts for every project",
   expect(bootstrap.toString()).toContain(
     "mandatory permanent minimized trace upload",
   );
-  expect(await projectDiscoveryResponse.json()).toEqual({
+  const projectDiscovery = await projectDiscoveryResponse.json();
+  expect(projectDiscovery).toEqual({
     schemaVersion: "1",
     projects: PROJECTS.flatMap((project) =>
       project.repositories.map((repository) => ({
         project_id: project.id,
         project_url: `https://slop.cash/projects/${project.id}/`,
-        repository: repository.id,
+        repository: repository.aliases?.at(-1) ?? repository.id,
         review_skill: project.reviewSkill.id,
         review_skill_manifest: `https://slop.cash/projects/${project.id}/review-skill-manifest.json`,
         skill: project.skill.id,
@@ -747,6 +748,12 @@ test("serves byte-consistent install and read-only artifacts for every project",
       })),
     ),
   });
+
+  expect(
+    projectDiscovery.projects.find(
+      (project: { project_id: string }) => project.project_id === "asi",
+    )?.repository,
+  ).toBe("SlopDotCash/asi");
 
   for (const project of PROJECTS) {
     const root = `/projects/${project.id}`;

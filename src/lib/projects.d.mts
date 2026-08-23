@@ -30,7 +30,7 @@ export interface ProjectRewardPolicy {
   readonly monthlyCapDisplay: string;
   readonly committedMinor: string;
   readonly paymentMode: "disabled" | "enabled";
-  readonly feeBasisPoints: 100;
+  readonly feeBasisPoints: 100 | 1000;
   readonly unusedFunds: "not-applicable" | "rollover-without-cap-increase";
   readonly fundingState: "committed" | "external-opportunity" | "pledged";
   readonly externalOpportunity?: {

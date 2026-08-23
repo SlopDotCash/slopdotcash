@@ -436,7 +436,7 @@ writeFileSync(
         project.repositories.map((repository) => ({
           project_id: project.id,
           project_url: `${publicSiteOrigin}/projects/${project.id}/`,
-          repository: repository.id,
+          repository: repository.aliases?.at(-1) ?? repository.id,
           review_skill: project.reviewSkill.id,
           review_skill_manifest: `${publicSiteOrigin}/projects/${project.id}/review-skill-manifest.json`,
           skill: project.skill.id,

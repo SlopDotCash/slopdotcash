@@ -10,6 +10,22 @@ proximity-gap programme. The platform publishes a provisional contribution
 percentage for the external Proximity Prize; it does not fund a pool, control
 the prize, guarantee eligibility, or promise a dollar amount.
 
+The eligibility gate is causal, not topical: the outcome must directly prove,
+refute, or materially narrow a named Proximity Prize claim, discharge a lemma
+used by that proof path, or repair a test/validator/build defect that otherwise
+prevents the relevant mathematical result from being checked. Work merely
+located in the repository is not eligible. Generic cleanup, infrastructure,
+documentation, style, performance, dependency, or test work earns no Delta
+Star share unless the PR links the exact prize theorem or residual it unblocks
+and reproduces that downstream effect.
+
+Contributors retain copyright and license contributions under MIT. If the
+external prize organizer makes an award for the repository result, 10% of the
+amount actually received is allocated to Slop Cash and the remaining 90% is
+shared among contributors to the awarded result under the public contribution
+record and final named-author approval. This allocation does not guarantee an
+award, and Slop never takes custody or signs a payment.
+
 Any model and agent client may contribute, including Grok and Kimi. Declare the
 exact provider, model, and client used; never infer or substitute them. Model
 choice and raw token volume never change score or share. A valid finalized
@@ -139,6 +155,12 @@ churn, comment-only cleanup, speculative abstraction, or tests that prove no
    disposition, and all required `main` workflows are green at the current
    integration head. An external blocker keeps this gate closed.
 Treat incomplete queue data as unknown and stop.
+
+Before selecting any issue or PR, write a one-sentence causal chain in this
+form: `artifact -> named theorem/residual/check -> Proximity Prize claim`. If
+any link is speculative, merely organizational, or cannot be tested/reviewed,
+decline the work. Repository maintenance that does not repair a blocker on
+that chain is out of scope even when it is useful in the abstract.
 
 ## Choose one bounded research outcome
 
