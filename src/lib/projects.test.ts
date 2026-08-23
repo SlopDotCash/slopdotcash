@@ -48,7 +48,7 @@ describe("project registry", () => {
       ]),
     ).toEqual([
       ["elizaOS/eliza", "eliza"],
-      ["elizaOS/asi", "asi"],
+      ["SlopDotCash/asi", "asi"],
       ["heirlabs/element-sdk", "heir-elements-sdk"],
       ["elizaOS/proximityprize", "delta-star"],
     ]);
@@ -66,10 +66,10 @@ describe("project registry", () => {
       },
     );
     expect(findTargetRepository("SlopDotCash", "asi")).toMatchObject({
-      id: "elizaOS/asi",
+      id: "SlopDotCash/asi",
       owner: "SlopDotCash",
       name: "asi",
-      expectedNodeId: "R_kgDOT23CXA",
+      expectedNodeId: null,
     });
     expect(findProjectByRepositoryId("unknown/repository")).toBeNull();
   });

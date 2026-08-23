@@ -450,6 +450,18 @@ describe("contribution skill package", () => {
         })),
       ),
     });
+    expect(projectDiscovery.projects).toContainEqual(
+      expect.objectContaining({
+        project_id: "asi",
+        repository: "SlopDotCash/asi",
+      }),
+    );
+    expect(projectDiscovery.projects).not.toContainEqual(
+      expect.objectContaining({
+        project_id: "asi",
+        repository: "elizaOS/asi",
+      }),
+    );
   });
 
   it("serves discovery files with explicit portable content types", () => {

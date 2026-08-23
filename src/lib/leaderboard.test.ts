@@ -56,7 +56,7 @@ describe("repository URL trust boundary", () => {
     ).toBe("elizaOS/proximityprize");
     expect(
       repositoryIdFromUrl("https://github.com/SlopDotCash/asi/pull/1"),
-    ).toBe("elizaOS/asi");
+    ).toBe("SlopDotCash/asi");
     for (const url of [
       "http://github.com/elizaOS/eliza/pull/1",
       "https://github.com:444/elizaOS/eliza/pull/1",
@@ -354,7 +354,7 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       repositoryId: "REPO_1",
       repositories: [
         { id: "elizaOS/eliza", repositoryId: "REPO_1" },
-        { id: "elizaOS/asi", repositoryId: "REPO_3" },
+        { id: "SlopDotCash/asi", repositoryId: "REPO_3" },
         { id: "heirlabs/element-sdk", repositoryId: "REPO_4" },
         { id: "elizaOS/proximityprize", repositoryId: "REPO_2" },
       ],
@@ -2465,10 +2465,36 @@ describe("scoring and limits", () => {
     expect(snapshot.workQueue.pullRequests[0].repository).toBe("elizaOS/eliza");
     expect(snapshot.repositories.map((repository) => repository.id)).toEqual([
       "elizaOS/eliza",
-      "elizaOS/asi",
+      "SlopDotCash/asi",
       "heirlabs/element-sdk",
       "elizaOS/proximityprize",
     ]);
+
+    const historicalTransferSnapshot = structuredClone(snapshot);
+    historicalTransferSnapshot.repositories[1] = {
+      ...historicalTransferSnapshot.repositories[1],
+      id: "elizaOS/asi",
+    };
+    historicalTransferSnapshot.source.repositories[1] = {
+      ...historicalTransferSnapshot.source.repositories[1],
+      id: "elizaOS/asi",
+    };
+    expect(() =>
+      assertLeaderboardSnapshot(historicalTransferSnapshot),
+    ).not.toThrow();
+
+    const unregisteredIdentity = structuredClone(snapshot);
+    unregisteredIdentity.repositories[1] = {
+      ...unregisteredIdentity.repositories[1],
+      id: "attacker/asi",
+    };
+    unregisteredIdentity.source.repositories[1] = {
+      ...unregisteredIdentity.source.repositories[1],
+      id: "attacker/asi",
+    };
+    expect(() => assertLeaderboardSnapshot(unregisteredIdentity)).toThrow(
+      "does not match the target repository registry",
+    );
     expect(() =>
       createLeaderboardSnapshot(
         input({

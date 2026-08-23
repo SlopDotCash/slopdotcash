@@ -1753,7 +1753,7 @@ describe("current-head review selection", () => {
     const snapshot = await generateLeaderboardFromGitHub(client, { now });
     expect(snapshot.source.repositories).toEqual([
       { id: "elizaOS/eliza", repositoryId: "REPOSITORY_ELIZA" },
-      { id: "elizaOS/asi", repositoryId: "R_kgDOT23CXA" },
+      { id: "SlopDotCash/asi", repositoryId: "R_kgDOT23CXA" },
       {
         id: "heirlabs/element-sdk",
         repositoryId: "REPOSITORY_ELEMENT_SDK",

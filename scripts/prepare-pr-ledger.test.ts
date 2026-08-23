@@ -12,7 +12,7 @@ describe("pull-request ledger schema bridge", () => {
   it("rebinds only a registered pre-transfer repository presentation", () => {
     const deployed = structuredClone(snapshotFixture());
     const asi = deployed.repositories.find(
-      (repository) => repository.id === "elizaOS/asi",
+      (repository) => repository.id === "SlopDotCash/asi",
     ) as unknown as {
       owner: string;
       name: string;
@@ -29,7 +29,7 @@ describe("pull-request ledger schema bridge", () => {
     expect(rebound).not.toBe(deployed);
     expect(
       rebound.repositories.find(
-        (repository) => repository.id === "elizaOS/asi",
+        (repository) => repository.id === "SlopDotCash/asi",
       ),
     ).toMatchObject({
       owner: "SlopDotCash",

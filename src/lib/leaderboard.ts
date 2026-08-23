@@ -3595,7 +3595,7 @@ function assertRepositoryUrl(
   }
   if (
     expectedRepository !== undefined &&
-    repository.id !== expectedRepository
+    findTargetRepositoryById(expectedRepository) !== repository
   ) {
     throw new Error(`${path} does not match its declared repository`);
   }
@@ -3643,6 +3643,17 @@ function assertEnum<const Values extends readonly string[]>(
 ): asserts value is Values[number] {
   if (typeof value !== "string" || !allowed.includes(value)) {
     throw new Error(`${path} must be one of: ${allowed.join(", ")}`);
+  }
+}
+
+function assertRegisteredRepositoryId(
+  value: unknown,
+  path: string,
+): asserts value is RepositoryId {
+  if (typeof value !== "string" || !findTargetRepositoryById(value)) {
+    throw new Error(
+      `${path} must be a registered canonical repository ID or retained alias`,
+    );
   }
 }
 
@@ -3819,6 +3830,17 @@ function assertMethodologyValue(value: unknown, path: string): void {
   assertString(methodology.collectionPolicy, `${path}.collectionPolicy`);
 }
 
+function matchesRegisteredRepositoryId(
+  value: unknown,
+  repository: (typeof TARGET_REPOSITORIES)[number],
+): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.toLowerCase();
+  return [repository.id, ...repository.aliases].some(
+    (candidate) => candidate.toLowerCase() === normalized,
+  );
+}
+
 function assertSourceValue(value: unknown, path: string): void {
   const source = assertObject(value, path);
   if (source.provider !== "github-graphql") {
@@ -3839,7 +3861,7 @@ function assertSourceValue(value: unknown, path: string): void {
   source.repositories.forEach((value, index) => {
     const entryPath = `${path}.repositories[${index}]`;
     const entry = assertObject(value, entryPath);
-    if (entry.id !== TARGET_REPOSITORIES[index].id) {
+    if (!matchesRegisteredRepositoryId(entry.id, TARGET_REPOSITORIES[index])) {
       throw new Error(
         `${entryPath}.id must follow the target repository registry order`,
       );
@@ -4153,11 +4175,7 @@ function assertWorkItemValue(
   }
   assertPositiveInteger(item.number, `${path}.number`);
   assertString(item.title, `${path}.title`);
-  assertEnum(
-    item.repository,
-    TARGET_REPOSITORIES.map((repository) => repository.id),
-    `${path}.repository`,
-  );
+  assertRegisteredRepositoryId(item.repository, `${path}.repository`);
   assertRepositoryUrl(
     item.url,
     `${path}.url`,
@@ -4477,11 +4495,7 @@ function assertLedgerValue(
   }
   assertIsoTimestamp(event.occurredAt, `${path}.occurredAt`);
   assertString(event.reason, `${path}.reason`);
-  assertEnum(
-    event.repository,
-    TARGET_REPOSITORIES.map((repository) => repository.id),
-    `${path}.repository`,
-  );
+  assertRegisteredRepositoryId(event.repository, `${path}.repository`);
   const source = assertObject(event.source, `${path}.source`);
   assertString(source.id, `${path}.source.id`);
   assertEnum(
@@ -4646,11 +4660,7 @@ function assertOpportunityValue(
   ) {
     throw new Error(`${path}.hint must be an actionable next step`);
   }
-  assertEnum(
-    opportunity.repository,
-    TARGET_REPOSITORIES.map((repository) => repository.id),
-    `${path}.repository`,
-  );
+  assertRegisteredRepositoryId(opportunity.repository, `${path}.repository`);
   const source = assertObject(opportunity.source, `${path}.source`);
   assertString(source.id, `${path}.source.id`);
   assertEnum(
@@ -4743,8 +4753,12 @@ export function assertLeaderboardSnapshot(
     const path = `snapshot.repositories[${index}]`;
     const published = assertObject(value, path);
     const registered = TARGET_REPOSITORIES[index];
+    if (!matchesRegisteredRepositoryId(published.id, registered)) {
+      throw new Error(
+        `${path}.id does not match the target repository registry`,
+      );
+    }
     for (const key of [
-      "id",
       "owner",
       "name",
       "displayName",
