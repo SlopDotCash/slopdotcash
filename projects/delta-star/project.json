@@ -7,7 +7,7 @@
   "headline": "Make money solving math.",
   "description": "Advance machine-checked Reed–Solomon proximity work in the dedicated Proximity Prize repository.",
   "listingTier": "featured",
-  "status": "paused",
+  "status": "active",
   "steward": {
     "displayName": "Proximity Prize contributors",
     "kind": "collective",
@@ -27,56 +27,64 @@
     "repositoryId": "1334780197",
     "repositoryNodeId": "R_kgDOT48hJQ",
     "proof": {
-      "commitSha": "acfa4f072d0c7fe8e706c80d8e21cb5b083f73a6",
-      "fileSha256": "0e963b4212a6330f2aad0ccd43730485704b1494bf40ff00b469671426c87774",
-      "policyRevision": "2026-08-20.1",
-      "url": "https://github.com/SlopDotCash/proximityprize/blob/acfa4f072d0c7fe8e706c80d8e21cb5b083f73a6/.github/slop-project.json",
-      "verifiedAt": "2026-08-18T22:43:17.000Z"
+      "commitSha": "2f0505ff01565ad96d77e354d0f568d9f99119d8",
+      "fileSha256": "0d7f2133971b3e6ebc839b54c78be038fb58a335224fe91ad28b764f86c4fcdd",
+      "policyRevision": "2026-08-23.1",
+      "url": "https://github.com/SlopDotCash/proximityprize/blob/2f0505ff01565ad96d77e354d0f568d9f99119d8/.github/slop-project.json",
+      "verifiedAt": "2026-08-23T05:11:23.000Z"
     }
   },
   "terms": {
-    "revision": "2026-08-20.1",
-    "effectiveAt": "2026-08-20T09:17:02.000Z",
+    "revision": "2026-08-23.1",
+    "effectiveAt": "2026-08-23T05:11:23.000Z",
     "receiptPolicy": {
-      "state": "pending-authority-activation",
-      "activatedAt": null,
-      "bindings": []
+      "state": "active",
+      "activatedAt": "2026-08-23T05:11:23.000Z",
+      "bindings": [
+        {
+          "policyRevision": "2026-08-23.1",
+          "activatedAt": "2026-08-23T05:11:23.000Z",
+          "licenseSha256": "5c1a41a87661cfac8326215f1bc6630efe20a163263aa36412c1bc36718c6f3d",
+          "inboundTermsSha256": "cc7faa61cf35b18bcc9d3941e42ccc034d10ecd076b9734adbdafdeeb962c6a4",
+          "prizeRulesSha256": "029d33c474304c55599583f06380e4f594bd7dbba98926ea8f0c17930b53febb"
+        }
+      ]
     },
     "paymentTransfersIp": false,
     "retroactive": false,
     "copyright": {
-      "model": "unknown",
+      "model": "contributor-retained",
       "claimedLegalHolder": null,
-      "notice": null,
+      "notice": "Contributors retain copyright in their own work; accepted Proximity Prize work is contributor-owned in aggregate without assignment or inferred joint ownership of another contributor's work.",
       "legalCapacity": null,
       "governanceResolution": null
     },
     "repositoryLicense": {
       "state": "verified",
-      "spdx": "Apache-2.0",
-      "url": "https://github.com/SlopDotCash/proximityprize/blob/b72890393a68745ecc43f6b39470509b630c7192/LICENSE",
-      "commitSha": "b72890393a68745ecc43f6b39470509b630c7192",
-      "fileSha256": "c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851"
+      "spdx": "Apache-2.0 AND MIT",
+      "url": "https://github.com/SlopDotCash/proximityprize/blob/2f0505ff01565ad96d77e354d0f568d9f99119d8/LICENSE",
+      "commitSha": "2f0505ff01565ad96d77e354d0f568d9f99119d8",
+      "fileSha256": "5c1a41a87661cfac8326215f1bc6630efe20a163263aa36412c1bc36718c6f3d"
     },
     "inbound": {
-      "mode": "unknown",
-      "termsUrl": null,
-      "commitSha": null,
-      "fileSha256": null,
-      "version": null,
-      "acceptance": null
+      "mode": "license",
+      "termsUrl": "https://github.com/SlopDotCash/proximityprize/blob/2f0505ff01565ad96d77e354d0f568d9f99119d8/CONTRIBUTING.md",
+      "commitSha": "2f0505ff01565ad96d77e354d0f568d9f99119d8",
+      "fileSha256": "cc7faa61cf35b18bcc9d3941e42ccc034d10ecd076b9734adbdafdeeb962c6a4",
+      "version": "2026-08-23.1",
+      "acceptance": "New original contributions accepted after activation retain contributor copyright and are licensed under both MIT and Apache-2.0; historical grants remain unchanged."
     },
     "assignment": null,
     "externalPrize": {
       "organizer": "Ethereum Foundation Proximity Prize",
-      "rulesUrl": "https://proximityprize.org/",
-      "rulesSha256": null,
-      "rulesCapturedAt": null,
-      "version": "unknown",
-      "eligibility": "Organizer controlled; immutable captured rules are not yet supplied.",
-      "allocationAuthority": "Final author-approved allocation, subject to organizer rules.",
-      "defaultContributorAllocation": "Equal shares for all named authors by default; a non-equal split requires approval from every named author. Organizer rules remain controlling. Shares are payout allocation only, never a copyright or ownership claim.",
-      "ipTerms": "Unknown until immutable organizer rules are captured."
+      "rulesUrl": "https://github.com/SlopDotCash/proximityprize/blob/2f0505ff01565ad96d77e354d0f568d9f99119d8/docs/prize-rules-2026-08-20.md",
+      "rulesSha256": "029d33c474304c55599583f06380e4f594bd7dbba98926ea8f0c17930b53febb",
+      "rulesCapturedAt": "2026-08-22T17:43:34.000Z",
+      "version": "proximityprize.org preliminary rules captured 2026-08-20",
+      "eligibility": "The external organizer and judges control eligibility, submission, peer-review, award, and rule changes; this repository makes no eligibility or award claim.",
+      "allocationAuthority": "For an awarded result whose included contributors accepted revision 2026-08-23.1: 10% of the amount actually received goes to Slop Cash and 90% follows the author-approved contributor record, subject to organizer rules.",
+      "defaultContributorAllocation": "The contributor 90% follows the public evidence-backed contribution-share record and final named-author approval. Historical authors must affirm the policy; no share is a copyright claim.",
+      "ipTerms": "Contributors retain copyright. New original contributions are MIT and Apache-2.0 dual-licensed; historical Apache grants and notices remain unchanged. Payment transfers no IP."
     }
   },
   "repositories": [
