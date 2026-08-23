@@ -442,7 +442,7 @@ describe("contribution skill package", () => {
         project.repositories.map((repository) => ({
           project_id: project.id,
           project_url: `https://slop.cash/projects/${project.id}/`,
-          repository: repository.id,
+          repository: repository.aliases?.at(-1) ?? repository.id,
           review_skill: project.reviewSkill.id,
           review_skill_manifest: `https://slop.cash/projects/${project.id}/review-skill-manifest.json`,
           skill: project.skill.id,
