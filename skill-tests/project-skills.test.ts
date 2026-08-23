@@ -337,6 +337,24 @@ describe("project skill contracts", () => {
     );
   });
 
+  it("accepts the transferred canonical repository as bundled skill provenance", () => {
+    const [canonicalPackage] = projectPackages;
+    const receiptSource = readFileSync(
+      join(canonicalPackage.contributorRoot, "scripts", "run-receipt.mjs"),
+      "utf8",
+    );
+    for (const remote of [
+      "https://github.com/elizaos/army",
+      "https://github.com/elizaos/slopdotcash",
+      "https://github.com/slopdotcash/slopdotcash",
+    ]) {
+      assert.ok(
+        receiptSource.includes(`"${remote}",`),
+        `bundled-source provenance must accept ${remote}`,
+      );
+    }
+  });
+
   it("accepts only exact signed Delta Star migration-era receipt identities", () => {
     const sha = "a".repeat(40);
     for (const [repositoryId, skillRepository] of [
