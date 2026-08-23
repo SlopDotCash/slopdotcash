@@ -114,8 +114,8 @@ describe("project proposal schema", () => {
       githubUrl: "https://github.com/SlopDotCash/proximityprize",
     });
     expect(assertProjectDefinition(asi).repositories[0]).toMatchObject({
-      id: "SlopDotCash/asi",
-      aliases: ["elizaOS/asi"],
+      id: "elizaOS/asi",
+      aliases: ["SlopDotCash/asi"],
       githubUrl: "https://github.com/SlopDotCash/asi",
     });
   });

@@ -442,7 +442,9 @@ describe("contribution skill package", () => {
         project.repositories.map((repository) => ({
           project_id: project.id,
           project_url: `https://slop.cash/projects/${project.id}/`,
-          repository: repository.id,
+          repository: new URL(repository.githubUrl).pathname
+            .replace(/^\//u, "")
+            .replace(/\/$/u, ""),
           review_skill: project.reviewSkill.id,
           review_skill_manifest: `https://slop.cash/projects/${project.id}/review-skill-manifest.json`,
           skill: project.skill.id,
@@ -450,18 +452,16 @@ describe("contribution skill package", () => {
         })),
       ),
     });
-    expect(projectDiscovery.projects).toContainEqual(
-      expect.objectContaining({
-        project_id: "asi",
-        repository: "SlopDotCash/asi",
-      }),
-    );
-    expect(projectDiscovery.projects).not.toContainEqual(
-      expect.objectContaining({
-        project_id: "asi",
-        repository: "elizaOS/asi",
-      }),
-    );
+    expect(projectDiscovery.projects).toContainEqual({
+      project_id: "asi",
+      project_url: "https://slop.cash/projects/asi/",
+      repository: "SlopDotCash/asi",
+      review_skill: "review-asi-contributions",
+      review_skill_manifest:
+        "https://slop.cash/projects/asi/review-skill-manifest.json",
+      skill: "contribute-to-asi",
+      skill_source: "skills/contribute-to-asi",
+    });
   });
 
   it("serves discovery files with explicit portable content types", () => {

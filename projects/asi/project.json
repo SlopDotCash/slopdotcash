@@ -86,8 +86,8 @@
   },
   "repositories": [
     {
-      "id": "SlopDotCash/asi",
-      "aliases": ["elizaOS/asi"],
+      "id": "elizaOS/asi",
+      "aliases": ["SlopDotCash/asi"],
       "displayName": "SlopDotCash/asi",
       "githubUrl": "https://github.com/SlopDotCash/asi",
       "description": "Continual-reinforcement-learning research framework in JAX pursuing The Alberta Plan.",

@@ -436,7 +436,9 @@ writeFileSync(
         project.repositories.map((repository) => ({
           project_id: project.id,
           project_url: `${publicSiteOrigin}/projects/${project.id}/`,
-          repository: repository.id,
+          repository: new URL(repository.githubUrl).pathname
+            .replace(/^\//u, "")
+            .replace(/\/$/u, ""),
           review_skill: project.reviewSkill.id,
           review_skill_manifest: `${publicSiteOrigin}/projects/${project.id}/review-skill-manifest.json`,
           skill: project.skill.id,

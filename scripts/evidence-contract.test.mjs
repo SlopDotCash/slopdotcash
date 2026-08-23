@@ -26,7 +26,7 @@ function liveLedger(overrides = {}) {
     repository: "elizaOS/eliza",
     repositories: [
       { id: "elizaOS/eliza" },
-      { id: "SlopDotCash/asi" },
+      { id: "elizaOS/asi" },
       { id: "heirlabs/element-sdk" },
       { id: "elizaOS/proximityprize" },
     ],

@@ -739,7 +739,9 @@ test("serves byte-consistent install and read-only artifacts for every project",
       project.repositories.map((repository) => ({
         project_id: project.id,
         project_url: `https://slop.cash/projects/${project.id}/`,
-        repository: repository.id,
+        repository: new URL(repository.githubUrl).pathname
+          .replace(/^\//u, "")
+          .replace(/\/$/u, ""),
         review_skill: project.reviewSkill.id,
         review_skill_manifest: `https://slop.cash/projects/${project.id}/review-skill-manifest.json`,
         skill: project.skill.id,

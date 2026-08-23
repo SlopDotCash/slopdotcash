@@ -113,7 +113,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
       repositoryId: "R_fixture",
       repositories: [
         { id: "elizaOS/eliza", repositoryId: "R_fixture" },
-        { id: "SlopDotCash/asi", repositoryId: "R_fixture_asi" },
+        { id: "elizaOS/asi", repositoryId: "R_fixture_asi" },
         {
           id: "heirlabs/element-sdk",
           repositoryId: "R_fixture_element_sdk",
