@@ -418,7 +418,7 @@ function validateTerms(
   } else if (license.state === "verified") {
     text(license.spdx, `${field}.repositoryLicense.spdx`, {
       max: 80,
-      pattern: /^[A-Za-z0-9-.+]+$/u,
+      pattern: /^[A-Za-z0-9-.+]+(?: (?:AND|OR|WITH) [A-Za-z0-9-.+]+)*$/u,
     });
     const licenseCommit = commit(
       license.commitSha,

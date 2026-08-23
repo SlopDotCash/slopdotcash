@@ -484,6 +484,22 @@ describe("project proposal schema", () => {
     }
   });
 
+  it("accepts bounded SPDX license expressions and rejects prose", () => {
+    const dualLicensed = mutablePolicyFixture(eliza);
+    const repositoryLicense = (
+      dualLicensed.terms as unknown as {
+        repositoryLicense: { spdx: string };
+      }
+    ).repositoryLicense;
+    repositoryLicense.spdx = "Apache-2.0 AND MIT";
+    expect(
+      assertProjectDefinition(dualLicensed).terms.repositoryLicense.spdx,
+    ).toBe("Apache-2.0 AND MIT");
+
+    repositoryLicense.spdx = "MIT or anything else";
+    expect(() => assertProjectDefinition(dualLicensed)).toThrow(/spdx/u);
+  });
+
   it("permits a legacy unsupported holder only on the historical transition side", () => {
     const legacy = mutablePolicyFixture(eliza);
     legacy.terms.copyright.model = "mixed";
