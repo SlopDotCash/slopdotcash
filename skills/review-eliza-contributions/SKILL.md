@@ -1,6 +1,6 @@
 ---
 name: review-eliza-contributions
-description: "Independently evaluate an elizaOS/eliza implementation, test, diagnosis, evidence artifact, or substantive review for quality, security, duplication, provenance, and contribution credit. Use in project CI or maintainer review before accepting work or changing a public reward allocation."
+description: "Independently evaluate an elizaOS/eliza implementation, real-system verification, diagnosis, evidence artifact, or substantive review for quality, security, duplication, provenance, and contribution credit. Use in project CI or maintainer review before accepting work or changing a public reward allocation; reject unit-only or mock-only proof."
 ---
 
 # Review Eliza Contributions
@@ -56,15 +56,31 @@ actual defects and rerun the full exact-head review.
 
 ## Reproduce the outcome
 
-Verify the exact base and head revisions. Run focused tests first, then the
-repository-required package and root checks. Inspect the real artifact—not just
-the command exit code. For UI work, inspect desktop/mobile rest and interaction
-states; for runtime work, inspect logs and live-model output when required.
+Verify the exact base and head revisions. Reproduce the affected user or
+operator path on a real operating system before treating any test suite as
+evidence. Run the applicable end-to-end flow first, then an Eliza scenario
+through the actual agent, model/provider, actions or tools, outputs, and state.
+Require a reproducible baseline and benchmark for any claimed quality,
+reliability, latency, performance, or resource effect. Exercise every relevant
+platform and inspect the real artifact, logs, trajectory, and resulting state,
+not just command exit codes.
+
+Unit tests are not acceptance evidence. Do not request one by default. Allow a
+unit test only as a supplemental regression guard after a material failure is
+reproduced and the fix is independently proved in the real working system. It
+must execute production code and a real contract; mocks, fakes, snapshots,
+stubbed collaborators, private implementation assertions, and coverage-only
+tests cannot justify merge. If a unit test can pass while the product path is
+broken, treat it as useless. Formatting, lint, typecheck, build, and broad test
+suites are required hygiene but do not prove Eliza works. Report missing live
+provider, device, platform, or system evidence as a blocker instead of replacing
+it with a mock.
 
 Separate these questions:
 
 - Does the claimed behavior exist and meet the linked acceptance criteria?
-- Are tests material, failure-sensitive, and independent of the implementation?
+- Do E2E runs, Eliza scenarios, and applicable benchmarks exercise the real
+  system and fail when the claimed behavior breaks?
 - Is the change maintainable and correctly scoped?
 - Is each attached screenshot, video, log, trajectory hash, or domain artifact
   authentic, current, relevant, and attributable to this head revision?
@@ -76,9 +92,11 @@ Require a reproduced user, runtime, security, documentation-correctness, or
 behavioral-test outcome on an authorized Eliza path. Recommend `reject` for
 trivial fixes, cosmetic cleanup, generic improvements, opportunistic
 refactors, comment-only churn, speculative abstractions, and tests with no
-demonstrated behavioral risk. An old issue, large diff, or green suite does not
-make low-value work material. For a claimed bug fix, require the pre-fix
-failure and post-fix behavior at a reachable production boundary.
+demonstrated behavioral risk. Reject unit-test production, mock-only evidence,
+coverage-only additions, and test-only work without an actual reproduced
+material failure plus real-system proof. An old issue, large diff, or green
+suite does not make low-value work material. For a claimed bug fix, require the
+pre-fix failure and post-fix behavior at a reachable production boundary.
 
 ## Adversarial review
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Contribute to Eliza"
-  short_description: "Clear Eliza queues, then audit by risk"
-  default_prompt: "Use $contribute-to-eliza to review and test every current PR first, finish valid existing issues through PRs second, restore develop workflows third, then audit security, bugs, stale docs or comments, and missing real tests in elizaOS/eliza."
+  short_description: "Prove Eliza works on real systems"
+  default_prompt: "Use $contribute-to-eliza to review and test every current PR first on a real working system, finish valid existing issues through PRs second, restore develop workflows third, then audit security, bugs, stale docs or comments, and missing E2E, scenario, or benchmark verification in elizaOS/eliza. Do not produce unit tests or new issues except under the skill's narrow necessity rules."

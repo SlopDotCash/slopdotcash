@@ -6,11 +6,12 @@ this gate before claiming, implementing, reviewing, or validating work.
 
 ## Pass all three gates
 
-Apply the gates inside the queue-first order in `SKILL.md`. Existing authorized
-issues without PRs come first, then PRs without substantive current-head human
-review. Only after the old queue is reconciled may self-directed inspection
-move through security, bugs, incorrect or stale documentation and code
-comments, and missing meaningful behavioral tests, in that order.
+Apply the gates inside the queue-first order in `SKILL.md`. PRs without a
+substantive review of their exact current head come first, then existing
+authorized issues without PRs. Only after the old queue is reconciled may
+self-directed inspection move through security, bugs, incorrect or stale
+documentation and code comments, and missing real-system verification, in that
+order.
 
 ### 1. Authorized demand
 
@@ -71,7 +72,9 @@ Reject work whose primary value is any of the following:
 - formatting, renaming, comment churn, generic cleanup, or style-only changes;
 - documentation or comments that are merely old rather than demonstrably
   wrong, misleading, or harmful to a real user, contributor, or operator path;
-- tests that only increase counts or restate implementation details;
+- unit tests, mocks, snapshots, or coverage additions that can pass while the
+  real product path is broken, only increase counts, or restate implementation
+  details;
 - speculative refactors, abstractions, migrations, or performance work without
   a reproduced problem and measurable target;
 - routine dependency bumps, generated-file churn, or CI edits unrelated to a
@@ -120,10 +123,14 @@ is reconciled, inspect exactly one tier at a time:
    examples, links, names, or code comments contradict current behavior or
    preserve obsolete migration/history narration that misdirects present work.
    Remove or correct the smallest coherent surface; do not perform prose churn.
-4. **Missing real tests**: identify material behavior whose regression would
-   escape existing coverage. Add tests against the real contract and important
-   success, failure, authorization, concurrency, or adversarial paths; do not
-   mock away the system under test or add coverage solely to raise a number.
+4. **Missing real-system verification**: identify material behavior whose
+   regression would escape end-to-end, scenario, or benchmark evidence. Start
+   from the actual user or operator entry point on a real operating system and
+   exercise the production path across its real boundaries. Do not create a
+   unit-test task merely because coverage is absent. A unit test is acceptable
+   only as a supplemental regression guard after the material failure is
+   reproduced and the fixed behavior is proved in the real system; never mock
+   away the system under test or add coverage solely to raise a number.
 
 If a concrete higher-tier finding exists, finish it before moving down. If no
 finding survives reproduction and duplication checks, record that privately

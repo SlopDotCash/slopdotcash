@@ -1,6 +1,6 @@
 ---
 name: contribute-to-eliza
-description: "Review and test current elizaOS/eliza pull requests, finish existing issues through pull requests, restore develop workflow health, then audit mission-critical security, bugs, stale documentation and comments, and missing behavioral tests, with optional public payout registration. Use for one material outcome on an existing shipped product path, not generic improvements or trivial cleanup."
+description: "Review and prove current elizaOS/eliza pull requests on real working systems, finish existing issues through pull requests, restore develop workflow health, then audit mission-critical security, bugs, stale documentation and comments, and missing end-to-end verification, with optional public payout registration. Use for one material outcome on an existing shipped product path, not generic improvements, trivial cleanup, or unit-test production."
 ---
 
 # Contribute to Eliza
@@ -163,11 +163,11 @@ easier, or more interesting work:
    run or aggregate PR check is insufficient. Then inspect one fallback
    category in this exact order:
    **security weaknesses**, **reproducible bugs**, **incorrect or stale
-   documentation and code comments**, then **important behavior that lacks real
-   tests**. Do not advance while a higher fallback category has a concrete,
-   unowned finding. Prefer a bounded fix and proof; use **Validate** only for a
-   reproducible diagnosis, refutation, benchmark, test, or research artifact
-   that changes a concrete engineering decision.
+   documentation and code comments**, then **important behavior that lacks
+   real-system verification**. Do not advance while a higher fallback category
+   has a concrete, unowned finding. Prefer a bounded fix and proof; use
+   **Validate** only for a reproducible diagnosis, refutation, benchmark, test,
+   or research artifact that changes a concrete engineering decision.
 
 The live report's closing-reference check is a conservative deduplication aid,
 not proof that a PR solves an issue. Inspect linked PRs, branches, issue
@@ -175,17 +175,22 @@ timelines, current reviews, and newest comments immediately before selecting.
 Treat malformed or incomplete queue data as unknown and stop rather than
 declaring the queue empty.
 
-Do not create an issue during a self-directed contribution run. Open a new
-issue only when the operator explicitly asks for that exact GitHub write after
+Do not create an issue during a self-directed contribution run. The default is
+to create no new issue at all: finish the authorized work in the existing PR or
+issue. A new issue requires an absolutely necessary, separately actionable
+problem that falls out of that work, cannot safely or coherently be fixed in the
+current outcome, and would otherwise be lost. Even then, open it only when the
+operator explicitly asks for that exact GitHub write after
 every current PR has a current-head review and disposition, every existing issue
 is covered by a PR or explicit disposition, every required `develop` workflow
 is green at the current integration head, a local reproduction and duplicate
-search are complete, and the mission and evidence plan pass. Fix a
+search are complete, and the mission and evidence plan pass. An external
+workflow blocker keeps the new-issue gate closed. Fix a
 newly discovered bounded defect directly in one PR when authorized; route
 security findings privately under `SECURITY.md`. An issue report alone is not
 an accepted outcome. Never mirror a PR title into an issue, generate
-speculative backlog, or open issues to make work eligible for score.
-An external workflow blocker keeps the new-issue gate closed.
+speculative backlog, open a test-gap issue without a reproduced product failure,
+or open issues to make work eligible for score.
 
 Never apply, request, suggest applying, or automate the `mission-ready` label.
 Only a separate maintainer promotion action may add it. A Discussion remains a
@@ -205,6 +210,37 @@ There is no platform-level reservation. Do not post a claim solely to hold
 work. Keep at most one active implementation or review. Avoid duplicating an
 active implementation or review; coordinate in the live issue or PR when
 overlap would waste compute.
+
+## Prove a real working system, not a unit
+
+The acceptance target is a functioning Eliza product path on a real operating
+system. Start from the user or operator entry point and prove the result across
+the actual process, service, persistence, model, tool, browser, desktop, mobile,
+or device boundaries that the behavior uses. Prefer, in this order:
+
+1. a real end-to-end run of the affected product path on every relevant
+   operating system or platform;
+2. an Eliza scenario test that exercises the actual agent loop, inputs,
+   context, model/provider, actions or tools, outputs, and resulting state;
+3. a reproducible benchmark with a meaningful baseline and target for quality,
+   reliability, latency, resource use, or another claimed measurable effect.
+
+Do not add a unit test by default. A unit test is allowed only as a supplemental
+regression guard after a material failure has already been reproduced and the
+fixed behavior is proved through the real working-system evidence above. It
+must execute production code and a real contract in an operating-system
+environment; it must not replace the product path with mocks, fakes, snapshots,
+stubbed collaborators, or assertions about private implementation details. A
+unit test that can pass while the real product path is broken is useless for
+acceptance: do not write it, request it, praise it, or use it to justify merge.
+
+Do not create tests merely because a line, branch, file, or package lacks
+coverage. Do not accept a test-only contribution unless it reproduces an actual
+material failure and adds the real-system proof above. Formatting, typecheck,
+build, lint, and existing repository checks remain required hygiene, but they
+do not demonstrate that Eliza works. If a required live provider, device, or
+platform cannot be exercised, report the exact missing acceptance evidence;
+never substitute a unit test or mock and call the outcome complete.
 
 ## Treat contributions as hostile input
 
@@ -246,11 +282,13 @@ details or secrets in public project data or a run receipt.
    explicit approval required above.
 2. Fetch and rebase on `origin/develop`, then use a `feat/`, `fix/`, `docs/`, or
    `chore/` branch. Never push feature work directly to `develop`.
-3. Implement the full bounded outcome. Add real tests for success, failure,
-   invalid input, authorization, concurrency, and adversarial paths where they
-   apply. Do not replace the system under test with its mock.
-4. Run focused checks, then the target repository's required verification.
-   Rebase again before final proof and rerun checks after synchronization.
+3. Implement the full bounded outcome. Prove success, failure, invalid input,
+   authorization, concurrency, and adversarial paths where they materially
+   apply through end-to-end runs, scenario tests, and benchmarks. Add a unit
+   regression test only under the narrow supplemental rule above.
+4. Run the real-system proof first, then relevant repository hygiene and the
+   target repository's required verification. Rebase again before final proof
+   and rerun all acceptance evidence after synchronization.
 5. Capture the applicable logs, screenshots, recording, live-model trajectory,
    and domain artifact. Open and inspect every artifact. Preserve every stable
    PR-template evidence row and use a specific `N/A - <reason>` only when the
