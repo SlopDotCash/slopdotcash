@@ -249,11 +249,44 @@ describe("contribute-to-eliza skill structure", () => {
     assert.ok(auditPriority > workflowPriority);
     assert.match(
       source,
-      /\*\*security weaknesses\*\*.*\*\*reproducible bugs\*\*.*\*\*incorrect or stale\s+documentation and code comments\*\*.*\*\*important behavior that lacks real\s+tests\*\*/is,
+      /\*\*security weaknesses\*\*.*\*\*reproducible bugs\*\*.*\*\*incorrect or stale\s+documentation and code comments\*\*.*\*\*important behavior that lacks\s+real-system verification\*\*/is,
     );
     assert.match(
       source,
       /every current PR has a current-head review and disposition[\s\S]*every existing issue[\s\S]*every required `develop` workflow/iu,
+    );
+    assert.match(
+      source,
+      /default is\s+to create no new issue at all[\s\S]*requires an absolutely necessary[\s\S]*falls out of that work/iu,
+    );
+    assert.match(
+      source,
+      /open a test-gap issue without a reproduced product failure/iu,
+    );
+    assert.match(source, /## Prove a real working system, not a unit/iu);
+    const endToEndPriority = source.indexOf(
+      "a real end-to-end run of the affected product path",
+    );
+    const scenarioPriority = source.indexOf(
+      "an Eliza scenario test that exercises the actual agent loop",
+    );
+    const benchmarkPriority = source.indexOf(
+      "a reproducible benchmark with a meaningful baseline",
+    );
+    assert.ok(endToEndPriority >= 0);
+    assert.ok(scenarioPriority > endToEndPriority);
+    assert.ok(benchmarkPriority > scenarioPriority);
+    assert.match(
+      source,
+      /Do not add a unit test by default[\s\S]*supplemental\s+regression guard[\s\S]*real working-system evidence/iu,
+    );
+    assert.match(
+      source,
+      /unit test that can pass while the real product path is broken is useless/iu,
+    );
+    assert.match(
+      source,
+      /Formatting, typecheck,\s+build, lint, and existing repository checks[\s\S]*do not demonstrate that Eliza works/iu,
     );
     assert.match(mission, /Eliza app/);
     assert.match(mission, /Eliza Cloud/);
@@ -265,6 +298,37 @@ describe("contribute-to-eliza skill structure", () => {
       /splitting one outcome into multiple issues or pull requests/i,
     );
     assert.match(mission, /Recommend closure rather than repairs/i);
+    assert.match(
+      mission,
+      /PRs without a\s+substantive review of their exact current head come first[\s\S]*existing\s+authorized issues without PRs/iu,
+    );
+    assert.match(
+      mission,
+      /Missing real-system verification[\s\S]*end-to-end, scenario, or benchmark evidence/iu,
+    );
+    const rubric = readFileSync(
+      join(skillDir, "references", "evidence-review-rubric.md"),
+      "utf8",
+    );
+    const reviewer = readFileSync(
+      join(skillDir, "..", "review-eliza-contributions", "SKILL.md"),
+      "utf8",
+    );
+    assert.match(rubric, /## Verification hierarchy/iu);
+    assert.match(rubric, /Unit tests are not acceptance evidence/iu);
+    assert.match(
+      rubric,
+      /E2E runs, Eliza scenarios, and applicable benchmarks drive the real system/iu,
+    );
+    assert.match(
+      reviewer,
+      /Reproduce the affected user or\s+operator path on a real operating system[\s\S]*end-to-end flow first[\s\S]*Eliza scenario/iu,
+    );
+    assert.match(reviewer, /Unit tests are not acceptance evidence/iu);
+    assert.match(
+      reviewer,
+      /Reject unit-test production, mock-only evidence,\s+coverage-only additions/iu,
+    );
     assert.deepStrictEqual(readProjectSelectionPolicy().eligibleIssueLabels, [
       "mission-ready",
     ]);
@@ -404,7 +468,15 @@ writeFileSync(
     );
     assert.match(openaiYaml, /display_name: "Contribute to Eliza"/);
     assert.match(openaiYaml, /default_prompt: "Use \$contribute-to-eliza/);
-    assert.match(openaiYaml, /review and test every current PR first/);
+    assert.match(
+      openaiYaml,
+      /review and test every current PR first on a real working system/,
+    );
+    assert.match(
+      openaiYaml,
+      /missing E2E, scenario, or benchmark verification/,
+    );
+    assert.match(openaiYaml, /Do not produce unit tests or new issues/);
     assert.match(openaiYaml, /existing issues through PRs second/);
     assert.match(openaiYaml, /develop workflows third/);
     assert.match(openaiYaml, /elizaOS\/eliza/);

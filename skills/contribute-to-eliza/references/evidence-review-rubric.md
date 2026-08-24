@@ -27,12 +27,32 @@ bun run --cwd packages/app audit:app
 
 Follow package-local capture commands for native platforms. Upload screenshots as JPG where practical, videos as MP4, and long logs in a `<details>` block. Re-run and re-capture after a behavior-changing rebase.
 
+## Verification hierarchy
+
+Acceptance requires proof from a real working product path on a real operating
+system. Run the applicable E2E flow first, then an Eliza scenario against the
+actual agent/model/tool path, then a benchmark when the change makes a quality,
+performance, reliability, latency, or resource claim. Exercise every relevant
+platform; do not infer desktop, mobile, native, browser, or server behavior from
+another platform.
+
+Unit tests are not acceptance evidence. Do not request or add one unless an
+actual material failure is already reproduced, real-system evidence proves the
+fix, and the unit test is useful only as a supplemental regression guard over
+production code and a real contract. Reject mocks, fakes, snapshots, stubbed
+collaborators, implementation-detail assertions, and coverage-only additions
+that can remain green while the product path fails. Formatting, lint, typecheck,
+build, and broad test-suite results are hygiene, not proof that Eliza works.
+
 ## Implementation completion rubric
 
 - Acceptance criteria map to code, tests, and proof with no hidden scope expansion.
 - Required DTO values and collaborators remain required; failed or missing data does not become a healthy empty or zero state.
 - Inner failures throw typed errors; only designated boundaries translate them. Any retained handler follows the repository's documented J1–J7 policy.
-- Tests drive the real system under test and cover success, failure, empty/invalid input, permissions, concurrency, and adversarial input where relevant.
+- E2E runs, Eliza scenarios, and applicable benchmarks drive the real system
+  through success, failure, empty/invalid input, permissions, concurrency, and
+  adversarial behavior where relevant; no mock or unit-only proof substitutes
+  for them.
 - Formatting, typecheck, build, focused tests, and repository verification run on the final synced head.
 - Documentation and package-local guidance match the shipped behavior.
 - No TODO, stub, mock standing in for the changed behavior, committed evidence bundle, or unrelated cleanup remains.
@@ -43,7 +63,10 @@ Follow package-local capture commands for native platforms. Upload screenshots a
 2. Trace changed data across boundaries; check validation, authorization, secret handling, SSRF/file handling, error propagation, and observable failure states.
 3. Read every affected package guide and verify the implementation follows its architecture.
 4. Reproduce the old failure or stated need, then exercise the changed path independently.
-5. Inspect tests for meaningful assertions and missing negative, role, concurrency, and integration cases.
+5. Reproduce the real product path on the relevant operating systems. Inspect
+   E2E, scenario, and benchmark evidence for meaningful assertions and missing
+   negative, role, concurrency, and integration cases. Treat unit tests only as
+   supplemental and block unit-only or mock-only acceptance claims.
 6. Verify the branch is current with `origin/develop` and checks were run after sync.
 7. Open every attached trajectory, log, screenshot, recording, and domain artifact. Compare it to the acceptance criteria and look for stale builds, hidden errors, clipped states, or mismatched model identity.
 8. Audit the PR template: every evidence row is concrete or carries an allowed specific `N/A` reason, and the PR body plus every contribution comment discloses the exact provider/model.
