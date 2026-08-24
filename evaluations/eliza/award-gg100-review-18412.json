@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_gg100_review_18412",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "U_kgDOCzOt4w",
+    "login": "GG100-eng",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/187936227?v=4",
+    "url": "https://github.com/GG100-eng",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-11T16:39:38.000Z",
+  "points": 8,
+  "source": {
+    "id": "PRR_kwDOMT5cIs8AAAABJJLpgw",
+    "kind": "review",
+    "number": 18412,
+    "title": "fix(browser): capability-aware dispatch with no side-effect replay (#18258)",
+    "url": "https://github.com/elizaOS/eliza/pull/18412#pullrequestreview-4908575107"
+  },
+  "reason": "The exact-head formal review identified three independent release blockers: a production module imported but absent from the committed tree, a bridge capability manifest that advertised operations its executor rejected and could misclassify side-effect uncertainty, and an action boundary that erased the new typed retry-safety state. The author explicitly accepted all three findings, and commit bfe4f2f4ef89ad01f054c1ce9f0258172196062c directly repaired each boundary with the requested module, real-manifest dispatcher regressions, typed action failures, and 216 lines of focused tests before the repaired pull request merged.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-08-23T16:44:00.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/240"
+  }
+}
