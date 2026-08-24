@@ -1015,6 +1015,7 @@ function resolveSkillProvenance() {
     ![
       "https://github.com/elizaos/army",
       "https://github.com/elizaos/slopdotcash",
+      "https://github.com/slopdotcash/slopdotcash",
     ].includes(sourceRemote)
   ) {
     fail("bundled skill source must come from the canonical Slop repository");
