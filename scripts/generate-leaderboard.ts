@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertPublishableLeaderboardSnapshot,
+  canonicalActorAvatarUrl,
   createLeaderboardSnapshot,
   DETAILED_MERGED_PULL_REQUESTS_PER_MONTH,
   dedupeByNodeId,
@@ -680,7 +681,9 @@ function parseActor(value: unknown, path: string): GitHubActor | null {
   return {
     id: asString(actor.id, `${path}.id`),
     login: asString(actor.login, `${path}.login`),
-    avatarUrl: asString(actor.avatarUrl, `${path}.avatarUrl`),
+    avatarUrl: canonicalActorAvatarUrl(
+      asString(actor.avatarUrl, `${path}.avatarUrl`),
+    ),
     url: asString(actor.url, `${path}.url`),
     kind: actorKind(asString(actor.__typename, `${path}.__typename`)),
   };
