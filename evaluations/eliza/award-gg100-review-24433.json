@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_gg100_review_24433",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "U_kgDOCzOt4w",
+    "login": "GG100-eng",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/187936227?v=4",
+    "url": "https://github.com/GG100-eng",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-22T12:55:00.000Z",
+  "points": 4,
+  "source": {
+    "id": "PRR_kwDOMT5cIs8AAAABKglAuA",
+    "kind": "review",
+    "number": 24433,
+    "title": "feat(desktop): cloud-only settings panel with hardened Cloud contracts",
+    "url": "https://github.com/elizaOS/eliza/pull/24433#pullrequestreview-5000216760"
+  },
+  "reason": "The exact-head review found that a broad Settings rewrite introduced 24 static translation keys absent from the canonical English catalog and carried an exact-head Biome failure, while also correctly withholding visual acceptance for a large UI change. The author explicitly credited the review, added all 24 catalog entries in commit 16b880c51d61759a0d2d3ced27928e15a37c1e44, fixed the formatter failure, and later obtained green exact-head hosted checks before merge. The award is bounded because the visual-evidence request remained unresolved at merge and this review did not claim the deeper contract repairs supplied by other reviewers.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-08-24T17:00:00.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/248"
+  }
+}
