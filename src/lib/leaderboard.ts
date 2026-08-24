@@ -98,6 +98,17 @@ export interface GitHubActor {
   kind: GitHubActorKind;
 }
 
+// GitHub appends a mutable ?u= cache key to avatar URLs whenever a user
+// changes their avatar, so the same actor can carry different avatarUrl bytes
+// in live data and in reviewed manifests. Only the stable v parameter may
+// survive into a snapshot, or actor coherence fails on a cosmetic change.
+export function canonicalActorAvatarUrl(value: string): string {
+  const url = new URL(value);
+  const version = url.searchParams.get("v");
+  url.search = version === null ? "" : `v=${version}`;
+  return url.toString();
+}
+
 export interface GitHubLabel {
   id: string;
   name: string;

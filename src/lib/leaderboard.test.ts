@@ -13,6 +13,7 @@ import {
   assertPublishableLeaderboardSnapshot,
   assessEvidence,
   assessModelAttribution,
+  canonicalActorAvatarUrl,
   createLeaderboardSnapshot,
   dedupeByNodeId,
   type EvidenceCategory,
@@ -4042,5 +4043,29 @@ describe("deduplication and public schema", () => {
     expect(() => assertLeaderboardSnapshot(actionable)).toThrow(
       "actionability does not match its labels",
     );
+  });
+});
+
+describe("canonical actor avatar URLs", () => {
+  it("strips the mutable u cache key and keeps the stable v parameter", () => {
+    expect(
+      canonicalActorAvatarUrl(
+        "https://avatars.githubusercontent.com/u/38991243?u=5884a38e5f489400941246854be4d9b7c51a1030&v=4",
+      ),
+    ).toBe("https://avatars.githubusercontent.com/u/38991243?v=4");
+  });
+
+  it("leaves an already-canonical URL unchanged", () => {
+    expect(
+      canonicalActorAvatarUrl("https://avatars.githubusercontent.com/u/1?v=4"),
+    ).toBe("https://avatars.githubusercontent.com/u/1?v=4");
+  });
+
+  it("drops every parameter when no version is present", () => {
+    expect(
+      canonicalActorAvatarUrl(
+        "https://avatars.githubusercontent.com/u/1?u=abc&s=96",
+      ),
+    ).toBe("https://avatars.githubusercontent.com/u/1");
   });
 });

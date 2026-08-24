@@ -7,7 +7,11 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
-import type { GitHubActor, ScoreEvent } from "./leaderboard";
+import {
+  canonicalActorAvatarUrl,
+  type GitHubActor,
+  type ScoreEvent,
+} from "./leaderboard";
 import { findProject } from "./projects.mjs";
 
 export const EVALUATOR_AWARD_SCHEMA_VERSION = "1" as const;
@@ -153,7 +157,7 @@ function actor(value: unknown, field: string): GitHubActor {
   return {
     id,
     login,
-    avatarUrl,
+    avatarUrl: canonicalActorAvatarUrl(avatarUrl),
     url: githubUrl(candidate.url, `${field}.url`, `/${login}`),
     kind: "User",
   };
