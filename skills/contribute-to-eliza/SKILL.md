@@ -163,11 +163,12 @@ easier, or more interesting work:
    run or aggregate PR check is insufficient. Then inspect one fallback
    category in this exact order:
    **security weaknesses**, **reproducible bugs**, **incorrect or stale
-   documentation and code comments**, then **important behavior that lacks
-   real-system verification**. Do not advance while a higher fallback category
-   has a concrete, unowned finding. Prefer a bounded fix and proof; use
-   **Validate** only for a reproducible diagnosis, refutation, benchmark, test,
-   or research artifact that changes a concrete engineering decision.
+   documentation and code comments**, then **important behavior that lacks real
+   tests**. Here, real tests mean the real-system verification required below,
+   not unit-test coverage. Do not advance while a higher fallback category has
+   a concrete, unowned finding. Prefer a bounded fix and proof; use **Validate**
+   only for a reproducible diagnosis, refutation, benchmark, test, or research
+   artifact that changes a concrete engineering decision.
 
 The live report's closing-reference check is a conservative deduplication aid,
 not proof that a PR solves an issue. Inspect linked PRs, branches, issue
