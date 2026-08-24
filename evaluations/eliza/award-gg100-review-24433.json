@@ -23,7 +23,7 @@
   "reason": "The exact-head review found that a broad Settings rewrite introduced 24 static translation keys absent from the canonical English catalog and carried an exact-head Biome failure, while also correctly withholding visual acceptance for a large UI change. The author explicitly credited the review, added all 24 catalog entries in commit 16b880c51d61759a0d2d3ced27928e15a37c1e44, fixed the formatter failure, and later obtained green exact-head hosted checks before merge. The award is bounded because the visual-evidence request remained unresolved at merge and this review did not claim the deeper contract repairs supplied by other reviewers.",
   "review": {
     "reviewer": "lalalune",
-    "reviewedAt": "2026-08-24T17:00:00.000Z",
+    "reviewedAt": "2026-08-24T07:35:00.000Z",
     "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/248"
   }
 }
