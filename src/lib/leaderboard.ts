@@ -5414,7 +5414,7 @@ export function assertLeaderboardSnapshot(
     }
     if (
       event.category === "evaluated-contribution" &&
-      event.source.kind === "comment"
+      (event.source.kind === "comment" || event.source.kind === "review")
     ) {
       causalAttributionKeys.add(
         `${event.actor.id}\0source\0${event.source.id}`,

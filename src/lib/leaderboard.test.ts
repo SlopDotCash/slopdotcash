@@ -2352,7 +2352,10 @@ describe("scoring and limits", () => {
     };
     const review = {
       id: "REVIEW_EVALUATED_AUTHORITY",
-      body: "This exact-head review found and explained a material defect.",
+      body: [
+        "This exact-head review found and explained a material defect.",
+        machineAttribution("OpenAI", "gpt-5.6-sol"),
+      ].join("\n\n"),
       state: "CHANGES_REQUESTED",
       submittedAt,
       url: "https://github.com/elizaOS/eliza/pull/78#pullrequestreview-780",
@@ -2387,6 +2390,13 @@ describe("scoring and limits", () => {
     expect(
       snapshot.ledger.filter((event) => event.source.id === review.id),
     ).toEqual([expect.objectContaining({ id: evaluated.id, points: 4 })]);
+    expect(snapshot.attributions).toContainEqual(
+      expect.objectContaining({
+        actor: reviewer,
+        sourceId: review.id,
+        identifier: "openai/gpt-5.6-sol",
+      }),
+    );
     expect(snapshot.reviewExclusions).toEqual([
       expect.objectContaining({
         reviewId: priorReview.id,
