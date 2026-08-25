@@ -223,6 +223,19 @@ credentials.
   review.
 - Prefer deterministic scripts and strict schemas over duplicated prose or
   fallback success.
+- Reject one-PR-per-file coverage farming, “no same-named test” tasks,
+  barrel/type/schema/constant inventory suites, and shape-smoke assertions
+  that prove only existence, type, finiteness, length, literals, export
+  identity, or mocked calls.
+- Reject copied or mismatched PR narratives and shotgun defensive series such
+  as repeated NaN comparator fallbacks, CE year 0–99 handling,
+  placeholder/config-shape guards, or Unicode truncation refinements. Fix the
+  one demonstrated canonical boundary instead.
+- Coverage discovery does not authorize theoretical parser, lookup, regex,
+  word-boundary, or fallback micro-fixes per occurrence.
+- Missing coverage, green tests, mutation counts, and plausible edge cases are
+  not accepted outcomes. Low-value PRs and reviews earn no score and may be
+  penalized or excluded from reward review.
 - Keep UI loading, empty, stale, invalid, and error states distinct.
 - Never fabricate an empty leaderboard after ingestion failure.
 - Do not leave TODOs, placeholders, dead controls, or silent fallback success.

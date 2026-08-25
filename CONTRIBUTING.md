@@ -83,6 +83,36 @@ Preserve these boundaries:
 Schema, installer, scoring, identity, trace, funding, cycle, settlement, or
 deployment changes require focused success and failure-path tests.
 
+## Anti-slop contribution gate
+
+Slop scores accepted outcomes, not PR, line, test, mutation, assertion, or
+coverage counts. Low-value work earns no accepted-outcome score and may be
+penalized or excluded from contribution-quality and reward review. Reviews that
+reward bloat are judged by the same standard.
+
+Do not submit or reward:
+
+- one-PR-per-file coverage farming, “no same-named test” tasks, or tests of
+  helpers, hooks, barrels, schemas, types, constants, exports, and test helpers
+  without a reproduced material product failure;
+- shape-smoke assertions that only check existence, type, finiteness, length,
+  literal metadata, export identity, or mocked calls;
+- copied, templated, or mismatched PR descriptions and evidence that describe
+  another diff or substitute counts for a causal explanation;
+- speculative guards, sanitizers, coercions, fallback success, exhaustive edge
+  matrices, lossy caps, compaction, bounded reads, or arbitrary short deadlines;
+- shotgun series that replicate NaN-sort fallbacks, CE year 0–99 handling,
+  placeholder-key/config-shape checks, Unicode truncation refinements, or the
+  same defensive patch across unrelated modules; or
+- coverage-generated parser, lookup, regex-state, word-boundary, or fallback
+  micro-fixes split under an “independent module, independent fix” rationale; or
+- generalized systems and large harnesses that do not first deliver one
+  working end-to-end product outcome.
+
+Real security, authorization, protocol, and resource boundaries remain valid
+when reachability and material impact are demonstrated. Enforce them once at
+the canonical boundary and prove the real path.
+
 ## Quality gate
 
 Install the pinned toolchain and run the complete repository check:
