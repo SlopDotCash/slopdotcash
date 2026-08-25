@@ -3310,6 +3310,10 @@ export function createLeaderboardSnapshot(
 
     const ratification = scoreRatifications.get(pullRequest.id);
     const awardedReviewers = new Set<string>();
+    const hasEvaluatedReviewReservation = (actorId: string): boolean =>
+      evaluatedReviewReservations.has(
+        `${repositoryId}\0${pullRequest.number}\0${actorId}`,
+      );
     for (const source of sources) {
       let rawReview: unknown | null;
       try {
@@ -3323,6 +3327,7 @@ export function createLeaderboardSnapshot(
         sameActor(source.author, pullRequest.author)
       )
         continue;
+      if (hasEvaluatedReviewReservation(source.author.id)) continue;
       const assessment = assessModelAttribution([source], {
         requireEverySource: true,
         verifyRunReceipt: input.verifyRunReceipt,
@@ -3385,6 +3390,7 @@ export function createLeaderboardSnapshot(
     if (
       ratification?.source.author &&
       !sameActor(ratification.source.author, pullRequest.author) &&
+      !hasEvaluatedReviewReservation(ratification.source.author.id) &&
       !awardedReviewers.has(ratification.source.author.id)
     ) {
       addScore(entries, ledger, {
@@ -5122,10 +5128,23 @@ export function assertLeaderboardSnapshot(
   }
 
   const evaluatedSources = new Set<string>();
+  const evaluatedReviewSemanticKeys = new Set<string>();
   const nonEvaluatedSourceIds = new Set<string>();
   const nonEvaluatedSourceUrls = new Set<string>();
   const eventsByActor = new Map<string, ScoreEvent[]>();
   for (const event of validatedLedger) {
+    if (
+      event.category === "evaluated-contribution" &&
+      event.source.kind === "review"
+    ) {
+      const semanticKey = `${event.repository}\0${event.source.number}\0${event.actor.id}`;
+      if (evaluatedReviewSemanticKeys.has(semanticKey)) {
+        throw new Error(
+          "snapshot.ledger repeats evaluated reviewer/pull-request credit",
+        );
+      }
+      evaluatedReviewSemanticKeys.add(semanticKey);
+    }
     if (event.category !== "evaluated-contribution") {
       nonEvaluatedSourceIds.add(`${event.repository}\0${event.source.id}`);
       nonEvaluatedSourceUrls.add(`${event.repository}\0${event.source.url}`);
@@ -5160,6 +5179,16 @@ export function assertLeaderboardSnapshot(
       resolvedIssues: 0,
       substantiveReviews: 0,
     };
+    if (
+      event.category === "substantive-review" &&
+      evaluatedReviewSemanticKeys.has(
+        `${event.repository}\0${event.source.number}\0${event.actor.id}`,
+      )
+    ) {
+      throw new Error(
+        `snapshot.ledger review event ${event.id} duplicates evaluated reviewer/pull-request credit`,
+      );
+    }
     if (event.category === "merged-pull-request") {
       usage.mergedPullRequests += 1;
       const group = mergedEventsByProjectMonth.get(capKey) ?? [];

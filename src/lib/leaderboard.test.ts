@@ -885,6 +885,53 @@ describe("score v2 work units", () => {
         (event) => event.id === `${pr.id}:ratifier:COMMENT_V2_RATIFICATION`,
       ),
     ).toMatchObject({ scoreThirds: 1 });
+    const evaluatedReview = {
+      id: "REVIEW_V2_EVALUATED",
+      body: "This formal review identified a concrete release blocker.",
+      state: "CHANGES_REQUESTED",
+      submittedAt: "2026-08-18T01:00:00.000Z",
+      url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1001",
+      author: reviewer,
+      inlineCommentCount: 0,
+    };
+    pr.reviews = [evaluatedReview];
+    const evaluatedAward: ScoreEvent = {
+      id: "award_v2_evaluated_reviewer",
+      actor: reviewer,
+      category: "evaluated-contribution",
+      points: 4,
+      occurredAt: evaluatedReview.submittedAt,
+      repository: "elizaOS/eliza",
+      source: {
+        id: evaluatedReview.id,
+        kind: "review",
+        number: pr.number,
+        title: pr.title,
+        url: evaluatedReview.url,
+      },
+      reason: "Maintainer-evaluated review award remains authoritative.",
+      evaluation: {
+        reviewer: "maintainer",
+        reviewedAt: "2026-08-18T04:00:00.000Z",
+        decisionUrl: "https://github.com/SlopDotCash/slopdotcash/pull/99",
+        manifestPath: "evaluations/eliza/award-v2-reviewer.json",
+        manifestSha256: "a".repeat(64),
+      },
+    };
+    const reserved = createLeaderboardSnapshot({
+      ...postUsageBonusInput,
+      mergedPullRequests: [pr],
+      evaluatedContributions: [evaluatedAward],
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      reserved.ledger.find(
+        (event) => event.id === `${pr.id}:automated-review:${source.id}`,
+      ),
+    ).toBeUndefined();
+    expect(reserved.ledger).toContainEqual(
+      expect.objectContaining({ id: evaluatedAward.id }),
+    );
     const legacy = structuredClone(accepted);
     legacy.generatedAt = "2026-08-18T05:00:00.000Z";
     legacy.source.fetchedAt = legacy.generatedAt;
