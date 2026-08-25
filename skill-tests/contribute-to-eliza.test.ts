@@ -629,6 +629,150 @@ describe("live report parsing", () => {
     assert.ok(activity.pulls.has(1_097));
   });
 
+  it("uses bounded REST activity when GraphQL cannot afford the scan", () => {
+    const issueComment = {
+      ...comment(10, "reviewer", "Issue comment"),
+      issue_url: "https://api.github.com/repos/elizaOS/eliza/issues/1",
+    };
+    const pullComment = {
+      ...comment(20, "reviewer", "Pull comment"),
+      issue_url: "https://api.github.com/repos/elizaOS/eliza/issues/2",
+    };
+    const inlineComment = {
+      ...comment(30, "reviewer", "Inline comment"),
+      pull_request_url: "https://api.github.com/repos/elizaOS/eliza/pulls/2",
+      commit_id: HEAD_SHA,
+    };
+    const calls: string[][] = [];
+
+    const activity = readGhOpenActivity(
+      "elizaOS/eliza",
+      (_command, args) => {
+        calls.push(args);
+        if (args.at(-1) === "rate_limit") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              resources: {
+                graphql: {
+                  limit: 5_000,
+                  remaining: 999,
+                  reset: 1_800_000_000,
+                },
+                core: {
+                  limit: 5_000,
+                  remaining: 4_943,
+                  reset: 1_800_000_000,
+                },
+                search: { limit: 30, remaining: 30, reset: 1_800_000_000 },
+              },
+            }),
+          };
+        }
+        if (args.includes("graphql")) {
+          return {
+            status: 1,
+            stderr: "gh: API rate limit already exceeded",
+            stdout: "",
+          };
+        }
+        const endpoint = args.at(-1) ?? "";
+        if (endpoint.includes("/issues?state=open")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: `${JSON.stringify({ number: 1, created_at: "2026-01-18T12:00:00.000Z" })}\n${JSON.stringify({ number: 2, created_at: "2026-01-19T12:00:00.000Z", pull_request: {} })}\n`,
+          };
+        }
+        if (endpoint.includes("/pulls?state=open")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: `${JSON.stringify({ number: 2, created_at: "2026-01-19T12:00:00.000Z" })}\n`,
+          };
+        }
+        if (endpoint.includes("/issues/comments?")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: `${JSON.stringify(issueComment)}\n${JSON.stringify(pullComment)}\n`,
+          };
+        }
+        if (endpoint.includes("/pulls/comments?")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: `${JSON.stringify(inlineComment)}\n`,
+          };
+        }
+        if (
+          args.includes("q=repo:elizaOS/eliza is:pr is:open review:approved")
+        ) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: `${JSON.stringify({ number: 2 })}\n`,
+          };
+        }
+        if (
+          args.includes(
+            "q=repo:elizaOS/eliza is:pr is:open review:changes_requested",
+          )
+        ) {
+          return { status: 0, stderr: "", stdout: "" };
+        }
+        assert.fail(`unexpected GitHub command: ${args.join(" ")}`);
+      },
+      { preflight: true },
+    );
+
+    assert.strictEqual(calls[0].at(-1), "rate_limit");
+    assert.ok(calls.every((args) => !args.includes("graphql")));
+    assert.ok(
+      calls
+        .filter((args) => args.at(-1)?.includes("/comments?"))
+        .every((args) =>
+          args.at(-1)?.includes("since=2026-01-18T12%3A00%3A00.000Z"),
+        ),
+    );
+    assert.strictEqual(activity.issues.get(1)?.[0].id, 10);
+    assert.strictEqual(activity.pulls.get(2)?.issueComments[0].id, 20);
+    assert.strictEqual(activity.pulls.get(2)?.inlineComments[0].id, 30);
+    assert.strictEqual(activity.pulls.get(2)?.reviewStatus, "approved");
+
+    const report = collectLiveReport(
+      "elizaOS/eliza",
+      (endpoint) => {
+        if (endpoint.includes("/issues?state=open")) {
+          return [
+            {
+              number: 1,
+              title: "Issue 1",
+              html_url: "https://github.com/elizaOS/eliza/issues/1",
+              user: account("issue-author"),
+              labels: [{ name: MISSION_READY_LABEL }],
+              assignees: [],
+              comments: 1,
+            },
+          ];
+        }
+        if (endpoint.includes("/pulls?state=open")) return [pullRequest(2)];
+        assert.fail(`unexpected endpoint: ${endpoint}`);
+      },
+      NOW,
+      () => {},
+      activity,
+      [MISSION_READY_LABEL],
+    );
+
+    assert.strictEqual(report.reviewablePullRequests.length, 0);
+    assert.deepStrictEqual(
+      report.filtered.reviewedPullRequests.map((pull) => pull.number),
+      [2],
+    );
+  });
+
   it("paginates overflowing issue activity through bounded GET-only REST", () => {
     const actor = {
       __typename: "User",
