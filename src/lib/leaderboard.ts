@@ -151,6 +151,33 @@ export interface PullRequestReview {
   inlineCommentCount: number;
 }
 
+export const REVIEW_EXCLUSION_REASONS = [
+  "missing-reviewer",
+  "bot-reviewer",
+  "missing-pull-request-author",
+  "bot-pull-request-author",
+  "self-review",
+  "missing-submission-time",
+  "unmerged-pull-request",
+  "post-merge",
+  "non-decision",
+  "insufficient-substance",
+  "already-awarded-reviewer",
+  "external-prize-policy",
+  "reviewer-cycle-cap",
+] as const;
+
+export type ReviewExclusionReason = (typeof REVIEW_EXCLUSION_REASONS)[number];
+
+export interface ReviewExclusion {
+  id: string;
+  reviewId: string;
+  pullRequestId: string;
+  repository: RepositoryId;
+  url: string;
+  reason: ReviewExclusionReason;
+}
+
 export interface PullRequestRecord {
   id: string;
   number: number;
@@ -558,6 +585,7 @@ export interface LeaderboardSnapshot {
   source: LeaderboardSourceMetadata;
   leaders: LeaderboardEntry[];
   ledger: ScoreEvent[];
+  reviewExclusions: ReviewExclusion[];
   opportunities: ScoreOpportunity[];
   attributions: ModelAttribution[];
   invalidAttributionMarkers: InvalidAttributionMarker[];
@@ -1616,30 +1644,32 @@ export function isSubstantiveReview(
   review: PullRequestReview,
   pullRequest: PullRequestRecord,
 ): boolean {
-  if (
-    !review.author ||
-    isBotActor(review.author) ||
-    !pullRequest.author ||
-    isBotActor(pullRequest.author)
-  ) {
-    return false;
-  }
+  return reviewExclusionReason(review, pullRequest) === null;
+}
+
+function reviewExclusionReason(
+  review: PullRequestReview,
+  pullRequest: PullRequestRecord,
+): ReviewExclusionReason | null {
+  if (!review.author) return "missing-reviewer";
+  if (isBotActor(review.author)) return "bot-reviewer";
+  if (!pullRequest.author) return "missing-pull-request-author";
+  if (isBotActor(pullRequest.author)) return "bot-pull-request-author";
   if (
     review.author.id === pullRequest.author.id ||
     review.author.login.toLowerCase() === pullRequest.author.login.toLowerCase()
   ) {
-    return false;
+    return "self-review";
   }
-  if (!review.submittedAt || !pullRequest.mergedAt) {
-    return false;
-  }
+  if (!review.submittedAt) return "missing-submission-time";
+  if (!pullRequest.mergedAt) return "unmerged-pull-request";
   if (parseIsoTime(review.submittedAt) > parseIsoTime(pullRequest.mergedAt)) {
-    return false;
+    return "post-merge";
   }
   if (!["APPROVED", "CHANGES_REQUESTED"].includes(review.state)) {
-    return false;
+    return "non-decision";
   }
-  return hasSubstantiveReviewBody(review);
+  return hasSubstantiveReviewBody(review) ? null : "insufficient-substance";
 }
 
 /**
@@ -1728,7 +1758,7 @@ export function leaderboardMethodology(): LeaderboardMethodology {
           "triage 1/3; standard 1; deep reproduction 3; specialist 8; ratification 1/3",
         cap: "uncapped; no self-review and no duplicate reviewer credit on one artifact",
         qualification:
-          "Within the published deep-inspection set of human-authored pull requests, a pre-merge APPROVED or CHANGES_REQUESTED review has substantive text or inline discussion.",
+          "Every merged pull request with a formal review is selected through a separate bounded review census, independent of the pull-request author's detail cap. A pre-merge APPROVED or CHANGES_REQUESTED review of human-authored work has substantive text or inline discussion; excluded formal reviews publish a machine-readable reason.",
       },
       {
         id: "evaluated-contribution",
@@ -1767,7 +1797,7 @@ export function leaderboardMethodology(): LeaderboardMethodology {
     ],
     provenancePolicy:
       "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
-    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID and every artifact keeps its repository attribution. Score v2 applies to work from 2026-08-01 UTC. Every accepted merge receives at least provisional micro credit. Higher scores require an unedited maintainer-authored slop-score record bound to the PR node ID and exact head SHA; corrections append a successor. Proposal review records disclose exact provider, model, client, run, trace, effort, complexity, impact, review load, split risk, and confidence. XL and exceptional decisions require a second maintainer. Project reward views exclude work before the published reward start.`,
+    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID and every artifact keeps its repository attribution. A scalar-only, budget-preflighted census selects every merged pull request with formal reviews for complete review hydration; missing or inconsistent census/detail data aborts the snapshot instead of publishing partial review credit. Score v2 applies to work from 2026-08-01 UTC. Every accepted merge receives at least provisional micro credit. Higher scores require an unedited maintainer-authored slop-score record bound to the PR node ID and exact head SHA; corrections append a successor. Proposal review records disclose exact provider, model, client, run, trace, effort, complexity, impact, review load, split risk, and confidence. XL and exceptional decisions require a second maintainer. Project reward views exclude work before the published reward start.`,
   };
 }
 
@@ -2803,6 +2833,21 @@ export function createLeaderboardSnapshot(
   );
   const entries = new Map<string, MutableLeaderboardEntry>();
   const ledger: ScoreEvent[] = [];
+  const reviewExclusions: ReviewExclusion[] = [];
+  const excludeReview = (
+    pullRequest: PullRequestRecord,
+    review: PullRequestReview,
+    reason: ReviewExclusionReason,
+  ): void => {
+    reviewExclusions.push({
+      id: `${pullRequest.id}:review-exclusion:${review.id}`,
+      reviewId: review.id,
+      pullRequestId: pullRequest.id,
+      repository: repositoryIdFromUrl(pullRequest.url),
+      url: review.url,
+      reason,
+    });
+  };
   const scoredAttributionSources = new Map<string, GitHubTextSource>();
   const recordScoredSources = (sources: GitHubTextSource[]): void => {
     for (const source of sources) {
@@ -3244,12 +3289,20 @@ export function createLeaderboardSnapshot(
       if (review.author && !isBotActor(review.author)) {
         actorEntry(entries, review.author).rawActivity.reviews += 1;
       }
-      if (
-        !review.author ||
-        awardedReviewers.has(review.author.id) ||
-        explicitPrizeAcceptance ||
-        !isSubstantiveReview(review, pullRequest)
-      ) {
+      const exclusionReason = reviewExclusionReason(review, pullRequest);
+      if (exclusionReason !== null) {
+        excludeReview(pullRequest, review, exclusionReason);
+        continue;
+      }
+      if (!review.author) {
+        throw new Error("Qualifying review lost its reviewer");
+      }
+      if (awardedReviewers.has(review.author.id)) {
+        excludeReview(pullRequest, review, "already-awarded-reviewer");
+        continue;
+      }
+      if (explicitPrizeAcceptance) {
+        excludeReview(pullRequest, review, "external-prize-policy");
         continue;
       }
       if (!review.submittedAt) {
@@ -3280,6 +3333,8 @@ export function createLeaderboardSnapshot(
         if (source) {
           recordScoredSources([source]);
         }
+      } else {
+        excludeReview(pullRequest, review, "reviewer-cycle-cap");
       }
     }
   }
@@ -3495,6 +3550,11 @@ export function createLeaderboardSnapshot(
         right.points - left.points ||
         left.source.number - right.source.number ||
         left.id.localeCompare(right.id),
+    ),
+    reviewExclusions: reviewExclusions.sort(
+      (left, right) =>
+        left.pullRequestId.localeCompare(right.pullRequestId) ||
+        left.reviewId.localeCompare(right.reviewId),
     ),
     opportunities,
     attributions,
@@ -3836,6 +3896,43 @@ function assertMethodologyValue(value: unknown, path: string): void {
   );
   assertString(methodology.provenancePolicy, `${path}.provenancePolicy`);
   assertString(methodology.collectionPolicy, `${path}.collectionPolicy`);
+}
+
+function assertReviewExclusionValue(value: unknown, path: string): void {
+  const exclusion = assertObject(value, path);
+  const expectedKeys = [
+    "id",
+    "pullRequestId",
+    "reason",
+    "repository",
+    "reviewId",
+    "url",
+  ];
+  if (
+    JSON.stringify(Object.keys(exclusion).sort()) !==
+    JSON.stringify(expectedKeys)
+  ) {
+    throw new Error(`${path} must contain exactly the review exclusion fields`);
+  }
+  assertString(exclusion.id, `${path}.id`);
+  assertString(exclusion.pullRequestId, `${path}.pullRequestId`);
+  assertString(exclusion.reviewId, `${path}.reviewId`);
+  if (
+    exclusion.id !==
+    `${exclusion.pullRequestId}:review-exclusion:${exclusion.reviewId}`
+  ) {
+    throw new Error(`${path}.id must bind the pull request and review IDs`);
+  }
+  assertEnum(exclusion.reason, REVIEW_EXCLUSION_REASONS, `${path}.reason`);
+  assertEnum(
+    exclusion.repository,
+    TARGET_REPOSITORIES.map((repository) => repository.id),
+    `${path}.repository`,
+  );
+  assertString(exclusion.url, `${path}.url`);
+  if (repositoryIdFromUrl(exclusion.url) !== exclusion.repository) {
+    throw new Error(`${path}.url must match ${path}.repository`);
+  }
 }
 
 function assertSourceValue(value: unknown, path: string): void {
@@ -4860,6 +4957,44 @@ export function assertLeaderboardSnapshot(
     validatedLedger.length
   ) {
     throw new Error("snapshot.ledger must contain unique score event IDs");
+  }
+
+  const reviewExclusions = snapshot.reviewExclusions;
+  if (reviewExclusions === undefined) {
+    // Schema 6 was deployed before this additive audit field existed. Newly
+    // generated snapshots always publish it, while readers remain compatible
+    // with the last deployed snapshot during rollout.
+  } else if (!Array.isArray(reviewExclusions)) {
+    throw new Error("snapshot.reviewExclusions must be an array");
+  } else {
+    const validatedReviewExclusions = reviewExclusions.map(
+      (exclusion, index) => {
+        assertReviewExclusionValue(
+          exclusion,
+          `snapshot.reviewExclusions[${index}]`,
+        );
+        return exclusion;
+      },
+    );
+    if (
+      new Set(validatedReviewExclusions.map((exclusion) => exclusion.id))
+        .size !== validatedReviewExclusions.length
+    ) {
+      throw new Error("snapshot.reviewExclusions must contain unique IDs");
+    }
+    for (let index = 1; index < validatedReviewExclusions.length; index += 1) {
+      const previous = validatedReviewExclusions[index - 1];
+      const current = validatedReviewExclusions[index];
+      if (
+        previous.pullRequestId.localeCompare(current.pullRequestId) > 0 ||
+        (previous.pullRequestId === current.pullRequestId &&
+          previous.reviewId.localeCompare(current.reviewId) > 0)
+      ) {
+        throw new Error(
+          "snapshot.reviewExclusions must be ordered by pull request and review ID",
+        );
+      }
+    }
   }
 
   if (!Array.isArray(snapshot.opportunities)) {

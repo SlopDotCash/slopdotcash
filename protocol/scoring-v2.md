@@ -33,6 +33,22 @@ reproduction 3, and specialist review 8. A separate maintainer ratification
 earns 1/3 unless that actor already received review credit on the artifact.
 Self-review, post-merge review, duplicate review, and bot activity do not score.
 
+Formal review collection is independent of the reviewed pull-request author's
+full-detail hydration cap. Before detail hydration, the generator performs a
+bounded scalar census across the complete merged-outcome window. Every pull
+request with at least one formal review enters complete review hydration even
+when it is older than the author's five newest merges. The generator preflights
+the census and detail cost against its fixed GitHub budget and aborts without a
+snapshot if any requested node, review page, or inline-comment page is missing
+or inconsistent.
+
+Each collected formal review that does not score appears in the public
+`reviewExclusions` array with immutable pull-request and review node IDs, its
+canonical public URL and repository, and one closed reason enum. This makes
+self-review, bot, post-merge, duplicate-reviewer, non-decision, insufficient-
+substance, external-prize-policy, and reviewer-cycle-cap exclusions auditable
+without publishing review bodies in a second surface.
+
 The `slop-review` proposal records effort, complexity, impact, review load,
 split risk, confidence, exact provider/model/client, receipt, and finalized
 private trace. Maintainers remain the sole scoring authority.

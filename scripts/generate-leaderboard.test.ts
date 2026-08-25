@@ -17,6 +17,7 @@ import {
 } from "../src/lib/repositories.mjs";
 import {
   assertOpenEvidenceReferencesCurrent,
+  collectReviewedPullRequestIds,
   collectSearchReferences,
   deriveCurrentHeadReviewDecision,
   deriveSourceUpdatedAt,
@@ -34,6 +35,7 @@ import {
   sameReferenceSet,
   selectDetailedMergedPullRequestIds,
   selectEvaluatedContributionsForWindow,
+  selectHydratedMergedPullRequestIds,
   verifyPullRequestEvidence,
 } from "./generate-leaderboard";
 
@@ -1092,6 +1094,62 @@ describe("GitHub GraphQL boundary", () => {
 });
 
 describe("rate-efficient query plan", () => {
+  it("finds every reviewed merged pull request without hydrating unrelated detail", async () => {
+    const seenDocuments: string[] = [];
+    const client: GraphqlExecutor = {
+      execute: async (document, variables) => {
+        seenDocuments.push(document);
+        const ids = variables?.ids;
+        if (!Array.isArray(ids)) throw new Error("missing review census IDs");
+        return {
+          nodes: ids.map((id) => ({
+            __typename: "PullRequest",
+            id,
+            reviews: { totalCount: id === "PR_REVIEWED" ? 2 : 0 },
+          })),
+        };
+      },
+      getRequestCount: () => seenDocuments.length,
+      getRateLimit: () => ({
+        cost: 1,
+        consumedDuringRun: seenDocuments.length,
+        limit: 5_000,
+        remaining: 4_999,
+        resetAt: "2026-08-25T18:00:00.000Z",
+      }),
+    };
+
+    await expect(
+      collectReviewedPullRequestIds(client, [
+        { id: "PR_UNREVIEWED" },
+        { id: "PR_REVIEWED" },
+      ]),
+    ).resolves.toEqual(new Set(["PR_REVIEWED"]));
+    expect(seenDocuments).toHaveLength(1);
+    expect(seenDocuments[0]).toContain("reviews { totalCount }");
+    expect(seenDocuments[0]).not.toContain("reviews(first:");
+  });
+
+  it("fails closed when the review census is incomplete", async () => {
+    const client: GraphqlExecutor = {
+      execute: async () => ({ nodes: [] }),
+      getRequestCount: () => 1,
+      getRateLimit: () => ({
+        cost: 1,
+        consumedDuringRun: 1,
+        limit: 5_000,
+        remaining: 4_999,
+        resetAt: "2026-08-25T18:00:00.000Z",
+      }),
+    };
+
+    await expect(
+      collectReviewedPullRequestIds(client, [{ id: "PR_MISSING" }]),
+    ).rejects.toThrow(
+      "GitHub returned 0 review census nodes for 1 requested IDs",
+    );
+  });
+
   it("parses every production GraphQL document", () => {
     for (const [name, document] of Object.entries(
       LEADERBOARD_QUERY_DOCUMENTS,
@@ -1263,7 +1321,7 @@ describe("rate-efficient query plan", () => {
     ).toThrow("verificationWindowFrom must be a valid date");
   });
 
-  it("deep-inspects the newest budgeted outcomes when merge timestamps tie", () => {
+  it("hydrates reviewed outcomes independently of the author detail cap", async () => {
     const mergedAt = "2026-07-15T12:00:00.000Z";
     const outcome = (id: string): MergedPullRequestOutcome => ({
       id,
@@ -1292,14 +1350,35 @@ describe("rate-efficient query plan", () => {
       "PR_106",
     ].map((id) => ({ outcome: outcome(id), projectId: "eliza" }));
 
+    const client: GraphqlExecutor = {
+      execute: async (_document, variables) => ({
+        nodes: ((variables?.ids ?? []) as string[]).map((id) => ({
+          __typename: "PullRequest",
+          id,
+          reviews: { totalCount: id === "PR_101" ? 1 : 0 },
+        })),
+      }),
+      getRequestCount: () => 0,
+      getRateLimit: () => ({
+        cost: 0,
+        consumedDuringRun: 0,
+        limit: 5_000,
+        remaining: 5_000,
+        resetAt: "2026-08-25T18:00:00.000Z",
+      }),
+    };
+
     expect(
       [
-        ...selectDetailedMergedPullRequestIds(
+        ...(await selectHydratedMergedPullRequestIds(
+          client,
           candidates,
           new Date("2026-06-01T00:00:00.000Z"),
-        ),
+        )),
       ].sort(),
-    ).toEqual(["PR_102", "PR_103", "PR_104", "PR_105", "PR_106"].sort());
+    ).toEqual(
+      ["PR_101", "PR_102", "PR_103", "PR_104", "PR_105", "PR_106"].sort(),
+    );
   });
 
   it("recollects only typed concurrent changes to the non-scoring queue", async () => {

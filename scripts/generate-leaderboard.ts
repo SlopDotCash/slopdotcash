@@ -406,6 +406,19 @@ const PULL_REQUEST_DETAILS_QUERY = `
   ${PULL_REQUEST_FRAGMENT}
 `;
 
+const REVIEWED_PULL_REQUEST_REFERENCES_QUERY = `
+  query LeaderboardReviewedPullRequestReferences($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest {
+        id
+        reviews { totalCount }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`;
+
 const ISSUE_DETAILS_QUERY = `
   query LeaderboardIssueDetails($ids: [ID!]!) {
     nodes(ids: $ids) {
@@ -589,6 +602,7 @@ export const LEADERBOARD_QUERY_DOCUMENTS = {
   openPullRequestReferences: OPEN_PULL_REQUEST_REFERENCES_QUERY,
   issueDetails: ISSUE_DETAILS_QUERY,
   pullRequestDetails: PULL_REQUEST_DETAILS_QUERY,
+  reviewedPullRequestReferences: REVIEWED_PULL_REQUEST_REFERENCES_QUERY,
   reviewInlineComments: REVIEW_INLINE_COMMENTS_QUERY,
   morePullRequestComments: MORE_PULL_REQUEST_COMMENTS_QUERY,
   moreIssueComments: MORE_ISSUE_COMMENTS_QUERY,
@@ -1482,6 +1496,56 @@ function chunks<T>(values: T[], size: number): T[][] {
   return result;
 }
 
+export async function collectReviewedPullRequestIds(
+  client: GraphqlExecutor,
+  references: ReadonlyArray<{ id: string }>,
+): Promise<Set<string>> {
+  const batches = chunks([...references], REVIEW_DETAIL_BATCH_SIZE);
+  const rateLimit = client.getRateLimit();
+  const available = Math.min(
+    MAX_GENERATION_COST - rateLimit.consumedDuringRun,
+    rateLimit.remaining - MINIMUM_RATE_LIMIT_RESERVE,
+  );
+  if (batches.length > available) {
+    throw new Error(
+      `Review census cost ${batches.length} exceeds the safe GraphQL budget ${available}; no partial snapshot will be written`,
+    );
+  }
+  const reviewed = new Set<string>();
+  for (const batch of batches) {
+    const data = await client.execute(REVIEWED_PULL_REQUEST_REFERENCES_QUERY, {
+      ids: batch.map((reference) => reference.id),
+    });
+    const nodes = asArray(data.nodes, "data.nodes");
+    if (nodes.length !== batch.length) {
+      throw new Error(
+        `GitHub returned ${nodes.length} review census nodes for ${batch.length} requested IDs`,
+      );
+    }
+    for (const [index, reference] of batch.entries()) {
+      const path = `data.nodes[${index}]`;
+      const node = asRecord(nodes[index], path);
+      if (
+        node.__typename !== "PullRequest" ||
+        asString(node.id, `${path}.id`) !== reference.id
+      ) {
+        throw new Error(`${path} did not match the requested pull request`);
+      }
+      const totalCount = asNumber(
+        child(node, "reviews", path).totalCount,
+        `${path}.reviews.totalCount`,
+      );
+      if (!Number.isSafeInteger(totalCount) || totalCount < 0) {
+        throw new Error(
+          `${path}.reviews.totalCount must be a non-negative integer`,
+        );
+      }
+      if (totalCount > 0) reviewed.add(reference.id);
+    }
+  }
+  return reviewed;
+}
+
 async function preflightRepository(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
@@ -2195,6 +2259,7 @@ export function selectDetailedMergedPullRequestIds(
     projectId: string;
   }>,
   verificationWindowFrom: Date,
+  reviewedPullRequestIds: ReadonlySet<string> = new Set(),
 ): Set<string> {
   const from = verificationWindowFrom.getTime();
   if (!Number.isFinite(from)) {
@@ -2202,6 +2267,14 @@ export function selectDetailedMergedPullRequestIds(
   }
   const usage = new Map<string, number>();
   const selected = new Set<string>();
+  for (const { outcome } of candidates) {
+    if (
+      reviewedPullRequestIds.has(outcome.id) &&
+      Date.parse(outcome.mergedAt) >= from
+    ) {
+      selected.add(outcome.id);
+    }
+  }
   for (const candidate of [...candidates].sort(
     (left, right) =>
       right.outcome.mergedAt.localeCompare(left.outcome.mergedAt) ||
@@ -2224,6 +2297,25 @@ export function selectDetailedMergedPullRequestIds(
     selected.add(outcome.id);
   }
   return selected;
+}
+
+export async function selectHydratedMergedPullRequestIds(
+  client: GraphqlExecutor,
+  candidates: ReadonlyArray<{
+    outcome: MergedPullRequestOutcome;
+    projectId: string;
+  }>,
+  verificationWindowFrom: Date,
+): Promise<Set<string>> {
+  const reviewedPullRequestIds = await collectReviewedPullRequestIds(
+    client,
+    candidates.map(({ outcome }) => ({ id: outcome.id })),
+  );
+  return selectDetailedMergedPullRequestIds(
+    candidates,
+    verificationWindowFrom,
+    reviewedPullRequestIds,
+  );
 }
 
 async function collectOpenIssues(
@@ -2773,7 +2865,8 @@ export async function generateLeaderboardFromGitHub(
     });
   }
 
-  const detailedMergedPullRequestIds = selectDetailedMergedPullRequestIds(
+  const detailedMergedPullRequestIds = await selectHydratedMergedPullRequestIds(
+    client,
     collections.flatMap((collection) =>
       collection.mergedPullRequestOutcomes.map((outcome) => ({
         outcome,

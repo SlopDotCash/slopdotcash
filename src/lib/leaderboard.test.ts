@@ -27,6 +27,7 @@ import {
   isNearMaterialTestChange,
   LEADERBOARD_REPOSITORY,
   type LeaderboardInput,
+  type LeaderboardSnapshot,
   MATERIAL_TEST_ADDITIONS,
   MATERIAL_TEST_CHURN,
   mergedPullRequestPoints,
@@ -580,6 +581,67 @@ describe("score v2 work units", () => {
         (event) => event.category === "merged-pull-request",
       ),
     ).toHaveLength(1);
+  });
+
+  it("publishes deterministic reasons for formal reviews that do not score", () => {
+    const pr = pullRequest({
+      id: "PR_REVIEW_EXCLUSIONS",
+      number: 61,
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T03:00:00.000Z",
+      mergedAt: "2026-08-18T03:00:00.000Z",
+      reviews: [
+        {
+          id: "REVIEW_SELF",
+          body: "I verified every required path in my own pull request.",
+          state: "APPROVED",
+          submittedAt: "2026-08-18T02:00:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/61#pullrequestreview-601",
+          author: actor("author"),
+          inlineCommentCount: 0,
+        },
+        {
+          id: "REVIEW_THIN",
+          body: "Looks good",
+          state: "APPROVED",
+          submittedAt: "2026-08-18T02:30:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/61#pullrequestreview-602",
+          author: actor("reviewer"),
+          inlineCommentCount: 0,
+        },
+      ],
+    });
+
+    const snapshot = createLeaderboardSnapshot(v2Input([pr]));
+
+    expect(snapshot.reviewExclusions).toEqual([
+      {
+        id: "PR_REVIEW_EXCLUSIONS:review-exclusion:REVIEW_SELF",
+        pullRequestId: "PR_REVIEW_EXCLUSIONS",
+        reason: "self-review",
+        repository: "elizaOS/eliza",
+        reviewId: "REVIEW_SELF",
+        url: "https://github.com/elizaOS/eliza/pull/61#pullrequestreview-601",
+      },
+      {
+        id: "PR_REVIEW_EXCLUSIONS:review-exclusion:REVIEW_THIN",
+        pullRequestId: "PR_REVIEW_EXCLUSIONS",
+        reason: "insufficient-substance",
+        repository: "elizaOS/eliza",
+        reviewId: "REVIEW_THIN",
+        url: "https://github.com/elizaOS/eliza/pull/61#pullrequestreview-602",
+      },
+    ]);
+
+    const invalid = structuredClone(snapshot);
+    invalid.reviewExclusions[0].reason = "author-detail-cap" as never;
+    expect(() => assertLeaderboardSnapshot(invalid)).toThrow(
+      "snapshot.reviewExclusions[0].reason",
+    );
+
+    const legacy = structuredClone(snapshot) as Partial<LeaderboardSnapshot>;
+    delete legacy.reviewExclusions;
+    expect(() => assertLeaderboardSnapshot(legacy)).not.toThrow();
   });
 
   it("rejects a self slop-score without a second maintainer co-ratifier", () => {
@@ -2193,7 +2255,7 @@ describe("scoring and limits", () => {
           body: "A human review of automated churn must not become an incentive.",
           state: "APPROVED",
           submittedAt: "2026-07-10T11:00:00.000Z",
-          url: "https://github.com/elizaOS/eliza/pull/3#human-review",
+          url: "https://github.com/elizaOS/eliza/pull/3#pullrequestreview-303",
           author: actor("bot-reviewer"),
           inlineCommentCount: 1,
         },
@@ -2207,7 +2269,7 @@ describe("scoring and limits", () => {
           body: "This is long enough but is still a self review.",
           state: "APPROVED",
           submittedAt: "2026-07-10T11:00:00.000Z",
-          url: "https://github.com/elizaOS/eliza/pull/1#self",
+          url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-101",
           author: pullRequestAuthor,
           inlineCommentCount: 1,
         },
@@ -2216,7 +2278,7 @@ describe("scoring and limits", () => {
           body: "Automated approval cannot score.",
           state: "APPROVED",
           submittedAt: "2026-07-10T11:00:00.000Z",
-          url: "https://github.com/elizaOS/eliza/pull/1#bot",
+          url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-102",
           author: bot,
           inlineCommentCount: 1,
         },
@@ -2225,7 +2287,7 @@ describe("scoring and limits", () => {
           body: "This review arrived after the pull request was merged.",
           state: "APPROVED",
           submittedAt: "2026-07-30T11:30:00.000Z",
-          url: "https://github.com/elizaOS/eliza/pull/1#late",
+          url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-103",
           author: lateReviewer,
           inlineCommentCount: 1,
         },
