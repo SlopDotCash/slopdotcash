@@ -2928,7 +2928,7 @@ export function createLeaderboardSnapshot(
     string,
     { record: ScoreRatificationRecord; source: GitHubTextSource }
   >();
-  for (const pullRequest of detailEligibleMergedPullRequests) {
+  for (const pullRequest of mergedPullRequests) {
     const repository = findTargetRepositoryById(
       repositoryIdFromUrl(pullRequest.url),
     );
@@ -3051,7 +3051,9 @@ export function createLeaderboardSnapshot(
 
   for (const pullRequest of mergedPullRequestOutcomes) {
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
-    const ratification = scoreRatifications.get(pullRequest.id);
+    const ratification = detailEligibleMergedPullRequestIds.has(pullRequest.id)
+      ? scoreRatifications.get(pullRequest.id)
+      : undefined;
     if (
       pullRequest.author &&
       !isBotActor(pullRequest.author) &&
@@ -3308,7 +3310,7 @@ export function createLeaderboardSnapshot(
 
     const ratification = scoreRatifications.get(pullRequest.id);
     const awardedReviewers = new Set<string>();
-    for (const source of detailEligible ? sources : []) {
+    for (const source of sources) {
       let rawReview: unknown | null;
       try {
         rawReview = parseReviewRecordBlock(source.body);
@@ -3381,7 +3383,6 @@ export function createLeaderboardSnapshot(
     }
 
     if (
-      detailEligible &&
       ratification?.source.author &&
       !sameActor(ratification.source.author, pullRequest.author) &&
       !awardedReviewers.has(ratification.source.author.id)

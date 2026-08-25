@@ -862,6 +862,29 @@ describe("score v2 work units", () => {
       scoreThirds: 3,
       evidenceBonusBasisPoints: 1_500,
     });
+    const outsideAuthorDetailCap = createLeaderboardSnapshot({
+      ...postUsageBonusInput,
+      detailEligibleMergedPullRequestIds: [],
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      outsideAuthorDetailCap.ledger.find(
+        (event) => event.id === `${pr.id}:automated-review:${source.id}`,
+      ),
+    ).toMatchObject({
+      scoreThirds: 3,
+      evidenceBonusBasisPoints: 1_500,
+    });
+    expect(
+      outsideAuthorDetailCap.ledger.find(
+        (event) => event.id === `${pr.id}:merged`,
+      ),
+    ).toMatchObject({ scoreThirds: 1 });
+    expect(
+      outsideAuthorDetailCap.ledger.find(
+        (event) => event.id === `${pr.id}:ratifier:COMMENT_V2_RATIFICATION`,
+      ),
+    ).toMatchObject({ scoreThirds: 1 });
     const legacy = structuredClone(accepted);
     legacy.generatedAt = "2026-08-18T05:00:00.000Z";
     legacy.source.fetchedAt = legacy.generatedAt;
