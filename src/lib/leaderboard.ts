@@ -1347,6 +1347,7 @@ export function assessModelAttribution(
   const invalidSourceIds = new Set<string>();
   const humanOnlySourceIds = new Set<string>();
   const receiptArtifactMismatchSourceIds = new Set<string>();
+  const receiptClaims = new Map<string, string>();
 
   for (const source of eligibleSources) {
     if (hasMarkdownLine(source.body, HUMAN_ONLY_PATTERN)) {
@@ -1468,6 +1469,30 @@ export function assessModelAttribution(
         });
         markerIndex += 1;
         continue;
+      }
+      if (verifiedRun?.traceUpload) {
+        const claims = [
+          ["client run", verifiedRun.runId],
+          ["server run", verifiedRun.traceUpload.serverRunId],
+          ["trace object", verifiedRun.traceUpload.objectId],
+        ] as const;
+        const duplicate = claims.find(([kind, value]) =>
+          receiptClaims.has(`${kind}:${value}`),
+        );
+        if (duplicate) {
+          const [kind, value] = duplicate;
+          invalidSourceIds.add(source.id);
+          invalidMarkers.push({
+            sourceId: source.id,
+            sourceUrl: source.url,
+            reason: `run receipt excluded: ${kind} already claimed by ${receiptClaims.get(`${kind}:${value}`)}`,
+          });
+          markerIndex += 1;
+          continue;
+        }
+        for (const [kind, value] of claims) {
+          receiptClaims.set(`${kind}:${value}`, source.id);
+        }
       }
       const identifier = exactIdentifier(marker.provider, marker.model);
       validSourceIds.add(source.id);

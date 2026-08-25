@@ -1048,6 +1048,43 @@ describe("model attribution", () => {
     expect(result.declarations[0].run?.traceUpload).not.toBeNull();
   });
 
+  it("excludes a replayed trace object without discarding the scored source", () => {
+    const sourceContext = {
+      artifactUrl: "https://github.com/elizaOS/eliza/pull/1",
+      artifactHeadSha: "a".repeat(40),
+    };
+    const first = {
+      ...textSource("REVIEW_TRACE_FIRST", reviewAttribution()),
+      ...sourceContext,
+    };
+    const second = {
+      ...textSource(
+        "REVIEW_TRACE_REPLAY",
+        reviewAttribution({
+          runId: "run_01K3JZ6Y7E8M9N0P1Q2R3S4T6V",
+          traceUpload: {
+            authority: "https://api.slop.cash",
+            serverRunId: "server_review_replay",
+            objectId: `sha256:${"b".repeat(64)}`,
+            sha256: "b".repeat(64),
+          },
+        }),
+      ),
+      ...sourceContext,
+    };
+
+    const result = assessModelAttribution([first, second]);
+
+    expect(result.declarations).toHaveLength(1);
+    expect(result.declarations[0].sourceId).toBe(first.id);
+    expect(result.invalidMarkers).toContainEqual(
+      expect.objectContaining({
+        sourceId: second.id,
+        reason: expect.stringContaining("trace object already claimed"),
+      }),
+    );
+  });
+
   it("rejects review ingestion without finalization or with a mismatched join", () => {
     const missingFinalization = {
       ...textSource(
