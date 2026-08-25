@@ -867,7 +867,11 @@ describe("project run usage", () => {
       const sequence: string[] = [];
       let disclosure: Record<string, unknown> | null = null;
       const responses = [
-        { enabled: true },
+        {
+          enabled: true,
+          source: "github-authenticated",
+          verifiedAt: "2026-08-25T12:00:00.000Z",
+        },
         {
           token: "s".repeat(32),
           tokenType: "Bearer",
@@ -959,7 +963,7 @@ describe("project run usage", () => {
       );
       assert.strictEqual(
         calls[0].url,
-        "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
+        "https://api.slop.cash/api/v1/private-request-intake",
       );
       assert.strictEqual(calls[0].options.method, "GET");
       assert.strictEqual(
@@ -1008,9 +1012,14 @@ describe("project run usage", () => {
             },
             fetchImpl: async (url) => {
               requests.push(String(url));
-              return new Response(JSON.stringify({ enabled: false }), {
-                status: 200,
-              });
+              return new Response(
+                JSON.stringify({
+                  enabled: false,
+                  source: "github-authenticated",
+                  verifiedAt: "2026-08-25T12:00:00.000Z",
+                }),
+                { status: 200 },
+              );
             },
           },
         ),
@@ -1018,8 +1027,51 @@ describe("project run usage", () => {
       );
       assert.strictEqual(authorizationStarted, false);
       assert.deepStrictEqual(requests, [
-        "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
+        "https://api.slop.cash/api/v1/private-request-intake",
       ]);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("reports private intake rate-limit reset before authorization", async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-trace-intake-rate-"));
+    try {
+      const trajectory = join(fixtureRoot, "trace.ndjson");
+      writeFileSync(trajectory, '{"event":"complete"}\n');
+      let authorizationStarted = false;
+      await assert.rejects(
+        uploadPrivateTrace(
+          {
+            runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            projectId: "eliza",
+            repositoryId: "elizaOS/eliza",
+            revision: "a".repeat(40),
+            provider: "moonshot",
+            model: "kimi-k2",
+            client: "kimi-cli",
+          },
+          trajectory,
+          "1.2.3",
+          {
+            disclosure: () => {},
+            assertionProvider: () => {
+              authorizationStarted = true;
+              return "i".repeat(32);
+            },
+            fetchImpl: async () =>
+              new Response(
+                JSON.stringify({
+                  error: "private_intake_rate_limited",
+                  resetAt: "2027-01-15T08:00:00.000Z",
+                }),
+                { status: 503 },
+              ),
+          },
+        ),
+        /private request intake verification is rate limited until 2027-01-15T08:00:00.000Z/u,
+      );
+      assert.strictEqual(authorizationStarted, false);
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }

@@ -36,6 +36,11 @@ export type TraceApiDependencies = {
   verifyIdentityAssertion: (
     assertion: string,
   ) => Promise<{ githubId: string; githubLogin: string } | null>;
+  privateIntakeStatus: () => Promise<
+    | { status: "verified"; enabled: boolean; verifiedAt: string }
+    | { status: "rate_limited"; resetAt: string }
+    | { status: "unavailable" }
+  >;
 };
 
 type ApiError = Error & { status?: number; code?: string };
@@ -60,6 +65,35 @@ function json(status: number, body: Record<string, unknown>): Response {
       "x-slop-trace-api-contract": TRACE_API_CONTRACT_VERSION,
     },
   });
+}
+
+async function readPrivateIntakeStatus(
+  deps: TraceApiDependencies,
+): Promise<Response> {
+  const status = await deps.privateIntakeStatus();
+  if (status.status === "verified") {
+    if (!validIsoTimestamp(status.verifiedAt)) {
+      return json(503, { error: "private_intake_unavailable" });
+    }
+    return json(200, {
+      enabled: status.enabled,
+      source: "github-authenticated",
+      verifiedAt: status.verifiedAt,
+    });
+  }
+  if (status.status === "rate_limited") {
+    if (!validIsoTimestamp(status.resetAt)) {
+      return json(503, { error: "private_intake_unavailable" });
+    }
+    return json(503, {
+      error: "private_intake_rate_limited",
+      resetAt: status.resetAt,
+    });
+  }
+  if (status.status === "unavailable") {
+    return json(503, { error: "private_intake_unavailable" });
+  }
+  return json(503, { error: "private_intake_unavailable" });
 }
 
 function requiredString(
@@ -830,6 +864,13 @@ export async function handleTraceApi(
     return json(404, { error: "not_found" });
   }
   try {
+    if (
+      request.method === "GET" &&
+      parts.length === 1 &&
+      parts[0] === "private-request-intake"
+    ) {
+      return await readPrivateIntakeStatus(deps);
+    }
     if (
       request.method === "GET" &&
       parts.length === 4 &&

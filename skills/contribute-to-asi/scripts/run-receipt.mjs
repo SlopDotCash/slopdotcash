@@ -82,8 +82,7 @@ const AUTHORIZATION_RECEIPT = ".slop-authorization.json";
 const TRACE_AUTHORITY = "https://api.slop.cash";
 const IDENTITY_AUTHORITY = "https://identity.slop.cash";
 const TRACE_PRIVACY_CONTRACT = "https://slop.cash/protocol/private-trace-v1.md";
-const PRIVATE_REQUEST_INTAKE_STATUS =
-  "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting";
+const PRIVATE_REQUEST_INTAKE_STATUS = `${TRACE_AUTHORITY}/api/v1/private-request-intake`;
 const LEGACY_V1_RECEIPT_IDENTITIES = new Map([
   [
     "delta-star",
@@ -1245,6 +1244,57 @@ async function jsonRequest(fetchImpl, url, options, keys, field) {
   return exactObject(value, keys, field);
 }
 
+async function authoritativePrivateIntake(fetchImpl) {
+  let response;
+  try {
+    response = await fetchImpl(PRIVATE_REQUEST_INTAKE_STATUS, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    fail("private request intake status request failed");
+  }
+  const source = await boundedResponseText(
+    response,
+    "private request intake status",
+  );
+  let value;
+  try {
+    value = JSON.parse(source);
+  } catch {
+    fail("private request intake status response was not JSON");
+  }
+  if (!response?.ok) {
+    if (
+      response?.status === 503 &&
+      hasExactKeys(value, ["error", "resetAt"]) &&
+      value.error === "private_intake_rate_limited" &&
+      canonicalIso(value.resetAt) === value.resetAt
+    ) {
+      fail(
+        `private request intake verification is rate limited until ${value.resetAt}`,
+      );
+    }
+    fail(
+      `private request intake status request returned HTTP ${response?.status}`,
+    );
+  }
+  const intake = exactObject(
+    value,
+    ["enabled", "source", "verifiedAt"],
+    "private request intake status",
+  );
+  if (
+    typeof intake.enabled !== "boolean" ||
+    intake.source !== "github-authenticated" ||
+    canonicalIso(intake.verifiedAt) !== intake.verifiedAt
+  ) {
+    fail("private request intake status returned invalid verification");
+  }
+  return intake;
+}
+
 export async function slopIdentityAssertion(
   fetchImpl = globalThis.fetch,
   delayImpl = (milliseconds) =>
@@ -1418,16 +1468,7 @@ export async function uploadPrivateTrace(
     automaticRedaction: "none",
     retention: "permanent",
   });
-  const intake = await jsonRequest(
-    fetchImpl,
-    PRIVATE_REQUEST_INTAKE_STATUS,
-    {
-      method: "GET",
-      headers: { Accept: "application/vnd.github+json" },
-    },
-    ["enabled"],
-    "private request intake status",
-  );
+  const intake = await authoritativePrivateIntake(fetchImpl);
   if (intake.enabled !== true) {
     fail(
       "private request intake is unavailable; private trace upload is blocked",
@@ -2179,7 +2220,7 @@ function previewRun(options) {
     network: [
       `With --allow-package-execution, resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
       `On start and finish, fetch current project terms from https://slop.cash/projects/${PROJECT.projectId}/terms.json and any digest-bound LICENSE, inbound terms, or prize rules from github.com, raw.githubusercontent.com, or proximityprize.org as named by that policy`,
-      `Verify the public private-request intake gate at ${PRIVATE_REQUEST_INTAKE_STATUS}; trace upload remains blocked unless it reports enabled`,
+      `Verify the server-authenticated private-request intake gate at ${PRIVATE_REQUEST_INTAKE_STATUS}; trace upload remains blocked unless it reports enabled`,
       `After a local byte/digest disclosure, authenticate with GitHub and permanently upload the inspected trace through ${TRACE_AUTHORITY} under ${TRACE_PRIVACY_CONTRACT}`,
     ],
     automaticUploads: [],

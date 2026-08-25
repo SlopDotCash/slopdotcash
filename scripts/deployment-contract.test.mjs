@@ -108,6 +108,10 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
     );
+    expect(deployJob).toContain(`GITHUB_TOKEN: ${"$"}{{ github.token }}`);
+    expect(deployJob).toContain(
+      '--header "Authorization: Bearer $GITHUB_TOKEN"',
+    );
     expect(deployJob).toContain("value?.enabled !== true");
     expect(
       deployJob.indexOf("Require public private-request intake"),
@@ -125,6 +129,7 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler pages secret list \\\n            --project-name eliza-computer",
     );
+    expect(deployJob).toContain('"PRIVATE_INTAKE_GITHUB_TOKEN",');
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler d1 migrations apply slop-private \\",
     );
@@ -201,6 +206,25 @@ describe("slop.cash deployment contract", () => {
     );
     expect(
       deployJob.indexOf("Verify active private trace API boundary"),
+    ).toBeLessThan(deployJob.indexOf("Require public identity OAuth app"));
+    expect(deployJob).toContain(
+      "Verify authenticated private intake preflight",
+    );
+    expect(deployJob).toContain(
+      "https://api.slop.cash/api/v1/private-request-intake?verify=",
+    );
+    expect(deployJob).toContain('value?.source !== "github-authenticated"');
+    expect(deployJob).toContain("value?.enabled !== true");
+    expect(deployJob).toContain(
+      "Authenticated private intake preflight did not become authoritative.",
+    );
+    expect(
+      deployJob.indexOf("Verify active private trace API boundary"),
+    ).toBeLessThan(
+      deployJob.indexOf("Verify authenticated private intake preflight"),
+    );
+    expect(
+      deployJob.indexOf("Verify authenticated private intake preflight"),
     ).toBeLessThan(deployJob.indexOf("Require public identity OAuth app"));
     expect(deployJob).toContain(
       "Active private trace API did not reach its fail-closed unauthenticated boundary.",
@@ -496,7 +520,7 @@ describe("slop.cash deployment contract", () => {
   it("bounds every trusted external response before buffering it", () => {
     const curlCommands = workflow.match(/^\s*(?:if )?curl /gmu) ?? [];
     const responseBounds = workflow.match(/^\s*--max-filesize /gmu) ?? [];
-    expect(curlCommands).toHaveLength(14);
+    expect(curlCommands).toHaveLength(15);
     expect(responseBounds).toHaveLength(curlCommands.length);
     expect(workflow).toContain('--max-filesize "$(wc -c < dist/index.html)"');
     expect(workflow).toContain('--max-filesize "$expected_bytes"');
