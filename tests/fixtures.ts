@@ -307,6 +307,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         reason: "Substantive review completed before merge.",
       },
     ],
+    reviewExclusions: [],
     opportunities: [
       {
         id: "PR_open_fixture:opportunity:missing-evidence",

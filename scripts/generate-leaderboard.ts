@@ -406,6 +406,20 @@ const PULL_REQUEST_DETAILS_QUERY = `
   ${PULL_REQUEST_FRAGMENT}
 `;
 
+const REVIEWED_PULL_REQUEST_REFERENCES_QUERY = `
+  query LeaderboardReviewedPullRequestReferences($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest {
+        id
+        updatedAt
+        reviews { totalCount }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`;
+
 const ISSUE_DETAILS_QUERY = `
   query LeaderboardIssueDetails($ids: [ID!]!) {
     nodes(ids: $ids) {
@@ -589,6 +603,7 @@ export const LEADERBOARD_QUERY_DOCUMENTS = {
   openPullRequestReferences: OPEN_PULL_REQUEST_REFERENCES_QUERY,
   issueDetails: ISSUE_DETAILS_QUERY,
   pullRequestDetails: PULL_REQUEST_DETAILS_QUERY,
+  reviewedPullRequestReferences: REVIEWED_PULL_REQUEST_REFERENCES_QUERY,
   reviewInlineComments: REVIEW_INLINE_COMMENTS_QUERY,
   morePullRequestComments: MORE_PULL_REQUEST_COMMENTS_QUERY,
   moreIssueComments: MORE_ISSUE_COMMENTS_QUERY,
@@ -1482,6 +1497,79 @@ function chunks<T>(values: T[], size: number): T[][] {
   return result;
 }
 
+export interface ReviewCensusEntry {
+  reviewCount: number;
+  updatedAt: string;
+}
+
+export async function collectPullRequestReviewCounts(
+  client: GraphqlExecutor,
+  references: ReadonlyArray<{ id: string }>,
+  reservedPasses = 1,
+): Promise<Map<string, ReviewCensusEntry>> {
+  const batches = chunks([...references], REVIEW_DETAIL_BATCH_SIZE);
+  const rateLimit = client.getRateLimit();
+  const available = Math.min(
+    MAX_GENERATION_COST - rateLimit.consumedDuringRun,
+    rateLimit.remaining - MINIMUM_RATE_LIMIT_RESERVE,
+  );
+  const estimatedCost = batches.length * reservedPasses;
+  if (estimatedCost > available) {
+    throw new Error(
+      `Review census cost ${estimatedCost} exceeds the safe GraphQL budget ${available}; no partial snapshot will be written`,
+    );
+  }
+  const reviewCounts = new Map<string, ReviewCensusEntry>();
+  for (const batch of batches) {
+    const data = await client.execute(REVIEWED_PULL_REQUEST_REFERENCES_QUERY, {
+      ids: batch.map((reference) => reference.id),
+    });
+    const nodes = asArray(data.nodes, "data.nodes");
+    if (nodes.length !== batch.length) {
+      throw new Error(
+        `GitHub returned ${nodes.length} review census nodes for ${batch.length} requested IDs`,
+      );
+    }
+    for (const [index, reference] of batch.entries()) {
+      const path = `data.nodes[${index}]`;
+      const node = asRecord(nodes[index], path);
+      if (
+        node.__typename !== "PullRequest" ||
+        asString(node.id, `${path}.id`) !== reference.id
+      ) {
+        throw new Error(`${path} did not match the requested pull request`);
+      }
+      const totalCount = asNumber(
+        child(node, "reviews", path).totalCount,
+        `${path}.reviews.totalCount`,
+      );
+      if (!Number.isSafeInteger(totalCount) || totalCount < 0) {
+        throw new Error(
+          `${path}.reviews.totalCount must be a non-negative integer`,
+        );
+      }
+      const updatedAt = asString(node.updatedAt, `${path}.updatedAt`);
+      if (!Number.isFinite(Date.parse(updatedAt))) {
+        throw new Error(`${path}.updatedAt must be an ISO timestamp`);
+      }
+      reviewCounts.set(reference.id, { reviewCount: totalCount, updatedAt });
+    }
+  }
+  return reviewCounts;
+}
+
+export async function collectReviewedPullRequestIds(
+  client: GraphqlExecutor,
+  references: ReadonlyArray<{ id: string }>,
+): Promise<Set<string>> {
+  const reviewCounts = await collectPullRequestReviewCounts(client, references);
+  return new Set(
+    [...reviewCounts].flatMap(([id, entry]) =>
+      entry.reviewCount > 0 ? [id] : [],
+    ),
+  );
+}
+
 async function preflightRepository(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
@@ -2195,6 +2283,7 @@ export function selectDetailedMergedPullRequestIds(
     projectId: string;
   }>,
   verificationWindowFrom: Date,
+  reviewedPullRequestIds: ReadonlySet<string> = new Set(),
 ): Set<string> {
   const from = verificationWindowFrom.getTime();
   if (!Number.isFinite(from)) {
@@ -2202,6 +2291,14 @@ export function selectDetailedMergedPullRequestIds(
   }
   const usage = new Map<string, number>();
   const selected = new Set<string>();
+  for (const { outcome } of candidates) {
+    if (
+      reviewedPullRequestIds.has(outcome.id) &&
+      Date.parse(outcome.mergedAt) >= from
+    ) {
+      selected.add(outcome.id);
+    }
+  }
   for (const candidate of [...candidates].sort(
     (left, right) =>
       right.outcome.mergedAt.localeCompare(left.outcome.mergedAt) ||
@@ -2226,11 +2323,86 @@ export function selectDetailedMergedPullRequestIds(
   return selected;
 }
 
+export async function selectHydratedMergedPullRequestIds(
+  client: GraphqlExecutor,
+  candidates: ReadonlyArray<{
+    outcome: MergedPullRequestOutcome;
+    projectId: string;
+  }>,
+  verificationWindowFrom: Date,
+): Promise<Set<string>> {
+  return (
+    await planMergedPullRequestHydration(
+      client,
+      candidates,
+      verificationWindowFrom,
+    )
+  ).hydratedIds;
+}
+
+export interface MergedPullRequestHydrationPlan {
+  detailEligibleIds: Set<string>;
+  hydratedIds: Set<string>;
+  reviewCounts: Map<string, ReviewCensusEntry>;
+}
+
+export async function planMergedPullRequestHydration(
+  client: GraphqlExecutor,
+  candidates: ReadonlyArray<{
+    outcome: MergedPullRequestOutcome;
+    projectId: string;
+  }>,
+  verificationWindowFrom: Date,
+): Promise<MergedPullRequestHydrationPlan> {
+  const detailEligibleIds = selectDetailedMergedPullRequestIds(
+    candidates,
+    verificationWindowFrom,
+  );
+  const reviewCounts = await collectPullRequestReviewCounts(
+    client,
+    candidates.map(({ outcome }) => ({ id: outcome.id })),
+    2,
+  );
+  const reviewedPullRequestIds = new Set(
+    [...reviewCounts].flatMap(([id, entry]) =>
+      entry.reviewCount > 0 ? [id] : [],
+    ),
+  );
+  const hydratedIds = selectDetailedMergedPullRequestIds(
+    candidates,
+    verificationWindowFrom,
+    reviewedPullRequestIds,
+  );
+  return { detailEligibleIds, hydratedIds, reviewCounts };
+}
+
+export function assertReviewCensusStable(
+  before: ReadonlyMap<string, ReviewCensusEntry>,
+  after: ReadonlyMap<string, ReviewCensusEntry>,
+): void {
+  if (before.size !== after.size) {
+    throw new Error("Review census changed identity before snapshot assembly");
+  }
+  for (const [id, entry] of before) {
+    const current = after.get(id);
+    if (
+      !current ||
+      current.reviewCount !== entry.reviewCount ||
+      current.updatedAt !== entry.updatedAt
+    ) {
+      throw new Error(
+        `Review census changed for ${id} before snapshot assembly`,
+      );
+    }
+  }
+}
+
 async function collectOpenIssues(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
   repositoryId: string,
   onProgress: (progress: GenerationProgress) => void,
+  reservedCost = 0,
 ): Promise<IssueRecord[]> {
   for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
     try {
@@ -2244,7 +2416,7 @@ async function collectOpenIssues(
       if (before.repositoryId !== repositoryId) {
         throw new Error("GitHub returned an inconsistent repository node ID");
       }
-      assertEstimatedBudget(client, 0, before.references.length);
+      assertEstimatedBudget(client, 0, before.references.length, reservedCost);
       return await hydrateIssues(
         client,
         before.references,
@@ -2271,6 +2443,7 @@ async function collectOpenPullRequests(
   targetRepository: TargetRepository,
   repositoryId: string,
   onProgress: (progress: GenerationProgress) => void,
+  reservedCost = 0,
 ): Promise<PullRequestRecord[]> {
   for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
     try {
@@ -2284,7 +2457,7 @@ async function collectOpenPullRequests(
       if (before.repositoryId !== repositoryId) {
         throw new Error("GitHub returned an inconsistent repository node ID");
       }
-      assertEstimatedBudget(client, before.references.length, 0);
+      assertEstimatedBudget(client, before.references.length, 0, reservedCost);
       return await hydratePullRequests(
         client,
         before.references,
@@ -2379,6 +2552,7 @@ function assertEstimatedBudget(
   client: GraphqlExecutor,
   pullRequestCount: number,
   issueCount: number,
+  reservedCost = 0,
 ): void {
   const rateLimit = client.getRateLimit();
   const estimate = estimateFirstPageDetailCost(pullRequestCount, issueCount);
@@ -2386,9 +2560,9 @@ function assertEstimatedBudget(
     MAX_GENERATION_COST - rateLimit.consumedDuringRun,
     rateLimit.remaining - MINIMUM_RATE_LIMIT_RESERVE,
   );
-  if (estimate > available) {
+  if (estimate + reservedCost > available) {
     throw new Error(
-      `Estimated first-page detail cost ${estimate} exceeds the safe GraphQL budget ${available}; no partial snapshot will be written`,
+      `Estimated first-page detail cost ${estimate} plus reserved cost ${reservedCost} exceeds the safe GraphQL budget ${available}; no partial snapshot will be written`,
     );
   }
 }
@@ -2773,20 +2947,30 @@ export async function generateLeaderboardFromGitHub(
     });
   }
 
-  const detailedMergedPullRequestIds = selectDetailedMergedPullRequestIds(
-    collections.flatMap((collection) =>
-      collection.mergedPullRequestOutcomes.map((outcome) => ({
-        outcome,
-        projectId: collection.repository.projectId,
-      })),
-    ),
+  const hydrationCandidates = collections.flatMap((collection) =>
+    collection.mergedPullRequestOutcomes.map((outcome) => ({
+      outcome,
+      projectId: collection.repository.projectId,
+    })),
+  );
+  const hydrationPlan = await planMergedPullRequestHydration(
+    client,
+    hydrationCandidates,
     verificationWindowFrom,
+  );
+  const finalReviewCensusCost = Math.ceil(
+    hydrationCandidates.length / REVIEW_DETAIL_BATCH_SIZE,
   );
   for (const collection of collections) {
     const detailedReferences = collection.mergedPullRequestReferences.filter(
-      (reference) => detailedMergedPullRequestIds.has(reference.id),
+      (reference) => hydrationPlan.hydratedIds.has(reference.id),
     );
-    assertEstimatedBudget(client, detailedReferences.length, 0);
+    assertEstimatedBudget(
+      client,
+      detailedReferences.length,
+      0,
+      finalReviewCensusCost,
+    );
     const detailedPullRequests = await hydratePullRequests(
       client,
       detailedReferences,
@@ -2794,17 +2978,36 @@ export async function generateLeaderboardFromGitHub(
       onProgress,
       "merged-pull-requests",
     );
+    for (const pullRequest of detailedPullRequests) {
+      const censusCount = hydrationPlan.reviewCounts.get(pullRequest.id);
+      if (
+        censusCount === undefined ||
+        pullRequest.reviews.length !== censusCount.reviewCount ||
+        pullRequest.updatedAt !== censusCount.updatedAt
+      ) {
+        throw new Error(
+          `Review census changed for ${pullRequest.id} during detail hydration`,
+        );
+      }
+    }
     mergedPullRequests.push(...detailedPullRequests);
 
     const linkedIssueIds = new Set(
-      detailedPullRequests.flatMap(
-        (pullRequest) => pullRequest.closingIssueIds,
-      ),
+      detailedPullRequests
+        .filter((pullRequest) =>
+          hydrationPlan.detailEligibleIds.has(pullRequest.id),
+        )
+        .flatMap((pullRequest) => pullRequest.closingIssueIds),
     );
     const linkedClosedIssueReferences = collection.closedIssueReferences.filter(
       (reference) => linkedIssueIds.has(reference.id),
     );
-    assertEstimatedBudget(client, 0, linkedClosedIssueReferences.length);
+    assertEstimatedBudget(
+      client,
+      0,
+      linkedClosedIssueReferences.length,
+      finalReviewCensusCost,
+    );
     closedIssues.push(
       ...(await hydrateIssues(
         client,
@@ -2819,17 +3022,22 @@ export async function generateLeaderboardFromGitHub(
       collection.repository,
       collection.preflight.id,
       onProgress,
+      finalReviewCensusCost,
     );
     collection.openPullRequests = await collectOpenPullRequests(
       client,
       collection.repository,
       collection.preflight.id,
       onProgress,
+      finalReviewCensusCost,
     );
   }
 
   const dedupedOutcomes = dedupeByNodeId(mergedPullRequestOutcomes);
   const dedupedMergedPullRequests = dedupeByNodeId(mergedPullRequests);
+  const detailEligibleMergedPullRequests = dedupedMergedPullRequests.filter(
+    (pullRequest) => hydrationPlan.detailEligibleIds.has(pullRequest.id),
+  );
   const dedupedClosedIssues = dedupeByNodeId(closedIssues);
   const { evidenceVerification, openIssues, openPullRequests } =
     await retrySlopSnapshot(async (attempt) => {
@@ -2840,6 +3048,7 @@ export async function generateLeaderboardFromGitHub(
             collection.repository,
             collection.preflight.id,
             onProgress,
+            finalReviewCensusCost,
           );
         }
       }
@@ -2850,7 +3059,7 @@ export async function generateLeaderboardFromGitHub(
         collections.flatMap((collection) => collection.openPullRequests),
       );
       const currentEvidenceVerification = await verifyPullRequestEvidence(
-        [...dedupedMergedPullRequests, ...currentOpenPullRequests],
+        [...detailEligibleMergedPullRequests, ...currentOpenPullRequests],
         options,
       );
       for (const collection of collections) {
@@ -2874,6 +3083,12 @@ export async function generateLeaderboardFromGitHub(
         openPullRequests: currentOpenPullRequests,
       };
     });
+
+  const finalReviewCounts = await collectPullRequestReviewCounts(
+    client,
+    hydrationCandidates.map(({ outcome }) => ({ id: outcome.id })),
+  );
+  assertReviewCensusStable(hydrationPlan.reviewCounts, finalReviewCounts);
 
   const allRecords = [
     ...dedupedOutcomes,
@@ -2903,7 +3118,7 @@ export async function generateLeaderboardFromGitHub(
     rateLimit,
     counts: {
       mergedPullRequests: dedupedOutcomes.length,
-      detailedMergedPullRequests: dedupedMergedPullRequests.length,
+      detailedMergedPullRequests: detailEligibleMergedPullRequests.length,
       closedIssues: closedIssueCount,
       detailedClosedIssues: dedupedClosedIssues.length,
       resolvedIssues: 0,
@@ -2931,6 +3146,7 @@ export async function generateLeaderboardFromGitHub(
     source,
     mergedPullRequestOutcomes: dedupedOutcomes,
     mergedPullRequests: dedupedMergedPullRequests,
+    detailEligibleMergedPullRequestIds: [...hydrationPlan.detailEligibleIds],
     closedIssueCount,
     resolvedIssues: dedupedClosedIssues,
     openIssues,

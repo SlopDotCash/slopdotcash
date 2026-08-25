@@ -27,6 +27,7 @@ import {
   isNearMaterialTestChange,
   LEADERBOARD_REPOSITORY,
   type LeaderboardInput,
+  type LeaderboardSnapshot,
   MATERIAL_TEST_ADDITIONS,
   MATERIAL_TEST_CHURN,
   mergedPullRequestPoints,
@@ -417,6 +418,9 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       deletions: pullRequest.deletions,
     })),
     mergedPullRequests,
+    detailEligibleMergedPullRequestIds: mergedPullRequests.map(
+      (pullRequest) => pullRequest.id,
+    ),
     closedIssueCount: resolvedIssues.length,
     resolvedIssues,
     openIssues: [],
@@ -580,6 +584,82 @@ describe("score v2 work units", () => {
         (event) => event.category === "merged-pull-request",
       ),
     ).toHaveLength(1);
+  });
+
+  it("publishes deterministic reasons for formal reviews that do not score", () => {
+    const pr = pullRequest({
+      id: "PR_REVIEW_EXCLUSIONS",
+      number: 61,
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T03:00:00.000Z",
+      mergedAt: "2026-08-18T03:00:00.000Z",
+      reviews: [
+        {
+          id: "REVIEW_SELF",
+          body: "I verified every required path in my own pull request.",
+          state: "APPROVED",
+          submittedAt: "2026-08-18T02:00:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/61#pullrequestreview-601",
+          author: actor("author"),
+          inlineCommentCount: 0,
+        },
+        {
+          id: "REVIEW_THIN",
+          body: "Looks good",
+          state: "APPROVED",
+          submittedAt: "2026-08-18T02:30:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/61#pullrequestreview-602",
+          author: actor("reviewer"),
+          inlineCommentCount: 0,
+        },
+      ],
+    });
+
+    const snapshot = createLeaderboardSnapshot(v2Input([pr]));
+
+    expect(snapshot.reviewExclusions).toEqual([
+      {
+        id: "PR_REVIEW_EXCLUSIONS:review-exclusion:REVIEW_SELF",
+        pullRequestId: "PR_REVIEW_EXCLUSIONS",
+        pullRequestNumber: 61,
+        reason: "self-review",
+        repository: "elizaOS/eliza",
+        reviewId: "REVIEW_SELF",
+        url: "https://github.com/elizaOS/eliza/pull/61#pullrequestreview-601",
+      },
+      {
+        id: "PR_REVIEW_EXCLUSIONS:review-exclusion:REVIEW_THIN",
+        pullRequestId: "PR_REVIEW_EXCLUSIONS",
+        pullRequestNumber: 61,
+        reason: "insufficient-substance",
+        repository: "elizaOS/eliza",
+        reviewId: "REVIEW_THIN",
+        url: "https://github.com/elizaOS/eliza/pull/61#pullrequestreview-602",
+      },
+    ]);
+
+    const invalid = structuredClone(snapshot);
+    if (invalid.reviewExclusions?.[0] === undefined) {
+      throw new Error("expected a review exclusion fixture");
+    }
+    invalid.reviewExclusions[0].reason = "author-detail-cap" as never;
+    expect(() => assertLeaderboardSnapshot(invalid)).toThrow(
+      "snapshot.reviewExclusions[0].reason",
+    );
+
+    const invalidUrl = structuredClone(snapshot);
+    if (invalidUrl.reviewExclusions?.[0] === undefined) {
+      throw new Error("expected a review exclusion fixture");
+    }
+    invalidUrl.reviewExclusions[0].url =
+      "https://github.com/elizaOS/eliza/pull/61";
+    expect(() => assertLeaderboardSnapshot(invalidUrl)).toThrow(
+      "review URL must identify",
+    );
+
+    const legacy = structuredClone(snapshot) as Partial<LeaderboardSnapshot>;
+    delete legacy.reviewExclusions;
+    expect(() => assertLeaderboardSnapshot(legacy)).not.toThrow();
   });
 
   it("rejects a self slop-score without a second maintainer co-ratifier", () => {
@@ -782,6 +862,76 @@ describe("score v2 work units", () => {
       scoreThirds: 3,
       evidenceBonusBasisPoints: 1_500,
     });
+    const outsideAuthorDetailCap = createLeaderboardSnapshot({
+      ...postUsageBonusInput,
+      detailEligibleMergedPullRequestIds: [],
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      outsideAuthorDetailCap.ledger.find(
+        (event) => event.id === `${pr.id}:automated-review:${source.id}`,
+      ),
+    ).toMatchObject({
+      scoreThirds: 3,
+      evidenceBonusBasisPoints: 1_500,
+    });
+    expect(
+      outsideAuthorDetailCap.ledger.find(
+        (event) => event.id === `${pr.id}:merged`,
+      ),
+    ).toMatchObject({ scoreThirds: 1 });
+    expect(
+      outsideAuthorDetailCap.ledger.find(
+        (event) => event.id === `${pr.id}:ratifier:COMMENT_V2_RATIFICATION`,
+      ),
+    ).toMatchObject({ scoreThirds: 1 });
+    const evaluatedReview = {
+      id: "REVIEW_V2_EVALUATED",
+      body: "This formal review identified a concrete release blocker.",
+      state: "CHANGES_REQUESTED",
+      submittedAt: "2026-08-18T01:00:00.000Z",
+      url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1001",
+      author: reviewer,
+      inlineCommentCount: 0,
+    };
+    pr.reviews = [evaluatedReview];
+    const evaluatedAward: ScoreEvent = {
+      id: "award_v2_evaluated_reviewer",
+      actor: reviewer,
+      category: "evaluated-contribution",
+      points: 4,
+      occurredAt: evaluatedReview.submittedAt,
+      repository: "elizaOS/eliza",
+      source: {
+        id: evaluatedReview.id,
+        kind: "review",
+        number: pr.number,
+        title: pr.title,
+        url: evaluatedReview.url,
+      },
+      reason: "Maintainer-evaluated review award remains authoritative.",
+      evaluation: {
+        reviewer: "maintainer",
+        reviewedAt: "2026-08-18T04:00:00.000Z",
+        decisionUrl: "https://github.com/SlopDotCash/slopdotcash/pull/99",
+        manifestPath: "evaluations/eliza/award-v2-reviewer.json",
+        manifestSha256: "a".repeat(64),
+      },
+    };
+    const reserved = createLeaderboardSnapshot({
+      ...postUsageBonusInput,
+      mergedPullRequests: [pr],
+      evaluatedContributions: [evaluatedAward],
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      reserved.ledger.find(
+        (event) => event.id === `${pr.id}:automated-review:${source.id}`,
+      ),
+    ).toBeUndefined();
+    expect(reserved.ledger).toContainEqual(
+      expect.objectContaining({ id: evaluatedAward.id }),
+    );
     const legacy = structuredClone(accepted);
     legacy.generatedAt = "2026-08-18T05:00:00.000Z";
     legacy.source.fetchedAt = legacy.generatedAt;
@@ -896,6 +1046,43 @@ describe("model attribution", () => {
     expect(result.invalidMarkers).toEqual([]);
     expect(result.declarations).toHaveLength(1);
     expect(result.declarations[0].run?.traceUpload).not.toBeNull();
+  });
+
+  it("excludes a replayed trace object without discarding the scored source", () => {
+    const sourceContext = {
+      artifactUrl: "https://github.com/elizaOS/eliza/pull/1",
+      artifactHeadSha: "a".repeat(40),
+    };
+    const first = {
+      ...textSource("REVIEW_TRACE_FIRST", reviewAttribution()),
+      ...sourceContext,
+    };
+    const second = {
+      ...textSource(
+        "REVIEW_TRACE_REPLAY",
+        reviewAttribution({
+          runId: "run_01K3JZ6Y7E8M9N0P1Q2R3S4T6V",
+          traceUpload: {
+            authority: "https://api.slop.cash",
+            serverRunId: "server_review_replay",
+            objectId: `sha256:${"b".repeat(64)}`,
+            sha256: "b".repeat(64),
+          },
+        }),
+      ),
+      ...sourceContext,
+    };
+
+    const result = assessModelAttribution([first, second]);
+
+    expect(result.declarations).toHaveLength(1);
+    expect(result.declarations[0].sourceId).toBe(first.id);
+    expect(result.invalidMarkers).toContainEqual(
+      expect.objectContaining({
+        sourceId: second.id,
+        reason: expect.stringContaining("trace object already claimed"),
+      }),
+    );
   });
 
   it("rejects review ingestion without finalization or with a mismatched join", () => {
@@ -2077,6 +2264,223 @@ describe("scoring and limits", () => {
     ).toThrow("duplicates a score-bearing source");
   });
 
+  it("scores an out-of-cap formal review without enabling author bonuses", () => {
+    const reviewer = actor("outside-cap-reviewer");
+    const merged = pullRequest({
+      id: "PR_OUTSIDE_DETAIL_CAP",
+      number: 77,
+      files: [
+        {
+          path: "src/review-cap.test.ts",
+          additions: MATERIAL_TEST_ADDITIONS,
+          deletions: MATERIAL_TEST_CHURN - MATERIAL_TEST_ADDITIONS,
+        },
+      ],
+      reviews: [
+        {
+          id: "REVIEW_OUTSIDE_DETAIL_CAP",
+          body: "This review identifies the exact regression and its required fix.",
+          state: "APPROVED",
+          submittedAt: "2026-07-30T10:00:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/77#pullrequestreview-770",
+          author: reviewer,
+          inlineCommentCount: 0,
+        },
+      ],
+    });
+
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        mergedPullRequests: [merged],
+        detailEligibleMergedPullRequestIds: [],
+      }),
+    );
+
+    expect(snapshot.ledger).toContainEqual(
+      expect.objectContaining({
+        category: "substantive-review",
+        source: expect.objectContaining({ id: "REVIEW_OUTSIDE_DETAIL_CAP" }),
+      }),
+    );
+    expect(snapshot.ledger).not.toContainEqual(
+      expect.objectContaining({
+        category: "material-test-change",
+        actor: merged.author,
+      }),
+    );
+    expect(snapshot.source.counts.detailedMergedPullRequests).toBe(0);
+
+    const contradictory = structuredClone(snapshot);
+    contradictory.reviewExclusions = [
+      {
+        id: `${merged.id}:review-exclusion:REVIEW_OUTSIDE_DETAIL_CAP`,
+        pullRequestId: merged.id,
+        pullRequestNumber: merged.number,
+        reason: "insufficient-substance",
+        repository: "elizaOS/eliza",
+        reviewId: "REVIEW_OUTSIDE_DETAIL_CAP",
+        url: "https://github.com/elizaOS/eliza/pull/77#pullrequestreview-770",
+      },
+    ];
+    expect(() => assertLeaderboardSnapshot(contradictory)).toThrow(
+      "cannot contain a score-bearing review source",
+    );
+  });
+
+  it("rejects a detail-eligible pull request that was not hydrated", () => {
+    expect(() =>
+      createLeaderboardSnapshot(
+        input({
+          mergedPullRequests: [],
+          detailEligibleMergedPullRequestIds: ["PR_NOT_HYDRATED"],
+        }),
+      ),
+    ).toThrow("Detail-eligible pull request PR_NOT_HYDRATED was not hydrated");
+  });
+
+  it("keeps an evaluated review award authoritative over ordinary review credit", () => {
+    const reviewer = actor("evaluated-reviewer");
+    const submittedAt = "2026-07-28T10:00:00.000Z";
+    const priorReview = {
+      id: "REVIEW_EVALUATED_PRIOR",
+      body: "This earlier review also identified a concrete blocking defect.",
+      state: "CHANGES_REQUESTED",
+      submittedAt: "2026-07-27T10:00:00.000Z",
+      url: "https://github.com/elizaOS/eliza/pull/78#pullrequestreview-779",
+      author: reviewer,
+      inlineCommentCount: 0,
+    };
+    const review = {
+      id: "REVIEW_EVALUATED_AUTHORITY",
+      body: [
+        "This exact-head review found and explained a material defect.",
+        machineAttribution("OpenAI", "gpt-5.6-sol"),
+      ].join("\n\n"),
+      state: "CHANGES_REQUESTED",
+      submittedAt,
+      url: "https://github.com/elizaOS/eliza/pull/78#pullrequestreview-780",
+      author: reviewer,
+      inlineCommentCount: 0,
+    };
+    const merged = pullRequest({
+      id: "PR_EVALUATED_AUTHORITY",
+      number: 78,
+      reviews: [priorReview, review],
+    });
+    const evaluated = {
+      ...evaluatedContribution(0, reviewer),
+      occurredAt: submittedAt,
+      source: {
+        id: review.id,
+        kind: "review" as const,
+        number: merged.number,
+        title: merged.title,
+        url: review.url,
+      },
+    };
+
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        mergedPullRequests: [merged],
+        detailEligibleMergedPullRequestIds: [],
+        evaluatedContributions: [evaluated],
+      }),
+    );
+
+    expect(
+      snapshot.ledger.filter((event) => event.source.id === review.id),
+    ).toEqual([expect.objectContaining({ id: evaluated.id, points: 4 })]);
+    expect(snapshot.attributions).toContainEqual(
+      expect.objectContaining({
+        actor: reviewer,
+        sourceId: review.id,
+        identifier: "openai/gpt-5.6-sol",
+      }),
+    );
+    expect(snapshot.reviewExclusions).toEqual([
+      expect.objectContaining({
+        reviewId: priorReview.id,
+        reason: "evaluated-contribution-award",
+      }),
+    ]);
+  });
+
+  it("rejects two evaluator awards for one reviewer and pull request", () => {
+    const reviewer = actor("duplicate-evaluated-reviewer");
+    const firstReview = {
+      id: "REVIEW_EVALUATED_DUPLICATE_1",
+      body: "This review identifies the first concrete blocking defect.",
+      state: "CHANGES_REQUESTED",
+      submittedAt: "2026-07-27T10:00:00.000Z",
+      url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-791",
+      author: reviewer,
+      inlineCommentCount: 0,
+    };
+    const secondReview = {
+      ...firstReview,
+      id: "REVIEW_EVALUATED_DUPLICATE_2",
+      body: "This review identifies the second concrete blocking defect.",
+      submittedAt: "2026-07-28T10:00:00.000Z",
+      url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-792",
+    };
+    const merged = pullRequest({
+      id: "PR_EVALUATED_DUPLICATE",
+      number: 79,
+      reviews: [firstReview, secondReview],
+    });
+    const award = (review: typeof firstReview, index: number): ScoreEvent => ({
+      ...evaluatedContribution(index, reviewer),
+      id: `award_review_duplicate_${index}`,
+      occurredAt: review.submittedAt,
+      source: {
+        id: review.id,
+        kind: "review",
+        number: merged.number,
+        title: merged.title,
+        url: review.url,
+      },
+    });
+
+    expect(() =>
+      createLeaderboardSnapshot(
+        input({
+          mergedPullRequests: [merged],
+          evaluatedContributions: [
+            award(firstReview, 0),
+            award(secondReview, 1),
+          ],
+        }),
+      ),
+    ).toThrow("duplicates a reviewer/pull-request award");
+  });
+
+  it("retains a historic review award whose closed unmerged parent is outside the live window", () => {
+    const reviewer = actor("historic-evaluated-reviewer");
+    const award: ScoreEvent = {
+      ...evaluatedContribution(0, reviewer),
+      id: "award_historic_closed_review",
+      occurredAt: "2026-07-27T10:00:00.000Z",
+      source: {
+        id: "REVIEW_HISTORIC_CLOSED",
+        kind: "review",
+        number: 79,
+        title: "Closed unmerged contribution",
+        url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-799",
+      },
+    };
+
+    const snapshot = createLeaderboardSnapshot(
+      input({ evaluatedContributions: [award] }),
+    );
+
+    expect(snapshot.ledger).toContainEqual(
+      expect.objectContaining({
+        id: award.id,
+        source: expect.objectContaining({ id: award.source.id }),
+      }),
+    );
+  });
+
   it("scores accepted outcomes while capping evidence and reviews", () => {
     const reviewer = actor("reviewer");
     const evidenceBody = [
@@ -2193,7 +2597,7 @@ describe("scoring and limits", () => {
           body: "A human review of automated churn must not become an incentive.",
           state: "APPROVED",
           submittedAt: "2026-07-10T11:00:00.000Z",
-          url: "https://github.com/elizaOS/eliza/pull/3#human-review",
+          url: "https://github.com/elizaOS/eliza/pull/3#pullrequestreview-303",
           author: actor("bot-reviewer"),
           inlineCommentCount: 1,
         },
@@ -2207,7 +2611,7 @@ describe("scoring and limits", () => {
           body: "This is long enough but is still a self review.",
           state: "APPROVED",
           submittedAt: "2026-07-10T11:00:00.000Z",
-          url: "https://github.com/elizaOS/eliza/pull/1#self",
+          url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-101",
           author: pullRequestAuthor,
           inlineCommentCount: 1,
         },
@@ -2216,7 +2620,7 @@ describe("scoring and limits", () => {
           body: "Automated approval cannot score.",
           state: "APPROVED",
           submittedAt: "2026-07-10T11:00:00.000Z",
-          url: "https://github.com/elizaOS/eliza/pull/1#bot",
+          url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-102",
           author: bot,
           inlineCommentCount: 1,
         },
@@ -2225,7 +2629,7 @@ describe("scoring and limits", () => {
           body: "This review arrived after the pull request was merged.",
           state: "APPROVED",
           submittedAt: "2026-07-30T11:30:00.000Z",
-          url: "https://github.com/elizaOS/eliza/pull/1#late",
+          url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-103",
           author: lateReviewer,
           inlineCommentCount: 1,
         },
