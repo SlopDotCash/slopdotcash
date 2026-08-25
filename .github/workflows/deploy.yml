@@ -15,10 +15,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # PR supersessions cancel, while trusted runs keep independent quality lanes
-  # so a release awaiting approval cannot block fresh verification.
-  group: slop-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Serialize trusted refreshes so scheduled and develop-push runs cannot
+  # overlap their expensive all-repository GitHub GraphQL scans. PRs retain
+  # independent groups and cancel only their own superseded revisions.
+  group: slop-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'trusted' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

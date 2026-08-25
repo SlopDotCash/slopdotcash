@@ -84,6 +84,10 @@ describe("slop.cash deployment contract", () => {
     expect(qualityJob).toContain(`GH_TOKEN: ${"$"}{{ github.token }}`);
     expect(qualityJob).toContain(`GITHUB_TOKEN: ${"$"}{{ github.token }}`);
     expect(qualityJob).toContain("if: github.event_name != 'pull_request'");
+    expect(workflow).toContain(
+      `group: slop-${"$"}{{ github.event_name == 'pull_request' && github.event.pull_request.number || 'trusted' }}`,
+    );
+    expect(workflow).toContain("cancel-in-progress: true");
   });
 
   it("rewrites the nested project funding route through the Pages SPA", () => {
@@ -343,11 +347,9 @@ describe("slop.cash deployment contract", () => {
   });
 
   it("keeps every release path restricted to develop", () => {
+    expect(workflow).toContain("cancel-in-progress: true");
     expect(workflow).toContain(
-      `cancel-in-progress: ${"$"}{{ github.event_name == 'pull_request' }}`,
-    );
-    expect(workflow).toContain(
-      `group: slop-${"$"}{{ github.event.pull_request.number || github.run_id }}`,
+      `group: slop-${"$"}{{ github.event_name == 'pull_request' && github.event.pull_request.number || 'trusted' }}`,
     );
     expect(deployJob).toContain(
       "github.event_name == 'push' && github.ref == 'refs/heads/develop'",
