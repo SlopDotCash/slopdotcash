@@ -607,6 +607,28 @@ describe("live report parsing", () => {
     assert.strictEqual(activity.pulls.get(2)?.inlineComments.length, 1);
   });
 
+  it("audits the current 1,097-item pull queue without truncation", () => {
+    const pullNodes = Array.from({ length: 1_097 }, (_, index) => ({
+      number: index + 1,
+      comments: { totalCount: 0, nodes: [] },
+      reviews: { totalCount: 0, nodes: [] },
+      reviewThreads: { totalCount: 0, nodes: [] },
+    }));
+
+    const activity = readGhOpenActivity("elizaOS/eliza", (_command, args) => ({
+      status: 0,
+      stderr: "",
+      stdout: args.at(-1)?.includes(".pullRequests.")
+        ? `${pullNodes.map((node) => JSON.stringify(node)).join("\n")}\n`
+        : "",
+    }));
+
+    assert.strictEqual(activity.issues.size, 0);
+    assert.strictEqual(activity.pulls.size, 1_097);
+    assert.ok(activity.pulls.has(1));
+    assert.ok(activity.pulls.has(1_097));
+  });
+
   it("paginates overflowing issue activity through bounded GET-only REST", () => {
     const actor = {
       __typename: "User",

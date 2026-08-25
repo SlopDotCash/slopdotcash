@@ -22,7 +22,7 @@ export const REQUIRED_EVIDENCE_ROWS = [
 ];
 export const CLAIM_RECENCY_DAYS = 7;
 export const MISSION_READY_LABEL = "mission-ready";
-export const MAX_OPEN_ITEMS = 1_000;
+export const MAX_OPEN_ITEMS = 10_000;
 export const MAX_API_READS = 16;
 export const MAX_ACTIVITY_CONNECTION_ITEMS = 1_000;
 
