@@ -103,6 +103,56 @@ rank, reward share, or payment. Policy preflight
 and trace networking still run. Because receipts bind the exact skill revision,
 restart any active run created before this option was installed.
 
+## Anti-slop penalty gate
+
+The program rewards accepted product outcomes, not activity that makes the
+repository harder to review or maintain. Close or decline work whose primary
+value is coverage, changed lines, mutation kills, defensive-looking code,
+theoretical edge cases, or green automation. It earns no accepted-outcome
+score and may be excluded or penalized in contribution-quality and reward
+review. The same applies to reviews that recommend acceptance because a PR is
+large, exhaustive, or green without proving material product value.
+
+Reject these patterns before implementation or repair:
+
+- test-only coverage of helpers, barrels, constants, manifests, defaults,
+  wording, fallback order, private branches, or unreproduced behavior;
+- one-PR-per-file coverage farming justified by “no same-named test,” including
+  helper, hook, barrel, schema, type, export, and test-infrastructure suites;
+- shape-only assertions for existence, type, finiteness, array length, literal
+  metadata, mock calls, or export identity without semantic product behavior;
+- copied or templated PR bodies and evidence that describe another module or
+  replace a causal explanation with test, mutation, or assertion counts;
+- exhaustive boundary matrices, mocks, snapshots, and adversarial cases whose
+  input is not reachable and whose failure is not material on a supported path;
+- tests that pin accidental behavior, including behavior the author already
+  says contradicts the intended contract;
+- speculative guards, sanitizers, clamps, coercions, and fallbacks on internal
+  typed inputs, especially ones that turn invalid or missing data into `0`,
+  `""`, an empty collection, a plausible location, or success;
+- shotgun PR series that repeat NaN-sort fallbacks, CE year 0–99 handling,
+  placeholder-key/config-shape guards, Unicode truncation fixes, or another
+  defensive pattern across unrelated modules instead of one canonical boundary;
+- coverage-generated micro-fixes for theoretical parser, lookup, regex-state,
+  word-boundary, or fallback behavior, split as “independent module,
+  independent fix” PRs;
+- changes that preserve, refine, add, or test lossy truncation, compaction,
+  output caps, item limits, bounded reads, or arbitrary short timeouts and
+  deadlines; and
+- duplicate, contradictory, stale, superseded, generated, or generalized work
+  that builds a framework, registry, certification layer, abstraction, or
+  large harness before one current end-to-end outcome works.
+
+Real authorization and security checks, externally mandated protocol limits,
+and demonstrated resource-exhaustion controls remain valid. Show the reachable
+threat or exact external contract, use the least complex proportional control,
+and prove the real path. For hard size limits, use typed rejection, lossless
+ordered chunking, or explicit pagination. For deadlines, cite the external SLA
+or measured failure, preserve slow supported operations with ample headroom,
+and make caller cancellation, configuration, or opt-out explicit when longer
+runs are valid. Add only the smallest regression test set needed for the
+reproduced failure.
+
 ## Choose one mission-critical outcome
 
 Use the read-only live report as a filter, then inspect GitHub immediately
@@ -141,7 +191,9 @@ easier, or more interesting work:
    existing PR completely solid by repairing real defects, strengthening
    failure-sensitive tests, and rerunning exact-head checks; never approve your
    own work. A low-value or invalid premise still needs a disposition, not
-   neglect while new work is invented.
+   neglect while new work is invented. Apply the anti-slop gate before asking
+   for repairs: close a valueless premise instead of requesting more tests,
+   guards, documentation, or polish that only makes it larger.
 2. **Finish every existing issue without a PR**: only when tier one is empty,
    choose the oldest bounded, unblocked, unclaimed open issue carrying the exact
    repository label `mission-ready`, or an issue explicitly selected by the

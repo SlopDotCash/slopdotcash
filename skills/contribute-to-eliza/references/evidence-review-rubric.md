@@ -44,6 +44,42 @@ collaborators, implementation-detail assertions, and coverage-only additions
 that can remain green while the product path fails. Formatting, lint, typecheck,
 build, and broad test-suite results are hygiene, not proof that Eliza works.
 
+## Anti-slop review gate
+
+Demand a causal chain from a reproduced supported-path failure to the smallest
+production change, real-system proof, and only then a minimal regression test.
+Missing coverage, mutation counts, exhaustive inputs, and passing automation do
+not establish need or impact.
+
+Reject tests that mirror constants, manifests, exports, wording, fallback
+precedence, straightforward helpers, private branches, or behavior already
+known to conflict with the intended contract. Reject speculative guards and
+sanitizers where invalid input cannot reach the function. Invalid data must not
+become plausible success. Reject lossy caps, compaction, bounded reads, and
+short deadlines unless an exact external contract or measured resource failure
+requires them and the chosen value preserves supported large or slow work.
+
+Reject one-PR-per-file coverage farming and “no same-named test” justifications,
+including helper, hook, barrel, schema, type, constant, and test-infrastructure
+suites. Existence, type, finiteness, array length, literal metadata, export
+identity, and mock-call assertions are shape smoke unless they protect a
+demonstrated semantic failure. Copied or mismatched PR descriptions invalidate
+the claimed evidence.
+
+A burst of identical defensive patches means the wrong layer is being changed.
+Do not reward module-by-module NaN comparator fallbacks, CE year 0–99 support,
+placeholder-key/config-shape lists, or Unicode truncation refinements. Require
+one reachable canonical boundary and real-path proof.
+Do not convert an uncovered parser, lookup, regex, word-boundary, or fallback
+branch into a micro-fix merely because coverage work discovered it.
+
+Real security, authorization, protocol, and resource boundaries require
+proportional enforcement and real-path proof. Prefer typed rejection, lossless
+chunking, explicit pagination, and explicit cancellation/configuration over
+silent loss. Close PRs that fail this gate instead of requesting more bloat;
+they earn no accepted-outcome score and may be penalized or excluded from
+reward review. Apply the same quality judgment to reviews.
+
 ## Implementation completion rubric
 
 - Acceptance criteria map to code, tests, and proof with no hidden scope expansion.

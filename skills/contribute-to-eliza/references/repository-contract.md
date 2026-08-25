@@ -34,6 +34,29 @@ pnpm, Yarn, an older Node runtime, or another branch.
 Never expose a live vulnerability, credential, exploit path, or embargoed
 dependency issue publicly. Follow `SECURITY.md`.
 
+## Contribution value gate
+
+Require an authorized need or reproduced material failure on a supported path
+before a claim, branch, test, or review comment. Search current `develop`,
+callers, issues, and open PRs for duplicate, contradictory, and superseding
+work. Missing coverage and plausible edge cases do not create authorized work.
+
+Reject test bloat, implementation-detail assertions, speculative guards and
+sanitizers, fabricated fallback success, lossy truncation/compaction/output
+caps, arbitrary short deadlines, and generalized subsystems without one
+working end-to-end result. Real security boundaries, external protocol limits,
+and resource controls require a reachable threat or contract and proportional
+real-path proof. Low-value PRs earn no accepted-outcome score and may be
+penalized or excluded from reward review; low-value reviews are judged by the
+same standard.
+
+This includes one-PR-per-file coverage farming, “no same-named test” tasks,
+barrel/type/schema/constant inventory tests, shape-only assertions, copied or
+mismatched PR narratives, and shotgun repetition of NaN, date, placeholder,
+configuration-shape, or Unicode defensive patches across unrelated modules. It
+also includes coverage-generated parser/lookup/regex/fallback micro-fixes split
+under an “independent module, independent fix” rationale.
+
 ## GitHub-native coordination
 
 - Use an open issue carrying the exact repository label `mission-ready`, or an

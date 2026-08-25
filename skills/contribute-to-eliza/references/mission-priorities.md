@@ -75,6 +75,24 @@ Reject work whose primary value is any of the following:
 - unit tests, mocks, snapshots, or coverage additions that can pass while the
   real product path is broken, only increase counts, or restate implementation
   details;
+- one-PR-per-file coverage farming, “no same-named test” tasks, and
+  barrel/type/schema/constant inventory suites;
+- shape-only assertions for existence, type, finiteness, array length, literal
+  metadata, mock calls, or export identity;
+- copied or mismatched PR narratives and evidence that describe another diff
+  or use counts and boilerplate instead of a causal product need;
+- exhaustive helper/default/boundary tests, mutation exercises, and
+  adversarial cases without a reproduced reachable failure and material
+  consequence;
+- speculative guards, sanitizers, clamps, coercions, or fallbacks on internal
+  typed data, especially fabricated zero/empty/success values;
+- lossy truncation, compaction, output or item caps, bounded reads, or arbitrary
+  short timeouts/deadlines that are not required by a proven external contract;
+- shotgun replication of NaN-sort fallbacks, CE year 0–99 handling,
+  placeholder-key/config-shape guards, Unicode truncation refinements, or other
+  defensive patches across unrelated modules instead of one canonical boundary;
+- coverage-generated parser, lookup, regex-state, word-boundary, or fallback
+  micro-fixes split under an “independent module, independent fix” rationale;
 - speculative refactors, abstractions, migrations, or performance work without
   a reproduced problem and measurable target;
 - routine dependency bumps, generated-file churn, or CI edits unrelated to a
@@ -107,7 +125,10 @@ Apply the same gates to reviews. Do not review a low-value PR merely because it
 is open. For a mission-relevant PR, determine whether it solves the authorized
 need completely, adds unrelated scope, or creates activity without product
 value. Recommend closure rather than repairs when the premise fails the mission
-gate.
+gate. These PRs earn no accepted-outcome score and may be excluded or penalized
+in contribution-quality and reward review. Reviews that reward test count,
+diff size, exhaustive speculative hardening, or green checks without material
+product value are subject to the same judgment.
 
 ## Queue-cleared audit order
 
