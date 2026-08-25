@@ -78,6 +78,14 @@ const qualityJob = workflow.slice(
 const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
 
 describe("slop.cash deployment contract", () => {
+  it("refreshes the complete manifest-backed leaderboard every six hours", () => {
+    expect(workflow).toContain('- cron: "17 */6 * * *"');
+    expect(qualityJob).toContain("run: bun run leaderboard:generate");
+    expect(qualityJob).toContain(`GH_TOKEN: ${"$"}{{ github.token }}`);
+    expect(qualityJob).toContain(`GITHUB_TOKEN: ${"$"}{{ github.token }}`);
+    expect(qualityJob).toContain("if: github.event_name != 'pull_request'");
+  });
+
   it("rewrites the nested project funding route through the Pages SPA", () => {
     const redirects = pagesRedirects.trim().split("\n");
     expect(redirects).toContain("/projects/:project/funding/ / 200");

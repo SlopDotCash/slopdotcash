@@ -31,6 +31,7 @@ import {
   parseGenerationArguments,
   planMergedPullRequestHydration,
   resolveGitHubToken,
+  retryOpenBatch,
   retrySlopSnapshot,
   runGenerator,
   SEARCH_SAFE_RESULT_LIMIT,
@@ -1443,6 +1444,23 @@ describe("rate-efficient query plan", () => {
       "Open evidence changed during 3 consecutive verification attempts",
     );
     expect(attempts).toBe(3);
+  });
+
+  it("retries only a changing open-work hydration batch", async () => {
+    let attempts = 0;
+    await expect(
+      retryOpenBatch("open", async () => {
+        attempts += 1;
+        if (attempts < 3) throw new OpenSetChangedError("open work moved");
+        return ["stable-pr"];
+      }),
+    ).resolves.toEqual(["stable-pr"]);
+    expect(attempts).toBe(3);
+    await expect(
+      retryOpenBatch("merged", async () => {
+        throw new OpenSetChangedError("merged outcome changed");
+      }),
+    ).rejects.toThrow("merged outcome changed");
   });
 });
 

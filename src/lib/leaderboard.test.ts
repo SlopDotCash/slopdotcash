@@ -4274,6 +4274,8 @@ describe("deduplication and public schema", () => {
       ...actor("impostor"),
       id: identityDrift.leaders[0].actor.id,
     };
+    const avatarQueryDrift = structuredClone(snapshot);
+    avatarQueryDrift.ledger[0].actor.avatarUrl = `${avatarQueryDrift.ledger[0].actor.avatarUrl}?u=immutable-content&v=4`;
 
     expect(() => assertLeaderboardSnapshot(phishing)).toThrow(
       "canonical GitHub profile",
@@ -4285,6 +4287,7 @@ describe("deduplication and public schema", () => {
     expect(() => assertLeaderboardSnapshot(identityDrift)).toThrow(
       "changes identity inside the snapshot",
     );
+    expect(() => assertLeaderboardSnapshot(avatarQueryDrift)).not.toThrow();
   });
 
   it("rejects leader arrays whose ranks disguise the published ordering", () => {

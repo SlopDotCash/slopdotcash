@@ -3896,7 +3896,8 @@ function assertActorCoherence(actors: GitHubActor[]): void {
     if (
       previous &&
       (previous.login !== actor.login ||
-        previous.avatarUrl !== actor.avatarUrl ||
+        canonicalActorAvatarUrl(previous.avatarUrl) !==
+          canonicalActorAvatarUrl(actor.avatarUrl) ||
         previous.url !== actor.url ||
         previous.kind !== actor.kind)
     ) {

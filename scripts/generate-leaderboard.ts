@@ -2208,18 +2208,24 @@ async function hydratePullRequests(
 ): Promise<PullRequestRecord[]> {
   const pending: PendingPullRequestRecord[] = [];
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
-    const ids = batch.map((reference) => reference.id);
-    const data = await client.execute(PULL_REQUEST_DETAILS_QUERY, { ids });
-    const parsed = parseDetailBatch(data, ids, "PullRequest", parsePullRequest);
-    for (const value of parsed) {
-      validateRecordState(value, expectedState);
-      pending.push(await completePullRequestConnections(client, value));
-      onProgress({
-        phase,
-        completed: pending.length,
-        total: references.length,
-      });
-    }
+    const hydratedBatch = await retryOpenBatch(expectedState, async () => {
+      const ids = batch.map((reference) => reference.id);
+      const data = await client.execute(PULL_REQUEST_DETAILS_QUERY, { ids });
+      const parsed = parseDetailBatch(
+        data,
+        ids,
+        "PullRequest",
+        parsePullRequest,
+      );
+      const completed: PendingPullRequestRecord[] = [];
+      for (const value of parsed) {
+        validateRecordState(value, expectedState);
+        completed.push(await completePullRequestConnections(client, value));
+      }
+      return completed;
+    });
+    pending.push(...hydratedBatch);
+    onProgress({ phase, completed: pending.length, total: references.length });
   }
   const pullRequests = await finalizePullRequests(client, pending);
   onProgress({
@@ -2239,20 +2245,44 @@ async function hydrateIssues(
 ): Promise<IssueRecord[]> {
   const issues: IssueRecord[] = [];
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
-    const ids = batch.map((reference) => reference.id);
-    const data = await client.execute(ISSUE_DETAILS_QUERY, { ids });
-    const parsed = parseDetailBatch(data, ids, "Issue", parseIssue);
-    for (const value of parsed) {
-      validateRecordState(value, expectedState);
-      issues.push(await completeIssueConnections(client, value));
-      onProgress({
-        phase,
-        completed: issues.length,
-        total: references.length,
-      });
-    }
+    const hydratedBatch = await retryOpenBatch(expectedState, async () => {
+      const ids = batch.map((reference) => reference.id);
+      const data = await client.execute(ISSUE_DETAILS_QUERY, { ids });
+      const parsed = parseDetailBatch(data, ids, "Issue", parseIssue);
+      const completed: IssueRecord[] = [];
+      for (const value of parsed) {
+        validateRecordState(value, expectedState);
+        completed.push(await completeIssueConnections(client, value));
+      }
+      return completed;
+    });
+    issues.push(...hydratedBatch);
+    onProgress({ phase, completed: issues.length, total: references.length });
   }
   return issues;
+}
+
+/** Retry only the small open-work batch that moved while it was hydrated. */
+export async function retryOpenBatch<T>(
+  expectedState: ExpectedRecordState,
+  hydrate: () => Promise<T>,
+): Promise<T> {
+  let lastChange: OpenSetChangedError | null = null;
+  const attempts = expectedState === "open" ? MAX_TRANSIENT_ATTEMPTS : 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await hydrate();
+    } catch (error) {
+      if (expectedState !== "open" || !(error instanceof OpenSetChangedError)) {
+        throw error;
+      }
+      lastChange = error;
+    }
+  }
+  throw new OpenSetChangedError(
+    `Open work batch changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive hydration attempts`,
+    { cause: lastChange },
+  );
 }
 
 export function sameReferenceSet(
