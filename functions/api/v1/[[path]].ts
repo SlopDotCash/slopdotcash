@@ -9,6 +9,7 @@ type Env = {
   SLOP_DB: D1Database;
   PRIVATE_TRACES: R2Bucket;
   TRACE_AUTH_SECRET: string;
+  PRIVATE_INTAKE_GITHUB_TOKEN?: string;
   OPERATOR_GITHUB_IDS?: string;
   SLOP_IDENTITY: { fetch(request: Request): Promise<Response> };
 };
@@ -19,16 +20,35 @@ type PagesContext = {
 };
 
 export const MAX_IDENTITY_RESPONSE_BYTES = 16 * 1024;
+export const MAX_PRIVATE_INTAKE_RESPONSE_BYTES = 16 * 1024;
+const PRIVATE_INTAKE_CACHE_KEY = new Request(
+  "https://private-intake-cache.invalid/status-v1",
+);
+const PRIVATE_INTAKE_STATUS_URL =
+  "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting";
 
-async function readIdentityResponse(response: Response): Promise<unknown> {
+type EdgeCache = {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
+};
+
+type PrivateIntakeStatus =
+  | { status: "verified"; enabled: boolean; verifiedAt: string }
+  | { status: "rate_limited"; resetAt: string }
+  | { status: "unavailable" };
+
+async function readBoundedJson(
+  response: Response,
+  maximumBytes: number,
+): Promise<unknown> {
   const declared = response.headers.get("content-length");
   if (
     declared !== null &&
-    (!/^\d+$/u.test(declared) || Number(declared) > MAX_IDENTITY_RESPONSE_BYTES)
+    (!/^\d+$/u.test(declared) || Number(declared) > maximumBytes)
   ) {
-    throw new Error("Identity response exceeds the allowed size");
+    throw new Error("Response exceeds the allowed size");
   }
-  if (response.body === null) throw new Error("Identity response is empty");
+  if (response.body === null) throw new Error("Response is empty");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -37,9 +57,9 @@ async function readIdentityResponse(response: Response): Promise<unknown> {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > MAX_IDENTITY_RESPONSE_BYTES) {
-        await reader.cancel("identity response too large");
-        throw new Error("Identity response exceeds the allowed size");
+      if (total > maximumBytes) {
+        await reader.cancel("response too large");
+        throw new Error("Response exceeds the allowed size");
       }
       chunks.push(value);
     }
@@ -53,6 +73,139 @@ async function readIdentityResponse(response: Response): Promise<unknown> {
     offset += chunk.byteLength;
   }
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+}
+
+function parsedPrivateIntakeStatus(value: unknown): PrivateIntakeStatus | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.status === "verified" &&
+    typeof record.enabled === "boolean" &&
+    typeof record.verifiedAt === "string" &&
+    !Number.isNaN(Date.parse(record.verifiedAt)) &&
+    Object.keys(record).length === 3
+  ) {
+    return {
+      status: "verified",
+      enabled: record.enabled,
+      verifiedAt: record.verifiedAt,
+    };
+  }
+  if (
+    record.status === "rate_limited" &&
+    typeof record.resetAt === "string" &&
+    !Number.isNaN(Date.parse(record.resetAt)) &&
+    Object.keys(record).length === 2
+  ) {
+    return { status: "rate_limited", resetAt: record.resetAt };
+  }
+  return null;
+}
+
+async function privateIntakeStatus(
+  token: string | undefined,
+  cache: EdgeCache | undefined,
+  fetchImpl: typeof fetch,
+  now: () => Date,
+): Promise<PrivateIntakeStatus> {
+  if (cache !== undefined) {
+    try {
+      const cached = await cache.match(PRIVATE_INTAKE_CACHE_KEY);
+      if (cached !== undefined) {
+        const status = parsedPrivateIntakeStatus(
+          await readBoundedJson(cached, MAX_PRIVATE_INTAKE_RESPONSE_BYTES),
+        );
+        if (status !== null) return status;
+      }
+    } catch {
+      return { status: "unavailable" };
+    }
+  }
+  if (
+    typeof token !== "string" ||
+    token.length < 20 ||
+    token.length > 2048 ||
+    /\s/u.test(token)
+  ) {
+    return { status: "unavailable" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(PRIVATE_INTAKE_STATUS_URL, {
+      method: "GET",
+      redirect: "error",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "slop-private-intake-verifier",
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    return { status: "unavailable" };
+  }
+  let status: PrivateIntakeStatus;
+  if (
+    (response.status === 403 || response.status === 429) &&
+    response.headers.get("x-ratelimit-remaining") === "0"
+  ) {
+    const reset = response.headers.get("x-ratelimit-reset");
+    if (reset === null || !/^\d{9,12}$/u.test(reset)) {
+      return { status: "unavailable" };
+    }
+    status = {
+      status: "rate_limited",
+      resetAt: new Date(Number(reset) * 1000).toISOString(),
+    };
+  } else if (response.ok) {
+    let value: unknown;
+    try {
+      value = await readBoundedJson(
+        response,
+        MAX_PRIVATE_INTAKE_RESPONSE_BYTES,
+      );
+    } catch {
+      return { status: "unavailable" };
+    }
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      Array.isArray(value) ||
+      Object.keys(value).length !== 1 ||
+      typeof (value as { enabled?: unknown }).enabled !== "boolean"
+    ) {
+      return { status: "unavailable" };
+    }
+    status = {
+      status: "verified",
+      enabled: (value as { enabled: boolean }).enabled,
+      verifiedAt: now().toISOString(),
+    };
+  } else {
+    return { status: "unavailable" };
+  }
+  if (cache !== undefined) {
+    try {
+      await cache.put(
+        PRIVATE_INTAKE_CACHE_KEY,
+        new Response(JSON.stringify(status), {
+          headers: {
+            "cache-control": "public, max-age=300",
+            "content-type": "application/json; charset=utf-8",
+          },
+        }),
+      );
+    } catch {
+      return { status: "unavailable" };
+    }
+  }
+  return status;
+}
+
+async function readIdentityResponse(response: Response): Promise<unknown> {
+  return readBoundedJson(response, MAX_IDENTITY_RESPONSE_BYTES);
 }
 
 async function verifyIdentityAssertion(
@@ -86,6 +239,9 @@ async function verifyIdentityAssertion(
 }
 
 export async function onRequest(context: PagesContext): Promise<Response> {
+  const cache = (
+    globalThis as typeof globalThis & { caches?: { default?: EdgeCache } }
+  ).caches?.default;
   return handleTraceApi(context.request, {
     persistence: new CloudflareTracePersistence(
       context.env.SLOP_DB,
@@ -102,5 +258,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     randomId: () => crypto.randomUUID(),
     verifyIdentityAssertion: (assertion) =>
       verifyIdentityAssertion(context.env.SLOP_IDENTITY, assertion),
+    privateIntakeStatus: () =>
+      privateIntakeStatus(
+        context.env.PRIVATE_INTAKE_GITHUB_TOKEN,
+        cache,
+        globalThis.fetch,
+        () => new Date(),
+      ),
   });
 }

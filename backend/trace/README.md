@@ -13,10 +13,11 @@ it. Backend integrity checks enforce the declared bytes; they do not replace
 the contributor's required pre-upload inspection.
 
 Trace upload and production activation require GitHub's public private
-vulnerability reporting status to return exactly `enabled: true`. The client
-and deploy workflow check that operator-controlled intake fail closed; an
-advisory URL alone is not evidence of availability, and a public issue is never
-a private intake.
+vulnerability reporting status to return exactly `enabled: true`. The deploy
+workflow verifies GitHub directly, while the client reads only the bounded
+server-authenticated Slop preflight. Both checks fail closed; an advisory URL
+alone is not evidence of availability, and a public issue is never a private
+intake.
 
 ## Storage contract
 
@@ -112,6 +113,7 @@ bunx wrangler d1 create slop-private
 bunx wrangler r2 bucket create slop-private-traces
 bunx wrangler d1 migrations apply slop-private --remote
 bunx wrangler pages secret put TRACE_AUTH_SECRET --project-name eliza-computer
+bunx wrangler pages secret put PRIVATE_INTAKE_GITHUB_TOKEN --project-name eliza-computer
 ```
 
 Then add the returned D1 ID and R2 binding to the production Pages project:
@@ -133,6 +135,13 @@ service = "slop-identity"
 ```
 
 Set `OPERATOR_GITHUB_IDS` to an explicit comma-separated list of numeric IDs.
+`PRIVATE_INTAKE_GITHUB_TOKEN` is a server-only GitHub credential scoped to
+`SlopDotCash/slopdotcash` with read access to the private-vulnerability-
+reporting status endpoint and no write permission. The public
+`GET /api/v1/private-request-intake` route exposes only the bounded verified
+boolean and timestamp, or a fail-closed error with rate-limit reset time. Its
+five-minute edge cache prevents each contributor from consuming a GitHub API
+request. The credential is never returned to the client or accepted from one.
 `TRACE_AUTH_SECRET` is opaque HMAC key material and must contain 32-128
 high-entropy printable ASCII characters. It must never be configured as a
 checked-in `[vars]` value. Generate a recommended 43-character base64url value

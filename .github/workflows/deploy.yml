@@ -250,6 +250,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Require public private-request intake
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           curl --fail --silent --show-error \
@@ -257,6 +259,7 @@ jobs:
             --max-time 30 \
             --max-filesize 65536 \
             --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
             --header "User-Agent: slop-release-intake-check" \
             https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting |
             node -e '
@@ -433,7 +436,11 @@ jobs:
           node - "$pages_secrets" <<'NODE'
           const { readFileSync } = require("node:fs");
           const contents = readFileSync(process.argv[2], "utf8");
-          const expected = ["OPERATOR_GITHUB_IDS", "TRACE_AUTH_SECRET"];
+          const expected = [
+            "OPERATOR_GITHUB_IDS",
+            "PRIVATE_INTAKE_GITHUB_TOKEN",
+            "TRACE_AUTH_SECRET",
+          ];
           const actual = [...contents.matchAll(/^\s*-\s+([A-Z][A-Z0-9_]*):\s+Value Encrypted\s*$/gmu)]
             .map((match) => match[1])
             .sort();

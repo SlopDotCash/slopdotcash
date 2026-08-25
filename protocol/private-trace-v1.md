@@ -97,10 +97,14 @@ private report from a signed-in GitHub user without publishing the report as an
 issue. Do not put private data, trace contents, or request details in a public
 issue.
 
-The uploader and production workflow independently query GitHub's public
-private-vulnerability-reporting status before activating this path. Trace
-upload and production activation fail closed if it does not report exactly
-`enabled: true`; the advisory URL alone is not evidence that intake is usable.
+The production workflow queries GitHub's private-vulnerability-reporting status
+with its trusted repository credential. The uploader queries only Slop's
+bounded server-authoritative preflight, whose server-held credential and
+five-minute cache keep GitHub authentication out of the client. Trace upload
+and production activation fail closed if the authoritative state does not
+report exactly `enabled: true`; a rate limit reports its bounded reset time and
+never becomes an enabled result. The advisory URL alone is not evidence that
+intake is usable.
 Operators must authenticate the requester and handle any action required by
 applicable law outside the contributor API with an audit record. This channel
 does not create a voluntary deletion or contributor-read right that conflicts

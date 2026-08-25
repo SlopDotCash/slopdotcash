@@ -108,6 +108,10 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
     );
+    expect(deployJob).toContain(`GITHUB_TOKEN: ${"$"}{{ github.token }}`);
+    expect(deployJob).toContain(
+      '--header "Authorization: Bearer $GITHUB_TOKEN"',
+    );
     expect(deployJob).toContain("value?.enabled !== true");
     expect(
       deployJob.indexOf("Require public private-request intake"),
@@ -125,6 +129,7 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler pages secret list \\\n            --project-name eliza-computer",
     );
+    expect(deployJob).toContain('"PRIVATE_INTAKE_GITHUB_TOKEN",');
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler d1 migrations apply slop-private \\",
     );
