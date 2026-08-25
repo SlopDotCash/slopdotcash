@@ -17,6 +17,7 @@ import {
 } from "../src/lib/repositories.mjs";
 import {
   assertOpenEvidenceReferencesCurrent,
+  assertReviewCensusStable,
   collectReviewedPullRequestIds,
   collectSearchReferences,
   deriveCurrentHeadReviewDecision,
@@ -28,6 +29,7 @@ import {
   LEADERBOARD_QUERY_DOCUMENTS,
   OpenSetChangedError,
   parseGenerationArguments,
+  planMergedPullRequestHydration,
   resolveGitHubToken,
   retrySlopSnapshot,
   runGenerator,
@@ -35,7 +37,6 @@ import {
   sameReferenceSet,
   selectDetailedMergedPullRequestIds,
   selectEvaluatedContributionsForWindow,
-  selectHydratedMergedPullRequestIds,
   verifyPullRequestEvidence,
 } from "./generate-leaderboard";
 
@@ -1105,6 +1106,7 @@ describe("rate-efficient query plan", () => {
           nodes: ids.map((id) => ({
             __typename: "PullRequest",
             id,
+            updatedAt: "2026-08-25T18:00:00.000Z",
             reviews: { totalCount: id === "PR_REVIEWED" ? 2 : 0 },
           })),
         };
@@ -1148,6 +1150,33 @@ describe("rate-efficient query plan", () => {
     ).rejects.toThrow(
       "GitHub returned 0 review census nodes for 1 requested IDs",
     );
+  });
+
+  it("fails closed when review counts change before snapshot assembly", () => {
+    expect(() =>
+      assertReviewCensusStable(
+        new Map([
+          [
+            "PR_STABLE",
+            { reviewCount: 1, updatedAt: "2026-08-25T18:00:00.000Z" },
+          ],
+          [
+            "PR_CHANGED",
+            { reviewCount: 0, updatedAt: "2026-08-25T18:00:00.000Z" },
+          ],
+        ]),
+        new Map([
+          [
+            "PR_STABLE",
+            { reviewCount: 1, updatedAt: "2026-08-25T18:00:00.000Z" },
+          ],
+          [
+            "PR_CHANGED",
+            { reviewCount: 1, updatedAt: "2026-08-25T18:01:00.000Z" },
+          ],
+        ]),
+      ),
+    ).toThrow("Review census changed for PR_CHANGED");
   });
 
   it("parses every production GraphQL document", () => {
@@ -1355,6 +1384,7 @@ describe("rate-efficient query plan", () => {
         nodes: ((variables?.ids ?? []) as string[]).map((id) => ({
           __typename: "PullRequest",
           id,
+          updatedAt: mergedAt,
           reviews: { totalCount: id === "PR_101" ? 1 : 0 },
         })),
       }),
@@ -1368,16 +1398,17 @@ describe("rate-efficient query plan", () => {
       }),
     };
 
-    expect(
-      [
-        ...(await selectHydratedMergedPullRequestIds(
-          client,
-          candidates,
-          new Date("2026-06-01T00:00:00.000Z"),
-        )),
-      ].sort(),
-    ).toEqual(
+    const plan = await planMergedPullRequestHydration(
+      client,
+      candidates,
+      new Date("2026-06-01T00:00:00.000Z"),
+    );
+
+    expect([...plan.hydratedIds].sort()).toEqual(
       ["PR_101", "PR_102", "PR_103", "PR_104", "PR_105", "PR_106"].sort(),
+    );
+    expect([...plan.detailEligibleIds].sort()).toEqual(
+      ["PR_102", "PR_103", "PR_104", "PR_105", "PR_106"].sort(),
     );
   });
 

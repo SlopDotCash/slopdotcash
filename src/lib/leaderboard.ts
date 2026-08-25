@@ -163,6 +163,7 @@ export const REVIEW_EXCLUSION_REASONS = [
   "non-decision",
   "insufficient-substance",
   "already-awarded-reviewer",
+  "evaluated-contribution-award",
   "external-prize-policy",
   "reviewer-cycle-cap",
 ] as const;
@@ -173,6 +174,7 @@ export interface ReviewExclusion {
   id: string;
   reviewId: string;
   pullRequestId: string;
+  pullRequestNumber: number;
   repository: RepositoryId;
   url: string;
   reason: ReviewExclusionReason;
@@ -585,7 +587,7 @@ export interface LeaderboardSnapshot {
   source: LeaderboardSourceMetadata;
   leaders: LeaderboardEntry[];
   ledger: ScoreEvent[];
-  reviewExclusions: ReviewExclusion[];
+  reviewExclusions?: ReviewExclusion[];
   opportunities: ScoreOpportunity[];
   attributions: ModelAttribution[];
   invalidAttributionMarkers: InvalidAttributionMarker[];
@@ -604,6 +606,7 @@ export interface LeaderboardInput {
   source: LeaderboardSourceMetadata;
   mergedPullRequestOutcomes: MergedPullRequestOutcome[];
   mergedPullRequests: PullRequestRecord[];
+  detailEligibleMergedPullRequestIds: string[];
   closedIssueCount: number;
   resolvedIssues: IssueRecord[];
   openIssues: IssueRecord[];
@@ -2816,6 +2819,20 @@ export function createLeaderboardSnapshot(
       right.number - left.number ||
       left.id.localeCompare(right.id),
   );
+  const detailEligibleMergedPullRequestIds = new Set(
+    input.detailEligibleMergedPullRequestIds,
+  );
+  const mergedPullRequestIds = new Set(
+    mergedPullRequests.map((pullRequest) => pullRequest.id),
+  );
+  for (const id of detailEligibleMergedPullRequestIds) {
+    if (!mergedPullRequestIds.has(id)) {
+      throw new Error(`Detail-eligible pull request ${id} was not hydrated`);
+    }
+  }
+  const detailEligibleMergedPullRequests = mergedPullRequests.filter(
+    (pullRequest) => detailEligibleMergedPullRequestIds.has(pullRequest.id),
+  );
   const resolvedIssues = dedupeByNodeId(input.resolvedIssues)
     .filter(qualifiesResolvedIssue)
     .sort(
@@ -2829,7 +2846,7 @@ export function createLeaderboardSnapshot(
   const openPullRequests = dedupeByNodeId(input.openPullRequests);
   const verifiedEvidence = selectUniqueVerifiedEvidence(
     input.verifiedEvidence,
-    [...mergedPullRequests, ...openPullRequests],
+    [...detailEligibleMergedPullRequests, ...openPullRequests],
   );
   const entries = new Map<string, MutableLeaderboardEntry>();
   const ledger: ScoreEvent[] = [];
@@ -2843,6 +2860,7 @@ export function createLeaderboardSnapshot(
       id: `${pullRequest.id}:review-exclusion:${review.id}`,
       reviewId: review.id,
       pullRequestId: pullRequest.id,
+      pullRequestNumber: pullRequest.number,
       repository: repositoryIdFromUrl(pullRequest.url),
       url: review.url,
       reason,
@@ -2856,6 +2874,15 @@ export function createLeaderboardSnapshot(
       }
     }
   };
+  const isScoreBearingSource = (
+    repository: RepositoryId,
+    source: { id: string; url: string },
+  ): boolean =>
+    ledger.some(
+      (event) =>
+        event.repository === repository &&
+        (event.source.id === source.id || event.source.url === source.url),
+    );
   const outcomeIds = new Set(
     mergedPullRequestOutcomes.map((pullRequest) => pullRequest.id),
   );
@@ -2901,7 +2928,7 @@ export function createLeaderboardSnapshot(
     string,
     { record: ScoreRatificationRecord; source: GitHubTextSource }
   >();
-  for (const pullRequest of mergedPullRequests) {
+  for (const pullRequest of detailEligibleMergedPullRequests) {
     const repository = findTargetRepositoryById(
       repositoryIdFromUrl(pullRequest.url),
     );
@@ -3089,6 +3116,88 @@ export function createLeaderboardSnapshot(
     }
   }
 
+  const evaluatedSourceKeys = new Set<string>();
+  const evaluatedReviewReservations = new Set<string>();
+  const evaluatedTextSources = new Map<string, GitHubTextSource>();
+  for (const source of [
+    ...mergedPullRequests.flatMap(pullRequestTextSources),
+    ...openPullRequests.flatMap(pullRequestTextSources),
+    ...resolvedIssues.flatMap(issueTextSources),
+    ...openIssues.flatMap(issueTextSources),
+  ]) {
+    const existing = evaluatedTextSources.get(source.id);
+    if (
+      existing &&
+      (existing.url !== source.url ||
+        existing.body !== source.body ||
+        existing.author?.id !== source.author?.id)
+    ) {
+      throw new TypeError(
+        `Evaluated source ${source.id} has conflicting GitHub records`,
+      );
+    }
+    evaluatedTextSources.set(source.id, source);
+  }
+  const evaluatedContributions = [...(input.evaluatedContributions ?? [])].sort(
+    (left, right) =>
+      parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
+      left.id.localeCompare(right.id),
+  );
+  for (const [index, event] of evaluatedContributions.entries()) {
+    assertLedgerValue(event, `evaluatedContributions[${index}]`);
+    if (event.category !== "evaluated-contribution") {
+      throw new TypeError(
+        `evaluatedContributions[${index}] must use the evaluated-contribution category`,
+      );
+    }
+    const occurredAt = parseIsoTime(event.occurredAt);
+    if (occurredAt < parseIsoTime(input.windowFrom) || occurredAt >= windowTo) {
+      throw new RangeError(
+        `Evaluated contribution ${event.id} falls outside the rolling window`,
+      );
+    }
+    const sourceKey = `${event.repository}\0${event.source.id}`;
+    if (
+      evaluatedSourceKeys.has(sourceKey) ||
+      ledger.some(
+        (existing) =>
+          existing.repository === event.repository &&
+          (existing.source.id === event.source.id ||
+            existing.source.url === event.source.url),
+      )
+    ) {
+      throw new TypeError(
+        `Evaluated contribution ${event.id} duplicates a score-bearing source`,
+      );
+    }
+    evaluatedSourceKeys.add(sourceKey);
+    const source = evaluatedTextSources.get(event.source.id);
+    if (event.source.kind === "comment" || event.source.kind === "review") {
+      if (
+        source?.kind !== event.source.kind ||
+        source.url !== event.source.url ||
+        source.author?.id !== event.actor.id ||
+        parseIsoTime(source.createdAt) !== occurredAt
+      ) {
+        throw new TypeError(
+          `Evaluated contribution ${event.id} does not match its exact GitHub ${event.source.kind}`,
+        );
+      }
+    }
+    if (event.source.kind === "review") {
+      const reservationKey = `${event.repository}\0${event.source.number}\0${event.actor.id}`;
+      if (evaluatedReviewReservations.has(reservationKey)) {
+        throw new TypeError(
+          `Evaluated contribution ${event.id} duplicates a reviewer/pull-request award`,
+        );
+      }
+      evaluatedReviewReservations.add(reservationKey);
+    }
+    if (addScore(entries, ledger, event) && source) {
+      recordScoredSources([source]);
+    }
+  }
+
   for (const pullRequest of mergedPullRequests) {
     if (!pullRequest.mergedAt) {
       throw new Error(
@@ -3099,9 +3208,16 @@ export function createLeaderboardSnapshot(
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
     const explicitPrizeAcceptance =
       requiresExplicitPrizeAcceptance(repositoryId);
-    recordTextActivity(entries, sources);
+    const detailEligible = detailEligibleMergedPullRequestIds.has(
+      pullRequest.id,
+    );
+    if (detailEligible) recordTextActivity(entries, sources);
 
-    if (pullRequest.author && !isBotActor(pullRequest.author)) {
+    if (
+      detailEligible &&
+      pullRequest.author &&
+      !isBotActor(pullRequest.author)
+    ) {
       const authorEntry = actorEntry(entries, pullRequest.author);
       authorEntry.rawActivity.commits += pullRequest.commitCount;
       if (
@@ -3176,7 +3292,7 @@ export function createLeaderboardSnapshot(
 
     const ratification = scoreRatifications.get(pullRequest.id);
     const awardedReviewers = new Set<string>();
-    for (const source of sources) {
+    for (const source of detailEligible ? sources : []) {
       let rawReview: unknown | null;
       try {
         rawReview = parseReviewRecordBlock(source.body);
@@ -3215,6 +3331,7 @@ export function createLeaderboardSnapshot(
       if (parseIsoTime(source.createdAt) > parseIsoTime(pullRequest.mergedAt)) {
         continue;
       }
+      if (isScoreBearingSource(repositoryId, source)) continue;
       const reviewThirds = {
         triage: 1,
         standard: 3,
@@ -3248,6 +3365,7 @@ export function createLeaderboardSnapshot(
     }
 
     if (
+      detailEligible &&
       ratification?.source.author &&
       !sameActor(ratification.source.author, pullRequest.author) &&
       !awardedReviewers.has(ratification.source.author.id)
@@ -3288,6 +3406,16 @@ export function createLeaderboardSnapshot(
     )) {
       if (review.author && !isBotActor(review.author)) {
         actorEntry(entries, review.author).rawActivity.reviews += 1;
+      }
+      if (isScoreBearingSource(repositoryId, review)) continue;
+      if (
+        review.author &&
+        evaluatedReviewReservations.has(
+          `${repositoryId}\0${pullRequest.number}\0${review.author.id}`,
+        )
+      ) {
+        excludeReview(pullRequest, review, "evaluated-contribution-award");
+        continue;
       }
       const exclusionReason = reviewExclusionReason(review, pullRequest);
       if (exclusionReason !== null) {
@@ -3383,77 +3511,6 @@ export function createLeaderboardSnapshot(
     }
   }
 
-  const evaluatedSourceKeys = new Set<string>();
-  const evaluatedTextSources = new Map<string, GitHubTextSource>();
-  for (const source of [
-    ...mergedPullRequests.flatMap(pullRequestTextSources),
-    ...openPullRequests.flatMap(pullRequestTextSources),
-    ...resolvedIssues.flatMap(issueTextSources),
-    ...openIssues.flatMap(issueTextSources),
-  ]) {
-    const existing = evaluatedTextSources.get(source.id);
-    if (
-      existing &&
-      (existing.url !== source.url ||
-        existing.body !== source.body ||
-        existing.author?.id !== source.author?.id)
-    ) {
-      throw new TypeError(
-        `Evaluated source ${source.id} has conflicting GitHub records`,
-      );
-    }
-    evaluatedTextSources.set(source.id, source);
-  }
-  const evaluatedContributions = [...(input.evaluatedContributions ?? [])].sort(
-    (left, right) =>
-      parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
-      left.id.localeCompare(right.id),
-  );
-  for (const [index, event] of evaluatedContributions.entries()) {
-    assertLedgerValue(event, `evaluatedContributions[${index}]`);
-    if (event.category !== "evaluated-contribution") {
-      throw new TypeError(
-        `evaluatedContributions[${index}] must use the evaluated-contribution category`,
-      );
-    }
-    const occurredAt = parseIsoTime(event.occurredAt);
-    if (occurredAt < parseIsoTime(input.windowFrom) || occurredAt >= windowTo) {
-      throw new RangeError(
-        `Evaluated contribution ${event.id} falls outside the rolling window`,
-      );
-    }
-    const sourceKey = `${event.repository}\0${event.source.id}`;
-    if (
-      evaluatedSourceKeys.has(sourceKey) ||
-      ledger.some(
-        (existing) =>
-          existing.repository === event.repository &&
-          (existing.source.id === event.source.id ||
-            existing.source.url === event.source.url),
-      )
-    ) {
-      throw new TypeError(
-        `Evaluated contribution ${event.id} duplicates a score-bearing source`,
-      );
-    }
-    evaluatedSourceKeys.add(sourceKey);
-    addScore(entries, ledger, event);
-    if (event.source.kind === "comment") {
-      const source = evaluatedTextSources.get(event.source.id);
-      if (
-        source?.kind !== "comment" ||
-        source.url !== event.source.url ||
-        source.author?.id !== event.actor.id ||
-        parseIsoTime(source.createdAt) !== occurredAt
-      ) {
-        throw new TypeError(
-          `Evaluated contribution ${event.id} does not match its exact GitHub comment`,
-        );
-      }
-      recordScoredSources([source]);
-    }
-  }
-
   const issueQueue = openIssues.map((record) =>
     issueWorkItem(record, input.generatedAt),
   );
@@ -3531,7 +3588,7 @@ export function createLeaderboardSnapshot(
       ...input.source,
       counts: {
         mergedPullRequests: mergedPullRequestOutcomes.length,
-        detailedMergedPullRequests: mergedPullRequests.length,
+        detailedMergedPullRequests: detailEligibleMergedPullRequests.length,
         closedIssues: input.closedIssueCount,
         detailedClosedIssues: input.resolvedIssues.length,
         resolvedIssues: resolvedIssues.length,
@@ -3903,6 +3960,7 @@ function assertReviewExclusionValue(value: unknown, path: string): void {
   const expectedKeys = [
     "id",
     "pullRequestId",
+    "pullRequestNumber",
     "reason",
     "repository",
     "reviewId",
@@ -3916,6 +3974,10 @@ function assertReviewExclusionValue(value: unknown, path: string): void {
   }
   assertString(exclusion.id, `${path}.id`);
   assertString(exclusion.pullRequestId, `${path}.pullRequestId`);
+  assertPositiveInteger(
+    exclusion.pullRequestNumber,
+    `${path}.pullRequestNumber`,
+  );
   assertString(exclusion.reviewId, `${path}.reviewId`);
   if (
     exclusion.id !==
@@ -3929,10 +3991,13 @@ function assertReviewExclusionValue(value: unknown, path: string): void {
     TARGET_REPOSITORIES.map((repository) => repository.id),
     `${path}.repository`,
   );
-  assertString(exclusion.url, `${path}.url`);
-  if (repositoryIdFromUrl(exclusion.url) !== exclusion.repository) {
-    throw new Error(`${path}.url must match ${path}.repository`);
-  }
+  assertRepositoryUrl(
+    exclusion.url,
+    `${path}.url`,
+    "review",
+    exclusion.pullRequestNumber,
+    exclusion.repository as RepositoryId,
+  );
 }
 
 function assertSourceValue(value: unknown, path: string): void {
@@ -4982,6 +5047,20 @@ export function assertLeaderboardSnapshot(
     ) {
       throw new Error("snapshot.reviewExclusions must contain unique IDs");
     }
+    for (const exclusion of validatedReviewExclusions) {
+      if (
+        validatedLedger.some(
+          (event) =>
+            event.repository === exclusion.repository &&
+            (event.source.id === exclusion.reviewId ||
+              event.source.url === exclusion.url),
+        )
+      ) {
+        throw new Error(
+          "snapshot.reviewExclusions cannot contain a score-bearing review source",
+        );
+      }
+    }
     for (let index = 1; index < validatedReviewExclusions.length; index += 1) {
       const previous = validatedReviewExclusions[index - 1];
       const current = validatedReviewExclusions[index];
@@ -5502,14 +5581,16 @@ export function assertLeaderboardSnapshot(
   const detailedPullRequestIds = new Set(
     validatedLedger
       .filter((event) =>
-        ["material-test-change", "evidence", "substantive-review"].includes(
-          event.category,
-        ),
+        ["material-test-change", "evidence"].includes(event.category),
       )
-      .map((event) =>
-        event.category === "substantive-review"
-          ? event.id.split(/:(?:automated-review|ratifier|reviewer):/u)[0]
-          : event.source.id,
+      .map((event) => event.source.id),
+  );
+  const reviewedPullRequestIds = new Set(
+    validatedLedger
+      .filter((event) => event.category === "substantive-review")
+      .map(
+        (event) =>
+          event.id.split(/:(?:automated-review|ratifier|reviewer):/u)[0],
       ),
   );
   const resolvedIssueEvents = validatedLedger.filter(
@@ -5533,6 +5614,7 @@ export function assertLeaderboardSnapshot(
   if (
     mergedOutcomeEvents.length > mergedPullRequestCount ||
     detailedPullRequestIds.size > detailedMergedPullRequestCount ||
+    reviewedPullRequestIds.size > mergedPullRequestCount ||
     resolvedIssueEvents.length > resolvedIssueCount
   ) {
     throw new Error(
