@@ -3119,6 +3119,17 @@ export function createLeaderboardSnapshot(
   const evaluatedSourceKeys = new Set<string>();
   const evaluatedReviewReservations = new Set<string>();
   const evaluatedTextSources = new Map<string, GitHubTextSource>();
+  const evaluatedArtifactKeys = new Set<string>();
+  for (const artifact of [
+    ...mergedPullRequests,
+    ...openPullRequests,
+    ...resolvedIssues,
+    ...openIssues,
+  ]) {
+    evaluatedArtifactKeys.add(
+      `${repositoryIdFromUrl(artifact.url)}\0${artifact.number}`,
+    );
+  }
   for (const source of [
     ...mergedPullRequests.flatMap(pullRequestTextSources),
     ...openPullRequests.flatMap(pullRequestTextSources),
@@ -3174,10 +3185,15 @@ export function createLeaderboardSnapshot(
     const source = evaluatedTextSources.get(event.source.id);
     if (event.source.kind === "comment" || event.source.kind === "review") {
       if (
-        source?.kind !== event.source.kind ||
-        source.url !== event.source.url ||
-        source.author?.id !== event.actor.id ||
-        parseIsoTime(source.createdAt) !== occurredAt
+        (source !== undefined &&
+          (source.kind !== event.source.kind ||
+            source.url !== event.source.url ||
+            source.author?.id !== event.actor.id ||
+            parseIsoTime(source.createdAt) !== occurredAt)) ||
+        (source === undefined &&
+          evaluatedArtifactKeys.has(
+            `${event.repository}\0${event.source.number}`,
+          ))
       ) {
         throw new TypeError(
           `Evaluated contribution ${event.id} does not match its exact GitHub ${event.source.kind}`,

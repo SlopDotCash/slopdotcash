@@ -2337,6 +2337,33 @@ describe("scoring and limits", () => {
     ).toThrow("duplicates a reviewer/pull-request award");
   });
 
+  it("retains a historic review award whose closed unmerged parent is outside the live window", () => {
+    const reviewer = actor("historic-evaluated-reviewer");
+    const award: ScoreEvent = {
+      ...evaluatedContribution(0, reviewer),
+      id: "award_historic_closed_review",
+      occurredAt: "2026-07-27T10:00:00.000Z",
+      source: {
+        id: "REVIEW_HISTORIC_CLOSED",
+        kind: "review",
+        number: 79,
+        title: "Closed unmerged contribution",
+        url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-799",
+      },
+    };
+
+    const snapshot = createLeaderboardSnapshot(
+      input({ evaluatedContributions: [award] }),
+    );
+
+    expect(snapshot.ledger).toContainEqual(
+      expect.objectContaining({
+        id: award.id,
+        source: expect.objectContaining({ id: award.source.id }),
+      }),
+    );
+  });
+
   it("scores accepted outcomes while capping evidence and reviews", () => {
     const reviewer = actor("reviewer");
     const evidenceBody = [

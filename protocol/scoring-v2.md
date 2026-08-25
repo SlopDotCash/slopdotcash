@@ -55,7 +55,8 @@ in a second surface.
 An existing evaluated-contribution review award remains authoritative for its
 reviewer and pull request. The same review cannot also receive ordinary formal
 review credit, and a second evaluator award for that reviewer/pull-request pair
-fails closed.
+fails closed. Historic awards whose closed-unmerged parent is outside the live
+collection window remain governed by their validated evaluator manifest.
 
 The `slop-review` proposal records effort, complexity, impact, review load,
 split risk, confidence, exact provider/model/client, receipt, and finalized
