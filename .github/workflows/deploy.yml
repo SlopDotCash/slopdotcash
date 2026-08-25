@@ -261,6 +261,7 @@ jobs:
             --header "Accept: application/vnd.github+json" \
             --header "Authorization: Bearer $GITHUB_TOKEN" \
             --header "User-Agent: slop-release-intake-check" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting |
             node -e '
               let source = "";
@@ -957,6 +958,45 @@ jobs:
             sleep 5
           done
           echo "::error::Active private trace API did not reach its fail-closed unauthenticated boundary."
+          exit 1
+
+      - name: Verify authenticated private intake preflight
+        run: |
+          set -euo pipefail
+          response="$RUNNER_TEMP/slop-private-intake-preflight.json"
+          headers="$RUNNER_TEMP/slop-private-intake-preflight.headers"
+          for attempt in $(seq 1 18); do
+            status="$(
+              curl --silent --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --max-filesize 65536 \
+                --output "$response" \
+                --dump-header "$headers" \
+                --write-out "%{http_code}" \
+                --header "Cache-Control: no-cache" \
+                "https://api.slop.cash/api/v1/private-request-intake?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-intake-$attempt"
+            )"
+            if [ "$status" = "200" ] && node - "$response" "$headers" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const headers = readFileSync(process.argv[3], "utf8");
+          const contract = headers.match(/^x-slop-trace-api-contract:\s*([^\r\n]+)$/imu)?.[1]?.trim();
+          if (
+            JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(["enabled", "source", "verifiedAt"]) ||
+            value?.enabled !== true ||
+            value?.source !== "github-authenticated" ||
+            !Number.isFinite(Date.parse(value?.verifiedAt)) ||
+            contract !== "private-trace-v1-opaque-hmac-v1"
+          ) process.exit(1);
+          NODE
+            then
+              exit 0
+            fi
+            echo "::warning::Authenticated private intake preflight returned HTTP $status (attempt $attempt/18)."
+            sleep 5
+          done
+          echo "::error::Authenticated private intake preflight did not become authoritative."
           exit 1
 
       - name: Require public identity OAuth app

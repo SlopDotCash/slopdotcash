@@ -110,6 +110,14 @@ async function privateIntakeStatus(
   fetchImpl: typeof fetch,
   now: () => Date,
 ): Promise<PrivateIntakeStatus> {
+  if (
+    typeof token !== "string" ||
+    token.length < 20 ||
+    token.length > 2048 ||
+    /\s/u.test(token)
+  ) {
+    return { status: "unavailable" };
+  }
   if (cache !== undefined) {
     try {
       const cached = await cache.match(PRIVATE_INTAKE_CACHE_KEY);
@@ -123,14 +131,6 @@ async function privateIntakeStatus(
       return { status: "unavailable" };
     }
   }
-  if (
-    typeof token !== "string" ||
-    token.length < 20 ||
-    token.length > 2048 ||
-    /\s/u.test(token)
-  ) {
-    return { status: "unavailable" };
-  }
   let response: Response;
   try {
     response = await fetchImpl(PRIVATE_INTAKE_STATUS_URL, {
@@ -140,6 +140,7 @@ async function privateIntakeStatus(
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${token}`,
         "User-Agent": "slop-private-intake-verifier",
+        "X-GitHub-Api-Version": "2022-11-28",
       },
       signal: AbortSignal.timeout(30_000),
     });

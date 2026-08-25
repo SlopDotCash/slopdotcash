@@ -440,6 +440,7 @@ describe("private trace API", () => {
     );
     const cache = new Map<string, Response>();
     const requests: Array<{ url: string; init: RequestInit }> = [];
+    let cachedControl: string | null = null;
     try {
       globalThis.fetch = (async (input, init = {}) => {
         requests.push({ url: String(input), init });
@@ -451,6 +452,7 @@ describe("private trace API", () => {
           default: {
             match: async (request: Request) => cache.get(request.url)?.clone(),
             put: async (request: Request, response: Response) => {
+              cachedControl = response.headers.get("cache-control");
               cache.set(request.url, response.clone());
             },
           },
@@ -491,8 +493,68 @@ describe("private trace API", () => {
           Accept: "application/vnd.github+json",
           Authorization: "Bearer github_server_token_value",
           "User-Agent": "slop-private-intake-verifier",
+          "X-GitHub-Api-Version": "2022-11-28",
         },
       });
+      expect(cachedControl).toBe("public, max-age=300");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCaches === undefined) {
+        Reflect.deleteProperty(globalThis, "caches");
+      } else {
+        Object.defineProperty(globalThis, "caches", originalCaches);
+      }
+    }
+  });
+
+  it("rejects cached enabled status when the server credential is absent", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalCaches = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "caches",
+    );
+    let upstreamRequested = false;
+    try {
+      globalThis.fetch = (async () => {
+        upstreamRequested = true;
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }) as unknown as typeof fetch;
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {
+          default: {
+            match: async () =>
+              new Response(
+                JSON.stringify({
+                  status: "verified",
+                  enabled: true,
+                  verifiedAt: "2026-08-25T00:00:00.000Z",
+                }),
+              ),
+            put: async () => undefined,
+          },
+        },
+      });
+
+      const response = await onPagesRequest({
+        request: new Request(
+          "https://api.slop.cash/api/v1/private-request-intake",
+        ),
+        env: {
+          SLOP_DB: {} as never,
+          PRIVATE_TRACES: {} as never,
+          TRACE_AUTH_SECRET: SECRET,
+          SLOP_IDENTITY: {
+            fetch: async () => new Response(null, { status: 401 }),
+          },
+        },
+      });
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: "private_intake_unavailable",
+      });
+      expect(upstreamRequested).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
       if (originalCaches === undefined) {
