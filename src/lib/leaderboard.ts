@@ -213,6 +213,29 @@ export interface PullRequestRecord {
   commitCount: number;
 }
 
+/**
+ * Complete text and review evidence for a merged pull request whose expensive
+ * author-detail connections were not requested. Detail-only fields are
+ * deliberately absent rather than represented by plausible empty values.
+ */
+export type MergedPullRequestReviewRecord = Pick<
+  PullRequestRecord,
+  | "id"
+  | "number"
+  | "title"
+  | "url"
+  | "body"
+  | "createdAt"
+  | "updatedAt"
+  | "lastEditedAt"
+  | "editor"
+  | "mergedAt"
+  | "headRefOid"
+  | "author"
+  | "comments"
+  | "reviews"
+>;
+
 export interface MergedPullRequestOutcome {
   id: string;
   number: number;
@@ -606,6 +629,7 @@ export interface LeaderboardInput {
   source: LeaderboardSourceMetadata;
   mergedPullRequestOutcomes: MergedPullRequestOutcome[];
   mergedPullRequests: PullRequestRecord[];
+  reviewedMergedPullRequests?: MergedPullRequestReviewRecord[];
   detailEligibleMergedPullRequestIds: string[];
   closedIssueCount: number;
   resolvedIssues: IssueRecord[];
@@ -1613,7 +1637,7 @@ export function assessModelAttribution(
 }
 
 export function pullRequestTextSources(
-  pullRequest: PullRequestRecord,
+  pullRequest: MergedPullRequestReviewRecord,
 ): GitHubTextSource[] {
   const body = pullRequestBodySource(pullRequest);
   const reviewSources: GitHubTextSource[] = pullRequest.reviews.map(
@@ -1677,7 +1701,7 @@ export function isSubstantiveReview(
 
 function reviewExclusionReason(
   review: PullRequestReview,
-  pullRequest: PullRequestRecord,
+  pullRequest: Pick<PullRequestRecord, "author" | "mergedAt">,
 ): ReviewExclusionReason | null {
   if (!review.author) return "missing-reviewer";
   if (isBotActor(review.author)) return "bot-reviewer";
@@ -2167,7 +2191,7 @@ function evidenceSourcesAtMerge(
 }
 
 function pullRequestBodySource(
-  pullRequest: PullRequestRecord | MergedPullRequestOutcome,
+  pullRequest: MergedPullRequestReviewRecord | MergedPullRequestOutcome,
 ): GitHubTextSource {
   return {
     id: `${pullRequest.id}:body`,
@@ -2817,6 +2841,9 @@ function latestSourceUpdate(input: LeaderboardInput): string {
     input.sourceUpdatedAt,
     ...input.mergedPullRequestOutcomes.map((record) => record.updatedAt),
     ...input.mergedPullRequests.map((record) => record.updatedAt),
+    ...(input.reviewedMergedPullRequests ?? []).map(
+      (record) => record.updatedAt,
+    ),
     ...input.resolvedIssues.map((record) => record.updatedAt),
     ...input.openIssues.map((record) => record.updatedAt),
     ...input.openPullRequests.map((record) => record.updatedAt),
@@ -2837,7 +2864,33 @@ export function createLeaderboardSnapshot(
       right.number - left.number ||
       left.id.localeCompare(right.id),
   );
-  const mergedPullRequests = dedupeByNodeId(input.mergedPullRequests).sort(
+  const detailHydratedMergedPullRequests = dedupeByNodeId(
+    input.mergedPullRequests,
+  ).sort(
+    (left, right) =>
+      parseIsoTime(right.mergedAt ?? right.updatedAt) -
+        parseIsoTime(left.mergedAt ?? left.updatedAt) ||
+      right.number - left.number ||
+      left.id.localeCompare(right.id),
+  );
+  const reviewedMergedPullRequests = dedupeByNodeId(
+    input.reviewedMergedPullRequests ?? [],
+  );
+  const detailHydratedIds = new Set(
+    detailHydratedMergedPullRequests.map((record) => record.id),
+  );
+  const overlappingHydrationId = reviewedMergedPullRequests.find((record) =>
+    detailHydratedIds.has(record.id),
+  )?.id;
+  if (overlappingHydrationId) {
+    throw new Error(
+      `Merged pull request ${overlappingHydrationId} was supplied as both full-detail and review-only hydration`,
+    );
+  }
+  const mergedPullRequests: MergedPullRequestReviewRecord[] = [
+    ...detailHydratedMergedPullRequests,
+    ...reviewedMergedPullRequests,
+  ].sort(
     (left, right) =>
       parseIsoTime(right.mergedAt ?? right.updatedAt) -
         parseIsoTime(left.mergedAt ?? left.updatedAt) ||
@@ -2847,16 +2900,20 @@ export function createLeaderboardSnapshot(
   const detailEligibleMergedPullRequestIds = new Set(
     input.detailEligibleMergedPullRequestIds,
   );
-  const mergedPullRequestIds = new Set(
-    mergedPullRequests.map((pullRequest) => pullRequest.id),
-  );
   for (const id of detailEligibleMergedPullRequestIds) {
-    if (!mergedPullRequestIds.has(id)) {
+    if (!detailHydratedIds.has(id)) {
       throw new Error(`Detail-eligible pull request ${id} was not hydrated`);
     }
   }
-  const detailEligibleMergedPullRequests = mergedPullRequests.filter(
-    (pullRequest) => detailEligibleMergedPullRequestIds.has(pullRequest.id),
+  const detailEligibleMergedPullRequests =
+    detailHydratedMergedPullRequests.filter((pullRequest) =>
+      detailEligibleMergedPullRequestIds.has(pullRequest.id),
+    );
+  const detailEligibleMergedPullRequestById = new Map(
+    detailEligibleMergedPullRequests.map((pullRequest) => [
+      pullRequest.id,
+      pullRequest,
+    ]),
   );
   const resolvedIssues = dedupeByNodeId(input.resolvedIssues)
     .filter(qualifiesResolvedIssue)
@@ -2877,7 +2934,7 @@ export function createLeaderboardSnapshot(
   const ledger: ScoreEvent[] = [];
   const reviewExclusions: ReviewExclusion[] = [];
   const excludeReview = (
-    pullRequest: PullRequestRecord,
+    pullRequest: MergedPullRequestReviewRecord,
     review: PullRequestReview,
     reason: ReviewExclusionReason,
   ): void => {
@@ -3254,44 +3311,48 @@ export function createLeaderboardSnapshot(
     const detailEligible = detailEligibleMergedPullRequestIds.has(
       pullRequest.id,
     );
+    const detailedPullRequest = detailEligibleMergedPullRequestById.get(
+      pullRequest.id,
+    );
     if (detailEligible) recordTextActivity(entries, sources);
 
     if (
-      detailEligible &&
-      pullRequest.author &&
-      !isBotActor(pullRequest.author)
+      detailedPullRequest?.author &&
+      !isBotActor(detailedPullRequest.author)
     ) {
-      const authorEntry = actorEntry(entries, pullRequest.author);
-      authorEntry.rawActivity.commits += pullRequest.commitCount;
+      const authorEntry = actorEntry(entries, detailedPullRequest.author);
+      authorEntry.rawActivity.commits += detailedPullRequest.commitCount;
       if (
         !explicitPrizeAcceptance &&
-        hasMaterialTestChange(pullRequest.files)
+        hasMaterialTestChange(detailedPullRequest.files)
       ) {
         const scored = addScore(entries, ledger, {
-          id: `${pullRequest.id}:tests`,
-          actor: pullRequest.author,
+          id: `${detailedPullRequest.id}:tests`,
+          actor: detailedPullRequest.author,
           category: "material-test-change",
           points: 4,
           occurredAt: pullRequest.mergedAt,
-          repository: repositoryIdFromUrl(pullRequest.url),
+          repository: repositoryIdFromUrl(detailedPullRequest.url),
           source: {
-            id: pullRequest.id,
+            id: detailedPullRequest.id,
             kind: "pull-request",
-            number: pullRequest.number,
-            title: pullRequest.title,
-            url: pullRequest.url,
+            number: detailedPullRequest.number,
+            title: detailedPullRequest.title,
+            url: detailedPullRequest.url,
           },
           reason: `Recognized test files met the ${MATERIAL_TEST_ADDITIONS}-addition and ${MATERIAL_TEST_CHURN}-churn threshold.`,
         });
         if (scored) {
-          recordScoredSources([pullRequestBodySource(pullRequest)]);
+          recordScoredSources([pullRequestBodySource(detailedPullRequest)]);
         }
       }
 
       const attributableEvidenceSources = evidenceSourcesAtMerge(
-        pullRequest,
+        detailedPullRequest,
         sources,
-      ).filter((source) => sameActor(source.author, pullRequest.author));
+      ).filter((source) =>
+        sameActor(source.author, detailedPullRequest.author),
+      );
       const evidence = assessEvidence(
         attributableEvidenceSources,
         verifiedEvidence.filter(
@@ -3308,7 +3369,7 @@ export function createLeaderboardSnapshot(
       for (const finding of evidence.findings) {
         const scored = addScore(entries, ledger, {
           id: `${pullRequest.id}:evidence:${finding.category}`,
-          actor: pullRequest.author,
+          actor: detailedPullRequest.author,
           category: "evidence",
           points: finding.points,
           occurredAt: pullRequest.mergedAt,

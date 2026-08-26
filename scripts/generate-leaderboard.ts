@@ -26,6 +26,7 @@ import {
   type LeaderboardSnapshot,
   type LeaderboardSourceMetadata,
   type MergedPullRequestOutcome,
+  type MergedPullRequestReviewRecord,
   type PullRequestFile,
   type PullRequestRecord,
   type PullRequestReview,
@@ -112,6 +113,12 @@ type PendingPullRequestRecord = Omit<PullRequestRecord, "reviews"> & {
   headRefOid: string;
   reviews: PendingPullRequestReview[];
 };
+type PendingMergedPullRequestReviewRecord = Omit<
+  MergedPullRequestReviewRecord,
+  "reviews"
+> & {
+  reviews: PendingPullRequestReview[];
+};
 
 interface ParsedPullRequest {
   record: PendingPullRequestRecord;
@@ -121,6 +128,15 @@ interface ParsedPullRequest {
     reviews: NestedPageState;
     files: NestedPageState;
     closingIssues: NestedPageState;
+  };
+}
+
+interface ParsedMergedPullRequestReview {
+  record: PendingMergedPullRequestReviewRecord;
+  state: string;
+  pages: {
+    comments: NestedPageState;
+    reviews: NestedPageState;
   };
 }
 
@@ -176,6 +192,7 @@ export interface RateLimitSnapshot {
 
 export interface GraphqlExecutor {
   execute(document: string, variables?: GraphqlVariables): Promise<JsonRecord>;
+  ensureBudget?(requiredCost: number): Promise<void>;
   getRequestCount(): number;
   getRateLimit(): RateLimitSnapshot;
 }
@@ -316,6 +333,26 @@ const PULL_REQUEST_FRAGMENT = `
   }
 `;
 
+const MERGED_PULL_REQUEST_REVIEW_FRAGMENT = `
+  fragment LeaderboardMergedPullRequestReview on PullRequest {
+    id
+    state
+    number
+    title
+    url
+    body
+    createdAt
+    updatedAt
+    lastEditedAt
+    editor { ...LeaderboardActor }
+    mergedAt
+    headRefOid
+    author { ...LeaderboardActor }
+    comments(first: 100) { ${COMMENT_FIELDS} }
+    reviews(states: [APPROVED, CHANGES_REQUESTED], first: 100) { ${REVIEW_FIELDS} }
+  }
+`;
+
 const ISSUE_FRAGMENT = `
   fragment LeaderboardIssue on Issue {
     id
@@ -406,6 +443,18 @@ const PULL_REQUEST_DETAILS_QUERY = `
   ${PULL_REQUEST_FRAGMENT}
 `;
 
+const MERGED_PULL_REQUEST_REVIEWS_QUERY = `
+  query LeaderboardMergedPullRequestReviews($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest { ...LeaderboardMergedPullRequestReview }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${ACTOR_FRAGMENT}
+  ${MERGED_PULL_REQUEST_REVIEW_FRAGMENT}
+`;
+
 const REVIEWED_PULL_REQUEST_REFERENCES_QUERY = `
   query LeaderboardReviewedPullRequestReferences($ids: [ID!]!) {
     nodes(ids: $ids) {
@@ -413,7 +462,7 @@ const REVIEWED_PULL_REQUEST_REFERENCES_QUERY = `
       ... on PullRequest {
         id
         updatedAt
-        reviews { totalCount }
+        reviews(states: [APPROVED, CHANGES_REQUESTED]) { totalCount }
       }
     }
     rateLimit { cost limit remaining resetAt }
@@ -518,6 +567,24 @@ const MORE_REVIEWS_QUERY = `
   ${ACTOR_FRAGMENT}
 `;
 
+const MORE_FORMAL_REVIEWS_QUERY = `
+  query LeaderboardMoreFormalReviews($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on PullRequest {
+        id
+        headRefOid
+        reviews(
+          states: [APPROVED, CHANGES_REQUESTED]
+          first: 100
+          after: $after
+        ) { ${REVIEW_FIELDS} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${ACTOR_FRAGMENT}
+`;
+
 const REVIEW_INLINE_COMMENTS_QUERY = `
   query LeaderboardReviewInlineComments($ids: [ID!]!) {
     nodes(ids: $ids) {
@@ -603,11 +670,13 @@ export const LEADERBOARD_QUERY_DOCUMENTS = {
   openPullRequestReferences: OPEN_PULL_REQUEST_REFERENCES_QUERY,
   issueDetails: ISSUE_DETAILS_QUERY,
   pullRequestDetails: PULL_REQUEST_DETAILS_QUERY,
+  mergedPullRequestReviews: MERGED_PULL_REQUEST_REVIEWS_QUERY,
   reviewedPullRequestReferences: REVIEWED_PULL_REQUEST_REFERENCES_QUERY,
   reviewInlineComments: REVIEW_INLINE_COMMENTS_QUERY,
   morePullRequestComments: MORE_PULL_REQUEST_COMMENTS_QUERY,
   moreIssueComments: MORE_ISSUE_COMMENTS_QUERY,
   moreReviews: MORE_REVIEWS_QUERY,
+  moreFormalReviews: MORE_FORMAL_REVIEWS_QUERY,
   moreReviewInlineComments: MORE_REVIEW_INLINE_COMMENTS_QUERY,
   moreFiles: MORE_FILES_QUERY,
   moreClosingIssues: MORE_CLOSING_ISSUES_QUERY,
@@ -940,6 +1009,39 @@ function parsePullRequest(value: unknown, path: string): ParsedPullRequest {
   };
 }
 
+function parseMergedPullRequestReview(
+  value: unknown,
+  path: string,
+): ParsedMergedPullRequestReview {
+  const node = asRecord(value, path);
+  const id = asString(node.id, `${path}.id`);
+  const comments = parseComments(node.comments, `${path}.comments`, id);
+  const reviews = parseReviews(node.reviews, `${path}.reviews`);
+  return {
+    state: asString(node.state, `${path}.state`),
+    record: {
+      id,
+      number: asNumber(node.number, `${path}.number`),
+      title: asString(node.title, `${path}.title`),
+      url: asString(node.url, `${path}.url`),
+      body: asString(node.body, `${path}.body`),
+      createdAt: asString(node.createdAt, `${path}.createdAt`),
+      updatedAt: asString(node.updatedAt, `${path}.updatedAt`),
+      lastEditedAt: asNullableString(node.lastEditedAt, `${path}.lastEditedAt`),
+      editor: parseActor(node.editor, `${path}.editor`),
+      mergedAt: asNullableString(node.mergedAt, `${path}.mergedAt`),
+      headRefOid: asFullCommitSha(node.headRefOid, `${path}.headRefOid`),
+      author: parseActor(node.author, `${path}.author`),
+      comments: comments.nodes,
+      reviews: reviews.nodes,
+    },
+    pages: {
+      comments: pageState(comments),
+      reviews: pageState(reviews),
+    },
+  };
+}
+
 function parseIssue(value: unknown, path: string): ParsedIssue {
   const node = asRecord(value, path);
   const id = asString(node.id, `${path}.id`);
@@ -1079,6 +1181,29 @@ function isJsonContentType(value: string | null): boolean {
   );
 }
 
+function secondaryRateLimitDelayMs(
+  response: Response,
+  responseBody: string,
+): number | null {
+  if (response.status !== 403 && response.status !== 429) return null;
+  let message = "";
+  try {
+    const payload = JSON.parse(responseBody) as { message?: unknown };
+    if (typeof payload.message === "string") message = payload.message;
+  } catch {
+    return null;
+  }
+  if (!/secondary rate limit|abuse detection/iu.test(message)) return null;
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter !== null && /^\d+$/u.test(retryAfter)) {
+    const seconds = Number(retryAfter);
+    if (Number.isSafeInteger(seconds)) return seconds * 1_000;
+  }
+  // GitHub directs clients without Retry-After guidance to wait at least one
+  // minute before retrying a secondary-limit response.
+  return 60_000;
+}
+
 async function retryDelay(milliseconds: number): Promise<void> {
   await new Promise<void>((resolveDelay) => {
     setTimeout(resolveDelay, milliseconds);
@@ -1192,6 +1317,38 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     this.#retryBaseDelayMs = retryBaseDelayMs;
   }
 
+  async ensureBudget(requiredCost: number): Promise<void> {
+    if (!Number.isInteger(requiredCost) || requiredCost < 0) {
+      throw new Error("requiredCost must be a non-negative integer");
+    }
+    if (!this.#rateLimit) return;
+    const effectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
+    if (requiredCost > effectiveMaxGenerationCost) {
+      throw new Error(
+        `Required GitHub GraphQL cost ${requiredCost} exceeds the safe per-window budget ${effectiveMaxGenerationCost}`,
+      );
+    }
+    const available = Math.min(
+      effectiveMaxGenerationCost - this.#consumedCost,
+      this.#rateLimit.remaining - this.#minimumRateLimitReserve,
+    );
+    if (requiredCost <= available) return;
+
+    const resetAt = Date.parse(this.#rateLimit.resetAt);
+    if (!Number.isFinite(resetAt)) {
+      throw new Error("GitHub GraphQL returned an invalid rate-limit resetAt");
+    }
+    await retryDelay(Math.max(0, resetAt - Date.now() + 1_000));
+    this.#consumedCost = 0;
+    this.#startingRemaining = null;
+    this.#rateLimit = {
+      ...this.#rateLimit,
+      cost: 0,
+      consumedDuringRun: 0,
+      remaining: this.#rateLimit.limit,
+    };
+  }
+
   async execute(
     document: string,
     variables: GraphqlVariables = {},
@@ -1204,16 +1361,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       attempt <= MAX_GRAPHQL_REQUEST_ATTEMPTS;
       attempt += 1
     ) {
-      const effectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
-      if (
-        this.#consumedCost >= effectiveMaxGenerationCost ||
-        (this.#rateLimit &&
-          this.#rateLimit.remaining <= this.#minimumRateLimitReserve)
-      ) {
-        throw new Error(
-          `GitHub GraphQL safety budget reached before request ${this.#requestCount + 1} (${this.#consumedCost}/${effectiveMaxGenerationCost} points consumed, ${this.#rateLimit?.remaining ?? "unknown"} remaining)`,
-        );
-      }
+      await this.ensureBudget(1);
       this.#requestCount += 1;
       const controller = new AbortController();
       const timeout = setTimeout(() => {
@@ -1256,6 +1404,17 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       const retryableStatus = [502, 503, 504].includes(response.status);
       if (retryableStatus && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
         await retryDelay(this.#retryBaseDelayMs * 2 ** (attempt - 1));
+        continue;
+      }
+      const secondaryLimitDelay = secondaryRateLimitDelayMs(
+        response,
+        responseBody,
+      );
+      if (
+        secondaryLimitDelay !== null &&
+        attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS
+      ) {
+        await retryDelay(secondaryLimitDelay);
         continue;
       }
 
@@ -1502,6 +1661,14 @@ export interface ReviewCensusEntry {
   updatedAt: string;
 }
 
+function formalDecisionReviewCount(
+  reviews: ReadonlyArray<{ state: string }>,
+): number {
+  return reviews.filter((review) =>
+    ["APPROVED", "CHANGES_REQUESTED"].includes(review.state),
+  ).length;
+}
+
 export async function collectPullRequestReviewCounts(
   client: GraphqlExecutor,
   references: ReadonlyArray<{ id: string }>,
@@ -1515,9 +1682,13 @@ export async function collectPullRequestReviewCounts(
   );
   const estimatedCost = batches.length * reservedPasses;
   if (estimatedCost > available) {
-    throw new Error(
-      `Review census cost ${estimatedCost} exceeds the safe GraphQL budget ${available}; no partial snapshot will be written`,
-    );
+    if (client.ensureBudget) {
+      await client.ensureBudget(estimatedCost);
+    } else {
+      throw new Error(
+        `Review census cost ${estimatedCost} exceeds the safe GraphQL budget ${available}; no partial snapshot will be written`,
+      );
+    }
   }
   const reviewCounts = new Map<string, ReviewCensusEntry>();
   for (const batch of batches) {
@@ -1765,7 +1936,7 @@ async function collectOpenReferences(
 }
 
 function validateRecordState(
-  parsed: ParsedIssue | ParsedPullRequest,
+  parsed: ParsedIssue | ParsedPullRequest | ParsedMergedPullRequestReview,
   expectedState: ExpectedRecordState,
 ): void {
   if (
@@ -1813,7 +1984,9 @@ function parsePullRequestOutcome(
   };
 }
 
-function parseDetailBatch<T extends ParsedIssue | ParsedPullRequest>(
+function parseDetailBatch<
+  T extends ParsedIssue | ParsedPullRequest | ParsedMergedPullRequestReview,
+>(
   data: JsonRecord,
   ids: string[],
   expectedKind: NodeReference["kind"],
@@ -1841,13 +2014,19 @@ function parseDetailBatch<T extends ParsedIssue | ParsedPullRequest>(
   });
 }
 
-async function completePullRequestConnections(
-  client: GraphqlExecutor,
-  parsed: ParsedPullRequest,
-): Promise<PendingPullRequestRecord> {
-  const pullRequest = parsed.record;
+type PendingPullRequestTextRecord =
+  | PendingPullRequestRecord
+  | PendingMergedPullRequestReviewRecord;
 
-  let commentsState = parsed.pages.comments;
+async function completePullRequestTextConnections<
+  T extends PendingPullRequestTextRecord,
+>(
+  client: GraphqlExecutor,
+  pullRequest: T,
+  pages: Pick<ParsedPullRequest["pages"], "comments" | "reviews">,
+  moreReviewsQuery: string,
+): Promise<T> {
+  let commentsState = pages.comments;
   while (commentsState.pageInfo.hasNextPage) {
     if (!commentsState.pageInfo.endCursor) {
       throw new Error(`PR #${pullRequest.number} comments cursor is missing`);
@@ -1865,12 +2044,12 @@ async function completePullRequestConnections(
     commentsState = pageState(page);
   }
 
-  let reviewsState = parsed.pages.reviews;
+  let reviewsState = pages.reviews;
   while (reviewsState.pageInfo.hasNextPage) {
     if (!reviewsState.pageInfo.endCursor) {
       throw new Error(`PR #${pullRequest.number} reviews cursor is missing`);
     }
-    const data = await client.execute(MORE_REVIEWS_QUERY, {
+    const data = await client.execute(moreReviewsQuery, {
       id: pullRequest.id,
       after: reviewsState.pageInfo.endCursor,
     });
@@ -1892,6 +2071,30 @@ async function completePullRequestConnections(
     pullRequest.reviews.push(...page.nodes);
     reviewsState = pageState(page);
   }
+
+  pullRequest.comments = dedupeByNodeId(pullRequest.comments);
+  pullRequest.reviews = dedupeByNodeId(pullRequest.reviews);
+  if (
+    pullRequest.comments.length !== pages.comments.totalCount ||
+    pullRequest.reviews.length !== pages.reviews.totalCount
+  ) {
+    throw new Error(
+      `PR #${pullRequest.number} changed during collection; review connection totals no longer match`,
+    );
+  }
+  return pullRequest;
+}
+
+async function completePullRequestConnections(
+  client: GraphqlExecutor,
+  parsed: ParsedPullRequest,
+): Promise<PendingPullRequestRecord> {
+  const pullRequest = await completePullRequestTextConnections(
+    client,
+    parsed.record,
+    parsed.pages,
+    MORE_REVIEWS_QUERY,
+  );
 
   let filesState = parsed.pages.files;
   while (filesState.pageInfo.hasNextPage) {
@@ -1929,12 +2132,8 @@ async function completePullRequestConnections(
     closingState = pageState(page);
   }
 
-  pullRequest.comments = dedupeByNodeId(pullRequest.comments);
-  pullRequest.reviews = dedupeByNodeId(pullRequest.reviews);
   pullRequest.closingIssueIds = [...new Set(pullRequest.closingIssueIds)];
   if (
-    pullRequest.comments.length !== parsed.pages.comments.totalCount ||
-    pullRequest.reviews.length !== parsed.pages.reviews.totalCount ||
     pullRequest.files.length !== parsed.pages.files.totalCount ||
     pullRequest.closingIssueIds.length !== parsed.pages.closingIssues.totalCount
   ) {
@@ -1943,6 +2142,18 @@ async function completePullRequestConnections(
     );
   }
   return pullRequest;
+}
+
+async function completeMergedPullRequestReviewConnections(
+  client: GraphqlExecutor,
+  parsed: ParsedMergedPullRequestReview,
+): Promise<PendingMergedPullRequestReviewRecord> {
+  return await completePullRequestTextConnections(
+    client,
+    parsed.record,
+    parsed.pages,
+    MORE_FORMAL_REVIEWS_QUERY,
+  );
 }
 
 async function completeIssueConnections(
@@ -2111,7 +2322,17 @@ export function deriveCurrentHeadReviewDecision(
 async function finalizePullRequests(
   client: GraphqlExecutor,
   pending: PendingPullRequestRecord[],
-): Promise<PullRequestRecord[]> {
+): Promise<PullRequestRecord[]>;
+async function finalizePullRequests(
+  client: GraphqlExecutor,
+  pending: PendingMergedPullRequestReviewRecord[],
+): Promise<MergedPullRequestReviewRecord[]>;
+async function finalizePullRequests(
+  client: GraphqlExecutor,
+  pending: Array<
+    PendingPullRequestRecord | PendingMergedPullRequestReviewRecord
+  >,
+): Promise<Array<PullRequestRecord | MergedPullRequestReviewRecord>> {
   const bindings = pending.flatMap((pullRequest) =>
     pullRequest.reviews.map((review) => ({
       artifactId: pullRequest.id,
@@ -2224,6 +2445,44 @@ async function hydratePullRequests(
   const pullRequests = await finalizePullRequests(client, pending);
   onProgress({
     phase,
+    completed: pullRequests.length,
+    total: references.length,
+  });
+  return pullRequests;
+}
+
+async function hydrateReviewedMergedPullRequests(
+  client: GraphqlExecutor,
+  references: NodeReference[],
+  onProgress: (progress: GenerationProgress) => void,
+): Promise<MergedPullRequestReviewRecord[]> {
+  const pending: PendingMergedPullRequestReviewRecord[] = [];
+  for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
+    const ids = batch.map((reference) => reference.id);
+    const data = await client.execute(MERGED_PULL_REQUEST_REVIEWS_QUERY, {
+      ids,
+    });
+    const parsed = parseDetailBatch(
+      data,
+      ids,
+      "PullRequest",
+      parseMergedPullRequestReview,
+    );
+    for (const value of parsed) {
+      validateRecordState(value, "merged");
+      pending.push(
+        await completeMergedPullRequestReviewConnections(client, value),
+      );
+      onProgress({
+        phase: "merged-pull-requests",
+        completed: pending.length,
+        total: references.length,
+      });
+    }
+  }
+  const pullRequests = await finalizePullRequests(client, pending);
+  onProgress({
+    phase: "merged-pull-requests",
     completed: pullRequests.length,
     total: references.length,
   });
@@ -2416,7 +2675,12 @@ async function collectOpenIssues(
       if (before.repositoryId !== repositoryId) {
         throw new Error("GitHub returned an inconsistent repository node ID");
       }
-      assertEstimatedBudget(client, 0, before.references.length, reservedCost);
+      await ensureEstimatedBudget(
+        client,
+        0,
+        before.references.length,
+        reservedCost,
+      );
       return await hydrateIssues(
         client,
         before.references,
@@ -2457,7 +2721,12 @@ async function collectOpenPullRequests(
       if (before.repositoryId !== repositoryId) {
         throw new Error("GitHub returned an inconsistent repository node ID");
       }
-      assertEstimatedBudget(client, before.references.length, 0, reservedCost);
+      await ensureEstimatedBudget(
+        client,
+        before.references.length,
+        0,
+        reservedCost,
+      );
       return await hydratePullRequests(
         client,
         before.references,
@@ -2548,19 +2817,35 @@ export function estimateFirstPageDetailCost(
   );
 }
 
-function assertEstimatedBudget(
+export function estimateReviewFirstPageDetailCost(
+  pullRequestCount: number,
+): number {
+  if (!Number.isInteger(pullRequestCount) || pullRequestCount < 0) {
+    throw new Error("Review-detail count must be a non-negative integer");
+  }
+  return estimateBatchedConnectionCost(pullRequestCount, 2);
+}
+
+async function ensureEstimatedBudget(
   client: GraphqlExecutor,
   pullRequestCount: number,
   issueCount: number,
   reservedCost = 0,
-): void {
+  reviewPullRequestCount = 0,
+): Promise<void> {
   const rateLimit = client.getRateLimit();
-  const estimate = estimateFirstPageDetailCost(pullRequestCount, issueCount);
+  const estimate =
+    estimateFirstPageDetailCost(pullRequestCount, issueCount) +
+    estimateReviewFirstPageDetailCost(reviewPullRequestCount);
   const available = Math.min(
     MAX_GENERATION_COST - rateLimit.consumedDuringRun,
     rateLimit.remaining - MINIMUM_RATE_LIMIT_RESERVE,
   );
   if (estimate + reservedCost > available) {
+    if (client.ensureBudget) {
+      await client.ensureBudget(estimate + reservedCost);
+      return;
+    }
     throw new Error(
       `Estimated first-page detail cost ${estimate} plus reserved cost ${reservedCost} exceeds the safe GraphQL budget ${available}; no partial snapshot will be written`,
     );
@@ -2883,6 +3168,7 @@ export async function generateLeaderboardFromGitHub(
   const collections: RepositoryCollection[] = [];
   const mergedPullRequestOutcomes: MergedPullRequestOutcome[] = [];
   const mergedPullRequests: PullRequestRecord[] = [];
+  const reviewedMergedPullRequests: MergedPullRequestReviewRecord[] = [];
   const closedIssues: IssueRecord[] = [];
   let closedIssueCount = 0;
 
@@ -2963,13 +3249,19 @@ export async function generateLeaderboardFromGitHub(
   );
   for (const collection of collections) {
     const detailedReferences = collection.mergedPullRequestReferences.filter(
-      (reference) => hydrationPlan.hydratedIds.has(reference.id),
+      (reference) => hydrationPlan.detailEligibleIds.has(reference.id),
     );
-    assertEstimatedBudget(
+    const reviewedReferences = collection.mergedPullRequestReferences.filter(
+      (reference) =>
+        hydrationPlan.hydratedIds.has(reference.id) &&
+        !hydrationPlan.detailEligibleIds.has(reference.id),
+    );
+    await ensureEstimatedBudget(
       client,
       detailedReferences.length,
       0,
       finalReviewCensusCost,
+      reviewedReferences.length,
     );
     const detailedPullRequests = await hydratePullRequests(
       client,
@@ -2978,11 +3270,20 @@ export async function generateLeaderboardFromGitHub(
       onProgress,
       "merged-pull-requests",
     );
-    for (const pullRequest of detailedPullRequests) {
+    const reviewedPullRequests = await hydrateReviewedMergedPullRequests(
+      client,
+      reviewedReferences,
+      onProgress,
+    );
+    for (const pullRequest of [
+      ...detailedPullRequests,
+      ...reviewedPullRequests,
+    ]) {
       const censusCount = hydrationPlan.reviewCounts.get(pullRequest.id);
       if (
         censusCount === undefined ||
-        pullRequest.reviews.length !== censusCount.reviewCount ||
+        formalDecisionReviewCount(pullRequest.reviews) !==
+          censusCount.reviewCount ||
         pullRequest.updatedAt !== censusCount.updatedAt
       ) {
         throw new Error(
@@ -2991,18 +3292,17 @@ export async function generateLeaderboardFromGitHub(
       }
     }
     mergedPullRequests.push(...detailedPullRequests);
+    reviewedMergedPullRequests.push(...reviewedPullRequests);
 
     const linkedIssueIds = new Set(
-      detailedPullRequests
-        .filter((pullRequest) =>
-          hydrationPlan.detailEligibleIds.has(pullRequest.id),
-        )
-        .flatMap((pullRequest) => pullRequest.closingIssueIds),
+      detailedPullRequests.flatMap(
+        (pullRequest) => pullRequest.closingIssueIds,
+      ),
     );
     const linkedClosedIssueReferences = collection.closedIssueReferences.filter(
       (reference) => linkedIssueIds.has(reference.id),
     );
-    assertEstimatedBudget(
+    await ensureEstimatedBudget(
       client,
       0,
       linkedClosedIssueReferences.length,
@@ -3035,6 +3335,9 @@ export async function generateLeaderboardFromGitHub(
 
   const dedupedOutcomes = dedupeByNodeId(mergedPullRequestOutcomes);
   const dedupedMergedPullRequests = dedupeByNodeId(mergedPullRequests);
+  const dedupedReviewedMergedPullRequests = dedupeByNodeId(
+    reviewedMergedPullRequests,
+  );
   const detailEligibleMergedPullRequests = dedupedMergedPullRequests.filter(
     (pullRequest) => hydrationPlan.detailEligibleIds.has(pullRequest.id),
   );
@@ -3093,6 +3396,7 @@ export async function generateLeaderboardFromGitHub(
   const allRecords = [
     ...dedupedOutcomes,
     ...dedupedMergedPullRequests,
+    ...dedupedReviewedMergedPullRequests,
     ...dedupedClosedIssues,
     ...openIssues,
     ...openPullRequests,
@@ -3146,6 +3450,7 @@ export async function generateLeaderboardFromGitHub(
     source,
     mergedPullRequestOutcomes: dedupedOutcomes,
     mergedPullRequests: dedupedMergedPullRequests,
+    reviewedMergedPullRequests: dedupedReviewedMergedPullRequests,
     detailEligibleMergedPullRequestIds: [...hydrationPlan.detailEligibleIds],
     closedIssueCount,
     resolvedIssues: dedupedClosedIssues,
