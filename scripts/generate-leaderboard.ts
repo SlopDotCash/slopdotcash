@@ -1273,6 +1273,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   #requestCount = 0;
   #rateLimit: RateLimitSnapshot | null = null;
   #consumedCost = 0;
+  #windowConsumedCost = 0;
   #startingRemaining: number | null = null;
 
   #effectiveMaxGenerationCost(): number {
@@ -1329,7 +1330,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       );
     }
     const available = Math.min(
-      effectiveMaxGenerationCost - this.#consumedCost,
+      effectiveMaxGenerationCost - this.#windowConsumedCost,
       this.#rateLimit.remaining - this.#minimumRateLimitReserve,
     );
     if (requiredCost <= available) return;
@@ -1339,12 +1340,12 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       throw new Error("GitHub GraphQL returned an invalid rate-limit resetAt");
     }
     await retryDelay(Math.max(0, resetAt - Date.now() + 1_000));
-    this.#consumedCost = 0;
+    this.#windowConsumedCost = 0;
     this.#startingRemaining = null;
     this.#rateLimit = {
       ...this.#rateLimit,
       cost: 0,
-      consumedDuringRun: 0,
+      consumedDuringRun: this.#consumedCost,
       remaining: this.#rateLimit.limit,
     };
   }
@@ -1459,8 +1460,9 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     const rateLimit = parseRateLimit(data.rateLimit);
     this.#startingRemaining =
       this.#startingRemaining ?? rateLimit.remaining + rateLimit.cost;
-    this.#consumedCost = Math.max(
-      this.#consumedCost + rateLimit.cost,
+    this.#consumedCost += rateLimit.cost;
+    this.#windowConsumedCost = Math.max(
+      this.#windowConsumedCost + rateLimit.cost,
       this.#startingRemaining - rateLimit.remaining,
     );
     this.#rateLimit = {
@@ -1469,11 +1471,11 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     };
     const effectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
     if (
-      this.#consumedCost > effectiveMaxGenerationCost ||
+      this.#windowConsumedCost > effectiveMaxGenerationCost ||
       rateLimit.remaining < this.#minimumRateLimitReserve
     ) {
       throw new Error(
-        `GitHub GraphQL safety budget exceeded (${this.#consumedCost}/${effectiveMaxGenerationCost} points consumed, ${rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve})`,
+        `GitHub GraphQL safety budget exceeded (${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve})`,
       );
     }
     return data;
