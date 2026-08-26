@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-24.04
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Leave room for complete fail-closed hydration plus four browser projects.
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

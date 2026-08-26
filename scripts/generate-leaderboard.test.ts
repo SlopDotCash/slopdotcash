@@ -23,6 +23,7 @@ import {
   deriveCurrentHeadReviewDecision,
   deriveSourceUpdatedAt,
   estimateFirstPageDetailCost,
+  estimateReviewFirstPageDetailCost,
   GitHubGraphqlClient,
   type GraphqlExecutor,
   generateLeaderboardFromGitHub,
@@ -847,6 +848,37 @@ describe("GitHub GraphQL boundary", () => {
     expect(client.getRateLimit().consumedDuringRun).toBe(1);
   });
 
+  it("honors GitHub secondary-limit retry guidance before returning data", async () => {
+    let attempts = 0;
+    const fetcher = async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(
+          JSON.stringify({
+            message: "You have exceeded a secondary rate limit.",
+          }),
+          {
+            status: 403,
+            headers: {
+              "Content-Type": "application/json",
+              "Retry-After": "0",
+            },
+          },
+        );
+      }
+      return successResponse();
+    };
+    const client = new GitHubGraphqlClient("secret-token", fetcher, {
+      retryBaseDelayMs: 0,
+    });
+
+    await expect(
+      client.execute("query { viewer { login } }"),
+    ).resolves.toMatchObject({ viewer: { login: "eliza" } });
+    expect(attempts).toBe(2);
+    expect(client.getRequestCount()).toBe(2);
+  });
+
   it("retries transient network failures before returning validated data", async () => {
     let attempts = 0;
     const fetcher = async () => {
@@ -1046,7 +1078,7 @@ describe("GitHub GraphQL boundary", () => {
     );
   });
 
-  it("adapts its run cap to a 1,000-point Actions token", async () => {
+  it("resumes a 1,000-point Actions token after its rate window resets", async () => {
     let attempts = 0;
     const fetcher = async () => {
       attempts += 1;
@@ -1055,7 +1087,7 @@ describe("GitHub GraphQL boundary", () => {
         {
           cost: 450,
           limit: 1_000,
-          remaining: 1_000 - attempts * 450,
+          remaining: attempts <= 2 ? 1_000 - attempts * 450 : 550,
           resetAt: "2026-07-30T13:00:00.000Z",
         },
       );
@@ -1070,10 +1102,11 @@ describe("GitHub GraphQL boundary", () => {
     await expect(
       client.execute("query { viewer { login } }"),
     ).resolves.toBeDefined();
-    await expect(client.execute("query { viewer { login } }")).rejects.toThrow(
-      "900/900 points consumed",
-    );
-    expect(attempts).toBe(2);
+    await expect(
+      client.execute("query { viewer { login } }"),
+    ).resolves.toBeDefined();
+    expect(attempts).toBe(3);
+    expect(client.getRateLimit().consumedDuringRun).toBe(450);
   });
 
   it("does not call the writer after live generation fails", async () => {
@@ -1128,7 +1161,9 @@ describe("rate-efficient query plan", () => {
       ]),
     ).resolves.toEqual(new Set(["PR_REVIEWED"]));
     expect(seenDocuments).toHaveLength(1);
-    expect(seenDocuments[0]).toContain("reviews { totalCount }");
+    expect(seenDocuments[0]).toContain(
+      "reviews(states: [APPROVED, CHANGES_REQUESTED]) { totalCount }",
+    );
     expect(seenDocuments[0]).not.toContain("reviews(first:");
   });
 
@@ -1249,6 +1284,21 @@ describe("rate-efficient query plan", () => {
     expect(LEADERBOARD_QUERY_DOCUMENTS.pullRequestDetails).not.toMatch(
       /author\s*\{[^}]+}\s*comments\s*\{/,
     );
+    expect(LEADERBOARD_QUERY_DOCUMENTS.mergedPullRequestReviews).toContain(
+      "reviews(states: [APPROVED, CHANGES_REQUESTED], first: 100)",
+    );
+    expect(LEADERBOARD_QUERY_DOCUMENTS.mergedPullRequestReviews).toContain(
+      "comments(first: 100)",
+    );
+    expect(LEADERBOARD_QUERY_DOCUMENTS.mergedPullRequestReviews).not.toContain(
+      "files(first:",
+    );
+    expect(LEADERBOARD_QUERY_DOCUMENTS.mergedPullRequestReviews).not.toContain(
+      "closingIssuesReferences",
+    );
+    expect(LEADERBOARD_QUERY_DOCUMENTS.moreFormalReviews).toContain(
+      "states: [APPROVED, CHANGES_REQUESTED]",
+    );
     expect(LEADERBOARD_QUERY_DOCUMENTS.reviewInlineComments).toContain(
       "comments(first: 100)",
     );
@@ -1258,8 +1308,13 @@ describe("rate-efficient query plan", () => {
     expect(estimateFirstPageDetailCost(0, 0)).toBe(0);
     expect(estimateFirstPageDetailCost(25, 25)).toBe(3);
     expect(estimateFirstPageDetailCost(26, 0)).toBe(3);
+    expect(estimateReviewFirstPageDetailCost(25)).toBe(1);
+    expect(estimateReviewFirstPageDetailCost(26)).toBe(2);
     expect(() => estimateFirstPageDetailCost(-1, 0)).toThrow(
       "non-negative integers",
+    );
+    expect(() => estimateReviewFirstPageDetailCost(-1)).toThrow(
+      "non-negative integer",
     );
   });
 

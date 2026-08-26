@@ -30,6 +30,7 @@ import {
   type LeaderboardSnapshot,
   MATERIAL_TEST_ADDITIONS,
   MATERIAL_TEST_CHURN,
+  type MergedPullRequestReviewRecord,
   mergedPullRequestPoints,
   type PullRequestRecord,
   parseEvidenceHeadOid,
@@ -2288,10 +2289,43 @@ describe("scoring and limits", () => {
         },
       ],
     });
+    if (!merged.mergedAt) throw new Error("test pull request must be merged");
+    const reviewHydration: MergedPullRequestReviewRecord = {
+      id: merged.id,
+      number: merged.number,
+      title: merged.title,
+      url: merged.url,
+      body: merged.body,
+      createdAt: merged.createdAt,
+      updatedAt: merged.updatedAt,
+      lastEditedAt: merged.lastEditedAt,
+      editor: merged.editor,
+      mergedAt: merged.mergedAt,
+      headRefOid: merged.headRefOid,
+      author: merged.author,
+      comments: merged.comments,
+      reviews: merged.reviews,
+    };
 
     const snapshot = createLeaderboardSnapshot(
       input({
-        mergedPullRequests: [merged],
+        mergedPullRequestOutcomes: [
+          {
+            id: merged.id,
+            number: merged.number,
+            title: merged.title,
+            url: merged.url,
+            body: merged.body,
+            createdAt: merged.createdAt,
+            updatedAt: merged.updatedAt,
+            mergedAt: merged.mergedAt,
+            author: merged.author,
+            additions: merged.additions,
+            deletions: merged.deletions,
+          },
+        ],
+        mergedPullRequests: [],
+        reviewedMergedPullRequests: [reviewHydration],
         detailEligibleMergedPullRequestIds: [],
       }),
     );
