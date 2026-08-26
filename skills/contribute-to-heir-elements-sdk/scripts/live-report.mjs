@@ -25,6 +25,9 @@ export const MISSION_READY_LABEL = "mission-ready";
 export const MAX_OPEN_ITEMS = 10_000;
 export const MAX_API_READS = 16;
 export const MAX_ACTIVITY_CONNECTION_ITEMS = 1_000;
+export const MIN_GRAPHQL_ACTIVITY_POINTS = 1_000;
+export const MIN_REST_ACTIVITY_REQUESTS = 100;
+export const MIN_SEARCH_ACTIVITY_REQUESTS = 2;
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PLACEHOLDER_RE =
@@ -627,6 +630,196 @@ function readOverflowActivity(endpoint, expectedCount, context, spawn) {
   return records;
 }
 
+function activityItemNumber(record, field, context) {
+  const url = asStringField(record, field, context);
+  const match = url.match(/\/(?:issues|pulls)\/([1-9]\d*)$/);
+  if (!match) {
+    throw new TypeError(`${context}.${field} must end with an item number`);
+  }
+  return Number(match[1]);
+}
+
+function appendBoundedActivity(target, value, context) {
+  if (target.length >= MAX_ACTIVITY_CONNECTION_ITEMS) {
+    throw new RangeError(
+      `${context} exceeds the complete ${MAX_ACTIVITY_CONNECTION_ITEMS}-record activity bound`,
+    );
+  }
+  target.push(value);
+}
+
+function readGhSearchPullNumbers(repo, qualifier, spawn) {
+  const query = `repo:${repo} is:pr is:open review:${qualifier}`;
+  const result = spawn(
+    "gh",
+    [
+      "api",
+      "--method",
+      "GET",
+      "--paginate",
+      "-f",
+      `q=${query}`,
+      "-f",
+      "per_page=100",
+      "--jq",
+      ".items[]",
+      "search/issues",
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail =
+      result.stderr.trim().length > 0 ? `: ${result.stderr.trim()}` : "";
+    throw new Error(`gh api failed for review:${qualifier}${detail}`);
+  }
+  const records = parsePaginatedJson(result.stdout, `review:${qualifier}`);
+  if (records.length >= 1_000) {
+    throw new RangeError(
+      `review:${qualifier} reaches GitHub's 1000-result search bound`,
+    );
+  }
+  const numbers = new Set();
+  for (const [index, value] of records.entries()) {
+    const number = asNumberField(
+      asRecord(value, `review:${qualifier}[${index}]`),
+      "number",
+      `review:${qualifier}[${index}]`,
+    );
+    if (numbers.has(number)) {
+      throw new TypeError(
+        `duplicate review:${qualifier} result for #${number}`,
+      );
+    }
+    numbers.add(number);
+  }
+  return numbers;
+}
+
+function readGhRestOpenActivity(repo, spawn) {
+  const issueItems = readGhPages(
+    `repos/${repo}/issues?state=open&per_page=100&sort=created&direction=asc`,
+    spawn,
+  )
+    .map((value, index) => asRecord(value, `REST issues[${index}]`))
+    .filter((item) => item.pull_request === undefined);
+  const pullItems = readGhPages(
+    `repos/${repo}/pulls?state=open&per_page=100&sort=created&direction=asc`,
+    spawn,
+  ).map((value, index) => asRecord(value, `REST pulls[${index}]`));
+  if (issueItems.length > MAX_OPEN_ITEMS || pullItems.length > MAX_OPEN_ITEMS) {
+    throw new RangeError(
+      `Live discovery exceeds the ${MAX_OPEN_ITEMS}-item per-kind safety bound`,
+    );
+  }
+  const oldestCreatedAt = [...issueItems, ...pullItems]
+    .map((item, index) =>
+      isoTime(item.created_at, `REST open items[${index}].created_at`),
+    )
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
+  const since =
+    oldestCreatedAt === undefined
+      ? null
+      : `since=${encodeURIComponent(oldestCreatedAt)}`;
+  const issues = new Map();
+  for (const item of issueItems) {
+    const number = asNumberField(item, "number", "REST issue");
+    if (issues.has(number))
+      throw new TypeError(`duplicate issue activity for #${number}`);
+    issues.set(number, []);
+  }
+  const pulls = new Map();
+  for (const item of pullItems) {
+    const number = asNumberField(item, "number", "REST pull request");
+    if (pulls.has(number))
+      throw new TypeError(`duplicate pull activity for #${number}`);
+    pulls.set(number, {
+      issueComments: [],
+      inlineComments: [],
+      reviews: [],
+      reviewStatus: "none",
+    });
+  }
+  const issueComments =
+    since === null
+      ? []
+      : readGhPages(
+          `repos/${repo}/issues/comments?per_page=100&sort=created&direction=asc&${since}`,
+          spawn,
+        );
+  for (const [index, value] of issueComments.entries()) {
+    const record = asRecord(value, `REST issue comments[${index}]`);
+    const number = activityItemNumber(
+      record,
+      "issue_url",
+      `REST issue comments[${index}]`,
+    );
+    if (issues.has(number)) {
+      appendBoundedActivity(
+        issues.get(number),
+        record,
+        `issue #${number}.comments`,
+      );
+    } else if (pulls.has(number)) {
+      appendBoundedActivity(
+        pulls.get(number).issueComments,
+        record,
+        `pull request #${number}.comments`,
+      );
+    }
+  }
+  const inlineComments =
+    since === null || pulls.size === 0
+      ? []
+      : readGhPages(
+          `repos/${repo}/pulls/comments?per_page=100&sort=created&direction=asc&${since}`,
+          spawn,
+        );
+  for (const [index, value] of inlineComments.entries()) {
+    const record = asRecord(value, `REST review comments[${index}]`);
+    const number = activityItemNumber(
+      record,
+      "pull_request_url",
+      `REST review comments[${index}]`,
+    );
+    if (pulls.has(number)) {
+      appendBoundedActivity(
+        pulls.get(number).inlineComments,
+        record,
+        `pull request #${number}.review comments`,
+      );
+    }
+  }
+  const approved = readGhSearchPullNumbers(repo, "approved", spawn);
+  const changesRequested = readGhSearchPullNumbers(
+    repo,
+    "changes_requested",
+    spawn,
+  );
+  for (const number of approved) {
+    if (!pulls.has(number)) {
+      throw new TypeError(`review:approved returned non-open pull #${number}`);
+    }
+    pulls.get(number).reviewStatus = "approved";
+  }
+  for (const number of changesRequested) {
+    if (!pulls.has(number)) {
+      throw new TypeError(
+        `review:changes_requested returned non-open pull #${number}`,
+      );
+    }
+    if (approved.has(number)) {
+      throw new TypeError(`conflicting REST review status for pull #${number}`);
+    }
+    pulls.get(number).reviewStatus = "changes_requested";
+  }
+  return { issues, pulls };
+}
+
 function graphqlAccount(value, context) {
   if (value === null) return null;
   const actor = asRecord(value, context);
@@ -728,10 +921,112 @@ export function createGhCommandBudget(spawn = spawnSync) {
   };
 }
 
+function rateResource(value, context) {
+  const resource = asRecord(value, context);
+  const limit = asNumberField(resource, "limit", context);
+  const remaining = asNumberField(resource, "remaining", context);
+  const reset = asNumberField(resource, "reset", context);
+  if (limit <= 0 || remaining < 0 || remaining > limit || reset <= 0) {
+    throw new RangeError(`${context} contains an invalid rate budget`);
+  }
+  return { limit, remaining, reset };
+}
+
+export function readGhRateLimits(spawn = spawnSync) {
+  const result = spawn(
+    "gh",
+    [
+      "api",
+      "--method",
+      "GET",
+      "--jq",
+      "{resources: .resources | {core, graphql, search}}",
+      "rate_limit",
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail =
+      result.stderr.trim().length > 0 ? `: ${result.stderr.trim()}` : "";
+    throw new Error(`gh api failed for rate_limit${detail}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (cause) {
+    throw new SyntaxError("gh api returned malformed JSON for rate_limit", {
+      cause,
+    });
+  }
+  const resources = asRecord(
+    asRecord(parsed, "GitHub rate limit response").resources,
+    "GitHub rate limit resources",
+  );
+  const graphql = rateResource(resources.graphql, "GitHub GraphQL rate limit");
+  const rest = rateResource(resources.core, "GitHub REST rate limit");
+  const search = rateResource(resources.search, "GitHub Search rate limit");
+  return {
+    graphqlLimit: graphql.limit,
+    graphqlRemaining: graphql.remaining,
+    graphqlReset: graphql.reset,
+    restLimit: rest.limit,
+    restRemaining: rest.remaining,
+    restReset: rest.reset,
+    searchLimit: search.limit,
+    searchRemaining: search.remaining,
+    searchReset: search.reset,
+  };
+}
+
 /** Reads open activity in two batches plus bounded overflow pagination. */
-export function readGhOpenActivity(repo, spawn = spawnSync) {
+export function readGhOpenActivity(repo, spawn = spawnSync, rateLimits = null) {
   if (!REPOSITORY_RE.test(repo)) {
     throw new TypeError("Repository must use the owner/name form");
+  }
+  let limits = rateLimits;
+  if (limits !== null) {
+    const options = asRecord(limits, "GitHub rate limits");
+    if (options.preflight === true) {
+      limits = readGhRateLimits(spawn);
+    }
+  }
+  if (limits !== null) {
+    limits = asRecord(limits, "GitHub rate limits");
+    const graphqlRemaining = asNumberField(
+      limits,
+      "graphqlRemaining",
+      "GitHub rate limits",
+    );
+    const restRemaining = asNumberField(
+      limits,
+      "restRemaining",
+      "GitHub rate limits",
+    );
+    const searchRemaining = asNumberField(
+      limits,
+      "searchRemaining",
+      "GitHub rate limits",
+    );
+    if (graphqlRemaining < MIN_GRAPHQL_ACTIVITY_POINTS) {
+      if (
+        restRemaining < MIN_REST_ACTIVITY_REQUESTS ||
+        searchRemaining < MIN_SEARCH_ACTIVITY_REQUESTS
+      ) {
+        throw new RangeError(
+          "GitHub budgets cannot afford either complete GraphQL or REST activity discovery",
+        );
+      }
+      return {
+        ...readGhRestOpenActivity(repo, spawn),
+        rateLimits: limits,
+        source: "rest",
+      };
+    }
   }
   const issueNodes = readGraphqlActivityNodes(
     repo,
@@ -846,7 +1141,12 @@ export function readGhOpenActivity(repo, spawn = spawnSync) {
     }
     pulls.set(number, { issueComments, inlineComments, reviews });
   }
-  return { issues, pulls };
+  return {
+    issues,
+    pulls,
+    ...(limits === null ? {} : { rateLimits: limits }),
+    source: "graphql",
+  };
 }
 
 export function parseModelDisclosure(text) {
@@ -1646,7 +1946,24 @@ export function collectLiveReport(
     const body = nullableText(item.body, `${context}.body`);
     const requestedTargets = requestedReviewTargets(item, context);
     const requestStatus = reviewRequestStatus(requestedTargets);
-    const currentReviews = currentHeadReviewStatus(item, reviews, context);
+    const fallbackReviewStatus = pullActivity?.reviewStatus ?? null;
+    if (
+      fallbackReviewStatus !== null &&
+      !new Set(["none", "approved", "changes_requested"]).has(
+        fallbackReviewStatus,
+      )
+    ) {
+      throw new TypeError(`${context} has an invalid REST review status`);
+    }
+    const currentReviews =
+      fallbackReviewStatus === "approved"
+        ? { approved: ["GitHub REST review status"], changesRequested: [] }
+        : fallbackReviewStatus === "changes_requested"
+          ? {
+              approved: [],
+              changesRequested: ["GitHub REST review status"],
+            }
+          : currentHeadReviewStatus(item, reviews, context);
     const reviewState = {
       activeRequests: requestStatus.active,
       staleRequests: requestStatus.stale,
@@ -1874,7 +2191,13 @@ export function main(args = process.argv.slice(2)) {
   const boundedRead = (endpoint) => {
     return readGhPages(endpoint, commandBudget.run);
   };
-  const openActivity = readGhOpenActivity(options.repo, commandBudget.run);
+  const openActivity = readGhOpenActivity(options.repo, commandBudget.run, {
+    preflight: true,
+  });
+  const limits = asRecord(openActivity.rateLimits, "GitHub rate limits");
+  process.stderr.write(
+    `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit}; REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
+  );
   const report = collectLiveReport(
     options.repo,
     boundedRead,
