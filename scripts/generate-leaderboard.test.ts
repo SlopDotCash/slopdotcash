@@ -32,6 +32,7 @@ import {
   parseGenerationArguments,
   planMergedPullRequestHydration,
   resolveGitHubToken,
+  retryOpenBatch,
   retrySlopSnapshot,
   runGenerator,
   SEARCH_SAFE_RESULT_LIMIT,
@@ -1487,6 +1488,26 @@ describe("rate-efficient query plan", () => {
     ).rejects.toThrow("evidence verifier failed");
   });
 
+  it("retries only the changing open-work hydration batch", async () => {
+    let attempts = 0;
+    await expect(
+      retryOpenBatch("open", async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new OpenSetChangedError("open work moved");
+        }
+        return ["stable-pr"];
+      }),
+    ).resolves.toEqual(["stable-pr"]);
+    expect(attempts).toBe(2);
+
+    await expect(
+      retryOpenBatch("merged", async () => {
+        throw new OpenSetChangedError("merged outcome changed");
+      }),
+    ).rejects.toThrow("merged outcome changed");
+  });
+
   it("fails when the non-scoring queue never stabilizes", async () => {
     let attempts = 0;
     await expect(
@@ -1960,7 +1981,7 @@ describe("current-head review selection", () => {
     await expect(
       generateLeaderboardFromGitHub(client, { now }),
     ).rejects.toThrow(
-      "Open pull-request state changed during 3 consecutive collection attempts",
+      "Open work batch changed during 3 consecutive hydration attempts",
     );
   });
 });
