@@ -180,6 +180,14 @@ export async function retrySlopSnapshot<T>(
     { cause: lastChange },
   );
 }
+
+/** Retries a paginated open-work listing when its live total changes. */
+export async function retryOpenReferenceListing<T>(
+  collect: () => Promise<T>,
+): Promise<T> {
+  return await retrySlopSnapshot(() => collect());
+}
+
 class GraphqlResponseBoundaryError extends Error {}
 
 export interface RateLimitSnapshot {
@@ -2431,18 +2439,24 @@ async function hydratePullRequests(
 ): Promise<PullRequestRecord[]> {
   const pending: PendingPullRequestRecord[] = [];
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
-    const ids = batch.map((reference) => reference.id);
-    const data = await client.execute(PULL_REQUEST_DETAILS_QUERY, { ids });
-    const parsed = parseDetailBatch(data, ids, "PullRequest", parsePullRequest);
-    for (const value of parsed) {
-      validateRecordState(value, expectedState);
-      pending.push(await completePullRequestConnections(client, value));
-      onProgress({
-        phase,
-        completed: pending.length,
-        total: references.length,
-      });
-    }
+    const hydratedBatch = await retryOpenBatch(expectedState, async () => {
+      const ids = batch.map((reference) => reference.id);
+      const data = await client.execute(PULL_REQUEST_DETAILS_QUERY, { ids });
+      const parsed = parseDetailBatch(
+        data,
+        ids,
+        "PullRequest",
+        parsePullRequest,
+      );
+      const completed: PendingPullRequestRecord[] = [];
+      for (const value of parsed) {
+        validateRecordState(value, expectedState);
+        completed.push(await completePullRequestConnections(client, value));
+      }
+      return completed;
+    });
+    pending.push(...hydratedBatch);
+    onProgress({ phase, completed: pending.length, total: references.length });
   }
   const pullRequests = await finalizePullRequests(client, pending);
   onProgress({
@@ -2500,20 +2514,47 @@ async function hydrateIssues(
 ): Promise<IssueRecord[]> {
   const issues: IssueRecord[] = [];
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
-    const ids = batch.map((reference) => reference.id);
-    const data = await client.execute(ISSUE_DETAILS_QUERY, { ids });
-    const parsed = parseDetailBatch(data, ids, "Issue", parseIssue);
-    for (const value of parsed) {
-      validateRecordState(value, expectedState);
-      issues.push(await completeIssueConnections(client, value));
-      onProgress({
-        phase,
-        completed: issues.length,
-        total: references.length,
-      });
-    }
+    const hydratedBatch = await retryOpenBatch(expectedState, async () => {
+      const ids = batch.map((reference) => reference.id);
+      const data = await client.execute(ISSUE_DETAILS_QUERY, { ids });
+      const parsed = parseDetailBatch(data, ids, "Issue", parseIssue);
+      const completed: IssueRecord[] = [];
+      for (const value of parsed) {
+        validateRecordState(value, expectedState);
+        completed.push(await completeIssueConnections(client, value));
+      }
+      return completed;
+    });
+    issues.push(...hydratedBatch);
+    onProgress({ phase, completed: issues.length, total: references.length });
   }
   return issues;
+}
+
+/**
+ * Rehydrates only a changing open-work batch. Open queues are intentionally
+ * live, so a global three-attempt freeze penalizes healthy contribution input.
+ */
+export async function retryOpenBatch<T>(
+  expectedState: ExpectedRecordState,
+  hydrate: () => Promise<T>,
+): Promise<T> {
+  let lastChange: OpenSetChangedError | null = null;
+  const attempts = expectedState === "open" ? MAX_TRANSIENT_ATTEMPTS : 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await hydrate();
+    } catch (error) {
+      if (expectedState !== "open" || !(error instanceof OpenSetChangedError)) {
+        throw error;
+      }
+      lastChange = error;
+    }
+  }
+  throw new OpenSetChangedError(
+    `Open work batch changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive hydration attempts`,
+    { cause: lastChange },
+  );
 }
 
 export function sameReferenceSet(
@@ -2665,42 +2706,30 @@ async function collectOpenIssues(
   onProgress: (progress: GenerationProgress) => void,
   reservedCost = 0,
 ): Promise<IssueRecord[]> {
-  for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
-    try {
-      const before = await collectOpenReferences(
-        client,
-        targetRepository,
-        OPEN_ISSUE_REFERENCES_QUERY,
-        "issues",
-        "Issue",
-      );
-      if (before.repositoryId !== repositoryId) {
-        throw new Error("GitHub returned an inconsistent repository node ID");
-      }
-      await ensureEstimatedBudget(
-        client,
-        0,
-        before.references.length,
-        reservedCost,
-      );
-      return await hydrateIssues(
-        client,
-        before.references,
-        "open",
-        onProgress,
-        "open-issues",
-      );
-    } catch (error) {
-      // error-policy:J1 A record that closes while its details are read is
-      // recollected; unrelated additions do not invalidate the point-in-time
-      // queue reference set.
-      if (!(error instanceof OpenSetChangedError)) {
-        throw error;
-      }
-    }
+  const before = await retryOpenReferenceListing(() =>
+    collectOpenReferences(
+      client,
+      targetRepository,
+      OPEN_ISSUE_REFERENCES_QUERY,
+      "issues",
+      "Issue",
+    ),
+  );
+  if (before.repositoryId !== repositoryId) {
+    throw new Error("GitHub returned an inconsistent repository node ID");
   }
-  throw new Error(
-    `Open issue state changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive collection attempts`,
+  await ensureEstimatedBudget(
+    client,
+    0,
+    before.references.length,
+    reservedCost,
+  );
+  return await hydrateIssues(
+    client,
+    before.references,
+    "open",
+    onProgress,
+    "open-issues",
   );
 }
 
@@ -2711,42 +2740,30 @@ async function collectOpenPullRequests(
   onProgress: (progress: GenerationProgress) => void,
   reservedCost = 0,
 ): Promise<PullRequestRecord[]> {
-  for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
-    try {
-      const before = await collectOpenReferences(
-        client,
-        targetRepository,
-        OPEN_PULL_REQUEST_REFERENCES_QUERY,
-        "pullRequests",
-        "PullRequest",
-      );
-      if (before.repositoryId !== repositoryId) {
-        throw new Error("GitHub returned an inconsistent repository node ID");
-      }
-      await ensureEstimatedBudget(
-        client,
-        before.references.length,
-        0,
-        reservedCost,
-      );
-      return await hydratePullRequests(
-        client,
-        before.references,
-        "open",
-        onProgress,
-        "open-pull-requests",
-      );
-    } catch (error) {
-      // error-policy:J1 A record that closes or changes head while its nested
-      // details are read is recollected; unrelated additions do not invalidate
-      // the point-in-time queue reference set.
-      if (!(error instanceof OpenSetChangedError)) {
-        throw error;
-      }
-    }
+  const before = await retryOpenReferenceListing(() =>
+    collectOpenReferences(
+      client,
+      targetRepository,
+      OPEN_PULL_REQUEST_REFERENCES_QUERY,
+      "pullRequests",
+      "PullRequest",
+    ),
+  );
+  if (before.repositoryId !== repositoryId) {
+    throw new Error("GitHub returned an inconsistent repository node ID");
   }
-  throw new Error(
-    `Open pull-request state changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive collection attempts`,
+  await ensureEstimatedBudget(
+    client,
+    before.references.length,
+    0,
+    reservedCost,
+  );
+  return await hydratePullRequests(
+    client,
+    before.references,
+    "open",
+    onProgress,
+    "open-pull-requests",
   );
 }
 
