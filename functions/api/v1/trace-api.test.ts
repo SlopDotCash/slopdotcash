@@ -432,7 +432,7 @@ async function uploadTrace(
 }
 
 describe("private trace API", () => {
-  it("serves a cached server-authenticated private intake verification", async () => {
+  it("serves a cached public private intake verification", async () => {
     const originalFetch = globalThis.fetch;
     const originalCaches = Object.getOwnPropertyDescriptor(
       globalThis,
@@ -466,7 +466,6 @@ describe("private trace API", () => {
           SLOP_DB: {} as never,
           PRIVATE_TRACES: {} as never,
           TRACE_AUTH_SECRET: SECRET,
-          PRIVATE_INTAKE_GITHUB_TOKEN: "github_server_token_value",
           SLOP_IDENTITY: {
             fetch: async () => new Response(null, { status: 401 }),
           },
@@ -479,7 +478,7 @@ describe("private trace API", () => {
       expect(second.status).toBe(200);
       await expect(first.json()).resolves.toEqual({
         enabled: true,
-        source: "github-authenticated",
+        source: "github-public-status",
         verifiedAt: expect.any(String),
       });
       expect(requests).toHaveLength(1);
@@ -491,70 +490,11 @@ describe("private trace API", () => {
         redirect: "error",
         headers: {
           Accept: "application/vnd.github+json",
-          Authorization: "Bearer github_server_token_value",
           "User-Agent": "slop-private-intake-verifier",
           "X-GitHub-Api-Version": "2022-11-28",
         },
       });
       expect(cachedControl).toBe("public, max-age=300");
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (originalCaches === undefined) {
-        Reflect.deleteProperty(globalThis, "caches");
-      } else {
-        Object.defineProperty(globalThis, "caches", originalCaches);
-      }
-    }
-  });
-
-  it("rejects cached enabled status when the server credential is absent", async () => {
-    const originalFetch = globalThis.fetch;
-    const originalCaches = Object.getOwnPropertyDescriptor(
-      globalThis,
-      "caches",
-    );
-    let upstreamRequested = false;
-    try {
-      globalThis.fetch = (async () => {
-        upstreamRequested = true;
-        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
-      }) as unknown as typeof fetch;
-      Object.defineProperty(globalThis, "caches", {
-        configurable: true,
-        value: {
-          default: {
-            match: async () =>
-              new Response(
-                JSON.stringify({
-                  status: "verified",
-                  enabled: true,
-                  verifiedAt: "2026-08-25T00:00:00.000Z",
-                }),
-              ),
-            put: async () => undefined,
-          },
-        },
-      });
-
-      const response = await onPagesRequest({
-        request: new Request(
-          "https://api.slop.cash/api/v1/private-request-intake",
-        ),
-        env: {
-          SLOP_DB: {} as never,
-          PRIVATE_TRACES: {} as never,
-          TRACE_AUTH_SECRET: SECRET,
-          SLOP_IDENTITY: {
-            fetch: async () => new Response(null, { status: 401 }),
-          },
-        },
-      });
-
-      expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toEqual({
-        error: "private_intake_unavailable",
-      });
-      expect(upstreamRequested).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
       if (originalCaches === undefined) {
@@ -584,7 +524,6 @@ describe("private trace API", () => {
           SLOP_DB: {} as never,
           PRIVATE_TRACES: {} as never,
           TRACE_AUTH_SECRET: SECRET,
-          PRIVATE_INTAKE_GITHUB_TOKEN: "github_server_token_value",
           SLOP_IDENTITY: {
             fetch: async () => new Response(null, { status: 401 }),
           },
@@ -620,7 +559,6 @@ describe("private trace API", () => {
           SLOP_DB: {} as never,
           PRIVATE_TRACES: {} as never,
           TRACE_AUTH_SECRET: SECRET,
-          PRIVATE_INTAKE_GITHUB_TOKEN: "github_server_token_value",
           SLOP_IDENTITY: {
             fetch: async () => new Response(null, { status: 401 }),
           },
@@ -636,7 +574,7 @@ describe("private trace API", () => {
     }
   });
 
-  it("fails closed on a malformed authenticated GitHub response", async () => {
+  it("fails closed on a malformed GitHub response", async () => {
     const originalFetch = globalThis.fetch;
     try {
       globalThis.fetch = (async () =>
@@ -651,7 +589,6 @@ describe("private trace API", () => {
           SLOP_DB: {} as never,
           PRIVATE_TRACES: {} as never,
           TRACE_AUTH_SECRET: SECRET,
-          PRIVATE_INTAKE_GITHUB_TOKEN: "github_server_token_value",
           SLOP_IDENTITY: {
             fetch: async () => new Response(null, { status: 401 }),
           },

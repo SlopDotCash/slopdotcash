@@ -108,8 +108,7 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
     );
-    expect(deployJob).toContain(`GITHUB_TOKEN: ${"$"}{{ github.token }}`);
-    expect(deployJob).toContain(
+    expect(deployJob).not.toContain(
       '--header "Authorization: Bearer $GITHUB_TOKEN"',
     );
     expect(deployJob).toContain("value?.enabled !== true");
@@ -129,7 +128,7 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler pages secret list \\\n            --project-name eliza-computer",
     );
-    expect(deployJob).toContain('"PRIVATE_INTAKE_GITHUB_TOKEN",');
+    expect(deployJob).not.toContain("PRIVATE_INTAKE_GITHUB_TOKEN");
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler d1 migrations apply slop-private \\",
     );
@@ -208,23 +207,23 @@ describe("slop.cash deployment contract", () => {
       deployJob.indexOf("Verify active private trace API boundary"),
     ).toBeLessThan(deployJob.indexOf("Require public identity OAuth app"));
     expect(deployJob).toContain(
-      "Verify authenticated private intake preflight",
+      "Verify authoritative private intake preflight",
     );
     expect(deployJob).toContain(
       "https://api.slop.cash/api/v1/private-request-intake?verify=",
     );
-    expect(deployJob).toContain('value?.source !== "github-authenticated"');
+    expect(deployJob).toContain('value?.source !== "github-public-status"');
     expect(deployJob).toContain("value?.enabled !== true");
     expect(deployJob).toContain(
-      "Authenticated private intake preflight did not become authoritative.",
+      "Private intake preflight did not become authoritative.",
     );
     expect(
       deployJob.indexOf("Verify active private trace API boundary"),
     ).toBeLessThan(
-      deployJob.indexOf("Verify authenticated private intake preflight"),
+      deployJob.indexOf("Verify authoritative private intake preflight"),
     );
     expect(
-      deployJob.indexOf("Verify authenticated private intake preflight"),
+      deployJob.indexOf("Verify authoritative private intake preflight"),
     ).toBeLessThan(deployJob.indexOf("Require public identity OAuth app"));
     expect(deployJob).toContain(
       "Active private trace API did not reach its fail-closed unauthenticated boundary.",

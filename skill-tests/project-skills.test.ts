@@ -869,7 +869,7 @@ describe("project run usage", () => {
       const responses = [
         {
           enabled: true,
-          source: "github-authenticated",
+          source: "github-public-status",
           verifiedAt: "2026-08-25T12:00:00.000Z",
         },
         {
@@ -1015,7 +1015,7 @@ describe("project run usage", () => {
               return new Response(
                 JSON.stringify({
                   enabled: false,
-                  source: "github-authenticated",
+                  source: "github-public-status",
                   verifiedAt: "2026-08-25T12:00:00.000Z",
                 }),
                 { status: 200 },

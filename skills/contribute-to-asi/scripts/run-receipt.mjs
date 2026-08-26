@@ -1287,7 +1287,7 @@ async function authoritativePrivateIntake(fetchImpl) {
   );
   if (
     typeof intake.enabled !== "boolean" ||
-    intake.source !== "github-authenticated" ||
+    intake.source !== "github-public-status" ||
     canonicalIso(intake.verifiedAt) !== intake.verifiedAt
   ) {
     fail("private request intake status returned invalid verification");
@@ -2220,7 +2220,7 @@ function previewRun(options) {
     network: [
       `With --allow-package-execution, resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
       `On start and finish, fetch current project terms from https://slop.cash/projects/${PROJECT.projectId}/terms.json and any digest-bound LICENSE, inbound terms, or prize rules from github.com, raw.githubusercontent.com, or proximityprize.org as named by that policy`,
-      `Verify the server-authenticated private-request intake gate at ${PRIVATE_REQUEST_INTAKE_STATUS}; trace upload remains blocked unless it reports enabled`,
+      `Verify the server-authoritative private-request intake gate at ${PRIVATE_REQUEST_INTAKE_STATUS}; trace upload remains blocked unless it reports enabled`,
       `After a local byte/digest disclosure, authenticate with GitHub and permanently upload the inspected trace through ${TRACE_AUTHORITY} under ${TRACE_PRIVACY_CONTRACT}`,
     ],
     automaticUploads: [],

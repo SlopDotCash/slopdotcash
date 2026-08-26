@@ -97,10 +97,9 @@ private report from a signed-in GitHub user without publishing the report as an
 issue. Do not put private data, trace contents, or request details in a public
 issue.
 
-The production workflow queries GitHub's private-vulnerability-reporting status
-with its trusted repository credential. The uploader queries only Slop's
-bounded server-authoritative preflight, whose server-held credential and
-five-minute cache keep GitHub authentication out of the client. Trace upload
+The production workflow and Slop's bounded server-authoritative preflight query
+GitHub's public private-vulnerability-reporting status endpoint. The five-minute
+server cache keeps the upstream request out of contributor clients. Trace upload
 and production activation fail closed if the authoritative state does not
 report exactly `enabled: true`; a rate limit reports its bounded reset time and
 never becomes an enabled result. The advisory URL alone is not evidence that
