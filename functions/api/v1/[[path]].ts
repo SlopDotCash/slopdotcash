@@ -9,7 +9,6 @@ type Env = {
   SLOP_DB: D1Database;
   PRIVATE_TRACES: R2Bucket;
   TRACE_AUTH_SECRET: string;
-  PRIVATE_INTAKE_GITHUB_TOKEN?: string;
   OPERATOR_GITHUB_IDS?: string;
   SLOP_IDENTITY: { fetch(request: Request): Promise<Response> };
 };
@@ -105,19 +104,10 @@ function parsedPrivateIntakeStatus(value: unknown): PrivateIntakeStatus | null {
 }
 
 async function privateIntakeStatus(
-  token: string | undefined,
   cache: EdgeCache | undefined,
   fetchImpl: typeof fetch,
   now: () => Date,
 ): Promise<PrivateIntakeStatus> {
-  if (
-    typeof token !== "string" ||
-    token.length < 20 ||
-    token.length > 2048 ||
-    /\s/u.test(token)
-  ) {
-    return { status: "unavailable" };
-  }
   if (cache !== undefined) {
     try {
       const cached = await cache.match(PRIVATE_INTAKE_CACHE_KEY);
@@ -138,7 +128,6 @@ async function privateIntakeStatus(
       redirect: "error",
       headers: {
         Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
         "User-Agent": "slop-private-intake-verifier",
         "X-GitHub-Api-Version": "2022-11-28",
       },
@@ -260,11 +249,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     verifyIdentityAssertion: (assertion) =>
       verifyIdentityAssertion(context.env.SLOP_IDENTITY, assertion),
     privateIntakeStatus: () =>
-      privateIntakeStatus(
-        context.env.PRIVATE_INTAKE_GITHUB_TOKEN,
-        cache,
-        globalThis.fetch,
-        () => new Date(),
-      ),
+      privateIntakeStatus(cache, globalThis.fetch, () => new Date()),
   });
 }

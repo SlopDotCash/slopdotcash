@@ -77,7 +77,7 @@ async function readPrivateIntakeStatus(
     }
     return json(200, {
       enabled: status.enabled,
-      source: "github-authenticated",
+      source: "github-public-status",
       verifiedAt: status.verifiedAt,
     });
   }
