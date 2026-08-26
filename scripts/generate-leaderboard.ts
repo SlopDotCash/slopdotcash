@@ -180,6 +180,14 @@ export async function retrySlopSnapshot<T>(
     { cause: lastChange },
   );
 }
+
+/** Retries a paginated open-work listing when its live total changes. */
+export async function retryOpenReferenceListing<T>(
+  collect: () => Promise<T>,
+): Promise<T> {
+  return await retrySlopSnapshot(() => collect());
+}
+
 class GraphqlResponseBoundaryError extends Error {}
 
 export interface RateLimitSnapshot {
@@ -2698,12 +2706,14 @@ async function collectOpenIssues(
   onProgress: (progress: GenerationProgress) => void,
   reservedCost = 0,
 ): Promise<IssueRecord[]> {
-  const before = await collectOpenReferences(
-    client,
-    targetRepository,
-    OPEN_ISSUE_REFERENCES_QUERY,
-    "issues",
-    "Issue",
+  const before = await retryOpenReferenceListing(() =>
+    collectOpenReferences(
+      client,
+      targetRepository,
+      OPEN_ISSUE_REFERENCES_QUERY,
+      "issues",
+      "Issue",
+    ),
   );
   if (before.repositoryId !== repositoryId) {
     throw new Error("GitHub returned an inconsistent repository node ID");
@@ -2730,12 +2740,14 @@ async function collectOpenPullRequests(
   onProgress: (progress: GenerationProgress) => void,
   reservedCost = 0,
 ): Promise<PullRequestRecord[]> {
-  const before = await collectOpenReferences(
-    client,
-    targetRepository,
-    OPEN_PULL_REQUEST_REFERENCES_QUERY,
-    "pullRequests",
-    "PullRequest",
+  const before = await retryOpenReferenceListing(() =>
+    collectOpenReferences(
+      client,
+      targetRepository,
+      OPEN_PULL_REQUEST_REFERENCES_QUERY,
+      "pullRequests",
+      "PullRequest",
+    ),
   );
   if (before.repositoryId !== repositoryId) {
     throw new Error("GitHub returned an inconsistent repository node ID");

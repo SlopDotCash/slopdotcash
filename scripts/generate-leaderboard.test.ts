@@ -33,6 +33,7 @@ import {
   planMergedPullRequestHydration,
   resolveGitHubToken,
   retryOpenBatch,
+  retryOpenReferenceListing,
   retrySlopSnapshot,
   runGenerator,
   SEARCH_SAFE_RESULT_LIMIT,
@@ -1506,6 +1507,20 @@ describe("rate-efficient query plan", () => {
         throw new OpenSetChangedError("merged outcome changed");
       }),
     ).rejects.toThrow("merged outcome changed");
+  });
+
+  it("retries a paginated open-work listing when its live count changes", async () => {
+    let attempts = 0;
+    await expect(
+      retryOpenReferenceListing(async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new OpenSetChangedError("open queue count moved");
+        }
+        return ["stable-reference"];
+      }),
+    ).resolves.toEqual(["stable-reference"]);
+    expect(attempts).toBe(2);
   });
 
   it("fails when the non-scoring queue never stabilizes", async () => {
