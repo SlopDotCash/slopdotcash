@@ -30,9 +30,12 @@ import {
   CLAIM_RECENCY_DAYS,
   closingIssueNumbers,
   collectLiveReport,
+  completeReviewEpoch,
   createGhCommandBudget,
+  createReviewEpoch,
   isBotAccount,
   MAX_ACTIVITY_CONNECTION_ITEMS,
+  MAX_REVIEW_EPOCH_CANDIDATES,
   MISSION_READY_LABEL,
   parseCliArguments,
   parseModelDisclosure,
@@ -40,7 +43,9 @@ import {
   REQUIRED_EVIDENCE_ROWS,
   readGhOpenActivity,
   readGhPages,
+  readLivePullHead,
   readProjectSelectionPolicy,
+  recheckReviewEpochCandidate,
   renderMarkdown,
 } from "../skills/contribute-to-eliza/scripts/live-report.mjs";
 import {
@@ -1506,6 +1511,135 @@ describe("live report parsing", () => {
 });
 
 describe("live report behavior", () => {
+  it("freezes a finite oldest-first epoch and defers arrivals and overflow", () => {
+    const candidates = Array.from(
+      { length: MAX_REVIEW_EPOCH_CANDIDATES + 3 },
+      (_, index) => ({
+        number: index + 1,
+        headSha: `${String(index + 1).padStart(2, "0")}${"a".repeat(38)}`,
+        updatedAt: "2026-01-18T12:00:00.000Z",
+      }),
+    );
+    candidates.push({
+      number: 99,
+      headSha: "f".repeat(40),
+      updatedAt: "2026-01-20T12:00:01.000Z",
+    });
+
+    const epoch = createReviewEpoch(
+      candidates,
+      "2026-01-20T12:00:00.000Z",
+      MAX_REVIEW_EPOCH_CANDIDATES,
+    );
+
+    assert.deepStrictEqual(
+      epoch.candidates.map((candidate) => candidate.number),
+      Array.from(
+        { length: MAX_REVIEW_EPOCH_CANDIDATES },
+        (_, index) => index + 1,
+      ),
+    );
+    assert.deepStrictEqual(
+      epoch.deferred.map((candidate) => [
+        candidate.number,
+        candidate.deferredReason,
+      ]),
+      [
+        [21, "epoch-limit"],
+        [22, "epoch-limit"],
+        [23, "epoch-limit"],
+        [99, "after-cutoff"],
+      ],
+    );
+    assert.strictEqual(epoch.completion.allowsNextTier, false);
+    assert.strictEqual(epoch.completion.maxNextTierOutcomes, 0);
+    const incomplete = completeReviewEpoch(epoch, [
+      {
+        number: 1,
+        expectedHeadSha: epoch.candidates[0].headSha,
+        status: "reviewed",
+      },
+    ]);
+    assert.strictEqual(incomplete.allowsNextTier, false);
+    assert.strictEqual(incomplete.remainingCandidates.length, 19);
+    const completed = completeReviewEpoch(
+      epoch,
+      epoch.candidates.map((candidate) => ({
+        number: candidate.number,
+        expectedHeadSha: candidate.headSha,
+        status: "reviewed",
+      })),
+    );
+    assert.strictEqual(completed.complete, true);
+    assert.strictEqual(completed.allowsNextTier, true);
+    assert.strictEqual(completed.nextTier, "next-eligible-lower-tier");
+    assert.strictEqual(completed.maxNextTierOutcomes, 1);
+  });
+
+  it("requires an exact current head before publishing and defers churn", () => {
+    const candidate = {
+      number: 7,
+      headSha: "a".repeat(40),
+      updatedAt: "2026-01-18T12:00:00.000Z",
+    };
+    assert.deepStrictEqual(
+      recheckReviewEpochCandidate(candidate, "A".repeat(40)),
+      {
+        number: 7,
+        status: "current",
+        publishable: true,
+      },
+    );
+    assert.deepStrictEqual(
+      recheckReviewEpochCandidate(candidate, "b".repeat(40)),
+      {
+        number: 7,
+        status: "stale",
+        publishable: false,
+        currentHeadSha: "b".repeat(40),
+        deferredReason: "head-changed",
+      },
+    );
+    assert.deepStrictEqual(
+      recheckReviewEpochCandidate(candidate, "c".repeat(40)),
+      {
+        number: 7,
+        status: "stale",
+        publishable: false,
+        currentHeadSha: "c".repeat(40),
+        deferredReason: "head-changed",
+      },
+    );
+  });
+
+  it("uses a read-only live GET as the publication head guard", () => {
+    const calls: string[][] = [];
+    const live = readLivePullHead("elizaOS/eliza", 7, (_command, args) => {
+      calls.push(args);
+      return {
+        status: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          number: 7,
+          headSha: "b".repeat(40),
+          updatedAt: "2026-01-20T12:00:01.000Z",
+        }),
+      };
+    });
+    assert.deepStrictEqual(live, {
+      number: 7,
+      headSha: "b".repeat(40),
+      updatedAt: "2026-01-20T12:00:01.000Z",
+    });
+    assert.deepStrictEqual(calls[0].slice(0, 4), [
+      "api",
+      "--method",
+      "GET",
+      "--jq",
+    ]);
+    assert.ok(calls[0].at(-1)?.endsWith("/pulls/7"));
+  });
+
   it("invokes gh only through paginated GET requests", () => {
     let invocation:
       | {

@@ -23,6 +23,11 @@ export const REQUIRED_EVIDENCE_ROWS = [
 export const CLAIM_RECENCY_DAYS = 7;
 export const MISSION_READY_LABEL = "mission-ready";
 export const MAX_OPEN_ITEMS = 10_000;
+// The repository-size bound protects discovery. This smaller work-epoch bound
+// is the liveness contract: one run has a finite frozen PR frontier and may
+// advance after that frontier is dispositioned even while new PRs arrive.
+export const MAX_REVIEW_EPOCH_CANDIDATES = 20;
+export const REVIEW_EPOCH_SCHEMA_VERSION = 1;
 export const MAX_API_READS = 16;
 export const MAX_ACTIVITY_CONNECTION_ITEMS = 1_000;
 export const MIN_GRAPHQL_ACTIVITY_POINTS = 1_000;
@@ -370,6 +375,208 @@ function compareByNumber(left, right) {
   return left.number - right.number;
 }
 
+function reviewEpochCandidate(
+  value,
+  index,
+  context = "review epoch candidate",
+) {
+  const record = asRecord(value, `${context}[${index}]`);
+  const number = asNumberField(record, "number", `${context}[${index}]`);
+  if (number < 1) {
+    throw new TypeError(`${context}[${index}].number must be positive`);
+  }
+  const headSha = asStringField(
+    record,
+    "headSha",
+    `${context}[${index}]`,
+  ).toLowerCase();
+  if (!FULL_COMMIT_RE.test(headSha)) {
+    throw new TypeError(
+      `${context}[${index}].headSha must be a full commit SHA`,
+    );
+  }
+  const updatedAt = isoTime(record.updatedAt, `${context}[${index}].updatedAt`);
+  return { number, headSha, updatedAt };
+}
+
+function reviewEpochIdentity(value, context = "review epoch candidate") {
+  const record = asRecord(value, context);
+  const number = asNumberField(record, "number", context);
+  if (number < 1) {
+    throw new TypeError(`${context}.number must be positive`);
+  }
+  const headSha = asStringField(record, "headSha", context).toLowerCase();
+  if (!FULL_COMMIT_RE.test(headSha)) {
+    throw new TypeError(`${context}.headSha must be a full commit SHA`);
+  }
+  return { number, headSha };
+}
+
+/**
+ * Freezes a deterministic, bounded PR review frontier. Candidates updated
+ * after the cutoff are explicitly deferred, as are candidates beyond the
+ * finite epoch count; both are eligible for a later epoch and never vanish
+ * from diagnostics.
+ */
+export function createReviewEpoch(
+  candidates,
+  cutoff,
+  maxCandidates = MAX_REVIEW_EPOCH_CANDIDATES,
+) {
+  if (!Array.isArray(candidates)) {
+    throw new TypeError("review epoch candidates must be an array");
+  }
+  const cutoffTime = Date.parse(isoTime(cutoff, "review epoch cutoff"));
+  if (
+    !Number.isInteger(maxCandidates) ||
+    maxCandidates < 1 ||
+    maxCandidates > MAX_REVIEW_EPOCH_CANDIDATES
+  ) {
+    throw new TypeError(
+      `review epoch maxCandidates must be an integer from 1 to ${MAX_REVIEW_EPOCH_CANDIDATES}`,
+    );
+  }
+  const normalized = candidates
+    .map((value, index) => reviewEpochCandidate(value, index))
+    .sort(compareByNumber);
+  const seen = new Set();
+  for (const candidate of normalized) {
+    if (seen.has(candidate.number)) {
+      throw new TypeError(
+        `duplicate review epoch candidate #${candidate.number}`,
+      );
+    }
+    seen.add(candidate.number);
+  }
+  const frozen = normalized.filter(
+    (candidate) => Date.parse(candidate.updatedAt) <= cutoffTime,
+  );
+  const arrivals = normalized
+    .filter((candidate) => Date.parse(candidate.updatedAt) > cutoffTime)
+    .map((candidate) => ({ ...candidate, deferredReason: "after-cutoff" }));
+  const selected = frozen.slice(0, maxCandidates);
+  const overLimit = frozen
+    .slice(maxCandidates)
+    .map((candidate) => ({ ...candidate, deferredReason: "epoch-limit" }));
+  return {
+    schemaVersion: REVIEW_EPOCH_SCHEMA_VERSION,
+    cutoff,
+    maxCandidates,
+    candidateCount: normalized.length,
+    candidates: selected,
+    deferred: [...overLimit, ...arrivals].sort(compareByNumber),
+    completion: {
+      requiredCandidateCount: selected.length,
+      allowsNextTier: false,
+      maxNextTierOutcomes: 0,
+    },
+  };
+}
+
+const REVIEW_EPOCH_DISPOSITIONS = new Set([
+  "reviewed",
+  "fix",
+  "close",
+  "stale-head",
+]);
+
+/** Returns the lower-tier permit only after every frozen candidate is closed. */
+export function completeReviewEpoch(epoch, dispositions) {
+  const record = asRecord(epoch, "review epoch");
+  const candidates = asArrayField(record, "candidates", "review epoch").map(
+    (candidate, index) =>
+      reviewEpochIdentity(candidate, `review epoch.candidates[${index}]`),
+  );
+  if (!Array.isArray(dispositions)) {
+    throw new TypeError("review epoch dispositions must be an array");
+  }
+  const expected = new Map(
+    candidates.map((candidate) => [candidate.number, candidate]),
+  );
+  const completed = new Set();
+  for (const [index, value] of dispositions.entries()) {
+    const context = `review epoch dispositions[${index}]`;
+    const disposition = asRecord(value, context);
+    const number = asNumberField(disposition, "number", context);
+    const candidate = expected.get(number);
+    if (!candidate) {
+      throw new TypeError(`${context} names non-epoch candidate #${number}`);
+    }
+    if (completed.has(number)) {
+      throw new TypeError(`duplicate review epoch disposition for #${number}`);
+    }
+    const expectedHeadSha = asStringField(
+      disposition,
+      "expectedHeadSha",
+      context,
+    ).toLowerCase();
+    if (expectedHeadSha !== candidate.headSha) {
+      throw new TypeError(
+        `${context} does not bind the frozen head for #${number}`,
+      );
+    }
+    const status = asStringField(disposition, "status", context);
+    if (!REVIEW_EPOCH_DISPOSITIONS.has(status)) {
+      throw new TypeError(`${context}.status is not a terminal disposition`);
+    }
+    if (status === "stale-head") {
+      const currentHeadSha = asStringField(
+        disposition,
+        "currentHeadSha",
+        context,
+      ).toLowerCase();
+      if (
+        !FULL_COMMIT_RE.test(currentHeadSha) ||
+        currentHeadSha === candidate.headSha
+      ) {
+        throw new TypeError(
+          `${context}.currentHeadSha must be a different full commit SHA`,
+        );
+      }
+    }
+    completed.add(number);
+  }
+  const remainingCandidates = candidates
+    .filter((candidate) => !completed.has(candidate.number))
+    .map((candidate) => candidate.number);
+  const complete = remainingCandidates.length === 0;
+  return {
+    complete,
+    dispositionCount: completed.size,
+    requiredCandidateCount: candidates.length,
+    remainingCandidates,
+    allowsNextTier: complete,
+    ...(complete
+      ? { nextTier: "next-eligible-lower-tier", maxNextTierOutcomes: 1 }
+      : { maxNextTierOutcomes: 0 }),
+  };
+}
+
+/**
+ * Publication boundary for an epoch candidate. A changed head is stale and
+ * must be deferred; only an exact byte-for-byte head match is publishable.
+ */
+export function recheckReviewEpochCandidate(candidate, currentHeadSha) {
+  const normalized = reviewEpochIdentity(candidate);
+  if (
+    typeof currentHeadSha !== "string" ||
+    !FULL_COMMIT_RE.test(currentHeadSha)
+  ) {
+    throw new TypeError("currentHeadSha must be a full commit SHA");
+  }
+  const current = currentHeadSha.toLowerCase();
+  if (current === normalized.headSha) {
+    return { number: normalized.number, status: "current", publishable: true };
+  }
+  return {
+    number: normalized.number,
+    status: "stale",
+    publishable: false,
+    currentHeadSha: current,
+    deferredReason: "head-changed",
+  };
+}
+
 function compareComment(left, right) {
   return left.id - right.id || left.url.localeCompare(right.url);
 }
@@ -459,6 +666,86 @@ export function readGhPages(endpoint, spawn = spawnSync) {
     throw new TypeError("gh api did not return text output");
   }
   return parsePaginatedJson(result.stdout, endpoint);
+}
+
+/** Performs the single live GET used as the pre-publication head guard. */
+export function readLivePullHead(repo, number, spawn = spawnSync) {
+  if (!REPOSITORY_RE.test(repo)) {
+    throw new TypeError("Repository must use the owner/name form");
+  }
+  if (!Number.isInteger(number) || number < 1) {
+    throw new TypeError("pull request number must be a positive integer");
+  }
+  const endpoint = `repos/${repo}/pulls/${number}`;
+  const result = spawn(
+    "gh",
+    [
+      "api",
+      "--method",
+      "GET",
+      "--jq",
+      "{number: .number, headSha: .head.sha, updatedAt: .updated_at}",
+      endpoint,
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail =
+      typeof result.stderr === "string" && result.stderr.trim().length > 0
+        ? `: ${result.stderr.trim()}`
+        : "";
+    throw new Error(`gh api failed for ${endpoint}${detail}`);
+  }
+  let value;
+  try {
+    value = JSON.parse(result.stdout);
+  } catch (cause) {
+    throw new SyntaxError(`gh api returned malformed JSON for ${endpoint}`, {
+      cause,
+    });
+  }
+  const record = asRecord(value, `live pull request #${number}`);
+  const liveNumber = asNumberField(
+    record,
+    "number",
+    `live pull request #${number}`,
+  );
+  if (liveNumber !== number) {
+    throw new TypeError(`live pull request number changed from #${number}`);
+  }
+  const headSha = asStringField(
+    record,
+    "headSha",
+    `live pull request #${number}`,
+  ).toLowerCase();
+  if (!FULL_COMMIT_RE.test(headSha)) {
+    throw new TypeError(
+      `live pull request #${number}.headSha must be a full commit SHA`,
+    );
+  }
+  return {
+    number,
+    headSha,
+    updatedAt: isoTime(
+      record.updatedAt,
+      `live pull request #${number}.updatedAt`,
+    ),
+  };
+}
+
+export function recheckLivePullHead(repo, candidate, spawn = spawnSync) {
+  const normalized = reviewEpochIdentity(candidate);
+  const live = readLivePullHead(repo, normalized.number, spawn);
+  return {
+    ...recheckReviewEpochCandidate(normalized, live.headSha),
+    expectedHeadSha: normalized.headSha,
+    updatedAt: live.updatedAt,
+  };
 }
 
 const ACTIVITY_PAGE_SIZE = 100;
@@ -1739,6 +2026,7 @@ export function collectLiveReport(
     throw new TypeError("Repository must use the owner/name form");
   }
   const referenceTime = nowTime(now);
+  const snapshotCutoff = now.toISOString();
   const candidateLabelSet = new Set(
     eligibleIssueLabels(projectEligibleIssueLabels, "eligible issue labels"),
   );
@@ -1970,7 +2258,18 @@ export function collectLiveReport(
       currentHeadApprovals: currentReviews.approved,
       currentHeadChangesRequested: currentReviews.changesRequested,
     };
-    const detailedSummary = { ...summary, reviewState };
+    const head = asRecord(item.head, `${context}.head`);
+    const headSha = asStringField(head, "sha", `${context}.head`).toLowerCase();
+    if (!FULL_COMMIT_RE.test(headSha)) {
+      throw new TypeError(`${context}.head.sha must be a full commit SHA`);
+    }
+    const updatedAt = isoTime(item.updated_at, `${context}.updated_at`);
+    const detailedSummary = {
+      ...summary,
+      updatedAt,
+      headSha,
+      reviewState,
+    };
     pullRequestAudits.push({
       ...detailedSummary,
       bodyProviderModel: parseModelDisclosure(body),
@@ -2010,10 +2309,13 @@ export function collectLiveReport(
     reviewablePullRequests.push(detailedSummary);
   }
 
+  const reviewEpoch = createReviewEpoch(reviewablePullRequests, snapshotCutoff);
   return {
     repository: repo,
+    snapshot: { cutoff: snapshotCutoff },
     selection: {
       eligibleIssueLabels: [...candidateLabelSet].sort(),
+      reviewEpoch,
     },
     totals: {
       openIssues: issueItems.length,
@@ -2080,6 +2382,9 @@ export function renderMarkdown(report) {
     "",
     `Open issues: ${report.totals.openIssues}; unclaimed candidates: ${report.totals.candidateIssues}.`,
     `Open PRs: ${report.totals.openPullRequests}; reviewable candidates: ${report.totals.reviewablePullRequests}.`,
+    report.selection?.reviewEpoch
+      ? `Review epoch cutoff: ${report.selection.reviewEpoch.cutoff}; frozen candidates: ${report.selection.reviewEpoch.candidates.length}/${report.selection.reviewEpoch.candidateCount}; deferred to a later epoch: ${report.selection.reviewEpoch.deferred.length}.`
+      : "Review epoch: unavailable.",
     "",
     "## Priority 1: unclaimed issue candidates with no open closing PR",
     "",
@@ -2143,7 +2448,11 @@ export function parseCliArguments(
   if (!REPOSITORY_RE.test(defaultRepository)) {
     throw new TypeError("default repository must use the owner/name form");
   }
-  const options = { repo: defaultRepository, json: false, help: false };
+  const options = {
+    repo: defaultRepository,
+    json: false,
+    help: false,
+  };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") {
@@ -2158,12 +2467,43 @@ export function parseCliArguments(
       options.repo = args[index];
     } else if (argument.startsWith("--repo=")) {
       options.repo = argument.slice("--repo=".length);
+    } else if (argument === "--recheck-pr") {
+      index += 1;
+      if (index >= args.length) {
+        throw new TypeError("--recheck-pr requires a pull request number");
+      }
+      options.recheckPr = Number(args[index]);
+    } else if (argument.startsWith("--recheck-pr=")) {
+      options.recheckPr = Number(argument.slice("--recheck-pr=".length));
+    } else if (argument === "--expected-head") {
+      index += 1;
+      if (index >= args.length) {
+        throw new TypeError("--expected-head requires a full commit SHA");
+      }
+      options.expectedHead = args[index];
+    } else if (argument.startsWith("--expected-head=")) {
+      options.expectedHead = argument.slice("--expected-head=".length);
     } else {
       throw new TypeError(`Unknown argument: ${argument}`);
     }
   }
   if (!REPOSITORY_RE.test(options.repo)) {
     throw new TypeError("--repo must use the owner/name form");
+  }
+  if (options.recheckPr !== undefined) {
+    if (!Number.isInteger(options.recheckPr) || options.recheckPr < 1) {
+      throw new TypeError("--recheck-pr must be a positive integer");
+    }
+    if (
+      typeof options.expectedHead !== "string" ||
+      !FULL_COMMIT_RE.test(options.expectedHead)
+    ) {
+      throw new TypeError(
+        "--expected-head must be a full commit SHA when rechecking a PR",
+      );
+    }
+  } else if (options.expectedHead !== undefined) {
+    throw new TypeError("--expected-head requires --recheck-pr");
   }
   return options;
 }
@@ -2176,6 +2516,8 @@ Read and paginate open GitHub issues and pull requests without changing them.
 Options:
   --repo <owner/name>  Repository to inspect (default: this skill's project)
   --json               Print stable machine-readable JSON
+  --recheck-pr <n>     GET one live PR head before publishing a review
+  --expected-head <sha>  Frozen epoch head required by --recheck-pr
   --help, -h           Show this help
 `;
 }
@@ -2188,6 +2530,19 @@ export function main(args = process.argv.slice(2)) {
     return;
   }
   const commandBudget = createGhCommandBudget();
+  if (options.recheckPr !== undefined) {
+    const result = recheckLivePullHead(
+      options.repo,
+      {
+        number: options.recheckPr,
+        headSha: options.expectedHead,
+      },
+      commandBudget.run,
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.publishable) process.exitCode = 2;
+    return;
+  }
   const boundedRead = (endpoint) => {
     return readGhPages(endpoint, commandBudget.run);
   };
