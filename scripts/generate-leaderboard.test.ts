@@ -1074,7 +1074,7 @@ describe("GitHub GraphQL boundary", () => {
       client.execute("query { viewer { login } }"),
     ).resolves.toBeDefined();
     await expect(client.execute("query { viewer { login } }")).rejects.toThrow(
-      "safety budget exceeded (800/750 points consumed",
+      "safety budget exceeded (800/750 points consumed in the current window",
     );
   });
 
@@ -1106,7 +1106,7 @@ describe("GitHub GraphQL boundary", () => {
       client.execute("query { viewer { login } }"),
     ).resolves.toBeDefined();
     expect(attempts).toBe(3);
-    expect(client.getRateLimit().consumedDuringRun).toBe(450);
+    expect(client.getRateLimit().consumedDuringRun).toBe(1_350);
   });
 
   it("does not call the writer after live generation fails", async () => {

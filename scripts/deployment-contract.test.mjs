@@ -370,7 +370,7 @@ describe("slop.cash deployment contract", () => {
       "- name: Load deployed public ledger for pull-request checks",
     );
     expect(qualityJob).toContain("if: github.event_name == 'pull_request'");
-    expect(qualityJob).toContain("--max-filesize 16777216");
+    expect(qualityJob).toContain("--max-filesize 26214400");
     expect(qualityJob).toContain("https://slop.cash/data/leaderboard.json");
     expect(qualityJob).toContain(
       "- name: Validate finalized Solana evidence on trusted revisions\n        if: github.event_name != 'pull_request'",
