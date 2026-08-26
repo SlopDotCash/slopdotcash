@@ -127,7 +127,7 @@ jobs:
             --tlsv1.2 \
             --connect-timeout 10 \
             --max-time 60 \
-            --max-filesize 16777216 \
+            --max-filesize 26214400 \
             --output "$ledger_file" \
             https://slop.cash/data/leaderboard.json
           test -s "$ledger_file"

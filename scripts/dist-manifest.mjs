@@ -16,7 +16,10 @@ export const MANIFEST_FILENAME = "deployment-manifest.json";
 const SCHEMA_VERSION = 1;
 const MAXIMUM_DIRECTORIES = 128;
 const MAXIMUM_FILES = 256;
-const MAXIMUM_FILE_BYTES = 16 * 1024 * 1024;
+// Cloudflare Pages accepts individual static assets up to 25 MiB. Keep the
+// local release gate aligned with that external boundary instead of imposing
+// a smaller product-specific cap on the complete public ledger.
+const MAXIMUM_FILE_BYTES = 25 * 1024 * 1024;
 const MAXIMUM_TOTAL_BYTES = 128 * 1024 * 1024;
 const MAXIMUM_PATH_BYTES = 1_024;
 const MAXIMUM_MANIFEST_BYTES = 256 * 1024;
