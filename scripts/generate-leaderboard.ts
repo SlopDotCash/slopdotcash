@@ -1043,6 +1043,7 @@ export interface GitHubGraphqlClientOptions {
   maxGenerationCost?: number;
   minimumRateLimitReserve?: number;
   retryBaseDelayMs?: number;
+  secondaryRateLimitDelayMs?: number;
 }
 
 function isTransientNetworkError(value: unknown): boolean {
@@ -1145,6 +1146,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   readonly #maxGenerationCost: number;
   readonly #minimumRateLimitReserve: number;
   readonly #retryBaseDelayMs: number;
+  readonly #secondaryRateLimitDelayMs: number;
   #requestCount = 0;
   #rateLimit: RateLimitSnapshot | null = null;
   #consumedCost = 0;
@@ -1174,11 +1176,13 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     const minimumRateLimitReserve =
       options.minimumRateLimitReserve ?? MINIMUM_RATE_LIMIT_RESERVE;
     const retryBaseDelayMs = options.retryBaseDelayMs ?? 250;
+    const secondaryRateLimitDelayMs = options.secondaryRateLimitDelayMs ?? 15_000;
     for (const [name, value] of [
       ["requestTimeoutMs", requestTimeoutMs],
       ["maxGenerationCost", maxGenerationCost],
       ["minimumRateLimitReserve", minimumRateLimitReserve],
       ["retryBaseDelayMs", retryBaseDelayMs],
+      ["secondaryRateLimitDelayMs", secondaryRateLimitDelayMs],
     ] as const) {
       if (!Number.isFinite(value) || value < 0) {
         throw new Error(`${name} must be a non-negative finite number`);
@@ -1190,6 +1194,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     this.#maxGenerationCost = maxGenerationCost;
     this.#minimumRateLimitReserve = minimumRateLimitReserve;
     this.#retryBaseDelayMs = retryBaseDelayMs;
+    this.#secondaryRateLimitDelayMs = secondaryRateLimitDelayMs;
   }
 
   async execute(
@@ -1252,6 +1257,15 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         continue;
       } finally {
         clearTimeout(timeout);
+      }
+      const secondaryRateLimited =
+        response.status === 403 &&
+        /secondary rate limit|abuse detection/i.test(responseBody);
+      if (secondaryRateLimited && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+        await retryDelay(
+          this.#secondaryRateLimitDelayMs * 2 ** (attempt - 1),
+        );
+        continue;
       }
       const retryableStatus = [502, 503, 504].includes(response.status);
       if (retryableStatus && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {

@@ -848,6 +848,29 @@ describe("GitHub GraphQL boundary", () => {
     expect(client.getRateLimit().consumedDuringRun).toBe(1);
   });
 
+  it("backs off and retries secondary-rate-limit responses", async () => {
+    let attempts = 0;
+    const fetcher = async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        return new Response(
+          JSON.stringify({ message: "You have exceeded a secondary rate limit" }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return successResponse();
+    };
+    const client = new GitHubGraphqlClient("secret-token", fetcher, {
+      retryBaseDelayMs: 0,
+      secondaryRateLimitDelayMs: 0,
+    });
+
+    await expect(
+      client.execute("query { viewer { login } }"),
+    ).resolves.toMatchObject({ viewer: { login: "eliza" } });
+    expect(attempts).toBe(3);
+  });
+
   it("retries transient network failures before returning validated data", async () => {
     let attempts = 0;
     const fetcher = async () => {
