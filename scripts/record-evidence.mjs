@@ -540,7 +540,10 @@ try {
       .filter({ hasText: /^SHIPPING OPEN SOURCE\.$/u })
       .waitFor({ state: "visible", timeout: 10_000 });
     await page.locator("#projects").waitFor({ state: "visible" });
-    await page.locator("#leaderboard table").waitFor({ state: "visible" });
+    await page
+      .locator("#leaderboard table")
+      .first()
+      .waitFor({ state: "visible" });
     if (previewServer && previewState) {
       assertPreviewRunning(previewServer, previewState);
     }
