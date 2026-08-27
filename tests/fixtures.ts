@@ -314,7 +314,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
         actor: leaderActor,
         kind: "missing-evidence",
         category: "evidence",
-        potentialPoints: 6,
+        potentialPoints: null,
         occurredAt: "2026-07-29T18:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
@@ -325,7 +325,7 @@ export function snapshotFixture(): LeaderboardSnapshot {
           url: "https://github.com/elizaOS/eliza/pull/17340",
         },
         reason:
-          "Open pull request evidence is missing with 0 of 6 points verified.",
+          "Open pull request evidence is missing; its legacy evidence assessment is 0 of 6. Evidence does not add standalone Score v2 points.",
         hint: "Add verified screenshot, video, or log evidence before merge.",
       },
     ],

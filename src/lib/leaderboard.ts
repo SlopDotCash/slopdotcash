@@ -404,7 +404,8 @@ export interface ScoreOpportunity {
   actor: GitHubActor;
   kind: ScoreOpportunityKind;
   category: ScoreCategory;
-  potentialPoints: number;
+  /** Null when the row is useful guidance but cannot add standalone score. */
+  potentialPoints: number | null;
   occurredAt: string;
   repository: RepositoryId;
   source: ScoreEvent["source"];
@@ -2744,7 +2745,6 @@ function collectOpenPullRequestOpportunities(
           (status.status === "missing" &&
             hasOpenPullRequestOpportunitySignal(pullRequest));
         if (publishEvidenceGap) {
-          const remaining = status.maxPoints - status.points;
           opportunities.push({
             id: `${pullRequest.id}:opportunity:${status.status}-evidence`,
             actor: pullRequest.author,
@@ -2753,11 +2753,11 @@ function collectOpenPullRequestOpportunities(
                 ? "missing-evidence"
                 : "partial-evidence",
             category: "evidence",
-            potentialPoints: remaining,
+            potentialPoints: null,
             occurredAt: pullRequest.updatedAt,
             repository,
             source: pullRequestSource,
-            reason: `Open pull request evidence is ${status.status} with ${status.points} of ${status.maxPoints} points verified.`,
+            reason: `Open pull request evidence is ${status.status}; its legacy evidence assessment is ${status.points} of ${status.maxPoints}. Evidence does not add standalone Score v2 points.`,
             hint:
               status.status === "missing"
                 ? "Add verified screenshot, video, or log evidence before merge."
@@ -4894,10 +4894,16 @@ function assertOpportunityValue(
     ],
     `${path}.category`,
   );
-  assertPositiveInteger(opportunity.potentialPoints, `${path}.potentialPoints`);
-  const potentialPoints = Number(opportunity.potentialPoints);
   const kind = opportunity.kind as ScoreOpportunityKind;
   const category = opportunity.category as ScoreCategory;
+  let potentialPoints: number | null = null;
+  if (opportunity.potentialPoints !== null) {
+    assertPositiveInteger(
+      opportunity.potentialPoints,
+      `${path}.potentialPoints`,
+    );
+    potentialPoints = Number(opportunity.potentialPoints);
+  }
   const validPair =
     (kind === "near-material-test" &&
       category === "material-test-change" &&
@@ -4907,8 +4913,8 @@ function assertOpportunityValue(
       potentialPoints === 3) ||
     ((kind === "missing-evidence" || kind === "partial-evidence") &&
       category === "evidence" &&
-      potentialPoints >= 1 &&
-      potentialPoints <= 6);
+      (potentialPoints === null ||
+        (potentialPoints >= 1 && potentialPoints <= 6)));
   if (!validPair) {
     throw new Error(
       `${path} kind/category/potentialPoints combination is invalid`,

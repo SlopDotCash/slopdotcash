@@ -843,7 +843,7 @@ describe("public records", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryAllByText(/2026-07 scoring ·/)).toHaveLength(0);
-    expect(screen.getByText(/\+6 if it verifies/)).toBeInTheDocument();
+    expect(screen.getByText("Evidence guidance")).toBeInTheDocument();
     expect(screen.getByText("all-time score")).toBeInTheDocument();
     expect(screen.getByText("monthly estimate")).toBeInTheDocument();
     expect(
@@ -868,7 +868,7 @@ describe("public records", () => {
         actor: openOnly,
         kind: "partial-evidence",
         category: "evidence",
-        potentialPoints: 4,
+        potentialPoints: null,
         occurredAt: "2026-07-29T18:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
@@ -879,7 +879,7 @@ describe("public records", () => {
           url: "https://github.com/elizaOS/eliza/pull/17399",
         },
         reason:
-          "Open pull request evidence is partial with 2 of 6 points verified.",
+          "Open pull request evidence is partial; its legacy evidence assessment is 2 of 6. Evidence does not add standalone Score v2 points.",
         hint: "Finish verified evidence categories before merge.",
       },
     ];
@@ -948,7 +948,7 @@ describe("public records", () => {
         actor,
         kind: "missing-evidence" as const,
         category: "evidence" as const,
-        potentialPoints: 6,
+        potentialPoints: null,
         occurredAt: `2026-07-${String(29 - index).padStart(2, "0")}T12:00:00.000Z`,
         repository: "elizaOS/eliza" as const,
         source: {
@@ -959,7 +959,7 @@ describe("public records", () => {
           url: `https://github.com/elizaOS/eliza/pull/${number}`,
         },
         reason:
-          "Open pull request evidence is missing with 0 of 6 points verified.",
+          "Open pull request evidence is missing; its legacy evidence assessment is 0 of 6. Evidence does not add standalone Score v2 points.",
         hint: "Add verified screenshot, video, or log evidence before merge.",
       };
     });
@@ -985,7 +985,7 @@ describe("public records", () => {
         name: "Open work",
       }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText(/\+6 if it verifies/)).toHaveLength(5);
+    expect(screen.getAllByText("Evidence guidance")).toHaveLength(5);
     expect(screen.getByText(/Open checklist 18000/)).toBeInTheDocument();
     expect(screen.queryByText(/Open checklist 18005/)).not.toBeInTheDocument();
   });
