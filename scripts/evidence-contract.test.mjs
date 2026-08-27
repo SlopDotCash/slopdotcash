@@ -22,7 +22,7 @@ const now = Date.parse("2026-07-30T20:00:00.000Z");
 
 function liveLedger(overrides = {}) {
   return {
-    schemaVersion: "5",
+    schemaVersion: "6",
     repository: "elizaOS/eliza",
     repositories: [
       { id: "elizaOS/eliza" },
@@ -107,7 +107,7 @@ describe("live ledger readiness", () => {
     ).toThrow("leaderboard.ledger must be a non-empty array");
     expect(() =>
       assertLiveLedgerReady(liveLedger({ schemaVersion: "1" }), { now }),
-    ).toThrow("leaderboard.schemaVersion must be 5");
+    ).toThrow("leaderboard.schemaVersion must be 6");
     expect(() =>
       assertLiveLedgerReady(
         liveLedger({ repositories: [{ id: "elizaOS/eliza" }] }),
