@@ -849,6 +849,85 @@ async function readTrace(
   });
 }
 
+function matchAuthenticatedRoute(
+  request: Request,
+  parts: string[],
+  deps: TraceApiDependencies,
+): ((actor: AuthenticatedActor) => Promise<Response>) | null {
+  if (
+    request.method === "GET" &&
+    parts.length === 2 &&
+    parts[0] === "wallet-claims" &&
+    parts[1] === "current"
+  ) {
+    return async (actor) => {
+      const current = await deps.persistence.getCurrentWalletClaim(
+        actor.githubId,
+      );
+      if (current === null) fail(404, "not_found", "Wallet claim not found");
+      return json(200, publicWalletClaim(current));
+    };
+  }
+  if (
+    request.method === "POST" &&
+    parts.length === 1 &&
+    parts[0] === "wallet-claims"
+  ) {
+    return (actor) => createContributorWalletClaim(request, actor, deps);
+  }
+  if (request.method === "POST" && parts.length === 1 && parts[0] === "runs") {
+    return (actor) => createRun(request, actor, deps);
+  }
+  if (
+    request.method === "POST" &&
+    parts.length === 3 &&
+    parts[0] === "runs" &&
+    (parts[2] === "trace-intents" ||
+      parts[2] === "finalize" ||
+      parts[2] === "events")
+  ) {
+    const runId = parts[1];
+    const action = parts[2];
+    return (actor) => {
+      if (!validIdentifier(runId))
+        fail(400, "invalid_request", "Invalid run id");
+      if (action === "trace-intents") {
+        return createTraceIntent(request, actor, deps, runId);
+      }
+      if (action === "finalize") {
+        return finalizeRun(request, actor, deps, runId);
+      }
+      return appendEvent(request, actor, deps, runId);
+    };
+  }
+  if (
+    request.method === "POST" &&
+    parts.length === 4 &&
+    parts[0] === "operator" &&
+    parts[1] === "traces" &&
+    parts[3] === "grant"
+  ) {
+    return (actor) => createReadGrant(request, actor, deps, parts[2]);
+  }
+  if (
+    request.method === "GET" &&
+    parts.length === 3 &&
+    parts[0] === "operator" &&
+    parts[1] === "traces"
+  ) {
+    return (actor) => readTrace(request, actor, deps, parts[2]);
+  }
+  if (
+    request.method === "POST" &&
+    parts.length === 2 &&
+    parts[0] === "operator" &&
+    parts[1] === "wallet-claims"
+  ) {
+    return (actor) => createFallbackWalletClaim(request, actor, deps);
+  }
+  return null;
+}
+
 export async function handleTraceApi(
   request: Request,
   deps: TraceApiDependencies,
@@ -903,6 +982,9 @@ export async function handleTraceApi(
     ) {
       return await exchangeIdentityAssertion(request, deps);
     }
+    const route = matchAuthenticatedRoute(request, parts, deps);
+    // No contributor or project-owner read endpoint exists by design.
+    if (route === null) return json(404, { error: "not_found" });
     const actor = await verifyApiToken({
       authorization: request.headers.get("authorization"),
       secret: deps.authSecret,
@@ -910,75 +992,7 @@ export async function handleTraceApi(
       nowSeconds: Math.floor(deps.now().getTime() / 1000),
     });
     if (actor === null) fail(401, "unauthorized", "Authentication failed");
-
-    if (
-      request.method === "GET" &&
-      parts.length === 2 &&
-      parts[0] === "wallet-claims" &&
-      parts[1] === "current"
-    ) {
-      const current = await deps.persistence.getCurrentWalletClaim(
-        actor.githubId,
-      );
-      if (current === null) fail(404, "not_found", "Wallet claim not found");
-      return json(200, publicWalletClaim(current));
-    }
-    if (
-      request.method === "POST" &&
-      parts.length === 1 &&
-      parts[0] === "wallet-claims"
-    ) {
-      return await createContributorWalletClaim(request, actor, deps);
-    }
-
-    if (
-      request.method === "POST" &&
-      parts.length === 1 &&
-      parts[0] === "runs"
-    ) {
-      return await createRun(request, actor, deps);
-    }
-    if (parts[0] === "runs" && parts.length === 3) {
-      const runId = parts[1];
-      if (!validIdentifier(runId))
-        fail(400, "invalid_request", "Invalid run id");
-      if (request.method === "POST" && parts[2] === "trace-intents") {
-        return await createTraceIntent(request, actor, deps, runId);
-      }
-      if (request.method === "POST" && parts[2] === "finalize") {
-        return await finalizeRun(request, actor, deps, runId);
-      }
-      if (request.method === "POST" && parts[2] === "events") {
-        return await appendEvent(request, actor, deps, runId);
-      }
-    }
-    if (
-      parts[0] === "operator" &&
-      parts[1] === "traces" &&
-      parts.length === 4 &&
-      parts[3] === "grant" &&
-      request.method === "POST"
-    ) {
-      return await createReadGrant(request, actor, deps, parts[2]);
-    }
-    if (
-      parts[0] === "operator" &&
-      parts[1] === "traces" &&
-      parts.length === 3 &&
-      request.method === "GET"
-    ) {
-      return await readTrace(request, actor, deps, parts[2]);
-    }
-    if (
-      request.method === "POST" &&
-      parts.length === 2 &&
-      parts[0] === "operator" &&
-      parts[1] === "wallet-claims"
-    ) {
-      return await createFallbackWalletClaim(request, actor, deps);
-    }
-    // No contributor or project-owner read endpoint exists by design.
-    return json(404, { error: "not_found" });
+    return await route(actor);
   } catch (caught) {
     const error =
       typeof caught === "object" && caught !== null
