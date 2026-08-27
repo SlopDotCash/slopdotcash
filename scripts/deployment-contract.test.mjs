@@ -108,8 +108,11 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain(
       "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
     );
-    expect(deployJob).not.toContain(
+    expect(deployJob).toContain(
       '--header "Authorization: Bearer $GITHUB_TOKEN"',
+    );
+    expect(deployJob).toContain(
+      "--check dist/data/private-intake-attestation.json",
     );
     expect(deployJob).toContain("value?.enabled !== true");
     expect(

@@ -432,6 +432,48 @@ async function uploadTrace(
 }
 
 describe("private trace API", () => {
+  it("serves the fresh private intake attestation from the exact Pages bundle", async () => {
+    let requestedUrl = "";
+    const verifiedAt = new Date().toISOString();
+    const response = await onPagesRequest({
+      request: new Request(
+        "https://api.slop.cash/api/v1/private-request-intake",
+      ),
+      env: {
+        SLOP_DB: {} as never,
+        PRIVATE_TRACES: {} as never,
+        TRACE_AUTH_SECRET: SECRET,
+        SLOP_IDENTITY: {
+          fetch: async () => new Response(null, { status: 401 }),
+        },
+        ASSETS: {
+          fetch: async (request) => {
+            requestedUrl = request.url;
+            return new Response(
+              JSON.stringify({
+                enabled: true,
+                source: "github-public-status",
+                verifiedAt,
+                revision: "a".repeat(40),
+              }),
+              { status: 200 },
+            );
+          },
+        },
+      },
+    });
+
+    expect(requestedUrl).toBe(
+      "https://api.slop.cash/data/private-intake-attestation.json",
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      enabled: true,
+      source: "github-public-status",
+      verifiedAt,
+    });
+  });
+
   it("serves a cached public private intake verification", async () => {
     const originalFetch = globalThis.fetch;
     const originalCaches = Object.getOwnPropertyDescriptor(

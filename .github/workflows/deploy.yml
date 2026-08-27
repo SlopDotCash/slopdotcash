@@ -113,7 +113,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: bun run leaderboard:generate
+        run: |
+          bun run leaderboard:generate
+          bun scripts/prepare-private-intake-attestation.ts
 
       - name: Load deployed public ledger for pull-request checks
         if: github.event_name == 'pull_request'
@@ -133,6 +135,7 @@ jobs:
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json
+          bun scripts/prepare-private-intake-attestation.ts --ensure-disabled
 
       - name: Validate reward lifecycle
         run: bun run cycles:check
@@ -250,6 +253,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Require public private-request intake
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           curl --fail --silent --show-error \
@@ -257,6 +262,7 @@ jobs:
             --max-time 30 \
             --max-filesize 65536 \
             --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
             --header "User-Agent: slop-release-intake-check" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting |
@@ -309,6 +315,8 @@ jobs:
             echo "::error::Live develop changed a slop.cash release input after $GITHUB_SHA was tested."
             exit 1
           fi
+          bun scripts/prepare-private-intake-attestation.ts \
+            --check dist/data/private-intake-attestation.json
 
       - name: Require scoped Cloudflare credentials
         env:
