@@ -118,7 +118,9 @@ async function privateIntakeStatus(
         if (status !== null) return status;
       }
     } catch {
-      return { status: "unavailable" };
+      // The edge cache is an availability optimization, not an authority.
+      // Fall through to the bounded live GitHub status check when it cannot
+      // be read so a cache outage cannot close an otherwise verified intake.
     }
   }
   let response: Response;
@@ -188,7 +190,8 @@ async function privateIntakeStatus(
         }),
       );
     } catch {
-      return { status: "unavailable" };
+      // A verified live response remains authoritative when the optional
+      // cache cannot be updated. The next request will verify GitHub again.
     }
   }
   return status;
