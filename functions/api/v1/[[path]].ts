@@ -4,6 +4,10 @@ import {
   type R2Bucket,
 } from "../../../backend/trace/cloudflare-persistence";
 import { handleTraceApi } from "../../../backend/trace/handler";
+import {
+  PRIVATE_INTAKE_ATTESTATION_PATH,
+  parsePrivateIntakeAttestation,
+} from "../../../src/lib/private-intake-attestation";
 
 type Env = {
   SLOP_DB: D1Database;
@@ -11,6 +15,7 @@ type Env = {
   TRACE_AUTH_SECRET: string;
   OPERATOR_GITHUB_IDS?: string;
   SLOP_IDENTITY: { fetch(request: Request): Promise<Response> };
+  ASSETS?: { fetch(request: Request): Promise<Response> };
 };
 
 type PagesContext = {
@@ -104,10 +109,37 @@ function parsedPrivateIntakeStatus(value: unknown): PrivateIntakeStatus | null {
 }
 
 async function privateIntakeStatus(
+  assets: Env["ASSETS"],
+  requestUrl: string,
   cache: EdgeCache | undefined,
   fetchImpl: typeof fetch,
   now: () => Date,
 ): Promise<PrivateIntakeStatus> {
+  if (assets !== undefined) {
+    try {
+      const url = new URL(PRIVATE_INTAKE_ATTESTATION_PATH, requestUrl);
+      const response = await assets.fetch(
+        new Request(url, {
+          method: "GET",
+          headers: { accept: "application/json" },
+        }),
+      );
+      if (!response.ok) return { status: "unavailable" };
+      const value = await readBoundedJson(
+        response,
+        MAX_PRIVATE_INTAKE_RESPONSE_BYTES,
+      );
+      const attestation = parsePrivateIntakeAttestation(value, now());
+      if (attestation === null) return { status: "unavailable" };
+      return {
+        status: "verified",
+        enabled: true,
+        verifiedAt: attestation.verifiedAt,
+      };
+    } catch {
+      return { status: "unavailable" };
+    }
+  }
   if (cache !== undefined) {
     try {
       const cached = await cache.match(PRIVATE_INTAKE_CACHE_KEY);
@@ -251,6 +283,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     verifyIdentityAssertion: (assertion) =>
       verifyIdentityAssertion(context.env.SLOP_IDENTITY, assertion),
     privateIntakeStatus: () =>
-      privateIntakeStatus(cache, globalThis.fetch, () => new Date()),
+      privateIntakeStatus(
+        context.env.ASSETS,
+        context.request.url,
+        cache,
+        globalThis.fetch,
+        () => new Date(),
+      ),
   });
 }

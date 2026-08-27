@@ -97,11 +97,12 @@ private report from a signed-in GitHub user without publishing the report as an
 issue. Do not put private data, trace contents, or request details in a public
 issue.
 
-The production workflow and Slop's bounded server-authoritative preflight query
-GitHub's public private-vulnerability-reporting status endpoint. The five-minute
-server cache keeps the upstream request out of contributor clients. Trace upload
-and production activation fail closed if the authoritative state does not
-report exactly `enabled: true`; a rate limit reports its bounded reset time and
+The protected quality and deploy jobs query GitHub's public
+private-vulnerability-reporting status endpoint. The tested Pages bundle carries
+their bounded revision-bound attestation, and Slop's server-authoritative
+preflight accepts it for at most seven hours. Trace upload and production
+activation fail closed if the attestation is missing, stale, malformed, or does
+not report exactly `enabled: true`; the preflight reports only safe state and
 never becomes an enabled result. The advisory URL alone is not evidence that
 intake is usable.
 Operators must authenticate the requester and handle any action required by

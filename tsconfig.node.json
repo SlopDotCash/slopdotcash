@@ -29,6 +29,7 @@
     "src/lib/model-identity.ts",
     "src/lib/install-command.ts",
     "src/lib/project-view.ts",
+    "src/lib/private-intake-attestation.ts",
     "src/lib/reward-cycle.ts",
     "src/lib/reward-finalization.ts",
     "src/lib/rewards.ts",
