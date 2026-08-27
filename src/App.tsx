@@ -64,6 +64,7 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
+import { formatThirds, selectReviewerLeaders } from "./lib/reviewer-leaders";
 import { feeForPrincipal, PLATFORM_FEE_BASIS_POINTS } from "./lib/rewards";
 
 const SOURCE_REPOSITORY = "https://github.com/SlopDotCash/slopdotcash";
@@ -617,6 +618,75 @@ function Avatar({
   );
 }
 
+function ReviewerLeaderboard({
+  caption,
+  cycleMonth,
+  ledger,
+}: {
+  caption: string;
+  cycleMonth: string;
+  ledger: readonly ScoreEvent[];
+}) {
+  const reviewers = selectReviewerLeaders(ledger);
+  return (
+    <div className="reviewer-leaderboard">
+      <div className="leaderboard-cycle-summary">
+        <div>
+          <strong>{cycleMonth} · Reviewers</strong>
+          <span>
+            Scored reviews of accepted work. Review points currently share the
+            monthly pool with authored work.
+          </span>
+        </div>
+      </div>
+      {reviewers.length === 0 ? (
+        <EmptyState text="No scored reviews in this project cycle yet." />
+      ) : (
+        <div className="leader-table global-leader-table">
+          <table className="leader-grid global-leader-grid">
+            <caption className="visually-hidden">{caption}</caption>
+            <thead>
+              <tr className="leader-row leader-head global-leader-head reviewer-leader-row">
+                <th scope="col">Rank</th>
+                <th scope="col">Reviewer</th>
+                <th scope="col">Review score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reviewers.slice(0, 20).map((reviewer) => (
+                <tr
+                  className="leader-row global-leader-row reviewer-leader-row"
+                  key={reviewer.actor.id}
+                >
+                  <td className="rank-cell">#{reviewer.rank}</td>
+                  <td className="person-cell">
+                    <Link
+                      className="person-link"
+                      href={`/contributors/${encodeURIComponent(reviewer.actor.login)}`}
+                    >
+                      <Avatar actor={reviewer.actor} />
+                      <span>
+                        <strong>{reviewer.actor.login}</strong>
+                        <small>
+                          {reviewer.reviewEventCount} scored review
+                          {reviewer.reviewEventCount === 1 ? "" : "s"}
+                        </small>
+                      </span>
+                    </Link>
+                  </td>
+                  <td data-label="Review score">
+                    <strong>{formatThirds(reviewer.reviewThirds)}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GlobalLeaderboard({
   cycleIndex,
   snapshot,
@@ -787,6 +857,11 @@ function GlobalLeaderboard({
                       </tbody>
                     </table>
                   </div>
+                  <ReviewerLeaderboard
+                    caption={`${selectedView.project.name} ${cycleMonth} reviewer leaderboard`}
+                    cycleMonth={cycleMonth}
+                    ledger={selectedView.ledger}
+                  />
                   <Link
                     className="leaderboard-project-link"
                     href={`/projects/${selectedView.project.slug}`}
@@ -1228,6 +1303,11 @@ function ProjectLeaderboard({
           </table>
         </div>
       )}
+      <ReviewerLeaderboard
+        caption={`${view.project.name} ${formatCycleMonth(view.cycle.id)} reviewer leaderboard`}
+        cycleMonth={formatCycleMonth(view.cycle.id)}
+        ledger={view.ledger}
+      />
     </section>
   );
 }
