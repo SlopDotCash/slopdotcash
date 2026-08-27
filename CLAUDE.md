@@ -77,9 +77,12 @@ skills/contribute-to-<project-id>/
 skills/review-<project-id>-contributions/
 ```
 
-New projects begin paused. Verify immutable repository and actor IDs, repository
+New projects begin paused. Public contribution access may open independently
+when missing authority and terms remain explicit, receipts stay pending, and
+payments stay disabled. Verify immutable repository and actor IDs, repository
 license facts, GitHub stewardship, integration branch, reward policy, and
-failure paths before activation. Stewardship is a GitHub identity only.
+failure paths before activating receipts or money states. Stewardship is a
+GitHub identity only.
 
 The contributor skill must inspect live GitHub, select bounded unblocked work,
 follow the target repository’s rules, test the result, prepare evidence, and

@@ -988,12 +988,17 @@ function validateProjectDefinition(
     project.steward,
     { allowLegacyUnsupportedOwnershipClaim },
   );
-  if (project.status === "active" && project.authority.state !== "verified") {
+  if (
+    project.status === "active" &&
+    project.authority.state !== "verified" &&
+    (project.terms.receiptPolicy.state !== "pending-authority-activation" ||
+      project.reward.paymentMode !== "disabled")
+  ) {
     throw new TypeError(
-      "active projects require verified repository authority",
+      "active projects without verified repository authority require pending receipts and disabled payments",
     );
   }
-  if (project.status === "active") {
+  if (project.status === "active" && project.authority.state === "verified") {
     if (
       project.terms.receiptPolicy.state !== "active" ||
       project.terms.receiptPolicy.activatedAt !==
@@ -1006,6 +1011,7 @@ function validateProjectDefinition(
   }
   if (
     project.status === "active" &&
+    project.authority.state === "verified" &&
     (project.terms.inbound.mode === "unknown" ||
       project.terms.repositoryLicense.state === "unknown" ||
       (project.reward.kind === "external-prize-share" &&
