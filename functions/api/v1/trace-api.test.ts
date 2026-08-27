@@ -529,7 +529,7 @@ describe("private trace API", () => {
       );
       expect(requests[0]?.init).toMatchObject({
         method: "GET",
-        redirect: "error",
+        redirect: "manual",
         headers: {
           Accept: "application/vnd.github+json",
           "User-Agent": "slop-private-intake-verifier",
@@ -680,6 +680,43 @@ describe("private trace API", () => {
         new Response(JSON.stringify({ enabled: "yes" }), {
           status: 200,
         })) as unknown as typeof fetch;
+      const response = await onPagesRequest({
+        request: new Request(
+          "https://api.slop.cash/api/v1/private-request-intake",
+        ),
+        env: {
+          SLOP_DB: {} as never,
+          PRIVATE_TRACES: {} as never,
+          TRACE_AUTH_SECRET: SECRET,
+          SLOP_IDENTITY: {
+            fetch: async () => new Response(null, { status: 401 }),
+          },
+        },
+      });
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: "private_intake_unavailable",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects GitHub redirects without following them", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (
+        _input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        expect(init?.redirect).toBe("manual");
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://example.com/not-github" },
+        });
+      }) as unknown as typeof fetch;
+
       const response = await onPagesRequest({
         request: new Request(
           "https://api.slop.cash/api/v1/private-request-intake",
