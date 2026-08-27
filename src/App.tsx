@@ -2056,9 +2056,7 @@ function opportunityPointsLabel(opportunity: ScoreOpportunity): string {
     opportunity.kind === "missing-evidence" ||
     opportunity.kind === "partial-evidence"
   ) {
-    // Evidence is the least certain category: each attachment must still pass
-    // remote structure and head-binding verification after merge.
-    return `+${opportunity.potentialPoints} if it verifies`;
+    return "Evidence guidance";
   }
   return `+${opportunity.potentialPoints} if it qualifies`;
 }

@@ -3924,6 +3924,20 @@ describe("work queue claims and prioritization", () => {
       "near-material-test",
     ]);
     expect(
+      snapshot.opportunities.filter(
+        (opportunity) => opportunity.category === "evidence",
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          potentialPoints: null,
+          reason: expect.stringContaining(
+            "Evidence does not add standalone Score v2 points.",
+          ),
+        }),
+      ]),
+    );
+    expect(
       snapshot.opportunities.some(
         (opportunity) => opportunity.source.id === mergedNearTest.id,
       ),

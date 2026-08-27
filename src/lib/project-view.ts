@@ -166,12 +166,12 @@ function capUsageForEvents(
 function opportunityPointsWithinCap(
   opportunity: ScoreOpportunity,
   usage: CapUsageStatus,
-): number {
+): number | null {
   if (opportunity.category === "evidence") {
-    return Math.min(
-      opportunity.potentialPoints,
-      Math.max(0, SCORE_CAPS.evidencePoints - usage.evidencePoints.used),
-    );
+    return null;
+  }
+  if (opportunity.potentialPoints === null) {
+    return 0;
   }
   if (
     opportunity.category === "material-test-change" &&
@@ -620,6 +620,9 @@ export function createProjectView(
         ledger.filter((event) => event.actor.id === opportunity.actor.id),
       );
       const potentialPoints = opportunityPointsWithinCap(opportunity, usage);
+      if (potentialPoints === null) {
+        return { ...opportunity, potentialPoints: null };
+      }
       return potentialPoints > 0 ? { ...opportunity, potentialPoints } : null;
     })
     .filter(

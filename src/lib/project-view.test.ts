@@ -129,7 +129,7 @@ describe("project views", () => {
         actor: snapshot.leaders[0].actor,
         kind: "missing-evidence",
         category: "evidence",
-        potentialPoints: 6,
+        potentialPoints: null,
         occurredAt: "2026-06-20T12:00:00.000Z",
         repository: "elizaOS/eliza",
         source: {
@@ -140,7 +140,7 @@ describe("project views", () => {
           url: "https://github.com/elizaOS/eliza/pull/17000",
         },
         reason:
-          "Open pull request evidence is missing with 0 of 6 points verified.",
+          "Open pull request evidence is missing; its legacy evidence assessment is 0 of 6. Evidence does not add standalone Score v2 points.",
         hint: "Add verified screenshot, video, or log evidence before merge.",
       },
       {
@@ -148,7 +148,7 @@ describe("project views", () => {
         actor: snapshot.leaders[0].actor,
         kind: "partial-evidence",
         category: "evidence",
-        potentialPoints: 4,
+        potentialPoints: null,
         occurredAt: "2026-07-29T12:00:00.000Z",
         repository: "elizaOS/proximityprize",
         source: {
@@ -159,7 +159,7 @@ describe("project views", () => {
           url: "https://github.com/SlopDotCash/proximityprize/pull/99",
         },
         reason:
-          "Open pull request evidence is partial with 2 of 6 points verified.",
+          "Open pull request evidence is partial; its legacy evidence assessment is 2 of 6. Evidence does not add standalone Score v2 points.",
         hint: "Finish verified evidence categories before merge.",
       },
     ];
@@ -189,7 +189,7 @@ describe("project views", () => {
     ]);
   });
 
-  it("does not advertise points after the contributor has filled that cap", () => {
+  it("keeps non-scoring evidence guidance after legacy evidence cap usage", () => {
     const snapshot = snapshotFixture();
     const evidenceTemplate = snapshot.ledger.find(
       (event) => event.category === "evidence",
@@ -212,7 +212,7 @@ describe("project views", () => {
 
     expect(
       createProjectView(snapshot, "eliza", "2026-07").opportunities,
-    ).toEqual([]);
+    ).toMatchObject([{ potentialPoints: null, category: "evidence" }]);
   });
 
   it("keeps pre-v2 receipt evidence diagnostic", () => {
