@@ -6,7 +6,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,7 @@ export const MAX_OPEN_ITEMS = 10_000;
 // advance after that frontier is dispositioned even while new PRs arrive.
 export const MAX_REVIEW_EPOCH_CANDIDATES = 20;
 export const REVIEW_EPOCH_SCHEMA_VERSION = 1;
+export const MAX_REVIEW_EPOCH_FILE_BYTES = 262_144;
 export const MAX_API_READS = 16;
 export const MAX_ACTIVITY_CONNECTION_ITEMS = 1_000;
 export const MIN_GRAPHQL_ACTIVITY_POINTS = 1_000;
@@ -474,7 +475,7 @@ export function createReviewEpoch(
 }
 
 const REVIEW_EPOCH_DISPOSITIONS = new Set([
-  "reviewed",
+  "merge",
   "fix",
   "close",
   "stale-head",
@@ -483,6 +484,13 @@ const REVIEW_EPOCH_DISPOSITIONS = new Set([
 /** Returns the lower-tier permit only after every frozen candidate is closed. */
 export function completeReviewEpoch(epoch, dispositions) {
   const record = asRecord(epoch, "review epoch");
+  const schemaVersion = asNumberField(record, "schemaVersion", "review epoch");
+  if (schemaVersion !== REVIEW_EPOCH_SCHEMA_VERSION) {
+    throw new TypeError(
+      `review epoch.schemaVersion must be ${REVIEW_EPOCH_SCHEMA_VERSION}`,
+    );
+  }
+  const cutoff = isoTime(record.cutoff, "review epoch.cutoff");
   const candidates = asArrayField(record, "candidates", "review epoch").map(
     (candidate, index) =>
       reviewEpochIdentity(candidate, `review epoch.candidates[${index}]`),
@@ -493,7 +501,11 @@ export function completeReviewEpoch(epoch, dispositions) {
   const expected = new Map(
     candidates.map((candidate) => [candidate.number, candidate]),
   );
+  if (expected.size !== candidates.length) {
+    throw new TypeError("review epoch contains duplicate candidates");
+  }
   const completed = new Set();
+  const normalizedDispositions = new Map();
   for (const [index, value] of dispositions.entries()) {
     const context = `review epoch dispositions[${index}]`;
     const disposition = asRecord(value, context);
@@ -519,6 +531,11 @@ export function completeReviewEpoch(epoch, dispositions) {
     if (!REVIEW_EPOCH_DISPOSITIONS.has(status)) {
       throw new TypeError(`${context}.status is not a terminal disposition`);
     }
+    const normalizedDisposition = {
+      number,
+      expectedHeadSha,
+      status,
+    };
     if (status === "stale-head") {
       const currentHeadSha = asStringField(
         disposition,
@@ -533,23 +550,103 @@ export function completeReviewEpoch(epoch, dispositions) {
           `${context}.currentHeadSha must be a different full commit SHA`,
         );
       }
+      normalizedDisposition.currentHeadSha = currentHeadSha;
+    } else {
+      const recommendationUrl = asStringField(
+        disposition,
+        "recommendationUrl",
+        context,
+      );
+      let parsedRecommendationUrl;
+      try {
+        parsedRecommendationUrl = new URL(recommendationUrl);
+      } catch (cause) {
+        throw new TypeError(`${context}.recommendationUrl must be a URL`, {
+          cause,
+        });
+      }
+      const pathParts = parsedRecommendationUrl.pathname
+        .split("/")
+        .filter(Boolean);
+      if (
+        parsedRecommendationUrl.protocol !== "https:" ||
+        parsedRecommendationUrl.hostname !== "github.com" ||
+        parsedRecommendationUrl.username !== "" ||
+        parsedRecommendationUrl.password !== "" ||
+        pathParts.length < 4 ||
+        pathParts[2] !== "pull" ||
+        Number(pathParts[3]) !== number ||
+        recommendationUrl.length > 2_048
+      ) {
+        throw new TypeError(
+          `${context}.recommendationUrl must be a bounded public GitHub HTTPS URL`,
+        );
+      }
+      normalizedDisposition.recommendationUrl =
+        parsedRecommendationUrl.toString();
     }
     completed.add(number);
+    normalizedDispositions.set(number, normalizedDisposition);
   }
   const remainingCandidates = candidates
     .filter((candidate) => !completed.has(candidate.number))
     .map((candidate) => candidate.number);
   const complete = remainingCandidates.length === 0;
   return {
+    schemaVersion: REVIEW_EPOCH_SCHEMA_VERSION,
+    cutoff,
     complete,
     dispositionCount: completed.size,
     requiredCandidateCount: candidates.length,
     remainingCandidates,
+    dispositions: candidates.flatMap((candidate) => {
+      const disposition = normalizedDispositions.get(candidate.number);
+      return disposition ? [disposition] : [];
+    }),
     allowsNextTier: complete,
     ...(complete
       ? { nextTier: "next-eligible-lower-tier", maxNextTierOutcomes: 1 }
       : { maxNextTierOutcomes: 0 }),
   };
+}
+
+function readBoundedJsonFile(path, context) {
+  if (typeof path !== "string" || path.trim() === "") {
+    throw new TypeError(`${context} path must be a non-empty string`);
+  }
+  const statistics = statSync(path);
+  if (!statistics.isFile()) {
+    throw new TypeError(`${context} must be a regular file`);
+  }
+  if (statistics.size > MAX_REVIEW_EPOCH_FILE_BYTES) {
+    throw new RangeError(
+      `${context} exceeds ${MAX_REVIEW_EPOCH_FILE_BYTES} bytes`,
+    );
+  }
+  const contents = readFileSync(path);
+  if (contents.byteLength > MAX_REVIEW_EPOCH_FILE_BYTES) {
+    throw new RangeError(
+      `${context} exceeds ${MAX_REVIEW_EPOCH_FILE_BYTES} bytes`,
+    );
+  }
+  try {
+    return JSON.parse(contents.toString("utf8"));
+  } catch (cause) {
+    throw new SyntaxError(`${context} must contain valid JSON`, { cause });
+  }
+}
+
+function reviewEpochFromFile(path) {
+  const value = asRecord(
+    readBoundedJsonFile(path, "review epoch input"),
+    "review epoch input",
+  );
+  if (value.selection === undefined) return value;
+  const selection = asRecord(value.selection, "review epoch input.selection");
+  return asRecord(
+    selection.reviewEpoch,
+    "review epoch input.selection.reviewEpoch",
+  );
 }
 
 /**
@@ -2457,6 +2554,8 @@ export function parseCliArguments(
     const argument = args[index];
     if (argument === "--json") {
       options.json = true;
+    } else if (argument === "--epoch-only") {
+      options.epochOnly = true;
     } else if (argument === "--help" || argument === "-h") {
       options.help = true;
     } else if (argument === "--repo") {
@@ -2483,6 +2582,22 @@ export function parseCliArguments(
       options.expectedHead = args[index];
     } else if (argument.startsWith("--expected-head=")) {
       options.expectedHead = argument.slice("--expected-head=".length);
+    } else if (argument === "--complete-epoch") {
+      index += 1;
+      if (index >= args.length) {
+        throw new TypeError("--complete-epoch requires a JSON file path");
+      }
+      options.completeEpochPath = args[index];
+    } else if (argument.startsWith("--complete-epoch=")) {
+      options.completeEpochPath = argument.slice("--complete-epoch=".length);
+    } else if (argument === "--dispositions") {
+      index += 1;
+      if (index >= args.length) {
+        throw new TypeError("--dispositions requires a JSON file path");
+      }
+      options.dispositionsPath = args[index];
+    } else if (argument.startsWith("--dispositions=")) {
+      options.dispositionsPath = argument.slice("--dispositions=".length);
     } else {
       throw new TypeError(`Unknown argument: ${argument}`);
     }
@@ -2505,6 +2620,34 @@ export function parseCliArguments(
   } else if (options.expectedHead !== undefined) {
     throw new TypeError("--expected-head requires --recheck-pr");
   }
+  const completionRequested =
+    options.completeEpochPath !== undefined ||
+    options.dispositionsPath !== undefined;
+  if (completionRequested) {
+    if (
+      typeof options.completeEpochPath !== "string" ||
+      options.completeEpochPath.trim() === "" ||
+      typeof options.dispositionsPath !== "string" ||
+      options.dispositionsPath.trim() === ""
+    ) {
+      throw new TypeError(
+        "--complete-epoch and --dispositions must be provided together",
+      );
+    }
+    if (options.recheckPr !== undefined) {
+      throw new TypeError(
+        "--complete-epoch cannot be combined with --recheck-pr",
+      );
+    }
+  }
+  if (
+    options.epochOnly === true &&
+    (options.json || completionRequested || options.recheckPr !== undefined)
+  ) {
+    throw new TypeError(
+      "--epoch-only cannot be combined with another output operation",
+    );
+  }
   return options;
 }
 
@@ -2516,8 +2659,11 @@ Read and paginate open GitHub issues and pull requests without changing them.
 Options:
   --repo <owner/name>  Repository to inspect (default: this skill's project)
   --json               Print stable machine-readable JSON
+  --epoch-only         Print only the finite review epoch JSON
   --recheck-pr <n>     GET one live PR head before publishing a review
   --expected-head <sha>  Frozen epoch head required by --recheck-pr
+  --complete-epoch <path>  Validate a saved report or epoch JSON file
+  --dispositions <path>  Terminal disposition JSON required for completion
   --help, -h           Show this help
 `;
 }
@@ -2527,6 +2673,17 @@ export function main(args = process.argv.slice(2)) {
   const options = parseCliArguments(args, selectionPolicy.repositoryId);
   if (options.help) {
     process.stdout.write(usage());
+    return;
+  }
+  if (options.completeEpochPath !== undefined) {
+    const epoch = reviewEpochFromFile(options.completeEpochPath);
+    const dispositions = readBoundedJsonFile(
+      options.dispositionsPath,
+      "review epoch dispositions",
+    );
+    const result = completeReviewEpoch(epoch, dispositions);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.complete) process.exitCode = 2;
     return;
   }
   const commandBudget = createGhCommandBudget();
@@ -2568,9 +2725,11 @@ export function main(args = process.argv.slice(2)) {
     selectionPolicy.eligibleIssueLabels,
   );
   process.stdout.write(
-    options.json
-      ? `${JSON.stringify(report, null, 2)}\n`
-      : renderMarkdown(report),
+    options.epochOnly
+      ? `${JSON.stringify(report.selection.reviewEpoch, null, 2)}\n`
+      : options.json
+        ? `${JSON.stringify(report, null, 2)}\n`
+        : renderMarkdown(report),
   );
 }
 

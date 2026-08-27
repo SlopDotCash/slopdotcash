@@ -197,6 +197,24 @@ mandatory even when the report was just generated. Sustained arrivals and head
 churn therefore cannot keep lower-tier issue or workflow work behind a moving
 frontier, while the complete live report remains available for diagnostics.
 
+Persist the report and produce the completion record through the bundled CLI;
+do not hand-edit the frozen epoch:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo elizaOS/eliza \
+  --epoch-only > review-epoch.json
+node <skill-directory>/scripts/live-report.mjs \
+  --complete-epoch review-epoch.json --dispositions dispositions.json \
+  > epoch-completion.json
+```
+
+`dispositions.json` is an array with one entry per frozen candidate. Every entry
+binds `number` and `expectedHeadSha`; use only `merge`, `fix`, or `close` with the
+public GitHub `recommendationUrl`, or `stale-head` with the different observed
+`currentHeadSha`. The command exits 2 and denies lower-tier progression while
+any frozen candidate is missing. A complete record permits exactly one bounded
+outcome in the next eligible lower tier; begin a fresh epoch before another.
+
 Do not infer that review publication is blocked from `CONTRIBUTING.md` or a
 standalone validator alone. Re-run `review-preflight.mjs` against the current
 integration-branch workflows and forward proof. Report documentation drift as

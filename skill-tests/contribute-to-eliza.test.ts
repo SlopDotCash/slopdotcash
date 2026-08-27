@@ -1502,6 +1502,49 @@ describe("live report parsing", () => {
       json: false,
       help: false,
     });
+    assert.deepStrictEqual(parseCliArguments(["--epoch-only"]), {
+      repo: "elizaOS/eliza",
+      json: false,
+      help: false,
+      epochOnly: true,
+    });
+    assert.throws(
+      () => parseCliArguments(["--epoch-only", "--json"]),
+      /cannot be combined/,
+    );
+    assert.deepStrictEqual(
+      parseCliArguments([
+        "--complete-epoch",
+        "report.json",
+        "--dispositions",
+        "dispositions.json",
+      ]),
+      {
+        repo: "elizaOS/eliza",
+        json: false,
+        help: false,
+        completeEpochPath: "report.json",
+        dispositionsPath: "dispositions.json",
+      },
+    );
+    assert.throws(
+      () => parseCliArguments(["--complete-epoch", "report.json"]),
+      /must be provided together/,
+    );
+    assert.throws(
+      () =>
+        parseCliArguments([
+          "--recheck-pr",
+          "1",
+          "--expected-head",
+          "a".repeat(40),
+          "--complete-epoch",
+          "report.json",
+          "--dispositions",
+          "dispositions.json",
+        ]),
+      /cannot be combined/,
+    );
     assert.throws(
       () => parseCliArguments(["--repo", "invalid"]),
       /owner\/name/,
@@ -1557,7 +1600,9 @@ describe("live report behavior", () => {
       {
         number: 1,
         expectedHeadSha: epoch.candidates[0].headSha,
-        status: "reviewed",
+        status: "merge",
+        recommendationUrl:
+          "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1",
       },
     ]);
     assert.strictEqual(incomplete.allowsNextTier, false);
@@ -1567,13 +1612,132 @@ describe("live report behavior", () => {
       epoch.candidates.map((candidate) => ({
         number: candidate.number,
         expectedHeadSha: candidate.headSha,
-        status: "reviewed",
+        status: "fix",
+        recommendationUrl: `https://github.com/elizaOS/eliza/pull/${candidate.number}#pullrequestreview-${candidate.number}`,
       })),
     );
     assert.strictEqual(completed.complete, true);
     assert.strictEqual(completed.allowsNextTier, true);
     assert.strictEqual(completed.nextTier, "next-eligible-lower-tier");
     assert.strictEqual(completed.maxNextTierOutcomes, 1);
+    assert.throws(
+      () =>
+        completeReviewEpoch(epoch, [
+          {
+            number: 1,
+            expectedHeadSha: epoch.candidates[0].headSha,
+            status: "reviewed",
+          },
+        ]),
+      /not a terminal disposition/,
+    );
+    assert.throws(
+      () =>
+        completeReviewEpoch(epoch, [
+          {
+            number: 1,
+            expectedHeadSha: epoch.candidates[0].headSha,
+            status: "merge",
+          },
+        ]),
+      /recommendationUrl/,
+    );
+    assert.throws(
+      () =>
+        completeReviewEpoch(epoch, [
+          {
+            number: 1,
+            expectedHeadSha: epoch.candidates[0].headSha,
+            status: "merge",
+            recommendationUrl:
+              "https://github.com/elizaOS/eliza/pull/2#pullrequestreview-2",
+          },
+        ]),
+      /bounded public GitHub HTTPS URL/,
+    );
+  });
+
+  it("emits an executable epoch completion record from saved JSON", () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-review-epoch-"));
+    try {
+      const epoch = createReviewEpoch(
+        [
+          {
+            number: 7,
+            headSha: "a".repeat(40),
+            updatedAt: "2026-01-18T12:00:00.000Z",
+          },
+        ],
+        "2026-01-20T12:00:00.000Z",
+      );
+      const reportPath = join(fixtureRoot, "report.json");
+      const dispositionsPath = join(fixtureRoot, "dispositions.json");
+      writeFileSync(reportPath, `${JSON.stringify(epoch)}\n`);
+      writeFileSync(
+        dispositionsPath,
+        `${JSON.stringify([
+          {
+            number: 7,
+            expectedHeadSha: "a".repeat(40),
+            status: "close",
+            recommendationUrl:
+              "https://github.com/elizaOS/eliza/pull/7#pullrequestreview-7",
+          },
+        ])}\n`,
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          liveReportPath,
+          "--complete-epoch",
+          reportPath,
+          "--dispositions",
+          dispositionsPath,
+        ],
+        { encoding: "utf8" },
+      );
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.deepStrictEqual(JSON.parse(result.stdout), {
+        schemaVersion: 1,
+        cutoff: "2026-01-20T12:00:00.000Z",
+        complete: true,
+        dispositionCount: 1,
+        requiredCandidateCount: 1,
+        remainingCandidates: [],
+        dispositions: [
+          {
+            number: 7,
+            expectedHeadSha: "a".repeat(40),
+            status: "close",
+            recommendationUrl:
+              "https://github.com/elizaOS/eliza/pull/7#pullrequestreview-7",
+          },
+        ],
+        allowsNextTier: true,
+        nextTier: "next-eligible-lower-tier",
+        maxNextTierOutcomes: 1,
+      });
+
+      writeFileSync(dispositionsPath, "[]\n");
+      const incomplete = spawnSync(
+        process.execPath,
+        [
+          liveReportPath,
+          "--complete-epoch",
+          reportPath,
+          "--dispositions",
+          dispositionsPath,
+        ],
+        { encoding: "utf8" },
+      );
+      assert.strictEqual(incomplete.status, 2, incomplete.stderr);
+      assert.deepStrictEqual(
+        JSON.parse(incomplete.stdout).remainingCandidates,
+        [7],
+      );
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("requires an exact current head before publishing and defers churn", () => {

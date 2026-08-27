@@ -187,6 +187,9 @@ describe("project skill contracts", () => {
         /\*\*merge\*\*, \*\*fix\*\*, or \*\*close\*\*/iu,
       );
       assert.match(contributor, /exact current head|exact-head/iu);
+      assert.match(contributor, /--epoch-only/u);
+      assert.match(contributor, /--complete-epoch/u);
+      assert.match(contributor, /recommendationUrl/u);
       const newIssueGate = contributor.search(
         /(?:a new (?:issue|one)\s+requires|open a new\s+issue only)/iu,
       );
