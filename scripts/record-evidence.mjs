@@ -537,7 +537,7 @@ try {
     });
     await page
       .locator(".hero-action")
-      .filter({ hasText: /^SHIPPING SLOP\.$/u })
+      .filter({ hasText: /^SHIPPING OPEN SOURCE\.$/u })
       .waitFor({ state: "visible", timeout: 10_000 });
     await page.locator("#projects").waitFor({ state: "visible" });
     await page.locator("#leaderboard table").waitFor({ state: "visible" });
