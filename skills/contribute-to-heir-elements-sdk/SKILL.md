@@ -106,7 +106,30 @@ Re-read the chosen issue or pull request immediately before acting.
 
 ## Finish the existing queue and workflows before inventing work
 
-Follow this order without skipping a nonempty higher tier:
+The report freezes at most 20 oldest eligible PR numbers and exact head SHAs in
+`selection.reviewEpoch`; later arrivals and overflow remain visible in
+`reviewEpoch.deferred`. Recheck each frozen head immediately before publishing:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo heirlabs/element-sdk \
+  --recheck-pr <number> --expected-head <frozen-head-sha>
+```
+
+Save the frozen epoch with `--epoch-only`, record one `merge`, `fix`, or `close` disposition
+and public GitHub `recommendationUrl` per frozen head (or `stale-head` plus the
+different `currentHeadSha`), then run:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo heirlabs/element-sdk \
+  --epoch-only > review-epoch.json
+node <skill-directory>/scripts/live-report.mjs \
+  --complete-epoch review-epoch.json --dispositions dispositions.json \
+  > epoch-completion.json
+```
+
+An incomplete command exits 2. A complete record permits exactly one bounded
+outcome in the next eligible lower tier even when deferred PRs remain; begin a
+fresh epoch before another. Follow this order within each finite epoch:
 
 1. Review and test every current PR, starting with the oldest non-draft,
    unblocked, non-sensitive PR lacking a substantive independent review of its
@@ -114,17 +137,20 @@ Follow this order without skipping a nonempty higher tier:
    **merge**, **fix**, or **close** recommendation. When authorized, repair real
    defects and rerun exact-head checks so an existing PR is completely solid;
    never approve your own work or leave a reviewable PR undisposed.
-2. Only when tier one is empty, finish the oldest bounded, unblocked, unclaimed
+2. After the epoch completion record permits one lower-tier outcome, finish the oldest
+   bounded, unblocked, unclaimed
    open issue that fits the inheritance SDK mission and has no open PR that
    closes or substantively implements it. Complete it through a focused PR, or
    give duplicate, obsolete, invalid, and out-of-scope issues an explicit
    closure recommendation.
-3. Only when tiers one and two are empty, inspect every required GitHub Actions
+3. After the completion record permits the next eligible lower-tier outcome and
+   no bounded issue outcome is available, inspect every required GitHub Actions
    workflow on `main`. Repair every reproducible repository-caused failure and
    rerun it at the exact head. Treat queued runs, missing runners,
    credential/environment gates, and external outages as precise blockers, not
    green results or reasons to weaken validation.
-4. Only after every PR, issue, and fixable workflow failure is reconciled may
+4. Only after the completion record permits the next eligible lower-tier
+   outcome and every PR, issue, and fixable workflow failure is reconciled may
    you find new work. It
    must close a concrete sandbox or permission hole, fix an actual reproduced
    SDK defect, or add a failure-sensitive validator or test for demonstrated

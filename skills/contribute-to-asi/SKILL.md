@@ -106,9 +106,31 @@ acting — someone may already be running your experiment.
 
 ## Finish the existing queue and workflows before inventing work
 
-Use the live report as a filter, then inspect GitHub directly. Follow this
-priority order without skipping a nonempty higher tier for easier, newer, or
-more interesting work:
+The report freezes at most 20 oldest eligible PR numbers and exact head SHAs in
+`selection.reviewEpoch`; later arrivals and overflow remain visible in
+`reviewEpoch.deferred`. Recheck each frozen head immediately before publishing:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo SlopDotCash/asi \
+  --recheck-pr <number> --expected-head <frozen-head-sha>
+```
+
+Save the frozen epoch with `--epoch-only`, record one `merge`, `fix`, or `close` disposition
+and public GitHub `recommendationUrl` per frozen head (or `stale-head` plus the
+different `currentHeadSha`), then run:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo SlopDotCash/asi \
+  --epoch-only > review-epoch.json
+node <skill-directory>/scripts/live-report.mjs \
+  --complete-epoch review-epoch.json --dispositions dispositions.json \
+  > epoch-completion.json
+```
+
+An incomplete command exits 2. A complete record permits exactly one bounded
+outcome in the next eligible lower tier even when deferred PRs remain; begin a
+fresh epoch before another. Use the live report as a filter, inspect GitHub
+directly, and follow this priority order within each finite epoch:
 
 1. **Review and test every current PR.** Start with the oldest non-draft,
    unblocked, non-sensitive PR lacking a substantive independent review of its
@@ -119,20 +141,24 @@ more interesting work:
    failure-sensitive tests, and rerunning exact-head checks; never approve your
    own work. Do not leave any reviewable PR without a current-head test and
    disposition merely because its premise is weak or its author is inactive.
-2. **Finish every existing issue without a PR.** Only after tier one is empty,
+2. **Finish every existing issue without a PR.** After the epoch completion
+   record permits one lower-tier outcome,
    choose the oldest bounded, unblocked, unclaimed open issue that fits the
    measured ASI mission. Confirm no open PR has a closing reference or
    substantively implements it, then resolve it completely through a focused PR
    with the required paired evidence. Give duplicate, obsolete, invalid, or
    out-of-scope issues an explicit closure recommendation instead of turning
    them into cleanup work.
-3. **Restore integration-branch workflow health.** Only after tiers one and two
-   are empty, inspect every required GitHub Actions workflow on `main`. Repair
+3. **Restore integration-branch workflow health.** After the epoch completion
+   record permits the next eligible lower-tier outcome and no bounded issue
+   outcome is available, inspect every required GitHub Actions workflow on
+   `main`. Repair
    every reproducible repository-caused failure and rerun it at the exact head.
    A queued run, missing runner, credential/environment gate, or external outage
    is not green and not a code bug; record the precise blocker instead of
    weakening checks or inventing unrelated work.
-4. **Advance the research only after all three gates are clear.** New work
+4. **Advance the research only after the completion record permits the next
+   eligible lower-tier outcome and all three gates are clear.** New work
    must be a benchmark hill climb, a measured port or decisive experimental
    advancement/refutation, or a fix for an actual reproduced runtime,
    harness, metric, validator, or test-system bug. Do not make random

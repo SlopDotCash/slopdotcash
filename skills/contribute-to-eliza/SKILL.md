@@ -169,6 +169,52 @@ the gh 2.45 packaged with Ubuntu 24.04. A blank result is a valid empty
 collection; command failures and malformed or truncated records fail closed
 with endpoint context.
 
+### Finite review epochs
+
+The report's `snapshot.cutoff` and `selection.reviewEpoch` define one finite
+review frontier. The repository discovery bound (`MAX_OPEN_ITEMS`) protects the
+read-only inventory; it is not a contributor work budget. A review epoch freezes
+the oldest eligible PR numbers and their exact `headSha` values, up to the
+reported `maxCandidates` (currently 20). Review the frozen candidates in number
+order. When the frozen set is fully dispositioned, the run may advance one
+bounded outcome to the next eligible tier even if newer PRs are already open.
+
+PRs updated after the cutoff and candidates beyond the epoch limit are listed in
+`reviewEpoch.deferred` with a deterministic reason and must be considered by a
+later epoch. They are never discarded or treated as reviewed. Immediately before
+publishing each review, run the live GET guard:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo elizaOS/eliza \
+  --recheck-pr <number> --expected-head <frozen-head-sha>
+```
+
+The guard is read-only, not a publication command: use the separate authorized
+GitHub review path only when it returns `publishable: true`. On a changed head it
+returns non-zero with `status: "stale"` and the observed `currentHeadSha`; record
+that candidate as stale and defer its new head to the next epoch. This recheck is
+mandatory even when the report was just generated. Sustained arrivals and head
+churn therefore cannot keep lower-tier issue or workflow work behind a moving
+frontier, while the complete live report remains available for diagnostics.
+
+Persist the report and produce the completion record through the bundled CLI;
+do not hand-edit the frozen epoch:
+
+```bash
+node <skill-directory>/scripts/live-report.mjs --repo elizaOS/eliza \
+  --epoch-only > review-epoch.json
+node <skill-directory>/scripts/live-report.mjs \
+  --complete-epoch review-epoch.json --dispositions dispositions.json \
+  > epoch-completion.json
+```
+
+`dispositions.json` is an array with one entry per frozen candidate. Every entry
+binds `number` and `expectedHeadSha`; use only `merge`, `fix`, or `close` with the
+public GitHub `recommendationUrl`, or `stale-head` with the different observed
+`currentHeadSha`. The command exits 2 and denies lower-tier progression while
+any frozen candidate is missing. A complete record permits exactly one bounded
+outcome in the next eligible lower tier; begin a fresh epoch before another.
+
 Do not infer that review publication is blocked from `CONTRIBUTING.md` or a
 standalone validator alone. Re-run `review-preflight.mjs` against the current
 integration-branch workflows and forward proof. Report documentation drift as
@@ -180,13 +226,18 @@ with the authorized demand, affected user path, observed failure or missing
 capability, mission surface, acceptance proof, and duplication check. Do not
 post this note merely to reserve work. Stop when any field is unknown.
 
-Follow this priority ladder. Do not skip a nonempty higher tier for newer,
-easier, or more interesting work:
+Follow this priority ladder within each finite epoch. Do not skip a frozen
+candidate for newer, easier, or more interesting work. After every frozen
+higher-tier candidate has a terminal disposition, the epoch completion receipt
+permits exactly one bounded outcome in the next eligible lower tier, even when
+new or deferred higher-tier PRs remain open. Begin a fresh epoch before taking
+another lower-tier outcome:
 
 1. **Review and test every current PR**: start with the oldest non-draft,
    unblocked, non-sensitive PR lacking a substantive independent review of its
-   exact current head. Inspect every open PR, including previously reviewed PRs
-   whose head changed. Reproduce the affected product path and give an explicit
+   exact current head in the frozen review epoch. Inspect the complete live
+   report for diagnostics, then disposition every frozen candidate. Reproduce
+   the affected product path and give an explicit
    **merge**, **fix**, or **close** recommendation. When authorized, make an
    existing PR completely solid by repairing real defects, strengthening
    failure-sensitive tests, and rerunning exact-head checks; never approve your
@@ -194,18 +245,19 @@ easier, or more interesting work:
    neglect while new work is invented. Apply the anti-slop gate before asking
    for repairs: close a valueless premise instead of requesting more tests,
    guards, documentation, or polish that only makes it larger.
-2. **Finish every existing issue without a PR**: only when tier one is empty,
-   choose the oldest bounded, unblocked, unclaimed open issue carrying the exact
-   repository label `mission-ready`, or an issue explicitly selected by the
-   operator. Confirm that no open PR has a GitHub closing reference or
-   substantively implements it, then resolve it completely through a focused PR
-   with acceptance criteria, tests, and proof. Give duplicate, obsolete,
-   invalid, low-value, or out-of-scope issues an explicit closure recommendation.
-   Other labels, Project membership, and text that merely says "mission-ready"
-   do not qualify for implementation.
-3. **Restore `develop` workflow health**: only when tiers one and two are empty,
-   inspect every required GitHub Actions workflow on the current `develop`
-   head. Repair every reproducible repository-caused failure and rerun it at the
+2. **Finish every existing issue without a PR**: after the epoch completion
+   receipt permits one lower-tier outcome, choose the oldest bounded, unblocked,
+   unclaimed open issue carrying the exact repository label `mission-ready`, or
+   an issue explicitly selected by the operator. Confirm that no open PR has a
+   GitHub closing reference or substantively implements it, then resolve it
+   completely through a focused PR with acceptance criteria, tests, and proof.
+   Give duplicate, obsolete, invalid, low-value, or out-of-scope issues an
+   explicit closure recommendation. Other labels, Project membership, and text
+   that merely says "mission-ready" do not qualify for implementation.
+3. **Restore `develop` workflow health**: after the epoch completion receipt
+   permits the next eligible lower-tier outcome and no bounded issue outcome is
+   available, inspect every required GitHub Actions workflow on the current
+   `develop` head. Repair every reproducible repository-caused failure and rerun it at the
    exact head. A queued run, missing runner, credential/environment gate, or
    external outage is not green and not a code bug; record the precise blocker
    instead of weakening checks or inventing unrelated work.
