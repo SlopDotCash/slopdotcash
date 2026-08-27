@@ -505,6 +505,63 @@ describe("private trace API", () => {
     }
   });
 
+  it("uses the public authority when the optional edge cache fails", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalCaches = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "caches",
+    );
+    let fetches = 0;
+    try {
+      globalThis.fetch = (async () => {
+        fetches += 1;
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }) as unknown as typeof fetch;
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {
+          default: {
+            match: async () => {
+              throw new Error("cache unavailable");
+            },
+            put: async () => {
+              throw new Error("cache unavailable");
+            },
+          },
+        },
+      });
+
+      const response = await onPagesRequest({
+        request: new Request(
+          "https://api.slop.cash/api/v1/private-request-intake",
+        ),
+        env: {
+          SLOP_DB: {} as never,
+          PRIVATE_TRACES: {} as never,
+          TRACE_AUTH_SECRET: SECRET,
+          SLOP_IDENTITY: {
+            fetch: async () => new Response(null, { status: 401 }),
+          },
+        },
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        enabled: true,
+        source: "github-public-status",
+        verifiedAt: expect.any(String),
+      });
+      expect(fetches).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCaches === undefined) {
+        Reflect.deleteProperty(globalThis, "caches");
+      } else {
+        Object.defineProperty(globalThis, "caches", originalCaches);
+      }
+    }
+  });
+
   it("reports bounded reset diagnostics for an upstream GitHub rate limit", async () => {
     const originalFetch = globalThis.fetch;
     try {
