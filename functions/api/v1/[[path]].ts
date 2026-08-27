@@ -118,7 +118,8 @@ async function privateIntakeStatus(
         if (status !== null) return status;
       }
     } catch {
-      return { status: "unavailable" };
+      // The cache is an availability optimization, not the authority. Continue
+      // to the bounded GitHub check when the runtime cache is unavailable.
     }
   }
   let response: Response;
@@ -188,7 +189,8 @@ async function privateIntakeStatus(
         }),
       );
     } catch {
-      return { status: "unavailable" };
+      // A verified GitHub response remains authoritative even when the edge
+      // runtime cannot persist the optional cache entry.
     }
   }
   return status;
