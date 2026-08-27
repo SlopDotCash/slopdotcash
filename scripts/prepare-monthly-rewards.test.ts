@@ -41,6 +41,29 @@ describe("monthly reward close", () => {
     expect(validateCycles).toHaveBeenCalledOnce();
   });
 
+  it("keeps active honor-system projects out of reward cycles", async () => {
+    const heir = PROJECTS.find((project) => project.id === "heir-elements-sdk");
+    if (!heir) throw new Error("Heir Elements SDK fixture is missing");
+    const openHeir = { ...heir, status: "active" as const };
+    const prepare = vi.fn();
+    const result = await prepareMonthlyRewards(
+      {
+        cycleId: "2026-09",
+        generatedAt: "2026-10-01T00:11:00.000Z",
+      },
+      {
+        inspectPath: vi.fn().mockResolvedValue("missing"),
+        prepare,
+        projects: [openHeir],
+        validateCycles: vi.fn(),
+      },
+    );
+
+    expect(result.prepared).toEqual([]);
+    expect(result.skippedPrelaunch).toEqual(["heir-elements-sdk"]);
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
   it("leaves complete existing cycles untouched and rejects partial state", async () => {
     const result = await prepareMonthlyRewards(
       {

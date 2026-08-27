@@ -108,6 +108,8 @@ export async function prepareMonthlyRewards(
   for (const project of dependencies.projects) {
     if (
       project.status !== "active" ||
+      project.authority.state !== "verified" ||
+      project.terms.receiptPolicy.state !== "active" ||
       Date.parse(project.reward.rewardStartAt) >= end
     ) {
       result.skippedPrelaunch.push(project.id);

@@ -791,7 +791,7 @@ describe("contribution skill package", () => {
       ).toEqual({
         schemaVersion: "1",
         projectId: project.id,
-        status: "active",
+        status: project.status,
         steward: project.steward,
         authority: project.authority,
         terms: project.terms,

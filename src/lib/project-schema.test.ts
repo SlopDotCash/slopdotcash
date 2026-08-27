@@ -373,7 +373,7 @@ describe("project proposal schema", () => {
     unprovenAuthority.reason = "missing-repository-proof";
     unprovenAuthority.proof = null;
     expect(() => assertProjectDefinition(activeWithoutProof)).toThrow(
-      /verified repository authority/u,
+      /pending receipts and disabled payments/u,
     );
 
     const loginAsIdentity = structuredClone(eliza);
@@ -672,19 +672,16 @@ describe("project proposal schema", () => {
     );
   });
 
-  it("keeps a missing repository license explicit without blocking runs", () => {
-    expect(assertProjectDefinition(heirElements).status).toBe("paused");
-    expect(heirElements.terms.repositoryLicense).toEqual({
+  it("keeps missing authority explicit without blocking contribution access", () => {
+    const contributionOpen = structuredClone(heirElements);
+    contributionOpen.status = "active";
+    expect(assertProjectDefinition(contributionOpen).status).toBe("active");
+    expect(contributionOpen.terms.repositoryLicense).toEqual({
       state: "unknown",
       spdx: null,
       url: null,
       commitSha: null,
       fileSha256: null,
     });
-    const active = structuredClone(heirElements);
-    active.status = "active";
-    expect(() => assertProjectDefinition(active)).toThrow(
-      /verified repository authority/u,
-    );
   });
 });
