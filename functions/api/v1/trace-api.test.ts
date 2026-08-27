@@ -1536,4 +1536,46 @@ describe("private trace API", () => {
     );
     expect(response.status).toBe(401);
   });
+
+  it("reports unknown paths as not found instead of demanding authentication", async () => {
+    const unknown: Array<[string, string]> = [
+      ["private-request-intak", "GET"],
+      ["private-request-intake/extra", "GET"],
+      ["runs", "GET"],
+      ["runs/run_0000000000000001/unknown-action", "POST"],
+      ["operator/traces", "GET"],
+    ];
+    for (const [path, method] of unknown) {
+      const response = await handleTraceApi(
+        new Request(`https://api.slop.cash/api/v1/${path}`, { method }),
+        dependencies(),
+      );
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ error: "not_found" });
+    }
+  });
+
+  it("still requires authentication before validating a matched run id", async () => {
+    const deps = dependencies();
+    const unauthenticated = await handleTraceApi(
+      new Request(
+        "https://api.slop.cash/api/v1/runs/not%20a%20valid%20id/finalize",
+        { method: "POST" },
+      ),
+      deps,
+    );
+    expect(unauthenticated.status).toBe(401);
+    expect(await unauthenticated.json()).toMatchObject({
+      error: "unauthorized",
+    });
+    const bearer = await token("42", "contributor-login", ["contributor"]);
+    const invalidRunId = await handleTraceApi(
+      request("runs/not%20a%20valid%20id/finalize", "POST", bearer),
+      deps,
+    );
+    expect(invalidRunId.status).toBe(400);
+    expect(await invalidRunId.json()).toMatchObject({
+      error: "invalid_request",
+    });
+  });
 });
