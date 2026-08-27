@@ -495,6 +495,10 @@ p {
   font-weight: 700;
 }
 
+.reviewer-leaderboard {
+  margin-top: 22px;
+}
+
 .leaderboard-cycle-summary,
 .leaderboard-record-summary {
   display: flex;
@@ -1283,6 +1287,10 @@ small {
 .global-leader-head,
 .global-leader-row {
   grid-template-columns: 72px minmax(220px, 1.5fr) 0.6fr 0.8fr;
+}
+
+.reviewer-leader-row {
+  grid-template-columns: 72px minmax(220px, 1.5fr) 0.8fr;
 }
 
 .event-list,

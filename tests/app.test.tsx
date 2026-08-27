@@ -491,7 +491,16 @@ describe("discovery", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("THE GITARMY NETWORK")).not.toBeInTheDocument();
     expect(screen.queryByText("Work in. Money out.")).not.toBeInTheDocument();
-    expect(screen.getByText("finish-line")).toBeInTheDocument();
+    expect(screen.getAllByText("finish-line")).toHaveLength(2);
+    const reviewerTable = screen.getByRole("table", {
+      name: /reviewer leaderboard/u,
+    });
+    const reviewerRow = within(reviewerTable)
+      .getByText("finish-line")
+      .closest("tr");
+    expect(reviewerRow).not.toBeNull();
+    expect(reviewerRow).toHaveTextContent("1 scored review");
+    expect(reviewerRow).toHaveTextContent("3");
 
     fireEvent.click(screen.getByRole("tab", { name: "All-time record" }));
     const record = screen.getByRole("table", {
