@@ -158,7 +158,10 @@ async function privateIntakeStatus(
   try {
     response = await fetchImpl(PRIVATE_INTAKE_STATUS_URL, {
       method: "GET",
-      redirect: "error",
+      // Cloudflare Workers supports manual redirect handling, not the browser
+      // `error` mode. Every redirect is still rejected below because a 3xx
+      // response is not successful and its body is never followed or parsed.
+      redirect: "manual",
       headers: {
         Accept: "application/vnd.github+json",
         "User-Agent": "slop-private-intake-verifier",
