@@ -104,6 +104,7 @@ import stat
 import struct
 import sys
 import tempfile
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -134,7 +135,8 @@ max_total_bytes = 4_194_304
 max_api_bytes = 2_097_152
 max_pull_pages = 10
 max_timeline_pages = 10
-request_timeout_seconds = 20
+request_timeout_seconds = 45
+request_attempts = 3
 sha_pattern = re.compile(r"[0-9a-f]{40}")
 digest_pattern = re.compile(r"[0-9a-f]{64}")
 local_header = struct.Struct("<IHHHHHIIIHH")
@@ -184,8 +186,27 @@ def fetch_bytes(url, limit, expected_origin):
         },
         method="GET",
     )
+    for attempt in range(1, request_attempts + 1):
+        try:
+            response = urllib.request.urlopen(request, timeout=request_timeout_seconds)
+            break
+        except urllib.error.HTTPError as error:
+            retryable = error.code in (408, 429) or 500 <= error.code <= 599
+            if not retryable or attempt == request_attempts:
+                raise ValueError(
+                    f"authenticated download failed after {attempt} attempt(s): "
+                    f"HTTP {error.code} from {url}"
+                ) from error
+        except (OSError, urllib.error.URLError) as error:
+            if attempt == request_attempts:
+                detail = getattr(error, "reason", error)
+                raise ValueError(
+                    f"authenticated download failed after {attempt} attempts "
+                    f"of {request_timeout_seconds}s: {url} ({detail})"
+                ) from error
+        time.sleep(attempt)
     try:
-        with urllib.request.urlopen(request, timeout=request_timeout_seconds) as response:
+        with response:
             final_url = response.geturl()
             expected = urllib.parse.urlsplit(expected_origin)
             final = urllib.parse.urlsplit(final_url)
@@ -206,7 +227,7 @@ def fetch_bytes(url, limit, expected_origin):
                     raise ValueError("remote response exceeds its declared size limit")
             contents = response.read(limit + 1)
     except (OSError, urllib.error.URLError) as error:
-        raise ValueError(f"authenticated download failed: {url}") from error
+        raise ValueError(f"authenticated response read failed: {url}") from error
     if len(contents) > limit:
         raise ValueError("remote response exceeds its actual size limit")
     return contents

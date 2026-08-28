@@ -1191,6 +1191,23 @@ describe("authenticated skill installer lifecycle", () => {
     ).toThrow("must be an unparameterized file:// origin");
   });
 
+  it("bounds transient authenticated download retries and reports their budget", () => {
+    const production = createInstallCommand(
+      "https://slop.cash",
+      `\${HOME}/.codex/skills`,
+      primaryInstallOptions,
+    );
+    expect(production).toContain("request_timeout_seconds = 45");
+    expect(production).toContain("request_attempts = 3");
+    expect(production).toContain(
+      "retryable = error.code in (408, 429) or 500 <= error.code <= 599",
+    );
+    expect(production).toContain("time.sleep(attempt)");
+    expect(production).toContain(
+      "authenticated download failed after {attempt} attempts",
+    );
+  });
+
   it("uses the current Slop repository for GitHub authority and local provenance", () => {
     const production = createInstallCommand(
       "https://slop.cash",
