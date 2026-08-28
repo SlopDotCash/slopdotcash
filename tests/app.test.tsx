@@ -810,6 +810,35 @@ describe("project routes", () => {
 });
 
 describe("public records", () => {
+  it("shows the actor-bound current wallet claim independently of cycle history", async () => {
+    route("/contributors/finish-line");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/wallet-claims/actors/1/current")) {
+        return Response.json({
+          schemaVersion: 1,
+          claimId: "wc_current01",
+          githubActorId: "1",
+          address: "11111111111111111111111111111111",
+        });
+      }
+      return Response.json(
+        url.includes("/data/cycles/")
+          ? archivedPaidCycleIndex()
+          : snapshotFixture(),
+      );
+    });
+    render(<App />);
+
+    const wallet = await screen.findByRole("link", {
+      name: /Current payout wallet · 11111111111111111111111111111111/i,
+    });
+    expect(wallet).toHaveAttribute(
+      "href",
+      "https://api.slop.cash/api/v1/wallet-claims/wc_current01",
+    );
+  });
+
   it("keeps rolling-window contributors reachable outside the active cycle", async () => {
     route("/contributors/finish-line");
     mockSnapshot(augustRollingSnapshot());
@@ -1011,7 +1040,7 @@ describe("public records", () => {
     render(<App />);
 
     const wallet = await screen.findByRole("link", {
-      name: /Payout wallet · 11111111111111111111111111111111/i,
+      name: /Historical payout wallet · 11111111111111111111111111111111/i,
     });
     expect(wallet).toHaveAttribute("href", expect.stringContaining("/blob/"));
   });

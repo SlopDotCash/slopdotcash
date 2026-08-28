@@ -74,10 +74,12 @@ const SOCIAL_TELEGRAM = "https://t.me/slopcashofficial";
 const PROJECT_PROPOSAL_ROOT = `${SOURCE_REPOSITORY}/new/develop`;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const FUNDING_TIMEOUT_MS = 12_000;
+const WALLET_CLAIM_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
 const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
 const MAX_FUNDING_INDEX_BYTES = 8 * 1024 * 1024;
+const MAX_WALLET_CLAIM_BYTES = 16 * 1024;
 const PROFILE_EVENT_PREVIEW_LIMIT = 10;
 
 export function rootPublishedTemplateProject(
@@ -1600,6 +1602,107 @@ function useFundingIndex(): FundingDataState {
   return funding;
 }
 
+type CurrentWalletState =
+  | { status: "loading" }
+  | { status: "none" }
+  | { status: "error" }
+  | { status: "ready"; address: string; sourceUrl: string };
+
+function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
+  const [wallet, setWallet] = useState<CurrentWalletState>({
+    status: "loading",
+  });
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    const normalizedLogin = login.toLowerCase();
+    const actors: Array<{ id: string; login: string; avatarUrl?: string }> = [
+      ...state.views.flatMap((view) => [
+        ...view.leaders.map((leader) => leader.actor),
+        ...view.opportunities.map((opportunity) => opportunity.actor),
+      ]),
+      ...state.cycleIndex.cycles.flatMap((cycle) =>
+        cycle.contributors.map((contributor) => contributor.actor),
+      ),
+    ];
+    const actor = actors.find(
+      (candidate) => candidate.login.toLowerCase() === normalizedLogin,
+    );
+    const avatarActorId = actor?.avatarUrl
+      ? /^https:\/\/avatars\.githubusercontent\.com\/u\/(\d+)(?:\?|$)/u.exec(
+          actor.avatarUrl,
+        )?.[1]
+      : undefined;
+    const githubActorId =
+      actor && /^\d+$/u.test(actor.id) ? actor.id : avatarActorId;
+    if (!githubActorId) {
+      setWallet({ status: "none" });
+      return;
+    }
+    let active = true;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(new Error("wallet claim request timed out")),
+      WALLET_CLAIM_TIMEOUT_MS,
+    );
+    void fetch(
+      `https://api.slop.cash/api/v1/wallet-claims/actors/${githubActorId}/current`,
+      {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      },
+    )
+      .then(async (response) => {
+        if (response.status === 404) return null;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return readBoundedJson(
+          response,
+          MAX_WALLET_CLAIM_BYTES,
+          "Wallet claim",
+        );
+      })
+      .then((value) => {
+        if (!active) return;
+        if (value === null) {
+          setWallet({ status: "none" });
+          return;
+        }
+        if (
+          typeof value !== "object" ||
+          value === null ||
+          Array.isArray(value)
+        ) {
+          throw new TypeError("Wallet claim must be an object");
+        }
+        const claim = value as Record<string, unknown>;
+        if (
+          typeof claim.claimId !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(claim.claimId) ||
+          claim.githubActorId !== githubActorId ||
+          typeof claim.address !== "string" ||
+          !isFundingAddress("solana", claim.address)
+        ) {
+          throw new TypeError("Wallet claim has invalid actor-bound metadata");
+        }
+        setWallet({
+          status: "ready",
+          address: claim.address,
+          sourceUrl: `https://api.slop.cash/api/v1/wallet-claims/${claim.claimId}`,
+        });
+      })
+      .catch(() => {
+        if (active) setWallet({ status: "error" });
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [state, login]);
+  return wallet;
+}
+
 function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
   const funding = useFundingIndex();
   const records =
@@ -1894,6 +1997,7 @@ function ProfilePage({
   retry: () => void;
 }) {
   const funding = useFundingIndex();
+  const currentWallet = useCurrentWallet(state, login);
   if (state.status !== "ready")
     return (
       <main className="shell route-main">
@@ -1983,7 +2087,7 @@ function ProfilePage({
     (total, { contributor }) => total + BigInt(contributor.paidMinor),
     0n,
   );
-  const wallet = history.find(({ contributor }) => contributor.wallet)
+  const historicalWallet = history.find(({ contributor }) => contributor.wallet)
     ?.contributor.wallet;
   const featuredEvents = events.slice(0, PROFILE_EVENT_PREVIEW_LIMIT);
   const remainingEvents = events.slice(PROFILE_EVENT_PREVIEW_LIMIT);
@@ -2001,13 +2105,22 @@ function ProfilePage({
             <ExternalLinkAnchor href={actor.url}>
               GitHub <ExternalLink aria-hidden="true" size={15} />
             </ExternalLinkAnchor>
-            {wallet ? (
-              <ExternalLinkAnchor href={wallet.sourceUrl}>
-                Payout wallet · {wallet.address}{" "}
+            {currentWallet.status === "ready" ? (
+              <ExternalLinkAnchor href={currentWallet.sourceUrl}>
+                Current payout wallet · {currentWallet.address}{" "}
                 <ExternalLink aria-hidden="true" size={15} />
               </ExternalLinkAnchor>
+            ) : historicalWallet ? (
+              <ExternalLinkAnchor href={historicalWallet.sourceUrl}>
+                Historical payout wallet · {historicalWallet.address}{" "}
+                <ExternalLink aria-hidden="true" size={15} />
+              </ExternalLinkAnchor>
+            ) : currentWallet.status === "loading" ? (
+              <span>Checking current payout wallet…</span>
+            ) : currentWallet.status === "error" ? (
+              <span>Current payout wallet status unavailable</span>
             ) : (
-              <span>No payout wallet registered</span>
+              <span>No current payout wallet registered</span>
             )}
           </div>
         </div>
