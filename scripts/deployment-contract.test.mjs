@@ -27,6 +27,10 @@ const releaseLabelWorkflow = readFileSync(
   "utf8",
 );
 const workflowDirectory = join(repositoryRoot, ".github", "workflows");
+const privateIntakeWatch = readFileSync(
+  join(workflowDirectory, "private-intake-watch.yml"),
+  "utf8",
+);
 const allWorkflows = readdirSync(workflowDirectory)
   .filter((name) => /\.ya?ml$/u.test(name))
   .map((name) => ({
@@ -78,6 +82,19 @@ const qualityJob = workflow.slice(
 const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
 
 describe("slop.cash deployment contract", () => {
+  it("alerts before a reviewed private-intake refresh can expire", () => {
+    expect(privateIntakeWatch).toContain('cron: "47 * * * *"');
+    expect(privateIntakeWatch).toContain(
+      "https://slop.cash/data/private-intake-attestation.json",
+    );
+    expect(privateIntakeWatch).toContain("remainingMs <= 90 * 60 * 1000");
+    expect(privateIntakeWatch).toContain(
+      "Approve the newest trusted deployment now",
+    );
+    expect(privateIntakeWatch).not.toContain("environment:");
+    expect(privateIntakeWatch).not.toContain("wrangler");
+  });
+
   it("rewrites the nested project funding route through the Pages SPA", () => {
     const redirects = pagesRedirects.trim().split("\n");
     expect(redirects).toContain("/projects/:project/funding/ / 200");
