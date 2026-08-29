@@ -1604,9 +1604,9 @@ function useFundingIndex(): FundingDataState {
 
 type CurrentWalletState =
   | { status: "loading" }
-  | { status: "none" }
-  | { status: "error" }
-  | { status: "ready"; address: string; sourceUrl: string };
+  | { status: "none"; login: string }
+  | { status: "error"; login: string }
+  | { status: "ready"; address: string; login: string; sourceUrl: string };
 
 function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
   const [wallet, setWallet] = useState<CurrentWalletState>({
@@ -1615,6 +1615,7 @@ function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
   useEffect(() => {
     if (state.status !== "ready") return;
     const normalizedLogin = login.toLowerCase();
+    setWallet({ status: "loading" });
     const actors: Array<{ id: string; login: string; avatarUrl?: string }> = [
       ...state.views.flatMap((view) => [
         ...view.leaders.map((leader) => leader.actor),
@@ -1635,7 +1636,7 @@ function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
     const githubActorId =
       actor && /^\d+$/u.test(actor.id) ? actor.id : avatarActorId;
     if (!githubActorId) {
-      setWallet({ status: "none" });
+      setWallet({ status: "none", login: normalizedLogin });
       return;
     }
     let active = true;
@@ -1664,7 +1665,7 @@ function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
       .then((value) => {
         if (!active) return;
         if (value === null) {
-          setWallet({ status: "none" });
+          setWallet({ status: "none", login: normalizedLogin });
           return;
         }
         if (
@@ -1687,11 +1688,12 @@ function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
         setWallet({
           status: "ready",
           address: claim.address,
+          login: normalizedLogin,
           sourceUrl: `https://api.slop.cash/api/v1/wallet-claims/${claim.claimId}`,
         });
       })
       .catch(() => {
-        if (active) setWallet({ status: "error" });
+        if (active) setWallet({ status: "error", login: normalizedLogin });
       })
       .finally(() => window.clearTimeout(timeout));
     return () => {
@@ -1700,6 +1702,9 @@ function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
       window.clearTimeout(timeout);
     };
   }, [state, login]);
+  if (wallet.status !== "loading" && wallet.login !== login.toLowerCase()) {
+    return { status: "loading" };
+  }
   return wallet;
 }
 
