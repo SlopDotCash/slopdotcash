@@ -15,6 +15,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Checkout watchdog
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+
       - name: Check deployed attestation expiry
         env:
           APPROVAL_URL: https://github.com/SlopDotCash/slopdotcash/actions/workflows/deploy.yml
@@ -30,26 +36,5 @@ jobs:
             --max-filesize 16384 \
             --output "$attestation" \
             https://slop.cash/data/private-intake-attestation.json
-          node - "$attestation" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const path = process.argv[2];
-          const value = JSON.parse(readFileSync(path, "utf8"));
-          const verifiedAt = Date.parse(value?.verifiedAt);
-          const expiresAt = verifiedAt + 7 * 60 * 60 * 1000;
-          const remainingMs = expiresAt - Date.now();
-          if (
-            value?.enabled !== true ||
-            value?.source !== "github-public-status" ||
-            !Number.isFinite(verifiedAt) ||
-            !/^[0-9a-f]{40}$/.test(value?.revision ?? "")
-          ) {
-            console.error(`::error title=Private intake attestation invalid::Approve a fresh trusted deployment: ${process.env.APPROVAL_URL}. Recovery procedure: ${process.env.RECOVERY_URL}`);
-            process.exit(1);
-          }
-          if (remainingMs <= 90 * 60 * 1000) {
-            const expiry = new Date(expiresAt).toISOString();
-            console.error(`::error title=Private intake renewal required::The deployed attestation expires at ${expiry}. Approve the newest trusted deployment now: ${process.env.APPROVAL_URL}. If the designated reviewer is unavailable, follow: ${process.env.RECOVERY_URL}`);
-            process.exit(1);
-          }
-          console.log(`Private intake attestation is safe until ${new Date(expiresAt).toISOString()}.`);
-          NODE
+          node scripts/check-private-intake-freshness.mjs \
+            "$attestation" "$APPROVAL_URL" "$RECOVERY_URL"

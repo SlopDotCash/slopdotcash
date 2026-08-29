@@ -31,6 +31,10 @@ const privateIntakeWatch = readFileSync(
   join(workflowDirectory, "private-intake-watch.yml"),
   "utf8",
 );
+const privateIntakeWatchScript = readFileSync(
+  join(repositoryRoot, "scripts", "check-private-intake-freshness.mjs"),
+  "utf8",
+);
 const privateIntakeRecoveryGuide = readFileSync(
   join(repositoryRoot, "backend", "trace", "PRIVATE_INTAKE_RECOVERY.md"),
   "utf8",
@@ -91,8 +95,10 @@ describe("slop.cash deployment contract", () => {
     expect(privateIntakeWatch).toContain(
       "https://slop.cash/data/private-intake-attestation.json",
     );
-    expect(privateIntakeWatch).toContain("remainingMs <= 90 * 60 * 1000");
     expect(privateIntakeWatch).toContain(
+      "node scripts/check-private-intake-freshness.mjs",
+    );
+    expect(privateIntakeWatchScript).toContain(
       "Approve the newest trusted deployment now",
     );
     expect(privateIntakeWatch).toContain("PRIVATE_INTAKE_RECOVERY.md");
