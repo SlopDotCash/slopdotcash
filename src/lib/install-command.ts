@@ -188,7 +188,26 @@ def fetch_bytes(url, limit, expected_origin):
     )
     for attempt in range(1, request_attempts + 1):
         try:
-            response = urllib.request.urlopen(request, timeout=request_timeout_seconds)
+            with urllib.request.urlopen(request, timeout=request_timeout_seconds) as response:
+                final_url = response.geturl()
+                expected = urllib.parse.urlsplit(expected_origin)
+                final = urllib.parse.urlsplit(final_url)
+                if expected.scheme == "file":
+                    expected_root = os.path.realpath(urllib.request.url2pathname(expected.path))
+                    final_path = os.path.realpath(urllib.request.url2pathname(final.path))
+                    if os.path.commonpath((expected_root, final_path)) != expected_root:
+                        raise ValueError("file authority escaped its injected fixture root")
+                elif origin_identity(final_url) != origin_identity(expected_origin):
+                    raise ValueError("authenticated request redirected to another authority")
+                content_length = response.headers.get("Content-Length")
+                if content_length is not None:
+                    try:
+                        declared_length = int(content_length)
+                    except ValueError as error:
+                        raise ValueError("remote response has an invalid Content-Length") from error
+                    if declared_length < 0 or declared_length > limit:
+                        raise ValueError("remote response exceeds its declared size limit")
+                contents = response.read(limit + 1)
             break
         except urllib.error.HTTPError as error:
             retryable = error.code in (408, 429) or 500 <= error.code <= 599
@@ -205,29 +224,6 @@ def fetch_bytes(url, limit, expected_origin):
                     f"of {request_timeout_seconds}s: {url} ({detail})"
                 ) from error
         time.sleep(attempt)
-    try:
-        with response:
-            final_url = response.geturl()
-            expected = urllib.parse.urlsplit(expected_origin)
-            final = urllib.parse.urlsplit(final_url)
-            if expected.scheme == "file":
-                expected_root = os.path.realpath(urllib.request.url2pathname(expected.path))
-                final_path = os.path.realpath(urllib.request.url2pathname(final.path))
-                if os.path.commonpath((expected_root, final_path)) != expected_root:
-                    raise ValueError("file authority escaped its injected fixture root")
-            elif origin_identity(final_url) != origin_identity(expected_origin):
-                raise ValueError("authenticated request redirected to another authority")
-            content_length = response.headers.get("Content-Length")
-            if content_length is not None:
-                try:
-                    declared_length = int(content_length)
-                except ValueError as error:
-                    raise ValueError("remote response has an invalid Content-Length") from error
-                if declared_length < 0 or declared_length > limit:
-                    raise ValueError("remote response exceeds its declared size limit")
-            contents = response.read(limit + 1)
-    except (OSError, urllib.error.URLError) as error:
-        raise ValueError(f"authenticated response read failed: {url}") from error
     if len(contents) > limit:
         raise ValueError("remote response exceeds its actual size limit")
     return contents

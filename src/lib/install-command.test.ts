@@ -1208,6 +1208,68 @@ describe("authenticated skill installer lifecycle", () => {
     );
   });
 
+  it("retries a transient timeout while reading an authenticated response", () => {
+    const root = freshRoot("read-timeout-retry");
+    const installRoot = join(root, "install");
+    const files = baseFiles("read-timeout-retry");
+    const artifact = writeArtifact(root, revisionA, files);
+    const authority = configureAuthority(root, {
+      developHead: revisionA,
+      revisions: { [revisionA]: { files } },
+    });
+    const pythonPath = join(root, "python-path");
+    const marker = join(root, "read-timeout-triggered");
+    mkdirSync(pythonPath);
+    writeFileSync(
+      join(pythonPath, "sitecustomize.py"),
+      `import os
+import urllib.request
+
+_original_urlopen = urllib.request.urlopen
+_failed = False
+
+class _TimeoutOnceResponse:
+    def __init__(self, response):
+        self._response = response
+
+    def __enter__(self):
+        self._response.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._response.__exit__(*args)
+
+    def __getattr__(self, name):
+        return getattr(self._response, name)
+
+    def read(self, *args, **kwargs):
+        global _failed
+        if not _failed:
+            _failed = True
+            with open(os.environ["SLOP_TIMEOUT_MARKER"], "w", encoding="utf-8") as output:
+                output.write("triggered\\n")
+            raise TimeoutError("simulated authenticated response read timeout")
+        return self._response.read(*args, **kwargs)
+
+def _urlopen(*args, **kwargs):
+    return _TimeoutOnceResponse(_original_urlopen(*args, **kwargs))
+
+urllib.request.urlopen = _urlopen
+`,
+    );
+
+    const result = run(command(artifact, authority), installRoot, {
+      PYTHONPATH: pythonPath,
+      SLOP_TIMEOUT_MARKER: marker,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(marker, "utf8")).toBe("triggered\n");
+    expect(currentLink(installRoot)).toBe(
+      `.contribute-to-eliza-versions/${revisionA}`,
+    );
+  });
+
   it("uses the current Slop repository for GitHub authority and local provenance", () => {
     const production = createInstallCommand(
       "https://slop.cash",
