@@ -159,6 +159,11 @@ trace uploads must remain disabled until a reviewed D1-backed policy bounds
 authenticated storage and write amplification without relying on an
 eventually-consistent edge counter.
 
+Operational renewal, designated-reviewer unavailability, full-cycle
+verification, and rollback are documented in
+[`PRIVATE_INTAKE_RECOVERY.md`](PRIVATE_INTAKE_RECOVERY.md). The procedure keeps
+the seven-hour gate and protected-environment review fail-closed.
+
 The Cloudflare account and bucket permissions remain limited to designated
 Slop operators. Application authorization does not replace Cloudflare account
 access control and audit logging.

@@ -18,6 +18,7 @@ jobs:
       - name: Check deployed attestation expiry
         env:
           APPROVAL_URL: https://github.com/SlopDotCash/slopdotcash/actions/workflows/deploy.yml
+          RECOVERY_URL: https://github.com/SlopDotCash/slopdotcash/blob/develop/backend/trace/PRIVATE_INTAKE_RECOVERY.md
         run: |
           set -euo pipefail
           attestation="$RUNNER_TEMP/private-intake-attestation.json"
@@ -42,12 +43,12 @@ jobs:
             !Number.isFinite(verifiedAt) ||
             !/^[0-9a-f]{40}$/.test(value?.revision ?? "")
           ) {
-            console.error(`::error title=Private intake attestation invalid::Approve a fresh trusted deployment: ${process.env.APPROVAL_URL}`);
+            console.error(`::error title=Private intake attestation invalid::Approve a fresh trusted deployment: ${process.env.APPROVAL_URL}. Recovery procedure: ${process.env.RECOVERY_URL}`);
             process.exit(1);
           }
           if (remainingMs <= 90 * 60 * 1000) {
             const expiry = new Date(expiresAt).toISOString();
-            console.error(`::error title=Private intake renewal required::The deployed attestation expires at ${expiry}. Approve the newest trusted deployment now: ${process.env.APPROVAL_URL}`);
+            console.error(`::error title=Private intake renewal required::The deployed attestation expires at ${expiry}. Approve the newest trusted deployment now: ${process.env.APPROVAL_URL}. If the designated reviewer is unavailable, follow: ${process.env.RECOVERY_URL}`);
             process.exit(1);
           }
           console.log(`Private intake attestation is safe until ${new Date(expiresAt).toISOString()}.`);
