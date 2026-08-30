@@ -214,6 +214,12 @@ describe("contribute-to-eliza skill structure", () => {
     assert.match(source, /marker name is outside the signed\s+payload/i);
     assert.match(source, /Do not remove the `run` object/i);
     assert.match(source, /generate the unsigned\s+legacy marker/i);
+    assert.match(source, /formal `APPROVE` or `REQUEST_CHANGES` event/);
+    assert.match(source, /`submittedAt` is after `mergedAt`/);
+    assert.match(
+      source,
+      /does not\s+require the reviewed commit to become the final merged head/,
+    );
     assert.match(source, /Do not put both markers in the same\s+source/i);
     assert.doesNotMatch(source, /ss251 gets \+50|give ss251 extra points/i);
   });
