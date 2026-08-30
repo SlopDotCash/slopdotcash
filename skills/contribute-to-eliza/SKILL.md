@@ -410,6 +410,16 @@ blocking defects, repairs, commands run, evidence inspected, and remaining
 human checks. A rejected or unmerged artifact may still be useful, but only the
 project evaluator can award it partial credit.
 
+Publish an ordinary score-eligible review only while GitHub still reports the
+pull request open, using the formal `APPROVE` or `REQUEST_CHANGES` event. A
+`COMMENT` event and any review whose GitHub `submittedAt` is after `mergedAt`
+remain useful discussion but do not receive automatic review credit; do not
+repost either after merge. The mandatory current-head recheck protects review
+quality, while ordinary scoring binds the immutable review event and does not
+require the reviewed commit to become the final merged head. Unscored useful
+diagnosis may be proposed once through the public maintainer-evaluation path;
+never request an evaluation for a source that already appears in the ledger.
+
 ## Finish the measured run
 
 After all work and proof, prepare the minimized contribution-specific UTF-8
