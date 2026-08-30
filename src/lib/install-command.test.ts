@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type AuthorityFixtureOptions,
@@ -1188,7 +1188,45 @@ describe("authenticated skill installer lifecycle", () => {
           rawOrigin: "https://attacker.example",
         },
       }),
-    ).toThrow("must be an unparameterized file:// origin");
+    ).toThrow(
+      "must be an unparameterized file:// or loopback http://127.0.0.1 origin",
+    );
+    expect(() =>
+      createInstallCommand("https://slop.cash", `\${HOME}/.codex/skills`, {
+        ...primaryInstallOptions,
+        testAuthority: {
+          apiOrigin: "http://attacker.example:8080",
+          rawOrigin: "file:///tmp/raw",
+        },
+      }),
+    ).toThrow(
+      "must be an unparameterized file:// or loopback http://127.0.0.1 origin",
+    );
+    expect(() =>
+      createInstallCommand("https://slop.cash", `\${HOME}/.codex/skills`, {
+        ...primaryInstallOptions,
+        testAuthority: {
+          apiOrigin: "http://127.0.0.1:8080",
+          rawOrigin: "file:///tmp/raw",
+          requestTimeoutSeconds: 0,
+        },
+      }),
+    ).toThrow("requestTimeoutSeconds must be between 0.1 and 300 seconds");
+    const loopback = createInstallCommand(
+      "https://slop.cash",
+      `\${HOME}/.codex/skills`,
+      {
+        ...primaryInstallOptions,
+        testAuthority: {
+          apiOrigin: "http://127.0.0.1:8080",
+          rawOrigin: "file:///tmp/raw",
+          requestTimeoutSeconds: 0.5,
+        },
+      },
+    );
+    expect(loopback).toContain("'http://127.0.0.1:8080'");
+    expect(loopback).toContain("'0.5'");
+    expect(production).toContain("'60'");
   });
 
   it("uses the current Slop repository for GitHub authority and local provenance", () => {
@@ -1319,5 +1357,188 @@ time.sleep(60)
     expect(readFileSync(unmanagedTarget, "utf8")).toBe(
       "must remain untouched\n",
     );
+  });
+
+  const stallServerScript = `
+    const http = require("node:http");
+    const fs = require("node:fs");
+    const [responsesPath, pattern, stallMsRaw, stallCountRaw, logPath] =
+      process.argv.slice(1);
+    const responses = JSON.parse(fs.readFileSync(responsesPath, "utf8"));
+    const stallMs = Number(stallMsRaw);
+    const stallCount = Number(stallCountRaw);
+    let stalled = 0;
+    const server = http.createServer((request, response) => {
+      fs.appendFileSync(logPath, request.url + "\\n");
+      const respond = () => {
+        try {
+          if (!(request.url in responses)) {
+            response.statusCode = 404;
+            response.end("{}");
+            return;
+          }
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify(responses[request.url]));
+        } catch {}
+      };
+      if (request.url.includes(pattern) && stalled < stallCount) {
+        stalled += 1;
+        setTimeout(respond, stallMs);
+      } else {
+        respond();
+      }
+    });
+    server.listen(0, "127.0.0.1", () => {
+      console.log("PORT " + server.address().port);
+    });
+  `;
+
+  async function startStallServer(options: {
+    responsesPath: string;
+    requestLog: string;
+    stallPattern: string;
+    stallMs: number;
+    stallCount: number;
+  }): Promise<{ port: number; kill: () => void }> {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        stallServerScript,
+        options.responsesPath,
+        options.stallPattern,
+        String(options.stallMs),
+        String(options.stallCount),
+        options.requestLog,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const port = await new Promise<number>((resolvePort, rejectPort) => {
+      let buffered = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        buffered += chunk.toString("utf8");
+        const match = buffered.match(/PORT (\d+)/u);
+        if (match) resolvePort(Number(match[1]));
+      });
+      child.once("exit", () =>
+        rejectPort(new Error("stall server exited before listening")),
+      );
+    });
+    return { port, kill: () => child.kill("SIGKILL") };
+  }
+
+  function timeoutUpdateFixture(root: string) {
+    const installRoot = join(root, "install");
+    const filesA = baseFiles("revision-a");
+    const filesB = baseFiles("revision-b");
+    const artifactA = writeArtifact(root, revisionA, filesA);
+    const artifactB = writeArtifact(root, revisionB, filesB);
+    const initialAuthority = configureAuthority(root, {
+      developHead: revisionA,
+      revisions: { [revisionA]: { files: filesA } },
+    });
+    const initial = run(command(artifactA, initialAuthority), installRoot);
+    expect(initial.status, initial.stderr).toBe(0);
+    const updateAuthority = configureAuthority(root, {
+      comparisons: {
+        [`${revisionA}...${revisionB}`]: aheadComparison(revisionA, revisionB),
+      },
+      developHead: revisionB,
+      revisions: {
+        [revisionA]: { files: filesA },
+        [revisionB]: { files: filesB },
+      },
+    });
+    return { artifactB, installRoot, updateAuthority };
+  }
+
+  function loopbackCommand(
+    artifactRoot: string,
+    apiPort: number,
+    rawOrigin: string,
+  ): string {
+    return createInstallCommand(
+      pathToFileURL(artifactRoot).href.replace(/\/$/u, ""),
+      `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
+      {
+        ...primaryInstallOptions,
+        testAuthority: {
+          apiOrigin: `http://127.0.0.1:${apiPort}`,
+          rawOrigin,
+          requestTimeoutSeconds: 0.5,
+        },
+      },
+    );
+  }
+
+  it("recovers a valid update from one slow comparison within bounded attempts", async () => {
+    const root = freshRoot("timeout-recover");
+    const { artifactB, installRoot, updateAuthority } =
+      timeoutUpdateFixture(root);
+    const requestLog = join(root, "requests.log");
+    writeFileSync(requestLog, "");
+    const server = await startStallServer({
+      responsesPath: join(
+        fileURLToPath(updateAuthority.apiOrigin),
+        "responses.json",
+      ),
+      requestLog,
+      stallPattern: "/compare/",
+      stallMs: 1500,
+      stallCount: 1,
+    });
+    try {
+      const update = run(
+        loopbackCommand(artifactB, server.port, updateAuthority.rawOrigin),
+        installRoot,
+      );
+      expect(update.status, update.stderr).toBe(0);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionB}`,
+      );
+      const compareRequests = readFileSync(requestLog, "utf8")
+        .split("\n")
+        .filter((line) => line.includes("/compare/"));
+      expect(compareRequests).toHaveLength(2);
+    } finally {
+      server.kill();
+    }
+  });
+
+  it("fails closed with a timeout-classified error after bounded attempts", async () => {
+    const root = freshRoot("timeout-exhaust");
+    const { artifactB, installRoot, updateAuthority } =
+      timeoutUpdateFixture(root);
+    const requestLog = join(root, "requests.log");
+    writeFileSync(requestLog, "");
+    const server = await startStallServer({
+      responsesPath: join(
+        fileURLToPath(updateAuthority.apiOrigin),
+        "responses.json",
+      ),
+      requestLog,
+      stallPattern: "/compare/",
+      stallMs: 1500,
+      stallCount: 99,
+    });
+    try {
+      const update = run(
+        loopbackCommand(artifactB, server.port, updateAuthority.rawOrigin),
+        installRoot,
+      );
+      expect(update.status).not.toBe(0);
+      expect(update.stderr).toContain(
+        "authenticated download failed after 3 attempts (timed out after 0.5s)",
+      );
+      const compareRequests = readFileSync(requestLog, "utf8")
+        .split("\n")
+        .filter((line) => line.includes("/compare/"));
+      expect(compareRequests).toHaveLength(3);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionA}`,
+      );
+    } finally {
+      server.kill();
+    }
   });
 });

@@ -9,6 +9,12 @@
 interface TestAuthorityOrigins {
   apiOrigin: string;
   rawOrigin: string;
+  /**
+   * Test-only per-attempt download timeout. Production always uses the
+   * default; this exists so a deterministic test can reproduce a response
+   * exceeding the per-attempt timeout without waiting minutes.
+   */
+  requestTimeoutSeconds?: number;
 }
 
 interface InstallCommandOptions {
@@ -19,6 +25,9 @@ interface InstallCommandOptions {
 
 const PRODUCTION_API_ORIGIN = "https://api.github.com";
 const PRODUCTION_RAW_ORIGIN = "https://raw.githubusercontent.com";
+// GitHub compare responses on large ranges have been observed taking ~34s
+// while still succeeding; the per-attempt timeout must exceed that.
+const DEFAULT_REQUEST_TIMEOUT_SECONDS = 60;
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -37,27 +46,45 @@ function validateArtifactOrigin(origin: string): string {
   return origin.replace(/\/$/u, "");
 }
 
-function resolveAuthorityOrigins(
-  options: InstallCommandOptions,
-): TestAuthorityOrigins {
+function validateTestOrigin(name: string, origin: string): void {
+  const parsed = new URL(origin);
+  const isFile = parsed.protocol === "file:";
+  const isLoopbackHttp =
+    parsed.protocol === "http:" && parsed.hostname === "127.0.0.1";
+  if ((!isFile && !isLoopbackHttp) || parsed.search || parsed.hash) {
+    throw new TypeError(
+      `[Slop] test ${name} must be an unparameterized file:// or loopback http://127.0.0.1 origin`,
+    );
+  }
+}
+
+function resolveAuthorityOrigins(options: InstallCommandOptions): {
+  apiOrigin: string;
+  rawOrigin: string;
+} {
   if (!options.testAuthority) {
     return {
       apiOrigin: PRODUCTION_API_ORIGIN,
       rawOrigin: PRODUCTION_RAW_ORIGIN,
     };
   }
-  for (const [name, origin] of Object.entries(options.testAuthority)) {
-    const parsed = new URL(origin);
-    if (parsed.protocol !== "file:" || parsed.search || parsed.hash) {
-      throw new TypeError(
-        `[Slop] test ${name} must be an unparameterized file:// origin`,
-      );
-    }
-  }
+  validateTestOrigin("apiOrigin", options.testAuthority.apiOrigin);
+  validateTestOrigin("rawOrigin", options.testAuthority.rawOrigin);
   return {
     apiOrigin: options.testAuthority.apiOrigin.replace(/\/$/u, ""),
     rawOrigin: options.testAuthority.rawOrigin.replace(/\/$/u, ""),
   };
+}
+
+function resolveRequestTimeoutSeconds(options: InstallCommandOptions): number {
+  const override = options.testAuthority?.requestTimeoutSeconds;
+  if (override === undefined) return DEFAULT_REQUEST_TIMEOUT_SECONDS;
+  if (!Number.isFinite(override) || override < 0.1 || override > 300) {
+    throw new TypeError(
+      "[Slop] test requestTimeoutSeconds must be between 0.1 and 300 seconds",
+    );
+  }
+  return override;
 }
 
 export function createInstallCommand(
@@ -67,6 +94,7 @@ export function createInstallCommand(
 ): string {
   const artifactOrigin = validateArtifactOrigin(origin);
   const authority = resolveAuthorityOrigins(options);
+  const requestTimeoutSeconds = resolveRequestTimeoutSeconds(options);
   const { skillName, skillRepositoryPath } = options;
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(skillName)) {
     throw new TypeError("[Slop] skill name must be canonical kebab-case");
@@ -90,20 +118,23 @@ export function createInstallCommand(
     exit 1
   fi
   trap 'exit 1' HUP INT TERM
-  python3 - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} <<'PY'
+  python3 - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} ${shellQuote(String(requestTimeoutSeconds))} <<'PY'
 import binascii
 import ctypes
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import secrets
 import shutil
+import socket
 import stat
 import struct
 import sys
 import tempfile
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -112,7 +143,7 @@ import zipfile
 import zlib
 from pathlib import Path, PurePosixPath
 
-artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path = sys.argv[1:]
+artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path, request_timeout_argument = sys.argv[1:]
 repository = "SlopDotCash/slopdotcash"
 github_repository = "SlopDotCash/slopdotcash"
 legacy_repository = "elizaOS/slopdotcash"
@@ -134,7 +165,14 @@ max_total_bytes = 4_194_304
 max_api_bytes = 2_097_152
 max_pull_pages = 10
 max_timeline_pages = 10
-request_timeout_seconds = 20
+try:
+    request_timeout_seconds = float(request_timeout_argument)
+except ValueError as error:
+    raise ValueError("request timeout argument is not a number") from error
+if not math.isfinite(request_timeout_seconds) or request_timeout_seconds <= 0:
+    raise ValueError("request timeout argument must be a positive finite number")
+download_attempts = 3
+retry_backoff_seconds = (2.0, 4.0)
 sha_pattern = re.compile(r"[0-9a-f]{40}")
 digest_pattern = re.compile(r"[0-9a-f]{64}")
 local_header = struct.Struct("<IHHHHHIIIHH")
@@ -174,7 +212,15 @@ def origin_identity(url):
     return (parsed.scheme, parsed.hostname, parsed.port)
 
 
-def fetch_bytes(url, limit, expected_origin):
+class RetryableDownloadError(Exception):
+    """A transient transport failure eligible for one bounded retry cycle."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def fetch_bytes_once(url, limit, expected_origin):
     request = urllib.request.Request(
         url,
         headers={
@@ -205,11 +251,45 @@ def fetch_bytes(url, limit, expected_origin):
                 if declared_length < 0 or declared_length > limit:
                     raise ValueError("remote response exceeds its declared size limit")
             contents = response.read(limit + 1)
-    except (OSError, urllib.error.URLError) as error:
-        raise ValueError(f"authenticated download failed: {url}") from error
+    except urllib.error.HTTPError as error:
+        if error.code >= 500:
+            raise RetryableDownloadError(f"HTTP {error.code}") from error
+        raise ValueError(f"authenticated download failed: HTTP {error.code}: {url}") from error
+    except (TimeoutError, socket.timeout) as error:
+        raise RetryableDownloadError(
+            f"timed out after {request_timeout_seconds}s"
+        ) from error
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, (TimeoutError, socket.timeout)):
+            raise RetryableDownloadError(
+                f"timed out after {request_timeout_seconds}s"
+            ) from error
+        raise ValueError(
+            f"authenticated download failed ({type(error.reason).__name__}): {url}"
+        ) from error
+    except OSError as error:
+        raise ValueError(
+            f"authenticated download failed ({type(error).__name__}): {url}"
+        ) from error
     if len(contents) > limit:
         raise ValueError("remote response exceeds its actual size limit")
     return contents
+
+
+def fetch_bytes(url, limit, expected_origin):
+    # Integrity, authority, and size violations above raise ValueError and are
+    # never retried; only per-attempt timeouts and HTTP 5xx repeat, bounded.
+    last_reason = None
+    for attempt in range(1, download_attempts + 1):
+        try:
+            return fetch_bytes_once(url, limit, expected_origin)
+        except RetryableDownloadError as error:
+            last_reason = error.reason
+            if attempt < download_attempts:
+                time.sleep(retry_backoff_seconds[attempt - 1])
+    raise ValueError(
+        f"authenticated download failed after {download_attempts} attempts ({last_reason}): {url}"
+    )
 
 
 def decode_json(contents, context):
