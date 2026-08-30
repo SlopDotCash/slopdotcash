@@ -239,9 +239,58 @@ p {
   line-height: 0.88;
 }
 
-.hero-action {
-  display: block;
+.hero-message {
+  display: flex;
+  flex-direction: column;
+}
+
+.hero-switch {
+  display: grid;
   color: var(--orange-dark);
+  font-size: clamp(30px, 7vw, 94px);
+  letter-spacing: -0.065em;
+  line-height: 0.88;
+  text-wrap: balance;
+}
+
+@media (min-width: 681px) {
+  .hero-switch {
+    white-space: nowrap;
+  }
+}
+
+.hero-switch-sizer,
+.hero-typewriter {
+  grid-area: 1 / 1;
+}
+
+.hero-switch-sizer {
+  visibility: hidden;
+}
+
+.hero-typewriter {
+  position: relative;
+  align-self: start;
+}
+
+.hero-mobile-action {
+  display: none;
+}
+
+.hero-typewriter-caret {
+  width: 0.055em;
+  height: 0.78em;
+  display: inline-block;
+  margin-left: 0.04em;
+  animation: typewriter-caret 720ms steps(1, end) infinite;
+  background: currentColor;
+  transform: translateY(0.04em);
+}
+
+@keyframes typewriter-caret {
+  50% {
+    opacity: 0;
+  }
 }
 
 .hero-copy {
@@ -2381,6 +2430,23 @@ small {
     line-height: 0.88;
   }
 
+  .hero-switch {
+    min-height: 1.8em;
+    margin-top: 0.08em;
+    font-size: clamp(36px, 11.5vw, 52px);
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+  }
+
+  .hero-typewriter {
+    display: none;
+  }
+
+  .hero-mobile-action {
+    display: block;
+    grid-area: 1 / 1;
+  }
+
   .hero-copy {
     margin-top: 24px;
   }
@@ -2804,6 +2870,9 @@ small {
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+  .hero-typewriter-caret {
+    display: none;
   }
   *,
   *::before,

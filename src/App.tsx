@@ -81,6 +81,16 @@ const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
 const MAX_FUNDING_INDEX_BYTES = 8 * 1024 * 1024;
 const MAX_WALLET_CLAIM_BYTES = 16 * 1024;
 const PROFILE_EVENT_PREVIEW_LIMIT = 10;
+const HERO_ACTIONS = [
+  "SHIPPING OPEN SOURCE.",
+  "SECURING THE WEB.",
+  "HACKING THE PLANET.",
+  "BUILDING AGI.",
+] as const;
+const HERO_HOLD_MS = 2_400;
+const HERO_TYPE_MS = 55;
+const HERO_DELETE_MS = 30;
+const HERO_GAP_MS = 220;
 
 export function rootPublishedTemplateProject(
   projects: readonly ProjectDefinition[] = PROJECTS,
@@ -566,10 +576,55 @@ function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
 }
 
 function TypewriterHeroHeading() {
+  const [index, setIndex] = useState(0);
+  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
+  const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
+    "holding",
+  );
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const target = HERO_ACTIONS[index];
+    let delay = 1;
+    let advance: () => void;
+    if (phase === "holding") {
+      delay = HERO_HOLD_MS;
+      advance = () => setPhase("deleting");
+    } else if (phase === "deleting" && characters > 0) {
+      delay = HERO_DELETE_MS;
+      advance = () => setCharacters((value) => Math.max(0, value - 1));
+    } else if (phase === "deleting") {
+      delay = HERO_GAP_MS;
+      advance = () => {
+        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
+        setPhase("typing");
+      };
+    } else if (characters < target.length) {
+      delay = HERO_TYPE_MS;
+      advance = () => setCharacters((value) => value + 1);
+    } else {
+      advance = () => setPhase("holding");
+    }
+    const timer = window.setTimeout(advance, delay);
+    return () => window.clearTimeout(timer);
+  }, [characters, index, phase]);
+  const action = HERO_ACTIONS[index];
   return (
     <h1 aria-label="MAKE MONEY SHIPPING OPEN SOURCE.">
-      MAKE MONEY
-      <span className="hero-action">SHIPPING OPEN SOURCE.</span>
+      <span aria-hidden="true" className="hero-message">
+        <span>MAKE MONEY</span>
+        <span className="hero-switch">
+          {HERO_ACTIONS.map((candidate) => (
+            <span className="hero-switch-sizer" key={candidate}>
+              {candidate}
+            </span>
+          ))}
+          <span className="hero-typewriter">
+            {action.slice(0, characters)}
+            <span className="hero-typewriter-caret" />
+          </span>
+          <span className="hero-mobile-action">{action}</span>
+        </span>
+      </span>
     </h1>
   );
 }

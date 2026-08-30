@@ -205,9 +205,10 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     "href",
     "/projects/eliza",
   );
-  await expect(page.locator(".hero-action")).toHaveText(
+  await expect(page.locator(".hero-mobile-action")).toHaveText(
     "SHIPPING OPEN SOURCE.",
   );
+  await expect(page.locator(".hero-typewriter-caret")).toBeHidden();
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();

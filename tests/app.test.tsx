@@ -303,6 +303,59 @@ afterEach(() => {
 });
 
 describe("discovery", () => {
+  it("types through the campaign headlines without changing the semantic heading", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      screen.getByRole("heading", {
+        name: "MAKE MONEY SHIPPING OPEN SOURCE.",
+      }),
+    ).toBeInTheDocument();
+    const visibleAction = () =>
+      document.querySelector(".hero-typewriter")?.textContent ?? "";
+    expect(visibleAction()).toBe("SHIPPING OPEN SOURCE.");
+
+    for (const action of [
+      "SECURING THE WEB.",
+      "HACKING THE PLANET.",
+      "BUILDING AGI.",
+      "SHIPPING OPEN SOURCE.",
+    ]) {
+      let attempts = 0;
+      while (visibleAction() !== action && attempts < 100) {
+        act(() => vi.advanceTimersToNextTimer());
+        attempts += 1;
+      }
+      expect(visibleAction()).toBe(action);
+      expect(
+        screen.getByRole("heading", {
+          name: "MAKE MONEY SHIPPING OPEN SOURCE.",
+        }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("keeps the first campaign headline fixed when reduced motion is requested", () => {
+    vi.useFakeTimers();
+    mockSnapshot();
+    render(<App />);
+
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(document.querySelector(".hero-typewriter")).toHaveTextContent(
+      "SHIPPING OPEN SOURCE.",
+    );
+  });
+
   it("keeps loading separate from empty and error states", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(
       (_input, init) =>
