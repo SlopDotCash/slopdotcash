@@ -20,6 +20,15 @@ export interface ProjectFundingPolicy {
   readonly commitments?: readonly FundingCommitmentInstrument[];
 }
 
+export interface ProjectReviewBudgetPolicy {
+  readonly monthlyCapMinor: string;
+  readonly monthlyCapDisplay: string;
+  readonly committedMinor: string;
+  readonly paymentMode: "disabled" | "enabled";
+  readonly unusedFunds: "rollover-without-cap-increase";
+  readonly fundingState: "committed" | "pledged";
+}
+
 export interface ProjectRewardPolicy {
   readonly kind: RewardKind;
   readonly currency: "USDC" | null;
@@ -33,6 +42,7 @@ export interface ProjectRewardPolicy {
   readonly feeBasisPoints: 100 | 1000;
   readonly unusedFunds: "not-applicable" | "rollover-without-cap-increase";
   readonly fundingState: "committed" | "external-opportunity" | "pledged";
+  readonly reviewBudget?: ProjectReviewBudgetPolicy;
   readonly externalOpportunity?: {
     readonly name: string;
     readonly advertisedAmountDisplay: string;

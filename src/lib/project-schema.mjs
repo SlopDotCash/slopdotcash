@@ -763,6 +763,47 @@ function validateSkill(
   return skill;
 }
 
+function validateReviewBudget(value, field, poolPaymentMode) {
+  const budget = record(value, field);
+  exactKeys(
+    budget,
+    [
+      "committedMinor",
+      "fundingState",
+      "monthlyCapDisplay",
+      "monthlyCapMinor",
+      "paymentMode",
+      "unusedFunds",
+    ],
+    field,
+  );
+  const monthlyCapMinor = minor(
+    budget.monthlyCapMinor,
+    `${field}.monthlyCapMinor`,
+  );
+  const committedMinor = minor(
+    budget.committedMinor,
+    `${field}.committedMinor`,
+  );
+  if (budget.paymentMode !== "disabled" && budget.paymentMode !== "enabled") {
+    throw new TypeError(`${field}.paymentMode is invalid`);
+  }
+  text(budget.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
+  const paymentsDisabled = budget.paymentMode === "disabled";
+  if (
+    BigInt(monthlyCapMinor) <= 0n ||
+    budget.unusedFunds !== "rollover-without-cap-increase" ||
+    (paymentsDisabled
+      ? budget.fundingState !== "pledged" || committedMinor !== "0"
+      : budget.fundingState !== "committed" || BigInt(committedMinor) <= 0n) ||
+    (budget.paymentMode === "enabled" && poolPaymentMode !== "enabled") ||
+    budget.monthlyCapDisplay !== formatMonthlyCapDisplay(monthlyCapMinor)
+  ) {
+    throw new TypeError(`${field} review budget policy is inconsistent`);
+  }
+  return budget;
+}
+
 function validateReward(
   value,
   field,
@@ -770,6 +811,7 @@ function validateReward(
 ) {
   const reward = record(value, field);
   const hasExternal = Object.hasOwn(reward, "externalOpportunity");
+  const hasReviewBudget = Object.hasOwn(reward, "reviewBudget");
   exactKeys(
     reward,
     [
@@ -784,6 +826,7 @@ function validateReward(
       "monthlyCapDisplay",
       "monthlyCapMinor",
       "paymentMode",
+      ...(hasReviewBudget ? ["reviewBudget"] : []),
       "rewardStartAt",
       "unusedFunds",
     ],
@@ -830,8 +873,16 @@ function validateReward(
     ) {
       throw new TypeError(`${field} monthly pool policy is inconsistent`);
     }
+    if (hasReviewBudget) {
+      validateReviewBudget(
+        reward.reviewBudget,
+        `${field}.reviewBudget`,
+        reward.paymentMode,
+      );
+    }
   } else if (reward.kind === "external-prize-share") {
     if (
+      hasReviewBudget ||
       !hasExternal ||
       reward.currency !== null ||
       reward.chain !== null ||
@@ -972,7 +1023,8 @@ function validateProjectDefinition(
   });
   validateFunding(project.funding, id);
   if (
-    project.reward.fundingState === "committed" &&
+    (project.reward.fundingState === "committed" ||
+      project.reward.reviewBudget?.fundingState === "committed") &&
     !hasActiveFundingCommitment(project.funding.commitments)
   ) {
     throw new TypeError(
