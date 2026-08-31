@@ -15,6 +15,27 @@ export interface PriorCycleAccrual {
   accruedMinor: ReadonlyMap<string, string>;
 }
 
+export type PriorCycleNotReadyReason = "under-review" | "unresolved-proposals";
+
+export class PriorCycleNotReadyError extends Error {
+  readonly cycleId: string;
+  readonly projectId: ProjectId;
+  readonly reason: PriorCycleNotReadyReason;
+
+  constructor(input: {
+    cycleId: string;
+    message: string;
+    projectId: ProjectId;
+    reason: PriorCycleNotReadyReason;
+  }) {
+    super(input.message);
+    this.name = "PriorCycleNotReadyError";
+    this.cycleId = input.cycleId;
+    this.projectId = input.projectId;
+    this.reason = input.reason;
+  }
+}
+
 export function previousCycleId(cycleId: string): string {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
     throw new TypeError("Cycle id must be YYYY-MM");
@@ -109,14 +130,20 @@ export async function loadPriorCycleAccrual(input: {
   }
   if (!allocation) {
     if (Date.parse(input.asOf) < Date.parse(proposal.review.endsAt)) {
-      throw new RangeError(
-        `Prior cycle ${input.projectId}/${priorId} is still under review`,
-      );
+      throw new PriorCycleNotReadyError({
+        cycleId: priorId,
+        message: `Prior cycle ${input.projectId}/${priorId} is still under review`,
+        projectId: input.projectId,
+        reason: "under-review",
+      });
     }
     if (proposal.allocations.some((row) => row.state === "proposed")) {
-      throw new TypeError(
-        `Prior cycle ${input.projectId}/${priorId} has unresolved proposals`,
-      );
+      throw new PriorCycleNotReadyError({
+        cycleId: priorId,
+        message: `Prior cycle ${input.projectId}/${priorId} has unresolved proposals`,
+        projectId: input.projectId,
+        reason: "unresolved-proposals",
+      });
     }
   }
 

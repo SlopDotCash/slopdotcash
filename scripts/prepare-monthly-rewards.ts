@@ -12,6 +12,10 @@ import {
   parsePrepareRewardCycleArguments,
   prepareRewardCycle,
 } from "./prepare-reward-cycle";
+import {
+  PriorCycleNotReadyError,
+  type PriorCycleNotReadyReason,
+} from "./prior-cycle-accrual";
 import { syncCycleIndex } from "./sync-cycle-index";
 
 type ExistingPath = "file" | "missing";
@@ -19,6 +23,12 @@ type ExistingPath = "file" | "missing";
 export interface MonthlyRewardResult {
   cycleId: string;
   prepared: string[];
+  refused: Array<{
+    message: string;
+    priorCycleId: string;
+    projectId: string;
+    reason: PriorCycleNotReadyReason;
+  }>;
   skippedExisting: string[];
   skippedPrelaunch: string[];
 }
@@ -102,6 +112,7 @@ export async function prepareMonthlyRewards(
   const result: MonthlyRewardResult = {
     cycleId,
     prepared: [],
+    refused: [],
     skippedExisting: [],
     skippedPrelaunch: [],
   };
@@ -137,10 +148,27 @@ export async function prepareMonthlyRewards(
       result.skippedExisting.push(project.id);
       continue;
     }
-    await dependencies.prepare(arguments_, {
-      generatedAt,
-      githubToken: options.githubToken,
-    });
+    try {
+      await dependencies.prepare(arguments_, {
+        generatedAt,
+        githubToken: options.githubToken,
+      });
+    } catch (error) {
+      if (!(error instanceof PriorCycleNotReadyError)) throw error;
+      if (error.projectId !== project.id) {
+        throw new TypeError(
+          `Prior-cycle refusal project ${error.projectId} does not match ${project.id}`,
+          { cause: error },
+        );
+      }
+      result.refused.push({
+        message: error.message,
+        priorCycleId: error.cycleId,
+        projectId: error.projectId,
+        reason: error.reason,
+      });
+      continue;
+    }
     result.prepared.push(project.id);
   }
   await dependencies.validateCycles();
@@ -182,7 +210,7 @@ if (import.meta.main) {
       githubToken: process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN,
     });
     process.stdout.write(
-      `[Slop] closed ${result.cycleId}: prepared ${result.prepared.join(", ") || "none"}; already present ${result.skippedExisting.join(", ") || "none"}\n`,
+      `[Slop] closed ${result.cycleId}: prepared ${result.prepared.join(", ") || "none"}; already present ${result.skippedExisting.join(", ") || "none"}; refused ${result.refused.map((entry) => `${entry.projectId} (${entry.reason}: ${entry.message})`).join(", ") || "none"}\n`,
     );
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.
