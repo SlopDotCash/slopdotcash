@@ -184,6 +184,74 @@ describe("project proposal schema", () => {
     expect(() => assertProjectDefinition(overlargeCap)).toThrow(/at most/u);
   });
 
+  it("validates the optional review budget line", () => {
+    const pledgedReviewBudget = {
+      monthlyCapMinor: "50000000",
+      monthlyCapDisplay: "$50",
+      committedMinor: "0",
+      paymentMode: "disabled",
+      unusedFunds: "rollover-without-cap-increase",
+      fundingState: "pledged",
+    };
+    const withBudget = structuredClone(eliza) as unknown as {
+      reward: Record<string, unknown>;
+    };
+    withBudget.reward.reviewBudget = structuredClone(pledgedReviewBudget);
+    expect(
+      assertProjectDefinition(withBudget).reward.reviewBudget
+        ?.monthlyCapDisplay,
+    ).toBe("$50");
+
+    const zeroCap = structuredClone(withBudget);
+    (zeroCap.reward.reviewBudget as Record<string, unknown>).monthlyCapMinor =
+      "0";
+    (zeroCap.reward.reviewBudget as Record<string, unknown>).monthlyCapDisplay =
+      "$0";
+    expect(() => assertProjectDefinition(zeroCap)).toThrow(/inconsistent/u);
+
+    const misleadingDisplay = structuredClone(withBudget);
+    (
+      misleadingDisplay.reward.reviewBudget as Record<string, unknown>
+    ).monthlyCapDisplay = "$5,000";
+    expect(() => assertProjectDefinition(misleadingDisplay)).toThrow(
+      /inconsistent/u,
+    );
+
+    const smuggledField = structuredClone(withBudget);
+    (smuggledField.reward.reviewBudget as Record<string, unknown>).payoutHook =
+      "https://example.com";
+    expect(() => assertProjectDefinition(smuggledField)).toThrow(
+      /unexpected or missing fields/u,
+    );
+
+    const fakeCommitted = structuredClone(withBudget);
+    (
+      fakeCommitted.reward.reviewBudget as Record<string, unknown>
+    ).committedMinor = "1000000";
+    expect(() => assertProjectDefinition(fakeCommitted)).toThrow(
+      /inconsistent/u,
+    );
+
+    const enabledAheadOfPool = structuredClone(withBudget);
+    Object.assign(enabledAheadOfPool.reward.reviewBudget as object, {
+      paymentMode: "enabled",
+      fundingState: "committed",
+      committedMinor: "50000000",
+    });
+    expect(() => assertProjectDefinition(enabledAheadOfPool)).toThrow(
+      /inconsistent/u,
+    );
+
+    const externalPrizeBudget = structuredClone(deltaStar) as unknown as {
+      reward: Record<string, unknown>;
+    };
+    externalPrizeBudget.reward.reviewBudget =
+      structuredClone(pledgedReviewBudget);
+    expect(() => assertProjectDefinition(externalPrizeBudget)).toThrow(
+      /unexpected or missing fields|inconsistent/u,
+    );
+  });
+
   it("rejects repository and skill collisions across project folders", () => {
     const copy = structuredClone(deltaStar);
     copy.status = "paused";
