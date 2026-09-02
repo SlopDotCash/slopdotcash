@@ -226,6 +226,23 @@ export interface GenerateOptions {
   evaluatedContributions?: ScoreEvent[];
 }
 
+export function collectEvaluatedReviewArtifactKeys(
+  events: ReadonlyArray<Pick<ScoreEvent, "category" | "repository" | "source">>,
+): Set<string> {
+  return new Set(
+    events
+      .filter(
+        (event) =>
+          event.category === "evaluated-contribution" &&
+          event.source.kind === "review",
+      )
+      .map(
+        (event) =>
+          `${event.repository.toLowerCase()}\u0000${event.source.number}`,
+      ),
+  );
+}
+
 export interface GeneratorDependencies {
   getToken: () => Promise<string>;
   createClient: (token: string) => GraphqlExecutor;
@@ -3311,17 +3328,28 @@ export async function generateLeaderboardFromGitHub(
     hydrationCandidates,
     verificationWindowFrom,
   );
+  const evaluatedReviewArtifactKeys = collectEvaluatedReviewArtifactKeys(
+    options.evaluatedContributions ?? [],
+  );
   const finalReviewCensusCost = Math.ceil(
     hydrationCandidates.length / REVIEW_DETAIL_BATCH_SIZE,
   );
   for (const collection of collections) {
     const detailedReferences = collection.mergedPullRequestReferences.filter(
-      (reference) => hydrationPlan.detailEligibleIds.has(reference.id),
+      (reference) =>
+        hydrationPlan.detailEligibleIds.has(reference.id) ||
+        (reference.outcome !== null &&
+          evaluatedReviewArtifactKeys.has(
+            `${collection.repository.id.toLowerCase()}\u0000${reference.outcome.number}`,
+          )),
+    );
+    const detailedReferenceIds = new Set(
+      detailedReferences.map((reference) => reference.id),
     );
     const reviewedReferences = collection.mergedPullRequestReferences.filter(
       (reference) =>
         hydrationPlan.hydratedIds.has(reference.id) &&
-        !hydrationPlan.detailEligibleIds.has(reference.id),
+        !detailedReferenceIds.has(reference.id),
     );
     await ensureEstimatedBudget(
       client,
