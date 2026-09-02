@@ -20,20 +20,20 @@ describe("private intake freshness watchdog", () => {
     expect(checkPrivateIntakeFreshness(attestation(NOW - 60_000), NOW)).toEqual(
       {
         status: "safe",
-        expiresAt: "2026-08-29T08:59:00.000Z",
+        expiresAt: "2026-08-31T02:59:00.000Z",
       },
     );
   });
 
-  it("requires renewal at the 90-minute boundary and after expiry", () => {
+  it("requires renewal at the nine-hour boundary and after expiry", () => {
     expect(
       checkPrivateIntakeFreshness(
-        attestation(NOW - (7 * 60 - 90) * 60_000),
+        attestation(NOW - (49 * 60 - 9 * 60) * 60_000),
         NOW,
       ).status,
     ).toBe("renew");
     expect(
-      checkPrivateIntakeFreshness(attestation(NOW - 7 * 60 * 60_000), NOW)
+      checkPrivateIntakeFreshness(attestation(NOW - 49 * 60 * 60_000), NOW)
         .status,
     ).toBe("renew");
   });
@@ -51,7 +51,7 @@ describe("private intake freshness watchdog", () => {
   it("rejects malformed, stale, and extra-field attestations", () => {
     expect(checkPrivateIntakeFreshness({}, NOW).status).toBe("invalid");
     expect(
-      checkPrivateIntakeFreshness(attestation(NOW - 7 * 60 * 60_000 - 1), NOW)
+      checkPrivateIntakeFreshness(attestation(NOW - 49 * 60 * 60_000 - 1), NOW)
         .status,
     ).toBe("invalid");
     expect(

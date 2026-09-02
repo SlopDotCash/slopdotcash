@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "slop-dev",
+      "runtimeExecutable": "/opt/homebrew/bin/bun",
+      "runtimeArgs": ["--bun", "vite", "--port", "4466"],
+      "port": 4466
+    }
+  ]
+}

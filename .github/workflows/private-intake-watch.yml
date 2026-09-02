@@ -2,7 +2,7 @@ name: Private intake freshness watch
 
 on:
   schedule:
-    # Detect a missed reviewed refresh before the seven-hour attestation gate closes.
+    # Detect a missed reviewed refresh before the 49-hour attestation gate closes.
     - cron: "47 * * * *"
   workflow_dispatch:
 
