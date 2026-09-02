@@ -2361,6 +2361,91 @@ describe("scoring and limits", () => {
     );
   });
 
+  it("applies the finalized-trace bonus to an ordinary formal review", () => {
+    const reviewer = actor("legacy-receipt-reviewer");
+    const attributedBody = reviewAttribution({
+      schemaVersion: "2",
+      startedAt: "2026-08-18T21:00:00.000Z",
+      completedAt: "2026-08-18T22:00:00.000Z",
+      policyAcknowledgement: {
+        policyRevision: "2026-08-18.1",
+        licenseSha256:
+          "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+        inboundTermsSha256:
+          "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+        prizeRulesSha256: null,
+        acknowledgedAt: "2026-08-18T21:00:00.000Z",
+      },
+    }).replace(
+      /^Findings: none\.\n\n```slop-review\n[^\n]+\n```\n\n/u,
+      "This review reproduced the failure and verified the exact repair.\n\n",
+    );
+    const merged = pullRequest({
+      id: "PR_ORDINARY_REVIEW_TRACE",
+      number: 78,
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T23:00:00.000Z",
+      mergedAt: "2026-08-18T23:00:00.000Z",
+      reviews: [
+        {
+          id: "REVIEW_ORDINARY_TRACE",
+          body: attributedBody,
+          state: "APPROVED",
+          submittedAt: "2026-08-18T22:00:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/78#pullrequestreview-780",
+          author: reviewer,
+          inlineCommentCount: 0,
+        },
+      ],
+    });
+    const ordinaryInput = v2Input([merged]);
+    ordinaryInput.generatedAt = "2026-08-19T00:01:00.000Z";
+    ordinaryInput.windowFrom = "2026-07-15T00:00:00.000Z";
+    ordinaryInput.windowTo = "2026-08-19T00:00:00.000Z";
+    ordinaryInput.sourceUpdatedAt = "2026-08-18T23:00:00.000Z";
+    ordinaryInput.source.fetchedAt = ordinaryInput.generatedAt;
+    ordinaryInput.source.cutoffAt = ordinaryInput.windowTo;
+    ordinaryInput.source.verificationWindow.from = ordinaryInput.windowFrom;
+    ordinaryInput.source.verificationWindow.to = ordinaryInput.windowTo;
+    ordinaryInput.verificationWindowFrom = ordinaryInput.windowFrom;
+    const accepted = createLeaderboardSnapshot({
+      ...ordinaryInput,
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(accepted.invalidAttributionMarkers).toEqual([]);
+    expect(
+      accepted.ledger.find(
+        (event) => event.source.id === "REVIEW_ORDINARY_TRACE",
+      ),
+    ).toMatchObject({
+      category: "substantive-review",
+      scoreThirds: 3,
+      evidenceBonusBasisPoints: 1_500,
+    });
+    expect(accepted.attributions).toContainEqual(
+      expect.objectContaining({
+        sourceId: "REVIEW_ORDINARY_TRACE",
+        actor: reviewer,
+        run: expect.objectContaining({
+          runId: "run_01K3JZ6Y7E8M9N0P1Q2R3S4T5V",
+          traceUpload: expect.any(Object),
+        }),
+      }),
+    );
+
+    const rejectedReceipt = createLeaderboardSnapshot({
+      ...ordinaryInput,
+      verifyRunReceipt: () => {
+        throw new TypeError("signature verification failed");
+      },
+    });
+    expect(
+      rejectedReceipt.ledger.find(
+        (event) => event.source.id === "REVIEW_ORDINARY_TRACE",
+      )?.evidenceBonusBasisPoints ?? 0,
+    ).toBe(0);
+  });
+
   it("rejects a detail-eligible pull request that was not hydrated", () => {
     expect(() =>
       createLeaderboardSnapshot(
