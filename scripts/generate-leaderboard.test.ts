@@ -18,6 +18,7 @@ import {
 import {
   assertOpenEvidenceReferencesCurrent,
   assertReviewCensusStable,
+  collectEvaluatedReviewArtifactKeys,
   collectReviewedPullRequestIds,
   collectSearchReferences,
   deriveCurrentHeadReviewDecision,
@@ -68,6 +69,36 @@ describe("generation arguments", () => {
 });
 
 describe("historical evaluator awards", () => {
+  it("selects reviewed pull requests that need exact evaluated-source hydration", () => {
+    const source = {
+      id: "PRR_1",
+      kind: "review" as const,
+      number: 25372,
+      title: "Durable cancellation",
+      url: "https://github.com/elizaOS/eliza/pull/25372#pullrequestreview-1",
+    };
+
+    expect(
+      collectEvaluatedReviewArtifactKeys([
+        {
+          category: "evaluated-contribution",
+          repository: "elizaOS/eliza",
+          source,
+        },
+        {
+          category: "substantive-review",
+          repository: "elizaOS/eliza",
+          source,
+        },
+        {
+          category: "evaluated-contribution",
+          repository: "elizaOS/eliza",
+          source: { ...source, kind: "comment" },
+        },
+      ]),
+    ).toEqual(new Set(["elizaos/eliza\u000025372"]));
+  });
+
   it("selects only awards in the cutoff's rolling window", () => {
     const events = [
       {
@@ -1110,6 +1141,31 @@ describe("GitHub GraphQL boundary", () => {
     ).resolves.toBeDefined();
     expect(attempts).toBe(3);
     expect(client.getRateLimit().consumedDuringRun).toBe(1_350);
+  });
+
+  it("uses the reported capacity of a 5,000-point Actions token", async () => {
+    let attempts = 0;
+    const fetcher = async () => {
+      attempts += 1;
+      return successResponse(
+        { viewer: { login: "eliza" } },
+        {
+          cost: 500,
+          limit: 5_000,
+          remaining: 5_000 - attempts * 500,
+          resetAt: "2026-07-30T13:00:00.000Z",
+        },
+      );
+    };
+    const client = new GitHubGraphqlClient("actions-token", fetcher);
+
+    await expect(
+      client.execute("query { viewer { login } }"),
+    ).resolves.toBeDefined();
+    await expect(
+      client.execute("query { viewer { login } }"),
+    ).resolves.toBeDefined();
+    expect(client.getRateLimit().consumedDuringRun).toBe(1_000);
   });
 
   it("does not call the writer after live generation fails", async () => {
