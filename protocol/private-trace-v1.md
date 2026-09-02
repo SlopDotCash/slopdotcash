@@ -100,7 +100,7 @@ issue.
 The protected quality and deploy jobs query GitHub's public
 private-vulnerability-reporting status endpoint. The tested Pages bundle carries
 their bounded revision-bound attestation, and Slop's server-authoritative
-preflight accepts it for at most seven hours. Trace upload and production
+preflight accepts it for at most 49 hours. Trace upload and production
 activation fail closed if the attestation is missing, stale, malformed, or does
 not report exactly `enabled: true`; the preflight reports only safe state and
 never becomes an enabled result. The advisory URL alone is not evidence that

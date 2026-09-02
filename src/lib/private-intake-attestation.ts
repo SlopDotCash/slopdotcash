@@ -1,6 +1,9 @@
 export const PRIVATE_INTAKE_ATTESTATION_PATH =
   "/data/private-intake-attestation.json";
-export const PRIVATE_INTAKE_ATTESTATION_MAX_AGE_MS = 7 * 60 * 60 * 1000;
+// Two full scheduled-refresh days. Every production refresh needs a human
+// environment approval, so a window shorter than a night plus one missed day
+// guarantees a recurring fail-closed intake outage (issue #302).
+export const PRIVATE_INTAKE_ATTESTATION_MAX_AGE_MS = 49 * 60 * 60 * 1000;
 
 export type PrivateIntakeAttestation = {
   enabled: true;
