@@ -31,6 +31,7 @@ import {
   OpenSetChangedError,
   parseGenerationArguments,
   planMergedPullRequestHydration,
+  reconcileHydratedReviewCensus,
   resolveGitHubToken,
   retryOpenBatch,
   retryOpenReferenceListing,
@@ -1214,6 +1215,147 @@ describe("rate-efficient query plan", () => {
         ]),
       ),
     ).toThrow("Review census changed for PR_CHANGED");
+  });
+
+  it("reconciles an unrelated PR update after complete review hydration", async () => {
+    const client: GraphqlExecutor = {
+      execute: async () => ({
+        nodes: [
+          {
+            __typename: "PullRequest",
+            id: "PR_UPDATED",
+            updatedAt: "2026-08-25T18:01:00.000Z",
+            reviews: { totalCount: 1 },
+          },
+        ],
+      }),
+      getRequestCount: () => 1,
+      getRateLimit: () => ({
+        cost: 1,
+        consumedDuringRun: 1,
+        limit: 5_000,
+        remaining: 4_999,
+        resetAt: "2026-08-25T18:00:00.000Z",
+      }),
+    };
+    const reviewCounts = new Map([
+      ["PR_UPDATED", { reviewCount: 1, updatedAt: "2026-08-25T18:00:00.000Z" }],
+    ]);
+
+    await reconcileHydratedReviewCensus(client, reviewCounts, [
+      {
+        id: "PR_UPDATED",
+        updatedAt: "2026-08-25T18:01:00.000Z",
+        reviews: [
+          {
+            id: "PRR_1",
+            body: "Substantive review",
+            state: "APPROVED",
+            submittedAt: "2026-08-25T17:59:00.000Z",
+            url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1",
+            author: null,
+            inlineCommentCount: 0,
+          },
+        ],
+      },
+    ]);
+
+    expect(reviewCounts.get("PR_UPDATED")).toEqual({
+      reviewCount: 1,
+      updatedAt: "2026-08-25T18:01:00.000Z",
+    });
+  });
+
+  it("keeps a pull request absent from the baseline census fatal", async () => {
+    const client: GraphqlExecutor = {
+      execute: async () => {
+        throw new Error("an absent baseline entry must not be re-read");
+      },
+      getRequestCount: () => 0,
+      getRateLimit: () => ({
+        cost: 0,
+        consumedDuringRun: 0,
+        limit: 5_000,
+        remaining: 5_000,
+        resetAt: "2026-08-25T18:00:00.000Z",
+      }),
+    };
+
+    await expect(
+      reconcileHydratedReviewCensus(client, new Map(), [
+        {
+          id: "PR_NEVER_IN_CENSUS",
+          updatedAt: "2026-08-25T18:01:00.000Z",
+          reviews: [
+            {
+              id: "PRR_1",
+              body: "Substantive review",
+              state: "APPROVED",
+              submittedAt: "2026-08-25T17:59:00.000Z",
+              url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1",
+              author: null,
+              inlineCommentCount: 0,
+            },
+          ],
+        },
+      ]),
+    ).rejects.toThrow(
+      "Review census missing PR_NEVER_IN_CENSUS before detail reconciliation",
+    );
+  });
+
+  it("fails closed when a hydrated formal-review set is still moving", async () => {
+    const client: GraphqlExecutor = {
+      execute: async () => ({
+        nodes: [
+          {
+            __typename: "PullRequest",
+            id: "PR_MOVING",
+            updatedAt: "2026-08-25T18:02:00.000Z",
+            reviews: { totalCount: 2 },
+          },
+        ],
+      }),
+      getRequestCount: () => 1,
+      getRateLimit: () => ({
+        cost: 1,
+        consumedDuringRun: 1,
+        limit: 5_000,
+        remaining: 4_999,
+        resetAt: "2026-08-25T18:00:00.000Z",
+      }),
+    };
+
+    await expect(
+      reconcileHydratedReviewCensus(
+        client,
+        new Map([
+          [
+            "PR_MOVING",
+            { reviewCount: 1, updatedAt: "2026-08-25T18:00:00.000Z" },
+          ],
+        ]),
+        [
+          {
+            id: "PR_MOVING",
+            updatedAt: "2026-08-25T18:01:00.000Z",
+            reviews: [
+              {
+                id: "PRR_1",
+                body: "Substantive review",
+                state: "APPROVED",
+                submittedAt: "2026-08-25T17:59:00.000Z",
+                url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1",
+                author: null,
+                inlineCommentCount: 0,
+              },
+            ],
+          },
+        ],
+      ),
+    ).rejects.toThrow(
+      "Review census changed for PR_MOVING during detail hydration",
+    );
   });
 
   it("parses every production GraphQL document", () => {

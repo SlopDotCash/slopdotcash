@@ -4,7 +4,8 @@ export type SettlementReminder =
   | { kind: "cycle-close"; message: string }
   | { kind: "overdue"; message: string }
   | { kind: "ready-to-sign"; message: string }
-  | { kind: "settler-seven-day"; message: string };
+  | { kind: "settler-seven-day"; message: string }
+  | { kind: "unfunded"; message: string };
 
 export type SettlementReminderLifecycle =
   | "closed-no-awards"
@@ -71,11 +72,17 @@ export function settlementReminder(
   };
 }
 
-/** Suppresses signing language for cycles that never enter platform settlement. */
+/**
+ * Suppresses signing language for cycles that never enter platform settlement
+ * and replaces settler-deadline copy with the unfunded state while the pool
+ * has no committed funding: a settlement can only be late once payments are
+ * enabled.
+ */
 export function cycleSettlementReminder(input: {
   closesAt: string;
   kind: "external-prize-share" | "monthly-pool";
   now: string;
+  paymentMode: "disabled" | "enabled";
   settledAt: string | null;
   state: SettlementReminderLifecycle;
 }): SettlementReminder | null {
@@ -87,5 +94,18 @@ export function cycleSettlementReminder(input: {
   ) {
     return null;
   }
-  return settlementReminder(input.closesAt, input.now, input.settledAt);
+  const reminder = settlementReminder(
+    input.closesAt,
+    input.now,
+    input.settledAt,
+  );
+  if (reminder === null) return null;
+  if (input.paymentMode === "disabled") {
+    return {
+      kind: "unfunded",
+      message:
+        "Unfunded pool reminder: no funding is committed and payments are disabled. Allocations remain projected; settlement deadlines begin once the project commits funding.",
+    };
+  }
+  return reminder;
 }

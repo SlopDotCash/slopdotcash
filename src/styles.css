@@ -961,6 +961,7 @@ small {
 
 .footer-links {
   display: flex;
+  flex-wrap: wrap;
   gap: 24px;
   font-size: 12px;
   font-weight: 600;

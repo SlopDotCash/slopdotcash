@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_andreolf_review_25372",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "MDQ6VXNlcjE1MTc0NzY0",
+    "login": "andreolf",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/15174764?v=4",
+    "url": "https://github.com/andreolf",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-23T10:38:22.000Z",
+  "points": 8,
+  "source": {
+    "id": "PRR_kwDOMT5cIs8AAAABKidoBw",
+    "kind": "review",
+    "number": 25372,
+    "title": "fix(cloud): make billing cancellation durable",
+    "url": "https://github.com/elizaOS/eliza/pull/25372#pullrequestreview-5002192903"
+  },
+  "reason": "The review independently validated the durable cancellation state machine and then identified a receipt-convergence defect where rearming an agent stop could detach the authoritative intent from the command job, plus missing provider-failure and route-contract coverage and an unexecuted real-PostgreSQL contention claim. The author immediately added the policy marker and missing negative tests, and maintainer follow-up held later heads on the receipt defect, migration ordering, compatibility, and real concurrency evidence. The final merged stack included dedicated receipt-authority, cancellation-authority, serialization, recovery, and aligned agent-stop tests before exact-head approval.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-08-30T19:02:45.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/305"
+  }
+}

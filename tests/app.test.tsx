@@ -1026,9 +1026,10 @@ describe("public records", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Review")).toBeInTheDocument();
     expect(screen.getByText("Settlement")).toBeInTheDocument();
+    expect(screen.getByText(/Unfunded pool reminder/u)).toBeInTheDocument();
     expect(
-      screen.getByText(/Overdue settlement reminder/u),
-    ).toBeInTheDocument();
+      screen.queryByText(/Overdue settlement reminder/u),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "July 2026 leaderboard." }),
     ).toBeInTheDocument();

@@ -42,6 +42,7 @@ describe("funding cycle reminders", () => {
         closesAt: close,
         kind,
         now: "2026-08-05T00:00:00.000Z",
+        paymentMode: "enabled",
         settledAt: null,
         state,
       });
@@ -53,10 +54,39 @@ describe("funding cycle reminders", () => {
         closesAt: close,
         kind: "monthly-pool",
         now: "2026-08-05T00:00:00.000Z",
+        paymentMode: "enabled",
         settledAt: null,
         state: "payment-ready",
       })?.kind,
     ).toBe("overdue");
+  });
+
+  it("replaces settler deadlines with the unfunded state while payments are disabled", () => {
+    const unfunded = (now: string) =>
+      cycleSettlementReminder({
+        closesAt: close,
+        kind: "monthly-pool",
+        now,
+        paymentMode: "disabled",
+        settledAt: null,
+        state: "review",
+      });
+    expect(unfunded("2026-07-20T00:00:00.000Z")).toBeNull();
+    expect(unfunded("2026-07-25T00:00:00.000Z")?.kind).toBe("unfunded");
+    expect(unfunded("2026-08-05T00:00:00.000Z")?.kind).toBe("unfunded");
+    expect(unfunded("2026-08-05T00:00:00.000Z")?.message).toMatch(
+      /remain projected/u,
+    );
+    expect(
+      cycleSettlementReminder({
+        closesAt: close,
+        kind: "monthly-pool",
+        now: "2026-08-05T00:00:00.000Z",
+        paymentMode: "disabled",
+        settledAt: "2026-08-03T00:00:00.000Z",
+        state: "review",
+      }),
+    ).toBeNull();
   });
 
   it("rejects malformed settlement timestamps instead of hiding reminders", () => {
