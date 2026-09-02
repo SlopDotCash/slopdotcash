@@ -462,6 +462,25 @@ test("renders contributor and cycle records from validated public data", async (
     return;
   }
 
+  await page.route(
+    "https://api.slop.cash/api/v1/wallet-claims/actors/*/current",
+    async (route) => {
+      const githubActorId = new URL(route.request().url()).pathname
+        .split("/")
+        .at(-2);
+      expect(githubActorId).toMatch(/^\d+$/u);
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          claimId: "e2e-wallet-claim",
+          githubActorId,
+          address: "11111111111111111111111111111111",
+        }),
+      });
+    },
+  );
+
   await page.goto(`/contributors/${encodeURIComponent(actor.login)}`, {
     waitUntil: "networkidle",
   });
