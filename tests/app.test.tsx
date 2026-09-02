@@ -810,6 +810,92 @@ describe("project routes", () => {
 });
 
 describe("public records", () => {
+  it("shows the actor-bound current wallet claim independently of cycle history", async () => {
+    route("/contributors/finish-line");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/wallet-claims/actors/1/current")) {
+        return Response.json({
+          schemaVersion: 1,
+          claimId: "wc_current01",
+          githubActorId: "1",
+          address: "11111111111111111111111111111111",
+        });
+      }
+      return Response.json(
+        url.includes("/data/cycles/")
+          ? archivedPaidCycleIndex()
+          : snapshotFixture(),
+      );
+    });
+    render(<App />);
+
+    const wallet = await screen.findByRole("link", {
+      name: /Current payout wallet · 11111111111111111111111111111111/i,
+    });
+    expect(wallet).toHaveAttribute(
+      "href",
+      "https://api.slop.cash/api/v1/wallet-claims/wc_current01",
+    );
+  });
+
+  it("does not show the previous contributor's wallet during navigation", async () => {
+    route("/contributors/finish-line");
+    const snapshot = snapshotFixture();
+    const secondActor: (typeof snapshot.leaders)[number]["actor"] = {
+      id: "U_second",
+      login: "second-profile",
+      avatarUrl: "https://avatars.githubusercontent.com/u/99?v=4",
+      url: "https://github.com/second-profile",
+      kind: "User",
+    };
+    snapshot.opportunities = [
+      {
+        ...snapshot.opportunities[0],
+        id: "PR_second:opportunity:partial-evidence",
+        actor: secondActor,
+      },
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/wallet-claims/actors/1/current")) {
+        return Response.json({
+          schemaVersion: 1,
+          claimId: "wc_first",
+          githubActorId: "1",
+          address: "11111111111111111111111111111111",
+        });
+      }
+      if (url.includes("/wallet-claims/actors/99/current")) {
+        return new Promise<Response>(() => {});
+      }
+      return Response.json(
+        url.includes("/data/cycles/") ? cycleIndexFixture() : snapshot,
+      );
+    });
+    render(<App />);
+    expect(
+      await screen.findByRole("link", {
+        name: /Current payout wallet · 11111111111111111111111111111111/i,
+      }),
+    ).toBeVisible();
+
+    act(() => {
+      window.history.pushState({}, "", "/contributors/second-profile");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "second-profile" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("link", {
+        name: /Current payout wallet · 11111111111111111111111111111111/i,
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Checking current payout wallet…")).toBeVisible();
+  });
+
   it("keeps rolling-window contributors reachable outside the active cycle", async () => {
     route("/contributors/finish-line");
     mockSnapshot(augustRollingSnapshot());
@@ -1011,7 +1097,7 @@ describe("public records", () => {
     render(<App />);
 
     const wallet = await screen.findByRole("link", {
-      name: /Payout wallet · 11111111111111111111111111111111/i,
+      name: /Historical payout wallet · 11111111111111111111111111111111/i,
     });
     expect(wallet).toHaveAttribute("href", expect.stringContaining("/blob/"));
   });
