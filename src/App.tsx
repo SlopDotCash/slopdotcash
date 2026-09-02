@@ -2744,10 +2744,50 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                     </Link>
                   </th>
                   <td>{contributor.score}</td>
-                  <td>{formatMicroUsdc(contributor.suggestedMinor)}</td>
-                  <td>{formatMicroUsdc(contributor.approvedMinor)}</td>
+                  <td>
+                    {formatMicroUsdc(contributor.suggestedMinor)}
+                    {contributor.lines ? (
+                      <small>
+                        Pool{" "}
+                        {formatMicroUsdc(
+                          contributor.lines.sharedPool.suggestedMinor,
+                        )}{" "}
+                        + review{" "}
+                        {formatMicroUsdc(
+                          contributor.lines.reviewBudget.suggestedMinor,
+                        )}
+                      </small>
+                    ) : null}
+                  </td>
+                  <td>
+                    {formatMicroUsdc(contributor.approvedMinor)}
+                    {contributor.lines ? (
+                      <small>
+                        Pool{" "}
+                        {formatMicroUsdc(
+                          contributor.lines.sharedPool.approvedMinor,
+                        )}{" "}
+                        + review{" "}
+                        {formatMicroUsdc(
+                          contributor.lines.reviewBudget.approvedMinor,
+                        )}
+                      </small>
+                    ) : null}
+                  </td>
                   <td>
                     <strong>{formatMicroUsdc(contributor.paidMinor)}</strong>
+                    {contributor.lines ? (
+                      <small>
+                        Pool{" "}
+                        {formatMicroUsdc(
+                          contributor.lines.sharedPool.paidMinor,
+                        )}{" "}
+                        + review{" "}
+                        {formatMicroUsdc(
+                          contributor.lines.reviewBudget.paidMinor,
+                        )}
+                      </small>
+                    ) : null}
                   </td>
                 </tr>
               ))}
@@ -2884,6 +2924,16 @@ function CyclePage({
           </span>
         </div>
       </section>
+      {record?.reward.lines ? (
+        <p className="cycle-line-summary">
+          Shared pool{" "}
+          {formatMicroUsdc(record.reward.lines.sharedPool.suggestedMinor)} +
+          additive review{" "}
+          {formatMicroUsdc(record.reward.lines.reviewBudget.suggestedMinor)}{" "}
+          suggested. The combined amount uses one wallet and one dust-floor
+          decision.
+        </p>
+      ) : null}
       {reminder ? (
         <div
           className={`data-notice cycle-reminder ${reminder.kind}`}
@@ -3464,6 +3514,13 @@ function ProjectProposalPage() {
         ...(includesReviewBudget
           ? {
               reviewBudget: {
+                effectiveAt: new Date(
+                  Date.UTC(
+                    new Date().getUTCFullYear(),
+                    new Date().getUTCMonth() + 1,
+                    1,
+                  ),
+                ).toISOString(),
                 monthlyCapMinor: reviewBudget.minor,
                 monthlyCapDisplay: reviewBudget.display,
                 committedMinor: "0",

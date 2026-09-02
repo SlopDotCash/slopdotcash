@@ -77,7 +77,7 @@ function assertRootPublisherInventory(projects, label) {
   return true;
 }
 
-function assertReviewBudgetTransition(prior, next) {
+function assertReviewBudgetTransition(prior, next, now) {
   const priorBudget = prior.reward.reviewBudget;
   const nextBudget = next.reward.reviewBudget;
   if (!nextBudget) return;
@@ -94,9 +94,26 @@ function assertReviewBudgetTransition(prior, next) {
       `project ${next.id} cannot add or fund a review budget while reducing the contributor pool cap`,
     );
   }
+  if (addsReviewBudget || fundsReviewBudget) {
+    const instant = new Date(now);
+    const nextCycle = Date.UTC(
+      instant.getUTCFullYear(),
+      instant.getUTCMonth() + 1,
+      1,
+    );
+    if (Date.parse(nextBudget.effectiveAt) < nextCycle) {
+      throw new TypeError(
+        `project ${next.id} review budget cannot affect an open or past cycle`,
+      );
+    }
+  }
 }
 
-export function validateProjectTransitions(previousEntries, currentEntries) {
+export function validateProjectTransitions(
+  previousEntries,
+  currentEntries,
+  now = Date.now(),
+) {
   const previous = boundedProjectMap(previousEntries, { historical: true });
   const current = boundedProjectMap(currentEntries);
   const previousPublishesAtRoot = assertRootPublisherInventory(
@@ -115,7 +132,7 @@ export function validateProjectTransitions(previousEntries, currentEntries) {
       );
     }
     assertProjectPolicyTransition(prior, next);
-    assertReviewBudgetTransition(prior, next);
+    assertReviewBudgetTransition(prior, next, now);
   }
   if (previousPublishesAtRoot && !currentPublishesAtRoot) {
     throw new TypeError(

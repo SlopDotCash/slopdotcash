@@ -276,6 +276,20 @@ export async function verifySettlement(
           approvedMinor: row.approvedMinor,
           paidMinor: row.approvedMinor,
           state: "paid",
+          ...(row.lines
+            ? {
+                rewardLines: {
+                  sharedPool: {
+                    approvedMinor: row.lines.sharedPool.approvedMinor,
+                    paidMinor: row.lines.sharedPool.approvedMinor,
+                  },
+                  reviewBudget: {
+                    approvedMinor: row.lines.reviewBudget.approvedMinor,
+                    paidMinor: row.lines.reviewBudget.approvedMinor,
+                  },
+                },
+              }
+            : {}),
         })),
       attempts: evidence.attempts.map((attempt) => ({
         ...attempt,

@@ -73,6 +73,14 @@ export interface RewardAllocation {
     reviewer: string;
     approvedAt: string;
   } | null;
+  lines?: {
+    sharedPool: { suggestedMinor: string; approvedMinor: string };
+    reviewBudget: {
+      suggestedMinor: string;
+      approvedMinor: string;
+      evidenceEventIds: string[];
+    };
+  };
 }
 
 export interface RewardAllocationManifest {
@@ -98,6 +106,19 @@ export interface RewardAllocationManifest {
   scoringRuleVersion: string;
   sourceSnapshotSha256: string;
   allocations: RewardAllocation[];
+  rewardLines?: {
+    sharedPool: {
+      capMinor: string;
+      suggestedMinor: string;
+      approvedMinor: string;
+    };
+    reviewBudget: {
+      capMinor: string;
+      committedMinor: string;
+      suggestedMinor: string;
+      approvedMinor: string;
+    };
+  };
   totals: {
     suggestedMinor: string;
     approvedMinor: string;
@@ -139,6 +160,10 @@ export interface RewardSettlementManifest {
     approvedMinor: string;
     paidMinor: string;
     state: "failed" | "paid" | "pending";
+    rewardLines?: {
+      sharedPool: { approvedMinor: string; paidMinor: string };
+      reviewBudget: { approvedMinor: string; paidMinor: string };
+    };
   }>;
   attempts: Array<{
     attemptId: string;
@@ -483,6 +508,7 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
   const path = `allocations[${index}]`;
   const allocation = record(value, path);
   const hasAccrual = "accruedMinor" in allocation;
+  const hasLines = "lines" in allocation;
   exactKeys(
     allocation,
     [
@@ -498,6 +524,7 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
       "suggestedMinor",
       "wallet",
       ...(hasAccrual ? ["accruedMinor"] : []),
+      ...(hasLines ? ["lines"] : []),
     ],
     path,
   );
@@ -530,6 +557,72 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
     allocation.approvedMinor,
     `${path}.approvedMinor`,
   );
+  let lines: RewardAllocation["lines"];
+  if (hasLines) {
+    const rawLines = record(allocation.lines, `${path}.lines`);
+    exactKeys(rawLines, ["reviewBudget", "sharedPool"], `${path}.lines`);
+    const sharedPool = record(rawLines.sharedPool, `${path}.lines.sharedPool`);
+    exactKeys(
+      sharedPool,
+      ["approvedMinor", "suggestedMinor"],
+      `${path}.lines.sharedPool`,
+    );
+    const reviewBudget = record(
+      rawLines.reviewBudget,
+      `${path}.lines.reviewBudget`,
+    );
+    exactKeys(
+      reviewBudget,
+      ["approvedMinor", "evidenceEventIds", "suggestedMinor"],
+      `${path}.lines.reviewBudget`,
+    );
+    lines = {
+      sharedPool: {
+        suggestedMinor: minor(
+          sharedPool.suggestedMinor,
+          `${path}.lines.sharedPool.suggestedMinor`,
+        ),
+        approvedMinor: minor(
+          sharedPool.approvedMinor,
+          `${path}.lines.sharedPool.approvedMinor`,
+        ),
+      },
+      reviewBudget: {
+        suggestedMinor: minor(
+          reviewBudget.suggestedMinor,
+          `${path}.lines.reviewBudget.suggestedMinor`,
+        ),
+        approvedMinor: minor(
+          reviewBudget.approvedMinor,
+          `${path}.lines.reviewBudget.approvedMinor`,
+        ),
+        evidenceEventIds: assertEvidenceIds(
+          reviewBudget.evidenceEventIds,
+          `${path}.lines.reviewBudget.evidenceEventIds`,
+        ),
+      },
+    };
+    if (
+      BigInt(lines.sharedPool.suggestedMinor) +
+        BigInt(lines.reviewBudget.suggestedMinor) !==
+        BigInt(suggestedMinor) ||
+      BigInt(lines.sharedPool.approvedMinor) +
+        BigInt(lines.reviewBudget.approvedMinor) !==
+        BigInt(approvedMinor)
+    ) {
+      throw new TypeError(`${path} reward lines do not reconcile`);
+    }
+    if (
+      (BigInt(lines.reviewBudget.suggestedMinor) > 0n &&
+        lines.reviewBudget.evidenceEventIds.length === 0) ||
+      lines.reviewBudget.evidenceEventIds.some(
+        (eventId) =>
+          !(allocation.evidenceEventIds as unknown[]).includes(eventId),
+      )
+    ) {
+      throw new TypeError(`${path} review line lacks accepted review evidence`);
+    }
+  }
   const adjustmentReason =
     allocation.adjustmentReason === null
       ? null
@@ -596,6 +689,15 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
   ) {
     throw new TypeError(`${path} approved payment is below the $2 minimum`);
   }
+  if (
+    hasLines &&
+    state === "approved" &&
+    BigInt(approvedMinor) < BigInt(MINIMUM_TRANSFER_MINOR)
+  ) {
+    throw new TypeError(
+      `${path} combined approved payment is below the $2 minimum`,
+    );
+  }
   if (state !== "approved" && BigInt(approvedMinor) !== 0n) {
     throw new TypeError(
       `${path} non-approved state must have zero approved amount`,
@@ -620,6 +722,7 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
     adjustmentReason,
     relatedParty: allocation.relatedParty,
     platformApproval,
+    ...(lines ? { lines } : {}),
   };
 }
 
@@ -630,6 +733,7 @@ export function assertRewardAllocationManifest(
   const manifest = record(value, "allocation manifest");
   const hasAccrual =
     "carriedMinor" in manifest || "minimumTransferMinor" in manifest;
+  const hasRewardLines = "rewardLines" in manifest;
   exactKeys(
     manifest,
     [
@@ -651,6 +755,7 @@ export function assertRewardAllocationManifest(
       "status",
       "totals",
       ...(hasAccrual ? ["carriedMinor", "minimumTransferMinor"] : []),
+      ...(hasRewardLines ? ["rewardLines"] : []),
     ],
     "allocation manifest",
   );
@@ -802,7 +907,108 @@ export function assertRewardAllocationManifest(
   const approvedMinor = sumMinor(
     allocations.map((allocation) => allocation.approvedMinor),
   );
-  if (BigInt(approvedMinor) > BigInt(capMinor) + BigInt(carriedMinor)) {
+  let rewardLines: RewardAllocationManifest["rewardLines"];
+  if (hasRewardLines) {
+    const policy = project.reward.reviewBudget;
+    if (
+      policy?.fundingState !== "committed" ||
+      policy.paymentMode !== "enabled"
+    ) {
+      throw new TypeError("allocation review line is not funded and enabled");
+    }
+    const rawLines = record(manifest.rewardLines, "allocation rewardLines");
+    exactKeys(
+      rawLines,
+      ["reviewBudget", "sharedPool"],
+      "allocation rewardLines",
+    );
+    const sharedPool = record(
+      rawLines.sharedPool,
+      "allocation rewardLines.sharedPool",
+    );
+    exactKeys(
+      sharedPool,
+      ["approvedMinor", "capMinor", "suggestedMinor"],
+      "allocation rewardLines.sharedPool",
+    );
+    const reviewBudget = record(
+      rawLines.reviewBudget,
+      "allocation rewardLines.reviewBudget",
+    );
+    exactKeys(
+      reviewBudget,
+      ["approvedMinor", "capMinor", "committedMinor", "suggestedMinor"],
+      "allocation rewardLines.reviewBudget",
+    );
+    rewardLines = {
+      sharedPool: {
+        capMinor: minor(sharedPool.capMinor, "shared-pool line capMinor"),
+        suggestedMinor: minor(
+          sharedPool.suggestedMinor,
+          "shared-pool line suggestedMinor",
+        ),
+        approvedMinor: minor(
+          sharedPool.approvedMinor,
+          "shared-pool line approvedMinor",
+        ),
+      },
+      reviewBudget: {
+        capMinor: minor(reviewBudget.capMinor, "review line capMinor"),
+        committedMinor: minor(
+          reviewBudget.committedMinor,
+          "review line committedMinor",
+        ),
+        suggestedMinor: minor(
+          reviewBudget.suggestedMinor,
+          "review line suggestedMinor",
+        ),
+        approvedMinor: minor(
+          reviewBudget.approvedMinor,
+          "review line approvedMinor",
+        ),
+      },
+    };
+    const allocationSharedSuggested = sumMinor(
+      allocations.map((entry) => entry.lines?.sharedPool.suggestedMinor ?? "0"),
+    );
+    const allocationSharedApproved = sumMinor(
+      allocations.map((entry) => entry.lines?.sharedPool.approvedMinor ?? "0"),
+    );
+    const allocationReviewSuggested = sumMinor(
+      allocations.map(
+        (entry) => entry.lines?.reviewBudget.suggestedMinor ?? "0",
+      ),
+    );
+    const allocationReviewApproved = sumMinor(
+      allocations.map(
+        (entry) => entry.lines?.reviewBudget.approvedMinor ?? "0",
+      ),
+    );
+    if (
+      allocations.some((entry) => !entry.lines) ||
+      rewardLines.sharedPool.capMinor !== capMinor ||
+      rewardLines.reviewBudget.capMinor !== policy.monthlyCapMinor ||
+      rewardLines.reviewBudget.committedMinor !== policy.committedMinor ||
+      rewardLines.sharedPool.suggestedMinor !== allocationSharedSuggested ||
+      rewardLines.sharedPool.approvedMinor !== allocationSharedApproved ||
+      rewardLines.reviewBudget.suggestedMinor !== allocationReviewSuggested ||
+      rewardLines.reviewBudget.approvedMinor !== allocationReviewApproved ||
+      BigInt(allocationSharedApproved) >
+        BigInt(capMinor) + BigInt(carriedMinor) ||
+      BigInt(allocationReviewApproved) > BigInt(policy.committedMinor) ||
+      BigInt(allocationReviewApproved) > BigInt(policy.monthlyCapMinor) ||
+      BigInt(allocationReviewSuggested) > BigInt(policy.committedMinor) ||
+      BigInt(allocationReviewSuggested) > BigInt(policy.monthlyCapMinor)
+    ) {
+      throw new TypeError(
+        "allocation reward lines do not reconcile with policy",
+      );
+    }
+  } else if (allocations.some((entry) => entry.lines)) {
+    throw new TypeError(
+      "allocation rows have reward lines without line totals",
+    );
+  } else if (BigInt(approvedMinor) > BigInt(capMinor) + BigInt(carriedMinor)) {
     throw new TypeError("allocation total exceeds the monthly cap");
   }
   const totals = record(manifest.totals, "allocation manifest.totals");
@@ -859,6 +1065,7 @@ export function assertRewardAllocationManifest(
       "allocation manifest.sourceSnapshotSha256",
     ),
     allocations,
+    ...(rewardLines ? { rewardLines } : {}),
     totals: { suggestedMinor, approvedMinor, feeMinor },
   };
 }
@@ -1046,15 +1253,26 @@ export function assertRewardSettlementManifest(
   const approvedByIntent = new Map(
     allocation.allocations
       .filter((entry) => entry.state === "approved")
-      .map((entry) => [entry.intentId, entry.approvedMinor]),
+      .map((entry) => [entry.intentId, entry]),
   );
   const recipients = array(manifest.recipients, "settlement recipients").map(
     (value, index) => {
       const path = `settlement recipients[${index}]`;
       const recipient = record(value, path);
+      const expectedAllocation =
+        typeof recipient.intentId === "string"
+          ? approvedByIntent.get(recipient.intentId)
+          : undefined;
+      const hasRewardLines = "rewardLines" in recipient;
       exactKeys(
         recipient,
-        ["approvedMinor", "intentId", "paidMinor", "state"],
+        [
+          "approvedMinor",
+          "intentId",
+          "paidMinor",
+          "state",
+          ...(hasRewardLines ? ["rewardLines"] : []),
+        ],
         path,
       );
       const intentId = text(recipient.intentId, `${path}.intentId`, {
@@ -1064,7 +1282,7 @@ export function assertRewardSettlementManifest(
         recipient.approvedMinor,
         `${path}.approvedMinor`,
       );
-      if (approvedByIntent.get(intentId) !== approvedMinor) {
+      if (expectedAllocation?.approvedMinor !== approvedMinor) {
         throw new TypeError(`${path} does not match an approved payout intent`);
       }
       const paidMinor = minor(recipient.paidMinor, `${path}.paidMinor`);
@@ -1084,7 +1302,59 @@ export function assertRewardSettlementManifest(
           `${path} non-paid state must have zero paid amount`,
         );
       }
-      return { intentId, approvedMinor, paidMinor, state };
+      let rewardLines: RewardSettlementManifest["recipients"][number]["rewardLines"];
+      if (expectedAllocation.lines) {
+        if (!hasRewardLines) {
+          throw new TypeError(`${path} must preserve reward line items`);
+        }
+        const rawLines = record(recipient.rewardLines, `${path}.rewardLines`);
+        exactKeys(
+          rawLines,
+          ["reviewBudget", "sharedPool"],
+          `${path}.rewardLines`,
+        );
+        const parseLine = (
+          value: unknown,
+          linePath: string,
+          expectedApprovedMinor: string,
+        ): { approvedMinor: string; paidMinor: string } => {
+          const line = record(value, linePath);
+          exactKeys(line, ["approvedMinor", "paidMinor"], linePath);
+          const lineApproved = minor(
+            line.approvedMinor,
+            `${linePath}.approvedMinor`,
+          );
+          const linePaid = minor(line.paidMinor, `${linePath}.paidMinor`);
+          if (
+            lineApproved !== expectedApprovedMinor ||
+            linePaid !== (state === "paid" ? lineApproved : "0")
+          ) {
+            throw new TypeError(`${linePath} does not reconcile`);
+          }
+          return { approvedMinor: lineApproved, paidMinor: linePaid };
+        };
+        rewardLines = {
+          sharedPool: parseLine(
+            rawLines.sharedPool,
+            `${path}.rewardLines.sharedPool`,
+            expectedAllocation.lines.sharedPool.approvedMinor,
+          ),
+          reviewBudget: parseLine(
+            rawLines.reviewBudget,
+            `${path}.rewardLines.reviewBudget`,
+            expectedAllocation.lines.reviewBudget.approvedMinor,
+          ),
+        };
+      } else if (hasRewardLines) {
+        throw new TypeError(`${path} has reward lines absent from allocation`);
+      }
+      return {
+        intentId,
+        approvedMinor,
+        paidMinor,
+        state,
+        ...(rewardLines ? { rewardLines } : {}),
+      };
     },
   );
   unique(

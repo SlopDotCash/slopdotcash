@@ -186,6 +186,7 @@ describe("project proposal schema", () => {
 
   it("validates the optional review budget line", () => {
     const pledgedReviewBudget = {
+      effectiveAt: "2026-09-01T00:00:00.000Z",
       monthlyCapMinor: "50000000",
       monthlyCapDisplay: "$50",
       committedMinor: "0",

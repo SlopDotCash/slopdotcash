@@ -22,6 +22,10 @@ export interface SettlementPlanTransfer {
   intentIds: string[];
   recipientOwner: string;
   amountMinor: string;
+  rewardLines?: {
+    sharedPoolMinor: string;
+    reviewBudgetMinor: string;
+  };
 }
 
 export interface SettlementExecutionPlan {
@@ -148,6 +152,14 @@ export function createSettlementExecutionPlan(input: {
       intentIds: [row.intentId],
       recipientOwner,
       amountMinor: row.approvedMinor,
+      ...(row.lines
+        ? {
+            rewardLines: {
+              sharedPoolMinor: row.lines.sharedPool.approvedMinor,
+              reviewBudgetMinor: row.lines.reviewBudget.approvedMinor,
+            },
+          }
+        : {}),
     };
   });
   const platformFeeMinor = allocation.totals.feeMinor;

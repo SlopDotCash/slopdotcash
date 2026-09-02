@@ -2,7 +2,10 @@
 
 import { describe, expect, it } from "vitest";
 import { snapshotFixture } from "../../tests/fixtures";
-import { createRewardCycleProposal } from "./reward-cycle";
+import {
+  allocateReviewBudgetMinor,
+  createRewardCycleProposal,
+} from "./reward-cycle";
 import type { WalletProof } from "./rewards";
 
 const SOURCE_SHA = "a".repeat(64);
@@ -28,6 +31,36 @@ function wallet(): WalletProof {
 }
 
 describe("reward cycle proposals", () => {
+  it("allocates an additive review line with deterministic largest remainder", () => {
+    expect(
+      Object.fromEntries(
+        allocateReviewBudgetMinor(10n, [
+          { actorId: "actor-c", scoreThirds: 1 },
+          { actorId: "actor-a", scoreThirds: 1 },
+          { actorId: "actor-b", scoreThirds: 1 },
+        ]),
+      ),
+    ).toEqual({ "actor-a": 4n, "actor-b": 3n, "actor-c": 3n });
+    expect(
+      Object.fromEntries(
+        allocateReviewBudgetMinor(5n, [
+          { actorId: "light", scoreThirds: 1 },
+          { actorId: "deep", scoreThirds: 3 },
+        ]),
+      ),
+    ).toEqual({ deep: 4n, light: 1n });
+  });
+
+  it("leaves the additive line unused without accepted review evidence", () => {
+    expect(allocateReviewBudgetMinor(10n, [])).toEqual(new Map());
+    expect(() =>
+      allocateReviewBudgetMinor(10n, [
+        { actorId: "duplicate", scoreThirds: 1 },
+        { actorId: "duplicate", scoreThirds: 2 },
+      ]),
+    ).toThrow(/unique non-negative/u);
+  });
+
   it("proposes the exact Eliza pool without approving a payment", () => {
     const wallets = new Map([["U_fixture", wallet()]]);
     const proposal = createRewardCycleProposal({
