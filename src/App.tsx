@@ -2340,6 +2340,7 @@ function CyclePage({
         ? "external-prize-share"
         : "monthly-pool"),
     now: new Date().toISOString(),
+    paymentMode: project.reward.paymentMode,
     settledAt: record?.settledAt ?? null,
     state: record?.state ?? (view?.cycle.status === "live" ? "live" : "review"),
   });
