@@ -893,6 +893,67 @@ describe("private trace API", () => {
     }
   });
 
+  it("permits browser reads of public wallet claims only from public site origins", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        contributor,
+        JSON.stringify({ address: "11111111111111111111111111111111" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(created.status).toBe(201);
+    const { claimId } = (await created.json()) as { claimId: string };
+
+    for (const origin of ["https://slop.cash", "https://slop.tech"]) {
+      const current = await handleTraceApi(
+        new Request(
+          "https://api.slop.cash/api/v1/wallet-claims/actors/42/current",
+          { headers: { origin } },
+        ),
+        deps,
+      );
+      expect(current.status).toBe(200);
+      expect(current.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(current.headers.get("vary")).toContain("Origin");
+
+      const immutable = await handleTraceApi(
+        new Request(`https://api.slop.cash/api/v1/wallet-claims/${claimId}`, {
+          headers: { origin },
+        }),
+        deps,
+      );
+      expect(immutable.status).toBe(200);
+      expect(immutable.headers.get("access-control-allow-origin")).toBe(origin);
+    }
+
+    const missing = await handleTraceApi(
+      new Request(
+        "https://api.slop.cash/api/v1/wallet-claims/actors/999/current",
+        { headers: { origin: "https://slop.cash" } },
+      ),
+      deps,
+    );
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get("access-control-allow-origin")).toBe(
+      "https://slop.cash",
+    );
+
+    const untrusted = await handleTraceApi(
+      new Request(
+        "https://api.slop.cash/api/v1/wallet-claims/actors/42/current",
+        { headers: { origin: "https://attacker.example" } },
+      ),
+      deps,
+    );
+    expect(untrusted.status).toBe(200);
+    expect(untrusted.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("rejects non-canonical body lengths and releases oversized streams", async () => {
     for (const value of ["2e0", "+2"]) {
       await expect(
