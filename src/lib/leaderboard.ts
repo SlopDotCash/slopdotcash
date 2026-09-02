@@ -642,6 +642,21 @@ export interface LeaderboardInput {
   verifyRunReceipt?: (value: unknown) => ProjectRunReceipt;
 }
 
+function exactEvidenceBonusRun(
+  event: ScoreEvent,
+  attributions: readonly ModelAttribution[],
+): ProjectRunReceipt | null {
+  return (
+    attributions.find(
+      (attribution) =>
+        attribution.actor?.id === event.actor.id &&
+        (attribution.artifactId === event.source.id ||
+          attribution.sourceId === event.source.id) &&
+        attribution.run !== null,
+    )?.run ?? null
+  );
+}
+
 const EVIDENCE_WEIGHTS: Record<EvidenceCategory, number> = {
   screenshot: 1,
   video: 2,
@@ -3664,6 +3679,19 @@ export function createLeaderboardSnapshot(
     },
   );
   const attributions = overallAttribution.declarations;
+  // A receipt can look valid when a review is assessed in isolation but be
+  // rejected by the snapshot-wide replay guard because another scored source
+  // already claimed the same client run, server run, or trace object. Preserve
+  // the base review credit while removing any bonus that has no surviving
+  // exact public attribution.
+  for (const event of ledger) {
+    if (
+      (event.evidenceBonusBasisPoints ?? 0) > 0 &&
+      exactEvidenceBonusRun(event, attributions) === null
+    ) {
+      delete event.evidenceBonusBasisPoints;
+    }
+  }
   for (const attribution of attributions) {
     if (attribution.actor && !isBotActor(attribution.actor)) {
       actorEntry(entries, attribution.actor).models.add(attribution.identifier);
@@ -5533,13 +5561,7 @@ export function assertLeaderboardSnapshot(
   for (const event of validatedLedger) {
     const publishedBonus = event.evidenceBonusBasisPoints ?? 0;
     if (publishedBonus === 0) continue;
-    const matchingRun = validatedAttributions.find(
-      (attribution) =>
-        attribution.actor?.id === event.actor.id &&
-        (attribution.artifactId === event.source.id ||
-          attribution.sourceId === event.source.id) &&
-        attribution.run !== null,
-    )?.run;
+    const matchingRun = exactEvidenceBonusRun(event, validatedAttributions);
     const legacyUsageBonusPolicy =
       Date.parse(snapshot.generatedAt) <
       Date.parse(USAGE_NEUTRAL_EVIDENCE_POLICY_AT);
