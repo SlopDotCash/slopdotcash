@@ -140,7 +140,7 @@ revision, and verification time into the tested Pages bundle. The deploy job
 checks GitHub again before publishing those exact bytes. The public
 `GET /api/v1/private-request-intake` route reads that bundle attestation and
 exposes only the verified boolean and timestamp. Missing, disabled, malformed,
-future-dated, or more-than-seven-hour-old attestations fail closed. No
+future-dated, or more-than-49-hour-old attestations fail closed. No
 contributor or runtime GitHub credential is involved.
 `TRACE_AUTH_SECRET` is opaque HMAC key material and must contain 32-128
 high-entropy printable ASCII characters. It must never be configured as a
@@ -162,7 +162,7 @@ eventually-consistent edge counter.
 Operational renewal, designated-reviewer unavailability, full-cycle
 verification, and rollback are documented in
 [`PRIVATE_INTAKE_RECOVERY.md`](PRIVATE_INTAKE_RECOVERY.md). The procedure keeps
-the seven-hour gate and protected-environment review fail-closed.
+the 49-hour gate and protected-environment review fail-closed.
 
 The Cloudflare account and bucket permissions remain limited to designated
 Slop operators. Application authorization does not replace Cloudflare account

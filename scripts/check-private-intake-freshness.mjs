@@ -3,9 +3,11 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const MAX_AGE_MS = 7 * 60 * 60 * 1000;
+const MAX_AGE_MS = 49 * 60 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
-const RENEWAL_WINDOW_MS = 90 * 60 * 1000;
+// One six-hour scheduled refresh plus three hours of approval slack, so at
+// least one reviewed run lands inside the window before expiry.
+const RENEWAL_WINDOW_MS = 9 * 60 * 60 * 1000;
 
 export function checkPrivateIntakeFreshness(value, now = Date.now()) {
   if (

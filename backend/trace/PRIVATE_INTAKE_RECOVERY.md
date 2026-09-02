@@ -2,7 +2,7 @@
 
 The private-trace API accepts uploads only while the deployed public-intake
 attestation is valid. The attestation is bound to one tested `develop` revision
-and expires seven hours after `verifiedAt`. Expiry is intentionally fail-closed:
+and expires 49 hours after `verifiedAt`. Expiry is intentionally fail-closed:
 `GET https://api.slop.cash/api/v1/private-request-intake` returns HTTP 503 with
 `{"error":"private_intake_unavailable"}` until a reviewed production deployment
 publishes a fresh attestation.
@@ -25,14 +25,14 @@ or let automation approve its own deployment.
    SHA, `verifiedAt`, and verification time on the operations issue.
 
 The scheduled deployment runs every six hours. The hourly freshness watch
-fails when fewer than 90 minutes remain so a reviewed scheduled run should
-already be available before expiry.
+fails when fewer than nine hours remain, so at least one reviewed scheduled
+run is available inside the renewal window before expiry.
 
 ## Designated reviewer unavailable
 
 GitHub environment protection is the release authority. Contributors and
 automation must not impersonate the reviewer, use administrator bypass, change
-the deployment payload, lengthen the seven-hour window, or publish an
+the deployment payload, change the reviewed 49-hour window, or publish an
 attestation from a local checkout.
 
 If no configured reviewer can respond before expiry:
@@ -61,7 +61,7 @@ After the deployment reports success:
 1. Fetch `https://slop.cash/data/private-intake-attestation.json` without cache.
    Require exactly `enabled: true`, `source: "github-public-status"`, a
    40-character lowercase-hex `revision` equal to the deployed `develop` SHA,
-   and an ISO `verifiedAt` no more than seven hours old and not future-dated.
+   and an ISO `verifiedAt` no more than 49 hours old and not future-dated.
 2. Fetch `https://api.slop.cash/api/v1/private-request-intake` without cache.
    Require HTTP 200 and exactly `enabled: true`,
    `source: "github-public-status"`, and the same `verifiedAt` as the bundle.
