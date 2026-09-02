@@ -6,6 +6,7 @@
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -70,6 +71,20 @@ afterEach(() => {
 });
 
 describe("evaluator award protocol", () => {
+  it("keeps review-led closure guidance narrow and non-automatic", () => {
+    const guide = readFileSync(
+      join(import.meta.dirname, "..", "..", "evaluations", "README.md"),
+      "utf8",
+    );
+
+    expect(guide).toMatch(/closure is never sufficient by itself/iu);
+    expect(guide).toMatch(/GitHub\s+has no `CLOSE` review state/iu);
+    expect(guide).toMatch(/substantive `COMMENTED` review may be evaluated/iu);
+    expect(guide).toMatch(/independent maintainer/iu);
+    expect(guide).toMatch(/ordinary-ledger\s+deduplication/iu);
+    expect(guide).toMatch(/receive no automatic credit/iu);
+  });
+
   it("turns a reviewed manifest into one digest-bound score event", () => {
     const root = fixtureRoot();
     writeFileSync(
