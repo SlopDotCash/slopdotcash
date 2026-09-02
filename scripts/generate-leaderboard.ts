@@ -2715,8 +2715,12 @@ export async function reconcileHydratedReviewCensus(
 ): Promise<void> {
   const changed = pullRequests.filter((pullRequest) => {
     const census = reviewCounts.get(pullRequest.id);
+    if (census === undefined) {
+      throw new Error(
+        `Review census missing ${pullRequest.id} before detail reconciliation`,
+      );
+    }
     return (
-      census === undefined ||
       formalDecisionReviewCount(pullRequest.reviews) !== census.reviewCount ||
       pullRequest.updatedAt !== census.updatedAt
     );

@@ -1266,6 +1266,44 @@ describe("rate-efficient query plan", () => {
     });
   });
 
+  it("keeps a pull request absent from the baseline census fatal", async () => {
+    const client: GraphqlExecutor = {
+      execute: async () => {
+        throw new Error("an absent baseline entry must not be re-read");
+      },
+      getRequestCount: () => 0,
+      getRateLimit: () => ({
+        cost: 0,
+        consumedDuringRun: 0,
+        limit: 5_000,
+        remaining: 5_000,
+        resetAt: "2026-08-25T18:00:00.000Z",
+      }),
+    };
+
+    await expect(
+      reconcileHydratedReviewCensus(client, new Map(), [
+        {
+          id: "PR_NEVER_IN_CENSUS",
+          updatedAt: "2026-08-25T18:01:00.000Z",
+          reviews: [
+            {
+              id: "PRR_1",
+              body: "Substantive review",
+              state: "APPROVED",
+              submittedAt: "2026-08-25T17:59:00.000Z",
+              url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1",
+              author: null,
+              inlineCommentCount: 0,
+            },
+          ],
+        },
+      ]),
+    ).rejects.toThrow(
+      "Review census missing PR_NEVER_IN_CENSUS before detail reconciliation",
+    );
+  });
+
   it("fails closed when a hydrated formal-review set is still moving", async () => {
     const client: GraphqlExecutor = {
       execute: async () => ({
