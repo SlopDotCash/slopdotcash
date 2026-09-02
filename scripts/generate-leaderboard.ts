@@ -28,6 +28,7 @@ import {
   type LeaderboardSourceMetadata,
   type MergedPullRequestOutcome,
   type MergedPullRequestReviewRecord,
+  type ModelAttribution,
   type PullRequestFile,
   type PullRequestRecord,
   type PullRequestReview,
@@ -83,7 +84,10 @@ const ACCEPTED_REVIEW_HISTORY_PATH = resolve(
   "../data/accepted-review-history.json",
 );
 
-function loadAcceptedReviewHistory(): ScoreEvent[] {
+function loadAcceptedReviewHistory(): {
+  events: ScoreEvent[];
+  attributions: ModelAttribution[];
+} {
   const value = JSON.parse(
     readFileSync(ACCEPTED_REVIEW_HISTORY_PATH, "utf8"),
   ) as unknown;
@@ -91,13 +95,15 @@ function loadAcceptedReviewHistory(): ScoreEvent[] {
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
-    (value as { schemaVersion?: unknown }).schemaVersion !== "1" ||
+    (value as { schemaVersion?: unknown }).schemaVersion !== "2" ||
     !Array.isArray((value as { events?: unknown }).events) ||
-    Object.keys(value).sort().join("\0") !== "events\0schemaVersion"
+    !Array.isArray((value as { attributions?: unknown }).attributions) ||
+    Object.keys(value).sort().join("\0") !==
+      "attributions\0events\0schemaVersion"
   ) {
     throw new TypeError("accepted review history manifest is invalid");
   }
-  return (value as { events: ScoreEvent[] }).events;
+  return value as { events: ScoreEvent[]; attributions: ModelAttribution[] };
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -247,6 +253,7 @@ export interface GenerateOptions {
   evidenceTimeoutMs?: number;
   evaluatedContributions?: ScoreEvent[];
   retainedReviewEvents?: ScoreEvent[];
+  retainedReviewAttributions?: ModelAttribution[];
 }
 
 export function collectEvaluatedReviewArtifactKeys(
@@ -3571,6 +3578,7 @@ export async function generateLeaderboardFromGitHub(
       actualNow,
     ),
     retainedReviewEvents: options.retainedReviewEvents,
+    retainedReviewAttributions: options.retainedReviewAttributions,
     verifyRunReceipt: verifyRunReceiptSignature,
   });
   return snapshot;
@@ -3619,11 +3627,13 @@ function progressLine(progress: GenerationProgress): string {
 
 if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
+  const acceptedReviewHistory = loadAcceptedReviewHistory();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
     evaluatedContributions: loadEvaluatorAwardEvents(),
-    retainedReviewEvents: loadAcceptedReviewHistory(),
+    retainedReviewEvents: acceptedReviewHistory.events,
+    retainedReviewAttributions: acceptedReviewHistory.attributions,
     onProgress: (progress) => {
       const phaseChanged = progress.phase !== lastProgressPhase;
       lastProgressPhase = progress.phase;

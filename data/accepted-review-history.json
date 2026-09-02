@@ -1,5 +1,69 @@
 {
-  "schemaVersion": "1",
+  "schemaVersion": "2",
+  "attributions": [
+    {
+      "id": "PRR_kwDOMT5cIs8AAAABKiiDoA:machine-marker:0",
+      "sourceId": "PRR_kwDOMT5cIs8AAAABKiiDoA",
+      "sourceUrl": "https://github.com/elizaOS/eliza/pull/25197#pullrequestreview-5002265504",
+      "artifactId": "PR_kwDOMT5cIs8AAAABAr93Yg",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "identifier": "openai/gpt-5.6-sol",
+      "client": "codex",
+      "skillRevision": "SlopDotCash/slopdotcash@92d692518c3d832ac9b203076ef691a54e61a9fa:skills/contribute-to-eliza",
+      "run": {
+        "schemaVersion": "2",
+        "runId": "run_01M0Q56B36JGGEP1AZNVNH3C9T",
+        "projectId": "eliza",
+        "repositoryId": "elizaOS/eliza",
+        "startedAt": "2026-08-23T11:13:17.926Z",
+        "completedAt": "2026-08-23T11:21:02.652Z",
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "client": "codex",
+        "skillRevision": "SlopDotCash/slopdotcash@92d692518c3d832ac9b203076ef691a54e61a9fa:skills/contribute-to-eliza",
+        "skillSha256": "97666aac5e8039955e335470436f46557ee59dcf48201fe39c429c078e373a0b",
+        "policyAcknowledgement": {
+          "policyRevision": "2026-08-18.1",
+          "licenseSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+          "inboundTermsSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+          "prizeRulesSha256": null,
+          "acknowledgedAt": "2026-08-23T11:13:19.068Z"
+        },
+        "usage": {
+          "source": "ccusage-session-v20",
+          "confidence": "unavailable",
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "totalTokens": 0,
+          "costMicroUsd": "0",
+          "sessionCount": 0
+        },
+        "trajectorySha256": "d86f5dbf7ae1cfe6ce01e19fd11d30ec240ba4a378417901e3dca20c359a7c4c",
+        "traceUpload": {
+          "authority": "https://api.slop.cash",
+          "serverRunId": "18b86343-e8a6-44fc-b70c-8875aea9c126",
+          "objectId": "sha256:d86f5dbf7ae1cfe6ce01e19fd11d30ec240ba4a378417901e3dca20c359a7c4c",
+          "sha256": "d86f5dbf7ae1cfe6ce01e19fd11d30ec240ba4a378417901e3dca20c359a7c4c"
+        },
+        "signatureAlgorithm": "ed25519",
+        "devicePublicKey": "MCowBQYDK2VwAyEAM-QnG1GIrFCQc80xfVVCicm6NwnOconuAnNxqQ3dJw0",
+        "deviceKeyId": "89e303b0db92a7b63fb55d5e6fbf1be4dc2eff6f41e4520fb74ee0b238899486",
+        "deviceSignature": "jwrbyBDpaF94xHMx-Ek2VbEGs5orn-tic8TnLOSWY8WFN_eadC5_FJKye6zl1RImejmAw0MpRClsNHuhVEJiDA"
+      },
+      "format": "machine-marker",
+      "status": "self-reported"
+    }
+  ],
   "events": [
     {
       "id": "PR_kwDOMT5cIs8AAAABAr9NwA:reviewer:U_kgDOCzScNQ",
