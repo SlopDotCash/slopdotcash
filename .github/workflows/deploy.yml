@@ -36,6 +36,11 @@ jobs:
   quality:
     name: Skill, data, build, and browser checks
     runs-on: ubuntu-24.04
+    concurrency:
+      # A newer trusted revision supersedes stale live-data generation, while
+      # each pull request retains its own independently superseding lane.
+      group: slop-quality-${{ github.event.pull_request.number || 'trusted' }}
+      cancel-in-progress: true
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Leave room for complete fail-closed hydration plus four browser projects.
     timeout-minutes: 180
