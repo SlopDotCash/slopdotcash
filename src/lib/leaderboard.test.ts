@@ -2444,6 +2444,46 @@ describe("scoring and limits", () => {
         (event) => event.source.id === "REVIEW_ORDINARY_TRACE",
       )?.evidenceBonusBasisPoints ?? 0,
     ).toBe(0);
+
+    const replayedReview = structuredClone(merged);
+    replayedReview.id = "PR_ORDINARY_REVIEW_TRACE_REPLAY";
+    replayedReview.number = 79;
+    replayedReview.url = "https://github.com/elizaOS/eliza/pull/79";
+    replayedReview.createdAt = "2026-08-17T09:00:00.000Z";
+    replayedReview.updatedAt = "2026-08-18T23:30:00.000Z";
+    replayedReview.mergedAt = "2026-08-18T23:30:00.000Z";
+    replayedReview.reviews[0].id = "REVIEW_ORDINARY_TRACE_REPLAY";
+    replayedReview.reviews[0].url =
+      "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-790";
+    const replayInput = v2Input([merged, replayedReview]);
+    replayInput.generatedAt = ordinaryInput.generatedAt;
+    replayInput.windowFrom = ordinaryInput.windowFrom;
+    replayInput.windowTo = ordinaryInput.windowTo;
+    replayInput.sourceUpdatedAt = replayedReview.updatedAt;
+    replayInput.source.fetchedAt = replayInput.generatedAt;
+    replayInput.source.cutoffAt = replayInput.windowTo;
+    replayInput.source.verificationWindow.from = replayInput.windowFrom;
+    replayInput.source.verificationWindow.to = replayInput.windowTo;
+    replayInput.verificationWindowFrom = replayInput.windowFrom;
+    const replayed = createLeaderboardSnapshot({
+      ...replayInput,
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    const replayEvents = replayed.ledger.filter(
+      (event) =>
+        event.source.id === "REVIEW_ORDINARY_TRACE" ||
+        event.source.id === "REVIEW_ORDINARY_TRACE_REPLAY",
+    );
+    expect(replayEvents).toHaveLength(2);
+    expect(
+      replayEvents.filter((event) => event.evidenceBonusBasisPoints === 1_500),
+    ).toHaveLength(1);
+    expect(replayed.invalidAttributionMarkers).toContainEqual(
+      expect.objectContaining({
+        sourceId: "REVIEW_ORDINARY_TRACE",
+        reason: expect.stringContaining("already claimed"),
+      }),
+    );
   });
 
   it("rejects a detail-eligible pull request that was not hydrated", () => {
