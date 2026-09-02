@@ -1112,6 +1112,31 @@ describe("GitHub GraphQL boundary", () => {
     expect(client.getRateLimit().consumedDuringRun).toBe(1_350);
   });
 
+  it("uses the reported capacity of a 5,000-point Actions token", async () => {
+    let attempts = 0;
+    const fetcher = async () => {
+      attempts += 1;
+      return successResponse(
+        { viewer: { login: "eliza" } },
+        {
+          cost: 500,
+          limit: 5_000,
+          remaining: 5_000 - attempts * 500,
+          resetAt: "2026-07-30T13:00:00.000Z",
+        },
+      );
+    };
+    const client = new GitHubGraphqlClient("actions-token", fetcher);
+
+    await expect(
+      client.execute("query { viewer { login } }"),
+    ).resolves.toBeDefined();
+    await expect(
+      client.execute("query { viewer { login } }"),
+    ).resolves.toBeDefined();
+    expect(client.getRateLimit().consumedDuringRun).toBe(1_000);
+  });
+
   it("does not call the writer after live generation fails", async () => {
     const write = vi.fn(async (_snapshot: LeaderboardSnapshot) => undefined);
     const generate = vi.fn(async () => {
