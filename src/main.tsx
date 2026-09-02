@@ -12,6 +12,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { Deck } from "./Deck";
 import { ErrorBoundary } from "./ErrorBoundary";
+import "./brand-tokens.css";
 import "./styles.css";
 
 const root = document.getElementById("root");

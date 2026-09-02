@@ -1,9 +1,9 @@
 .deck {
-  --ink: #16130f;
-  --paper: #f5f0e7;
-  --orange: #ff5a1f;
-  --orange-ink: #b83a0e;
-  --muted: #655f55;
+  --ink: var(--brand-color-ink);
+  --paper: var(--brand-color-paper);
+  --orange: var(--brand-color-orange);
+  --orange-ink: var(--brand-color-orange-text);
+  --muted: var(--brand-color-muted);
   position: fixed;
   inset: 0;
   overflow: hidden;

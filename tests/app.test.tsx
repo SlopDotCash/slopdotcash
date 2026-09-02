@@ -1213,6 +1213,23 @@ describe("public records", () => {
   });
 });
 
+describe("public proof routes", () => {
+  it.each([
+    ["/how-it-works", "Accepted work in. Auditable allocations out."],
+    ["/receipts", "Signed runs, without the private trace."],
+    ["/cycles", "Every pool gets a dated public record."],
+  ])("renders %s as a branded route", async (path, heading) => {
+    route(path);
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: heading }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Slop home" })).toBeVisible();
+  });
+});
+
 describe("project proposals", () => {
   function fillAuthorityDraft() {
     fireEvent.change(screen.getByLabelText("GitHub repository numeric ID"), {
@@ -1277,6 +1294,10 @@ describe("project proposals", () => {
       },
     );
     fireEvent.change(
+      screen.getByLabelText(/^Additive monthly review budget/u),
+      { target: { value: "50" } },
+    );
+    fireEvent.change(
       screen.getByLabelText(
         "Project-controlled Solana USDC address (optional)",
       ),
@@ -1300,6 +1321,10 @@ describe("project proposals", () => {
     ).not.toThrow();
     expect(
       screen.getByText(/"monthlyCapMinor": "2500000000"/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/"reviewBudget"/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/"monthlyCapMinor": "50000000"/),
     ).toBeInTheDocument();
     expect(screen.getByText(/"mode": "open-declared"/)).toBeInTheDocument();
     expect(
@@ -1329,6 +1354,7 @@ describe("project proposals", () => {
     expect(agentBrief).toContain("Do not infer creator, steward");
     expect(agentBrief).toContain(".github/slop-project.json");
     expect(agentBrief).toContain("Leave payouts disabled");
+    expect(agentBrief).toContain("never replaces review events");
     const template = rootPublishedTemplateProject();
     expect(agentBrief).toContain(
       `projects/${template.id}/project.json, ${template.skill.sourcePath}, and ${template.reviewSkill.sourcePath}`,
