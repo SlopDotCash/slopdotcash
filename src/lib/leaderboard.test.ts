@@ -2442,8 +2442,101 @@ describe("scoring and limits", () => {
     expect(
       rejectedReceipt.ledger.find(
         (event) => event.source.id === "REVIEW_ORDINARY_TRACE",
-      )?.evidenceBonusBasisPoints ?? 0,
-    ).toBe(0);
+      ),
+    ).toMatchObject({
+      category: "substantive-review",
+      scoreThirds: 3,
+    });
+    expect(
+      rejectedReceipt.ledger.find(
+        (event) => event.source.id === "REVIEW_ORDINARY_TRACE",
+      ),
+    ).not.toHaveProperty("evidenceBonusBasisPoints");
+  });
+
+  it("does not award a review bonus when global receipt validation rejects reuse", () => {
+    const firstReviewer = actor("first-receipt-reviewer");
+    const reusedReviewer = actor("reused-receipt-reviewer");
+    const attributedBody = reviewAttribution({
+      schemaVersion: "2",
+      startedAt: "2026-08-18T21:00:00.000Z",
+      completedAt: "2026-08-18T22:00:00.000Z",
+      policyAcknowledgement: {
+        policyRevision: "2026-08-18.1",
+        licenseSha256:
+          "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+        inboundTermsSha256:
+          "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+        prizeRulesSha256: null,
+        acknowledgedAt: "2026-08-18T21:00:00.000Z",
+      },
+    }).replace(
+      /^Findings: none\.\n\n```slop-review\n[^\n]+\n```\n\n/u,
+      "This review reproduced the failure and verified the exact repair.\n\n",
+    );
+    const merged = pullRequest({
+      id: "PR_REUSED_REVIEW_TRACE",
+      number: 79,
+      createdAt: "2026-08-17T08:00:00.000Z",
+      updatedAt: "2026-08-18T23:00:00.000Z",
+      mergedAt: "2026-08-18T23:00:00.000Z",
+      reviews: [
+        {
+          id: "REVIEW_FIRST_TRACE_CLAIM",
+          body: attributedBody,
+          state: "APPROVED",
+          submittedAt: "2026-08-18T21:59:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-791",
+          author: firstReviewer,
+          inlineCommentCount: 0,
+        },
+        {
+          id: "REVIEW_REUSED_TRACE_CLAIM",
+          body: attributedBody,
+          state: "APPROVED",
+          submittedAt: "2026-08-18T22:00:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-792",
+          author: reusedReviewer,
+          inlineCommentCount: 0,
+        },
+      ],
+    });
+    const input = v2Input([merged]);
+    input.generatedAt = "2026-08-19T00:01:00.000Z";
+    input.windowFrom = "2026-07-15T00:00:00.000Z";
+    input.windowTo = "2026-08-19T00:00:00.000Z";
+    input.sourceUpdatedAt = "2026-08-18T23:00:00.000Z";
+    input.source.fetchedAt = input.generatedAt;
+    input.source.cutoffAt = input.windowTo;
+    input.source.verificationWindow.from = input.windowFrom;
+    input.source.verificationWindow.to = input.windowTo;
+    input.verificationWindowFrom = input.windowFrom;
+
+    const snapshot = createLeaderboardSnapshot({
+      ...input,
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      snapshot.ledger.find(
+        (event) => event.source.id === "REVIEW_FIRST_TRACE_CLAIM",
+      ),
+    ).toMatchObject({ evidenceBonusBasisPoints: 1_500, scoreThirds: 3 });
+    expect(
+      snapshot.ledger.find(
+        (event) => event.source.id === "REVIEW_REUSED_TRACE_CLAIM",
+      ),
+    ).toMatchObject({ scoreThirds: 3 });
+    expect(
+      snapshot.ledger.find(
+        (event) => event.source.id === "REVIEW_REUSED_TRACE_CLAIM",
+      ),
+    ).not.toHaveProperty("evidenceBonusBasisPoints");
+    expect(snapshot.invalidAttributionMarkers).toContainEqual(
+      expect.objectContaining({
+        sourceId: "REVIEW_REUSED_TRACE_CLAIM",
+        reason: expect.stringMatching(/already claimed/u),
+      }),
+    );
   });
 
   it("rejects a detail-eligible pull request that was not hydrated", () => {

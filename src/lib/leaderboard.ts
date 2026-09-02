@@ -3550,26 +3550,12 @@ export function createLeaderboardSnapshot(
       const reviewSource = sources.find(
         (candidate) => candidate.id === review.id,
       );
-      const reviewReceipt =
-        reviewSource && input.verifyRunReceipt
-          ? assessModelAttribution([reviewSource], {
-              requireEverySource: true,
-              verifyRunReceipt: input.verifyRunReceipt,
-            }).declarations.find(
-              (declaration) =>
-                declaration.sourceId === review.id &&
-                declaration.actor?.id === review.author?.id,
-            )?.run
-          : null;
       awardedReviewers.add(review.author.id);
       const scored = addScore(entries, ledger, {
         id: `${pullRequest.id}:reviewer:${review.author.id}`,
         actor: review.author,
         category: "substantive-review",
         points: 3,
-        ...(reviewReceipt?.traceUpload
-          ? { evidenceBonusBasisPoints: 1_500 as const }
-          : {}),
         occurredAt: review.submittedAt,
         repository: repositoryIdFromUrl(review.url),
         source: {
@@ -3664,6 +3650,24 @@ export function createLeaderboardSnapshot(
     },
   );
   const attributions = overallAttribution.declarations;
+  const finalizedTraceAttributionKeys = new Set(
+    attributions
+      .filter(
+        (attribution) => attribution.actor && attribution.run?.traceUpload,
+      )
+      .map(
+        (attribution) => `${attribution.actor?.id}\0${attribution.sourceId}`,
+      ),
+  );
+  for (const event of ledger) {
+    if (
+      event.category === "substantive-review" &&
+      event.id.includes(":reviewer:") &&
+      finalizedTraceAttributionKeys.has(`${event.actor.id}\0${event.source.id}`)
+    ) {
+      event.evidenceBonusBasisPoints = 1_500;
+    }
+  }
   for (const attribution of attributions) {
     if (attribution.actor && !isBotActor(attribution.actor)) {
       actorEntry(entries, attribution.actor).models.add(attribution.identifier);
