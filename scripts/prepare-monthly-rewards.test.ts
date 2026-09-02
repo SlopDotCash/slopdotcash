@@ -6,6 +6,7 @@ import {
   prepareMonthlyRewards,
   previousUtcCycleId,
 } from "./prepare-monthly-rewards";
+import { PriorCycleNotReadyError } from "./prior-cycle-accrual";
 
 describe("monthly reward close", () => {
   const activeProjects = PROJECTS.map((project) => ({
@@ -106,5 +107,67 @@ describe("monthly reward close", () => {
         generatedAt: "2026-08-31T23:59:59.999Z",
       }),
     ).rejects.toThrow(/has not closed/u);
+  });
+
+  it.each([
+    ["under-review" as const, "is still under review"],
+    ["unresolved-proposals" as const, "has unresolved proposals"],
+  ])(
+    "records an %s prior-cycle refusal and prepares unaffected projects",
+    async (reason, message) => {
+      const prepare = vi.fn().mockImplementation(async (arguments_) => {
+        if (arguments_.projectId === "eliza") {
+          throw new PriorCycleNotReadyError({
+            cycleId: "2026-07",
+            message: `Prior cycle eliza/2026-07 ${message}`,
+            projectId: "eliza",
+            reason,
+          });
+        }
+      });
+      const validateCycles = vi.fn().mockResolvedValue({});
+
+      const result = await prepareMonthlyRewards(
+        {
+          cycleId: "2026-08",
+          generatedAt: "2026-09-05T00:11:00.000Z",
+        },
+        {
+          inspectPath: vi.fn().mockResolvedValue("missing"),
+          prepare,
+          projects: activeProjects,
+          validateCycles,
+        },
+      );
+
+      expect(result.prepared).toEqual(["asi", "delta-star"]);
+      expect(result.refused).toEqual([
+        {
+          projectId: "eliza",
+          priorCycleId: "2026-07",
+          reason,
+          message: `Prior cycle eliza/2026-07 ${message}`,
+        },
+      ]);
+      expect(prepare).toHaveBeenCalledTimes(3);
+      expect(validateCycles).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps unrelated project preparation failures fatal", async () => {
+    await expect(
+      prepareMonthlyRewards(
+        {
+          cycleId: "2026-08",
+          generatedAt: "2026-09-05T00:11:00.000Z",
+        },
+        {
+          inspectPath: vi.fn().mockResolvedValue("missing"),
+          prepare: vi.fn().mockRejectedValue(new Error("snapshot invalid")),
+          projects: activeProjects,
+          validateCycles: vi.fn(),
+        },
+      ),
+    ).rejects.toThrow("snapshot invalid");
   });
 });
