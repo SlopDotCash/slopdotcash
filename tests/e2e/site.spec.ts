@@ -462,6 +462,16 @@ test("renders contributor and cycle records from validated public data", async (
     return;
   }
 
+  await page.route(
+    "https://api.slop.cash/api/v1/wallet-claims/actors/*/current",
+    async (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "not_found" }),
+      }),
+  );
+
   await page.goto(`/contributors/${encodeURIComponent(actor.login)}`, {
     waitUntil: "networkidle",
   });

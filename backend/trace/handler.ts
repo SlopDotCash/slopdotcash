@@ -159,6 +159,42 @@ function pathParts(request: Request): string[] {
   return path.slice("/api/v1/".length).split("/").filter(Boolean);
 }
 
+const PUBLIC_WALLET_BROWSER_ORIGINS = new Set([
+  "https://slop.cash",
+  "https://www.slop.cash",
+  "https://slop.tech",
+  "https://www.slop.tech",
+]);
+
+function publicWalletBrowserResponse(
+  request: Request,
+  response: Response,
+): Response {
+  const origin = request.headers.get("origin");
+  if (origin === null || !PUBLIC_WALLET_BROWSER_ORIGINS.has(origin)) {
+    return response;
+  }
+  response.headers.set("access-control-allow-origin", origin);
+  response.headers.append("vary", "Origin");
+  return response;
+}
+
+function isPublicWalletRead(
+  request: Request,
+  parts: readonly string[],
+): boolean {
+  return (
+    request.method === "GET" &&
+    ((parts.length === 4 &&
+      parts[0] === "wallet-claims" &&
+      parts[1] === "actors" &&
+      parts[3] === "current") ||
+      (parts.length === 2 &&
+        parts[0] === "wallet-claims" &&
+        parts[1] !== "current"))
+  );
+}
+
 function publicWalletClaim(claim: WalletClaim): Record<string, unknown> {
   return {
     schemaVersion: 1,
@@ -942,6 +978,7 @@ export async function handleTraceApi(
   if (requestUrl.host !== "api.slop.cash" && !isLocal) {
     return json(404, { error: "not_found" });
   }
+  const publicWalletRead = isPublicWalletRead(request, parts);
   try {
     if (
       request.method === "GET" &&
@@ -957,7 +994,10 @@ export async function handleTraceApi(
       parts[1] === "actors" &&
       parts[3] === "current"
     ) {
-      return await readCurrentWalletClaim(deps, parts[2]);
+      return publicWalletBrowserResponse(
+        request,
+        await readCurrentWalletClaim(deps, parts[2]),
+      );
     }
     if (
       request.method === "GET" &&
@@ -965,7 +1005,10 @@ export async function handleTraceApi(
       parts[0] === "wallet-claims" &&
       parts[1] !== "current"
     ) {
-      return await readPublicWalletClaim(deps, parts[1]);
+      return publicWalletBrowserResponse(
+        request,
+        await readPublicWalletClaim(deps, parts[1]),
+      );
     }
     if (
       request.method === "PUT" &&
@@ -1005,7 +1048,7 @@ export async function handleTraceApi(
         ? Number(error.status)
         : 500;
     if (status >= 500) console.error("private trace API failure");
-    return json(status, {
+    const response = json(status, {
       error:
         typeof error.code === "string" &&
         /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
@@ -1016,6 +1059,9 @@ export async function handleTraceApi(
           ? "Internal error"
           : error.message,
     });
+    return publicWalletRead
+      ? publicWalletBrowserResponse(request, response)
+      : response;
   }
 }
 
