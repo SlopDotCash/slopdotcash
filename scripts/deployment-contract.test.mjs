@@ -393,6 +393,10 @@ describe("slop.cash deployment contract", () => {
     expect(workflow).toContain(
       `group: slop-${"$"}{{ github.event.pull_request.number || github.run_id }}`,
     );
+    expect(qualityJob).toContain(
+      `group: slop-quality-${"$"}{{ github.event.pull_request.number || 'trusted' }}`,
+    );
+    expect(qualityJob).toContain("cancel-in-progress: true");
     expect(deployJob).toContain(
       "github.event_name == 'push' && github.ref == 'refs/heads/develop'",
     );
