@@ -1,0 +1,40 @@
+name: Private intake freshness watch
+
+on:
+  schedule:
+    # Detect a missed reviewed refresh before the seven-hour attestation gate closes.
+    - cron: "47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    name: Require a safe private-intake renewal window
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout watchdog
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Check deployed attestation expiry
+        env:
+          APPROVAL_URL: https://github.com/SlopDotCash/slopdotcash/actions/workflows/deploy.yml
+          RECOVERY_URL: https://github.com/SlopDotCash/slopdotcash/blob/develop/backend/trace/PRIVATE_INTAKE_RECOVERY.md
+        run: |
+          set -euo pipefail
+          attestation="$RUNNER_TEMP/private-intake-attestation.json"
+          curl --fail --silent --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --max-filesize 16384 \
+            --output "$attestation" \
+            https://slop.cash/data/private-intake-attestation.json
+          node scripts/check-private-intake-freshness.mjs \
+            "$attestation" "$APPROVAL_URL" "$RECOVERY_URL"

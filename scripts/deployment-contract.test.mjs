@@ -27,6 +27,18 @@ const releaseLabelWorkflow = readFileSync(
   "utf8",
 );
 const workflowDirectory = join(repositoryRoot, ".github", "workflows");
+const privateIntakeWatch = readFileSync(
+  join(workflowDirectory, "private-intake-watch.yml"),
+  "utf8",
+);
+const privateIntakeWatchScript = readFileSync(
+  join(repositoryRoot, "scripts", "check-private-intake-freshness.mjs"),
+  "utf8",
+);
+const privateIntakeRecoveryGuide = readFileSync(
+  join(repositoryRoot, "backend", "trace", "PRIVATE_INTAKE_RECOVERY.md"),
+  "utf8",
+);
 const allWorkflows = readdirSync(workflowDirectory)
   .filter((name) => /\.ya?ml$/u.test(name))
   .map((name) => ({
@@ -78,6 +90,44 @@ const qualityJob = workflow.slice(
 const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
 
 describe("slop.cash deployment contract", () => {
+  it("alerts before a reviewed private-intake refresh can expire", () => {
+    expect(privateIntakeWatch).toContain('cron: "47 * * * *"');
+    expect(privateIntakeWatch).toContain(
+      "https://slop.cash/data/private-intake-attestation.json",
+    );
+    expect(privateIntakeWatch).toContain(
+      "node scripts/check-private-intake-freshness.mjs",
+    );
+    expect(privateIntakeWatchScript).toContain(
+      "Approve the newest trusted deployment now",
+    );
+    expect(privateIntakeWatch).toContain("PRIVATE_INTAKE_RECOVERY.md");
+    expect(privateIntakeWatch).not.toContain("environment:");
+    expect(privateIntakeWatch).not.toContain("wrangler");
+  });
+
+  it("documents fail-closed private-intake renewal and approver recovery", () => {
+    expect(privateIntakeRecoveryGuide).toContain("## Normal renewal");
+    expect(privateIntakeRecoveryGuide).toContain(
+      "## Designated reviewer unavailable",
+    );
+    expect(privateIntakeRecoveryGuide).toContain(
+      "## Complete renewal-cycle verification",
+    );
+    expect(privateIntakeRecoveryGuide).toContain(
+      "Prevent administrators from bypassing required reviewers",
+    );
+    expect(privateIntakeRecoveryGuide).toContain(
+      "If no independently authorized backup exists, wait for the designated reviewer",
+    );
+    expect(privateIntakeRecoveryGuide).toContain(
+      "GET https://api.slop.cash/api/v1/private-request-intake",
+    );
+    expect(privateIntakeRecoveryGuide).toContain(
+      "does not extend the freshness window",
+    );
+  });
+
   it("rewrites the nested project funding route through the Pages SPA", () => {
     const redirects = pagesRedirects.trim().split("\n");
     expect(redirects).toContain("/projects/:project/funding/ / 200");
