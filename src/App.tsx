@@ -21,6 +21,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -81,6 +82,16 @@ const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
 const MAX_FUNDING_INDEX_BYTES = 8 * 1024 * 1024;
 const MAX_WALLET_CLAIM_BYTES = 16 * 1024;
 const PROFILE_EVENT_PREVIEW_LIMIT = 10;
+const HERO_ACTIONS = [
+  "SHIPPING OPEN SOURCE.",
+  "SECURING THE WEB.",
+  "HACKING THE PLANET.",
+  "BUILDING AGI.",
+] as const;
+const HERO_HOLD_MS = 2_400;
+const HERO_TYPE_MS = 55;
+const HERO_DELETE_MS = 30;
+const HERO_GAP_MS = 220;
 
 export function rootPublishedTemplateProject(
   projects: readonly ProjectDefinition[] = PROJECTS,
@@ -213,10 +224,13 @@ interface Route {
     | "cycle"
     | "funding-project"
     | "home"
+    | "how-it-works"
     | "manage-project"
     | "new-project"
     | "profile"
     | "project"
+    | "receipts"
+    | "cycle-archive"
     | "unknown";
   projectId?: string;
   cycleId?: string;
@@ -231,6 +245,15 @@ function internalRoute(pathname: string): Route {
     return { kind: "unknown" };
   }
   if (segments.length === 0) return { kind: "home" };
+  if (segments.length === 1 && segments[0] === "how-it-works") {
+    return { kind: "how-it-works" };
+  }
+  if (segments.length === 1 && segments[0] === "receipts") {
+    return { kind: "receipts" };
+  }
+  if (segments.length === 1 && segments[0] === "cycles") {
+    return { kind: "cycle-archive" };
+  }
   if (segments[0] === "projects" && segments[1] === "new") {
     return { kind: "new-project" };
   }
@@ -275,11 +298,13 @@ function Link({
   children,
   className,
   href,
+  onNavigate,
 }: {
   ariaLabel?: string;
   children: ReactNode;
   className?: string;
   href: string;
+  onNavigate?: () => void;
 }) {
   const scrollAfterNavigation = () => {
     window.setTimeout(() => {
@@ -313,6 +338,7 @@ function Link({
         event.preventDefault();
         window.history.pushState({}, "", href);
         window.dispatchEvent(new PopStateEvent("popstate"));
+        onNavigate?.();
         scrollAfterNavigation();
       }}
     >
@@ -433,6 +459,14 @@ function formatCompact(value: number): string {
   }).format(value);
 }
 
+function formatScore(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+    useGrouping: false,
+  }).format(value);
+}
+
 function formatMicroUsdc(value: string): string {
   const amount = BigInt(value);
   const fraction = amount % 1_000_000n;
@@ -443,6 +477,14 @@ function formatMicroUsdc(value: string): string {
   const whole = roundedCents / 100n;
   const cents = (roundedCents % 100n).toString().padStart(2, "0");
   return `$${new Intl.NumberFormat("en-US").format(whole)}.${cents}`;
+}
+
+export function reviewBudgetLabel(
+  reviewBudget: NonNullable<ProjectDefinition["reward"]["reviewBudget"]>,
+): string {
+  return reviewBudget.fundingState === "committed"
+    ? `${formatMicroUsdc(reviewBudget.committedMinor)} committed of ${reviewBudget.monthlyCapDisplay} cap · additive review line`
+    : `${reviewBudget.monthlyCapDisplay} cap · additive review line · uncommitted pledge`;
 }
 
 function formatPercent(partsPerMillion: number): string {
@@ -466,33 +508,84 @@ function formatCycleMonth(value: string): string {
   }).format(new Date(`${value}-01T00:00:00.000Z`));
 }
 
+function cycleStateLabel(state: CycleIndexEntry["state"]): string {
+  return state
+    .split("-")
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function stale(snapshot: LeaderboardSnapshot): boolean {
   return Date.now() - Date.parse(snapshot.generatedAt) > 8 * 60 * 60 * 1_000;
 }
 
 function Header({ isHome }: { isHome: boolean }) {
   const [open, setOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeForOutsidePointer = (event: PointerEvent) => {
+      if (!headerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeForEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      menuButtonRef.current?.focus();
+    };
+    const closeForRoute = () => setOpen(false);
+    window.addEventListener("pointerdown", closeForOutsidePointer);
+    window.addEventListener("keydown", closeForEscape);
+    window.addEventListener("popstate", closeForRoute);
+    return () => {
+      window.removeEventListener("pointerdown", closeForOutsidePointer);
+      window.removeEventListener("keydown", closeForEscape);
+      window.removeEventListener("popstate", closeForRoute);
+    };
+  }, [open]);
+  const closeMenu = () => setOpen(false);
   return (
-    <header className="site-header">
+    <header className="site-header" ref={headerRef}>
       <div className="shell header-inner">
         <Link ariaLabel="Slop home" className="wordmark" href="/">
           slop.cash
         </Link>
         <button
           aria-expanded={open}
+          aria-controls="primary-navigation"
           aria-label={open ? "Close navigation" : "Open navigation"}
           className="menu-button"
           onClick={() => setOpen((value) => !value)}
+          ref={menuButtonRef}
           type="button"
         >
           {open ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
         </button>
-        <nav className={open ? "nav-links nav-links-open" : "nav-links"}>
-          {!isHome ? <Link href="/">Home</Link> : null}
-          <Link href="/#projects">Projects</Link>
-          <Link href="/#how-it-works">How it works</Link>
-          <Link href="/#leaderboard">Leaderboard</Link>
-          <Link className="nav-cta" href="/projects/new">
+        <nav
+          className={open ? "nav-links nav-links-open" : "nav-links"}
+          id="primary-navigation"
+        >
+          {!isHome ? (
+            <Link href="/" onNavigate={closeMenu}>
+              Home
+            </Link>
+          ) : null}
+          <Link href="/#projects" onNavigate={closeMenu}>
+            Projects
+          </Link>
+          <Link href="/#leaderboard" onNavigate={closeMenu}>
+            Leaderboard
+          </Link>
+          <Link href="/how-it-works" onNavigate={closeMenu}>
+            How it works
+          </Link>
+          <Link href="/receipts" onNavigate={closeMenu}>
+            Receipts
+          </Link>
+          <Link href="/cycles" onNavigate={closeMenu}>
+            Cycles
+          </Link>
+          <Link className="nav-cta" href="/projects/new" onNavigate={closeMenu}>
             Add a project
           </Link>
         </nav>
@@ -515,6 +608,9 @@ function Footer() {
         </div>
         <div className="footer-links">
           <Link href="/#projects">Projects</Link>
+          <Link href="/how-it-works">How scoring works</Link>
+          <Link href="/receipts">Receipts</Link>
+          <Link href="/cycles">Cycle archive</Link>
           <Link href="/projects/new">Add a project</Link>
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
@@ -566,10 +662,55 @@ function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
 }
 
 function TypewriterHeroHeading() {
+  const [index, setIndex] = useState(0);
+  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
+  const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
+    "holding",
+  );
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const target = HERO_ACTIONS[index];
+    let delay = 1;
+    let advance: () => void;
+    if (phase === "holding") {
+      delay = HERO_HOLD_MS;
+      advance = () => setPhase("deleting");
+    } else if (phase === "deleting" && characters > 0) {
+      delay = HERO_DELETE_MS;
+      advance = () => setCharacters((value) => Math.max(0, value - 1));
+    } else if (phase === "deleting") {
+      delay = HERO_GAP_MS;
+      advance = () => {
+        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
+        setPhase("typing");
+      };
+    } else if (characters < target.length) {
+      delay = HERO_TYPE_MS;
+      advance = () => setCharacters((value) => value + 1);
+    } else {
+      advance = () => setPhase("holding");
+    }
+    const timer = window.setTimeout(advance, delay);
+    return () => window.clearTimeout(timer);
+  }, [characters, index, phase]);
+  const action = HERO_ACTIONS[index];
   return (
     <h1 aria-label="MAKE MONEY SHIPPING OPEN SOURCE.">
-      MAKE MONEY
-      <span className="hero-action">SHIPPING OPEN SOURCE.</span>
+      <span aria-hidden="true" className="hero-message">
+        <span>MAKE MONEY</span>
+        <span className="hero-switch">
+          {HERO_ACTIONS.map((candidate) => (
+            <span className="hero-switch-sizer" key={candidate}>
+              {candidate}
+            </span>
+          ))}
+          <span className="hero-typewriter">
+            {action.slice(0, characters)}
+            <span className="hero-typewriter-caret" />
+          </span>
+          <span className="hero-mobile-action">{action}</span>
+        </span>
+      </span>
     </h1>
   );
 }
@@ -590,6 +731,11 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
       </div>
       <div className="project-card-content">
         <p className="project-summary">{project.description}</p>
+        <span className={`funding-kind funding-kind-${project.reward.kind}`}>
+          {project.reward.kind === "monthly-pool"
+            ? "Monthly contributor pool"
+            : "External sponsor prize"}
+        </span>
         <p className="project-bounty">
           <strong>{amount}</strong>
           <span>
@@ -598,6 +744,18 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
               : "external prize"}
           </span>
         </p>
+        <small className="project-money-state">
+          {project.reward.kind === "monthly-pool"
+            ? project.reward.fundingState === "committed"
+              ? "Committed funding · payment state published per cycle"
+              : "Projected cap · funding uncommitted"
+            : "External sponsor controls eligibility and payment"}
+        </small>
+        {project.reward.reviewBudget ? (
+          <small className="project-review-budget">
+            + {reviewBudgetLabel(project.reward.reviewBudget)}
+          </small>
+        ) : null}
       </div>
     </Link>
   );
@@ -634,10 +792,12 @@ function ReviewerLeaderboard({
   caption,
   cycleMonth,
   ledger,
+  reviewBudget,
 }: {
   caption: string;
   cycleMonth: string;
   ledger: readonly ScoreEvent[];
+  reviewBudget?: ProjectDefinition["reward"]["reviewBudget"];
 }) {
   const reviewers = selectReviewerLeaders(ledger);
   return (
@@ -646,8 +806,10 @@ function ReviewerLeaderboard({
         <div>
           <strong>{cycleMonth} · Reviewers</strong>
           <span>
-            Scored reviews of accepted work. Review points currently share the
-            monthly pool with authored work.
+            Scored reviews keep their shared-pool treatment.{" "}
+            {reviewBudget
+              ? `${reviewBudgetLabel(reviewBudget)}.`
+              : "No additive review line is declared."}
           </span>
         </div>
       </div>
@@ -857,7 +1019,9 @@ function GlobalLeaderboard({
                               </Link>
                             </td>
                             <td data-label="Accepted score">
-                              <strong>{leader.score}</strong>
+                              <strong title={`Exact score ${leader.score}`}>
+                                {formatScore(leader.score)}
+                              </strong>
                             </td>
                             <td data-label="Simulated share">
                               <strong>
@@ -873,6 +1037,7 @@ function GlobalLeaderboard({
                     caption={`${selectedView.project.name} ${cycleMonth} reviewer leaderboard`}
                     cycleMonth={cycleMonth}
                     ledger={selectedView.ledger}
+                    reviewBudget={selectedView.project.reward.reviewBudget}
                   />
                   <Link
                     className="leaderboard-project-link"
@@ -942,7 +1107,9 @@ function GlobalLeaderboard({
                         </Link>
                       </td>
                       <td data-label="Accepted score">
-                        <strong>{leader.score}</strong>
+                        <strong title={`Exact score ${leader.score}`}>
+                          {formatScore(leader.score)}
+                        </strong>
                       </td>
                       <td data-label="Paid to date">
                         <strong>
@@ -969,14 +1136,35 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   const communityProjects = PROJECTS.filter(
     (project) => project.listingTier === "community",
   );
+  const latestReceipt =
+    state.status === "ready"
+      ? (state.snapshot.attributions.find((entry) => entry.run !== null)?.run ??
+        null)
+      : null;
+  const latestCycle =
+    state.status === "ready"
+      ? [...state.cycleIndex.cycles].sort(
+          (left, right) =>
+            Date.parse(right.generatedAt) - Date.parse(left.generatedAt),
+        )[0]
+      : undefined;
+  const paidMinor =
+    state.status === "ready"
+      ? state.cycleIndex.cycles.reduce(
+          (total, cycle) => total + BigInt(cycle.reward.paidMinor),
+          0n,
+        )
+      : 0n;
   return (
     <main>
       <section className="hero shell">
         <DataNotice state={state} retry={retry} />
+        <p className="hero-eyebrow">Non-custodial open-source funding</p>
         <TypewriterHeroHeading />
         <p className="hero-copy">
-          Pick valuable public work. Give it to your best coding agent. Ship an
-          accepted result and build a contributor record anyone can verify.
+          Fund a capped monthly pool. Slop scores accepted work from public
+          GitHub evidence and produces an auditable allocation. Project owners
+          sign USDC directly. Slop never holds funds or keys.
         </p>
         <div className="hero-actions">
           <Link className="button primary-button" href="/#projects">
@@ -997,7 +1185,148 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             <strong>03</strong> Build a public record
           </li>
         </ol>
+        {state.status === "ready" ? (
+          <dl className="system-strip">
+            <div>
+              <dt>Accepted events</dt>
+              <dd>{state.snapshot.ledger.length}</dd>
+            </div>
+            <div>
+              <dt>Signed receipts</dt>
+              <dd>
+                {
+                  state.snapshot.attributions.filter((entry) => entry.run)
+                    .length
+                }
+              </dd>
+            </div>
+            <div>
+              <dt>Project pools</dt>
+              <dd>
+                {
+                  PROJECTS.filter(
+                    (project) => project.reward.kind === "monthly-pool",
+                  ).length
+                }
+              </dd>
+            </div>
+            <div>
+              <dt>Verified paid</dt>
+              <dd>{formatMicroUsdc(paidMinor.toString())}</dd>
+            </div>
+          </dl>
+        ) : null}
       </section>
+
+      {state.status === "ready" ? (
+        <section className="section shell proof-object-section">
+          <div className="home-section-heading">
+            <div>
+              <p className="eyebrow">Funny name. Serious receipts.</p>
+              <h2 className="home-section-title">The proof is the product.</h2>
+            </div>
+            <p>
+              Every number names its source, state, and authority. Private trace
+              bodies stay private; only safe receipt metadata is public.
+            </p>
+          </div>
+          <div className="proof-object-grid">
+            <article className="proof-object">
+              <span className="proof-object-kicker">Receipt</span>
+              {latestReceipt ? (
+                <>
+                  <strong>{latestReceipt.runId}</strong>
+                  <dl>
+                    <div>
+                      <dt>Model</dt>
+                      <dd>
+                        {latestReceipt.provider}/{latestReceipt.model}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Client</dt>
+                      <dd>{latestReceipt.client}</dd>
+                    </div>
+                    <div>
+                      <dt>Trace</dt>
+                      <dd>
+                        {latestReceipt.traceUpload
+                          ? "digest verified"
+                          : "unavailable"}
+                      </dd>
+                    </div>
+                  </dl>
+                </>
+              ) : (
+                <p>No publishable signed receipt in this snapshot.</p>
+              )}
+              <Link href="/receipts">
+                Inspect receipts <ArrowRight aria-hidden="true" />
+              </Link>
+            </article>
+            <article className="proof-object">
+              <span className="proof-object-kicker">Pool</span>
+              <strong>
+                {featuredProjects[0]?.reward.monthlyCapDisplay ?? "$0"}
+              </strong>
+              <dl>
+                <div>
+                  <dt>Type</dt>
+                  <dd>Monthly contributor cap</dd>
+                </div>
+                <div>
+                  <dt>Funding</dt>
+                  <dd>Uncommitted</dd>
+                </div>
+                <div>
+                  <dt>Payment</dt>
+                  <dd>Disabled</dd>
+                </div>
+              </dl>
+              <Link href="/#projects">
+                Compare pools <ArrowRight aria-hidden="true" />
+              </Link>
+            </article>
+            <article className="proof-object">
+              <span className="proof-object-kicker">Cycle</span>
+              <strong>
+                {latestCycle
+                  ? `${latestCycle.projectId} · ${latestCycle.cycleId}`
+                  : "No closed cycle"}
+              </strong>
+              <dl>
+                <div>
+                  <dt>State</dt>
+                  <dd>
+                    {latestCycle
+                      ? cycleStateLabel(latestCycle.state)
+                      : "Unavailable"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Suggested</dt>
+                  <dd>
+                    {latestCycle
+                      ? formatMicroUsdc(latestCycle.reward.suggestedMinor)
+                      : "$0"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Paid</dt>
+                  <dd>
+                    {latestCycle
+                      ? formatMicroUsdc(latestCycle.reward.paidMinor)
+                      : "$0"}
+                  </dd>
+                </div>
+              </dl>
+              <Link href="/cycles">
+                Open archive <ArrowRight aria-hidden="true" />
+              </Link>
+            </article>
+          </div>
+        </section>
+      ) : null}
 
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
@@ -1021,6 +1350,43 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             ))}
           </div>
         </section>
+      </section>
+      <section className="section shell audience-section">
+        <div className="home-section-heading">
+          <div>
+            <p className="eyebrow">Choose your lane</p>
+            <h2 className="home-section-title">One ledger. Three jobs.</h2>
+          </div>
+        </div>
+        <div className="audience-grid">
+          <article>
+            <span>Fund</span>
+            <h3>Pay for accepted outcomes.</h3>
+            <p>
+              Commit a capped contributor pool and an optional additive review
+              budget.
+            </p>
+            <Link href="/projects/new">Fund a project</Link>
+          </article>
+          <article>
+            <span>Maintain</span>
+            <h3>Keep GitHub in control.</h3>
+            <p>
+              Review work in the project repository while Slop publishes the
+              record.
+            </p>
+            <Link href="/how-it-works">See the mechanism</Link>
+          </article>
+          <article>
+            <span>Contribute</span>
+            <h3>Ship with any agent.</h3>
+            <p>
+              Use the project skill, disclose the exact model, and land useful
+              work.
+            </p>
+            <Link href="/#projects">Explore projects</Link>
+          </article>
+        </div>
       </section>
       <section className="how-section" id="how-it-works">
         <div className="shell">
@@ -1296,7 +1662,9 @@ function ProjectLeaderboard({
                     </Link>
                   </td>
                   <td>
-                    <strong>{leader.score}</strong>
+                    <strong title={`Exact score ${leader.score}`}>
+                      {formatScore(leader.score)}
+                    </strong>
                     {leader.computeBonusBasisPoints > 0 ? (
                       <small>
                         +{leader.computeBonusBasisPoints / 100}% receipt
@@ -1319,6 +1687,7 @@ function ProjectLeaderboard({
         caption={`${view.project.name} ${formatCycleMonth(view.cycle.id)} reviewer leaderboard`}
         cycleMonth={formatCycleMonth(view.cycle.id)}
         ledger={view.ledger}
+        reviewBudget={view.project.reward.reviewBudget}
       />
     </section>
   );
@@ -1890,6 +2259,11 @@ function ProjectPage({
                   : "10% of an award actually received is allocated to Slop Cash; the remaining 90% is shared among accepted contributors. The prize sponsor controls eligibility and payment."}
               </p>
               <div>
+                {project.reward.reviewBudget ? (
+                  <small>
+                    + {reviewBudgetLabel(project.reward.reviewBudget)}
+                  </small>
+                ) : null}
                 {project.reward.kind === "external-prize-share" ? (
                   <small>No platform pool · no dollar projection</small>
                 ) : null}
@@ -2171,7 +2545,9 @@ function ProfilePage({
                       <small>{view.cycle.id}</small>
                     </span>
                     <span className="profile-project-stat">
-                      <strong>{leader.score} score</strong>
+                      <strong title={`Exact score ${leader.score}`}>
+                        {formatScore(leader.score)} score
+                      </strong>
                       <small>
                         {leader.acceptedOutcomeCount} accepted outcome
                         {leader.acceptedOutcomeCount === 1 ? "" : "s"}
@@ -2311,7 +2687,9 @@ function EventList({
           href={event.evaluation?.decisionUrl ?? event.source.url}
           key={event.id}
         >
-          <span className="event-points">+{event.points}</span>
+          <span className="event-points" title={`Exact points ${event.points}`}>
+            +{formatScore(event.points)}
+          </span>
           <span>
             <strong>{event.source.title}</strong>
             <small>
@@ -2936,6 +3314,7 @@ function ProjectProposalPage() {
   const [goal, setGoal] = useState("");
   const [criteria, setCriteria] = useState("");
   const [monthlyPool, setMonthlyPool] = useState("0");
+  const [monthlyReviewBudget, setMonthlyReviewBudget] = useState("");
   const [solanaFundingAddress, setSolanaFundingAddress] = useState("");
   const [integrationBranch, setIntegrationBranch] = useState("main");
   const [copyrightModel, setCopyrightModel] = useState("unknown");
@@ -2960,6 +3339,8 @@ function ProjectProposalPage() {
   } | null>(null);
   const slug = slugify(name || repository.split("/").at(-1) || "new-project");
   const pool = monthlyPoolValue(monthlyPool);
+  const reviewBudget = monthlyPoolValue(monthlyReviewBudget);
+  const includesReviewBudget = monthlyReviewBudget.trim().length > 0;
   const manifest = useMemo(
     () => ({
       schemaVersion: "1",
@@ -3080,6 +3461,18 @@ function ProjectProposalPage() {
         feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
         unusedFunds: "rollover-without-cap-increase",
         fundingState: "pledged",
+        ...(includesReviewBudget
+          ? {
+              reviewBudget: {
+                monthlyCapMinor: reviewBudget.minor,
+                monthlyCapDisplay: reviewBudget.display,
+                committedMinor: "0",
+                paymentMode: "disabled",
+                unusedFunds: "rollover-without-cap-increase",
+                fundingState: "pledged",
+              },
+            }
+          : {}),
       },
       funding: {
         mode: "direct-noncustodial",
@@ -3137,6 +3530,9 @@ function ProjectProposalPage() {
       name,
       pool.display,
       pool.minor,
+      includesReviewBudget,
+      reviewBudget.display,
+      reviewBudget.minor,
       repository,
       slug,
       solanaFundingAddress,
@@ -3158,7 +3554,7 @@ Operating rules:
 - Fetch origin and branch from current develop. Confirm no overlapping project proposal, open an issue for the work, use a scoped feature branch, and open a pull request into develop. Never push directly to develop, self-approve, self-merge, or claim the project is active before independent review, merge, deployment, and live verification.
 - Read AGENTS.md, README.md, projects/${ROOT_PUBLISHED_TEMPLATE.id}/project.json, ${ROOT_PUBLISHED_TEMPLATE.skill.sourcePath}, and ${ROOT_PUBLISHED_TEMPLATE.reviewSkill.sourcePath} before editing. Adapt the mission and repository instructions; do not copy template-project-specific work criteria.
 - Validate immutable GitHub actor and repository IDs through the API. Record .github/slop-project.json repository proof, license facts, and inbound terms when available, and publish unknown values explicitly when they are not. Missing authority or terms never blocks contribution; do not fabricate them.
-- Do not infer creator, steward, intellectual-property, wallet, funding, or payout authority from a repository URL or proposal text. Leave payouts disabled and treat the monthly pool as an uncommitted proposal unless separately reviewed authority proves otherwise. Payment never transfers IP.
+- Do not infer creator, steward, intellectual-property, wallet, funding, or payout authority from a repository URL or proposal text. Leave payouts disabled and treat the monthly pool and optional additive review line as uncommitted proposals unless separately reviewed authority proves otherwise. The review line never replaces review events' existing shared-pool treatment. Payment never transfers IP.
 - Add projects/${slug}/project.json from the candidate manifest, a project-specific contributor skill with authenticated atomic update and signed usage receipts, a separate adversarial CI reviewer skill, and focused failure-path tests. Allow every model while requiring exact provider, model, and client disclosure.
 - Use only the existing authenticated operator-private trace path. If it is unavailable, stop and report the blocker; never publish private traces or invent an unauthenticated substitute.
 - Run projects:check, evaluations:check, every skill validator, live leaderboard generation, typecheck, lint, unit tests, production build, and desktop/mobile browser tests. Attach exact command and artifact receipts to the PR.
@@ -3182,6 +3578,8 @@ ${manifestText}`;
     boundedText(goal, 24, 600) &&
     boundedText(criteria, 6, 1_000) &&
     pool.valid &&
+    (!includesReviewBudget ||
+      (reviewBudget.valid && BigInt(reviewBudget.minor) > 0n)) &&
     (solanaFundingAddress === "" ||
       isFundingAddress("solana", solanaFundingAddress)) &&
     repositoryNumericId.length <= 40 &&
@@ -3550,6 +3948,24 @@ ${manifestText}`;
             />
           </label>
           <label>
+            Additive monthly review budget, digital dollars (optional)
+            <input
+              inputMode="decimal"
+              max="1000000000"
+              min="0.01"
+              onChange={(event) => setMonthlyReviewBudget(event.target.value)}
+              placeholder="50.00"
+              step="0.01"
+              type="number"
+              value={monthlyReviewBudget}
+            />
+            <small>
+              A second cash line for accepted reviews. It pays on top of the
+              unchanged shared pool and remains pledged until its own funding
+              evidence is reviewed.
+            </small>
+          </label>
+          <label>
             Project-controlled Solana USDC address (optional)
             <input
               autoComplete="off"
@@ -3636,6 +4052,270 @@ ${manifestText}`;
   );
 }
 
+function HowItWorksPage() {
+  return (
+    <main className="shell evidence-page">
+      <section className="evidence-page-hero">
+        <p className="eyebrow">How scoring works</p>
+        <h1>Accepted work in. Auditable allocations out.</h1>
+        <p>
+          GitHub is the work and review authority. Slop turns accepted public
+          evidence into a deterministic score and a reviewable allocation; it
+          never pays for agent activity by itself.
+        </p>
+      </section>
+      <ol className="mechanism-flow" aria-label="Slop funding mechanism">
+        <li>
+          <strong>01 · Bound the work</strong>
+          <p>
+            Projects publish repository authority, policy, a contributor skill,
+            and a live unblocked queue.
+          </p>
+        </li>
+        <li>
+          <strong>02 · Accept the outcome</strong>
+          <p>
+            Maintainers decide what lands. Token volume and open pull requests
+            do not score by themselves.
+          </p>
+        </li>
+        <li>
+          <strong>03 · Verify the receipt</strong>
+          <p>
+            The public marker binds provider, model, client, policy, device
+            signature, and the safe digest of the private trace.
+          </p>
+        </li>
+        <li>
+          <strong>04 · Apply the rule</strong>
+          <p>
+            Accepted events allocate the shared pool. A committed review budget
+            is additive and can never replace existing reviewer treatment.
+          </p>
+        </li>
+        <li>
+          <strong>05 · Review the cycle</strong>
+          <p>
+            Every proposal has a 14-day public review state. Adjustments require
+            reasons and remain in history.
+          </p>
+        </li>
+        <li>
+          <strong>06 · Prove payment</strong>
+          <p>
+            Paid means finalized on-chain deltas reconcile every immutable
+            intent and fee.
+          </p>
+        </li>
+      </ol>
+      <section className="worked-example">
+        <div>
+          <p className="eyebrow">Worked example</p>
+          <h2>One reproducible allocation.</h2>
+          <p>
+            If one contributor has 10 accepted score units out of 25, their
+            projected share is 40%. On a $10,000 cap that displays as $4,000.
+            The exact integer weights and source event IDs remain inspectable.
+          </p>
+        </div>
+        <dl className="equation-card">
+          <div>
+            <dt>Contributor pool</dt>
+            <dd>$10,000 cap</dd>
+          </div>
+          <div>
+            <dt>Accepted weight</dt>
+            <dd>10 / 25</dd>
+          </div>
+          <div>
+            <dt>Projected share</dt>
+            <dd>$4,000</dd>
+          </div>
+          <div>
+            <dt>Precision</dt>
+            <dd>integer micro-USDC</dd>
+          </div>
+        </dl>
+      </section>
+      <section className="custody-proof">
+        <p className="eyebrow">Non-custodial by construction</p>
+        <h2>What Slop never holds.</h2>
+        <ul>
+          <li>No contributor or project private keys.</li>
+          <li>No treasury, escrow, or platform token.</li>
+          <li>No authority to sign or broadcast payments.</li>
+          <li>No paid claim without finalized public evidence.</li>
+        </ul>
+      </section>
+    </main>
+  );
+}
+
+function ReceiptsPage({
+  state,
+  retry,
+}: {
+  state: DataState;
+  retry: () => void;
+}) {
+  const receipts =
+    state.status === "ready"
+      ? state.snapshot.attributions
+          .filter((entry) => entry.run !== null)
+          .sort((left, right) =>
+            (right.run?.completedAt ?? "").localeCompare(
+              left.run?.completedAt ?? "",
+            ),
+          )
+      : [];
+  return (
+    <main className="shell evidence-page">
+      <section className="evidence-page-hero">
+        <p className="eyebrow">Receipt inspector</p>
+        <h1>Signed runs, without the private trace.</h1>
+        <p>
+          Public receipts show identity and byte-continuity metadata. Raw
+          prompts, responses, source files, private trace bodies, and signing
+          material never appear here.
+        </p>
+        <DataNotice retry={retry} state={state} />
+      </section>
+      {state.status === "ready" && receipts.length === 0 ? (
+        <EmptyState text="No publishable signed receipts in this snapshot." />
+      ) : null}
+      <div className="receipt-grid">
+        {receipts.map((entry) => {
+          const run = entry.run;
+          if (!run) return null;
+          return (
+            <article className="receipt-card" key={run.runId}>
+              <header>
+                <span
+                  className="verification-seal"
+                  aria-label="Device signature present"
+                  role="img"
+                >
+                  S
+                </span>
+                <div>
+                  <span>Verified receipt</span>
+                  <strong>{run.runId}</strong>
+                </div>
+              </header>
+              <dl>
+                <div>
+                  <dt>Project</dt>
+                  <dd>{run.projectId}</dd>
+                </div>
+                <div>
+                  <dt>Model</dt>
+                  <dd>
+                    {run.provider}/{run.model}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Client</dt>
+                  <dd>{run.client}</dd>
+                </div>
+                <div>
+                  <dt>Completed</dt>
+                  <dd>{formatDate(run.completedAt)}</dd>
+                </div>
+                <div>
+                  <dt>Tokens</dt>
+                  <dd>
+                    {new Intl.NumberFormat("en-US").format(
+                      run.usage.totalTokens,
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Device key</dt>
+                  <dd>
+                    <code>{run.deviceKeyId.slice(0, 16)}…</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Private trace</dt>
+                  <dd>
+                    {run.traceUpload ? (
+                      <code>{run.traceUpload.sha256.slice(0, 16)}…</code>
+                    ) : (
+                      "not available"
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            </article>
+          );
+        })}
+      </div>
+    </main>
+  );
+}
+
+function CycleArchivePage({
+  state,
+  retry,
+}: {
+  state: DataState;
+  retry: () => void;
+}) {
+  const cycles =
+    state.status === "ready"
+      ? [...state.cycleIndex.cycles].sort((left, right) =>
+          right.cycleId.localeCompare(left.cycleId),
+        )
+      : [];
+  return (
+    <main className="shell evidence-page">
+      <section className="evidence-page-hero">
+        <p className="eyebrow">Permanent cycle archive</p>
+        <h1>Every pool gets a dated public record.</h1>
+        <p>
+          Proposed is not approved. Approved is not paid. Each cycle keeps its
+          source snapshot, state, allocation, and settlement evidence distinct.
+        </p>
+        <DataNotice retry={retry} state={state} />
+      </section>
+      <div className="cycle-archive-list">
+        {cycles.map((cycle) => (
+          <article
+            className="cycle-archive-card"
+            key={`${cycle.projectId}-${cycle.cycleId}`}
+          >
+            <div>
+              <span>{cycle.projectId}</span>
+              <h2>{formatCycleMonth(cycle.cycleId)}</h2>
+            </div>
+            <dl>
+              <div>
+                <dt>State</dt>
+                <dd>{cycleStateLabel(cycle.state)}</dd>
+              </div>
+              <div>
+                <dt>Suggested</dt>
+                <dd>{formatMicroUsdc(cycle.reward.suggestedMinor)}</dd>
+              </div>
+              <div>
+                <dt>Approved</dt>
+                <dd>{formatMicroUsdc(cycle.reward.approvedMinor)}</dd>
+              </div>
+              <div>
+                <dt>Paid</dt>
+                <dd>{formatMicroUsdc(cycle.reward.paidMinor)}</dd>
+              </div>
+            </dl>
+            <Link href={`/cycles/${cycle.projectId}/${cycle.cycleId}`}>
+              Inspect cycle <ArrowRight aria-hidden="true" />
+            </Link>
+          </article>
+        ))}
+      </div>
+    </main>
+  );
+}
+
 function NotFound({ title = "Page not found" }: { title?: string }) {
   return (
     <main className="shell not-found">
@@ -3652,6 +4332,11 @@ export function App() {
   const [state, retry] = useSnapshot();
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
+  else if (route.kind === "how-it-works") content = <HowItWorksPage />;
+  else if (route.kind === "receipts")
+    content = <ReceiptsPage retry={retry} state={state} />;
+  else if (route.kind === "cycle-archive")
+    content = <CycleArchivePage retry={retry} state={state} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
   else if (route.kind === "manage-project") {
     const project = findProject(route.projectId ?? "");

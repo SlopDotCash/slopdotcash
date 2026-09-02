@@ -4,8 +4,8 @@
   "description": "Make money shipping open source.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f4efe4",
-  "theme_color": "#f4efe4",
+  "background_color": "#f6f2e8",
+  "theme_color": "#f6f2e8",
   "icons": [
     {
       "src": "/slop-mark-192.png",

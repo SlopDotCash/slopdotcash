@@ -168,6 +168,10 @@ Monthly allocations use integer USDC micro-units and largest remainder. The 1%
 fee applies to approved principal only. Never use floats for money or let
 rollover increase a later monthly cap.
 
+A review budget is an optional additive cash line. Review events remain in the
+shared pool unchanged; a committed review line may pay them only on top of that
+treatment, with separate public arithmetic and evidence.
+
 Proposal review lasts 14 days. Project owners may adjust awards within the cap
 with a public reason. Wallet changes append a successor and reset review;
 history is never edited. Missing wallets remain unclaimed. Related-party money

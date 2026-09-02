@@ -22,6 +22,7 @@ import {
   ProjectManagePage,
   publicFooterDomain,
   readBoundedJson,
+  reviewBudgetLabel,
   rootPublishedTemplateProject,
   safeProposalHttpsUrl,
 } from "../src/App";
@@ -44,6 +45,31 @@ describe("public footer domain", () => {
     expect(publicFooterDomain("www.slop.tech")).toBe("slop.tech");
     expect(publicFooterDomain("attacker.slop.tech")).toBe("slop.cash");
     expect(publicFooterDomain("127.0.0.1")).toBe("slop.cash");
+  });
+});
+
+describe("review budget display", () => {
+  it("distinguishes the committed amount from the monthly cap", () => {
+    expect(
+      reviewBudgetLabel({
+        monthlyCapMinor: "50000000",
+        monthlyCapDisplay: "$50",
+        committedMinor: "1000000",
+        paymentMode: "enabled",
+        unusedFunds: "rollover-without-cap-increase",
+        fundingState: "committed",
+      }),
+    ).toBe("$1 committed of $50 cap · additive review line");
+    expect(
+      reviewBudgetLabel({
+        monthlyCapMinor: "50000000",
+        monthlyCapDisplay: "$50",
+        committedMinor: "0",
+        paymentMode: "disabled",
+        unusedFunds: "rollover-without-cap-increase",
+        fundingState: "pledged",
+      }),
+    ).toBe("$50 cap · additive review line · uncommitted pledge");
   });
 });
 
@@ -303,6 +329,59 @@ afterEach(() => {
 });
 
 describe("discovery", () => {
+  it("types through the campaign headlines without changing the semantic heading", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      screen.getByRole("heading", {
+        name: "MAKE MONEY SHIPPING OPEN SOURCE.",
+      }),
+    ).toBeInTheDocument();
+    const visibleAction = () =>
+      document.querySelector(".hero-typewriter")?.textContent ?? "";
+    expect(visibleAction()).toBe("SHIPPING OPEN SOURCE.");
+
+    for (const action of [
+      "SECURING THE WEB.",
+      "HACKING THE PLANET.",
+      "BUILDING AGI.",
+      "SHIPPING OPEN SOURCE.",
+    ]) {
+      let attempts = 0;
+      while (visibleAction() !== action && attempts < 100) {
+        act(() => vi.advanceTimersToNextTimer());
+        attempts += 1;
+      }
+      expect(visibleAction()).toBe(action);
+      expect(
+        screen.getByRole("heading", {
+          name: "MAKE MONEY SHIPPING OPEN SOURCE.",
+        }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("keeps the first campaign headline fixed when reduced motion is requested", () => {
+    vi.useFakeTimers();
+    mockSnapshot();
+    render(<App />);
+
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(document.querySelector(".hero-typewriter")).toHaveTextContent(
+      "SHIPPING OPEN SOURCE.",
+    );
+  });
+
   it("keeps loading separate from empty and error states", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(
       (_input, init) =>
@@ -1160,6 +1239,23 @@ describe("public records", () => {
   });
 });
 
+describe("public proof routes", () => {
+  it.each([
+    ["/how-it-works", "Accepted work in. Auditable allocations out."],
+    ["/receipts", "Signed runs, without the private trace."],
+    ["/cycles", "Every pool gets a dated public record."],
+  ])("renders %s as a branded route", async (path, heading) => {
+    route(path);
+    mockSnapshot();
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: heading }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Slop home" })).toBeVisible();
+  });
+});
+
 describe("project proposals", () => {
   function fillAuthorityDraft() {
     fireEvent.change(screen.getByLabelText("GitHub repository numeric ID"), {
@@ -1224,6 +1320,10 @@ describe("project proposals", () => {
       },
     );
     fireEvent.change(
+      screen.getByLabelText(/^Additive monthly review budget/u),
+      { target: { value: "50" } },
+    );
+    fireEvent.change(
       screen.getByLabelText(
         "Project-controlled Solana USDC address (optional)",
       ),
@@ -1247,6 +1347,10 @@ describe("project proposals", () => {
     ).not.toThrow();
     expect(
       screen.getByText(/"monthlyCapMinor": "2500000000"/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/"reviewBudget"/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/"monthlyCapMinor": "50000000"/),
     ).toBeInTheDocument();
     expect(screen.getByText(/"mode": "open-declared"/)).toBeInTheDocument();
     expect(
@@ -1276,6 +1380,7 @@ describe("project proposals", () => {
     expect(agentBrief).toContain("Do not infer creator, steward");
     expect(agentBrief).toContain(".github/slop-project.json");
     expect(agentBrief).toContain("Leave payouts disabled");
+    expect(agentBrief).toContain("never replaces review events");
     const template = rootPublishedTemplateProject();
     expect(agentBrief).toContain(
       `projects/${template.id}/project.json, ${template.skill.sourcePath}, and ${template.reviewSkill.sourcePath}`,
