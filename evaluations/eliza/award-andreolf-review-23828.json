@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_andreolf_review_23828",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "MDQ6VXNlcjE1MTc0NzY0",
+    "login": "andreolf",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/15174764?v=4",
+    "url": "https://github.com/andreolf",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-21T16:34:40.000Z",
+  "points": 8,
+  "source": {
+    "id": "PRR_kwDOMT5cIs8AAAABKb_6OQ",
+    "kind": "review",
+    "number": 23828,
+    "title": "fix(plugin-cli-inference): bound prompt flattening against hostile tool payloads",
+    "url": "https://github.com/elizaOS/eliza/pull/23828#pullrequestreview-4995414585"
+  },
+  "reason": "The post-merge review independently demonstrated that the new bounded prompt-flatten walker left its character budget unenforced on JSON projections, allowed shared-subtree output amplification into argv-sized prompts, silently dropped own __proto__ data, and introduced silent-loss and uncaught-throw regressions. A second reviewer execution-verified the findings against the exact landed bytes, the residue became issue #23885 with explicit credit to this review, and merged #24134 replaced the lossy budget-marker design with complete serialization plus explicit cycle and accessor rejection and file/stdin transport.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-08-30T19:02:45.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/304"
+  }
+}

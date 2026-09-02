@@ -68,6 +68,9 @@ import { formatThirds, selectReviewerLeaders } from "./lib/reviewer-leaders";
 import { feeForPrincipal, PLATFORM_FEE_BASIS_POINTS } from "./lib/rewards";
 
 const SOURCE_REPOSITORY = "https://github.com/SlopDotCash/slopdotcash";
+const SOCIAL_X = "https://x.com/SlopCash";
+const SOCIAL_LINKEDIN = "https://www.linkedin.com/company/slop-cash";
+const SOCIAL_TELEGRAM = "https://t.me/slopcashofficial";
 const PROJECT_PROPOSAL_ROOT = `${SOURCE_REPOSITORY}/new/develop`;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const FUNDING_TIMEOUT_MS = 12_000;
@@ -513,6 +516,13 @@ function Footer() {
           <Link href="/projects/new">Add a project</Link>
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
+          </ExternalLinkAnchor>
+          <ExternalLinkAnchor href={SOCIAL_X}>X</ExternalLinkAnchor>
+          <ExternalLinkAnchor href={SOCIAL_LINKEDIN}>
+            LinkedIn
+          </ExternalLinkAnchor>
+          <ExternalLinkAnchor href={SOCIAL_TELEGRAM}>
+            Telegram
           </ExternalLinkAnchor>
         </div>
         <p className="footer-fine">
@@ -2330,6 +2340,7 @@ function CyclePage({
         ? "external-prize-share"
         : "monthly-pool"),
     now: new Date().toISOString(),
+    paymentMode: project.reward.paymentMode,
     settledAt: record?.settledAt ?? null,
     state: record?.state ?? (view?.cycle.status === "live" ? "live" : "review"),
   });

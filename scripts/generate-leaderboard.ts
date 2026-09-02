@@ -2699,6 +2699,53 @@ export function assertReviewCensusStable(
   }
 }
 
+/**
+ * Re-checks only pull requests that changed between the scalar census and
+ * detail hydration. A comment or other unrelated PR update advances
+ * `updatedAt`; when the freshly hydrated formal-review set and an immediate
+ * scalar re-read agree, the detail is a complete current snapshot and the
+ * global closing census can safely use the refreshed checkpoint.
+ */
+export async function reconcileHydratedReviewCensus(
+  client: GraphqlExecutor,
+  reviewCounts: Map<string, ReviewCensusEntry>,
+  pullRequests: ReadonlyArray<
+    Pick<MergedPullRequestReviewRecord, "id" | "reviews" | "updatedAt">
+  >,
+): Promise<void> {
+  const changed = pullRequests.filter((pullRequest) => {
+    const census = reviewCounts.get(pullRequest.id);
+    if (census === undefined) {
+      throw new Error(
+        `Review census missing ${pullRequest.id} before detail reconciliation`,
+      );
+    }
+    return (
+      formalDecisionReviewCount(pullRequest.reviews) !== census.reviewCount ||
+      pullRequest.updatedAt !== census.updatedAt
+    );
+  });
+  if (changed.length === 0) return;
+
+  const refreshed = await collectPullRequestReviewCounts(
+    client,
+    changed.map(({ id }) => ({ id })),
+  );
+  for (const pullRequest of changed) {
+    const current = refreshed.get(pullRequest.id);
+    if (
+      current === undefined ||
+      formalDecisionReviewCount(pullRequest.reviews) !== current.reviewCount ||
+      pullRequest.updatedAt !== current.updatedAt
+    ) {
+      throw new Error(
+        `Review census changed for ${pullRequest.id} during detail hydration`,
+      );
+    }
+    reviewCounts.set(pullRequest.id, current);
+  }
+}
+
 async function collectOpenIssues(
   client: GraphqlExecutor,
   targetRepository: TargetRepository,
@@ -3294,22 +3341,10 @@ export async function generateLeaderboardFromGitHub(
       reviewedReferences,
       onProgress,
     );
-    for (const pullRequest of [
+    await reconcileHydratedReviewCensus(client, hydrationPlan.reviewCounts, [
       ...detailedPullRequests,
       ...reviewedPullRequests,
-    ]) {
-      const censusCount = hydrationPlan.reviewCounts.get(pullRequest.id);
-      if (
-        censusCount === undefined ||
-        formalDecisionReviewCount(pullRequest.reviews) !==
-          censusCount.reviewCount ||
-        pullRequest.updatedAt !== censusCount.updatedAt
-      ) {
-        throw new Error(
-          `Review census changed for ${pullRequest.id} during detail hydration`,
-        );
-      }
-    }
+    ]);
     mergedPullRequests.push(...detailedPullRequests);
     reviewedMergedPullRequests.push(...reviewedPullRequests);
 
