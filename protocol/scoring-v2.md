@@ -65,7 +65,11 @@ private trace. Maintainers remain the sole scoring authority.
 ## Evidence bonuses
 
 A valid signed receipt with an outcome-matched finalized private trace adds a
-fixed 15% weight. Usage evidence remains diagnostic: token volume, confidence,
+fixed 15% weight. This applies equally to an ordinary qualifying formal review
+when its exact review source carries the same actor's valid receipt and the
+receipt is bound to the reviewed repository. A missing or invalid receipt
+removes only the bonus; it does not remove otherwise valid base review credit.
+Usage evidence remains diagnostic: token volume, confidence,
 cost, lines, commits, and account count never change score, rank, reward share,
 or payment. Missing pre-activation August traces do not reduce base credit. Runs
 after a project's receipt cutover must satisfy its active receipt policy or

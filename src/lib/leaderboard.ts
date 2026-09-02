@@ -3547,12 +3547,29 @@ export function createLeaderboardSnapshot(
           `Qualifying review ${review.id} is missing its submitted timestamp`,
         );
       }
+      const reviewSource = sources.find(
+        (candidate) => candidate.id === review.id,
+      );
+      const reviewReceipt =
+        reviewSource && input.verifyRunReceipt
+          ? assessModelAttribution([reviewSource], {
+              requireEverySource: true,
+              verifyRunReceipt: input.verifyRunReceipt,
+            }).declarations.find(
+              (declaration) =>
+                declaration.sourceId === review.id &&
+                declaration.actor?.id === review.author?.id,
+            )?.run
+          : null;
       awardedReviewers.add(review.author.id);
       const scored = addScore(entries, ledger, {
         id: `${pullRequest.id}:reviewer:${review.author.id}`,
         actor: review.author,
         category: "substantive-review",
         points: 3,
+        ...(reviewReceipt?.traceUpload
+          ? { evidenceBonusBasisPoints: 1_500 as const }
+          : {}),
         occurredAt: review.submittedAt,
         repository: repositoryIdFromUrl(review.url),
         source: {
@@ -3566,9 +3583,8 @@ export function createLeaderboardSnapshot(
           "First qualifying substantive, non-self review submitted before merge.",
       });
       if (scored) {
-        const source = sources.find((candidate) => candidate.id === review.id);
-        if (source) {
-          recordScoredSources([source]);
+        if (reviewSource) {
+          recordScoredSources([reviewSource]);
         }
       } else {
         excludeReview(pullRequest, review, "reviewer-cycle-cap");
