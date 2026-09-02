@@ -75,6 +75,18 @@ export interface CycleIndexEntry {
     paidMinor: string;
     feeMinor: string;
     sharePartsPerMillion: number | null;
+    lines?: {
+      sharedPool: {
+        suggestedMinor: string;
+        approvedMinor: string;
+        paidMinor: string;
+      };
+      reviewBudget: {
+        suggestedMinor: string;
+        approvedMinor: string;
+        paidMinor: string;
+      };
+    };
   };
   contributors: Array<{
     actor: { id: string; login: string };
@@ -93,6 +105,18 @@ export interface CycleIndexEntry {
     paidMinor: string;
     sharePartsPerMillion: number | null;
     wallet: CycleWalletProof | null;
+    lines?: {
+      sharedPool: {
+        suggestedMinor: string;
+        approvedMinor: string;
+        paidMinor: string;
+      };
+      reviewBudget: {
+        suggestedMinor: string;
+        approvedMinor: string;
+        paidMinor: string;
+      };
+    };
   }>;
   files: {
     sourceSnapshot: CycleFileReference;
@@ -186,6 +210,32 @@ function nullableFileReference(
   expectedUrl: string,
 ): CycleFileReference | null {
   return value === null ? null : fileReference(value, field, expectedUrl);
+}
+
+function cycleMoneyLines(value: unknown, field: string) {
+  const lines = record(value, field);
+  exact(lines, ["reviewBudget", "sharedPool"], field);
+  const parseLine = (value: unknown, lineField: string) => {
+    const line = record(value, lineField);
+    exact(line, ["approvedMinor", "paidMinor", "suggestedMinor"], lineField);
+    const suggestedMinor = minor(
+      line.suggestedMinor,
+      `${lineField}.suggestedMinor`,
+    );
+    const approvedMinor = minor(
+      line.approvedMinor,
+      `${lineField}.approvedMinor`,
+    );
+    const paidMinor = minor(line.paidMinor, `${lineField}.paidMinor`);
+    if (BigInt(paidMinor) > BigInt(approvedMinor)) {
+      throw new TypeError(`${lineField} money totals do not reconcile`);
+    }
+    return { suggestedMinor, approvedMinor, paidMinor };
+  };
+  return {
+    sharedPool: parseLine(lines.sharedPool, `${field}.sharedPool`),
+    reviewBudget: parseLine(lines.reviewBudget, `${field}.reviewBudget`),
+  };
 }
 
 function contributorWallet(
@@ -417,6 +467,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     throw new TypeError(`${field}.contributionWindow is invalid`);
   }
   const reward = record(entry.reward, `${field}.reward`);
+  const hasRewardLines = "lines" in reward;
   exact(
     reward,
     [
@@ -427,6 +478,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       "paidMinor",
       "sharePartsPerMillion",
       "suggestedMinor",
+      ...(hasRewardLines ? ["lines"] : []),
     ],
     `${field}.reward`,
   );
@@ -453,10 +505,33 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     paidMinor: minor(reward.paidMinor, `${field}.reward.paidMinor`),
     feeMinor: minor(reward.feeMinor, `${field}.reward.feeMinor`),
     sharePartsPerMillion: share === null ? null : Number(share),
+    ...(hasRewardLines
+      ? {
+          lines: cycleMoneyLines(reward.lines, `${field}.reward.lines`),
+        }
+      : {}),
   };
   if (
-    BigInt(normalizedReward.approvedMinor) >
-      BigInt(normalizedReward.capMinor) ||
+    normalizedReward.lines &&
+    (BigInt(normalizedReward.lines.sharedPool.suggestedMinor) +
+      BigInt(normalizedReward.lines.reviewBudget.suggestedMinor) !==
+      BigInt(normalizedReward.suggestedMinor) ||
+      BigInt(normalizedReward.lines.sharedPool.approvedMinor) +
+        BigInt(normalizedReward.lines.reviewBudget.approvedMinor) !==
+        BigInt(normalizedReward.approvedMinor) ||
+      BigInt(normalizedReward.lines.sharedPool.paidMinor) +
+        BigInt(normalizedReward.lines.reviewBudget.paidMinor) !==
+        BigInt(normalizedReward.paidMinor))
+  ) {
+    throw new TypeError(`${field}.reward lines do not reconcile`);
+  }
+  if (
+    (!normalizedReward.lines &&
+      BigInt(normalizedReward.approvedMinor) >
+        BigInt(normalizedReward.capMinor)) ||
+    (normalizedReward.lines &&
+      BigInt(normalizedReward.lines.sharedPool.approvedMinor) >
+        BigInt(normalizedReward.capMinor)) ||
     BigInt(normalizedReward.paidMinor) > BigInt(normalizedReward.approvedMinor)
   ) {
     throw new TypeError(`${field}.reward money totals do not reconcile`);
@@ -477,6 +552,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   const contributors = entry.contributors.map((value, contributorIndex) => {
     const contributorField = `${field}.contributors[${contributorIndex}]`;
     const contributor = record(value, contributorField);
+    const hasLines = "lines" in contributor;
     exact(
       contributor,
       [
@@ -488,6 +564,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
         "state",
         "suggestedMinor",
         "wallet",
+        ...(hasLines ? ["lines"] : []),
       ],
       contributorField,
     );
@@ -549,6 +626,23 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     if (BigInt(paidMinor) > BigInt(approvedMinor)) {
       throw new TypeError(`${contributorField} money totals do not reconcile`);
     }
+    const lines = hasLines
+      ? cycleMoneyLines(contributor.lines, `${contributorField}.lines`)
+      : undefined;
+    if (
+      lines &&
+      (BigInt(lines.sharedPool.suggestedMinor) +
+        BigInt(lines.reviewBudget.suggestedMinor) !==
+        BigInt(suggestedMinor) ||
+        BigInt(lines.sharedPool.approvedMinor) +
+          BigInt(lines.reviewBudget.approvedMinor) !==
+          BigInt(approvedMinor) ||
+        BigInt(lines.sharedPool.paidMinor) +
+          BigInt(lines.reviewBudget.paidMinor) !==
+          BigInt(paidMinor))
+    ) {
+      throw new TypeError(`${contributorField}.lines do not reconcile`);
+    }
     return {
       actor: { id: actorId, login },
       score: Number(contributor.score),
@@ -558,6 +652,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       paidMinor,
       sharePartsPerMillion: share === null ? null : Number(share),
       wallet,
+      ...(lines ? { lines } : {}),
     };
   });
   if (
@@ -565,6 +660,16 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     contributors.length
   ) {
     throw new TypeError(`${field}.contributors repeats an actor`);
+  }
+  if (
+    (normalizedReward.lines &&
+      !contributors.every((contributor) => Boolean(contributor.lines))) ||
+    (!normalizedReward.lines &&
+      contributors.some((contributor) => Boolean(contributor.lines)))
+  ) {
+    throw new TypeError(
+      `${field}.reward and contributor line-item accounting differ`,
+    );
   }
   const contributorTotals = contributors.reduce(
     (totals, contributor) => ({

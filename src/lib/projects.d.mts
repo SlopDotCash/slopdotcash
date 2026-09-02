@@ -21,6 +21,7 @@ export interface ProjectFundingPolicy {
 }
 
 export interface ProjectReviewBudgetPolicy {
+  readonly effectiveAt: string;
   readonly monthlyCapMinor: string;
   readonly monthlyCapDisplay: string;
   readonly committedMinor: string;

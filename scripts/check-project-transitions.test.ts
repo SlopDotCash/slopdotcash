@@ -109,6 +109,7 @@ describe("project transition gate", () => {
     const withPledgedReview = structuredClone(eliza) as typeof eliza & {
       reward: typeof eliza.reward & {
         reviewBudget: {
+          effectiveAt: string;
           monthlyCapMinor: string;
           monthlyCapDisplay: string;
           committedMinor: string;
@@ -119,6 +120,7 @@ describe("project transition gate", () => {
       };
     };
     withPledgedReview.reward.reviewBudget = {
+      effectiveAt: "2026-10-01T00:00:00.000Z",
       monthlyCapMinor: "50000000",
       monthlyCapDisplay: "$50",
       committedMinor: "0",
@@ -135,8 +137,22 @@ describe("project transition gate", () => {
     ).toThrow(/review budget.*reducing the contributor pool cap/u);
 
     expect(
-      validateProjectTransitions([entry(eliza)], [entry(withPledgedReview)]),
+      validateProjectTransitions(
+        [entry(eliza)],
+        [entry(withPledgedReview)],
+        Date.parse("2026-09-02T00:00:00.000Z"),
+      ),
     ).toEqual({ previous: 1, current: 1 });
+
+    const retroactive = structuredClone(withPledgedReview);
+    retroactive.reward.reviewBudget.effectiveAt = "2026-09-01T00:00:00.000Z";
+    expect(() =>
+      validateProjectTransitions(
+        [entry(eliza)],
+        [entry(retroactive)],
+        Date.parse("2026-09-02T00:00:00.000Z"),
+      ),
+    ).toThrow(/open or past cycle/u);
 
     const funded = structuredClone(withPledgedReview);
     funded.reward.paymentMode = "enabled";
@@ -166,7 +182,11 @@ describe("project transition gate", () => {
       },
     ];
     expect(() =>
-      validateProjectTransitions([entry(withPledgedReview)], [entry(funded)]),
+      validateProjectTransitions(
+        [entry(withPledgedReview)],
+        [entry(funded)],
+        Date.parse("2026-09-02T00:00:00.000Z"),
+      ),
     ).toThrow(/review budget.*reducing the contributor pool cap/u);
   });
 });

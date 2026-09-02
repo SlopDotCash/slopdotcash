@@ -66,6 +66,44 @@ function allocationManifest() {
 }
 
 describe("reward manifests", () => {
+  it("rejects an additive review line until its project funding is committed", () => {
+    const manifest = allocationManifest() as unknown as Record<
+      string,
+      unknown
+    > & { allocations: Array<Record<string, unknown>> };
+    manifest.allocations[0].suggestedMinor = "2000000";
+    manifest.allocations[0].approvedMinor = "2000000";
+    manifest.allocations[0].lines = {
+      sharedPool: { suggestedMinor: "2000000", approvedMinor: "2000000" },
+      reviewBudget: {
+        suggestedMinor: "0",
+        approvedMinor: "0",
+        evidenceEventIds: [],
+      },
+    };
+    manifest.rewardLines = {
+      sharedPool: {
+        capMinor: "10000000000",
+        suggestedMinor: "2000000",
+        approvedMinor: "2000000",
+      },
+      reviewBudget: {
+        capMinor: "500000",
+        committedMinor: "500000",
+        suggestedMinor: "0",
+        approvedMinor: "0",
+      },
+    };
+    manifest.totals = {
+      suggestedMinor: "2000000",
+      approvedMinor: "2000000",
+      feeMinor: "20000",
+    };
+    expect(() => assertRewardAllocationManifest(manifest)).toThrow(
+      /not funded and enabled/u,
+    );
+  });
+
   it("holds sub-$2 awards without discarding or redistributing them", () => {
     const manifest = allocationManifest() as ReturnType<
       typeof allocationManifest

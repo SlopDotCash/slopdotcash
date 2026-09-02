@@ -84,6 +84,49 @@ describe("public cycle index", () => {
     expect(() => assertCycleIndex(value)).not.toThrow();
   });
 
+  it("publishes additive review-budget money as reconciled line items", () => {
+    const additive = entry();
+    additive.reward.suggestedMinor = "10500000000";
+    additive.reward.lines = {
+      sharedPool: {
+        suggestedMinor: "10000000000",
+        approvedMinor: "0",
+        paidMinor: "0",
+      },
+      reviewBudget: {
+        suggestedMinor: "500000000",
+        approvedMinor: "0",
+        paidMinor: "0",
+      },
+    };
+    additive.contributors[0].suggestedMinor = "10500000000";
+    additive.contributors[0].lines = {
+      sharedPool: {
+        suggestedMinor: "10000000000",
+        approvedMinor: "0",
+        paidMinor: "0",
+      },
+      reviewBudget: {
+        suggestedMinor: "500000000",
+        approvedMinor: "0",
+        paidMinor: "0",
+      },
+    };
+
+    expect(() => assertCycleIndex(index([additive]))).not.toThrow();
+
+    const missingContributorLines = structuredClone(additive);
+    delete missingContributorLines.contributors[0].lines;
+    expect(() => assertCycleIndex(index([missingContributorLines]))).toThrow(
+      /line-item accounting/u,
+    );
+
+    additive.reward.lines.reviewBudget.suggestedMinor = "499999999";
+    expect(() => assertCycleIndex(index([additive]))).toThrow(
+      /reward lines do not reconcile/u,
+    );
+  });
+
   it("accepts an actor-bound Slop wallet claim issue", () => {
     const claimed = entry();
     claimed.contributors[0].wallet = {

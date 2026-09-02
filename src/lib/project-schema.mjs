@@ -769,6 +769,7 @@ function validateReviewBudget(value, field, poolPaymentMode) {
     budget,
     [
       "committedMinor",
+      "effectiveAt",
       "fundingState",
       "monthlyCapDisplay",
       "monthlyCapMinor",
@@ -781,6 +782,7 @@ function validateReviewBudget(value, field, poolPaymentMode) {
     budget.monthlyCapMinor,
     `${field}.monthlyCapMinor`,
   );
+  const effectiveAt = timestamp(budget.effectiveAt, `${field}.effectiveAt`);
   const committedMinor = minor(
     budget.committedMinor,
     `${field}.committedMinor`,
@@ -792,6 +794,7 @@ function validateReviewBudget(value, field, poolPaymentMode) {
   const paymentsDisabled = budget.paymentMode === "disabled";
   if (
     BigInt(monthlyCapMinor) <= 0n ||
+    !effectiveAt.endsWith("-01T00:00:00.000Z") ||
     budget.unusedFunds !== "rollover-without-cap-increase" ||
     (paymentsDisabled
       ? budget.fundingState !== "pledged" || committedMinor !== "0"

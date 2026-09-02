@@ -34,6 +34,58 @@ export interface CreateRewardCycleProposalInput {
   priorActorLogins?: ReadonlyMap<string, string>;
 }
 
+export function allocateReviewBudgetMinor(
+  totalMinor: bigint,
+  contributors: readonly { actorId: string; scoreThirds: number }[],
+): Map<string, bigint> {
+  if (totalMinor < 0n) throw new RangeError("review budget cannot be negative");
+  if (
+    contributors.some(
+      ({ actorId, scoreThirds }) =>
+        actorId.length === 0 ||
+        !Number.isSafeInteger(scoreThirds) ||
+        scoreThirds < 0,
+    ) ||
+    new Set(contributors.map(({ actorId }) => actorId)).size !==
+      contributors.length
+  ) {
+    throw new TypeError("review weights must be unique non-negative integers");
+  }
+  const eligible = contributors
+    .filter(
+      ({ scoreThirds }) => Number.isSafeInteger(scoreThirds) && scoreThirds > 0,
+    )
+    .sort((left, right) => left.actorId.localeCompare(right.actorId));
+  if (eligible.length === 0 || totalMinor === 0n) return new Map();
+  const totalWeight = eligible.reduce(
+    (total, contributor) => total + BigInt(contributor.scoreThirds),
+    0n,
+  );
+  const allocations = new Map<string, bigint>();
+  const remainders = eligible.map((contributor) => {
+    const numerator = totalMinor * BigInt(contributor.scoreThirds);
+    const amount = numerator / totalWeight;
+    allocations.set(contributor.actorId, amount);
+    return { actorId: contributor.actorId, remainder: numerator % totalWeight };
+  });
+  let unallocated =
+    totalMinor -
+    [...allocations.values()].reduce((total, amount) => total + amount, 0n);
+  remainders.sort((left, right) =>
+    left.remainder === right.remainder
+      ? left.actorId.localeCompare(right.actorId)
+      : left.remainder > right.remainder
+        ? -1
+        : 1,
+  );
+  for (let index = 0; unallocated > 0n; index += 1) {
+    const actorId = remainders[index % remainders.length].actorId;
+    allocations.set(actorId, (allocations.get(actorId) ?? 0n) + 1n);
+    unallocated -= 1n;
+  }
+  return allocations;
+}
+
 function cycleBounds(cycleId: string): { from: number; to: number } {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
     throw new TypeError(`Invalid reward cycle id: ${cycleId}`);
@@ -168,6 +220,41 @@ export function createRewardCycleProposal(
       0n,
     ) + carriedOnlyMinor
   ).toString();
+  const reviewPolicy = view.project.reward.reviewBudget;
+  const reviewBudgetTotal =
+    reviewPolicy?.fundingState === "committed" &&
+    reviewPolicy.paymentMode === "enabled" &&
+    Date.parse(reviewPolicy.effectiveAt) <= Date.parse(view.cycle.from)
+      ? BigInt(reviewPolicy.committedMinor) <
+        BigInt(reviewPolicy.monthlyCapMinor)
+        ? BigInt(reviewPolicy.committedMinor)
+        : BigInt(reviewPolicy.monthlyCapMinor)
+      : 0n;
+  const reviewEvents = view.ledger.filter(
+    (event) => event.category === "substantive-review",
+  );
+  const reviewScoreThirds = new Map<string, number>();
+  for (const event of reviewEvents) {
+    reviewScoreThirds.set(
+      event.actor.id,
+      (reviewScoreThirds.get(event.actor.id) ?? 0) +
+        (event.scoreThirds ?? Math.round(event.points * 3)),
+    );
+  }
+  const reviewAllocations = allocateReviewBudgetMinor(
+    reviewBudgetTotal,
+    [...reviewScoreThirds].map(([actorId, scoreThirds]) => ({
+      actorId,
+      scoreThirds,
+    })),
+  );
+  const reviewSuggestedTotal = [...reviewAllocations.values()].reduce(
+    (total, amount) => total + amount,
+    0n,
+  );
+  const combinedSuggestedMinor = (
+    BigInt(suggestedMinor) + reviewSuggestedTotal
+  ).toString();
   const reviewEndsAt = new Date(
     Date.parse(input.generatedAt) + REVIEW_WINDOW_DAYS * 86_400_000,
   ).toISOString();
@@ -200,10 +287,11 @@ export function createRewardCycleProposal(
     allocations: view.leaders
       .map((leader, index) => {
         const wallet = input.wallets?.get(leader.actor.id) ?? null;
-        const accruedMinor = (
+        const sharedPoolMinor =
           BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
-          BigInt(leader.projectedMinor ?? "0")
-        ).toString();
+          BigInt(leader.projectedMinor ?? "0");
+        const reviewMinor = reviewAllocations.get(leader.actor.id) ?? 0n;
+        const accruedMinor = (sharedPoolMinor + reviewMinor).toString();
         return {
           intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(leader.actor.id)}`,
           actor: { id: leader.actor.id, login: leader.actor.login },
@@ -222,6 +310,23 @@ export function createRewardCycleProposal(
           relatedParty:
             input.relatedPartyActorIds?.has(leader.actor.id) ?? false,
           platformApproval: null,
+          ...(reviewBudgetTotal > 0n
+            ? {
+                lines: {
+                  sharedPool: {
+                    suggestedMinor: sharedPoolMinor.toString(),
+                    approvedMinor: "0",
+                  },
+                  reviewBudget: {
+                    suggestedMinor: reviewMinor.toString(),
+                    approvedMinor: "0",
+                    evidenceEventIds: reviewEvents
+                      .filter((event) => event.actor.id === leader.actor.id)
+                      .map((event) => event.id),
+                  },
+                },
+              }
+            : {}),
         };
       })
       .concat(
@@ -251,11 +356,40 @@ export function createRewardCycleProposal(
             adjustmentReason: null,
             relatedParty: input.relatedPartyActorIds?.has(actorId) ?? false,
             platformApproval: null,
+            ...(reviewBudgetTotal > 0n
+              ? {
+                  lines: {
+                    sharedPool: { suggestedMinor: minor, approvedMinor: "0" },
+                    reviewBudget: {
+                      suggestedMinor: "0",
+                      approvedMinor: "0",
+                      evidenceEventIds: [],
+                    },
+                  },
+                }
+              : {}),
           };
         }),
       ),
+    ...(reviewBudgetTotal > 0n && reviewPolicy
+      ? {
+          rewardLines: {
+            sharedPool: {
+              capMinor: view.project.reward.monthlyCapMinor,
+              suggestedMinor,
+              approvedMinor: "0",
+            },
+            reviewBudget: {
+              capMinor: reviewPolicy.monthlyCapMinor,
+              committedMinor: reviewPolicy.committedMinor,
+              suggestedMinor: reviewSuggestedTotal.toString(),
+              approvedMinor: "0",
+            },
+          },
+        }
+      : {}),
     totals: {
-      suggestedMinor,
+      suggestedMinor: combinedSuggestedMinor,
       approvedMinor: "0",
       feeMinor: feeForPrincipal("0", view.project.reward.feeBasisPoints),
     },

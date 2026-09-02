@@ -175,6 +175,7 @@ async function verifyProposalAgainstSnapshot(
       allocation.actor.login !== expected.actor.login ||
       allocation.score !== expected.score ||
       allocation.suggestedMinor !== expected.suggestedMinor ||
+      canonical(allocation.lines) !== canonical(expected.lines) ||
       canonical(allocation.evidenceEventIds) !==
         canonical(expected.evidenceEventIds)
     ) {
@@ -189,6 +190,7 @@ async function verifyProposalAgainstSnapshot(
     proposal.contributionWindow.from !== baseline.contributionWindow.from ||
     proposal.contributionWindow.to !== baseline.contributionWindow.to ||
     proposal.capMinor !== baseline.capMinor ||
+    canonical(proposal.rewardLines) !== canonical(baseline.rewardLines) ||
     proposal.totals.suggestedMinor !== baseline.totals.suggestedMinor
   ) {
     throw new TypeError(
@@ -422,6 +424,20 @@ async function buildCycle(
   const settlementByIntent = new Map(
     settlement?.recipients.map((entry) => [entry.intentId, entry]) ?? [],
   );
+  const paidSharedPoolMinor = (
+    settlement?.recipients.reduce(
+      (total, entry) =>
+        total + BigInt(entry.rewardLines?.sharedPool.paidMinor ?? "0"),
+      0n,
+    ) ?? 0n
+  ).toString();
+  const paidReviewBudgetMinor = (
+    settlement?.recipients.reduce(
+      (total, entry) =>
+        total + BigInt(entry.rewardLines?.reviewBudget.paidMinor ?? "0"),
+      0n,
+    ) ?? 0n
+  ).toString();
   return {
     entry: {
       projectId,
@@ -441,6 +457,26 @@ async function buildCycle(
         paidMinor: settlement?.totals.paidMinor ?? "0",
         feeMinor: allocation?.totals.feeMinor ?? "0",
         sharePartsPerMillion: null,
+        ...(proposal.rewardLines
+          ? {
+              lines: {
+                sharedPool: {
+                  suggestedMinor:
+                    proposal.rewardLines.sharedPool.suggestedMinor,
+                  approvedMinor:
+                    allocation?.rewardLines?.sharedPool.approvedMinor ?? "0",
+                  paidMinor: paidSharedPoolMinor,
+                },
+                reviewBudget: {
+                  suggestedMinor:
+                    proposal.rewardLines.reviewBudget.suggestedMinor,
+                  approvedMinor:
+                    allocation?.rewardLines?.reviewBudget.approvedMinor ?? "0",
+                  paidMinor: paidReviewBudgetMinor,
+                },
+              },
+            }
+          : {}),
       },
       contributors: proposal.allocations.map((entry) => {
         const approved = allocationByIntent.get(entry.intentId);
@@ -455,6 +491,24 @@ async function buildCycle(
           paidMinor: paid?.paidMinor ?? "0",
           sharePartsPerMillion: null,
           wallet: approved?.wallet ?? entry.wallet,
+          ...(entry.lines
+            ? {
+                lines: {
+                  sharedPool: {
+                    suggestedMinor: entry.lines.sharedPool.suggestedMinor,
+                    approvedMinor:
+                      approved?.lines?.sharedPool.approvedMinor ?? "0",
+                    paidMinor: paid?.rewardLines?.sharedPool.paidMinor ?? "0",
+                  },
+                  reviewBudget: {
+                    suggestedMinor: entry.lines.reviewBudget.suggestedMinor,
+                    approvedMinor:
+                      approved?.lines?.reviewBudget.approvedMinor ?? "0",
+                    paidMinor: paid?.rewardLines?.reviewBudget.paidMinor ?? "0",
+                  },
+                },
+              }
+            : {}),
         };
       }),
       files: {

@@ -13,7 +13,9 @@ pledged, disabled, or underfunded review line is public context only and changes
 nothing. Allocation becomes operative only after a positive review amount has
 its own active, reviewed funding commitment and the manifest declares the line
 committed and enabled. Existing open and closed cycles are never changed
-retroactively.
+retroactively. `effectiveAt` must be the first instant of a future UTC month
+when the line is added or funded. The allocator applies the line only when that
+instant is at or before the cycle's opening boundary.
 
 Public surfaces show the committed amount and the monthly cap as separate
 values. Allocation may never exceed `committedMinor`, even when
@@ -27,6 +29,13 @@ The reward-level fee applies identically to approved review principal. Because
 both lines settle to the same registered wallet, the minimum-transfer rule is
 evaluated against each recipient's combined cycle total. Reporting must still
 publish shared-pool and additive-review amounts as distinct line items.
+
+Proposal and approved-allocation rows publish `lines.sharedPool` and
+`lines.reviewBudget`; aggregate fields remain their exact sum for backwards
+compatibility. The review line binds the accepted review event IDs used as its
+weights. Unsigned transfer plans and finalized settlement recipients preserve
+the same split while transferring the combined recipient total, so a line
+below the dust floor cannot strand an otherwise payable combined allocation.
 
 ## Evidence and settlement
 

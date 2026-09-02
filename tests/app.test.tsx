@@ -52,6 +52,7 @@ describe("review budget display", () => {
   it("distinguishes the committed amount from the monthly cap", () => {
     expect(
       reviewBudgetLabel({
+        effectiveAt: "2026-10-01T00:00:00.000Z",
         monthlyCapMinor: "50000000",
         monthlyCapDisplay: "$50",
         committedMinor: "1000000",
@@ -62,6 +63,7 @@ describe("review budget display", () => {
     ).toBe("$1 committed of $50 cap · additive review line");
     expect(
       reviewBudgetLabel({
+        effectiveAt: "2026-10-01T00:00:00.000Z",
         monthlyCapMinor: "50000000",
         monthlyCapDisplay: "$50",
         committedMinor: "0",
