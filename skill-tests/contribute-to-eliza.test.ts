@@ -36,6 +36,8 @@ import {
   isBotAccount,
   MAX_ACTIVITY_CONNECTION_ITEMS,
   MAX_REVIEW_EPOCH_CANDIDATES,
+  MIN_REST_ACTIVITY_REQUESTS,
+  MIN_SEARCH_ACTIVITY_REQUESTS,
   MISSION_READY_LABEL,
   parseCliArguments,
   parseModelDisclosure,
@@ -683,9 +685,13 @@ describe("live report parsing", () => {
         }
         if (args.includes("graphql")) {
           return {
-            status: 1,
-            stderr: "gh: API rate limit already exceeded",
-            stdout: "",
+            status: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              limit: 5_000,
+              remaining: 354,
+              resetAt: "2027-01-15T08:00:00.000Z",
+            }),
           };
         }
         const endpoint = args.at(-1) ?? "";
@@ -739,7 +745,15 @@ describe("live report parsing", () => {
     );
 
     assert.strictEqual(calls[0].at(-1), "rate_limit");
-    assert.ok(calls.every((args) => !args.includes("graphql")));
+    assert.strictEqual(
+      calls.filter((args) => args.includes("graphql")).length,
+      1,
+    );
+    assert.strictEqual(activity.rateLimits.graphqlRemaining, 354);
+    assert.strictEqual(
+      activity.rateLimits.graphqlBudgetSource,
+      "direct-graphql",
+    );
     assert.ok(
       calls
         .filter((args) => args.at(-1)?.includes("/comments?"))
@@ -781,6 +795,160 @@ describe("live report parsing", () => {
     assert.deepStrictEqual(
       report.filtered.reviewedPullRequests.map((pull) => pull.number),
       [2],
+    );
+  });
+
+  it("uses REST when the direct GraphQL budget probe is rate-limited", () => {
+    const calls: string[][] = [];
+    const activity = readGhOpenActivity(
+      "elizaOS/eliza",
+      (_command, args) => {
+        calls.push(args);
+        if (args.at(-1) === "rate_limit") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              resources: {
+                graphql: {
+                  limit: 5_000,
+                  remaining: 5_000,
+                  reset: 1_800_000_000,
+                },
+                core: {
+                  limit: 5_000,
+                  remaining: 5_000,
+                  reset: 1_800_000_000,
+                },
+                search: { limit: 30, remaining: 30, reset: 1_800_000_000 },
+              },
+            }),
+          };
+        }
+        if (args.includes("graphql")) {
+          return {
+            status: 1,
+            stderr: "gh: API rate limit already exceeded",
+            stdout: "",
+          };
+        }
+        return { status: 0, stderr: "", stdout: "" };
+      },
+      { preflight: true },
+    );
+
+    assert.strictEqual(activity.source, "rest");
+    assert.strictEqual(activity.rateLimits.graphqlRemaining, 0);
+    assert.strictEqual(
+      activity.rateLimits.graphqlBudgetSource,
+      "direct-probe-rate-limited",
+    );
+    assert.strictEqual(
+      calls.filter((args) => args.includes("graphql")).length,
+      1,
+    );
+  });
+
+  it("fails closed with both budgets when no complete activity path is affordable", () => {
+    assert.throws(
+      () =>
+        readGhOpenActivity(
+          "elizaOS/eliza",
+          (_command, args) => {
+            if (args.at(-1) === "rate_limit") {
+              return {
+                status: 0,
+                stderr: "",
+                stdout: JSON.stringify({
+                  resources: {
+                    graphql: {
+                      limit: 5_000,
+                      remaining: 5_000,
+                      reset: 1_800_000_000,
+                    },
+                    core: {
+                      limit: 5_000,
+                      remaining: MIN_REST_ACTIVITY_REQUESTS - 1,
+                      reset: 1_800_000_000,
+                    },
+                    search: {
+                      limit: 30,
+                      remaining: MIN_SEARCH_ACTIVITY_REQUESTS - 1,
+                      reset: 1_800_000_000,
+                    },
+                  },
+                }),
+              };
+            }
+            return args.includes("graphql")
+              ? {
+                  status: 0,
+                  stderr: "",
+                  stdout: JSON.stringify({
+                    limit: 5_000,
+                    remaining: 354,
+                    resetAt: "2027-01-15T08:00:00.000Z",
+                  }),
+                }
+              : { status: 0, stderr: "", stdout: "" };
+          },
+          { preflight: true },
+        ),
+      /cannot afford either complete GraphQL or REST activity discovery/,
+    );
+  });
+
+  it("uses GraphQL when its direct budget probe is healthy", () => {
+    const calls: string[][] = [];
+    const activity = readGhOpenActivity(
+      "elizaOS/eliza",
+      (_command, args) => {
+        calls.push(args);
+        if (args.at(-1) === "rate_limit") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              resources: {
+                graphql: {
+                  limit: 5_000,
+                  remaining: 5_000,
+                  reset: 1_800_000_000,
+                },
+                core: {
+                  limit: 5_000,
+                  remaining: 5_000,
+                  reset: 1_800_000_000,
+                },
+                search: { limit: 30, remaining: 30, reset: 1_800_000_000 },
+              },
+            }),
+          };
+        }
+        if (
+          args.includes("graphql") &&
+          args.some((argument) => argument.includes("SlopActivityRateLimit"))
+        ) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              limit: 5_000,
+              remaining: 4_500,
+              resetAt: "2027-01-15T08:00:00.000Z",
+            }),
+          };
+        }
+        return { status: 0, stderr: "", stdout: "" };
+      },
+      { preflight: true },
+    );
+
+    assert.strictEqual(activity.source, "graphql");
+    assert.strictEqual(activity.rateLimits.graphqlRemaining, 4_500);
+    assert.strictEqual(
+      calls.filter((args) => args.includes("graphql")).length,
+      3,
     );
   });
 
