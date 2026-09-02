@@ -2677,6 +2677,193 @@ describe("scoring and limits", () => {
     );
   });
 
+  it("re-verifies retained review attribution without trusting its stored bonus", () => {
+    const reviewer = actor("retained-attributed-reviewer");
+    const retained: ScoreEvent = {
+      id: "PR_deleted_attributed:reviewer:U_retained-attributed-reviewer",
+      actor: reviewer,
+      category: "substantive-review",
+      points: 1,
+      scoreThirds: 3,
+      workUnitId: "wu_eliza_prr_deleted_attributed",
+      occurredAt: "2026-08-23T11:00:00.000Z",
+      repository: "elizaOS/eliza",
+      source: {
+        id: "PRR_deleted_attributed",
+        kind: "review",
+        number: 79,
+        title: "Deleted accepted attributed contribution",
+        url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-799",
+      },
+      reason: "Previously accepted review credit.",
+      continuity: {
+        sourceSnapshotSha256: "a".repeat(64),
+        decisionUrl: "https://github.com/SlopDotCash/slopdotcash/issues/313",
+      },
+    };
+    const source: GitHubTextSource = {
+      id: retained.source.id,
+      artifactId: "PR_deleted_attributed",
+      kind: "review",
+      body: reviewAttribution(
+        {
+          schemaVersion: "2",
+          startedAt: "2026-08-23T09:00:00.000Z",
+          completedAt: "2026-08-23T10:00:00.000Z",
+          policyAcknowledgement: {
+            policyRevision: "2026-08-18.1",
+            licenseSha256:
+              "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+            inboundTermsSha256:
+              "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+            prizeRulesSha256: null,
+            acknowledgedAt: "2026-08-23T09:00:00.000Z",
+          },
+        },
+        { artifactUrl: "https://github.com/elizaOS/eliza/pull/79" },
+      ),
+      url: retained.source.url,
+      createdAt: retained.occurredAt,
+      updatedAt: retained.occurredAt,
+      author: reviewer,
+      artifactUrl: "https://github.com/elizaOS/eliza/pull/79",
+      artifactHeadSha: "a".repeat(40),
+    };
+    const attributionAssessment = assessModelAttribution([source], {
+      requireEverySource: true,
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(attributionAssessment.invalidMarkers).toEqual([]);
+    const attribution = attributionAssessment.declarations[0];
+    expect(attribution).toBeDefined();
+    const retainedInput = (
+      overrides: Partial<LeaderboardInput>,
+    ): LeaderboardInput => {
+      const result = input(overrides);
+      result.generatedAt = "2026-08-24T12:00:00.000Z";
+      result.windowFrom = "2026-07-20T12:00:00.000Z";
+      result.windowTo = "2026-08-24T12:00:00.000Z";
+      result.sourceUpdatedAt = result.generatedAt;
+      result.source.fetchedAt = result.generatedAt;
+      result.source.cutoffAt = result.windowTo;
+      result.source.verificationWindow.from = result.windowFrom;
+      result.source.verificationWindow.to = result.windowTo;
+      result.verificationWindowFrom = result.windowFrom;
+      return result;
+    };
+
+    const accepted = createLeaderboardSnapshot(
+      retainedInput({
+        retainedReviewEvents: [retained],
+        retainedReviewAttributions: [attribution],
+        verifyRunReceipt: (value) => value as ProjectRunReceipt,
+      }),
+    );
+    expect(
+      accepted.ledger.find((event) => event.id === retained.id),
+    ).toMatchObject({
+      scoreThirds: 3,
+      evidenceBonusBasisPoints: 1_500,
+    });
+    expect(accepted.attributions).toContainEqual(
+      expect.objectContaining({ id: attribution.id }),
+    );
+
+    for (const rejectedInput of [
+      {
+        retainedReviewAttributions: [
+          {
+            ...attribution,
+            actor: actor("wrong-retained-reviewer"),
+          },
+        ],
+        verifyRunReceipt: (value: unknown) => value as ProjectRunReceipt,
+      },
+      {
+        retainedReviewAttributions: [attribution],
+        verifyRunReceipt: (_value: unknown): ProjectRunReceipt => {
+          throw new TypeError("signature verification failed");
+        },
+      },
+      {
+        retainedReviewAttributions: [
+          {
+            ...attribution,
+            run: { ...attribution.run!, traceUpload: null },
+          },
+        ],
+        verifyRunReceipt: (value: unknown) => value as ProjectRunReceipt,
+      },
+      {
+        retainedReviewAttributions: [
+          {
+            ...attribution,
+            run: { ...attribution.run!, repositoryId: "elizaOS/asi" },
+          },
+        ],
+        verifyRunReceipt: (value: unknown) => value as ProjectRunReceipt,
+      },
+      {
+        retainedReviewAttributions: [
+          { ...attribution, sourceId: "PRR_wrong_retained_source" },
+        ],
+        verifyRunReceipt: (value: unknown) => value as ProjectRunReceipt,
+      },
+    ]) {
+      const rejected = createLeaderboardSnapshot(
+        retainedInput({
+          retainedReviewEvents: [retained],
+          ...rejectedInput,
+        }),
+      );
+      expect(
+        rejected.ledger.find((event) => event.id === retained.id),
+      ).toMatchObject({ scoreThirds: 3 });
+      expect(
+        rejected.ledger.find((event) => event.id === retained.id)
+          ?.evidenceBonusBasisPoints ?? 0,
+      ).toBe(0);
+    }
+
+    const livePullRequest = pullRequest({
+      id: "PR_deleted_attributed",
+      number: 79,
+      createdAt: "2026-08-22T09:00:00.000Z",
+      updatedAt: "2026-08-23T12:00:00.000Z",
+      mergedAt: "2026-08-23T12:00:00.000Z",
+      reviews: [
+        {
+          id: retained.source.id,
+          body: source.body,
+          state: "APPROVED",
+          submittedAt: retained.occurredAt,
+          url: retained.source.url,
+          author: reviewer,
+          inlineCommentCount: 0,
+        },
+      ],
+    });
+    const live = createLeaderboardSnapshot(
+      retainedInput({
+        mergedPullRequests: [livePullRequest],
+        retainedReviewEvents: [retained],
+        retainedReviewAttributions: [attribution],
+        verifyRunReceipt: (value) => value as ProjectRunReceipt,
+      }),
+    );
+    expect(
+      live.ledger.filter((event) => event.source.id === retained.source.id),
+    ).toHaveLength(1);
+    expect(
+      live.ledger.find((event) => event.source.id === retained.source.id),
+    ).toMatchObject({ evidenceBonusBasisPoints: 1_500 });
+    expect(
+      live.attributions.filter(
+        (declaration) => declaration.sourceId === retained.source.id,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("lets current GitHub evidence replace retained review history", () => {
     const reviewer = actor("current-reviewer");
     const review = {

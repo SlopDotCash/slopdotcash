@@ -649,6 +649,8 @@ export interface LeaderboardInput {
    * are replayed, so live GitHub remains authoritative whenever it exists.
    */
   retainedReviewEvents?: ScoreEvent[];
+  /** Signed attributions recovered from the same accepted snapshot. */
+  retainedReviewAttributions?: ModelAttribution[];
   verifyRunReceipt?: (value: unknown) => ProjectRunReceipt;
 }
 
@@ -3665,6 +3667,7 @@ export function createLeaderboardSnapshot(
   const currentScoreSources = new Set(
     ledger.map((event) => `${event.repository}\0${event.source.id}`),
   );
+  const retainedAttributionCandidates = new Map<string, ModelAttribution>();
   for (const [index, event] of [...(input.retainedReviewEvents ?? [])]
     .sort(
       (left, right) =>
@@ -3706,6 +3709,12 @@ export function createLeaderboardSnapshot(
     if (addScore(entries, ledger, retained)) {
       currentLedgerIds.add(retained.id);
       currentScoreSources.add(`${retained.repository}\0${retained.source.id}`);
+      const candidates = (input.retainedReviewAttributions ?? []).filter(
+        (attribution) => attribution.sourceId === retained.source.id,
+      );
+      if (candidates.length === 1) {
+        retainedAttributionCandidates.set(retained.id, candidates[0]);
+      }
     }
   }
 
@@ -3736,7 +3745,80 @@ export function createLeaderboardSnapshot(
       verifyRunReceipt: input.verifyRunReceipt,
     },
   );
-  const attributions = overallAttribution.declarations;
+  const attributions = [...overallAttribution.declarations];
+  const receiptClaims = new Set(
+    attributions.flatMap((attribution) =>
+      attribution.run?.traceUpload
+        ? [
+            `client run:${attribution.run.runId}`,
+            `server run:${attribution.run.traceUpload.serverRunId}`,
+            `trace object:${attribution.run.traceUpload.objectId}`,
+          ]
+        : [],
+    ),
+  );
+  for (const event of ledger) {
+    const candidate = retainedAttributionCandidates.get(event.id);
+    if (!candidate || !input.verifyRunReceipt) continue;
+    try {
+      assertAttributionValue(candidate, `retained attribution ${candidate.id}`);
+      const verifiedRun = input.verifyRunReceipt(candidate.run);
+      const parentPullRequestId = event.id.split(":", 1)[0];
+      const claims = verifiedRun.traceUpload
+        ? [
+            `client run:${verifiedRun.runId}`,
+            `server run:${verifiedRun.traceUpload.serverRunId}`,
+            `trace object:${verifiedRun.traceUpload.objectId}`,
+          ]
+        : [];
+      if (
+        candidate.format !== "machine-marker" ||
+        candidate.actor?.id !== event.actor.id ||
+        candidate.sourceId !== event.source.id ||
+        candidate.sourceUrl !== event.source.url ||
+        candidate.artifactId !== parentPullRequestId ||
+        candidate.run === null ||
+        !verifiedRun.traceUpload ||
+        verifiedRun.repositoryId !== event.repository ||
+        verifiedRun.provider !== candidate.provider ||
+        verifiedRun.model !== candidate.model ||
+        verifiedRun.client !== candidate.client ||
+        verifiedRun.skillRevision !== candidate.skillRevision ||
+        Date.parse(verifiedRun.completedAt) > Date.parse(event.occurredAt) ||
+        claims.some((claim) => receiptClaims.has(claim))
+      ) {
+        continue;
+      }
+      for (const claim of claims) receiptClaims.add(claim);
+      event.evidenceBonusBasisPoints = 1_500;
+      attributions.push({ ...candidate, run: verifiedRun });
+    } catch {
+      // Historical attribution is optional. Invalid replay never removes the
+      // independently accepted base review credit.
+    }
+  }
+  const retainedValidSourceCount =
+    attributions.length - overallAttribution.declarations.length;
+  const eligibleSourceCount =
+    overallAttribution.coverage.eligibleSourceCount + retainedValidSourceCount;
+  const validSourceCount =
+    overallAttribution.coverage.validSourceCount + retainedValidSourceCount;
+  const invalidSourceCount = overallAttribution.coverage.invalidSourceCount;
+  const attributionCoverage: AttributionCoverage = {
+    ...overallAttribution.coverage,
+    status:
+      eligibleSourceCount > 0 &&
+      validSourceCount === eligibleSourceCount &&
+      invalidSourceCount === 0
+        ? "complete"
+        : validSourceCount > 0
+          ? "partial"
+          : invalidSourceCount > 0
+            ? "invalid"
+            : "missing",
+    eligibleSourceCount,
+    validSourceCount,
+  };
   // A receipt can look valid when a review is assessed in isolation but be
   // rejected by the snapshot-wide replay guard because another scored source
   // already claimed the same client run, server run, or trace object. Preserve
@@ -3831,7 +3913,7 @@ export function createLeaderboardSnapshot(
         left.sourceId.localeCompare(right.sourceId) ||
         left.reason.localeCompare(right.reason),
     ),
-    attributionCoverage: overallAttribution.coverage,
+    attributionCoverage,
     workQueue: {
       issues: issueQueue.map((result) => result.item).sort(compareWorkItems),
       pullRequests: pullRequestQueue
