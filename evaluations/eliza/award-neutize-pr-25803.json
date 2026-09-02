@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_neutize_pr_25803",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "MDQ6VXNlcjM4OTkxMjQz",
+    "login": "Neutize",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/38991243?v=4",
+    "url": "https://github.com/Neutize",
+    "kind": "User"
+  },
+  "occurredAt": "2026-08-23T11:47:36.000Z",
+  "points": 2,
+  "source": {
+    "id": "PR_kwDOMT5cIs8AAAABAsy-5w",
+    "kind": "pull-request",
+    "number": 25803,
+    "title": "fix(ci): remove retired connectors fixture gate",
+    "url": "https://github.com/elizaOS/eliza/pull/25803"
+  },
+  "reason": "The unmerged pull request supplied the exact five-line removal of a retired connectors-fixture workflow gate, and an independent exact-head review confirmed that the deletion was correct before the same removal landed in the broader merged pull request #27402. The limited award recognizes the reusable correct patch while accounting for uncertainty about whether the later author derived it from this contribution.",
+  "review": {
+    "reviewer": "lalalune",
+    "reviewedAt": "2026-09-02T11:50:55.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/316"
+  }
+}
