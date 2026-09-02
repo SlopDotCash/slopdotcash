@@ -60,9 +60,10 @@ export const MAX_GRAPHQL_REQUEST_ATTEMPTS = 5;
 // retries even though the successful query itself is inexpensive.
 export const GRAPHQL_REQUEST_TIMEOUT_MS = 60_000;
 export const MAX_GRAPHQL_RESPONSE_BYTES = 64 * 1024 * 1024;
-// Match the usable budget of GitHub Actions' 1,000-point repository token so a
-// local 5,000-point token cannot validate a query plan that production rejects.
-export const MAX_GENERATION_COST = 900;
+// Permit the usable portion of a 5,000-point token while preserving the same
+// 100-point reserve on lower-limit tokens. The effective cap is always bounded
+// by the limit GitHub reports, so a 1,000-point token still stops at 900.
+export const MAX_GENERATION_COST = 4_900;
 export const MINIMUM_RATE_LIMIT_RESERVE = 100;
 export const MINIMUM_STARTING_RATE_LIMIT = 900;
 export const MAX_EVIDENCE_ARTIFACTS_PER_SNAPSHOT = 64;
