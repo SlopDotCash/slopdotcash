@@ -1316,6 +1316,74 @@ function rateResource(value, context) {
   return { limit, remaining, reset };
 }
 
+const GRAPHQL_RATE_LIMIT_QUERY =
+  "query SlopActivityRateLimit { rateLimit { limit remaining resetAt } }";
+
+function readGhGraphqlRateLimit(spawn) {
+  const result = spawn(
+    "gh",
+    [
+      "api",
+      "graphql",
+      "--method",
+      "POST",
+      "-f",
+      `query=${GRAPHQL_RATE_LIMIT_QUERY}`,
+      "--jq",
+      ".data.rateLimit",
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
+    if (/\b(?:secondary )?rate limit\b|abuse detection/iu.test(detail)) {
+      return { rateLimited: true };
+    }
+    throw new Error(
+      `gh api graphql failed for rate-limit preflight${detail ? `: ${detail}` : ""}`,
+    );
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (cause) {
+    throw new SyntaxError(
+      "gh api graphql returned malformed JSON for rate-limit preflight",
+      { cause },
+    );
+  }
+  const resource = asRecord(parsed, "GitHub GraphQL rate-limit preflight");
+  const limit = asNumberField(
+    resource,
+    "limit",
+    "GitHub GraphQL rate-limit preflight",
+  );
+  const remaining = asNumberField(
+    resource,
+    "remaining",
+    "GitHub GraphQL rate-limit preflight",
+  );
+  const resetAt = nullableText(resource.resetAt, "GraphQL rate-limit resetAt");
+  const reset = resetAt === null ? Number.NaN : Date.parse(resetAt) / 1000;
+  if (
+    limit <= 0 ||
+    remaining < 0 ||
+    remaining > limit ||
+    !Number.isSafeInteger(reset) ||
+    reset <= 0
+  ) {
+    throw new RangeError(
+      "GitHub GraphQL rate-limit preflight contains an invalid rate budget",
+    );
+  }
+  return { limit, remaining, reset, rateLimited: false };
+}
+
 export function readGhRateLimits(spawn = spawnSync) {
   const result = spawn(
     "gh",
@@ -1354,10 +1422,18 @@ export function readGhRateLimits(spawn = spawnSync) {
   const graphql = rateResource(resources.graphql, "GitHub GraphQL rate limit");
   const rest = rateResource(resources.core, "GitHub REST rate limit");
   const search = rateResource(resources.search, "GitHub Search rate limit");
+  const directGraphql = readGhGraphqlRateLimit(spawn);
   return {
-    graphqlLimit: graphql.limit,
-    graphqlRemaining: graphql.remaining,
-    graphqlReset: graphql.reset,
+    graphqlLimit: directGraphql.rateLimited
+      ? graphql.limit
+      : directGraphql.limit,
+    graphqlRemaining: directGraphql.rateLimited ? 0 : directGraphql.remaining,
+    graphqlReset: directGraphql.rateLimited
+      ? graphql.reset
+      : directGraphql.reset,
+    graphqlBudgetSource: directGraphql.rateLimited
+      ? "direct-probe-rate-limited"
+      : "direct-graphql",
     restLimit: rest.limit,
     restRemaining: rest.remaining,
     restReset: rest.reset,
@@ -2708,7 +2784,7 @@ export function main(args = process.argv.slice(2)) {
   });
   const limits = asRecord(openActivity.rateLimits, "GitHub rate limits");
   process.stderr.write(
-    `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit}; REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
+    `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit} (${limits.graphqlBudgetSource}); REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
   );
   const report = collectLiveReport(
     options.repo,
