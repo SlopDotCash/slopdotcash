@@ -104,4 +104,69 @@ describe("project transition gate", () => {
       ),
     ).toThrow(/fee policy/u);
   });
+
+  it("rejects reducing the contributor cap while adding or funding a review budget", () => {
+    const withPledgedReview = structuredClone(eliza) as typeof eliza & {
+      reward: typeof eliza.reward & {
+        reviewBudget: {
+          monthlyCapMinor: string;
+          monthlyCapDisplay: string;
+          committedMinor: string;
+          paymentMode: "disabled" | "enabled";
+          unusedFunds: "rollover-without-cap-increase";
+          fundingState: "pledged" | "committed";
+        };
+      };
+    };
+    withPledgedReview.reward.reviewBudget = {
+      monthlyCapMinor: "50000000",
+      monthlyCapDisplay: "$50",
+      committedMinor: "0",
+      paymentMode: "disabled",
+      unusedFunds: "rollover-without-cap-increase",
+      fundingState: "pledged",
+    };
+
+    const reducedOnAdd = structuredClone(withPledgedReview);
+    reducedOnAdd.reward.monthlyCapMinor = "9999000000";
+    reducedOnAdd.reward.monthlyCapDisplay = "$9,999";
+    expect(() =>
+      validateProjectTransitions([entry(eliza)], [entry(reducedOnAdd)]),
+    ).toThrow(/review budget.*reducing the contributor pool cap/u);
+
+    expect(
+      validateProjectTransitions([entry(eliza)], [entry(withPledgedReview)]),
+    ).toEqual({ previous: 1, current: 1 });
+
+    const funded = structuredClone(withPledgedReview);
+    funded.reward.paymentMode = "enabled";
+    funded.reward.fundingState = "committed";
+    funded.reward.committedMinor = "5000000";
+    funded.reward.reviewBudget.fundingState = "committed";
+    funded.reward.reviewBudget.paymentMode = "enabled";
+    funded.reward.reviewBudget.committedMinor = "1000000";
+    funded.reward.monthlyCapMinor = "9999000000";
+    funded.reward.monthlyCapDisplay = "$9,999";
+    (
+      funded as unknown as { funding: { commitments: unknown[] } }
+    ).funding.commitments = [
+      {
+        kind: "squads-v4-vault",
+        network: "solana",
+        asset: "USDC",
+        multisig: "11111111111111111111111111111111",
+        vault: "Vote111111111111111111111111111111111111111",
+        vaultIndex: 0,
+        funderMember: "Stake11111111111111111111111111111111111111",
+        stewardMember: "SysvarRent111111111111111111111111111111111",
+        funderActorId: "18633264",
+        deadline: "2026-12-01T00:00:00.000Z",
+        effectiveAt: "2026-08-01T00:00:00.000Z",
+        replacedAt: null,
+      },
+    ];
+    expect(() =>
+      validateProjectTransitions([entry(withPledgedReview)], [entry(funded)]),
+    ).toThrow(/review budget.*reducing the contributor pool cap/u);
+  });
 });

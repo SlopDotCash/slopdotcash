@@ -77,6 +77,25 @@ function assertRootPublisherInventory(projects, label) {
   return true;
 }
 
+function assertReviewBudgetTransition(prior, next) {
+  const priorBudget = prior.reward.reviewBudget;
+  const nextBudget = next.reward.reviewBudget;
+  if (!nextBudget) return;
+
+  const addsReviewBudget = !priorBudget;
+  const fundsReviewBudget =
+    priorBudget?.fundingState !== "committed" &&
+    nextBudget.fundingState === "committed";
+  if (
+    (addsReviewBudget || fundsReviewBudget) &&
+    BigInt(next.reward.monthlyCapMinor) < BigInt(prior.reward.monthlyCapMinor)
+  ) {
+    throw new TypeError(
+      `project ${next.id} cannot add or fund a review budget while reducing the contributor pool cap`,
+    );
+  }
+}
+
 export function validateProjectTransitions(previousEntries, currentEntries) {
   const previous = boundedProjectMap(previousEntries, { historical: true });
   const current = boundedProjectMap(currentEntries);
@@ -96,6 +115,7 @@ export function validateProjectTransitions(previousEntries, currentEntries) {
       );
     }
     assertProjectPolicyTransition(prior, next);
+    assertReviewBudgetTransition(prior, next);
   }
   if (previousPublishesAtRoot && !currentPublishesAtRoot) {
     throw new TypeError(

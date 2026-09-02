@@ -22,6 +22,7 @@ import {
   ProjectManagePage,
   publicFooterDomain,
   readBoundedJson,
+  reviewBudgetLabel,
   rootPublishedTemplateProject,
   safeProposalHttpsUrl,
 } from "../src/App";
@@ -44,6 +45,31 @@ describe("public footer domain", () => {
     expect(publicFooterDomain("www.slop.tech")).toBe("slop.tech");
     expect(publicFooterDomain("attacker.slop.tech")).toBe("slop.cash");
     expect(publicFooterDomain("127.0.0.1")).toBe("slop.cash");
+  });
+});
+
+describe("review budget display", () => {
+  it("distinguishes the committed amount from the monthly cap", () => {
+    expect(
+      reviewBudgetLabel({
+        monthlyCapMinor: "50000000",
+        monthlyCapDisplay: "$50",
+        committedMinor: "1000000",
+        paymentMode: "enabled",
+        unusedFunds: "rollover-without-cap-increase",
+        fundingState: "committed",
+      }),
+    ).toBe("$1 committed of $50 cap · additive review line");
+    expect(
+      reviewBudgetLabel({
+        monthlyCapMinor: "50000000",
+        monthlyCapDisplay: "$50",
+        committedMinor: "0",
+        paymentMode: "disabled",
+        unusedFunds: "rollover-without-cap-increase",
+        fundingState: "pledged",
+      }),
+    ).toBe("$50 cap · additive review line · uncommitted pledge");
   });
 });
 

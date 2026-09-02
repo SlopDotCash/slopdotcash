@@ -479,6 +479,14 @@ function formatMicroUsdc(value: string): string {
   return `$${new Intl.NumberFormat("en-US").format(whole)}.${cents}`;
 }
 
+export function reviewBudgetLabel(
+  reviewBudget: NonNullable<ProjectDefinition["reward"]["reviewBudget"]>,
+): string {
+  return reviewBudget.fundingState === "committed"
+    ? `${formatMicroUsdc(reviewBudget.committedMinor)} committed of ${reviewBudget.monthlyCapDisplay} cap · additive review line`
+    : `${reviewBudget.monthlyCapDisplay} cap · additive review line · uncommitted pledge`;
+}
+
 function formatPercent(partsPerMillion: number): string {
   return `${(partsPerMillion / 10_000).toFixed(2)}%`;
 }
@@ -745,8 +753,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
         </small>
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
-            + {project.reward.reviewBudget.monthlyCapDisplay} additive review
-            line · {project.reward.reviewBudget.fundingState}
+            + {reviewBudgetLabel(project.reward.reviewBudget)}
           </small>
         ) : null}
       </div>
@@ -801,7 +808,7 @@ function ReviewerLeaderboard({
           <span>
             Scored reviews keep their shared-pool treatment.{" "}
             {reviewBudget
-              ? `${reviewBudget.monthlyCapDisplay} additive review line (${reviewBudget.fundingState}).`
+              ? `${reviewBudgetLabel(reviewBudget)}.`
               : "No additive review line is declared."}
           </span>
         </div>
@@ -2254,8 +2261,7 @@ function ProjectPage({
               <div>
                 {project.reward.reviewBudget ? (
                   <small>
-                    + {project.reward.reviewBudget.monthlyCapDisplay} additive
-                    review line · {project.reward.reviewBudget.fundingState}
+                    + {reviewBudgetLabel(project.reward.reviewBudget)}
                   </small>
                 ) : null}
                 {project.reward.kind === "external-prize-share" ? (

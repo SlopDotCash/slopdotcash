@@ -15,6 +15,14 @@ its own active, reviewed funding commitment and the manifest declares the line
 committed and enabled. Existing open and closed cycles are never changed
 retroactively.
 
+Public surfaces show the committed amount and the monthly cap as separate
+values. Allocation may never exceed `committedMinor`, even when
+`monthlyCapMinor` is higher. The trusted project-transition gate rejects adding
+or funding a review budget in the same change that reduces the contributor
+pool cap. A later, separately reviewed contributor-cap change remains governed
+by the project's public reward policy and cannot be presented as funding the
+review line.
+
 The reward-level fee applies identically to approved review principal. Because
 both lines settle to the same registered wallet, the minimum-transfer rule is
 evaluated against each recipient's combined cycle total. Reporting must still
