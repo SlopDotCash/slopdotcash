@@ -18,6 +18,7 @@ import {
 import {
   assertOpenEvidenceReferencesCurrent,
   assertReviewCensusStable,
+  collectEvaluatedReviewArtifactKeys,
   collectReviewedPullRequestIds,
   collectSearchReferences,
   deriveCurrentHeadReviewDecision,
@@ -68,6 +69,36 @@ describe("generation arguments", () => {
 });
 
 describe("historical evaluator awards", () => {
+  it("selects reviewed pull requests that need exact evaluated-source hydration", () => {
+    const source = {
+      id: "PRR_1",
+      kind: "review" as const,
+      number: 25372,
+      title: "Durable cancellation",
+      url: "https://github.com/elizaOS/eliza/pull/25372#pullrequestreview-1",
+    };
+
+    expect(
+      collectEvaluatedReviewArtifactKeys([
+        {
+          category: "evaluated-contribution",
+          repository: "elizaOS/eliza",
+          source,
+        },
+        {
+          category: "substantive-review",
+          repository: "elizaOS/eliza",
+          source,
+        },
+        {
+          category: "evaluated-contribution",
+          repository: "elizaOS/eliza",
+          source: { ...source, kind: "comment" },
+        },
+      ]),
+    ).toEqual(new Set(["elizaos/eliza\u000025372"]));
+  });
+
   it("selects only awards in the cutoff's rolling window", () => {
     const events = [
       {
