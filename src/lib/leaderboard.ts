@@ -383,6 +383,10 @@ export interface ScoreEvent {
     url: string;
   };
   reason: string;
+  continuity?: {
+    sourceSnapshotSha256: string;
+    decisionUrl: string;
+  };
   evaluation?: {
     decisionUrl: string;
     reviewedAt: string;
@@ -639,6 +643,12 @@ export interface LeaderboardInput {
   verificationWindowFrom: string;
   verifiedEvidence: VerifiedEvidenceArtifact[];
   evaluatedContributions?: ScoreEvent[];
+  /**
+   * Previously published accepted review events. GitHub may delete a merged
+   * pull request and its reviews; only events whose parent outcome is absent
+   * are replayed, so live GitHub remains authoritative whenever it exists.
+   */
+  retainedReviewEvents?: ScoreEvent[];
   verifyRunReceipt?: (value: unknown) => ProjectRunReceipt;
 }
 
@@ -3651,6 +3661,54 @@ export function createLeaderboardSnapshot(
     }
   }
 
+  const currentLedgerIds = new Set(ledger.map((event) => event.id));
+  const currentScoreSources = new Set(
+    ledger.map((event) => `${event.repository}\0${event.source.id}`),
+  );
+  for (const [index, event] of [...(input.retainedReviewEvents ?? [])]
+    .sort(
+      (left, right) =>
+        parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
+        left.id.localeCompare(right.id),
+    )
+    .entries()) {
+    assertLedgerValue(event, `retainedReviewEvents[${index}]`);
+    if (
+      event.category !== "substantive-review" ||
+      !isRecord(event.source) ||
+      (event.source as Record<string, unknown>).kind !== "review"
+    ) {
+      throw new TypeError(
+        `retainedReviewEvents[${index}] must be a formal substantive review`,
+      );
+    }
+    const parentPullRequestId = event.id.split(":", 1)[0];
+    if (!parentPullRequestId.startsWith("PR_")) {
+      throw new TypeError(
+        `retainedReviewEvents[${index}] does not bind a pull request node`,
+      );
+    }
+    const occurredAt = parseIsoTime(event.occurredAt);
+    if (
+      occurredAt < parseIsoTime(input.windowFrom) ||
+      occurredAt >= windowTo ||
+      outcomeIds.has(parentPullRequestId) ||
+      currentLedgerIds.has(event.id) ||
+      currentScoreSources.has(`${event.repository}\0${event.source.id}`)
+    ) {
+      continue;
+    }
+    const retained = { ...event };
+    // The historical event proves accepted base review credit. A trace bonus
+    // survives only when its attribution is independently present and replay
+    // checked in the current snapshot.
+    delete retained.evidenceBonusBasisPoints;
+    if (addScore(entries, ledger, retained)) {
+      currentLedgerIds.add(retained.id);
+      currentScoreSources.add(`${retained.repository}\0${retained.source.id}`);
+    }
+  }
+
   const issueQueue = openIssues.map((record) =>
     issueWorkItem(record, input.generatedAt),
   );
@@ -4811,6 +4869,44 @@ function assertLedgerValue(
   }
   assertIsoTimestamp(event.occurredAt, `${path}.occurredAt`);
   assertString(event.reason, `${path}.reason`);
+  if ("continuity" in event) {
+    if (
+      event.category !== "substantive-review" ||
+      !isRecord(event.source) ||
+      (event.source as Record<string, unknown>).kind !== "review"
+    ) {
+      throw new Error(`${path}.continuity is reserved for retained reviews`);
+    }
+    const continuity = assertObject(event.continuity, `${path}.continuity`);
+    if (
+      Object.keys(continuity).sort().join("\0") !==
+      "decisionUrl\0sourceSnapshotSha256"
+    ) {
+      throw new Error(`${path}.continuity has unexpected or missing fields`);
+    }
+    assertString(
+      continuity.sourceSnapshotSha256,
+      `${path}.continuity.sourceSnapshotSha256`,
+    );
+    if (!/^[0-9a-f]{64}$/u.test(continuity.sourceSnapshotSha256)) {
+      throw new Error(`${path}.continuity source digest is invalid`);
+    }
+    assertString(continuity.decisionUrl, `${path}.continuity.decisionUrl`);
+    const decisionUrl = secureUrl(
+      continuity.decisionUrl,
+      `${path}.continuity.decisionUrl`,
+    );
+    if (
+      decisionUrl.hostname !== "github.com" ||
+      !/^\/SlopDotCash\/slopdotcash\/issues\/[1-9]\d*$/u.test(
+        decisionUrl.pathname,
+      ) ||
+      decisionUrl.search ||
+      decisionUrl.hash
+    ) {
+      throw new Error(`${path}.continuity decision URL is invalid`);
+    }
+  }
   assertEnum(
     event.repository,
     TARGET_REPOSITORIES.map((repository) => repository.id),
@@ -5763,7 +5859,9 @@ export function assertLeaderboardSnapshot(
   );
   const reviewedPullRequestIds = new Set(
     validatedLedger
-      .filter((event) => event.category === "substantive-review")
+      .filter(
+        (event) => event.category === "substantive-review" && !event.continuity,
+      )
       .map(
         (event) =>
           event.id.split(/:(?:automated-review|ratifier|reviewer):/u)[0],

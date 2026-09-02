@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1",
+  "events": [
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAr9NwA:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T11:10:49Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKig2Kw",
+        "kind": "review",
+        "number": 25187,
+        "title": "test(app-core): cover electrobun window construction",
+        "url": "https://github.com/elizaOS/eliza/pull/25187#pullrequestreview-5002245675"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "continuity": {
+        "sourceSnapshotSha256": "5a76b7754a1522e19270814163bee78c39805a35cd0edb947f1418a9d306ddc9",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/313"
+      },
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkig2kw"
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAr93Yg:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T11:22:35Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKiiDoA",
+        "kind": "review",
+        "number": 25197,
+        "title": "test(core): cover canonical model capability gating",
+        "url": "https://github.com/elizaOS/eliza/pull/25197#pullrequestreview-5002265504"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "continuity": {
+        "sourceSnapshotSha256": "5a76b7754a1522e19270814163bee78c39805a35cd0edb947f1418a9d306ddc9",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/313"
+      },
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkiidoa"
+    }
+  ]
+}
