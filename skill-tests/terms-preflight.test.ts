@@ -1,10 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { preflight } from "../skills/contribute-to-eliza/scripts/terms-preflight.mjs";
 
 const license = Buffer.from("immutable license bytes\n");
@@ -42,8 +49,20 @@ const policy = {
 };
 
 const originalFetch = globalThis.fetch;
+const originalCacheHome = process.env.XDG_CACHE_HOME;
+let cacheHome = "";
+beforeEach(() => {
+  cacheHome = mkdtempSync(join(tmpdir(), "terms-preflight-cache-"));
+  process.env.XDG_CACHE_HOME = cacheHome;
+});
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  if (originalCacheHome === undefined) {
+    delete process.env.XDG_CACHE_HOME;
+  } else {
+    process.env.XDG_CACHE_HOME = originalCacheHome;
+  }
+  rmSync(cacheHome, { recursive: true, force: true });
 });
 
 function responses(...values: Response[]): typeof fetch {
@@ -66,6 +85,94 @@ describe("project terms preflight", () => {
       inboundTermsSha256: null,
       prizeRulesSha256: null,
     });
+  });
+
+  it("reuses rehashed commit-pinned bytes while refetching live policy", async () => {
+    const requested: string[] = [];
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url === "https://slop.cash/projects/eliza/terms.json") {
+        return new Response(JSON.stringify(policy));
+      }
+      if (url.includes("raw.githubusercontent.com")) {
+        return new Response(license);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await preflight("eliza");
+    await preflight("eliza");
+
+    expect(
+      requested.filter((url) => url.endsWith("/projects/eliza/terms.json")),
+    ).toHaveLength(2);
+    expect(
+      requested.filter((url) => url.includes("raw.githubusercontent.com")),
+    ).toHaveLength(1);
+  });
+
+  it("does not reuse cached bytes for a changed source and digest", async () => {
+    const changed = Buffer.from("replacement immutable license bytes\n");
+    const changedPolicy = structuredClone(policy);
+    changedPolicy.terms.repositoryLicense.url = `https://github.com/elizaOS/eliza/blob/${"b".repeat(40)}/LICENSE`;
+    changedPolicy.terms.repositoryLicense.fileSha256 = createHash("sha256")
+      .update(changed)
+      .digest("hex");
+    globalThis.fetch = responses(
+      new Response(JSON.stringify(policy)),
+      new Response(license),
+      new Response(JSON.stringify(changedPolicy)),
+      new Response(changed),
+    );
+
+    await preflight("eliza");
+    await expect(preflight("eliza")).resolves.toMatchObject({
+      licenseSha256: changedPolicy.terms.repositoryLicense.fileSha256,
+    });
+  });
+
+  it("refetches and repairs a corrupted immutable-document cache entry", async () => {
+    globalThis.fetch = responses(
+      new Response(JSON.stringify(policy)),
+      new Response(license),
+    );
+    await preflight("eliza");
+    const cacheRoot = join(cacheHome, "slop", "policy-documents-v1");
+    const [entry] = readdirSync(cacheRoot);
+    expect(entry).toMatch(/^[0-9a-f]{64}\.bin$/u);
+    writeFileSync(join(cacheRoot, entry), "corrupted cache bytes");
+    globalThis.fetch = responses(
+      new Response(JSON.stringify(policy)),
+      new Response(license),
+    );
+
+    await expect(preflight("eliza")).resolves.toMatchObject({
+      licenseSha256,
+    });
+  });
+
+  it("bounds the persistent immutable-document cache", async () => {
+    const cacheRoot = join(cacheHome, "slop", "policy-documents-v1");
+    mkdirSync(cacheRoot, { recursive: true });
+    for (let index = 0; index < 33; index += 1) {
+      writeFileSync(
+        join(cacheRoot, `${index.toString(16).padStart(64, "0")}.bin`),
+        "x",
+      );
+    }
+    globalThis.fetch = responses(
+      new Response(JSON.stringify(policy)),
+      new Response(license),
+    );
+
+    await preflight("eliza");
+
+    expect(
+      readdirSync(cacheRoot).filter((name) =>
+        /^[0-9a-f]{64}\.bin$/u.test(name),
+      ),
+    ).toHaveLength(32);
   });
 
   it("allows disclosed unknowns and legacy paused status but stops on byte drift", async () => {

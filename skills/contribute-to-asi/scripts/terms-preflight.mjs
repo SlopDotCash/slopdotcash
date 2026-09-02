@@ -1,11 +1,25 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, existsSync, realpathSync } from "node:fs";
+import {
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const MAX_POLICY_BYTES = 1024 * 1024;
 const MAX_TERMS_BYTES = 4 * 1024 * 1024;
+const MAX_CACHE_BYTES = 32 * 1024 * 1024;
+const MAX_CACHE_ENTRIES = 32;
+const CACHE_FILE_PATTERN = /^[0-9a-f]{64}\.bin$/u;
 const ALLOWED_TERMS_HOSTS = new Set([
   "github.com",
   "proximityprize.org",
@@ -29,6 +43,85 @@ function exact(value, keys, field) {
 
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function cacheRoot() {
+  const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
+  if (!base || !isAbsolute(base)) return null;
+  return join(base, "slop", "policy-documents-v1");
+}
+
+function immutableCachePath(source, expected) {
+  const parsed = new URL(source);
+  if (
+    parsed.hostname !== "raw.githubusercontent.com" ||
+    !/^\/[^/]+\/[^/]+\/[0-9a-f]{40}\/.+/u.test(parsed.pathname)
+  ) {
+    return null;
+  }
+  const root = cacheRoot();
+  return root === null
+    ? null
+    : {
+        root,
+        path: join(root, `${digest(`${source}\0${expected}`)}.bin`),
+      };
+}
+
+async function cachedVerifiedBytes(cache, expected) {
+  if (cache === null) return null;
+  let handle;
+  try {
+    handle = await open(cache.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > MAX_TERMS_BYTES) return null;
+    const bytes = await handle.readFile();
+    return digest(bytes) === expected ? bytes : null;
+  } catch {
+    return null;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function pruneCache(root) {
+  const entries = [];
+  for (const name of await readdir(root)) {
+    if (!CACHE_FILE_PATTERN.test(name)) continue;
+    try {
+      const metadata = await stat(join(root, name));
+      if (metadata.isFile()) {
+        entries.push({ name, mtimeMs: metadata.mtimeMs, size: metadata.size });
+      }
+    } catch {
+      // Concurrent cache cleanup is harmless; keep inspecting other entries.
+    }
+  }
+  entries.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  let retainedBytes = 0;
+  for (const [index, entry] of entries.entries()) {
+    retainedBytes += entry.size;
+    if (index >= MAX_CACHE_ENTRIES || retainedBytes > MAX_CACHE_BYTES) {
+      await unlink(join(root, entry.name)).catch(() => {});
+    }
+  }
+}
+
+async function publishCache(cache, bytes) {
+  if (cache === null) return;
+  try {
+    await mkdir(cache.root, { mode: 0o700, recursive: true });
+    const temporary = `${cache.path}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
+      await rename(temporary, cache.path);
+    } finally {
+      await unlink(temporary).catch(() => {});
+    }
+    await pruneCache(cache.root);
+  } catch {
+    // The cache is an availability optimization, never a policy authority.
+  }
 }
 
 function rawUrl(value) {
@@ -95,13 +188,20 @@ async function verifiedBytes(url, expected, field, allowFile) {
       fail(`${field} exceeds the byte limit`);
     }
   } else {
-    const response = await fetch(allowedRemoteSource(source, field), {
+    const allowedSource = allowedRemoteSource(source, field);
+    const cache = immutableCachePath(allowedSource, expected);
+    bytes = await cachedVerifiedBytes(cache, expected);
+    if (bytes !== null) return;
+    const response = await fetch(allowedSource, {
       headers: { accept: "application/octet-stream" },
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) fail(`${field} could not be fetched`);
     bytes = await boundedResponseBytes(response, MAX_TERMS_BYTES, field);
+    if (digest(bytes) !== expected) fail(`${field} digest drifted`);
+    await publishCache(cache, bytes);
+    return;
   }
   if (digest(bytes) !== expected) fail(`${field} digest drifted`);
 }
