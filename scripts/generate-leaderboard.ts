@@ -5,6 +5,7 @@
  * becoming a plausible-looking empty snapshot.
  */
 
+import { readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +78,27 @@ export const DEFAULT_OUTPUT_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../public/data/leaderboard.json",
 );
+const ACCEPTED_REVIEW_HISTORY_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../data/accepted-review-history.json",
+);
+
+function loadAcceptedReviewHistory(): ScoreEvent[] {
+  const value = JSON.parse(
+    readFileSync(ACCEPTED_REVIEW_HISTORY_PATH, "utf8"),
+  ) as unknown;
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    (value as { schemaVersion?: unknown }).schemaVersion !== "1" ||
+    !Array.isArray((value as { events?: unknown }).events) ||
+    Object.keys(value).sort().join("\0") !== "events\0schemaVersion"
+  ) {
+    throw new TypeError("accepted review history manifest is invalid");
+  }
+  return (value as { events: ScoreEvent[] }).events;
+}
 
 type JsonRecord = Record<string, unknown>;
 type GraphqlVariables = Record<
@@ -224,6 +246,7 @@ export interface GenerateOptions {
   evidenceToken?: string;
   evidenceTimeoutMs?: number;
   evaluatedContributions?: ScoreEvent[];
+  retainedReviewEvents?: ScoreEvent[];
 }
 
 export function collectEvaluatedReviewArtifactKeys(
@@ -3547,6 +3570,7 @@ export async function generateLeaderboardFromGitHub(
       now,
       actualNow,
     ),
+    retainedReviewEvents: options.retainedReviewEvents,
     verifyRunReceipt: verifyRunReceiptSignature,
   });
   return snapshot;
@@ -3599,6 +3623,7 @@ if (import.meta.main) {
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
     evaluatedContributions: loadEvaluatorAwardEvents(),
+    retainedReviewEvents: loadAcceptedReviewHistory(),
     onProgress: (progress) => {
       const phaseChanged = progress.phase !== lastProgressPhase;
       lastProgressPhase = progress.phase;

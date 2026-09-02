@@ -2640,6 +2640,94 @@ describe("scoring and limits", () => {
     );
   });
 
+  it("retains accepted formal review credit when GitHub deletes the parent pull request", () => {
+    const reviewer = actor("retained-reviewer");
+    const retained: ScoreEvent = {
+      id: "PR_deleted:reviewer:U_retained-reviewer",
+      actor: reviewer,
+      category: "substantive-review",
+      points: 3,
+      occurredAt: "2026-07-27T10:00:00.000Z",
+      repository: "elizaOS/eliza",
+      source: {
+        id: "PRR_deleted",
+        kind: "review",
+        number: 79,
+        title: "Deleted accepted contribution",
+        url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-799",
+      },
+      reason: "Previously accepted review credit.",
+      continuity: {
+        sourceSnapshotSha256: "a".repeat(64),
+        decisionUrl: "https://github.com/SlopDotCash/slopdotcash/issues/313",
+      },
+    };
+
+    const snapshot = createLeaderboardSnapshot(
+      input({ retainedReviewEvents: [retained] }),
+    );
+
+    expect(snapshot.ledger).toContainEqual(retained);
+    expect(snapshot.leaders).toContainEqual(
+      expect.objectContaining({
+        actor: reviewer,
+        scoreThirds: 9,
+        pointThirds: expect.objectContaining({ substantiveReviews: 9 }),
+      }),
+    );
+  });
+
+  it("lets current GitHub evidence replace retained review history", () => {
+    const reviewer = actor("current-reviewer");
+    const review = {
+      id: "PRR_current",
+      body: "This review identifies a concrete release-blocking regression.",
+      state: "CHANGES_REQUESTED",
+      submittedAt: "2026-07-27T10:00:00.000Z",
+      url: "https://github.com/elizaOS/eliza/pull/79#pullrequestreview-799",
+      author: reviewer,
+      inlineCommentCount: 0,
+    };
+    const merged = pullRequest({
+      id: "PR_current",
+      number: 79,
+      reviews: [review],
+    });
+    const retained: ScoreEvent = {
+      id: `${merged.id}:reviewer:${reviewer.id}`,
+      actor: reviewer,
+      category: "substantive-review",
+      points: 3,
+      occurredAt: review.submittedAt,
+      repository: "elizaOS/eliza",
+      source: {
+        id: review.id,
+        kind: "review",
+        number: merged.number,
+        title: merged.title,
+        url: review.url,
+      },
+      reason: "Stale retained value.",
+    };
+
+    const snapshot = createLeaderboardSnapshot(
+      input({
+        mergedPullRequests: [merged],
+        retainedReviewEvents: [retained],
+      }),
+    );
+
+    expect(
+      snapshot.ledger.filter((event) => event.source.id === review.id),
+    ).toHaveLength(1);
+    expect(
+      snapshot.ledger.find((event) => event.source.id === review.id)?.points,
+    ).toBe(3);
+    expect(
+      snapshot.ledger.find((event) => event.source.id === review.id)?.reason,
+    ).not.toBe("Stale retained value.");
+  });
+
   it("scores accepted outcomes while capping evidence and reviews", () => {
     const reviewer = actor("reviewer");
     const evidenceBody = [
