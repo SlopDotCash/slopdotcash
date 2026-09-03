@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   App,
   DonorFundingProfile,
+  monthlyPoolLabel,
   ProjectFunding,
   ProjectManagePage,
   publicFooterDomain,
@@ -72,6 +73,27 @@ describe("review budget display", () => {
         fundingState: "pledged",
       }),
     ).toBe("$50 cap · additive review line · uncommitted pledge");
+  });
+});
+
+describe("monthly pool display", () => {
+  it("never prints a pledged or empty pool as dollars", () => {
+    const pledged = {
+      committedMinor: "0",
+      fundingState: "pledged" as const,
+      monthlyCapDisplay: "$10,000",
+    };
+    expect(monthlyPoolLabel(pledged)).toBe("unfunded, target $10,000");
+    expect(monthlyPoolLabel({ ...pledged, fundingState: "committed" })).toBe(
+      "unfunded, target $10,000",
+    );
+    expect(
+      monthlyPoolLabel({
+        ...pledged,
+        committedMinor: "1000000",
+        fundingState: "committed",
+      }),
+    ).toBe("$10,000 monthly pool");
   });
 });
 
@@ -499,7 +521,7 @@ describe("discovery", () => {
       "true",
     );
     expect(
-      screen.getByRole("tab", { name: "Eliza, $10,000 monthly pool" }),
+      screen.getByRole("tab", { name: "Eliza, unfunded, target $10,000" }),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText(/July 2026 · Eliza/u)).toBeInTheDocument();
     const leaderboard = screen.getByRole("table", {
@@ -550,8 +572,11 @@ describe("discovery", () => {
       .closest("a");
     expect(elizaCard).not.toBeNull();
     if (!elizaCard) throw new Error("Eliza project card is missing");
-    expect(within(elizaCard).getByText("$10,000")).toBeInTheDocument();
-    expect(within(elizaCard).getByText("/ month")).toBeInTheDocument();
+    expect(within(elizaCard).getByText("Unfunded")).toBeInTheDocument();
+    expect(
+      within(elizaCard).getByText("target $10,000 / month"),
+    ).toBeInTheDocument();
+    expect(within(elizaCard).queryByText("$10,000")).not.toBeInTheDocument();
     expect(
       within(elizaCard).getByText(/Build and verify the elizaOS framework/u),
     ).toBeInTheDocument();
@@ -793,14 +818,17 @@ describe("project routes", () => {
       screen.queryByText("1% platform fee · Solana"),
     ).not.toBeInTheDocument();
     expect(
-      screen.getAllByText("$10,000", { exact: true }).length,
-    ).toBeGreaterThan(0);
+      screen.queryByText("$10,000 monthly pool", { exact: false }),
+    ).not.toBeInTheDocument();
     expect(
       screen
         .getByText("MONTHLY POOL")
         .closest("aside")
         ?.querySelector(".reward-amount-monthly"),
-    ).toHaveTextContent("$10,000");
+    ).toHaveTextContent("Unfunded");
+    expect(
+      screen.getByText(/Target \$10,000 per month\. No funding is committed/u),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText("simulated monthly pool"),
     ).not.toBeInTheDocument();
