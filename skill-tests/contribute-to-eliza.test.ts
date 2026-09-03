@@ -34,6 +34,7 @@ import {
   createGhCommandBudget,
   createReviewEpoch,
   isBotAccount,
+  LiveInventoryChangedError,
   MAX_ACTIVITY_CONNECTION_ITEMS,
   MAX_REVIEW_EPOCH_CANDIDATES,
   MIN_REST_ACTIVITY_REQUESTS,
@@ -49,6 +50,7 @@ import {
   readProjectSelectionPolicy,
   recheckReviewEpochCandidate,
   renderMarkdown,
+  retryChangedLiveInventory,
 } from "../skills/contribute-to-eliza/scripts/live-report.mjs";
 import {
   isRepositoryRoot,
@@ -589,31 +591,40 @@ describe("live report parsing", () => {
         nodes: [{ comments: { totalCount: 1, nodes: [graphqlComment] } }],
       },
     };
-    const calls: string[][] = [];
-    const activity = readGhOpenActivity("elizaOS/eliza", (command, args) => {
-      assert.strictEqual(command, "gh");
-      calls.push(args);
-      const selector = args.at(-1);
-      return {
-        status: 0,
-        stderr: "",
-        stdout: `${JSON.stringify(
-          selector?.includes(".issues.") ? issueNode : pullNode,
-        )}\n`,
-      };
-    });
+    const calls: Array<{
+      args: string[];
+      options: import("node:child_process").SpawnSyncOptionsWithStringEncoding;
+    }> = [];
+    const activity = readGhOpenActivity(
+      "elizaOS/eliza",
+      (command, args, options) => {
+        assert.strictEqual(command, "gh");
+        calls.push({ args, options });
+        const selector = args.at(-1);
+        return {
+          status: 0,
+          stderr: "",
+          stdout: `${JSON.stringify(
+            selector?.includes(".issues.") ? issueNode : pullNode,
+          )}\n`,
+        };
+      },
+    );
 
     assert.strictEqual(calls.length, 2);
-    assert.ok(calls.every((args) => args.includes("graphql")));
-    assert.ok(calls.every((args) => args.includes("--paginate")));
+    assert.ok(calls.every(({ args }) => args.includes("graphql")));
+    assert.ok(calls.every(({ args }) => args.includes("--paginate")));
     assert.ok(
-      calls.every((args) => args[args.indexOf("--method") + 1] === "POST"),
+      calls.every(({ args }) => args[args.indexOf("--method") + 1] === "POST"),
     );
     assert.ok(
-      calls.every((args) => {
+      calls.every(({ args }) => {
         const query = args.find((argument) => argument.startsWith("query="));
         return query?.includes("query(") && !/\bmutation\b/i.test(query);
       }),
+    );
+    assert.ok(
+      calls.every(({ options }) => options.maxBuffer === 256 * 1024 * 1024),
     );
     assert.strictEqual(activity.issues.get(1)?.[0].user.id, 42);
     assert.strictEqual(activity.pulls.get(2)?.reviews[0].commit_id, HEAD_SHA);
@@ -1728,6 +1739,37 @@ describe("live report parsing", () => {
 });
 
 describe("live report behavior", () => {
+  it("retries one changed inventory snapshot without weakening other failures", () => {
+    let attempts = 0;
+    const retries: number[] = [];
+    const report = retryChangedLiveInventory(
+      () => {
+        attempts += 1;
+        if (attempts === 1) throw new LiveInventoryChangedError();
+        return { coherent: true };
+      },
+      ({ attempt }) => retries.push(attempt),
+    );
+
+    assert.deepStrictEqual(report, { coherent: true });
+    assert.strictEqual(attempts, 2);
+    assert.deepStrictEqual(retries, [1]);
+    assert.throws(
+      () =>
+        retryChangedLiveInventory(() => {
+          throw new TypeError("malformed GitHub response");
+        }),
+      /malformed GitHub response/,
+    );
+    assert.throws(
+      () =>
+        retryChangedLiveInventory(() => {
+          throw new LiveInventoryChangedError();
+        }),
+      /changed while collecting the live report after 2 attempts/,
+    );
+  });
+
   it("freezes a finite oldest-first epoch and defers arrivals and overflow", () => {
     const candidates = Array.from(
       { length: MAX_REVIEW_EPOCH_CANDIDATES + 3 },
@@ -2013,6 +2055,7 @@ describe("live report behavior", () => {
     assert.ok(
       !invocation?.args.some((argument) => /POST|PATCH|DELETE/.test(argument)),
     );
+    assert.strictEqual(invocation?.options.maxBuffer, 256 * 1024 * 1024);
   });
 
   it("keeps issues with open closing PRs out of the first-priority queue", () => {
