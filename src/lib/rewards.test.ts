@@ -243,6 +243,33 @@ describe("reward manifests", () => {
     );
   });
 
+  it("cuts wallets off at proposal generation, not at the last material change", () => {
+    const amended = allocationManifest() as unknown as RewardAllocationManifest;
+    amended.review = {
+      days: 14,
+      lastMaterialChangeAt: "2026-09-03T00:00:00.000Z",
+      endsAt: "2026-09-17T00:00:00.000Z",
+    };
+    amended.approvedAt = "2026-09-18T00:00:00.000Z";
+    expect(() => assertRewardAllocationManifest(amended)).not.toThrow();
+
+    const lateWallet = structuredClone(amended);
+    lateWallet.allocations[0].wallet = {
+      ...wallet,
+      observedAt: "2026-09-02T00:00:00.000Z",
+    };
+    expect(() => assertRewardAllocationManifest(lateWallet)).toThrow(
+      /newer than the proposal generation time/u,
+    );
+
+    const atGeneration = structuredClone(amended);
+    atGeneration.allocations[0].wallet = {
+      ...wallet,
+      observedAt: "2026-09-01T00:00:00.000Z",
+    };
+    expect(() => assertRewardAllocationManifest(atGeneration)).not.toThrow();
+  });
+
   it("binds a wallet claim issue to the exact contributor and body snapshot", () => {
     const manifest = allocationManifest() as unknown as {
       allocations: Array<{ wallet: unknown }>;

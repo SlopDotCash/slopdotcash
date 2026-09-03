@@ -173,9 +173,11 @@ shared pool unchanged; a committed review line may pay them only on top of that
 treatment, with separate public arithmetic and evidence.
 
 Proposal review lasts 14 days. Project owners may adjust awards within the cap
-with a public reason. Wallet changes append a successor and reset review;
-history is never edited. Missing wallets remain unclaimed. Related-party money
-requires separate approval.
+with a public reason; only such amount changes reset review. Wallet changes
+append a successor; a wallet observed after proposal generation applies to the
+next cycle and never touches the current proposal. History is never edited.
+Missing wallets remain unclaimed. Related-party money requires separate
+approval.
 
 Settlement tools create unsigned Solana mainnet USDC plans only. `paid`
 requires finalized evidence whose exact source and destination deltas reconcile

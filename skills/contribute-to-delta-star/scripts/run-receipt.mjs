@@ -2193,6 +2193,20 @@ function renderResult(result, json) {
   );
 }
 
+const WALLET_CLAIM_SCRIPT = join(scriptDirectory, "wallet-claim.mjs");
+
+/**
+ * One stderr line after a fresh finish for projects that pay a monthly pool.
+ * The run never reads the wallet registry, so it cannot know whether a claim
+ * exists; it only points at the register command and the cut-off rule.
+ */
+function walletNudge() {
+  if (!existsSync(WALLET_CLAIM_SCRIPT)) return;
+  process.stderr.write(
+    `No payout wallet is checked by this run. If none is registered, run: node ${WALLET_CLAIM_SCRIPT} register --address <public-address> (a wallet observed after a proposal is generated applies to the next cycle).\n`,
+  );
+}
+
 function previewRun(options) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
@@ -2562,6 +2576,7 @@ function finishRun(options, testOptions) {
     },
     options.json,
   );
+  walletNudge();
 }
 
 export async function main(args = process.argv.slice(2), testOptions) {

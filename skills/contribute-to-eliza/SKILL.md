@@ -523,8 +523,9 @@ node <skill-directory>/scripts/wallet-claim.mjs register --address <public-addre
    Slop bearer token only in process memory. It prints the immutable claim ID,
    record digest, and public metadata URL—never a credential.
 5. An address change appends a new claim linked to the current claim; it never
-   edits or deletes history. The change is material and restarts that
-   allocation's 14-day review.
+   edits or deletes history. A claim observed after a proposal is generated
+   applies to the next cycle; it never modifies that proposal or restarts its
+   14-day review, and the row stays unclaimed and carries forward.
 
 A claim identifies where a reviewed payout may go. It does not prove custody,
 guarantee payment, approve an allocation, connect a wallet, or move funds.
