@@ -349,7 +349,7 @@ export function assertProjectCommitmentRecord(
     const expectedVerifierVersion =
       instrument.kind === "squads-v4-vault"
         ? "commitment-squads-v2"
-        : "commitment-sablier-v1";
+        : "commitment-sablier-v2";
     if (verifier.version !== expectedVerifierVersion) {
       throw new TypeError(
         "commitment record verifier version does not match its instrument",

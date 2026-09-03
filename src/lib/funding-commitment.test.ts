@@ -276,7 +276,7 @@ describe("project commitment records", () => {
       assertProjectCommitmentRecord(
         record({
           verifier: {
-            version: "commitment-sablier-v1",
+            version: "commitment-sablier-v2",
             checkedAt: "2026-08-02T01:00:00.000Z",
             evidenceUrl: `https://solscan.io/tx/${DEPOSIT_SIGNATURE}`,
             reason: null,

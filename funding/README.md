@@ -100,7 +100,7 @@ mechanism that Slop does not control: an autonomous Squads v4 multisig vault
 holding USDC on Solana or a Sablier Lockup v4 USDC stream on Base or Ethereum.
 A Squads commitment requires an exact 2-of-2 funder and project-steward
 multisig with no configuration authority; a Sablier commitment uses a
-non-upgradeable stream. Slop holds no key, admin, or fee position in any
+non-upgradeable, non-cancelable stream. Slop holds no key, admin, or fee position in any
 instrument; it publishes the reviewed reference and read-only evidence only.
 Committed funds are constrained by that reviewed third-party instrument, not
 held by Slop.
@@ -156,7 +156,7 @@ funder's claimed wallet—and are never inferred. The verifier never signs,
 broadcasts, handles a key, or writes a record.
 
 For a Sablier Lockup v4 USDC stream on Base or Ethereum, the read-only
-verifier (`commitment-sablier-v1`) queries three fixed public RPC authorities,
+verifier (`commitment-sablier-v2`) queries three fixed public RPC authorities,
 checks each authority's chain ID, pins every stream view call to that
 authority's own finalized block, and requires two to agree exactly on the
 stream state:
@@ -174,8 +174,11 @@ on-chain end time, and the canceled and depleted flags truthfully, with the
 canonical evidence URL `https://basescan.org/address/<contract>` or
 `https://etherscan.io/address/<contract>` and each agreeing authority's
 finalized block identity. Wrong chains, wrong tokens, wrong recipients, and
-malformed return data fail closed. The verifier never signs, broadcasts,
-handles a key, or writes a record.
+malformed return data fail closed. A cancelable stream also fails closed: the
+funder could reclaim the undistributed balance at any time, so it cannot back
+a positive `committedMinor`, and no evidence is emitted for it. Only a stream
+whose `isCancelable` flag is already false can be recorded. The verifier never
+signs, broadcasts, handles a key, or writes a record.
 
 A manifest may set `fundingState: "committed"` only while an active instrument
 is declared and the verified commitment ledger (deposits minus releases and
