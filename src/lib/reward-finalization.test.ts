@@ -40,7 +40,7 @@ function reviewedProposal() {
         wallet: {
           address: "11111111111111111111111111111111",
           chain: "solana",
-          observedAt: "2026-08-03T00:00:00.000Z",
+          observedAt: "2026-08-02T00:00:00.000Z",
           sourceCommit: COMMIT,
           sourceUrl: `https://github.com/finish-line/finish-line/blob/${COMMIT}/README.md`,
         },
@@ -106,16 +106,32 @@ describe("reward allocation finalization", () => {
     ).toThrow(/unresolved/u);
   });
 
-  it("forces a new review deadline when a wallet changes", () => {
-    const staleReview = reviewedProposal();
-    staleReview.allocations[0].wallet.observedAt = "2026-08-04T00:00:00.000Z";
+  it("refuses a wallet observed after the proposal was generated", () => {
+    const lateWallet = reviewedProposal();
+    lateWallet.allocations[0].wallet.observedAt = "2026-08-02T00:00:00.001Z";
     expect(() =>
       finalizeRewardAllocation(
-        staleReview,
+        lateWallet,
         "2026-08-17T00:00:00.000Z",
         Date.parse("2026-08-17T00:01:00.000Z"),
       ),
-    ).toThrow(/newer than the declared material change/u);
+    ).toThrow(/newer than the proposal generation time/u);
+  });
+
+  it("keeps a wallet observed before generation through a later amount change", () => {
+    const earlyWallet = reviewedProposal();
+    earlyWallet.allocations[0].wallet.observedAt = "2026-08-01T00:00:00.000Z";
+    const approved = finalizeRewardAllocation(
+      earlyWallet,
+      "2026-08-17T00:00:00.000Z",
+      Date.parse("2026-08-17T00:01:00.000Z"),
+    );
+    expect(approved.review.lastMaterialChangeAt).toBe(
+      "2026-08-03T00:00:00.000Z",
+    );
+    expect(approved.allocations[0].wallet?.observedAt).toBe(
+      "2026-08-01T00:00:00.000Z",
+    );
   });
 
   it("keeps an explicit zero-award close out of the payment lifecycle", () => {

@@ -3877,6 +3877,10 @@ try {
         { encoding: "utf8", env: environment },
       );
       assert.strictEqual(finished.status, 0, finished.stderr);
+      assert.match(
+        finished.stderr,
+        /wallet-claim\.mjs register --address <public-address>/u,
+      );
       const finishReport = JSON.parse(finished.stdout);
       assert.strictEqual(finishReport.receipt.usage.confidence, "exact");
       assert.strictEqual(finishReport.receipt.usage.totalTokens, 150);

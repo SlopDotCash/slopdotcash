@@ -16,9 +16,13 @@ untouched; a directory containing only one required file is refused as partial.
 For a platform-funded monthly pool, the creator edits `proposal.json` during
 the 14-day review. The creator may set any contributor amount, including zero,
 or raise it above the deterministic suggestion while the cycle total remains
-within the published cap. Every changed amount records a public reason. Wallet
-changes update `review.lastMaterialChangeAt` and reset `review.endsAt`. The
-normal progression then adds, without replacing earlier files:
+within the published cap. Every changed amount records a public reason and
+updates `review.lastMaterialChangeAt`, which resets `review.endsAt`. Wallets
+are cut off at `generatedAt`: a wallet observed after the proposal was
+generated applies to the next cycle and never modifies the current proposal
+or its review clock. The row stays `unclaimed` and carries forward. Only a
+creator amount change moves `review.lastMaterialChangeAt`. The normal
+progression then adds, without replacing earlier files:
 
 Transfers have a 2 USDC minimum. Smaller awards remain
 `held-below-minimum`, retain their exact integer micro-USDC amount, and accrue
