@@ -4,7 +4,11 @@ import {
   type D1Database,
   type R2Bucket,
 } from "../../../backend/trace/cloudflare-persistence";
-import type { TraceObject } from "../../../backend/trace/contracts";
+import type {
+  AuditInput,
+  CreateGrantInput,
+  TraceObject,
+} from "../../../backend/trace/contracts";
 
 const object: TraceObject = {
   sha256: "eafe895eb8119e6e5d06463590b2ef81b3651c157d5c8e18f1889186c7fd0ac0",
@@ -26,6 +30,104 @@ function body(text: string): ReadableStream<Uint8Array> {
 }
 
 describe("Cloudflare trace object persistence", () => {
+  it("creates read grants and their audit records in one D1 batch", async () => {
+    const queries: string[] = [];
+    const batches: string[][] = [];
+    const db: D1Database = {
+      async batch(statements) {
+        batches.push(queries.slice(-statements.length));
+        return statements.map(() => ({ success: true, meta: { changes: 1 } }));
+      },
+      prepare(query) {
+        queries.push(query);
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<T>() {
+            return null as T | null;
+          },
+          async run() {
+            return { success: true };
+          },
+        };
+        return statement;
+      },
+    };
+    const grant: CreateGrantInput = {
+      tokenHash: "a".repeat(64),
+      traceSha256: object.sha256,
+      operatorGithubId: "99",
+      reason: "investigate payout dispute",
+      requestId: "request-1",
+      createdAt: object.createdAt,
+      expiresAt: "2026-08-15T12:05:00.000Z",
+    };
+    const audit: AuditInput = {
+      id: "audit-1",
+      actorGithubId: "99",
+      action: "trace.read_grant.created",
+      target: `sha256:${object.sha256}`,
+      requestId: grant.requestId,
+      createdAt: grant.createdAt,
+      details: { reason: grant.reason, expiresAt: grant.expiresAt },
+    };
+
+    await new CloudflareTracePersistence(db, {} as R2Bucket).createReadGrant(
+      grant,
+      audit,
+    );
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(2);
+    expect(batches[0][0]).toContain("INSERT INTO trace_read_grants");
+    expect(batches[0][1]).toContain("INSERT INTO private_audit_events");
+  });
+
+  it("fails closed when read-grant consumption and audit results diverge", async () => {
+    const db: D1Database = {
+      async batch() {
+        return [
+          { success: true, meta: { changes: 1 } },
+          { success: true, meta: { changes: 0 } },
+        ];
+      },
+      prepare() {
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<T>() {
+            return null as T | null;
+          },
+          async run() {
+            return { success: true };
+          },
+        };
+        return statement;
+      },
+    };
+    const audit: AuditInput = {
+      id: "audit-2",
+      actorGithubId: "99",
+      action: "trace.read_grant.consumed",
+      target: `sha256:${object.sha256}`,
+      requestId: "request-2",
+      createdAt: object.createdAt,
+      details: { sizeBytes: object.sizeBytes },
+    };
+
+    await expect(
+      new CloudflareTracePersistence(db, {} as R2Bucket).consumeReadGrant(
+        "a".repeat(64),
+        object.sha256,
+        "99",
+        object.createdAt,
+        audit,
+      ),
+    ).rejects.toThrow("Trace read grant and audit state diverged");
+  });
+
   it("does not disguise a missing atomic-attachment migration as replay", async () => {
     const db: D1Database = {
       batch: async () => {

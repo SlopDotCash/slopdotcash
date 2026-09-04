@@ -772,24 +772,26 @@ async function createReadGrant(
   const expiresAt = new Date(
     createdAt.getTime() + OPERATOR_GRANT_TTL_SECONDS * 1000,
   );
-  await deps.persistence.createReadGrant({
-    tokenHash,
-    traceSha256: sha256,
-    operatorGithubId: actor.githubId,
-    reason,
-    requestId,
-    createdAt: createdAt.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-  });
-  await deps.persistence.writeAudit({
-    id: deps.randomId(),
-    actorGithubId: actor.githubId,
-    action: "trace.read_grant.created",
-    target: `sha256:${sha256}`,
-    requestId,
-    createdAt: createdAt.toISOString(),
-    details: { reason, expiresAt: expiresAt.toISOString() },
-  });
+  await deps.persistence.createReadGrant(
+    {
+      tokenHash,
+      traceSha256: sha256,
+      operatorGithubId: actor.githubId,
+      reason,
+      requestId,
+      createdAt: createdAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    },
+    {
+      id: deps.randomId(),
+      actorGithubId: actor.githubId,
+      action: "trace.read_grant.created",
+      target: `sha256:${sha256}`,
+      requestId,
+      createdAt: createdAt.toISOString(),
+      details: { reason, expiresAt: expiresAt.toISOString() },
+    },
+  );
   return json(201, {
     grant,
     expiresAt: expiresAt.toISOString(),
@@ -810,29 +812,30 @@ async function readTrace(
     fail(403, "read_grant_required", "A one-time trace read grant is required");
   }
   const tokenHash = await sha256Hex(new TextEncoder().encode(grant));
-  const consumed = await deps.persistence.consumeReadGrant(
-    tokenHash,
-    sha256,
-    actor.githubId,
-    deps.now().toISOString(),
-  );
-  if (!consumed)
-    fail(403, "invalid_read_grant", "Trace read grant is invalid or expired");
   const object = await deps.persistence.getTraceObject(sha256);
   if (object === null) fail(404, "not_found", "Trace not found");
   const bytes = await deps.persistence.readTraceBytes(object);
   if (bytes === null)
     fail(503, "object_unavailable", "Trace object is unavailable");
   const requestId = deps.randomId();
-  await deps.persistence.writeAudit({
-    id: deps.randomId(),
-    actorGithubId: actor.githubId,
-    action: "trace.read_grant.consumed",
-    target: `sha256:${sha256}`,
-    requestId,
-    createdAt: deps.now().toISOString(),
-    details: { sizeBytes: object.sizeBytes },
-  });
+  const consumedAt = deps.now().toISOString();
+  const consumed = await deps.persistence.consumeReadGrant(
+    tokenHash,
+    sha256,
+    actor.githubId,
+    consumedAt,
+    {
+      id: deps.randomId(),
+      actorGithubId: actor.githubId,
+      action: "trace.read_grant.consumed",
+      target: `sha256:${sha256}`,
+      requestId,
+      createdAt: consumedAt,
+      details: { sizeBytes: object.sizeBytes },
+    },
+  );
+  if (!consumed)
+    fail(403, "invalid_read_grant", "Trace read grant is invalid or expired");
   const responseBody =
     bytes instanceof Uint8Array ? bytes.slice().buffer : bytes;
   return new Response(responseBody, {

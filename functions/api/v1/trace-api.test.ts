@@ -44,6 +44,7 @@ class MemoryPersistence implements TracePersistence {
   readonly audits: AuditInput[] = [];
   readonly claims = new Map<string, WalletClaim>();
   failNextPut = false;
+  failNextAudit = false;
 
   async createRun(input: CreateRunInput): Promise<PersistenceResult<TraceRun>> {
     const key = `${input.githubId}:${input.idempotencyKey}`;
@@ -236,8 +237,16 @@ class MemoryPersistence implements TracePersistence {
     this.bytes.set(object.sha256, bytes.slice());
   }
 
-  async createReadGrant(input: CreateGrantInput): Promise<void> {
+  async createReadGrant(
+    input: CreateGrantInput,
+    audit: AuditInput,
+  ): Promise<void> {
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     this.grants.set(input.tokenHash, { ...input, consumed: false });
+    this.audits.push(audit);
   }
 
   async consumeReadGrant(
@@ -245,6 +254,7 @@ class MemoryPersistence implements TracePersistence {
     traceSha256: string,
     operatorGithubId: string,
     now: string,
+    audit: AuditInput,
   ): Promise<boolean> {
     const grant = this.grants.get(tokenHash);
     if (
@@ -256,7 +266,12 @@ class MemoryPersistence implements TracePersistence {
     ) {
       return false;
     }
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     grant.consumed = true;
+    this.audits.push(audit);
     return true;
   }
 
@@ -265,6 +280,10 @@ class MemoryPersistence implements TracePersistence {
   }
 
   async writeAudit(input: AuditInput): Promise<void> {
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     this.audits.push(input);
   }
 
@@ -1387,6 +1406,66 @@ describe("private trace API", () => {
       "trace.read_grant.created",
       "trace.read_grant.consumed",
     ]);
+  });
+
+  it("does not activate or consume a read grant without its audit event", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const operator = await token("99", "slop-operator", ["operator"]);
+    const created = await createRun(deps, contributor);
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const bytes = new TextEncoder().encode("audited private trace");
+    const digest = await sha256Hex(bytes);
+    await uploadTrace(
+      deps,
+      contributor,
+      serverRunId,
+      bytes,
+      "upload_trace_key_audit_failure",
+    );
+
+    store.failNextAudit = true;
+    const failedGrant = await handleTraceApi(
+      request(
+        `operator/traces/${digest}/grant`,
+        "POST",
+        operator,
+        JSON.stringify({ reason: "verify atomic grant audit behavior" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(failedGrant.status).toBe(500);
+    expect(store.grants.size).toBe(0);
+
+    const grantResponse = await handleTraceApi(
+      request(
+        `operator/traces/${digest}/grant`,
+        "POST",
+        operator,
+        JSON.stringify({ reason: "verify atomic read audit behavior" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    const { grant } = (await grantResponse.json()) as { grant: string };
+    store.failNextAudit = true;
+    const failedRead = await handleTraceApi(
+      request(`operator/traces/${digest}`, "GET", operator, undefined, {
+        "x-trace-read-grant": grant,
+      }),
+      deps,
+    );
+    expect(failedRead.status).toBe(500);
+    const retriedRead = await handleTraceApi(
+      request(`operator/traces/${digest}`, "GET", operator, undefined, {
+        "x-trace-read-grant": grant,
+      }),
+      deps,
+    );
+    expect(retriedRead.status).toBe(200);
+    expect(await retriedRead.text()).toBe("audited private trace");
   });
 
   it("publishes only immutable wallet claim metadata", async () => {
