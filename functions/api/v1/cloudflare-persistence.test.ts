@@ -4,7 +4,11 @@ import {
   type D1Database,
   type R2Bucket,
 } from "../../../backend/trace/cloudflare-persistence";
-import type { TraceObject } from "../../../backend/trace/contracts";
+import type {
+  AuditInput,
+  TraceObject,
+  WalletClaim,
+} from "../../../backend/trace/contracts";
 
 const object: TraceObject = {
   sha256: "eafe895eb8119e6e5d06463590b2ef81b3651c157d5c8e18f1889186c7fd0ac0",
@@ -26,6 +30,69 @@ function body(text: string): ReadableStream<Uint8Array> {
 }
 
 describe("Cloudflare trace object persistence", () => {
+  it("submits wallet claim and audit writes in one atomic D1 batch", async () => {
+    const queries: string[] = [];
+    const db: D1Database = {
+      async batch(statements) {
+        expect(statements).toHaveLength(2);
+        return statements.map(() => ({ success: true, meta: { changes: 1 } }));
+      },
+      prepare(query) {
+        queries.push(query);
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<T>() {
+            return null as T;
+          },
+          async run() {
+            throw new Error("wallet writes must use the atomic batch");
+          },
+        };
+        return statement;
+      },
+    };
+    const claim: WalletClaim = {
+      id: "claim-1",
+      githubId: "42",
+      githubLogin: "octocat",
+      walletAddress: "11111111111111111111111111111111",
+      source: "d1_registry",
+      issueRepository: null,
+      issueNumber: null,
+      sourceBodySha256: "b".repeat(64),
+      observedAt: object.createdAt,
+      recordSha256: "c".repeat(64),
+      supersedesClaimId: null,
+      createdAt: object.createdAt,
+    };
+    const audit: AuditInput = {
+      id: "audit-1",
+      actorGithubId: "42",
+      action: "wallet_claim.created",
+      target: "wallet-claim:claim-1",
+      requestId: "request-1",
+      createdAt: object.createdAt,
+      details: { recordDigest: claim.recordSha256 },
+    };
+
+    await expect(
+      new CloudflareTracePersistence(db, {} as R2Bucket).createWalletClaim(
+        claim,
+        audit,
+      ),
+    ).resolves.toEqual({ status: "created", value: claim });
+    expect(
+      queries.some((query) => query.includes("INSERT INTO wallet_claims")),
+    ).toBe(true);
+    expect(
+      queries.some((query) =>
+        query.includes("INSERT INTO private_audit_events"),
+      ),
+    ).toBe(true);
+  });
+
   it("does not disguise a missing atomic-attachment migration as replay", async () => {
     const db: D1Database = {
       batch: async () => {

@@ -176,8 +176,10 @@ export interface TracePersistence {
     object: TraceObject,
   ): Promise<ReadableStream<Uint8Array> | Uint8Array | null>;
   writeAudit(input: AuditInput): Promise<void>;
+  /** Atomically commits a wallet claim and its required audit event. */
   createWalletClaim(
     claim: WalletClaim,
+    audit: AuditInput,
   ): Promise<PersistenceResult<WalletClaim>>;
   getWalletClaim(claimId: string): Promise<WalletClaim | null>;
   getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null>;
