@@ -638,12 +638,13 @@ function validateTerms(
     }
     if (
       current.policyRevision !== terms.revision ||
+      current.activatedAt !== terms.effectiveAt ||
       current.licenseSha256 !== license.fileSha256 ||
       current.inboundTermsSha256 !== inbound.fileSha256 ||
       current.prizeRulesSha256 !== (terms.externalPrize?.rulesSha256 ?? null)
     ) {
       throw new TypeError(
-        `${field}.receiptPolicy latest binding must match current terms`,
+        `${field}.receiptPolicy latest binding must match current terms and effective date`,
       );
     }
   }

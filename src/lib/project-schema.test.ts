@@ -29,6 +29,7 @@ interface MutableActivationFixture {
   status: string;
   authority: unknown;
   terms: {
+    effectiveAt: string;
     revision: string;
     receiptPolicy: unknown;
     inbound: unknown;
@@ -48,6 +49,7 @@ function activatedWithoutOwnershipClaim(model: string): unknown {
   const proofCommit = "a".repeat(40);
   const inboundCommit = "c".repeat(40);
   fixture.status = "active";
+  fixture.terms.effectiveAt = verifiedAt;
   fixture.authority = {
     state: "verified",
     reason: null,
@@ -453,6 +455,12 @@ describe("project proposal schema", () => {
     mutableLicense.terms.repositoryLicense.url =
       "https://github.com/elizaOS/eliza/blob/develop/LICENSE";
     expect(() => assertProjectDefinition(mutableLicense)).toThrow(/immutable/u);
+
+    const retroactiveEffectiveDate = structuredClone(eliza);
+    retroactiveEffectiveDate.terms.effectiveAt = "2026-08-01T00:00:00.000Z";
+    expect(() => assertProjectDefinition(retroactiveEffectiveDate)).toThrow(
+      /effective date/u,
+    );
 
     const mismatchedInbound = structuredClone(eliza) as unknown as {
       terms: {
