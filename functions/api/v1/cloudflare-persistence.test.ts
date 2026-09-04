@@ -4,7 +4,10 @@ import {
   type D1Database,
   type R2Bucket,
 } from "../../../backend/trace/cloudflare-persistence";
-import type { TraceObject } from "../../../backend/trace/contracts";
+import type {
+  RunProgressEvent,
+  TraceObject,
+} from "../../../backend/trace/contracts";
 
 const object: TraceObject = {
   sha256: "eafe895eb8119e6e5d06463590b2ef81b3651c157d5c8e18f1889186c7fd0ac0",
@@ -26,6 +29,46 @@ function body(text: string): ReadableStream<Uint8Array> {
 }
 
 describe("Cloudflare trace object persistence", () => {
+  it("rejects an event when its run finalized before the atomic insert", async () => {
+    const db: D1Database = {
+      batch: async () => [],
+      prepare(query) {
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<_T>() {
+            if (query.includes("FROM run_progress_events")) return null;
+            throw new Error(`Unexpected query: ${query}`);
+          },
+          async run() {
+            expect(query).toMatch(/FROM trace_runs/u);
+            expect(query).toMatch(/state != 'finalized'/u);
+            return { success: true, meta: { changes: 0 } };
+          },
+        };
+        return statement;
+      },
+    };
+    const event: RunProgressEvent & { idempotencyKey: string } = {
+      id: "event-1",
+      runId: "run-1",
+      githubId: "42",
+      kind: "checkpoint",
+      occurredAt: object.createdAt,
+      source: "agent",
+      githubObjectId: null,
+      githubUrl: null,
+      headSha: null,
+      createdAt: object.createdAt,
+      idempotencyKey: "event-key-0001",
+    };
+
+    await expect(
+      new CloudflareTracePersistence(db, {} as R2Bucket).appendEvent(event),
+    ).resolves.toEqual({ status: "conflict" });
+  });
+
   it("does not disguise a missing atomic-attachment migration as replay", async () => {
     const db: D1Database = {
       batch: async () => {
