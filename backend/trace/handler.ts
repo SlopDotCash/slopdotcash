@@ -2,6 +2,7 @@ import { isSolanaAddress } from "../../src/lib/wallets";
 import { signApiToken, verifyApiToken } from "./auth";
 import {
   type ApiRole,
+  type AuditInput,
   type AuthenticatedActor,
   MAX_TRACE_BYTES,
   OPERATOR_GRANT_TTL_SECONDS,
@@ -269,7 +270,19 @@ async function createContributorWalletClaim(
     supersedesClaimId: requestedPredecessor,
     createdAt: observedAt,
   };
-  const result = await deps.persistence.createWalletClaim(claim);
+  const audit: AuditInput = {
+    id: deps.randomId(),
+    actorGithubId: actor.githubId,
+    action: "wallet_claim.created",
+    target: `wallet-claim:${claim.id}`,
+    requestId: deps.randomId(),
+    createdAt: observedAt,
+    details: {
+      recordDigest: claim.recordSha256,
+      supersedesClaimId: claim.supersedesClaimId,
+    },
+  };
+  const result = await deps.persistence.createWalletClaim(claim, audit);
   if (result.status === "conflict") {
     fail(
       409,
@@ -277,18 +290,6 @@ async function createContributorWalletClaim(
       "Wallet claim changed; reload the current claim before submitting",
     );
   }
-  await deps.persistence.writeAudit({
-    id: deps.randomId(),
-    actorGithubId: actor.githubId,
-    action: "wallet_claim.created",
-    target: `wallet-claim:${result.value.id}`,
-    requestId: deps.randomId(),
-    createdAt: observedAt,
-    details: {
-      recordDigest: result.value.recordSha256,
-      supersedesClaimId: result.value.supersedesClaimId,
-    },
-  });
   return json(
     result.status === "created" ? 201 : 200,
     publicWalletClaim(result.value),
@@ -380,24 +381,24 @@ async function createFallbackWalletClaim(
     supersedesClaimId,
     createdAt: deps.now().toISOString(),
   };
-  const result = await deps.persistence.createWalletClaim(claim);
-  if (result.status === "conflict")
-    fail(409, "claim_conflict", "Wallet claim conflicts");
-  await deps.persistence.writeAudit({
+  const audit: AuditInput = {
     id: deps.randomId(),
     actorGithubId: actor.githubId,
     action:
       source === "github_issue"
         ? "wallet_claim.historical_issue_migrated"
         : "wallet_claim.operator_recovery_created",
-    target: `wallet-claim:${result.value.id}`,
+    target: `wallet-claim:${claim.id}`,
     requestId: deps.randomId(),
     createdAt: deps.now().toISOString(),
     details: {
-      githubActorId: result.value.githubId,
-      recordDigest: result.value.recordSha256,
+      githubActorId: claim.githubId,
+      recordDigest: claim.recordSha256,
     },
-  });
+  };
+  const result = await deps.persistence.createWalletClaim(claim, audit);
+  if (result.status === "conflict")
+    fail(409, "claim_conflict", "Wallet claim conflicts");
   return json(
     result.status === "created" ? 201 : 200,
     publicWalletClaim(result.value),

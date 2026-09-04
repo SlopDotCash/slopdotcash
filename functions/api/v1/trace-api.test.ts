@@ -44,6 +44,7 @@ class MemoryPersistence implements TracePersistence {
   readonly audits: AuditInput[] = [];
   readonly claims = new Map<string, WalletClaim>();
   failNextPut = false;
+  failNextAudit = false;
 
   async createRun(input: CreateRunInput): Promise<PersistenceResult<TraceRun>> {
     const key = `${input.githubId}:${input.idempotencyKey}`;
@@ -265,11 +266,16 @@ class MemoryPersistence implements TracePersistence {
   }
 
   async writeAudit(input: AuditInput): Promise<void> {
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     this.audits.push(input);
   }
 
   async createWalletClaim(
     claim: WalletClaim,
+    audit: AuditInput,
   ): Promise<PersistenceResult<WalletClaim>> {
     const existing = [...this.claims.values()].find(
       (item) => item.recordSha256 === claim.recordSha256,
@@ -288,7 +294,12 @@ class MemoryPersistence implements TracePersistence {
     ) {
       return { status: "conflict" };
     }
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     this.claims.set(claim.id, claim);
+    this.audits.push(audit);
     return { status: "created", value: claim };
   }
 
@@ -1535,6 +1546,26 @@ describe("private trace API", () => {
       dependencies(),
     );
     expect(response.status).toBe(401);
+  });
+
+  it("does not activate a wallet claim when its required audit write fails", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    store.failNextAudit = true;
+    const failed = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        contributor,
+        JSON.stringify({ address: "11111111111111111111111111111111" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(failed.status).toBe(500);
+    expect(await store.getCurrentWalletClaim("42")).toBeNull();
+    expect(store.audits).toEqual([]);
   });
 
   it("reports unknown paths as not found instead of demanding authentication", async () => {
