@@ -34,6 +34,24 @@ export interface VerifiedSolanaTransaction {
 
 export const SOLANA_FUNDING_VERIFIER_VERSION = "funding-solana-v1" as const;
 
+/** Refuses an immutable settlement time earlier than its chain evidence. */
+export function assertSettlementChronology(
+  settledAt: string,
+  transactions: readonly VerifiedSolanaTransaction[],
+): void {
+  const settledAtMs = Date.parse(settledAt);
+  if (!Number.isFinite(settledAtMs)) {
+    throw new TypeError("Settlement time is invalid");
+  }
+  if (
+    transactions.some(
+      (transaction) => transaction.blockTime * 1_000 > settledAtMs,
+    )
+  ) {
+    throw new TypeError("Settlement time predates its finalized transaction");
+  }
+}
+
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`${field} must be an object`);
@@ -361,5 +379,6 @@ export async function verifyRewardSettlementOnchain(input: {
       ),
     );
   }
+  assertSettlementChronology(settlement.settledAt, verified);
   return verified;
 }
