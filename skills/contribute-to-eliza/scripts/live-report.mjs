@@ -3,6 +3,7 @@
  * Builds a stable, read-only inventory of open elizaOS issues and pull requests
  * for contribution selection. REST pagination stays behind one GET-only
  * adapter; GraphQL uses explicit read-only queries over GitHub's POST endpoint.
+ * A user-private process lease serializes complete discovery across skill copies.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -11,8 +12,8 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -50,15 +51,11 @@ export const MIN_SEARCH_ACTIVITY_REQUESTS = 2;
 
 const LIVE_REPORT_LOCK_DIRECTORY = "slop-live-report-locks-v2";
 const LIVE_REPORT_LOCK_OWNER_FILE = "owner.json";
-const LIVE_REPORT_LOCK_HEARTBEAT_FILE = "heartbeat.json";
 const LIVE_REPORT_LOCK_COMMAND_DIRECTORY = "commands";
 const LIVE_REPORT_LOCK_ACQUIRE_ATTEMPTS = 8;
-const LIVE_REPORT_HEARTBEAT_INTERVAL_MS = 200;
-const LIVE_REPORT_HEARTBEAT_STALE_MS = 1_000;
 const LIVE_REPORT_ORPHAN_COMMAND_GRACE_MS = 5 * 60 * 1_000;
 const LIVE_REPORT_LOCKED_GH_ARGUMENT = "--slop-internal-locked-gh-v1";
-const LIVE_REPORT_LOCK_HEARTBEAT_ARGUMENT =
-  "--slop-internal-lock-heartbeat-v1";
+const LIVE_REPORT_PROCESS_IDENTITY_RE = /^[a-f0-9]{64}$/u;
 const LIVE_REPORT_TOKEN_RE = /^[a-f0-9]{32}$/u;
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -1393,10 +1390,121 @@ function fileSystemErrorCode(error) {
     : null;
 }
 
-function heartbeatTimestampIsFresh(observedAtMs) {
-  const age = Date.now() - observedAtMs;
-  return age >= -LIVE_REPORT_HEARTBEAT_STALE_MS &&
-    age <= LIVE_REPORT_HEARTBEAT_STALE_MS;
+function assertLiveReportPrivatePath(path, context, kind) {
+  const stats = lstatSync(path);
+  const kindMatches =
+    kind === "directory" ? stats.isDirectory() : stats.isFile();
+  if (stats.isSymbolicLink() || !kindMatches) {
+    throw new TypeError(`${context} must be a real ${kind}`);
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (Number.isInteger(uid) && stats.uid !== uid) {
+    throw new TypeError(`${context} must belong to the current user`);
+  }
+  if (platform() !== "win32" && (stats.mode & 0o077) !== 0) {
+    throw new TypeError(`${context} permissions must exclude group and others`);
+  }
+  return stats;
+}
+
+function processIsRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (fileSystemErrorCode(error) === "ESRCH") return false;
+    if (fileSystemErrorCode(error) === "EPERM") return true;
+    throw error;
+  }
+}
+
+function hashProcessIdentity(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function readLiveReportProcessIdentity(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new TypeError("live report process ID must be a positive integer");
+  }
+  if (!processIsRunning(pid)) return null;
+  const operatingSystem = platform();
+  if (operatingSystem === "linux") {
+    let source;
+    try {
+      source = readFileSync(`/proc/${pid}/stat`, "utf8");
+    } catch (error) {
+      if (fileSystemErrorCode(error) === "ENOENT") return null;
+      throw error;
+    }
+    const commandEnd = source.lastIndexOf(")");
+    const fields = source
+      .slice(commandEnd + 2)
+      .trim()
+      .split(/\s+/u);
+    const startTime = fields[19];
+    if (commandEnd < 1 || !/^\d+$/u.test(startTime ?? "")) {
+      throw new TypeError("Linux returned an invalid process birth identity");
+    }
+    return hashProcessIdentity(`linux:${startTime}`);
+  }
+  if (
+    operatingSystem === "darwin" ||
+    operatingSystem === "freebsd" ||
+    operatingSystem === "openbsd"
+  ) {
+    const result = spawnSync(
+      existsSync("/bin/ps") ? "/bin/ps" : "ps",
+      ["-o", "lstart=", "-p", String(pid)],
+      { encoding: "utf8", maxBuffer: 64 * 1024, windowsHide: true },
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0 || result.stdout.trim() === "") {
+      if (!processIsRunning(pid)) return null;
+      throw new Error("could not read the process birth identity from ps");
+    }
+    return hashProcessIdentity(`${operatingSystem}:${result.stdout.trim()}`);
+  }
+  if (operatingSystem === "win32") {
+    const result = spawnSync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
+      ],
+      { encoding: "utf8", maxBuffer: 64 * 1024, windowsHide: true },
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0 || !/^\d+$/u.test(result.stdout.trim())) {
+      if (!processIsRunning(pid)) return null;
+      throw new Error("could not read the Windows process birth identity");
+    }
+    return hashProcessIdentity(`win32:${result.stdout.trim()}`);
+  }
+  throw new Error(
+    `live report locking does not support process identity on ${operatingSystem}`,
+  );
+}
+
+function readProcessLease(value, context) {
+  const record = asRecord(value, context);
+  const pid = asNumberField(record, "pid", context);
+  const processIdentity = asStringField(record, "processIdentity", context);
+  if (
+    !Number.isInteger(pid) ||
+    pid <= 0 ||
+    !LIVE_REPORT_PROCESS_IDENTITY_RE.test(processIdentity)
+  ) {
+    throw new TypeError(`${context} is invalid`);
+  }
+  return { pid, processIdentity };
+}
+
+function processLeaseIsActive(lease) {
+  const currentIdentity = readLiveReportProcessIdentity(lease.pid);
+  return currentIdentity !== null && currentIdentity === lease.processIdentity;
 }
 
 export function defaultLiveReportLockRoot() {
@@ -1420,25 +1528,18 @@ export function ensureLiveReportLockRoot(
   } catch (error) {
     if (fileSystemErrorCode(error) !== "EEXIST") throw error;
   }
-  const stats = lstatSync(rootPath);
-  if (stats.isSymbolicLink() || !stats.isDirectory()) {
-    throw new TypeError("live report lock root must be a real directory");
-  }
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (Number.isInteger(uid) && stats.uid !== uid) {
-    throw new TypeError(
-      "live report lock root must belong to the current user",
-    );
-  }
-  if (platform() !== "win32" && (stats.mode & 0o077) !== 0) {
-    throw new TypeError("live report lock root permissions must be 0700");
-  }
+  assertLiveReportPrivatePath(rootPath, "live report lock root", "directory");
   return rootPath;
 }
 
 function readLiveReportLockOwner(lockPath) {
   let source;
   try {
+    assertLiveReportPrivatePath(
+      join(lockPath, LIVE_REPORT_LOCK_OWNER_FILE),
+      "live report lock owner",
+      "file",
+    );
     source = readFileSync(join(lockPath, LIVE_REPORT_LOCK_OWNER_FILE), "utf8");
   } catch (error) {
     if (fileSystemErrorCode(error) === "ENOENT") return null;
@@ -1467,6 +1568,7 @@ function liveReportCommandDirectory(lockPath) {
 }
 
 function readLiveReportCommandLease(path) {
+  assertLiveReportPrivatePath(path, "live report command lease", "file");
   const record = asRecord(
     JSON.parse(readFileSync(path, "utf8")),
     "live report command lease",
@@ -1515,6 +1617,11 @@ function liveReportHasActiveCommand(lockPath, ownerToken) {
   const commandDirectory = liveReportCommandDirectory(lockPath);
   let entries;
   try {
+    assertLiveReportPrivatePath(
+      commandDirectory,
+      "live report command directory",
+      "directory",
+    );
     entries = readdirSync(commandDirectory, { withFileTypes: true });
   } catch (error) {
     if (fileSystemErrorCode(error) === "ENOENT" && !existsSync(lockPath)) {
@@ -1523,7 +1630,7 @@ function liveReportHasActiveCommand(lockPath, ownerToken) {
     throw error;
   }
   for (const entry of entries) {
-    if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
+    if (!entry.isFile()) {
       throw new TypeError("live report command directory is invalid");
     }
     if (!/^lease-[a-f0-9]{32}\.json$/u.test(entry.name)) continue;
@@ -1536,10 +1643,7 @@ function liveReportHasActiveCommand(lockPath, ownerToken) {
 }
 
 function assertLiveReportLockDirectory(lockPath) {
-  const stats = lstatSync(lockPath);
-  if (stats.isSymbolicLink() || !stats.isDirectory()) {
-    throw new TypeError("live report lock must be a real directory");
-  }
+  assertLiveReportPrivatePath(lockPath, "live report lock", "directory");
 }
 
 function prepareLiveReportLockCandidate(lockPath, ownerToken, processIdentity) {
@@ -1611,6 +1715,11 @@ function spawnLockedGh(lockPath, ownerToken, command, args, options = {}) {
     throw new RangeError("live report gh command maxBuffer is invalid");
   }
   const commandToken = randomBytes(16).toString("hex");
+  assertLiveReportPrivatePath(
+    liveReportCommandDirectory(lockPath),
+    "live report command directory",
+    "directory",
+  );
   const requestPath = join(
     liveReportCommandDirectory(lockPath),
     `request-${commandToken}.json`,
@@ -1737,7 +1846,7 @@ function readLockedGhRequest(lockPath, ownerToken, commandToken) {
   ) {
     throw new TypeError("locked GitHub command tokens are invalid");
   }
-  const root = ensureLiveReportLockRoot();
+  const root = ensureLiveReportLockRoot(dirname(lockPath));
   if (
     dirname(lockPath) !== root ||
     !/^[a-f0-9]{64}\.lock$/u.test(basename(lockPath))
@@ -1752,6 +1861,11 @@ function readLockedGhRequest(lockPath, ownerToken, commandToken) {
   const requestPath = join(
     liveReportCommandDirectory(lockPath),
     `request-${commandToken}.json`,
+  );
+  assertLiveReportPrivatePath(
+    requestPath,
+    "locked GitHub command request",
+    "file",
   );
   const request = asRecord(
     JSON.parse(readFileSync(requestPath, "utf8")),

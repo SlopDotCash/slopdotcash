@@ -3,6 +3,7 @@
  * Builds a stable, read-only inventory of open elizaOS issues and pull requests
  * for contribution selection. REST pagination stays behind one GET-only
  * adapter; GraphQL uses explicit read-only queries over GitHub's POST endpoint.
+ * A user-private process lease serializes complete discovery across skill copies.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -11,8 +12,8 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -1389,6 +1390,23 @@ function fileSystemErrorCode(error) {
     : null;
 }
 
+function assertLiveReportPrivatePath(path, context, kind) {
+  const stats = lstatSync(path);
+  const kindMatches =
+    kind === "directory" ? stats.isDirectory() : stats.isFile();
+  if (stats.isSymbolicLink() || !kindMatches) {
+    throw new TypeError(`${context} must be a real ${kind}`);
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (Number.isInteger(uid) && stats.uid !== uid) {
+    throw new TypeError(`${context} must belong to the current user`);
+  }
+  if (platform() !== "win32" && (stats.mode & 0o077) !== 0) {
+    throw new TypeError(`${context} permissions must exclude group and others`);
+  }
+  return stats;
+}
+
 function processIsRunning(pid) {
   try {
     process.kill(pid, 0);
@@ -1510,25 +1528,18 @@ export function ensureLiveReportLockRoot(
   } catch (error) {
     if (fileSystemErrorCode(error) !== "EEXIST") throw error;
   }
-  const stats = lstatSync(rootPath);
-  if (stats.isSymbolicLink() || !stats.isDirectory()) {
-    throw new TypeError("live report lock root must be a real directory");
-  }
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (Number.isInteger(uid) && stats.uid !== uid) {
-    throw new TypeError(
-      "live report lock root must belong to the current user",
-    );
-  }
-  if (platform() !== "win32" && (stats.mode & 0o077) !== 0) {
-    throw new TypeError("live report lock root permissions must be 0700");
-  }
+  assertLiveReportPrivatePath(rootPath, "live report lock root", "directory");
   return rootPath;
 }
 
 function readLiveReportLockOwner(lockPath) {
   let source;
   try {
+    assertLiveReportPrivatePath(
+      join(lockPath, LIVE_REPORT_LOCK_OWNER_FILE),
+      "live report lock owner",
+      "file",
+    );
     source = readFileSync(join(lockPath, LIVE_REPORT_LOCK_OWNER_FILE), "utf8");
   } catch (error) {
     if (fileSystemErrorCode(error) === "ENOENT") return null;
@@ -1557,6 +1568,7 @@ function liveReportCommandDirectory(lockPath) {
 }
 
 function readLiveReportCommandLease(path) {
+  assertLiveReportPrivatePath(path, "live report command lease", "file");
   const record = asRecord(
     JSON.parse(readFileSync(path, "utf8")),
     "live report command lease",
@@ -1605,6 +1617,11 @@ function liveReportHasActiveCommand(lockPath, ownerToken) {
   const commandDirectory = liveReportCommandDirectory(lockPath);
   let entries;
   try {
+    assertLiveReportPrivatePath(
+      commandDirectory,
+      "live report command directory",
+      "directory",
+    );
     entries = readdirSync(commandDirectory, { withFileTypes: true });
   } catch (error) {
     if (fileSystemErrorCode(error) === "ENOENT" && !existsSync(lockPath)) {
@@ -1613,7 +1630,7 @@ function liveReportHasActiveCommand(lockPath, ownerToken) {
     throw error;
   }
   for (const entry of entries) {
-    if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
+    if (!entry.isFile()) {
       throw new TypeError("live report command directory is invalid");
     }
     if (!/^lease-[a-f0-9]{32}\.json$/u.test(entry.name)) continue;
@@ -1626,10 +1643,7 @@ function liveReportHasActiveCommand(lockPath, ownerToken) {
 }
 
 function assertLiveReportLockDirectory(lockPath) {
-  const stats = lstatSync(lockPath);
-  if (stats.isSymbolicLink() || !stats.isDirectory()) {
-    throw new TypeError("live report lock must be a real directory");
-  }
+  assertLiveReportPrivatePath(lockPath, "live report lock", "directory");
 }
 
 function prepareLiveReportLockCandidate(lockPath, ownerToken, processIdentity) {
@@ -1701,6 +1715,11 @@ function spawnLockedGh(lockPath, ownerToken, command, args, options = {}) {
     throw new RangeError("live report gh command maxBuffer is invalid");
   }
   const commandToken = randomBytes(16).toString("hex");
+  assertLiveReportPrivatePath(
+    liveReportCommandDirectory(lockPath),
+    "live report command directory",
+    "directory",
+  );
   const requestPath = join(
     liveReportCommandDirectory(lockPath),
     `request-${commandToken}.json`,
@@ -1827,7 +1846,7 @@ function readLockedGhRequest(lockPath, ownerToken, commandToken) {
   ) {
     throw new TypeError("locked GitHub command tokens are invalid");
   }
-  const root = ensureLiveReportLockRoot();
+  const root = ensureLiveReportLockRoot(dirname(lockPath));
   if (
     dirname(lockPath) !== root ||
     !/^[a-f0-9]{64}\.lock$/u.test(basename(lockPath))
@@ -1842,6 +1861,11 @@ function readLockedGhRequest(lockPath, ownerToken, commandToken) {
   const requestPath = join(
     liveReportCommandDirectory(lockPath),
     `request-${commandToken}.json`,
+  );
+  assertLiveReportPrivatePath(
+    requestPath,
+    "locked GitHub command request",
+    "file",
   );
   const request = asRecord(
     JSON.parse(readFileSync(requestPath, "utf8")),
