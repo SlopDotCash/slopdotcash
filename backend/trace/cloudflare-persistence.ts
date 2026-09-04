@@ -499,12 +499,14 @@ export class CloudflareTracePersistence implements TracePersistence {
         : { status: "conflict" };
     }
     try {
-      await this.db
+      const inserted = await this.db
         .prepare(
           `INSERT INTO run_progress_events (
             id, run_id, github_user_id, kind, occurred_at, source,
             github_object_id, github_url, head_sha, created_at, idempotency_key
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            FROM trace_runs
+           WHERE id = ? AND github_user_id = ? AND state != 'finalized'`,
         )
         .bind(
           event.id,
@@ -518,8 +520,13 @@ export class CloudflareTracePersistence implements TracePersistence {
           event.headSha,
           event.createdAt,
           event.idempotencyKey,
+          event.runId,
+          event.githubId,
         )
         .run();
+      if ((inserted.meta?.changes ?? 0) !== 1) {
+        return { status: "conflict" };
+      }
     } catch {
       return { status: "conflict" };
     }
