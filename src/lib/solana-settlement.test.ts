@@ -86,6 +86,25 @@ describe("finalized Solana settlement", () => {
     ).toThrow(/source USDC debit|undeclared/u);
   });
 
+  it("requires the receipt signature to be the transaction identifier", () => {
+    const cosigned = transaction();
+    cosigned.transaction.signatures = ["4".repeat(88), SIGNATURE];
+
+    expect(() =>
+      assertFinalizedUsdcTransfer(cosigned, SIGNATURE, SOURCE, [
+        { recipientOwner: RECIPIENT, amountMinor: "1000000" },
+      ]),
+    ).toThrow(/signature/u);
+    expect(() =>
+      assertFinalizedUsdcFundingTransfer(
+        cosigned,
+        SIGNATURE,
+        RECIPIENT,
+        "1000000",
+      ),
+    ).toThrow(/signature/u);
+  });
+
   it("verifies an exact direct-funding credit without trusting the sender", () => {
     expect(
       assertFinalizedUsdcFundingTransfer(

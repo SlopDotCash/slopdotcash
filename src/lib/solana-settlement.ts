@@ -147,7 +147,7 @@ export function assertFinalizedUsdcTransfer(
   );
   if (
     !Array.isArray(envelope.signatures) ||
-    !envelope.signatures.some((value) => value === expectedSignature)
+    envelope.signatures[0] !== expectedSignature
   ) {
     throw new TypeError(
       "Solana transaction signature does not match the receipt",
@@ -229,7 +229,7 @@ export function assertFinalizedUsdcFundingTransfer(
   );
   if (
     !Array.isArray(envelope.signatures) ||
-    !envelope.signatures.some((value) => value === expectedSignature)
+    envelope.signatures[0] !== expectedSignature
   ) {
     throw new TypeError(
       "Solana transaction signature does not match the funding record",
