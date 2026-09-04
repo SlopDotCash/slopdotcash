@@ -46,6 +46,7 @@ export type TraceApiDependencies = {
 type ApiError = Error & { status?: number; code?: string };
 
 export const TRACE_API_CONTRACT_VERSION = "private-trace-v1-opaque-hmac-v1";
+const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function fail(status: number, code: string, message: string): never {
   const error: ApiError = new Error(message);
@@ -745,6 +746,10 @@ async function appendEvent(
   const kind = body.kind;
   if (!validEventKind(kind)) fail(400, "invalid_request", "Invalid event kind");
   const occurredAt = requiredString(body, "occurredAt", validIsoTimestamp);
+  const createdAt = deps.now();
+  if (Date.parse(occurredAt) > createdAt.getTime() + MAX_EVENT_CLOCK_SKEW_MS) {
+    fail(400, "invalid_request", "Event time is too far in the future");
+  }
   const source = body.source;
   // GitHub-authoritative events are written only by the webhook processor,
   // never by this contributor endpoint.
@@ -770,7 +775,7 @@ async function appendEvent(
     }),
     headSha: optionalString(body, "headSha", validGitSha),
     idempotencyKey: idempotencyKey(request),
-    createdAt: deps.now().toISOString(),
+    createdAt: createdAt.toISOString(),
   });
   if (result.status === "conflict") {
     fail(409, "idempotency_conflict", "Idempotency key was reused");

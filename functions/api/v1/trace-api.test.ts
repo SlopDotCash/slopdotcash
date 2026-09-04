@@ -1265,6 +1265,39 @@ describe("private trace API", () => {
     });
   });
 
+  it("rejects a progress event beyond the server clock tolerance", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_future_event_run_key_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const response = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/events`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          kind: "run_completed",
+          occurredAt: new Date(NOW.getTime() + 5 * 60_000 + 1).toISOString(),
+          source: "agent",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "future_progress_event_key_0001",
+        },
+      ),
+      deps,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "invalid_request" });
+    expect(store.events.size).toBe(0);
+  });
+
   it("rejects digest mismatches before retaining an object", async () => {
     const store = new MemoryPersistence();
     const deps = dependencies(store);
