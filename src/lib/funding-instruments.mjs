@@ -149,6 +149,7 @@ function validateSablierInstrument(candidate, field) {
         ? ["monthlyCommitment"]
         : []),
       "network",
+      "recipient",
       "replacedAt",
       "streamId",
     ],
@@ -165,6 +166,9 @@ function validateSablierInstrument(candidate, field) {
       `${field}.contract is not the reviewed Sablier Lockup v4 deployment`,
     );
   }
+  if (!isFundingAddress(candidate.network, candidate.recipient)) {
+    throw new TypeError(`${field}.recipient is invalid`);
+  }
   if (
     typeof candidate.streamId !== "string" ||
     candidate.streamId.length > 78 ||
@@ -178,6 +182,7 @@ function validateSablierInstrument(candidate, field) {
     network: candidate.network,
     asset: "USDC",
     contract: candidate.contract,
+    recipient: candidate.recipient,
     streamId: candidate.streamId,
     ...monthlyCommitment(candidate, field),
     ...window,
