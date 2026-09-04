@@ -73,27 +73,33 @@ const HEAD_SHA = "a".repeat(40);
 const PRIOR_SHA = "b".repeat(40);
 
 const configuredNodeExecutable = process.env.SLOP_TEST_NODE ?? "node";
-const configuredNodeRuntime = spawnSync(
-  configuredNodeExecutable,
-  [
-    "-p",
-    "JSON.stringify({ executable: process.execPath, version: process.versions.node })",
-  ],
-  { encoding: "utf8" },
-);
-assert.strictEqual(
-  configuredNodeRuntime.status,
-  0,
-  configuredNodeRuntime.stderr,
-);
-const nodeRuntime = JSON.parse(configuredNodeRuntime.stdout) as {
-  executable: string;
-  version: string;
-};
-assert.strictEqual(nodeRuntime.version, "24.15.0");
-const nodeExecutable = nodeRuntime.executable;
+const nodeExecutable = configuredNodeExecutable;
+let pinnedNodeRuntimeChecked = false;
+
+function assertPinnedNodeRuntime(): void {
+  if (pinnedNodeRuntimeChecked) return;
+  const configuredNodeRuntime = spawnSync(
+    configuredNodeExecutable,
+    [
+      "-p",
+      "JSON.stringify({ executable: process.execPath, version: process.versions.node })",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.strictEqual(
+    configuredNodeRuntime.status,
+    0,
+    configuredNodeRuntime.stderr,
+  );
+  const nodeRuntime = JSON.parse(configuredNodeRuntime.stdout) as {
+    version: string;
+  };
+  assert.strictEqual(nodeRuntime.version, "24.15.0");
+  pinnedNodeRuntimeChecked = true;
+}
 
 function createLiveReportGhFixture() {
+  assertPinnedNodeRuntime();
   const root = mkdtempSync(join(tmpdir(), "slop-live-report-lock-test-"));
   const identityId = Number.parseInt(randomBytes(6).toString("hex"), 16);
   const shimDirectory = join(root, "bin");
