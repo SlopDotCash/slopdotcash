@@ -4,6 +4,7 @@
  * amount is tied to one immutable payout intent.
  */
 
+import { isSolanaTransactionId } from "./funding-address.mjs";
 import { assertExactModelIdentity } from "./model-identity";
 import { findProject, type ProjectId } from "./projects.mjs";
 import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
@@ -248,6 +249,13 @@ function safeInteger(value: unknown, path: string): number {
 
 function sha256(value: unknown, path: string): string {
   return text(value, path, { pattern: /^[0-9a-f]{64}$/u });
+}
+
+function solanaSignature(value: unknown, path: string): string {
+  if (!isSolanaTransactionId(value)) {
+    throw new TypeError(`${path} is invalid`);
+  }
+  return value;
 }
 
 function array(value: unknown, path: string): unknown[] {
@@ -1404,11 +1412,7 @@ export function assertRewardSettlementManifest(
       const signature =
         attempt.signature === null
           ? null
-          : text(attempt.signature, `${path}.signature`, {
-              max: 128,
-              min: 64,
-              pattern: /^[1-9A-HJ-NP-Za-km-z]+$/u,
-            });
+          : solanaSignature(attempt.signature, `${path}.signature`);
       if (state === "finalized" && signature === null) {
         throw new TypeError(`${path} finalized attempt needs a signature`);
       }
@@ -1494,11 +1498,10 @@ export function assertRewardSettlementManifest(
   const feeSignature =
     platformFeeRecord.signature === null
       ? null
-      : text(platformFeeRecord.signature, "settlement platformFee.signature", {
-          max: 128,
-          min: 64,
-          pattern: /^[1-9A-HJ-NP-Za-km-z]+$/u,
-        });
+      : solanaSignature(
+          platformFeeRecord.signature,
+          "settlement platformFee.signature",
+        );
   if (BigInt(feeDueMinor) === 0n) {
     if (
       feeState !== "not-applicable" ||

@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isSolanaTransactionId } from "../src/lib/funding-address.mjs";
 import {
   assertProjectPaymentsEnabled,
   findProject,
@@ -159,8 +160,7 @@ function parseEvidence(value: unknown, cycleId: string): SettlementEvidence {
       attempt.intentIds.length === 0 ||
       !attempt.intentIds.every((id) => typeof id === "string") ||
       new Set(attempt.intentIds).size !== attempt.intentIds.length ||
-      typeof attempt.signature !== "string" ||
-      !/^[1-9A-HJ-NP-Za-km-z]{64,128}$/u.test(attempt.signature)
+      !isSolanaTransactionId(attempt.signature)
     ) {
       throw new TypeError(`Settlement evidence attempt ${index} is invalid`);
     }
@@ -177,8 +177,7 @@ function parseEvidence(value: unknown, cycleId: string): SettlementEvidence {
   const platformFeeSignature = evidence.platformFeeSignature;
   if (
     platformFeeSignature !== null &&
-    (typeof platformFeeSignature !== "string" ||
-      !/^[1-9A-HJ-NP-Za-km-z]{64,128}$/u.test(platformFeeSignature) ||
+    (!isSolanaTransactionId(platformFeeSignature) ||
       signatures.has(platformFeeSignature))
   ) {
     throw new TypeError(

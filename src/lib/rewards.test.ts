@@ -400,6 +400,12 @@ describe("reward manifests", () => {
       "paid",
     );
 
+    const malformedSignature = structuredClone(settlement);
+    malformedSignature.attempts[0].signature = "2".repeat(64);
+    expect(() =>
+      assertRewardSettlementManifest(malformedSignature, allocation),
+    ).toThrow(/signature is invalid/u);
+
     const proposed = allocationManifest() as RewardAllocationManifest;
     proposed.status = "proposed";
     proposed.approvedAt = null;
