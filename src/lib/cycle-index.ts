@@ -789,12 +789,19 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     state === "review" &&
     (approvedAt !== null ||
       settledAt !== null ||
+      normalizedFiles.allocation !== null ||
+      normalizedFiles.executionPlan !== null ||
+      normalizedFiles.settlement !== null ||
       normalizedReward.approvedMinor !== "0" ||
       normalizedReward.paidMinor !== "0" ||
       contributors.some(
         (contributor) =>
           contributor.state !== "proposed" && contributor.state !== "unclaimed",
       ));
+  const paymentReadyStateInvalid =
+    state === "payment-ready" &&
+    (normalizedFiles.executionPlan !== null ||
+      normalizedFiles.settlement !== null);
   const approvalStateInvalid =
     ["payment-ready", "settlement-planned", "paid"].includes(state) &&
     (approvedAt === null ||
@@ -833,6 +840,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       !normalizedFiles.executionPlan) ||
     (state === "paid" && !normalizedFiles.settlement) ||
     reviewStateInvalid ||
+    paymentReadyStateInvalid ||
     approvalStateInvalid ||
     settlementStateInvalid ||
     paidStateInvalid ||
