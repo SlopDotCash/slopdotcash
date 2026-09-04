@@ -68,6 +68,27 @@ const NOW = new Date("2026-01-20T12:00:00.000Z");
 const HEAD_SHA = "a".repeat(40);
 const PRIOR_SHA = "b".repeat(40);
 
+const configuredNodeExecutable = process.env.SLOP_TEST_NODE ?? "node";
+const configuredNodeRuntime = spawnSync(
+  configuredNodeExecutable,
+  [
+    "-p",
+    "JSON.stringify({ executable: process.execPath, version: process.versions.node })",
+  ],
+  { encoding: "utf8" },
+);
+assert.strictEqual(
+  configuredNodeRuntime.status,
+  0,
+  configuredNodeRuntime.stderr,
+);
+const nodeRuntime = JSON.parse(configuredNodeRuntime.stdout) as {
+  executable: string;
+  version: string;
+};
+assert.strictEqual(nodeRuntime.version, "24.15.0");
+const nodeExecutable = nodeRuntime.executable;
+
 function createLiveReportGhFixture() {
   const root = mkdtempSync(join(tmpdir(), "slop-live-report-lock-test-"));
   const shimDirectory = join(root, "bin");
@@ -127,7 +148,7 @@ if (args.at(-1) === "user") {
     donePath,
     environment: {
       ...process.env,
-      PATH: `${shimDirectory}${delimiter}${process.env.PATH ?? ""}`,
+      PATH: `${shimDirectory}${delimiter}${dirname(nodeExecutable)}${delimiter}${process.env.PATH ?? ""}`,
       SLOP_GH_LOG: logPath,
       SLOP_GH_READY: readyPath,
       SLOP_GH_RELEASE: releasePath,
@@ -1906,7 +1927,7 @@ describe("live report behavior", () => {
       "scripts",
       "live-report.mjs",
     );
-    const first = spawn(process.execPath, [liveReportPath, "--json"], {
+    const first = spawn(nodeExecutable, [liveReportPath, "--json"], {
       env: { ...fixture.environment, SLOP_GH_HOLD: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -1914,7 +1935,7 @@ describe("live report behavior", () => {
     let testError: unknown = null;
     try {
       await waitForFixturePath(fixture.readyPath);
-      const second = spawnSync(process.execPath, [asiReportPath, "--json"], {
+      const second = spawnSync(nodeExecutable, [asiReportPath, "--json"], {
         encoding: "utf8",
         env: fixture.environment,
       });
@@ -1950,13 +1971,13 @@ describe("live report behavior", () => {
       "live-report.mjs",
     );
     try {
-      const first = spawnSync(process.execPath, [liveReportPath, "--json"], {
+      const first = spawnSync(nodeExecutable, [liveReportPath, "--json"], {
         encoding: "utf8",
         env: fixture.environment,
       });
       assert.strictEqual(first.status, 0, first.stderr);
       const second = spawnSync(
-        process.execPath,
+        nodeExecutable,
         [deltaStarReportPath, "--json"],
         {
           encoding: "utf8",
@@ -1991,13 +2012,13 @@ describe("live report behavior", () => {
       "live-report.mjs",
     );
     try {
-      const failed = spawnSync(process.execPath, [liveReportPath, "--json"], {
+      const failed = spawnSync(nodeExecutable, [liveReportPath, "--json"], {
         encoding: "utf8",
         env: { ...fixture.environment, SLOP_GH_FAIL_RATE: "1" },
       });
       assert.strictEqual(failed.status, 1);
       assert.match(failed.stderr, /fixture rate-limit failure/u);
-      const recovered = spawnSync(process.execPath, [asiReportPath, "--json"], {
+      const recovered = spawnSync(nodeExecutable, [asiReportPath, "--json"], {
         encoding: "utf8",
         env: fixture.environment,
       });
@@ -2026,25 +2047,55 @@ describe("live report behavior", () => {
       "scripts",
       "live-report.mjs",
     );
-    const interrupted = spawn(process.execPath, [liveReportPath, "--json"], {
+    const interrupted = spawn(nodeExecutable, [liveReportPath, "--json"], {
       env: { ...fixture.environment, SLOP_GH_HOLD: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const interruptedResult = collectChild(interrupted);
+    let testError: unknown = null;
     try {
       await waitForFixturePath(fixture.readyPath);
       assert.strictEqual(interrupted.kill("SIGKILL"), true);
-      writeFileSync(fixture.releasePath, "release\n");
-      await waitForFixturePath(fixture.donePath);
       const killed = await interruptedResult;
       assert.strictEqual(killed.status, null);
       assert.strictEqual(killed.signal, "SIGKILL");
 
-      const recovered = spawnSync(
-        process.execPath,
-        [heirReportPath, "--json"],
-        { encoding: "utf8", env: fixture.environment },
+      const contending = spawnSync(nodeExecutable, [heirReportPath, "--json"], {
+        encoding: "utf8",
+        env: fixture.environment,
+      });
+      assert.strictEqual(contending.status, 2, contending.stderr);
+      assert.match(contending.stderr, /live report lock contention/iu);
+      const calls = readFileSync(fixture.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      assert.strictEqual(
+        calls.filter((args) => args.at(-1) === "rate_limit").length,
+        1,
+        "a surviving GitHub child must keep replacement discovery out",
       );
+    } catch (error) {
+      testError = error;
+    } finally {
+      if (interrupted.exitCode === null) interrupted.kill("SIGKILL");
+      if (!existsSync(fixture.releasePath)) {
+        writeFileSync(fixture.releasePath, "release\n");
+      }
+      await waitForFixturePath(fixture.donePath);
+    }
+    try {
+      if (testError) throw testError;
+      const recoveryDeadline = Date.now() + 5_000;
+      let recovered;
+      do {
+        recovered = spawnSync(nodeExecutable, [heirReportPath, "--json"], {
+          encoding: "utf8",
+          env: fixture.environment,
+        });
+        if (recovered.status !== 2) break;
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+      } while (Date.now() < recoveryDeadline);
       assert.strictEqual(recovered.status, 0, recovered.stderr);
       const calls = readFileSync(fixture.logPath, "utf8")
         .trim()
@@ -2055,10 +2106,6 @@ describe("live report behavior", () => {
         2,
       );
     } finally {
-      if (interrupted.exitCode === null) interrupted.kill("SIGKILL");
-      if (!existsSync(fixture.releasePath)) {
-        writeFileSync(fixture.releasePath, "release\n");
-      }
       rmSync(fixture.root, { force: true, recursive: true });
     }
   });
