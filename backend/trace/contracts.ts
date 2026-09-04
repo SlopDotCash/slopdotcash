@@ -165,12 +165,13 @@ export interface TracePersistence {
     now: string,
   ): Promise<TraceUploadIntent | null>;
   putTraceBytes(object: TraceObject, bytes: Uint8Array): Promise<void>;
-  createReadGrant(input: CreateGrantInput): Promise<void>;
+  createReadGrant(input: CreateGrantInput, audit: AuditInput): Promise<void>;
   consumeReadGrant(
     tokenHash: string,
     traceSha256: string,
     operatorGithubId: string,
     now: string,
+    audit: AuditInput,
   ): Promise<boolean>;
   readTraceBytes(
     object: TraceObject,
