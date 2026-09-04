@@ -54,6 +54,19 @@ describe("Solana RPC boundary", () => {
     ).rejects.toThrow("exceeded its size limit");
   });
 
+  it("rejects a base58 value that is not a 64-byte signature", async () => {
+    const fetcher = vi.fn(async () => rpcResponse({ slot: 42 }));
+
+    await expect(
+      fetchFinalizedSolanaTransaction(
+        "https://api.mainnet-beta.solana.com",
+        "2".repeat(64),
+        { fetcher },
+      ),
+    ).rejects.toThrow(/signature is invalid/u);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("aborts a stalled request at the bounded timeout", async () => {
     const fetcher = async (
       _input: RequestInfo | URL,
