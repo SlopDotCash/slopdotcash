@@ -6,7 +6,18 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,6 +60,10 @@ export class LiveInventoryChangedError extends Error {
     this.name = "LiveInventoryChangedError";
   }
 }
+
+const LIVE_REPORT_LOCK_DIRECTORY = "slop-live-report-locks-v1";
+const LIVE_REPORT_LOCK_OWNER_FILE = "owner.json";
+const LIVE_REPORT_LOCK_ACQUIRE_ATTEMPTS = 8;
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PLACEHOLDER_RE =
@@ -1316,6 +1331,193 @@ export function createGhCommandBudget(spawn = spawnSync) {
       }
       count += 1;
       return spawn(command, args, options);
+    },
+  };
+}
+
+export class LiveReportLockContentionError extends Error {
+  constructor() {
+    super(
+      "live report lock contention: another report for this GitHub identity is already discovering activity",
+    );
+    this.name = "LiveReportLockContentionError";
+  }
+}
+
+export function readGhAuthenticatedIdentity(spawn = spawnSync) {
+  const result = spawn(
+    "gh",
+    ["api", "--method", "GET", "--jq", "{id: .id, login: .login}", "user"],
+    {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail =
+      result.stderr.trim().length > 0 ? `: ${result.stderr.trim()}` : "";
+    throw new Error(`gh api failed for authenticated identity${detail}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (cause) {
+    throw new SyntaxError(
+      "gh api returned malformed JSON for authenticated identity",
+      { cause },
+    );
+  }
+  const identity = asRecord(parsed, "GitHub authenticated identity");
+  const id = asNumberField(identity, "id", "GitHub authenticated identity");
+  const login = asStringField(
+    identity,
+    "login",
+    "GitHub authenticated identity",
+  );
+  if (id <= 0 || login.length === 0) {
+    throw new TypeError("GitHub authenticated identity is invalid");
+  }
+  return { id, login };
+}
+
+function fileSystemErrorCode(error) {
+  return error && typeof error === "object" && "code" in error
+    ? error.code
+    : null;
+}
+
+function readLiveReportLockOwner(lockPath) {
+  try {
+    const owner = asRecord(
+      JSON.parse(
+        readFileSync(join(lockPath, LIVE_REPORT_LOCK_OWNER_FILE), "utf8"),
+      ),
+      "live report lock owner",
+    );
+    const schemaVersion = asNumberField(
+      owner,
+      "schemaVersion",
+      "live report lock owner",
+    );
+    const pid = asNumberField(owner, "pid", "live report lock owner");
+    const ownerToken = asStringField(
+      owner,
+      "ownerToken",
+      "live report lock owner",
+    );
+    if (
+      schemaVersion !== 1 ||
+      pid <= 0 ||
+      !/^[a-f0-9]{32}$/u.test(ownerToken)
+    ) {
+      return null;
+    }
+    return { pid, ownerToken };
+  } catch {
+    // error-policy:J3 A corrupt or incomplete lease cannot claim live ownership.
+    return null;
+  }
+}
+
+function processIsRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (fileSystemErrorCode(error) === "ESRCH") return false;
+    if (fileSystemErrorCode(error) === "EPERM") return true;
+    throw error;
+  }
+}
+
+function lockOwnerIsActive(owner) {
+  return owner !== null && processIsRunning(owner.pid);
+}
+
+function prepareLiveReportLockCandidate(lockPath, ownerToken) {
+  const candidatePath = `${lockPath}.candidate-${process.pid}-${ownerToken}`;
+  mkdirSync(candidatePath, { mode: 0o700 });
+  try {
+    writeFileSync(
+      join(candidatePath, LIVE_REPORT_LOCK_OWNER_FILE),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        pid: process.pid,
+        ownerToken,
+      })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+    return candidatePath;
+  } catch (error) {
+    rmSync(candidatePath, { force: true, recursive: true });
+    throw error;
+  }
+}
+
+export function acquireLiveReportLock(identity) {
+  const record = asRecord(identity, "GitHub authenticated identity");
+  const id = asNumberField(record, "id", "GitHub authenticated identity");
+  const login = asStringField(record, "login", "GitHub authenticated identity");
+  if (id <= 0 || login.length === 0) {
+    throw new TypeError("GitHub authenticated identity is invalid");
+  }
+  const root = join(tmpdir(), LIVE_REPORT_LOCK_DIRECTORY);
+  mkdirSync(root, { mode: 0o700, recursive: true });
+  const key = createHash("sha256").update(`github.com:${id}`).digest("hex");
+  const lockPath = join(root, `${key}.lock`);
+  const ownerToken = randomBytes(16).toString("hex");
+  let acquired = false;
+  for (
+    let attempt = 0;
+    attempt < LIVE_REPORT_LOCK_ACQUIRE_ATTEMPTS;
+    attempt += 1
+  ) {
+    const candidatePath = prepareLiveReportLockCandidate(lockPath, ownerToken);
+    try {
+      renameSync(candidatePath, lockPath);
+      acquired = true;
+      break;
+    } catch (error) {
+      rmSync(candidatePath, { force: true, recursive: true });
+      if (!existsSync(lockPath)) {
+        if (fileSystemErrorCode(error) === "ENOENT") continue;
+        throw error;
+      }
+      const currentOwner = readLiveReportLockOwner(lockPath);
+      if (lockOwnerIsActive(currentOwner)) {
+        throw new LiveReportLockContentionError();
+      }
+      const stalePath = `${lockPath}.stale-${process.pid}-${randomBytes(16).toString("hex")}`;
+      try {
+        renameSync(lockPath, stalePath);
+      } catch (renameError) {
+        if (fileSystemErrorCode(renameError) === "ENOENT") continue;
+        throw renameError;
+      }
+      rmSync(stalePath, { force: true, recursive: true });
+    }
+  }
+  if (!acquired) {
+    throw new Error("live report lock changed too often to acquire safely");
+  }
+  let released = false;
+  return {
+    release() {
+      if (released) return;
+      const owner = readLiveReportLockOwner(lockPath);
+      if (
+        owner === null ||
+        owner.pid !== process.pid ||
+        owner.ownerToken !== ownerToken
+      ) {
+        throw new Error("live report lock ownership changed before release");
+      }
+      const releasedPath = `${lockPath}.released-${process.pid}-${ownerToken}`;
+      renameSync(lockPath, releasedPath);
+      rmSync(releasedPath, { force: true, recursive: true });
+      released = true;
     },
   };
 }
@@ -2813,51 +3015,57 @@ export function main(args = process.argv.slice(2)) {
     if (!result.publishable) process.exitCode = 2;
     return;
   }
-  let rateLimits = { preflight: true };
-  const { report } = retryChangedLiveInventory(
-    ({ commandBudget }) => {
-      const boundedRead = (endpoint) => {
-        return readGhPages(endpoint, commandBudget.run);
-      };
-      const openActivity = readGhOpenActivity(
-        options.repo,
-        commandBudget.run,
-        rateLimits,
-      );
-      rateLimits = openActivity.rateLimits;
-      const limits = asRecord(openActivity.rateLimits, "GitHub rate limits");
-      process.stderr.write(
-        `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit} (${limits.graphqlBudgetSource}); REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
-      );
-      return {
-        report: collectLiveReport(
+  const authenticatedIdentity = readGhAuthenticatedIdentity();
+  const liveReportLock = acquireLiveReportLock(authenticatedIdentity);
+  try {
+    let rateLimits = { preflight: true };
+    const { report } = retryChangedLiveInventory(
+      ({ commandBudget }) => {
+        const boundedRead = (endpoint) => {
+          return readGhPages(endpoint, commandBudget.run);
+        };
+        const openActivity = readGhOpenActivity(
           options.repo,
-          boundedRead,
-          new Date(),
-          ({ phase, current, total }) => {
-            if (current === 0 || current === total || current % 10 === 0) {
-              process.stderr.write(
-                `[Slop] scanning ${phase}: ${current}/${total} (${commandBudget.count} bounded GitHub commands)\n`,
-              );
-            }
-          },
-          openActivity,
-          selectionPolicy.eligibleIssueLabels,
+          commandBudget.run,
+          rateLimits,
+        );
+        rateLimits = openActivity.rateLimits;
+        const limits = asRecord(openActivity.rateLimits, "GitHub rate limits");
+        process.stderr.write(
+          `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit} (${limits.graphqlBudgetSource}); REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
+        );
+        return {
+          report: collectLiveReport(
+            options.repo,
+            boundedRead,
+            new Date(),
+            ({ phase, current, total }) => {
+              if (current === 0 || current === total || current % 10 === 0) {
+                process.stderr.write(
+                  `[Slop] scanning ${phase}: ${current}/${total} (${commandBudget.count} bounded GitHub commands)\n`,
+                );
+              }
+            },
+            openActivity,
+            selectionPolicy.eligibleIssueLabels,
+          ),
+        };
+      },
+      ({ attempt }) =>
+        process.stderr.write(
+          `[Slop] open-item inventory changed during snapshot attempt ${attempt}; retrying one complete read\n`,
         ),
-      };
-    },
-    ({ attempt }) =>
-      process.stderr.write(
-        `[Slop] open-item inventory changed during snapshot attempt ${attempt}; retrying one complete read\n`,
-      ),
-  );
-  process.stdout.write(
-    options.epochOnly
-      ? `${JSON.stringify(report.selection.reviewEpoch, null, 2)}\n`
-      : options.json
-        ? `${JSON.stringify(report, null, 2)}\n`
-        : renderMarkdown(report),
-  );
+    );
+    process.stdout.write(
+      options.epochOnly
+        ? `${JSON.stringify(report.selection.reviewEpoch, null, 2)}\n`
+        : options.json
+          ? `${JSON.stringify(report, null, 2)}\n`
+          : renderMarkdown(report),
+    );
+  } finally {
+    liveReportLock.release();
+  }
 }
 
 const invokedDirectly =
@@ -2872,7 +3080,12 @@ if (invokedDirectly) {
   } catch (error) {
     // error-policy:J1 The CLI boundary turns a failed read/audit into a non-zero exit.
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Slop live report failed: ${message}\n`);
-    process.exitCode = 1;
+    if (error instanceof LiveReportLockContentionError) {
+      process.stderr.write(`Slop live report deferred: ${message}\n`);
+      process.exitCode = 2;
+    } else {
+      process.stderr.write(`Slop live report failed: ${message}\n`);
+      process.exitCode = 1;
+    }
   }
 }
