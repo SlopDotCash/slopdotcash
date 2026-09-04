@@ -420,6 +420,7 @@ describe("project proposal schema", () => {
         network: "base",
         asset: "USDC",
         contract: `0x${"9".repeat(40)}`,
+        recipient: `0x${"a".repeat(40)}`,
         streamId: "7",
         deadline: "2026-12-01T00:00:00.000Z",
         effectiveAt: "2026-08-01T00:00:00.000Z",
