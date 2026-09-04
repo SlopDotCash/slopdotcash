@@ -552,8 +552,9 @@ export class CloudflareTracePersistence implements TracePersistence {
         ? { status: "existing", value: mapped }
         : { status: "conflict" };
     }
+    let inserted: D1Result;
     try {
-      await this.db
+      inserted = await this.db
         .prepare(
           `INSERT INTO trace_upload_intents (
             token_hash, run_id, github_user_id, trace_sha256, size_bytes,
@@ -574,6 +575,9 @@ export class CloudflareTracePersistence implements TracePersistence {
         .run();
     } catch {
       return { status: "conflict" };
+    }
+    if (!inserted.success || (inserted.meta?.changes ?? 0) !== 1) {
+      throw new Error("Trace upload intent insertion failed");
     }
     return { status: "created", value: intent };
   }
