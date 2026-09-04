@@ -355,6 +355,10 @@ async function createFallbackWalletClaim(
     fail(400, "invalid_request", "Invalid Solana address");
   }
   const observedAt = requiredString(body, "observedAt", validIsoTimestamp);
+  const createdAt = deps.now();
+  if (Date.parse(observedAt) > createdAt.getTime()) {
+    fail(400, "invalid_request", "Wallet observation cannot be in the future");
+  }
   const sourceBodySha256 = requiredString(
     body,
     "sourceBodySha256",
@@ -415,7 +419,7 @@ async function createFallbackWalletClaim(
     observedAt,
     recordSha256: await sha256Hex(new TextEncoder().encode(canonicalRecord)),
     supersedesClaimId,
-    createdAt: deps.now().toISOString(),
+    createdAt: createdAt.toISOString(),
   };
   const audit: AuditInput = {
     id: deps.randomId(),
@@ -426,7 +430,7 @@ async function createFallbackWalletClaim(
         : "wallet_claim.operator_recovery_created",
     target: `wallet-claim:${claim.id}`,
     requestId: deps.randomId(),
-    createdAt: deps.now().toISOString(),
+    createdAt: createdAt.toISOString(),
     details: {
       githubActorId: claim.githubId,
       recordDigest: claim.recordSha256,
