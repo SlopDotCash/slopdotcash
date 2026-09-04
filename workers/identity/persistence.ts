@@ -212,17 +212,13 @@ export class D1IdentityPersistence implements IdentityPersistence {
     audience: string,
     now: string,
   ): Promise<IdentityAssertion | null> {
-    const result = await this.db
+    const row = await this.db
       .prepare(
         `UPDATE identity_assertions SET consumed_at = ?
-         WHERE token_hash = ? AND audience = ? AND consumed_at IS NULL AND expires_at > ?`,
+         WHERE token_hash = ? AND audience = ? AND consumed_at IS NULL AND expires_at > ?
+         RETURNING *`,
       )
       .bind(now, tokenHash, audience, now)
-      .run();
-    if ((result.meta?.changes ?? 0) !== 1) return null;
-    const row = await this.db
-      .prepare("SELECT * FROM identity_assertions WHERE token_hash = ?")
-      .bind(tokenHash)
       .first<AssertionRow>();
     return row === null ? null : mapAssertion(row);
   }
