@@ -76,7 +76,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
 
   async createFlow(flow: OAuthFlow): Promise<boolean> {
     try {
-      await this.db
+      const result = await this.db
         .prepare(
           `INSERT INTO identity_oauth_flows (
             id, state_hash, poll_capability_hash, encrypted_pkce_verifier,
@@ -96,7 +96,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
           flow.expiresAt,
         )
         .run();
-      return true;
+      return result.success && (result.meta?.changes ?? 0) === 1;
     } catch {
       return false;
     }
