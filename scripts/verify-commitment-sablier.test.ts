@@ -305,6 +305,26 @@ describe("Sablier commitment verifier", () => {
     ).rejects.toThrow(/did not reach commitment quorum/u);
   });
 
+  it("refuses equal net balances backed by different stream states", async () => {
+    const { fetchImpl } = fetchByAuthority({
+      [BASE_HOSTS[0]]: authorityFixture("base", 101),
+      [BASE_HOSTS[1]]: authorityFixture("base", 102, {
+        depositedAmount: uintWord(10_000_000n),
+        withdrawnAmount: uintWord(3_000_000n),
+      }),
+      [BASE_HOSTS[2]]: new Error("authority offline"),
+    });
+
+    await expect(
+      verifyCommitmentSablier({
+        network: "base",
+        streamId: STREAM_ID,
+        recipient: RECIPIENT,
+        fetchImpl,
+      }),
+    ).rejects.toThrow(/did not reach commitment quorum/u);
+  });
+
   it("refuses authorities serving the wrong chain or malformed data", async () => {
     const wrongChain = authorityFixture("base", 101);
     wrongChain.chainId = "0x1";

@@ -282,10 +282,20 @@ async function verifyStreamState(
       return { authority: rpc.toString(), block, verified };
     }),
   );
-  const agreeing = quorumGroups<VerifiedSablierStream>(
-    settled,
-    (verified) =>
-      `${verified.streamId}:${verified.lockedMinor}:${verified.recipient}:USDC:${contract}`,
+  const agreeing = quorumGroups<VerifiedSablierStream>(settled, (verified) =>
+    JSON.stringify([
+      verified.streamId,
+      verified.recipient,
+      verified.sender,
+      verified.depositedMinor,
+      verified.withdrawnMinor,
+      verified.refundedMinor,
+      verified.lockedMinor,
+      verified.endTime,
+      verified.wasCanceled,
+      verified.isDepleted,
+      contract,
+    ]),
   );
   const checkedAt = new Date().toISOString();
   const canonical = agreeing[0].verified;
