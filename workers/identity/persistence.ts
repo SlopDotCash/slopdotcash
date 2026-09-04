@@ -173,8 +173,8 @@ export class D1IdentityPersistence implements IdentityPersistence {
     return row === null ? null : mapFlow(row);
   }
 
-  async createAssertion(assertion: IdentityAssertion): Promise<void> {
-    await this.db
+  async createAssertion(assertion: IdentityAssertion): Promise<boolean> {
+    const result = await this.db
       .prepare(
         `INSERT INTO identity_assertions (
           token_hash, github_actor_id, github_login, audience, created_at,
@@ -190,6 +190,20 @@ export class D1IdentityPersistence implements IdentityPersistence {
         assertion.expiresAt,
       )
       .run();
+    if (!result.success) return false;
+    const row = await this.db
+      .prepare("SELECT * FROM identity_assertions WHERE token_hash = ?")
+      .bind(assertion.tokenHash)
+      .first<AssertionRow>();
+    return (
+      row !== null &&
+      row.github_actor_id === assertion.githubActorId &&
+      row.github_login === assertion.githubLogin &&
+      row.audience === assertion.audience &&
+      row.created_at === assertion.createdAt &&
+      row.expires_at === assertion.expiresAt &&
+      row.consumed_at === null
+    );
   }
 
   async markAssertionIssued(

@@ -361,7 +361,7 @@ async function pollFlow(
     deps.assertionSecret,
   );
   const expiresAt = new Date(now.getTime() + ASSERTION_TTL_SECONDS * 1000);
-  await deps.persistence.createAssertion({
+  const created = await deps.persistence.createAssertion({
     tokenHash: await sha256Hex(assertion),
     githubActorId: flow.githubActorId,
     githubLogin: flow.githubLogin,
@@ -370,6 +370,9 @@ async function pollFlow(
     expiresAt: expiresAt.toISOString(),
     consumedAt: null,
   });
+  if (!created) {
+    fail(503, "assertion_unavailable", "Could not create identity assertion");
+  }
   const issued = await deps.persistence.markAssertionIssued(
     flow.id,
     now.toISOString(),

@@ -19,6 +19,7 @@ const ASSERTION_SECRET = "B".repeat(43);
 class MemoryIdentityPersistence implements IdentityPersistence {
   readonly flows = new Map<string, OAuthFlow>();
   readonly assertions = new Map<string, IdentityAssertion>();
+  failAssertionCreate = false;
 
   async createFlow(flow: OAuthFlow): Promise<boolean> {
     if (this.flows.has(flow.id)) return false;
@@ -92,10 +93,12 @@ class MemoryIdentityPersistence implements IdentityPersistence {
       : null;
   }
 
-  async createAssertion(assertion: IdentityAssertion): Promise<void> {
+  async createAssertion(assertion: IdentityAssertion): Promise<boolean> {
+    if (this.failAssertionCreate) return false;
     if (!this.assertions.has(assertion.tokenHash)) {
       this.assertions.set(assertion.tokenHash, { ...assertion });
     }
+    return true;
   }
 
   async markAssertionIssued(
@@ -351,6 +354,27 @@ describe("slop identity worker", () => {
       deps,
     );
     expect(consumeReplay.status).toBe(401);
+  });
+
+  it("does not issue an assertion that persistence refused to create", async () => {
+    const { deps, store } = dependencies();
+    const flow = await start(deps);
+    const { callback } = await authorizeAndCallback(deps, flow);
+    expect(callback.status).toBe(200);
+    store.failAssertionCreate = true;
+
+    const response = await handleIdentityRequest(
+      jsonRequest("identity.slop.cash", "/v1/oauth/poll", {
+        flowId: flow.flowId,
+        pollCapability: flow.pollCapability,
+        audience: IDENTITY_AUDIENCE,
+      }),
+      deps,
+    );
+
+    expect(response.status).toBe(503);
+    expect(store.flows.get(flow.flowId)?.status).toBe("callback_complete");
+    expect(store.assertions.size).toBe(0);
   });
 
   it("requires the browser-bound CSRF cookie and consumes callback state once", async () => {
