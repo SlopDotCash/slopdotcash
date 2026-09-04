@@ -265,7 +265,10 @@ async function createContributorWalletClaim(
       "Wallet claim changed; reload the current claim before submitting",
     );
   }
-  if (current?.walletAddress === walletAddress) {
+  if (
+    current?.walletAddress === walletAddress &&
+    current.githubLogin.toLowerCase() === actor.githubLogin.toLowerCase()
+  ) {
     return json(200, publicWalletClaim(current));
   }
 
