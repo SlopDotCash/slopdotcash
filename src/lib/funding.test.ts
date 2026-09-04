@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertProjectFundingAddresses,
+  assertProjectFundingIndex,
   assertProjectFundingLedger,
   assertProjectFundingRecord,
   currentProjectFundingRecords,
@@ -352,5 +353,35 @@ describe("project funding records", () => {
     expect(
       publicFundingRecordsForDonor(ledger, "MDQ6VXNlcjE4NjMzMjY1"),
     ).toEqual([]);
+  });
+
+  it("binds the funding index timestamp to its latest observation", () => {
+    const addresses = new Map([["eliza", routes]]);
+    const commitments = new Map<string, readonly []>([["eliza", []]]);
+    const fundingRecord = record();
+    const index = {
+      schemaVersion: "1",
+      generatedAt: fundingRecord.observedAt,
+      records: [fundingRecord],
+      commitments: [],
+    };
+
+    expect(() =>
+      assertProjectFundingIndex(index, addresses, commitments),
+    ).not.toThrow();
+    expect(() =>
+      assertProjectFundingIndex(
+        { ...index, generatedAt: "2026-08-01T00:00:00.000Z" },
+        addresses,
+        commitments,
+      ),
+    ).toThrow(/latest observation/u);
+    expect(() =>
+      assertProjectFundingIndex(
+        { ...index, generatedAt: null },
+        addresses,
+        commitments,
+      ),
+    ).toThrow(/latest observation/u);
   });
 });
