@@ -170,6 +170,57 @@ describe("public cycle index", () => {
     );
   });
 
+  it("rejects lifecycle files that are ahead of the declared state", () => {
+    const allocationDuringReview = entry();
+    allocationDuringReview.files.allocation = {
+      sha256: DIGEST,
+      url: "/data/cycles/eliza/2026-07/allocation.json",
+    };
+    expect(() => assertCycleIndex(index([allocationDuringReview]))).toThrow(
+      "state does not match",
+    );
+
+    const planDuringReview = entry();
+    planDuringReview.files.executionPlan = {
+      sha256: DIGEST,
+      url: "/data/cycles/eliza/2026-07/execution-plan.json",
+    };
+    expect(() => assertCycleIndex(index([planDuringReview]))).toThrow(
+      "state does not match",
+    );
+
+    const planBeforeSettlement = entry({
+      state: "payment-ready",
+      approvedAt: "2026-08-16T00:00:00.000Z",
+      reward: {
+        ...entry().reward,
+        approvedMinor: "10000000000",
+        feeMinor: "100000000",
+      },
+      contributors: [
+        {
+          ...entry().contributors[0],
+          state: "approved",
+          approvedMinor: "10000000000",
+        },
+      ],
+      files: {
+        ...entry().files,
+        allocation: {
+          sha256: DIGEST,
+          url: "/data/cycles/eliza/2026-07/allocation.json",
+        },
+        executionPlan: {
+          sha256: DIGEST,
+          url: "/data/cycles/eliza/2026-07/execution-plan.json",
+        },
+      },
+    });
+    expect(() => assertCycleIndex(index([planBeforeSettlement]))).toThrow(
+      "state does not match",
+    );
+  });
+
   it("binds each lifecycle label to exact money and timestamp state", () => {
     const premature = entry({
       state: "payment-ready",
