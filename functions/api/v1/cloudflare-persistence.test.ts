@@ -6,8 +6,8 @@ import {
 } from "../../../backend/trace/cloudflare-persistence";
 import type {
   AuditInput,
-  RunProgressEvent,
   CreateGrantInput,
+  RunProgressEvent,
   TraceObject,
   WalletClaim,
 } from "../../../backend/trace/contracts";

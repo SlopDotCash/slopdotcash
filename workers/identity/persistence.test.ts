@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OAuthFlow, IdentityAssertion } from "./contracts";
+import type { IdentityAssertion, OAuthFlow } from "./contracts";
 import { type D1Database, D1IdentityPersistence } from "./persistence";
 
 const flow: OAuthFlow = {
