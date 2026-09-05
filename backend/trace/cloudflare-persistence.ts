@@ -735,6 +735,7 @@ export class CloudflareTracePersistence implements TracePersistence {
 
   async createWalletClaim(
     claim: WalletClaim,
+    audit: AuditInput,
   ): Promise<PersistenceResult<WalletClaim>> {
     const byDigest = await this.db
       .prepare("SELECT * FROM wallet_claims WHERE record_sha256 = ?")
@@ -748,32 +749,72 @@ export class CloudflareTracePersistence implements TracePersistence {
         return { status: "conflict" };
       }
     }
-    try {
-      await this.db
-        .prepare(
-          `INSERT INTO wallet_claims (
+    const claimInsert = this.db
+      .prepare(
+        `INSERT INTO wallet_claims (
             id, github_user_id, github_login, wallet_address, source,
             issue_repository, issue_number, source_body_sha256, observed_at,
             record_sha256, supersedes_claim_id, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        claim.id,
+        claim.githubId,
+        claim.githubLogin,
+        claim.walletAddress,
+        claim.source,
+        claim.issueRepository,
+        claim.issueNumber,
+        claim.sourceBodySha256,
+        claim.observedAt,
+        claim.recordSha256,
+        claim.supersedesClaimId,
+        claim.createdAt,
+      );
+    const auditInsert = this.db
+      .prepare(
+        `INSERT INTO private_audit_events (
+          id, actor_github_id, action, target, request_id, created_at, details_json
+        ) SELECT ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM wallet_claims WHERE id = ?)`,
+      )
+      .bind(
+        audit.id,
+        audit.actorGithubId,
+        audit.action,
+        audit.target,
+        audit.requestId,
+        audit.createdAt,
+        JSON.stringify(audit.details),
+        claim.id,
+      );
+    try {
+      const results = await this.db.batch([claimInsert, auditInsert]);
+      if (
+        results.length !== 2 ||
+        results.some((result) => !result.success) ||
+        results.some((result) => (result.meta?.changes ?? 0) !== 1)
+      ) {
+        throw new Error("Atomic wallet claim and audit did not both commit");
+      }
+    } catch (error) {
+      const raced = await this.db
+        .prepare("SELECT * FROM wallet_claims WHERE record_sha256 = ?")
+        .bind(claim.recordSha256)
+        .first<WalletClaimRow>();
+      if (raced !== null)
+        return { status: "existing", value: mapWalletClaim(raced) };
+      const competing = await this.db
+        .prepare(
+          claim.supersedesClaimId === null
+            ? `SELECT id FROM wallet_claims
+               WHERE github_user_id = ? AND supersedes_claim_id IS NULL`
+            : "SELECT id FROM wallet_claims WHERE supersedes_claim_id = ?",
         )
-        .bind(
-          claim.id,
-          claim.githubId,
-          claim.githubLogin,
-          claim.walletAddress,
-          claim.source,
-          claim.issueRepository,
-          claim.issueNumber,
-          claim.sourceBodySha256,
-          claim.observedAt,
-          claim.recordSha256,
-          claim.supersedesClaimId,
-          claim.createdAt,
-        )
-        .run();
-    } catch {
-      return { status: "conflict" };
+        .bind(claim.supersedesClaimId ?? claim.githubId)
+        .first<{ id: string }>();
+      if (competing !== null) return { status: "conflict" };
+      throw error;
     }
     return { status: "created", value: claim };
   }
