@@ -636,7 +636,6 @@ function Footer() {
       <div className="shell footer-grid">
         <div>
           <div className="wordmark footer-wordmark">{domain}</div>
-          <p className="footer-tagline">make money shipping open source</p>
           <p className="footer-copyright">
             © {new Date().getUTCFullYear()} slop.cash.
           </p>
@@ -1212,12 +1211,11 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
     <main>
       <section className="hero shell">
         <DataNotice state={state} retry={retry} />
-        <p className="hero-eyebrow">Non-custodial open-source funding</p>
+
         <TypewriterHeroHeading />
         <p className="hero-copy">
-          Fund a capped monthly pool. Slop scores accepted work from public
-          GitHub evidence and produces an auditable allocation. Project owners
-          sign USDC directly. Slop never holds funds or keys.
+          Fund accepted work on GitHub. Slop calculates allocations from public
+          evidence; project owners sign payments directly.
         </p>
         <div className="hero-actions">
           <Link className="button primary-button" href="/#projects">
@@ -1227,17 +1225,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             Fund a project
           </Link>
         </div>
-        <ol aria-label="How Slop works" className="hero-proof">
-          <li>
-            <strong>01</strong> Choose reviewed work
-          </li>
-          <li>
-            <strong>02</strong> Ship on GitHub
-          </li>
-          <li>
-            <strong>03</strong> Build a public record
-          </li>
-        </ol>
         {state.status === "ready" ? (
           <dl className="system-strip">
             <div>
@@ -1275,7 +1262,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
         <section className="section shell proof-object-section">
           <div className="home-section-heading">
             <div>
-              <p className="eyebrow">Funny name. Serious receipts.</p>
               <h2 className="home-section-title">The proof is the product.</h2>
             </div>
             <p>
@@ -1398,7 +1384,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
           <div>
-            <h2 className="home-section-title">Projects worth shipping.</h2>
+            <h2 className="home-section-title">Projects</h2>
           </div>
         </div>
         <section className="project-tier" aria-labelledby="featured-projects">
@@ -1421,13 +1407,11 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
       <section className="section shell audience-section">
         <div className="home-section-heading">
           <div>
-            <p className="eyebrow">Choose your lane</p>
             <h2 className="home-section-title">One ledger. Three jobs.</h2>
           </div>
         </div>
         <div className="audience-grid">
           <article>
-            <span>Fund</span>
             <h3>Pay for accepted outcomes.</h3>
             <p>
               Commit a capped contributor pool and an optional additive review
@@ -1436,7 +1420,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             <Link href="/projects/new">Fund a project</Link>
           </article>
           <article>
-            <span>Maintain</span>
             <h3>Keep GitHub in control.</h3>
             <p>
               Review work in the project repository while Slop publishes the
@@ -1445,7 +1428,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             <Link href="/how-it-works">See the mechanism</Link>
           </article>
           <article>
-            <span>Contribute</span>
             <h3>Ship with any agent.</h3>
             <p>
               Use the project skill, disclose the exact model, and land useful
@@ -1459,45 +1441,38 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
         <div className="shell">
           <div className="home-section-heading inverse-heading">
             <div>
-              <h2 className="home-section-title">Work in. Proof out.</h2>
+              <h2 className="home-section-title">How it works</h2>
             </div>
           </div>
           <div className="how-grid">
             <article>
-              <span>01</span>
-              <h3>Choose the mission.</h3>
+              <h3>Choose work.</h3>
+              <p>Read the project terms and choose unblocked work on GitHub.</p>
+            </article>
+            <article>
+              <h3>Submit a PR.</h3>
               <p>
-                Read the repository, reward terms, and live work queue. There
-                are no platform reservations or hidden tasks.
+                Use the project skill to guide your agent through testing and
+                submission.
               </p>
             </article>
             <article>
-              <span>02</span>
-              <h3>Ship the outcome.</h3>
+              <h3>Get reviewed.</h3>
               <p>
-                Use any agent or model. The project skill guides scope, tests,
-                evidence, and exact attribution.
-              </p>
-            </article>
-            <article>
-              <span>03</span>
-              <h3>Earn the record.</h3>
-              <p>
-                Maintainers accept the work. Slop publishes score, review, and
-                verified payment state without rewarding busywork.
+                Maintainers review your PR. Track accepted work, scores, and
+                payments on Slop.
               </p>
             </article>
           </div>
           <div className="owner-callout">
             <div>
-              <h3>Turn your roadmap into an open invitation.</h3>
+              <h3>Add your project.</h3>
               <p>
-                Draft the project on Slop, then open a GitHub pull request for
-                public review. Your repository remains the authority.
+                Propose your repository and reward terms for review on GitHub.
               </p>
             </div>
             <Link className="button inverse-button" href="/projects/new">
-              Add your project <ArrowRight aria-hidden="true" />
+              Get started <ArrowRight aria-hidden="true" />
             </Link>
           </div>
         </div>
@@ -3925,12 +3900,10 @@ ${manifestText}`;
         <span>/</span>Add a project
       </p>
       <section className="proposal-intro">
-        <p className="eyebrow">Project onboarding</p>
         <h1>Add a project.</h1>
         <p>
-          Describe the work and its public authority here. Slop will generate a
-          project manifest and an agent-ready proposal, then send you to GitHub
-          for the reviewable pull request.
+          Enter your project details to generate a manifest and proposal for
+          review on GitHub.
         </p>
         <ol className="proposal-steps" aria-label="Project onboarding steps">
           <li>
@@ -4362,7 +4335,6 @@ function HowItWorksPage() {
   return (
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
-        <p className="eyebrow">How scoring works</p>
         <h1>Accepted work in. Auditable allocations out.</h1>
         <p>
           GitHub is the work and review authority. Slop turns accepted public
@@ -4416,7 +4388,6 @@ function HowItWorksPage() {
       </ol>
       <section className="worked-example">
         <div>
-          <p className="eyebrow">Worked example</p>
           <h2>One reproducible allocation.</h2>
           <p>
             If one contributor has 10 accepted score units out of 25, their
@@ -4444,7 +4415,6 @@ function HowItWorksPage() {
         </dl>
       </section>
       <section className="custody-proof">
-        <p className="eyebrow">Non-custodial by construction</p>
         <h2>What Slop never holds.</h2>
         <ul>
           <li>No contributor or project private keys.</li>
@@ -4477,7 +4447,6 @@ function ReceiptsPage({
   return (
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
-        <p className="eyebrow">Receipt inspector</p>
         <h1>Signed runs, without the private trace.</h1>
         <p>
           Public receipts show identity and byte-continuity metadata. Raw
@@ -4576,7 +4545,6 @@ function CycleArchivePage({
   return (
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
-        <p className="eyebrow">Permanent cycle archive</p>
         <h1>Every pool gets a dated public record.</h1>
         <p>
           Proposed is not approved. Approved is not paid. Each cycle keeps its

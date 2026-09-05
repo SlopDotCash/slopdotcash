@@ -589,7 +589,7 @@ describe("discovery", () => {
       "/projects/eliza",
     );
     expect(
-      screen.getByRole("heading", { name: "Projects worth shipping." }),
+      screen.getByRole("heading", { name: "Projects" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Featured" }),
