@@ -36,6 +36,7 @@ import {
   isBotAccount,
   LiveInventoryChangedError,
   MAX_ACTIVITY_CONNECTION_ITEMS,
+  MAX_API_READS,
   MAX_REVIEW_EPOCH_CANDIDATES,
   MIN_REST_ACTIVITY_REQUESTS,
   MIN_SEARCH_ACTIVITY_REQUESTS,
@@ -1768,6 +1769,32 @@ describe("live report behavior", () => {
         }),
       /changed while collecting the live report after 2 attempts/,
     );
+  });
+
+  it("gives each changed-inventory attempt its own command budget", () => {
+    const attemptBudgets: number[] = [];
+    const report = retryChangedLiveInventory(
+      ({ attempt, commandBudget }) => {
+        for (let index = 0; index < MAX_API_READS; index += 1) {
+          commandBudget.run("gh", ["api", `attempt-${attempt}-${index}`], {
+            encoding: "utf8",
+          });
+        }
+        attemptBudgets.push(commandBudget.count);
+        if (attempt === 1) throw new LiveInventoryChangedError();
+        return { coherent: true };
+      },
+      () => {},
+      () =>
+        createGhCommandBudget(() => ({
+          status: 0,
+          stdout: "",
+          stderr: "",
+        })),
+    );
+
+    assert.deepStrictEqual(report, { coherent: true });
+    assert.deepStrictEqual(attemptBudgets, [MAX_API_READS, MAX_API_READS]);
   });
 
   it("freezes a finite oldest-first epoch and defers arrivals and overflow", () => {

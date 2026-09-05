@@ -2758,10 +2758,15 @@ Options:
 }
 
 /** Repeats one complete read when GitHub changes its open-item inventory mid-snapshot. */
-export function retryChangedLiveInventory(collect, onRetry = () => {}) {
+export function retryChangedLiveInventory(
+  collect,
+  onRetry = () => {},
+  createCommandBudget = createGhCommandBudget,
+) {
   for (let attempt = 1; attempt <= MAX_LIVE_INVENTORY_ATTEMPTS; attempt += 1) {
+    const commandBudget = createCommandBudget();
     try {
-      return collect(attempt);
+      return collect({ attempt, commandBudget });
     } catch (cause) {
       if (!(cause instanceof LiveInventoryChangedError)) throw cause;
       if (attempt === MAX_LIVE_INVENTORY_ATTEMPTS) {
@@ -2794,8 +2799,8 @@ export function main(args = process.argv.slice(2)) {
     if (!result.complete) process.exitCode = 2;
     return;
   }
-  const commandBudget = createGhCommandBudget();
   if (options.recheckPr !== undefined) {
+    const commandBudget = createGhCommandBudget();
     const result = recheckLivePullHead(
       options.repo,
       {
@@ -2808,12 +2813,12 @@ export function main(args = process.argv.slice(2)) {
     if (!result.publishable) process.exitCode = 2;
     return;
   }
-  const boundedRead = (endpoint) => {
-    return readGhPages(endpoint, commandBudget.run);
-  };
   let rateLimits = { preflight: true };
   const { report } = retryChangedLiveInventory(
-    () => {
+    ({ commandBudget }) => {
+      const boundedRead = (endpoint) => {
+        return readGhPages(endpoint, commandBudget.run);
+      };
       const openActivity = readGhOpenActivity(
         options.repo,
         commandBudget.run,
