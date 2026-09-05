@@ -317,7 +317,7 @@ describe("project commitment records", () => {
       transactionId: sablierTransaction,
       finality: { kind: "confirmations", confirmations: 12 },
       verifier: {
-        version: "commitment-sablier-v1",
+        version: "commitment-sablier-v2",
         checkedAt: "2026-08-02T01:00:00.000Z",
         evidenceUrl: `https://basescan.org/tx/${sablierTransaction}`,
         reason: null,
