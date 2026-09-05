@@ -91,6 +91,48 @@ function record(overrides: Record<string, unknown> = {}) {
 }
 
 describe("funding commitment instruments", () => {
+  it("never backs a monthly claim with a replaced instrument's balance", () => {
+    const original = assertProjectCommitmentRecord(record(), instruments);
+    const current = squadsInstrument({
+      multisig: "SysvarC1ock11111111111111111111111111111111",
+      vaultIndex: 1,
+      effectiveAt: "2026-09-01T00:00:00.000Z",
+      deadline: "2026-10-01T00:00:00.000Z",
+      monthlyCommitment: {
+        cycleId: "2026-09",
+        amountMinor: "5000000",
+        accessibility: "unknown",
+      },
+    });
+    const history = [
+      squadsInstrument({ replacedAt: "2026-09-01T00:00:00.000Z" }),
+      current,
+    ];
+    expect(() =>
+      assertCommittedFundingBound(
+        "eliza",
+        { committedMinor: "5000000", fundingState: "committed" },
+        history,
+        [original],
+      ),
+    ).toThrow(/exceeds the verified commitment balance 0/u);
+    const matched = {
+      ...original,
+      instrument: {
+        ...original.instrument,
+        multisig: current.multisig,
+        vaultIndex: 1,
+      },
+    };
+    expect(() =>
+      assertCommittedFundingBound(
+        "eliza",
+        { committedMinor: "5000000", fundingState: "committed" },
+        history,
+        [matched],
+      ),
+    ).not.toThrow();
+  });
   it("accepts only the reviewed instrument kinds with exact fields", () => {
     expect(instruments).toHaveLength(2);
     expect(hasActiveFundingCommitment(instruments)).toBe(true);

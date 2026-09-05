@@ -61,7 +61,9 @@ describe("review budget display", () => {
         unusedFunds: "rollover-without-cap-increase",
         fundingState: "committed",
       }),
-    ).toBe("$1 committed of $50 cap · additive review line");
+    ).toBe(
+      "$1 committed of $50 cap · accessibility unknown · additive review line",
+    );
     expect(
       reviewBudgetLabel({
         effectiveAt: "2026-10-01T00:00:00.000Z",
@@ -93,7 +95,7 @@ describe("monthly pool display", () => {
         committedMinor: "1000000",
         fundingState: "committed",
       }),
-    ).toBe("$10,000 monthly pool");
+    ).toBe("$1 committed · accessibility unknown · target $10,000");
   });
 });
 
@@ -1615,6 +1617,9 @@ describe("direct project funding", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Funds go directly to the project wallet/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Commitment accessibility: unknown/u),
     ).toBeInTheDocument();
     expect(
       screen.getByText(

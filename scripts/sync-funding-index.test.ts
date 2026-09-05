@@ -157,6 +157,15 @@ describe("funding manifest history", () => {
     expect(resolved.records).toEqual([]);
     expect(resolved.commitments).toEqual([record]);
     expect(resolved.generatedAt).toBe("2026-08-02T00:00:00.000Z");
+    expect(resolved.commitmentAccessibility).toBe("unknown");
+
+    const additive = committedProject();
+    Object.assign(additive.reward, {
+      reviewBudget: { committedMinor: "1", fundingState: "committed" },
+    });
+    await expect(
+      buildFundingIndex({ repositoryRoot: root, projects: [additive] }),
+    ).rejects.toThrow(/exceeds the verified commitment balance/u);
 
     const overcommitted = committedProject();
     overcommitted.reward.committedMinor = "5000001";

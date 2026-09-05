@@ -34,6 +34,10 @@ interface FundingIndexProject {
   readonly reward: {
     readonly committedMinor: string;
     readonly fundingState: string;
+    readonly reviewBudget?: {
+      readonly committedMinor: string;
+      readonly fundingState: string;
+    };
   };
 }
 
@@ -346,7 +350,17 @@ export async function buildFundingIndex(
   for (const project of projects) {
     assertCommittedFundingBound(
       project.id,
-      project.reward,
+      {
+        fundingState:
+          project.reward.fundingState === "committed" ||
+          project.reward.reviewBudget?.fundingState === "committed"
+            ? "committed"
+            : project.reward.fundingState,
+        committedMinor: (
+          BigInt(project.reward.committedMinor) +
+          BigInt(project.reward.reviewBudget?.committedMinor ?? "0")
+        ).toString(),
+      },
       project.funding.commitments ?? [],
       index.commitments.filter((record) => record.projectId === project.id),
     );

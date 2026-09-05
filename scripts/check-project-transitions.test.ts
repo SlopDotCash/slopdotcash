@@ -155,11 +155,11 @@ describe("project transition gate", () => {
     ).toThrow(/open or past cycle/u);
 
     const funded = structuredClone(withPledgedReview);
-    funded.reward.paymentMode = "enabled";
+    funded.reward.paymentMode = "disabled";
     funded.reward.fundingState = "committed";
     funded.reward.committedMinor = "5000000";
     funded.reward.reviewBudget.fundingState = "committed";
-    funded.reward.reviewBudget.paymentMode = "enabled";
+    funded.reward.reviewBudget.paymentMode = "disabled";
     funded.reward.reviewBudget.committedMinor = "1000000";
     funded.reward.monthlyCapMinor = "9999000000";
     funded.reward.monthlyCapDisplay = "$9,999";
@@ -176,7 +176,17 @@ describe("project transition gate", () => {
         funderMember: "Stake11111111111111111111111111111111111111",
         stewardMember: "SysvarRent111111111111111111111111111111111",
         funderActorId: "18633264",
-        deadline: "2026-12-01T00:00:00.000Z",
+        stewardGithub: {
+          actorId: "42",
+          nodeId: "U_fixture_42",
+          login: "independent-fixture",
+        },
+        monthlyCommitment: {
+          cycleId: "2026-08",
+          amountMinor: "6000000",
+          accessibility: "unknown",
+        },
+        deadline: "2026-09-01T00:00:00.000Z",
         effectiveAt: "2026-08-01T00:00:00.000Z",
         replacedAt: null,
       },

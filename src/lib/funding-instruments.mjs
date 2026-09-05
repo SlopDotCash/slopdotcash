@@ -72,10 +72,14 @@ function validateSquadsInstrument(candidate, field) {
       "funderActorId",
       "funderMember",
       "kind",
+      ...(Object.hasOwn(candidate, "monthlyCommitment")
+        ? ["monthlyCommitment"]
+        : []),
       "multisig",
       "network",
       "replacedAt",
       "stewardMember",
+      ...(Object.hasOwn(candidate, "stewardGithub") ? ["stewardGithub"] : []),
       "vault",
       "vaultIndex",
     ],
@@ -124,6 +128,10 @@ function validateSquadsInstrument(candidate, field) {
     funderActorId: candidate.funderActorId,
     funderMember: candidate.funderMember,
     stewardMember: candidate.stewardMember,
+    ...(Object.hasOwn(candidate, "stewardGithub")
+      ? { stewardGithub: validateStewardGithub(candidate.stewardGithub, field) }
+      : {}),
+    ...monthlyCommitment(candidate, field),
     ...window,
   };
 }
@@ -137,6 +145,9 @@ function validateSablierInstrument(candidate, field) {
       "deadline",
       "effectiveAt",
       "kind",
+      ...(Object.hasOwn(candidate, "monthlyCommitment")
+        ? ["monthlyCommitment"]
+        : []),
       "network",
       "replacedAt",
       "streamId",
@@ -168,8 +179,175 @@ function validateSablierInstrument(candidate, field) {
     asset: "USDC",
     contract: candidate.contract,
     streamId: candidate.streamId,
+    ...monthlyCommitment(candidate, field),
     ...window,
   };
+}
+
+function validateStewardGithub(value, field) {
+  const identity = commitmentRecord(value, `${field}.stewardGithub`);
+  exactCommitmentKeys(
+    identity,
+    ["actorId", "nodeId", "login"],
+    `${field}.stewardGithub`,
+  );
+  if (
+    typeof identity.actorId !== "string" ||
+    !/^[1-9]\d{0,19}$/u.test(identity.actorId) ||
+    typeof identity.nodeId !== "string" ||
+    !/^[A-Za-z0-9_=-]{1,100}$/u.test(identity.nodeId) ||
+    typeof identity.login !== "string" ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u.test(identity.login)
+  )
+    throw new TypeError(`${field}.stewardGithub is invalid`);
+  return {
+    actorId: identity.actorId,
+    nodeId: identity.nodeId,
+    login: identity.login,
+  };
+}
+
+/** Legacy references stay parseable, but cannot activate a current commitment. */
+function monthlyCommitment(candidate, field) {
+  if (!Object.hasOwn(candidate, "monthlyCommitment")) return {};
+  const monthly = commitmentRecord(
+    candidate.monthlyCommitment,
+    `${field}.monthlyCommitment`,
+  );
+  exactCommitmentKeys(
+    monthly,
+    ["cycleId", "amountMinor", "accessibility"],
+    `${field}.monthlyCommitment`,
+  );
+  if (
+    typeof monthly.cycleId !== "string" ||
+    !/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(monthly.cycleId)
+  ) {
+    throw new TypeError(`${field}.monthlyCommitment.cycleId is invalid`);
+  }
+  if (
+    typeof monthly.amountMinor !== "string" ||
+    !/^[1-9]\d{0,39}$/u.test(monthly.amountMinor)
+  ) {
+    throw new TypeError(
+      `${field}.monthlyCommitment.amountMinor must be positive integer minor units`,
+    );
+  }
+  if (monthly.accessibility !== "unknown") {
+    throw new TypeError(
+      `${field} accessibility must remain unknown until an authenticated evidence protocol is reviewed`,
+    );
+  }
+  const start = `${monthly.cycleId}-01T00:00:00.000Z`;
+  const end = new Date(start);
+  end.setUTCMonth(end.getUTCMonth() + 1);
+  if (
+    candidate.effectiveAt !== start ||
+    candidate.deadline !== end.toISOString()
+  ) {
+    throw new TypeError(
+      `${field} instrument period must match exactly one calendar month`,
+    );
+  }
+  return {
+    monthlyCommitment: {
+      cycleId: monthly.cycleId,
+      amountMinor: monthly.amountMinor,
+      accessibility: "unknown",
+    },
+  };
+}
+
+/**
+ * Current manifest policy, not a claim of independent control or key access.
+ * Identity/key control still requires human review; inequalities only reject
+ * contradictions already visible in the manifest. No accessibility evidence
+ * type is accepted in this version, so all payment activation fails closed.
+ */
+export function assertMonthlyCommitmentPolicy(project) {
+  const instruments = assertFundingCommitments(
+    project.funding.commitments ?? [],
+  );
+  const attributed = new Set(
+    project.funding.addresses.map(({ address }) => address),
+  );
+  for (const instrument of instruments) {
+    if (instrument.kind === "squads-v4-vault") {
+      attributed.add(instrument.funderMember);
+      attributed.add(instrument.multisig);
+      attributed.add(instrument.vault);
+    }
+  }
+  const cycles = new Set();
+  const cap =
+    BigInt(project.reward.monthlyCapMinor) +
+    BigInt(project.reward.reviewBudget?.monthlyCapMinor ?? "0");
+  for (const instrument of instruments) {
+    const monthly = instrument.monthlyCommitment;
+    if (!monthly) {
+      if (instrument.replacedAt !== null) continue;
+      throw new TypeError(
+        "active commitment requires a monthly instrument binding",
+      );
+    }
+    if (cycles.has(monthly.cycleId))
+      throw new TypeError(
+        "only one instrument may back each monthly commitment across all networks",
+      );
+    cycles.add(monthly.cycleId);
+    // Do not reinterpret immutable historical authority or caps under today's policy.
+    if (instrument.replacedAt !== null) continue;
+    if (BigInt(monthly.amountMinor) > cap)
+      throw new TypeError(
+        "monthly instrument amount exceeds the monthly reward caps",
+      );
+    if (instrument.kind === "squads-v4-vault") {
+      const identity = instrument.stewardGithub;
+      if (!identity)
+        throw new TypeError(
+          "monthly Squads commitment requires a named independent steward GitHub identity",
+        );
+      if (
+        identity.actorId === instrument.funderActorId ||
+        identity.actorId === project.steward.github.actorId ||
+        identity.nodeId === project.steward.github.nodeId ||
+        identity.login.toLowerCase() ===
+          project.steward.github.login.toLowerCase()
+      ) {
+        throw new TypeError(
+          "Squads steward identity must differ from the project steward and funder",
+        );
+      }
+      if (attributed.has(instrument.stewardMember))
+        throw new TypeError(
+          "Squads steward member must differ from every manifest-attributed project or funder address",
+        );
+    }
+  }
+  if (
+    project.reward.paymentMode === "enabled" ||
+    project.reward.reviewBudget?.paymentMode === "enabled"
+  ) {
+    throw new TypeError(
+      "funding accessibility is unknown; payment activation requires a reviewed authenticated evidence protocol",
+    );
+  }
+  const claimed =
+    BigInt(project.reward.committedMinor) +
+    BigInt(project.reward.reviewBudget?.committedMinor ?? "0");
+  if (claimed > 0n) {
+    const active = instruments.filter(
+      (instrument) => instrument.replacedAt === null,
+    );
+    if (
+      active.length !== 1 ||
+      BigInt(active[0].monthlyCommitment?.amountMinor ?? "0") !== claimed
+    ) {
+      throw new TypeError(
+        "committed amounts must bind exactly one active monthly instrument amount",
+      );
+    }
+  }
 }
 
 function instrumentIdentity(instrument) {

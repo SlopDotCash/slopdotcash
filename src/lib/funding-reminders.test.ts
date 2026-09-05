@@ -43,6 +43,7 @@ describe("funding cycle reminders", () => {
         kind,
         now: "2026-08-05T00:00:00.000Z",
         paymentMode: "enabled",
+        fundingState: "committed",
         settledAt: null,
         state,
       });
@@ -55,6 +56,7 @@ describe("funding cycle reminders", () => {
         kind: "monthly-pool",
         now: "2026-08-05T00:00:00.000Z",
         paymentMode: "enabled",
+        fundingState: "committed",
         settledAt: null,
         state: "payment-ready",
       })?.kind,
@@ -68,6 +70,7 @@ describe("funding cycle reminders", () => {
         kind: "monthly-pool",
         now,
         paymentMode: "disabled",
+        fundingState: "pledged",
         settledAt: null,
         state: "review",
       });
@@ -83,6 +86,7 @@ describe("funding cycle reminders", () => {
         kind: "monthly-pool",
         now: "2026-08-05T00:00:00.000Z",
         paymentMode: "disabled",
+        fundingState: "pledged",
         settledAt: "2026-08-03T00:00:00.000Z",
         state: "review",
       }),
@@ -93,5 +97,30 @@ describe("funding cycle reminders", () => {
     expect(() =>
       settlementReminder(close, "2026-08-02T00:00:00.000Z", "not-a-date"),
     ).toThrow(/timestamps are invalid/u);
+  });
+
+  it("keeps committed disabled funds constrained without calling them unfunded or payable", () => {
+    for (const now of [
+      "2026-07-25T00:00:00.000Z",
+      "2026-08-05T00:00:00.000Z",
+    ]) {
+      const reminder = cycleSettlementReminder({
+        closesAt: close,
+        kind: "monthly-pool",
+        now,
+        paymentMode: "disabled",
+        fundingState: "committed",
+        settledAt: null,
+        state: "review",
+      });
+      expect(reminder?.kind).toBe("accessibility-unknown");
+      expect(reminder?.message).toMatch(/funds remain constrained/u);
+      expect(reminder?.message).toMatch(
+        /accessibility and payability are not proven/u,
+      );
+      expect(reminder?.message).not.toMatch(
+        /unfunded|no funding is committed|ready.to.sign|overdue|begin once/u,
+      );
+    }
   });
 });

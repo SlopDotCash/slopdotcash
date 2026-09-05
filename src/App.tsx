@@ -483,14 +483,13 @@ export function reviewBudgetLabel(
   reviewBudget: NonNullable<ProjectDefinition["reward"]["reviewBudget"]>,
 ): string {
   return reviewBudget.fundingState === "committed"
-    ? `${formatMicroUsdc(reviewBudget.committedMinor)} committed of ${reviewBudget.monthlyCapDisplay} cap · additive review line`
+    ? `${formatMicroUsdc(reviewBudget.committedMinor)} committed of ${reviewBudget.monthlyCapDisplay} cap · accessibility unknown · additive review line`
     : `${reviewBudget.monthlyCapDisplay} cap · additive review line · uncommitted pledge`;
 }
 
 /**
- * A monthly pool prints a dollar figure only once funding is committed. A
- * pledged pool, or a committed one with nothing behind it, is unfunded: its
- * cap is a target, never a pool.
+ * Commitment is a balance claim, never proof that signers can act. This
+ * protocol has no authenticated accessibility evidence type yet.
  */
 export function monthlyPoolUnfunded(
   reward: Pick<ProjectDefinition["reward"], "committedMinor" | "fundingState">,
@@ -508,7 +507,7 @@ export function monthlyPoolLabel(
 ): string {
   return monthlyPoolUnfunded(reward)
     ? `unfunded, target ${reward.monthlyCapDisplay}`
-    : `${reward.monthlyCapDisplay} monthly pool`;
+    : `${formatMicroUsdc(reward.committedMinor)} committed · accessibility unknown · target ${reward.monthlyCapDisplay}`;
 }
 
 function formatPercent(partsPerMillion: number): string {
@@ -747,7 +746,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
     project.reward.kind === "monthly-pool"
       ? unfunded
         ? "Unfunded"
-        : project.reward.monthlyCapDisplay
+        : "Accessibility unknown"
       : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
         "External");
   return (
@@ -771,7 +770,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
             {project.reward.kind === "monthly-pool"
               ? unfunded
                 ? `target ${project.reward.monthlyCapDisplay} / month`
-                : "/ month"
+                : `${formatMicroUsdc(project.reward.committedMinor)} committed`
               : "external prize"}
           </span>
         </p>
@@ -779,7 +778,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
           {project.reward.kind === "monthly-pool"
             ? unfunded
               ? "Target cap · no funding committed"
-              : "Committed funding · payment state published per cycle"
+              : "Committed balance · accessibility unknown · payments disabled"
             : "External sponsor controls eligibility and payment"}
         </small>
         {project.reward.reviewBudget ? (
@@ -1300,7 +1299,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
               <strong>
                 {featuredProjects[0] &&
                 !monthlyPoolUnfunded(featuredProjects[0].reward)
-                  ? featuredProjects[0].reward.monthlyCapDisplay
+                  ? "Accessibility unknown"
                   : "Unfunded"}
               </strong>
               <dl>
@@ -1315,7 +1314,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
                   <dt>Funding</dt>
                   <dd>
                     {featuredProjects[0]?.reward.fundingState === "committed"
-                      ? "Committed"
+                      ? "Committed · accessibility unknown"
                       : "Uncommitted"}
                   </dd>
                 </div>
@@ -2155,6 +2154,11 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
         login or submitted transaction ID does not prove wallet ownership or
         payment.
       </p>
+      <p>
+        Commitment accessibility: unknown. On-chain balance does not establish
+        that both signers can act. No commitment is available payout funding
+        until an authenticated accessibility evidence protocol is reviewed.
+      </p>
       {funding.status === "loading" ? (
         <div className="data-notice" role="status">
           <span className="pulse" /> Reading funding records…
@@ -2302,14 +2306,14 @@ function ProjectPage({
                 {project.reward.kind === "monthly-pool"
                   ? monthlyPoolUnfunded(project.reward)
                     ? "Unfunded"
-                    : project.reward.monthlyCapDisplay
+                    : "Accessibility unknown"
                   : project.reward.externalOpportunity?.advertisedAmountDisplay}
               </strong>
               <p>
                 {project.reward.kind === "monthly-pool"
                   ? monthlyPoolUnfunded(project.reward)
                     ? `Target ${project.reward.monthlyCapDisplay} per month. No funding is committed, so no payment is scheduled until the project commits funds.`
-                    : "Up to this amount is allocated each month. Unused funding rolls forward without raising the cap."
+                    : `${formatMicroUsdc(project.reward.committedMinor)} committed against a ${project.reward.monthlyCapDisplay} monthly target. Accessibility is unknown; no payment is enabled.`
                   : "10% of an award actually received is allocated to Slop Cash; the remaining 90% is shared among accepted contributors. The prize sponsor controls eligibility and payment."}
               </p>
               <div>
@@ -2924,6 +2928,10 @@ function CyclePage({
     record?.state ?? (view?.cycle.status === "live" ? "live" : "closed");
   const reminder = cycleSettlementReminder({
     closesAt: to,
+    fundingState:
+      project.reward.reviewBudget?.fundingState === "committed"
+        ? "committed"
+        : project.reward.fundingState,
     kind:
       record?.kind ??
       (view?.reward.kind === "external-prize-share"
