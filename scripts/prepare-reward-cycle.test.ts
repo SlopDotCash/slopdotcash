@@ -48,6 +48,13 @@ describe("prepare reward cycle accrual", () => {
     expect(proposal.kind).toBe("reward-allocation");
     if (proposal.kind !== "reward-allocation") return;
     expect(proposal.carriedMinor).toBe("1500000");
+    expect(proposal.capMinor).toBe("0");
+    expect(proposal.totals.suggestedMinor).toBe("1500000");
+    expect(write).toHaveBeenCalledWith(
+      arguments_.snapshotArchivePath,
+      Buffer.from(JSON.stringify(snapshot)),
+    );
+    expect(write).toHaveBeenCalledWith(arguments_.outputPath, proposal);
     expect(proposal.allocations).toContainEqual(
       expect.objectContaining({
         actor: { id: "U_quiet", login: "quiet-contributor" },

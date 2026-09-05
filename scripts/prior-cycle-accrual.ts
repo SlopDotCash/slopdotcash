@@ -2,6 +2,10 @@
 
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  allocationFundingMinor,
+  LAST_LEGACY_CAP_CYCLE,
+} from "../src/lib/allocation-funding";
 import type { ProjectId } from "../src/lib/projects.mjs";
 import {
   assertRewardAllocationManifest,
@@ -129,6 +133,16 @@ export async function loadPriorCycleAccrual(input: {
     );
   }
   if (!allocation) {
+    // An unfunded score record has no reviewed monetary balance to carry.
+    // This also excludes the grandfathered cap-only trial suggestion.
+    if (
+      (proposal.fundingBasis &&
+        allocationFundingMinor(proposal.fundingBasis) === 0n &&
+        BigInt(proposal.carriedMinor ?? "0") === 0n) ||
+      (!proposal.fundingBasis && proposal.cycleId <= LAST_LEGACY_CAP_CYCLE)
+    ) {
+      return { actorLogins: new Map(), accruedMinor: new Map() };
+    }
     if (Date.parse(input.asOf) < Date.parse(proposal.review.endsAt)) {
       throw new PriorCycleNotReadyError({
         cycleId: priorId,

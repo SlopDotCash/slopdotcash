@@ -4,6 +4,10 @@
  * files while this index drives lifecycle labels and aggregate totals.
  */
 
+import {
+  type AllocationFundingBasis,
+  assertAllocationFundingBasis,
+} from "./allocation-funding";
 import { findProject } from "./projects.mjs";
 import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
 
@@ -68,6 +72,8 @@ export interface CycleIndexEntry {
   approvedAt: string | null;
   settledAt: string | null;
   reward: {
+    fundingBasis?: AllocationFundingBasis;
+    carriedMinor?: string;
     currency: "USDC" | null;
     capMinor: string;
     suggestedMinor: string;
@@ -468,6 +474,8 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   }
   const reward = record(entry.reward, `${field}.reward`);
   const hasRewardLines = "lines" in reward;
+  const hasFundingBasis = "fundingBasis" in reward;
+  const hasCarry = "carriedMinor" in reward;
   exact(
     reward,
     [
@@ -479,6 +487,8 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       "sharePartsPerMillion",
       "suggestedMinor",
       ...(hasRewardLines ? ["lines"] : []),
+      ...(hasFundingBasis ? ["fundingBasis"] : []),
+      ...(hasCarry ? ["carriedMinor"] : []),
     ],
     `${field}.reward`,
   );
@@ -495,6 +505,17 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     throw new TypeError(`${field}.reward.sharePartsPerMillion is invalid`);
   }
   const normalizedReward = {
+    ...(hasCarry
+      ? {
+          carriedMinor: minor(
+            reward.carriedMinor,
+            `${field}.reward.carriedMinor`,
+          ),
+        }
+      : {}),
+    ...(hasFundingBasis
+      ? { fundingBasis: assertAllocationFundingBasis(reward.fundingBasis) }
+      : {}),
     currency: reward.currency as "USDC" | null,
     capMinor: minor(reward.capMinor, `${field}.reward.capMinor`),
     suggestedMinor: minor(
@@ -528,10 +549,12 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   if (
     (!normalizedReward.lines &&
       BigInt(normalizedReward.approvedMinor) >
-        BigInt(normalizedReward.capMinor)) ||
+        BigInt(normalizedReward.capMinor) +
+          BigInt(normalizedReward.carriedMinor ?? "0")) ||
     (normalizedReward.lines &&
       BigInt(normalizedReward.lines.sharedPool.approvedMinor) >
-        BigInt(normalizedReward.capMinor)) ||
+        BigInt(normalizedReward.capMinor) +
+          BigInt(normalizedReward.carriedMinor ?? "0")) ||
     BigInt(normalizedReward.paidMinor) > BigInt(normalizedReward.approvedMinor)
   ) {
     throw new TypeError(`${field}.reward money totals do not reconcile`);

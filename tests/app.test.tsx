@@ -21,6 +21,7 @@ import {
   monthlyPoolLabel,
   ProjectFunding,
   ProjectManagePage,
+  ProjectParticipation,
   publicFooterDomain,
   readBoundedJson,
   reviewBudgetLabel,
@@ -1047,7 +1048,7 @@ describe("public records", () => {
       await screen.findByRole("heading", { name: "finish-line" }),
     ).toBeInTheDocument();
     expect(screen.getByText("34")).toBeInTheDocument();
-    expect(screen.getAllByText("$10,000").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$0").length).toBeGreaterThan(0);
     expect(screen.getByText("Eliza")).toBeInTheDocument();
     expect(screen.getByText("Delta Star")).toBeInTheDocument();
     expect(
@@ -1541,6 +1542,50 @@ describe("direct project funding", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Funding records unavailable: funding request timed out",
     );
+  });
+
+  it("shows pledged zero funding and disabled payments when there is no route", () => {
+    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+    if (!project) throw new Error("Missing fixture project");
+    render(<ProjectFunding project={project} />);
+    expect(screen.getByText("Fund this project")).toBeVisible();
+    expect(
+      screen.getByText(
+        /Funding: pledged · Committed: \$0 · Payments: disabled/u,
+      ),
+    ).toBeVisible();
+    expect(screen.getByText(/Not accepting direct funding yet/u)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Copy address" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("removes the skill CTA after two unfunded cycles while explaining continued records", () => {
+    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+    if (!project) throw new Error("Missing fixture project");
+    const cycles = ["2026-07", "2026-08"].map((cycleId) => ({
+      projectId: project.id,
+      cycleId,
+      kind: "monthly-pool" as const,
+      reward: {
+        fundingBasis: {
+          fundingState: "pledged" as const,
+          committedMinor: "0",
+          monthlyCapMinor: "10000000000",
+        },
+      },
+    }));
+    const { rerender } = render(
+      <ProjectParticipation project={project} cycles={cycles.slice(0, 1)} />,
+    );
+    expect(screen.getByLabelText("Manual install command")).toBeInTheDocument();
+    rerender(<ProjectParticipation project={project} cycles={cycles} />);
+    expect(
+      screen.queryByLabelText("Manual install command"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Accepted work and scores continue to be recorded/u),
+    ).toBeVisible();
   });
 
   it("shows an exact address, QR, copy feedback, and explorer without wallet control", async () => {

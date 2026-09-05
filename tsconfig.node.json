@@ -10,6 +10,7 @@
     "types": ["node", "bun-types"]
   },
   "include": [
+    "src/lib/allocation-funding.ts",
     "vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
