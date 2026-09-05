@@ -16,6 +16,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -52,7 +53,6 @@ export const MIN_SEARCH_ACTIVITY_REQUESTS = 2;
 const LIVE_REPORT_LOCK_DIRECTORY = "slop-live-report-locks-v2";
 const LIVE_REPORT_LOCK_OWNER_FILE = "owner.json";
 const LIVE_REPORT_LOCK_COMMAND_DIRECTORY = "commands";
-const LIVE_REPORT_LOCK_ACQUIRE_ATTEMPTS = 8;
 const LIVE_REPORT_ORPHAN_COMMAND_GRACE_MS = 5 * 60 * 1_000;
 const LIVE_REPORT_LOCKED_GH_ARGUMENT = "--slop-internal-locked-gh-v1";
 const LIVE_REPORT_PROCESS_IDENTITY_RE = /^[a-f0-9]{64}$/u;
@@ -1329,10 +1329,10 @@ export function createGhCommandBudget(spawn = spawnSync) {
 }
 
 export class LiveReportLockContentionError extends Error {
-  constructor() {
-    super(
-      "live report lock contention: another report for this GitHub identity is already discovering activity",
-    );
+  constructor(
+    message = "live report lock contention: another report for this GitHub identity is already discovering activity",
+  ) {
+    super(message);
     this.name = "LiveReportLockContentionError";
   }
 }
@@ -1646,6 +1646,27 @@ function assertLiveReportLockDirectory(lockPath) {
   assertLiveReportPrivatePath(lockPath, "live report lock", "directory");
 }
 
+function withLiveReportLockTransition(lockPath, operation) {
+  const transitionPath = `${lockPath}.transition`;
+  // Every lock-path mutation participates in this atomic mkdir guard. Never
+  // reclaim the guard: checking a token or dead PID before renaming it would
+  // recreate the same ABA race that this guard prevents for the report lock.
+  // A crash here requires manual recovery after all local reports are stopped.
+  try {
+    mkdirSync(transitionPath, { mode: 0o700 });
+  } catch (error) {
+    if (fileSystemErrorCode(error) !== "EEXIST") throw error;
+    throw new LiveReportLockContentionError(
+      `live report lock contention: transition guard exists at ${transitionPath}; retry after the other report finishes. If it persists, stop all local reports before manually removing this guard`,
+    );
+  }
+  try {
+    return operation();
+  } finally {
+    rmdirSync(transitionPath);
+  }
+}
+
 function prepareLiveReportLockCandidate(lockPath, ownerToken, processIdentity) {
   const candidatePath = `${lockPath}.candidate-${process.pid}-${ownerToken}`;
   mkdirSync(candidatePath, { mode: 0o700 });
@@ -1769,31 +1790,20 @@ export function acquireLiveReportLock(identity, options = {}) {
   if (processIdentity === null) {
     throw new Error("could not establish the live report process identity");
   }
-  let acquired = false;
-  for (
-    let attempt = 0;
-    attempt < LIVE_REPORT_LOCK_ACQUIRE_ATTEMPTS;
-    attempt += 1
-  ) {
+  withLiveReportLockTransition(lockPath, () => {
     const candidatePath = prepareLiveReportLockCandidate(
       lockPath,
       ownerToken,
       processIdentity,
     );
     try {
-      renameSync(candidatePath, lockPath);
-      acquired = true;
-      break;
-    } catch (error) {
-      rmSync(candidatePath, { force: true, recursive: true });
       if (!existsSync(lockPath)) {
-        if (fileSystemErrorCode(error) === "ENOENT") continue;
-        throw error;
+        renameSync(candidatePath, lockPath);
+        return;
       }
       assertLiveReportLockDirectory(lockPath);
       const currentOwner = readLiveReportLockOwner(lockPath);
       if (currentOwner === null) {
-        if (!existsSync(lockPath)) continue;
         throw new Error("live report lock owner is missing");
       }
       if (
@@ -1803,18 +1813,13 @@ export function acquireLiveReportLock(identity, options = {}) {
         throw new LiveReportLockContentionError();
       }
       const stalePath = `${lockPath}.stale-${process.pid}-${randomBytes(16).toString("hex")}`;
-      try {
-        renameSync(lockPath, stalePath);
-      } catch (renameError) {
-        if (fileSystemErrorCode(renameError) === "ENOENT") continue;
-        throw renameError;
-      }
+      renameSync(lockPath, stalePath);
+      renameSync(candidatePath, lockPath);
       rmSync(stalePath, { force: true, recursive: true });
+    } finally {
+      rmSync(candidatePath, { force: true, recursive: true });
     }
-  }
-  if (!acquired) {
-    throw new Error("live report lock changed too often to acquire safely");
-  }
+  });
   let released = false;
   return {
     spawn(command, args, options) {
@@ -1822,19 +1827,21 @@ export function acquireLiveReportLock(identity, options = {}) {
     },
     release() {
       if (released) return;
-      const owner = readLiveReportLockOwner(lockPath);
-      if (
-        owner === null ||
-        owner.pid !== process.pid ||
-        owner.processIdentity !== processIdentity ||
-        owner.ownerToken !== ownerToken
-      ) {
-        throw new Error("live report lock ownership changed before release");
-      }
-      const releasedPath = `${lockPath}.released-${process.pid}-${ownerToken}`;
-      renameSync(lockPath, releasedPath);
-      rmSync(releasedPath, { force: true, recursive: true });
-      released = true;
+      withLiveReportLockTransition(lockPath, () => {
+        const owner = readLiveReportLockOwner(lockPath);
+        if (
+          owner === null ||
+          owner.pid !== process.pid ||
+          owner.processIdentity !== processIdentity ||
+          owner.ownerToken !== ownerToken
+        ) {
+          throw new Error("live report lock ownership changed before release");
+        }
+        const releasedPath = `${lockPath}.released-${process.pid}-${ownerToken}`;
+        renameSync(lockPath, releasedPath);
+        rmSync(releasedPath, { force: true, recursive: true });
+        released = true;
+      });
     },
   };
 }

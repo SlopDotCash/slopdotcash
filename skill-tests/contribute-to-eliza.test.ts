@@ -224,6 +224,92 @@ function liveReportLockPath(root: string, identityId: number) {
   return join(root, `${key}.lock`);
 }
 
+function createStaleLiveReportLockFixture() {
+  const root = mkdtempSync(join(tmpdir(), "slop-live-report-reclaim-test-"));
+  const identity = { host: "github.com", id: 42, login: "fixture-user" };
+  const lockPath = liveReportLockPath(root, identity.id);
+  const ownerPath = join(lockPath, "owner.json");
+  const scriptPath = join(root, "reclaimer.mjs");
+  const readyPath = join(root, "reclaim-ready");
+  const resumePath = join(root, "reclaim-resume");
+  const acquiredPath = join(root, "acquired");
+  const releasePath = join(root, "release");
+  mkdirSync(join(lockPath, "commands"), { recursive: true, mode: 0o700 });
+  const currentIdentity = readLiveReportProcessIdentity(process.pid);
+  assert.ok(currentIdentity);
+  writeFileSync(
+    ownerPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      pid: process.pid,
+      processIdentity:
+        currentIdentity === "0".repeat(64) ? "1".repeat(64) : "0".repeat(64),
+      ownerToken: randomBytes(16).toString("hex"),
+    }),
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    scriptPath,
+    `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const [reportUrl, root, lockPath, ready, resume, acquired, release, role] = process.argv.slice(2);
+const rename = fs.renameSync.bind(fs);
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+fs.renameSync = (source, target) => {
+  if (role === "paused" && source === lockPath && target.includes(".stale-")) {
+    fs.writeFileSync(ready, "ready");
+    const deadline = Date.now() + 10000;
+    while (!fs.existsSync(resume)) {
+      if (Date.now() > deadline) throw new Error("reclaimer resume timed out");
+      Atomics.wait(sleeper, 0, 0, 10);
+    }
+  }
+  return rename(source, target);
+};
+syncBuiltinESMExports();
+const { acquireLiveReportLock } = await import(reportUrl);
+try {
+  const lock = acquireLiveReportLock({ host: "github.com", id: 42, login: "fixture-user" }, { rootPath: root });
+  if (role === "paused") {
+    fs.writeFileSync(acquired, "acquired");
+    const deadline = Date.now() + 10000;
+    while (!fs.existsSync(release)) {
+      if (Date.now() > deadline) throw new Error("report release timed out");
+      Atomics.wait(sleeper, 0, 0, 10);
+    }
+  }
+  lock.release();
+} catch (error) {
+  process.stderr.write(error.message);
+  process.exitCode = 2;
+}
+`,
+  );
+  return {
+    root,
+    identity,
+    lockPath,
+    ownerPath,
+    readyPath,
+    resumePath,
+    acquiredPath,
+    releasePath,
+    arguments(role: string, reportPath = liveReportPath) {
+      return [
+        scriptPath,
+        pathToFileURL(reportPath).href,
+        root,
+        lockPath,
+        readyPath,
+        resumePath,
+        acquiredPath,
+        releasePath,
+        role,
+      ];
+    },
+  };
+}
+
 function account(login: string, type = "User") {
   const id = [...login.toLowerCase()].reduce(
     (value, character) => (value * 31 + character.charCodeAt(0)) % 1_000_000,
@@ -2033,6 +2119,83 @@ describe("live report behavior", () => {
       }
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("serializes stale reclaimers before they can rename a live replacement", {
+    timeout: 15_000,
+  }, async () => {
+    const fixture = createStaleLiveReportLockFixture();
+    const originalOwner = readFileSync(fixture.ownerPath);
+    const child = spawn(nodeExecutable, fixture.arguments("paused"), {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const completion = collectChild(child);
+    try {
+      await waitForFixturePath(fixture.readyPath);
+      const otherReport = join(
+        skillDir,
+        "..",
+        "contribute-to-asi",
+        "scripts",
+        "live-report.mjs",
+      );
+      const contender = spawnSync(
+        nodeExecutable,
+        fixture.arguments("contender", otherReport),
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      assert.strictEqual(contender.status, 2, contender.stderr);
+      assert.match(contender.stderr, /lock contention: transition guard/iu);
+      assert.deepStrictEqual(readFileSync(fixture.ownerPath), originalOwner);
+
+      writeFileSync(fixture.resumePath, "resume");
+      await waitForFixturePath(fixture.acquiredPath);
+      const replacementOwner = readFileSync(fixture.ownerPath);
+      assert.notDeepStrictEqual(replacementOwner, originalOwner);
+      assert.strictEqual(existsSync(`${fixture.lockPath}.transition`), false);
+      assert.throws(
+        () =>
+          acquireLiveReportLock(fixture.identity, { rootPath: fixture.root }),
+        /another report.*already discovering/iu,
+      );
+      assert.deepStrictEqual(readFileSync(fixture.ownerPath), replacementOwner);
+      writeFileSync(fixture.releasePath, "release");
+      const completed = await completion;
+      assert.strictEqual(completed.status, 0, completed.stderr);
+      assert.strictEqual(existsSync(fixture.lockPath), false);
+    } finally {
+      writeFileSync(fixture.resumePath, "resume");
+      writeFileSync(fixture.releasePath, "release");
+      await completion;
+      rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves an interrupted transition guard and fails closed", {
+    timeout: 15_000,
+  }, async () => {
+    const fixture = createStaleLiveReportLockFixture();
+    const originalOwner = readFileSync(fixture.ownerPath);
+    const child = spawn(nodeExecutable, fixture.arguments("paused"), {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const completion = collectChild(child);
+    try {
+      await waitForFixturePath(fixture.readyPath);
+      child.kill("SIGKILL");
+      await completion;
+      assert.throws(
+        () =>
+          acquireLiveReportLock(fixture.identity, { rootPath: fixture.root }),
+        /stop all local reports before manually removing this guard/iu,
+      );
+      assert.strictEqual(existsSync(`${fixture.lockPath}.transition`), true);
+      assert.deepStrictEqual(readFileSync(fixture.ownerPath), originalOwner);
+    } finally {
+      child.kill("SIGKILL");
+      await completion;
+      rmSync(fixture.root, { force: true, recursive: true });
     }
   });
 
