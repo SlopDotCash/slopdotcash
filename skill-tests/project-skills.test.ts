@@ -1419,44 +1419,78 @@ describe("project run usage", () => {
     }
   });
 
-  it("reports a deadline miss as expiry instead of a bare 410", async () => {
-    const responses = [
-      new Response(
-        JSON.stringify({
-          flowId: `flow_${"f".repeat(32)}`,
-          authorizationUrl: `https://identity.slop.cash/v1/oauth/authorize?flow=${"f".repeat(32)}`,
-          pollCapability: "p".repeat(48),
-          expiresAt: new Date(Date.now() + 2_500).toISOString(),
-          pollAfterSeconds: 2,
-        }),
-        { status: 201 },
-      ),
-      new Response(
-        JSON.stringify({
-          error: "flow_unavailable",
-          message: "Identity flow is unavailable",
-        }),
-        { status: 410 },
-      ),
-    ];
-    const originalWrite = process.stderr.write;
-    process.stderr.write = (() => true) as typeof process.stderr.write;
-    try {
-      await assert.rejects(
-        slopIdentityAssertion(
-          async () => {
-            const response = responses.shift();
-            assert.ok(response);
-            return response;
-          },
-          async () => {},
+  for (const { elapsed, error, expected } of [
+    {
+      elapsed: 19_000,
+      error: "flow_unavailable",
+      expected: /returned HTTP 410 \(flow_unavailable\)/u,
+    },
+    {
+      elapsed: 29_999,
+      error: "flow_unavailable",
+      expected: /returned HTTP 410 \(flow_unavailable\)/u,
+    },
+    {
+      elapsed: 30_000,
+      error: "flow_unavailable",
+      expected: /authorization expired before completion/u,
+    },
+    {
+      elapsed: 19_000,
+      error: "flow_expired",
+      expected: /authorization expired before completion/u,
+    },
+    {
+      elapsed: 30_000,
+      error: "flow_consumed",
+      expected: /returned HTTP 410 \(flow_consumed\)/u,
+    },
+  ]) {
+    it(`classifies ${error} at ${elapsed}ms against the actual 30s identity deadline`, async () => {
+      const startedAt = Date.parse("2030-01-01T00:00:00.000Z");
+      let now = startedAt;
+      const responses = [
+        new Response(
+          JSON.stringify({
+            flowId: `flow_${"f".repeat(32)}`,
+            authorizationUrl: `https://identity.slop.cash/v1/oauth/authorize?flow=${"f".repeat(32)}`,
+            pollCapability: "p".repeat(48),
+            expiresAt: new Date(startedAt + 30_000).toISOString(),
+            pollAfterSeconds: 10,
+          }),
+          { status: 201 },
         ),
-        /authorization expired before completion/u,
-      );
-    } finally {
-      process.stderr.write = originalWrite;
-    }
-  });
+        new Response(
+          JSON.stringify({
+            error,
+            message: "Identity flow is unavailable",
+          }),
+          { status: 410 },
+        ),
+      ];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = (() => true) as typeof process.stderr.write;
+      try {
+        await assert.rejects(
+          slopIdentityAssertion(
+            async () => {
+              const response = responses.shift();
+              assert.ok(response);
+              if (response.status === 410) now = startedAt + elapsed;
+              return response;
+            },
+            async (milliseconds) => {
+              now += milliseconds;
+            },
+            () => now,
+          ),
+          expected,
+        );
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+  }
 
   it("serializes one terminal Slop marker without private material", () => {
     const key = generateKeyPairSync("ed25519");
