@@ -1,7 +1,13 @@
 /** Trusted Git objects, exact chain evidence, and human-review exclusions. */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -236,6 +242,7 @@ describe("trusted funding eligibility", () => {
   it("rejects executable record blobs", async () => {
     const f = fixture();
     f.put(PATH, f.record);
+    chmodSync(join(f.git("rev-parse", "--show-toplevel"), PATH), 0o755);
     f.git("add", ".");
     f.git("update-index", "--chmod=+x", PATH);
     f.git("commit", "-qm", "executable candidate");
@@ -261,6 +268,31 @@ describe("trusted funding eligibility", () => {
     await expect(
       checkFundingEligibility({ ...f.head(), verifyRecord }),
     ).rejects.toThrow(/fresh verifier/);
+  });
+  it("keeps retired routes on human review even with a backdated observation", async () => {
+    const f = fixture();
+    f.put("projects/sample/project.json", {
+      id: "sample",
+      funding: {
+        recordsPath: "funding/sample",
+        addresses: [
+          {
+            network: "solana",
+            asset: "USDC",
+            address: RECIPIENT,
+            effectiveAt: "2026-01-01T00:00:00.000Z",
+            replacedAt: "2026-08-02T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+    f.git("add", ".");
+    f.git("commit", "-qm", "retire receiving route");
+    const baseSha = f.git("rev-parse", "HEAD");
+    f.put(PATH, f.record);
+    const input = { ...f.head(), baseSha, verifyRecord };
+    f.git("checkout", "--detach", baseSha);
+    expect((await checkFundingEligibility(input)).eligible).toBe(false);
   });
   it.each([
     "",

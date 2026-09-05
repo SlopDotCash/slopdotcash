@@ -188,6 +188,17 @@ export async function checkFundingEligibility(input: {
       record,
       assertProjectFundingAddresses(current.funding.addresses),
     );
+    const activeRoute = assertProjectFundingAddresses(
+      current.funding.addresses,
+    ).find(
+      (route) =>
+        route.network === record.network &&
+        route.asset === record.asset &&
+        route.address === record.recipient &&
+        route.replacedAt === null,
+    );
+    if (!activeRoute)
+      return human("retired receiving routes need human review");
     if (record.state !== "verified-on-chain")
       return human("unverified or disputed evidence needs human review");
     if (record.supersedes !== null)

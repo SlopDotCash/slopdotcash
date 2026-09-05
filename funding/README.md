@@ -40,7 +40,7 @@ a later chain observation may therefore require a refreshed candidate record.
 The verifier's fresh `checkedAt` is logged, not required to equal the candidate's
 earlier check time; future candidate observations are rejected.
 
-Corrections, public donor attribution, commitments, mixed changes, and
+Retired receiving routes, corrections, public donor attribution, commitments, mixed changes, and
 non-verified records remain on human review. An ineligible decision is not an
 approval, even when the workflow finishes successfully. Every decision currently
 has `mergeAuthorized: false`: connecting the separate protected approver and
