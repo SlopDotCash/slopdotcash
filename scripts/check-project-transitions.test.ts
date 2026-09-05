@@ -281,8 +281,11 @@ describe("project transition gate", () => {
     };
 
     const reducedOnAdd = structuredClone(withPledgedReview);
-    reducedOnAdd.reward.monthlyCapMinor = "4999000000";
-    reducedOnAdd.reward.monthlyCapDisplay = "$4,999";
+    const reducedDollars = BigInt(eliza.reward.monthlyCapMinor) / 2_000_000n;
+    reducedOnAdd.reward.monthlyCapMinor = (
+      reducedDollars * 1_000_000n
+    ).toString();
+    reducedOnAdd.reward.monthlyCapDisplay = `$${reducedDollars.toLocaleString("en-US")}`;
     expect(() =>
       validateProjectTransitions([entry(eliza)], [entry(reducedOnAdd)]),
     ).toThrow(/review budget.*reducing the contributor pool cap/u);
@@ -312,8 +315,8 @@ describe("project transition gate", () => {
     funded.reward.reviewBudget.fundingState = "committed";
     funded.reward.reviewBudget.paymentMode = "disabled";
     funded.reward.reviewBudget.committedMinor = "1000000";
-    funded.reward.monthlyCapMinor = "4999000000";
-    funded.reward.monthlyCapDisplay = "$4,999";
+    funded.reward.monthlyCapMinor = reducedOnAdd.reward.monthlyCapMinor;
+    funded.reward.monthlyCapDisplay = reducedOnAdd.reward.monthlyCapDisplay;
     (
       funded as unknown as { funding: { commitments: unknown[] } }
     ).funding.commitments = [
