@@ -249,13 +249,6 @@ function septemberRollingSnapshot() {
   snapshot.source.fetchedAt = generatedAt;
   snapshot.source.rateLimit.resetAt = "2026-09-05T01:00:00.000Z";
   snapshot.source.verificationWindow = { days: 35, from, to: generatedAt };
-  for (const item of [
-    ...snapshot.workQueue.issues,
-    ...snapshot.workQueue.pullRequests,
-  ]) {
-    item.createdAt = generatedAt;
-    item.updatedAt = generatedAt;
-  }
   snapshot.ledger = snapshot.ledger.map((event) => ({
     ...event,
     occurredAt: "2026-09-04T12:00:00.000Z",
