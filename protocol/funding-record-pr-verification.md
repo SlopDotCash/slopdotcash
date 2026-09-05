@@ -2,8 +2,9 @@
 
 `Trusted funding record verification` produces read-only evidence for a narrow
 subset of funding PRs. It does not approve reviews, enable auto-merge, merge a
-PR, or invoke a deployment environment. Repository maintainers and repository
-rules retain merge authority.
+PR, or invoke a deployment environment. The separate, explicitly activated
+`Merge verified funding records` workflow implements repository-owned standing
+review authority under the strict safeguards below.
 
 ## Scope and evidence
 
@@ -57,9 +58,9 @@ For the automatic-verification subset:
   historical instant that finality was reached; finality is independently rechecked.
 - The new output must match the record's state, transaction, verifier version,
   evidence URL, and finality exactly. The fresh check may occur later than the
-  recorded check. An increased EVM or Bitcoin confirmation count is therefore
-  an explicit finality mismatch requiring a refreshed record or human review;
-  it is not silently substituted into the proposed bytes.
+  recorded check. An increased EVM or Bitcoin confirmation count is accepted
+  only within the same finality kind; a decrease or changed finality kind fails.
+  Fresh evidence is logged without rewriting the proposed record bytes.
 
 The decision artifact binds the exact PR number, base SHA, head SHA, checker
 revision and version, and check time. Each processed record binds its immutable
@@ -88,14 +89,55 @@ scheduled re-deployments of a previously human-approved revision. Deployment
 reviewer membership does not grant this checker PR merge authority, and that
 service's private credentials or source are not available in this repository.
 
-The implementation-time read-only repository audit found auto-merge disabled,
-default Actions workflow permissions set to read, no returned rulesets, and no
-classic protection on `develop`. The permission to create PR reviews does not
-establish a safe merge policy. Enabling autonomous merges requires an explicit
-maintainer-controlled identity and ruleset design, including exact-head checks,
-required review/check policy, and revocation. This checker does not create or
-infer that authority. The no-human-merge acceptance criterion in #368 therefore
-remains unfulfilled by this verification-only implementation.
+## Standing funding-only approval and merge
+
+Maintainers may activate the separate workflow by setting repository variable
+`SLOP_FUNDING_AUTOMERGE_ENABLED` to exactly `true`. Deleting the variable or
+changing its value revokes new runs; cancel an already running job to revoke
+that invocation. This is explicit standing authority for `github-actions[bot]`,
+not an extension of a production reviewer's private credentials or authority.
+The workflow token may review and merge PRs and dispatch Actions. It receives no
+production environment secrets and cannot approve production deployment.
+
+The scheduled/manual workflow executes only the checked-out `develop` code,
+installs no PR dependencies, and consumes no artifacts as authority. It fetches
+PR heads as Git objects and independently reruns the complete chain verifier.
+It refuses missing or weakened classic protection: strict up-to-date required
+checks (including `Skill, data, build, and browser checks`), at least one PR
+approval, dismissal of stale approvals, resolved conversations, administrator
+enforcement, no review bypass actors, no force pushes, and no branch deletion.
+Rulesets-only configurations are intentionally not inferred equivalent. This
+workflow never edits protections or enables GitHub's auto-merge setting.
+
+All labels, assignments, requested reviews, draft/conflict states, outstanding
+changes requests, and unresolved conversations require human handling. Bounded
+GitHub responses fail closed on truncation. The full quality workflow must
+succeed for the exact PR head; current checks on head and test-merge revisions
+must be green (the PR's intentionally skipped production job is exempt).
+The API still enforces every configured required review and check.
+
+The decision must bind the current trusted base/head/PR and be no older than
+five minutes. Its SHA-256, verifier versions, record byte hashes, and verifier
+output hashes appear in the commit-bound approval review. Full decision bytes
+and refusals are retained in the run artifact for 30 days. All authority,
+review, and check state is reread after approval. The REST merge call supplies
+the exact head SHA and requests a non-fast-forward merge. Strict server-side
+up-to-date protection closes the base-change race at that call. Merge readback
+must confirm the exact PR head and both expected merge parents. At most one PR
+is merged per run; no decision is reused after the base changes.
+
+Because a `GITHUB_TOKEN` merge does not trigger a push workflow, the worker
+explicitly dispatches the existing production workflow on `develop` after
+successful merge readback. The protected production reviewer is still required.
+An ambiguous merge response, failed readback, or failed dispatch fails the job;
+inspect GitHub before retrying and manually dispatch the ordinary `develop`
+release if the merge succeeded but dispatch did not. Merge is not deployment.
+
+Activation requires the protection policy above and Actions permission to
+create approvals. The implementation-time audit found no classic protection,
+so installation alone does not enable unattended merges. No synthetic transfer
+is published to claim an end-to-end canary; a real eligible record must prove
+the complete hosted path before #368's operational acceptance is complete.
 
 Merge the trusted checker before relying on its workflow for new proposals.
 Repository publication and on-chain verification do not prove private-key
