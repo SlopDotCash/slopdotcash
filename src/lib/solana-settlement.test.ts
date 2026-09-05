@@ -5,6 +5,7 @@ import { SOLANA_MAINNET_USDC_MINT } from "./settlement-plan";
 import {
   assertFinalizedUsdcFundingTransfer,
   assertFinalizedUsdcTransfer,
+  assertSettlementChronology,
 } from "./solana-settlement";
 
 const SOURCE = "Vote111111111111111111111111111111111111111";
@@ -46,6 +47,14 @@ function transaction() {
 }
 
 describe("finalized Solana settlement", () => {
+  it("rejects a settlement timestamp before its finalized transaction", () => {
+    expect(() =>
+      assertSettlementChronology("2026-08-01T00:00:00.000Z", [
+        { signature: SIGNATURE, slot: 123, blockTime: 1_786_000_000 },
+      ]),
+    ).toThrow(/predates its finalized transaction/u);
+  });
+
   it("accepts only the exact raw USDC debit and credit", () => {
     expect(
       assertFinalizedUsdcTransfer(transaction(), SIGNATURE, SOURCE, [
