@@ -7,8 +7,6 @@
 
 import { isFundingAddress } from "./funding-address.mjs";
 
-export const MAX_FUNDING_COMMITMENTS = 16;
-
 /** Sablier Lockup v4 deployments; the only accepted EVM stream contracts. */
 export const SABLIER_LOCKUP_V4_CONTRACTS = Object.freeze({
   base: "0xc19a09a66887017f603e5df420ed3cb9a5c07c0a",
@@ -362,7 +360,9 @@ function instrumentIdentity(instrument) {
 }
 
 /**
- * Validates the complete bounded commitment-instrument history. Replaced
+ * Validates the complete commitment-instrument history. The trusted manifest
+ * reader bounds input bytes; a lifetime entry cap would eventually require
+ * deleting append-only monthly evidence. Replaced
  * instruments stay listed so historical commitment records remain
  * independently verifiable, while windows for the same network and asset may
  * never overlap.
@@ -371,10 +371,8 @@ export function assertFundingCommitments(
   value,
   field = "project funding commitments",
 ) {
-  if (!Array.isArray(value) || value.length > MAX_FUNDING_COMMITMENTS) {
-    throw new TypeError(
-      `${field} must be an array of at most ${MAX_FUNDING_COMMITMENTS} instruments`,
-    );
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${field} must be an array of instruments`);
   }
   const seenIdentities = new Set();
   const histories = new Map();

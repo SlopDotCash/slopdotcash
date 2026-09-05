@@ -52,7 +52,7 @@ function fixture() {
 }
 
 describe("monthly commitment accessibility boundary", () => {
-  it("demonstrates the unresolved seventeenth-month archival ceiling without deleting history", () => {
+  it("retains append-only monthly history beyond the seventeenth month", () => {
     const withMonths = (count: number) => {
       const project = fixture();
       const commitments = Array.from({ length: count }, (_, index) => {
@@ -84,9 +84,29 @@ describe("monthly commitment accessibility boundary", () => {
     expect(assertProjectDefinition(sixteen).funding.commitments).toHaveLength(
       16,
     );
-    expect(() => assertProjectDefinition(seventeen)).toThrow(/at most 16/u);
-    expect(() => assertProjectPolicyTransition(sixteen, seventeen)).toThrow(
-      /at most 16/u,
+    const originalBytes = JSON.stringify(seventeen);
+    expect(assertProjectDefinition(seventeen).funding.commitments).toHaveLength(
+      17,
+    );
+    expect(() =>
+      assertProjectPolicyTransition(sixteen, seventeen),
+    ).not.toThrow();
+    expect(JSON.stringify(seventeen)).toBe(originalBytes);
+    expect(
+      assertProjectDefinition(withMonths(1200)).funding.commitments,
+    ).toHaveLength(1200);
+
+    const rewritten = structuredClone(seventeen);
+    rewritten.funding.commitments[0].recipient =
+      "0x2222222222222222222222222222222222222222";
+    expect(() => assertProjectPolicyTransition(sixteen, rewritten)).toThrow(
+      /historical commitment.*immutable/u,
+    );
+
+    const overlapping = structuredClone(seventeen);
+    overlapping.funding.commitments[0].replacedAt = null;
+    expect(() => assertProjectDefinition(overlapping)).toThrow(
+      /overlapping active instruments/u,
     );
   });
   it("requires append-only monthly history and refuses relabeling an old instrument", () => {

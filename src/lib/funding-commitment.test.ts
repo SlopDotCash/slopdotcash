@@ -181,14 +181,14 @@ describe("funding commitment instruments", () => {
     ).toThrow(/reviewed Sablier Lockup v4 deployment/u);
   });
 
-  it("bounds counts and rejects duplicate or overlapping instruments", () => {
+  it("rejects duplicate or overlapping instruments regardless of history length", () => {
     expect(() =>
       assertFundingCommitments(
         Array.from({ length: 17 }, (_, index) =>
           sablierInstrument({ streamId: `${index + 1}` }),
         ),
       ),
-    ).toThrow(/at most 16/u);
+    ).toThrow(/overlapping active instruments/u);
     expect(() =>
       assertFundingCommitments([sablierInstrument(), sablierInstrument()]),
     ).toThrow(/duplicate instrument/u);
