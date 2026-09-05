@@ -139,7 +139,7 @@ async function jsonFile(
   };
 }
 
-async function verifyProposalAgainstSnapshot(
+export async function verifyProposalAgainstSnapshot(
   proposal: RewardAllocationManifest,
   snapshot: LeaderboardSnapshot,
   snapshotDigest: string,
@@ -180,6 +180,7 @@ async function verifyProposalAgainstSnapshot(
       allocation.actor.login !== expected.actor.login ||
       allocation.score !== expected.score ||
       allocation.suggestedMinor !== expected.suggestedMinor ||
+      allocation.accruedMinor !== expected.accruedMinor ||
       (expected.unsafeDestinationReports ?? []).some(
         (report) =>
           !(allocation.unsafeDestinationReports ?? []).some(
@@ -201,6 +202,7 @@ async function verifyProposalAgainstSnapshot(
     proposal.contributionWindow.from !== baseline.contributionWindow.from ||
     proposal.contributionWindow.to !== baseline.contributionWindow.to ||
     proposal.capMinor !== baseline.capMinor ||
+    proposal.carriedMinor !== baseline.carriedMinor ||
     canonical(proposal.rewardLines) !== canonical(baseline.rewardLines) ||
     proposal.totals.suggestedMinor !== baseline.totals.suggestedMinor
   ) {

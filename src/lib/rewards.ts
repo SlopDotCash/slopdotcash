@@ -63,6 +63,7 @@ export interface UnsafeDestinationReport {
   projectId: string;
   cycleId: string;
   intentId: string;
+  suggestedMinor: string;
   reportedAt: string;
   verifiedAt: string;
   wallet: SlopDatabaseWalletProof;
@@ -560,6 +561,7 @@ export function assertUnsafeDestinationReport(
       "projectId",
       "cycleId",
       "intentId",
+      "suggestedMinor",
       "reportedAt",
       "verifiedAt",
       "wallet",
@@ -594,6 +596,7 @@ export function assertUnsafeDestinationReport(
       max: 160,
       pattern: /^pay_[a-z0-9][a-z0-9_-]+$/u,
     }),
+    suggestedMinor: minor(report.suggestedMinor, `${path}.suggestedMinor`),
     reportedAt,
     verifiedAt,
     wallet,
@@ -612,13 +615,19 @@ export function assertUnsafeDestinationReport(
 export function unsafeDestinationReportMessage(
   report: Pick<
     UnsafeDestinationReport,
-    "projectId" | "cycleId" | "intentId" | "reportedAt" | "wallet"
+    | "projectId"
+    | "cycleId"
+    | "intentId"
+    | "suggestedMinor"
+    | "reportedAt"
+    | "wallet"
   >,
 ): string {
   return `slop-unsafe-destination:v1\n${JSON.stringify({
     projectId: report.projectId,
     cycleId: report.cycleId,
     intentId: report.intentId,
+    suggestedMinor: report.suggestedMinor,
     reportedAt: report.reportedAt,
     wallet: report.wallet,
   })}`;
@@ -820,6 +829,15 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
     unsafeDestinationReports?.map((report) => report.sourceCommit) ?? [],
     `${path} unsafe destination report commits`,
   );
+  if (
+    unsafeDestinationReports &&
+    accruedMinor !== undefined &&
+    accruedMinor !== suggestedMinor
+  ) {
+    throw new TypeError(
+      `${path} unsafe destination carry must equal its reviewed suggested amount`,
+    );
+  }
   let hold: RewardAllocation["hold"];
   if ("hold" in allocation) {
     const rawHold = record(allocation.hold, `${path}.hold`);
@@ -833,6 +851,7 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
       !report ||
       !wallet ||
       !sameWalletObservation(wallet, report.wallet) ||
+      report.suggestedMinor !== suggestedMinor ||
       !adjustmentReason
     ) {
       throw new TypeError(
@@ -1066,6 +1085,7 @@ export function assertRewardAllocationManifest(
         Date.parse(report.verifiedAt) > Date.parse(endsAt) ||
         (report.cycleId === cycleId &&
           (report.intentId !== allocation.intentId ||
+            report.suggestedMinor !== allocation.suggestedMinor ||
             Date.parse(report.reportedAt) < Date.parse(generatedAt))) ||
         (report.cycleId < cycleId &&
           Date.parse(report.verifiedAt) > Date.parse(generatedAt))

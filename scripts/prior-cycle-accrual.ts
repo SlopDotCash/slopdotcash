@@ -160,7 +160,11 @@ export async function loadPriorCycleAccrual(input: {
     ) {
       continue;
     }
-    const amount = row.accruedMinor ?? row.suggestedMinor;
+    // Unused review funding stays with its original cycle, never pool carry.
+    const amount =
+      row.lines?.sharedPool.suggestedMinor ??
+      row.accruedMinor ??
+      row.suggestedMinor;
     if (BigInt(amount) === 0n) continue;
     accruedMinor.set(row.actor.id, amount);
     actorLogins.set(row.actor.id, row.actor.login);
