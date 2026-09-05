@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -16,6 +16,11 @@ function julyProposal() {
     cycleId: "2026-07",
     generatedAt: "2026-08-02T00:00:00.000Z",
     projectId: "eliza",
+    fundingBasis: {
+      fundingState: "committed",
+      committedMinor: "10000000000",
+      monthlyCapMinor: "10000000000",
+    },
     snapshot,
     sourceSnapshotSha256: "a".repeat(64),
   });
@@ -24,6 +29,83 @@ function julyProposal() {
 }
 
 describe("prior cycle accrual", () => {
+  it("never carries the immutable historical trial suggestion", async () => {
+    const cyclesRoot = join(process.cwd(), "cycles");
+    const proposalPath = join(cyclesRoot, "eliza", "2026-07", "proposal.json");
+    const before = await readFile(proposalPath);
+    const result = await loadPriorCycleAccrual({
+      asOf: "2026-09-05T00:00:00.000Z",
+      cycleId: "2026-08",
+      cyclesRoot,
+      projectId: "eliza",
+    });
+    expect([...result.accruedMinor]).toEqual([]);
+    expect(await readFile(proposalPath)).toEqual(before);
+  });
+  it("closes an unfunded score record, then funds a new cycle without creating retroactive carry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "slop-unfunded-transition-"));
+    const directory = join(root, "eliza", "2026-07");
+    await mkdir(directory, { recursive: true });
+    const july = julyProposal();
+    const snapshot = snapshotFixture();
+    snapshot.window.from = "2026-06-28T00:00:00.000Z";
+    snapshot.window.to = "2026-08-02T00:00:00.000Z";
+    snapshot.source.verificationWindow = { ...snapshot.window };
+    const zero = createRewardCycleProposal({
+      cycleId: "2026-07",
+      generatedAt: july.generatedAt,
+      projectId: "eliza",
+      snapshot,
+      sourceSnapshotSha256: july.sourceSnapshotSha256,
+    });
+    if (zero.kind !== "reward-allocation") throw new Error("wrong fixture");
+    expect(zero.totals.suggestedMinor).toBe("0");
+    expect(zero.allocations[0].score).toBe(july.allocations[0].score);
+    expect(zero.allocations[0].evidenceEventIds).toEqual(
+      july.allocations[0].evidenceEventIds,
+    );
+    const original = JSON.stringify(zero);
+    await writeFile(join(directory, "proposal.json"), original);
+    const carry = await loadPriorCycleAccrual({
+      asOf: "2026-08-03T00:00:00.000Z",
+      cycleId: "2026-08",
+      cyclesRoot: root,
+      projectId: "eliza",
+    });
+    expect([...carry.accruedMinor]).toEqual([]);
+    snapshot.window = {
+      days: 35,
+      from: "2026-07-28T00:00:00.000Z",
+      to: "2026-09-01T00:00:00.000Z",
+    };
+    snapshot.source.verificationWindow = { ...snapshot.window };
+    snapshot.ledger = snapshot.ledger.map((event) => ({
+      ...event,
+      occurredAt: event.occurredAt.replace("2026-07", "2026-08"),
+    }));
+    const august = createRewardCycleProposal({
+      cycleId: "2026-08",
+      generatedAt: "2026-09-02T00:00:00.000Z",
+      projectId: "eliza",
+      snapshot,
+      sourceSnapshotSha256: "b".repeat(64),
+      fundingBasis: {
+        fundingState: "committed",
+        committedMinor: "5000000",
+        monthlyCapMinor: "10000000000",
+      },
+      priorAccruedMinor: carry.accruedMinor,
+    });
+    expect(august).toMatchObject({
+      carriedMinor: "0",
+      capMinor: "5000000",
+      totals: { suggestedMinor: "5000000" },
+    });
+    expect(await readFile(join(directory, "proposal.json"), "utf8")).toBe(
+      original,
+    );
+  });
+
   it("handles calendar-year boundaries", () => {
     expect(previousCycleId("2026-01")).toBe("2025-12");
   });

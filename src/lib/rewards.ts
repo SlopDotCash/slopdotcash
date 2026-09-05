@@ -4,6 +4,11 @@
  * amount is tied to one immutable payout intent.
  */
 
+import {
+  type AllocationFundingBasis,
+  allocationFundingMinor,
+  assertAllocationFundingBasis,
+} from "./allocation-funding";
 import { assertExactModelIdentity } from "./model-identity";
 import { findProject, type ProjectId } from "./projects.mjs";
 import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
@@ -84,6 +89,7 @@ export interface RewardAllocation {
 }
 
 export interface RewardAllocationManifest {
+  fundingBasis?: AllocationFundingBasis;
   schemaVersion: typeof REWARD_PROTOCOL_VERSION;
   kind: "reward-allocation";
   projectId: string;
@@ -734,6 +740,7 @@ export function assertRewardAllocationManifest(
   const hasAccrual =
     "carriedMinor" in manifest || "minimumTransferMinor" in manifest;
   const hasRewardLines = "rewardLines" in manifest;
+  const hasFundingBasis = "fundingBasis" in manifest;
   exactKeys(
     manifest,
     [
@@ -756,6 +763,7 @@ export function assertRewardAllocationManifest(
       "totals",
       ...(hasAccrual ? ["carriedMinor", "minimumTransferMinor"] : []),
       ...(hasRewardLines ? ["rewardLines"] : []),
+      ...(hasFundingBasis ? ["fundingBasis"] : []),
     ],
     "allocation manifest",
   );
@@ -853,7 +861,15 @@ export function assertRewardAllocationManifest(
     throw new TypeError("allocation fee differs from project policy");
   }
   const capMinor = minor(manifest.capMinor, "allocation manifest.capMinor");
-  if (capMinor !== project.reward.monthlyCapMinor) {
+  const fundingBasis = hasFundingBasis
+    ? assertAllocationFundingBasis(manifest.fundingBasis)
+    : undefined;
+  if (
+    capMinor !==
+    (fundingBasis
+      ? allocationFundingMinor(fundingBasis).toString()
+      : project.reward.monthlyCapMinor)
+  ) {
     throw new TypeError("allocation cap differs from project policy");
   }
   const carriedMinor = hasAccrual
@@ -1050,6 +1066,7 @@ export function assertRewardAllocationManifest(
     currency: "USDC",
     chain: "solana",
     capMinor,
+    ...(fundingBasis ? { fundingBasis } : {}),
     ...(hasAccrual
       ? {
           carriedMinor,

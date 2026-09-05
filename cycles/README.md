@@ -13,6 +13,39 @@ no work qualified, so a zero-award month is auditable and unused funding can
 roll forward without raising the next cap. Existing complete cycles are left
 untouched; a directory containing only one required file is refused as partial.
 
+New monthly proposals freeze `fundingBasis` (funding state, committed amount,
+and monthly cap). Their new shared-pool allocation is the smaller of committed
+funding and the cap when funding is committed, and zero otherwise. Accepted
+events, scores, evidence, and previously reviewed carry remain recorded even
+when this month's allocation is zero. A zero-funded proposal with no carry
+does not prevent the next snapshot or close and contributes no monetary carry.
+
+The existing July 2026 cap-based proposal is the grandfathered unfunded trial.
+Its original snapshot, score table, suggestions, and review dates remain intact;
+the old suggestions do not become carry without a reviewed allocation. Cycle
+validation retains the historical cap basis through July. From August onward,
+new cycle artifacts must include their frozen funding basis. The cycle index
+identifies the historical trial as unfunded without rewriting its artifacts.
+
+The trusted project-transition gate executes from the immutable base commit.
+For each newly added monthly proposal it requires the frozen funding basis to
+equal that base commit's reviewed project manifest. Changes to that project's
+funding state, committed amount, or cap must land separately before a proposal;
+the proposal cannot authorize its own funding. Historical funding bases remain
+unchanged when later manifests evolve. This migration activates that gate for
+subsequent proposal PRs and adds no proposal itself.
+
+After two consecutive closed unfunded months, the site suppresses project pool
+promotion and the skill install CTA until positive committed funding resumes.
+This affects discovery only: the project page, score history, snapshot writing,
+cycle closing, and existing reviewed balances remain available. Missing cycle
+history cannot authorize promotion.
+
+Later funding supports a new reviewed allocation; retained scores create no
+automatic claim on it. Re-proposing an old cycle would need a separate reviewed
+append-only revision mechanism and a fresh 14-day review. The current CLI does
+not overwrite a closed proposal, and this migration does not add that mechanism.
+
 For a platform-funded monthly pool, the creator edits `proposal.json` during
 the 14-day review. The creator may set any contributor amount, including zero,
 or raise it above the deterministic suggestion while the cycle total remains
@@ -36,7 +69,8 @@ cycle. `held-below-minimum` and `unclaimed` balances carry even when the actor
 did no new work; approved payout intents stay in their original cycle, while
 excluded and manually held rows never become new payment proposals
 automatically. An unfinished review or unresolved proposed row fails the next
-cycle closed instead of guessing what is owed.
+cycle closed instead of guessing a reviewed balance; an unfunded record with
+no carried amount is exempt because it contains no monetary allocation.
 
 - `allocation.json` — reviewed and approved payout intents;
 - `execution-plan.json` — an unsigned, exact Solana USDC transfer plan;
