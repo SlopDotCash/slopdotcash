@@ -1299,6 +1299,7 @@ export async function slopIdentityAssertion(
   fetchImpl = globalThis.fetch,
   delayImpl = (milliseconds) =>
     new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
+  nowImpl = Date.now,
 ) {
   if (typeof fetchImpl !== "function")
     fail("Slop identity transport is unavailable");
@@ -1347,8 +1348,11 @@ export async function slopIdentityAssertion(
     `Authorize this contribution with GitHub:\n${authorizationUrl.href}\n`,
   );
   const expiresAt = Date.parse(started.expiresAt);
+  process.stderr.write(
+    `This link expires in ${Math.max(0, Math.round((expiresAt - nowImpl()) / 1000))} seconds; authorize promptly.\n`,
+  );
   let retryAfterSeconds = started.pollAfterSeconds;
-  while (Date.now() < expiresAt) {
+  while (nowImpl() < expiresAt) {
     await delayImpl(retryAfterSeconds * 1000);
     let response;
     try {
@@ -1366,7 +1370,34 @@ export async function slopIdentityAssertion(
       fail("Slop identity poll request failed");
     }
     if (!response.ok) {
-      fail(`Slop identity poll returned HTTP ${response.status}`);
+      let errorCode = null;
+      try {
+        const parsed = JSON.parse(
+          await boundedResponseText(response, "Slop identity poll"),
+        );
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.error === "string" &&
+          /^[a-z0-9_]{1,64}$/u.test(parsed.error)
+        ) {
+          errorCode = parsed.error;
+        }
+      } catch {
+        // Fail closed on the status alone when the body is unreadable.
+      }
+      if (
+        response.status === 410 &&
+        errorCode !== "flow_consumed" &&
+        (errorCode === "flow_expired" || nowImpl() >= expiresAt)
+      ) {
+        fail(
+          "Slop identity authorization expired before completion; run register again and authorize within the deadline",
+        );
+      }
+      fail(
+        `Slop identity poll returned HTTP ${response.status}${errorCode === null ? "" : ` (${errorCode})`}`,
+      );
     }
     const source = await boundedResponseText(response, "Slop identity poll");
     let result;
@@ -1406,7 +1437,7 @@ export async function slopIdentityAssertion(
       typeof result.assertion !== "string" ||
       !/^slop_assert_v1_[A-Za-z0-9_-]{20,512}$/u.test(result.assertion) ||
       canonicalIso(result.expiresAt) !== result.expiresAt ||
-      Date.parse(result.expiresAt) <= Date.now()
+      Date.parse(result.expiresAt) <= nowImpl()
     ) {
       fail("Slop identity completion response was invalid");
     }
