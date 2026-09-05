@@ -8,6 +8,7 @@ import { snapshotFixture } from "../../tests/fixtures";
 import {
   assertAllocationFundingBasis,
   deriveAllocationFundingBasis,
+  projectPromotionEligible,
 } from "./allocation-funding";
 import { assertProjectDefinition } from "./project-schema.mjs";
 import * as projects from "./projects.mjs";
@@ -84,6 +85,55 @@ function proposal(cycleId: string) {
 }
 afterEach(() => vi.restoreAllMocks());
 describe("exact-cycle reviewed funding", () => {
+  it("keeps September promotion paused when only June was funded", () => {
+    const project = fundedProject();
+    const instrument = project.funding.commitments?.[0];
+    if (!instrument?.monthlyCommitment) throw new Error("missing instrument");
+    const june = assertProjectDefinition({
+      ...project,
+      funding: {
+        ...project.funding,
+        commitments: [
+          {
+            ...instrument,
+            effectiveAt: "2026-06-01T00:00:00.000Z",
+            deadline: "2026-07-01T00:00:00.000Z",
+            monthlyCommitment: {
+              ...instrument.monthlyCommitment,
+              cycleId: "2026-06",
+            },
+          },
+        ],
+      },
+    });
+    const history = ["2026-07", "2026-08"].map((cycleId) => ({
+      projectId: project.id,
+      cycleId,
+      kind: "monthly-pool" as const,
+      reward: { fundingBasis: deriveAllocationFundingBasis(june, cycleId) },
+    }));
+    expect(projectPromotionEligible(june, history, "2026-09")).toBe(false);
+    expect(projectPromotionEligible(june, history, null)).toBe(false);
+    expect(projectPromotionEligible(june, [], "2026-06")).toBe(true);
+    const september = assertProjectDefinition({
+      ...project,
+      funding: {
+        ...project.funding,
+        commitments: [
+          {
+            ...instrument,
+            effectiveAt: "2026-09-01T00:00:00.000Z",
+            deadline: "2026-10-01T00:00:00.000Z",
+            monthlyCommitment: {
+              ...instrument.monthlyCommitment,
+              cycleId: "2026-09",
+            },
+          },
+        ],
+      },
+    });
+    expect(projectPromotionEligible(september, history, "2026-09")).toBe(true);
+  });
   it("does not borrow a later month's instrument and freezes exact-month identity", () => {
     const project = fundedProject();
     vi.spyOn(projects, "findProject").mockReturnValue(project);

@@ -1,4 +1,6 @@
 /** Frozen monetary basis for new proposals; accepted score is independent. */
+
+import { deriveAllocationFundingBasis } from "./allocation-funding-basis.mjs";
 import type { CycleIndexEntry } from "./cycle-index";
 import type { ProjectDefinition } from "./projects.mjs";
 
@@ -63,14 +65,22 @@ export type PromotionCycle = Pick<
 export function projectPromotionEligible(
   project: ProjectDefinition,
   cycles: readonly PromotionCycle[] | null,
+  displayCycleId: string | null,
 ): boolean {
   if (project.reward.kind !== "monthly-pool") return true;
-  if (cycles === null) return false;
-  if (allocationFundingMinor(project.reward) > 0n) return true;
+  if (cycles === null || displayCycleId === null) return false;
+  if (
+    allocationFundingMinor(
+      deriveAllocationFundingBasis(project, displayCycleId),
+    ) > 0n
+  )
+    return true;
   const history = cycles
     .filter(
       (cycle) =>
-        cycle.projectId === project.id && cycle.kind === "monthly-pool",
+        cycle.projectId === project.id &&
+        cycle.kind === "monthly-pool" &&
+        cycle.cycleId < displayCycleId,
     )
     .sort((left, right) => right.cycleId.localeCompare(left.cycleId));
   let consecutive = 0;

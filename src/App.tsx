@@ -1173,6 +1173,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
     projectPromotionEligible(
       project,
       state.status === "ready" ? state.cycleIndex.cycles : null,
+      views.find((view) => view.project.id === project.id)?.cycle.id ?? null,
     ),
   );
   const featuredProjects = promotedProjects.filter(
@@ -1584,11 +1585,13 @@ function projectInstallCommand(project: ProjectDefinition): string {
 export function ProjectParticipation({
   project,
   cycles,
+  displayCycleId,
 }: {
   project: ProjectDefinition;
   cycles: readonly PromotionCycle[] | null;
+  displayCycleId: string | null;
 }) {
-  if (projectPromotionEligible(project, cycles))
+  if (projectPromotionEligible(project, cycles, displayCycleId))
     return <InstallPanel project={project} />;
   return (
     <section className="section" id="start">
@@ -2303,6 +2306,7 @@ function ProjectPage({
   const promotionEligible = projectPromotionEligible(
     project,
     state.status === "ready" ? state.cycleIndex.cycles : null,
+    view?.cycle.id ?? null,
   );
   const headlineAction = project.headline.startsWith(headlinePrefix)
     ? project.headline.slice(headlinePrefix.length)
@@ -2407,6 +2411,7 @@ function ProjectPage({
       <div className="shell">
         <ProjectParticipation
           project={project}
+          displayCycleId={view?.cycle.id ?? null}
           cycles={state.status === "ready" ? state.cycleIndex.cycles : null}
         />
         <ProjectFunding project={project} />

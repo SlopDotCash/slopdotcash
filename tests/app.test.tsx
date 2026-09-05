@@ -1580,16 +1580,44 @@ describe("direct project funding", () => {
       },
     }));
     const { rerender } = render(
-      <ProjectParticipation project={project} cycles={cycles.slice(0, 1)} />,
+      <ProjectParticipation
+        project={project}
+        cycles={cycles.slice(0, 1)}
+        displayCycleId="2026-09"
+      />,
     );
     expect(screen.getByLabelText("Manual install command")).toBeInTheDocument();
-    rerender(<ProjectParticipation project={project} cycles={cycles} />);
+    rerender(
+      <ProjectParticipation
+        project={project}
+        cycles={cycles}
+        displayCycleId="2026-09"
+      />,
+    );
     expect(
       screen.queryByLabelText("Manual install command"),
     ).not.toBeInTheDocument();
     expect(
       screen.getByText(/Accepted work and scores continue to be recorded/u),
     ).toBeVisible();
+    const committedWithoutCurrentInstrument = {
+      ...project,
+      reward: {
+        ...project.reward,
+        fundingState: "committed" as const,
+        committedMinor: "5000000",
+      },
+    };
+    rerender(
+      <ProjectParticipation
+        project={committedWithoutCurrentInstrument}
+        cycles={cycles}
+        displayCycleId="2026-09"
+      />,
+    );
+    expect(
+      screen.queryByLabelText("Manual install command"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows an exact address, QR, copy feedback, and explorer without wallet control", async () => {

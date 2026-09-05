@@ -53,6 +53,7 @@ describe("reward cycle proposals", () => {
           kind: "monthly-pool" as const,
           reward: { fundingBasis: { ...basis, cycleId } },
         })),
+        "2026-09",
       ),
     ).toBe(false);
     const snapshot = closedSnapshot();

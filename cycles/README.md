@@ -44,7 +44,10 @@ unchanged when later manifests evolve. This migration activates that gate for
 subsequent proposal PRs and adds no proposal itself.
 
 After two consecutive closed unfunded months, the site suppresses project pool
-promotion and the skill install CTA until positive committed funding resumes.
+promotion and the skill install CTA until positive committed funding for the
+explicit display cycle resumes. A commitment for another month cannot reopen
+promotion; each caller uses its snapshot-derived project view cycle, not the
+wall clock or a raw policy balance.
 This affects discovery only: the project page, score history, snapshot writing,
 cycle closing, and existing reviewed balances remain available. Missing cycle
 history cannot authorize promotion.

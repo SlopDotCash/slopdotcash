@@ -85,21 +85,32 @@ describe("funding-backed allocation and promotion", () => {
   );
 
   it("allows a trial, pauses only after two adjacent unfunded cycles, and resumes when funded", () => {
-    expect(projectPromotionEligible(project, null)).toBe(false);
-    expect(projectPromotionEligible(project, [])).toBe(true);
-    expect(projectPromotionEligible(project, [cycle("2026-07")])).toBe(true);
+    expect(projectPromotionEligible(project, null, "2026-10")).toBe(false);
+    expect(projectPromotionEligible(project, [], null)).toBe(false);
+    expect(projectPromotionEligible(project, [], "2026-10")).toBe(true);
     expect(
-      projectPromotionEligible(project, [cycle("2026-07"), cycle("2026-08")]),
-    ).toBe(false);
-    expect(
-      projectPromotionEligible(project, [cycle("2026-07"), cycle("2026-09")]),
+      projectPromotionEligible(project, [cycle("2026-07")], "2026-10"),
     ).toBe(true);
     expect(
-      projectPromotionEligible(project, [
-        cycle("2026-07"),
-        cycle("2026-08", "10"),
-        cycle("2026-09"),
-      ]),
+      projectPromotionEligible(
+        project,
+        [cycle("2026-07"), cycle("2026-08")],
+        "2026-10",
+      ),
+    ).toBe(false);
+    expect(
+      projectPromotionEligible(
+        project,
+        [cycle("2026-07"), cycle("2026-09")],
+        "2026-10",
+      ),
+    ).toBe(true);
+    expect(
+      projectPromotionEligible(
+        project,
+        [cycle("2026-07"), cycle("2026-08", "10"), cycle("2026-09")],
+        "2026-10",
+      ),
     ).toBe(true);
     expect(
       projectPromotionEligible(
@@ -112,7 +123,8 @@ describe("funding-backed allocation and promotion", () => {
           },
         },
         [cycle("2026-07"), cycle("2026-08")],
+        "2026-09",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
