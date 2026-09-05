@@ -428,7 +428,9 @@ test("starts Eliza with one prompt and no separate payout form", async ({
         );
       }, 0),
     );
-  expect(displayedProjectionCents).toBe(1_000_000);
+  // The project cap is policy, not funded principal. With no reviewed
+  // commitment, the leaderboard must not turn that cap into projected money.
+  expect(displayedProjectionCents).toBe(0);
   await expect(page.getByText("Live from GitHub")).toHaveCount(0);
   await expect(page.getByText("How credit survives review")).toHaveCount(0);
 });

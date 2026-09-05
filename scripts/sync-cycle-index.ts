@@ -16,6 +16,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { LAST_LEGACY_CAP_CYCLE } from "../src/lib/allocation-funding";
 import {
   assertCycleIndex,
   CYCLE_INDEX_SCHEMA_VERSION,
@@ -143,6 +144,11 @@ async function verifyProposalAgainstSnapshot(
   snapshot: LeaderboardSnapshot,
   snapshotDigest: string,
 ): Promise<void> {
+  if (!proposal.fundingBasis && proposal.cycleId > LAST_LEGACY_CAP_CYCLE) {
+    throw new TypeError(
+      "New cycle proposals must freeze their committed funding basis",
+    );
+  }
   const priorAccrual = await loadPriorCycleAccrual({
     asOf: proposal.generatedAt,
     cycleId: proposal.cycleId,
@@ -150,6 +156,11 @@ async function verifyProposalAgainstSnapshot(
     projectId: proposal.projectId as ProjectId,
   });
   const baseline = createRewardCycleProposal({
+    fundingBasis: proposal.fundingBasis ?? {
+      fundingState: "committed",
+      committedMinor: proposal.capMinor,
+      monthlyCapMinor: proposal.capMinor,
+    },
     cycleId: proposal.cycleId,
     generatedAt: proposal.generatedAt,
     projectId: proposal.projectId,
@@ -451,6 +462,10 @@ async function buildCycle(
       settledAt: settlement?.settledAt ?? null,
       reward: {
         currency: "USDC",
+        carriedMinor: proposal.carriedMinor ?? "0",
+        ...(proposal.fundingBasis
+          ? { fundingBasis: proposal.fundingBasis }
+          : {}),
         capMinor: proposal.capMinor,
         suggestedMinor: proposal.totals.suggestedMinor,
         approvedMinor: allocation?.totals.approvedMinor ?? "0",
@@ -459,6 +474,12 @@ async function buildCycle(
         sharePartsPerMillion: null,
         ...(proposal.rewardLines
           ? {
+              reviewBudgetCapMinor: (BigInt(
+                proposal.rewardLines.reviewBudget.capMinor,
+              ) < BigInt(proposal.rewardLines.reviewBudget.committedMinor)
+                ? BigInt(proposal.rewardLines.reviewBudget.capMinor)
+                : BigInt(proposal.rewardLines.reviewBudget.committedMinor)
+              ).toString(),
               lines: {
                 sharedPool: {
                   suggestedMinor:

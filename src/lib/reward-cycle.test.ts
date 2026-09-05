@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 import { snapshotFixture } from "../../tests/fixtures";
+import { projectPromotionEligible } from "./allocation-funding";
+import { findProject } from "./projects.mjs";
 import {
   allocateReviewBudgetMinor,
   createRewardCycleProposal,
@@ -31,6 +33,55 @@ function wallet(): WalletProof {
 }
 
 describe("reward cycle proposals", () => {
+  it("closes a third unfunded cycle with score and evidence while promotion is paused", () => {
+    const project = findProject("eliza");
+    if (!project) throw new Error("Missing Eliza fixture");
+    const basis = {
+      fundingState: "pledged" as const,
+      committedMinor: "0",
+      monthlyCapMinor: project.reward.monthlyCapMinor,
+    };
+    expect(
+      projectPromotionEligible(
+        project,
+        ["2026-07", "2026-08"].map((cycleId) => ({
+          projectId: project.id,
+          cycleId,
+          kind: "monthly-pool" as const,
+          reward: { fundingBasis: basis },
+        })),
+      ),
+    ).toBe(false);
+    const snapshot = closedSnapshot();
+    snapshot.window = {
+      days: 35,
+      from: "2026-08-28T00:00:00.000Z",
+      to: "2026-10-02T00:00:00.000Z",
+    };
+    snapshot.source.verificationWindow = {
+      days: 35,
+      from: snapshot.window.from,
+      to: snapshot.window.to,
+    };
+    snapshot.ledger = snapshot.ledger.map((event) => ({
+      ...event,
+      occurredAt: event.occurredAt.replace("2026-07", "2026-09"),
+    }));
+    const original = JSON.stringify(snapshot);
+    const proposal = createRewardCycleProposal({
+      cycleId: "2026-09",
+      generatedAt: "2026-10-02T00:00:00.000Z",
+      projectId: "eliza",
+      snapshot,
+      sourceSnapshotSha256: SOURCE_SHA,
+    });
+    if (proposal.kind !== "reward-allocation")
+      throw new Error("wrong proposal");
+    expect(proposal.totals.suggestedMinor).toBe("0");
+    expect(proposal.allocations[0].score).toBeGreaterThan(0);
+    expect(proposal.allocations[0].evidenceEventIds.length).toBeGreaterThan(0);
+    expect(JSON.stringify(snapshot)).toBe(original);
+  });
   it("allocates an additive review line with deterministic largest remainder", () => {
     expect(
       Object.fromEntries(
@@ -61,7 +112,7 @@ describe("reward cycle proposals", () => {
     ).toThrow(/unique non-negative/u);
   });
 
-  it("proposes the exact Eliza pool without approving a payment", () => {
+  it("preserves scored contributors in an unfunded zero-dollar proposal", () => {
     const wallets = new Map([["U_fixture", wallet()]]);
     const proposal = createRewardCycleProposal({
       cycleId: "2026-07",
@@ -78,12 +129,12 @@ describe("reward cycle proposals", () => {
     expect(proposal.totals).toEqual({
       approvedMinor: "0",
       feeMinor: "0",
-      suggestedMinor: "10000000000",
+      suggestedMinor: "0",
     });
     expect(proposal.allocations[0]).toMatchObject({
       approvedMinor: "0",
-      state: "proposed",
-      suggestedMinor: "10000000000",
+      state: "held-below-minimum",
+      suggestedMinor: "0",
       wallet: wallet(),
     });
     expect(proposal.review.endsAt).toBe("2026-08-16T00:00:00.000Z");

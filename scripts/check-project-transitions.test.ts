@@ -3,13 +3,150 @@ import asi from "../projects/asi/project.json";
 import deltaStar from "../projects/delta-star/project.json";
 import eliza from "../projects/eliza/project.json";
 import heirElementsSdk from "../projects/heir-elements-sdk/project.json";
-import { validateProjectTransitions } from "./check-project-transitions.mjs";
+import {
+  validateProjectTransitions,
+  validateProposalFundingTransitions,
+} from "./check-project-transitions.mjs";
 
 function entry(value: { id: string }): [string, string] {
   return [`projects/${value.id}/project.json`, JSON.stringify(value)];
 }
 
 describe("project transition gate", () => {
+  it("freezes legacy proposal caps independently of later project caps", () => {
+    const path = "cycles/eliza/2026-07/proposal.json";
+    const proposal = {
+      kind: "reward-allocation",
+      projectId: "eliza",
+      cycleId: "2026-07",
+      capMinor: eliza.reward.monthlyCapMinor,
+    };
+    const original: [string, string][] = [[path, JSON.stringify(proposal)]];
+    const changed = structuredClone(eliza);
+    changed.reward.monthlyCapMinor = "20000000000";
+    changed.reward.monthlyCapDisplay = "$20,000";
+    expect(() =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(changed)],
+        original,
+        original,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(changed)],
+        original,
+        [
+          [
+            path,
+            JSON.stringify({
+              ...proposal,
+              capMinor: changed.reward.monthlyCapMinor,
+            }),
+          ],
+        ],
+      ),
+    ).toThrow(/historical proposal cap cannot change/u);
+  });
+  it("retains a multi-year proposal archive while bounding each artifact", () => {
+    const historical: [string, string][] = Array.from(
+      { length: 300 },
+      (_, index) => [
+        `cycles/eliza/${2000 + Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}/proposal.json`,
+        JSON.stringify({ kind: "reward-allocation" }),
+      ],
+    );
+    expect(() =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(eliza)],
+        historical,
+        historical,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(eliza)],
+        [],
+        [["cycles/eliza/2026-08/proposal.json", " ".repeat(1024 * 1024 + 1)]],
+      ),
+    ).toThrow(/byte bound/u);
+  });
+  it("binds new proposals to immutable-base funding and rejects self-declared commitment", () => {
+    const path = "cycles/eliza/2026-08/proposal.json";
+    const basis = {
+      fundingState: eliza.reward.fundingState,
+      committedMinor: eliza.reward.committedMinor,
+      monthlyCapMinor: eliza.reward.monthlyCapMinor,
+    };
+    const proposal = {
+      kind: "reward-allocation",
+      projectId: "eliza",
+      cycleId: "2026-08",
+      fundingBasis: basis,
+    };
+    const validate = (value: unknown, next = eliza) =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(next)],
+        [],
+        [[path, JSON.stringify(value)]],
+      );
+    expect(() => validate(proposal)).not.toThrow();
+    expect(() =>
+      validate({
+        ...proposal,
+        fundingBasis: {
+          ...basis,
+          fundingState: "committed",
+          committedMinor: "10000000000",
+        },
+      }),
+    ).toThrow(/immutable base project policy/u);
+    expect(() =>
+      validate({
+        ...proposal,
+        fundingBasis: { ...basis, monthlyCapMinor: "20000000000" },
+      }),
+    ).toThrow(/immutable base project policy/u);
+    expect(() => validate({ ...proposal, fundingBasis: undefined })).toThrow(
+      /immutable base project policy/u,
+    );
+    const changed = structuredClone(eliza);
+    changed.reward.monthlyCapMinor = "20000000000";
+    changed.reward.monthlyCapDisplay = "$20,000";
+    expect(() => validate(proposal, changed)).toThrow(
+      /separate reviewed changes/u,
+    );
+    const historic: [string, string][] = [[path, JSON.stringify(proposal)]];
+    expect(() =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(changed)],
+        historic,
+        historic,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(eliza)],
+        historic,
+        [
+          [
+            path,
+            JSON.stringify({
+              ...proposal,
+              fundingBasis: { ...basis, committedMinor: "1" },
+            }),
+          ],
+        ],
+      ),
+    ).toThrow(/historical proposal funding basis cannot change/u);
+  });
   it("accepts unchanged policy and rejects silent terms history edits", () => {
     expect(validateProjectTransitions([entry(eliza)], [entry(eliza)])).toEqual({
       previous: 1,

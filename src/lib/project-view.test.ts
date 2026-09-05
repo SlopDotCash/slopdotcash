@@ -94,8 +94,8 @@ describe("project views", () => {
 
     expect(eliza.leaders[0]).toMatchObject({
       score: 24,
-      projectedMinor: "10000000000",
-      projectedDisplayMinor: "10000000000",
+      projectedMinor: "0",
+      projectedDisplayMinor: "0",
       projectedSharePartsPerMillion: null,
     });
     expect(eliza.ledger).toHaveLength(6);
@@ -104,8 +104,8 @@ describe("project views", () => {
     ).toBe(true);
     expect(eliza.reward).toMatchObject({
       kind: "monthly-pool",
-      projectedPrincipalMinor: "10000000000",
-      platformFeeMinor: "100000000",
+      projectedPrincipalMinor: "0",
+      platformFeeMinor: "0",
     });
 
     expect(delta.leaders[0]).toMatchObject({
@@ -372,7 +372,11 @@ describe("project views", () => {
       reason: "Pull request merged during the rolling window.",
     });
 
-    const view = createProjectView(snapshot, "eliza", "2026-07");
+    const view = createProjectView(snapshot, "eliza", "2026-07", {
+      fundingState: "committed",
+      committedMinor: "10000000000",
+      monthlyCapMinor: "10000000000",
+    });
     expect(
       view.leaders.reduce(
         (total, entry) => total + BigInt(entry.projectedMinor ?? "0"),

@@ -4,6 +4,12 @@
  * files while this index drives lifecycle labels and aggregate totals.
  */
 
+import {
+  type AllocationFundingBasis,
+  allocationFundingMinor,
+  assertAllocationFundingBasis,
+  LAST_LEGACY_CAP_CYCLE,
+} from "./allocation-funding";
 import { findProject } from "./projects.mjs";
 import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
 
@@ -68,6 +74,9 @@ export interface CycleIndexEntry {
   approvedAt: string | null;
   settledAt: string | null;
   reward: {
+    fundingBasis?: AllocationFundingBasis;
+    carriedMinor?: string;
+    reviewBudgetCapMinor?: string;
     currency: "USDC" | null;
     capMinor: string;
     suggestedMinor: string;
@@ -468,6 +477,9 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   }
   const reward = record(entry.reward, `${field}.reward`);
   const hasRewardLines = "lines" in reward;
+  const hasFundingBasis = "fundingBasis" in reward;
+  const hasCarry = "carriedMinor" in reward;
+  const hasReviewBudgetCap = "reviewBudgetCapMinor" in reward;
   exact(
     reward,
     [
@@ -479,6 +491,9 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       "sharePartsPerMillion",
       "suggestedMinor",
       ...(hasRewardLines ? ["lines"] : []),
+      ...(hasFundingBasis ? ["fundingBasis"] : []),
+      ...(hasCarry ? ["carriedMinor"] : []),
+      ...(hasReviewBudgetCap ? ["reviewBudgetCapMinor"] : []),
     ],
     `${field}.reward`,
   );
@@ -495,6 +510,25 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     throw new TypeError(`${field}.reward.sharePartsPerMillion is invalid`);
   }
   const normalizedReward = {
+    ...(hasReviewBudgetCap
+      ? {
+          reviewBudgetCapMinor: minor(
+            reward.reviewBudgetCapMinor,
+            `${field}.reward.reviewBudgetCapMinor`,
+          ),
+        }
+      : {}),
+    ...(hasCarry
+      ? {
+          carriedMinor: minor(
+            reward.carriedMinor,
+            `${field}.reward.carriedMinor`,
+          ),
+        }
+      : {}),
+    ...(hasFundingBasis
+      ? { fundingBasis: assertAllocationFundingBasis(reward.fundingBasis) }
+      : {}),
     currency: reward.currency as "USDC" | null,
     capMinor: minor(reward.capMinor, `${field}.reward.capMinor`),
     suggestedMinor: minor(
@@ -528,13 +562,27 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   if (
     (!normalizedReward.lines &&
       BigInt(normalizedReward.approvedMinor) >
-        BigInt(normalizedReward.capMinor)) ||
+        BigInt(normalizedReward.capMinor) +
+          BigInt(normalizedReward.carriedMinor ?? "0")) ||
     (normalizedReward.lines &&
       BigInt(normalizedReward.lines.sharedPool.approvedMinor) >
-        BigInt(normalizedReward.capMinor)) ||
+        BigInt(normalizedReward.capMinor) +
+          BigInt(normalizedReward.carriedMinor ?? "0")) ||
     BigInt(normalizedReward.paidMinor) > BigInt(normalizedReward.approvedMinor)
   ) {
     throw new TypeError(`${field}.reward money totals do not reconcile`);
+  }
+  if (
+    normalizedReward.lines &&
+    (normalizedReward.reviewBudgetCapMinor === undefined ||
+      BigInt(normalizedReward.lines.reviewBudget.approvedMinor) >
+        BigInt(normalizedReward.reviewBudgetCapMinor) ||
+      BigInt(normalizedReward.lines.reviewBudget.suggestedMinor) >
+        BigInt(normalizedReward.reviewBudgetCapMinor))
+  ) {
+    throw new TypeError(
+      `${field}.review budget exceeds its separate allocation cap`,
+    );
   }
   if (!Array.isArray(entry.contributors)) {
     throw new TypeError(`${field}.contributors must be an array`);
@@ -692,6 +740,10 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   }
   const isExternal = entry.kind === "external-prize-share";
   const hasExternalMoney =
+    hasFundingBasis ||
+    hasCarry ||
+    hasReviewBudgetCap ||
+    hasRewardLines ||
     normalizedReward.currency !== null ||
     normalizedReward.capMinor !== "0" ||
     normalizedReward.suggestedMinor !== "0" ||
@@ -700,7 +752,12 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     normalizedReward.feeMinor !== "0";
   const hasMonthlyPolicyMismatch =
     normalizedReward.currency !== "USDC" ||
-    normalizedReward.capMinor !== project.reward.monthlyCapMinor ||
+    normalizedReward.capMinor !==
+      (normalizedReward.fundingBasis
+        ? allocationFundingMinor(normalizedReward.fundingBasis).toString()
+        : cycleId <= LAST_LEGACY_CAP_CYCLE
+          ? normalizedReward.capMinor
+          : project.reward.monthlyCapMinor) ||
     normalizedReward.sharePartsPerMillion !== null ||
     BigInt(normalizedReward.feeMinor) !==
       (BigInt(normalizedReward.approvedMinor) *

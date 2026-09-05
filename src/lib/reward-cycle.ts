@@ -4,9 +4,14 @@
  * human review and on-chain settlement remain separate, auditable transitions.
  */
 
+import {
+  type AllocationFundingBasis,
+  allocationFundingMinor,
+} from "./allocation-funding";
 import type { LeaderboardSnapshot } from "./leaderboard";
 import { createProjectView } from "./project-view";
 import type { ProjectId } from "./projects.mjs";
+import { findProject } from "./projects.mjs";
 import {
   assertExternalContributionShareManifest,
   assertRewardAllocationManifest,
@@ -32,6 +37,7 @@ export interface CreateRewardCycleProposalInput {
   wallets?: ReadonlyMap<string, WalletProof>;
   priorAccruedMinor?: ReadonlyMap<string, string>;
   priorActorLogins?: ReadonlyMap<string, string>;
+  fundingBasis?: AllocationFundingBasis;
 }
 
 export function allocateReviewBudgetMinor(
@@ -159,10 +165,23 @@ function ensureCompleteCycle(
 export function createRewardCycleProposal(
   input: CreateRewardCycleProposalInput,
 ): RewardCycleProposal {
+  const project = findProject(input.projectId);
+  const fundingBasis: AllocationFundingBasis | undefined =
+    project?.reward.kind === "monthly-pool"
+      ? (input.fundingBasis ?? {
+          fundingState:
+            project.reward.fundingState === "committed"
+              ? "committed"
+              : "pledged",
+          committedMinor: project.reward.committedMinor,
+          monthlyCapMinor: project.reward.monthlyCapMinor,
+        })
+      : undefined;
   const view = createProjectView(
     input.snapshot,
     input.projectId,
     input.cycleId,
+    fundingBasis,
   );
   ensureCompleteCycle(input, view);
 
@@ -193,8 +212,9 @@ export function createRewardCycleProposal(
     });
   }
 
-  // Accrual is a debt to the actor, not a reward for this cycle's activity:
-  // a positive prior balance must survive a quiet month, so carried-only
+  if (!fundingBasis)
+    throw new TypeError("Monthly proposal needs a funding basis");
+  // A previously reviewed balance survives a quiet month, so carried-only
   // actors get their own allocation rows after the leaders.
   const leaderIds = new Set(view.leaders.map((leader) => leader.actor.id));
   const carriedOnly = [...(input.priorAccruedMinor ?? [])]
@@ -278,7 +298,8 @@ export function createRewardCycleProposal(
     },
     currency: "USDC",
     chain: "solana",
-    capMinor: view.project.reward.monthlyCapMinor,
+    capMinor: allocationFundingMinor(fundingBasis).toString(),
+    fundingBasis,
     carriedMinor,
     minimumTransferMinor: MINIMUM_TRANSFER_MINOR,
     feeBasisPoints: view.project.reward.feeBasisPoints,
@@ -375,7 +396,7 @@ export function createRewardCycleProposal(
       ? {
           rewardLines: {
             sharedPool: {
-              capMinor: view.project.reward.monthlyCapMinor,
+              capMinor: allocationFundingMinor(fundingBasis).toString(),
               suggestedMinor,
               approvedMinor: "0",
             },
