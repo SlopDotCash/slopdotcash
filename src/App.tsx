@@ -3106,8 +3106,13 @@ export function ProjectManagePage({
   );
   const reviewBudget = project.reward.reviewBudget;
   const reviewCapMinor =
-    currentRecord?.reward.lines && reviewBudget
-      ? BigInt(reviewBudget.monthlyCapMinor)
+    currentRecord?.reward.lines &&
+    reviewBudget?.fundingState === "committed" &&
+    reviewBudget.paymentMode === "enabled"
+      ? BigInt(reviewBudget.committedMinor) <
+        BigInt(reviewBudget.monthlyCapMinor)
+        ? BigInt(reviewBudget.committedMinor)
+        : BigInt(reviewBudget.monthlyCapMinor)
       : 0n;
   const allocationCapMinor = (
     BigInt(currentRecord?.reward.capMinor ?? project.reward.monthlyCapMinor) +
@@ -4064,8 +4069,7 @@ ${manifestText}`;
               when payouts settle
             </p>
             <p>
-              Draft only · Signed in as: not yet · Project steward:{" "}
-              {stewardName || "not yet verified"}
+              Draft only · Project steward: {stewardName || "not yet verified"}
             </p>
             <p>
               Payment does not transfer IP. Material changes require a new

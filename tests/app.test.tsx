@@ -1918,64 +1918,93 @@ describe("public project draft workspace", () => {
     ).toBeVisible();
   });
 
-  it("includes an archived additive review line in the draft ceiling", () => {
-    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
-    if (!project) throw new TypeError("The Eliza project fixture is missing");
-    const snapshot = septemberRollingSnapshot();
-    const cycleIndex = archivedPaidCycleIndex();
-    const cycle = cycleIndex.cycles[0];
-    cycle.cycleId = "2026-09";
-    cycle.reward.lines = {
-      sharedPool: {
-        suggestedMinor: "1000000",
-        approvedMinor: "1000000",
-        paidMinor: "1000000",
-      },
-      reviewBudget: { suggestedMinor: "0", approvedMinor: "0", paidMinor: "0" },
-    };
-    render(
-      <ProjectManagePage
-        project={{
-          ...project,
-          reward: {
-            ...project.reward,
-            paymentMode: "enabled",
-            reviewBudget: {
-              effectiveAt: "2026-09-01T00:00:00.000Z",
-              monthlyCapMinor: "50000000",
-              monthlyCapDisplay: "$50",
-              committedMinor: "50000000",
+  it.each([
+    {
+      committedMinor: "25000000",
+      fundingState: "committed",
+      paymentMode: "enabled",
+      ceiling: "10025",
+      over: "10025.000001",
+    },
+    {
+      committedMinor: "100000000",
+      fundingState: "committed",
+      paymentMode: "enabled",
+      ceiling: "10050",
+      over: "10050.000001",
+    },
+    {
+      committedMinor: "0",
+      fundingState: "pledged",
+      paymentMode: "disabled",
+      ceiling: "10000",
+      over: "10000.000001",
+    },
+  ] as const)(
+    "bounds archived review drafts by funded principal ($committedMinor)",
+    ({ committedMinor, fundingState, paymentMode, ceiling, over }) => {
+      const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+      if (!project) throw new TypeError("The Eliza project fixture is missing");
+      const snapshot = septemberRollingSnapshot();
+      const cycleIndex = archivedPaidCycleIndex();
+      const cycle = cycleIndex.cycles[0];
+      cycle.cycleId = "2026-09";
+      cycle.reward.lines = {
+        sharedPool: {
+          suggestedMinor: "1000000",
+          approvedMinor: "1000000",
+          paidMinor: "1000000",
+        },
+        reviewBudget: {
+          suggestedMinor: "0",
+          approvedMinor: "0",
+          paidMinor: "0",
+        },
+      };
+      render(
+        <ProjectManagePage
+          project={{
+            ...project,
+            reward: {
+              ...project.reward,
               paymentMode: "enabled",
-              fundingState: "committed",
-              unusedFunds: "rollover-without-cap-increase",
+              reviewBudget: {
+                effectiveAt: "2026-09-01T00:00:00.000Z",
+                monthlyCapMinor: "50000000",
+                monthlyCapDisplay: "$50",
+                committedMinor,
+                paymentMode,
+                fundingState,
+                unusedFunds: "rollover-without-cap-increase",
+              },
             },
-          },
-        }}
-        state={{
-          status: "ready",
-          snapshot,
-          cycleIndex,
-          views: [createProjectView(snapshot, "eliza")],
-        }}
-      />,
-    );
-    fireEvent.click(screen.getByText("Edit 1 contributor allocation"));
-    fireEvent.change(screen.getByLabelText("archive-only reason"), {
-      target: { value: "Reviewed shared pool and review allocation" },
-    });
-    const amount = screen.getByLabelText("archive-only amount in USDC");
-    const total = screen.getByLabelText("Draft total, USDC");
-    fireEvent.change(amount, { target: { value: "10050" } });
-    fireEvent.change(total, { target: { value: "10050" } });
-    expect(
-      screen.getByRole("button", { name: "Copy unsigned allocation" }),
-    ).toBeEnabled();
-    fireEvent.change(amount, { target: { value: "10050.000001" } });
-    fireEvent.change(total, { target: { value: "10050.000001" } });
-    expect(
-      screen.getByRole("button", { name: "Copy unsigned allocation" }),
-    ).toBeDisabled();
-  });
+          }}
+          state={{
+            status: "ready",
+            snapshot,
+            cycleIndex,
+            views: [createProjectView(snapshot, "eliza")],
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByText("Edit 1 contributor allocation"));
+      fireEvent.change(screen.getByLabelText("archive-only reason"), {
+        target: { value: "Reviewed shared pool and review allocation" },
+      });
+      const amount = screen.getByLabelText("archive-only amount in USDC");
+      const total = screen.getByLabelText("Draft total, USDC");
+      fireEvent.change(amount, { target: { value: ceiling } });
+      fireEvent.change(total, { target: { value: ceiling } });
+      expect(
+        screen.getByRole("button", { name: "Copy unsigned allocation" }),
+      ).toBeEnabled();
+      fireEvent.change(amount, { target: { value: over } });
+      fireEvent.change(total, { target: { value: over } });
+      expect(
+        screen.getByRole("button", { name: "Copy unsigned allocation" }),
+      ).toBeDisabled();
+    },
+  );
 
   it("shows project payment history without exposing trace contents", async () => {
     route("/projects/eliza");
