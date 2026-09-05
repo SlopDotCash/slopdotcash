@@ -1564,88 +1564,92 @@ export async function uploadPrivateTrace(
   );
   if (
     created.clientRunId !== state.runId ||
-    created.state !== "awaiting_trace" ||
+    !["awaiting_trace", "trace_uploaded", "finalized"].includes(
+      created.state,
+    ) ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(created.serverRunId ?? "")
   ) {
     fail("trace run creation returned mismatched identity");
   }
   const serverPath = encodeURIComponent(created.serverRunId);
-  const intentBody = {
-    sha256: trace.sha256,
-    sizeBytes: trace.sizeBytes,
-    contentType: trace.contentType,
-  };
-  const intent = await jsonRequest(
-    fetchImpl,
-    `${TRACE_AUTHORITY}/api/v1/runs/${serverPath}/trace-intents`,
-    {
-      method: "POST",
-      headers: {
-        ...jsonHeaders,
-        "Idempotency-Key": sha256(
-          `intent:${created.serverRunId}:${trace.sha256}`,
-        ),
+  if (created.state === "awaiting_trace") {
+    const intentBody = {
+      sha256: trace.sha256,
+      sizeBytes: trace.sizeBytes,
+      contentType: trace.contentType,
+    };
+    const intent = await jsonRequest(
+      fetchImpl,
+      `${TRACE_AUTHORITY}/api/v1/runs/${serverPath}/trace-intents`,
+      {
+        method: "POST",
+        headers: {
+          ...jsonHeaders,
+          "Idempotency-Key": sha256(
+            `intent:${created.serverRunId}:${trace.sha256}`,
+          ),
+        },
+        body: JSON.stringify(intentBody),
       },
-      body: JSON.stringify(intentBody),
-    },
-    [
-      "contentType",
-      "expiresAt",
-      "serverRunId",
-      "sha256",
-      "sizeBytes",
-      "uploadUrl",
-    ],
-    "trace upload intent",
-  );
-  let uploadUrl;
-  try {
-    uploadUrl = new URL(intent.uploadUrl);
-  } catch {
-    fail("trace upload intent returned an invalid URL");
-  }
-  if (
-    intent.serverRunId !== created.serverRunId ||
-    intent.sha256 !== trace.sha256 ||
-    intent.sizeBytes !== trace.sizeBytes ||
-    intent.contentType !== trace.contentType ||
-    uploadUrl.origin !== TRACE_AUTHORITY ||
-    uploadUrl.username ||
-    uploadUrl.password ||
-    uploadUrl.hash
-  ) {
-    fail("trace upload intent returned mismatched fields");
-  }
-  const uploaded = await jsonRequest(
-    fetchImpl,
-    uploadUrl.href,
-    {
-      method: "PUT",
-      headers: {
-        "Content-Type": trace.contentType,
-        Digest: `sha-256=${trace.sha256}`,
+      [
+        "contentType",
+        "expiresAt",
+        "serverRunId",
+        "sha256",
+        "sizeBytes",
+        "uploadUrl",
+      ],
+      "trace upload intent",
+    );
+    let uploadUrl;
+    try {
+      uploadUrl = new URL(intent.uploadUrl);
+    } catch {
+      fail("trace upload intent returned an invalid URL");
+    }
+    if (
+      intent.serverRunId !== created.serverRunId ||
+      intent.sha256 !== trace.sha256 ||
+      intent.sizeBytes !== trace.sizeBytes ||
+      intent.contentType !== trace.contentType ||
+      uploadUrl.origin !== TRACE_AUTHORITY ||
+      uploadUrl.username ||
+      uploadUrl.password ||
+      uploadUrl.hash
+    ) {
+      fail("trace upload intent returned mismatched fields");
+    }
+    const uploaded = await jsonRequest(
+      fetchImpl,
+      uploadUrl.href,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": trace.contentType,
+          Digest: `sha-256=${trace.sha256}`,
+        },
+        body: trace.contents,
       },
-      body: trace.contents,
-    },
-    [
-      "clientRunId",
-      "serverRunId",
-      "sizeBytes",
-      "state",
-      "traceObjectId",
-      "traceSha256",
-    ],
-    "trace upload",
-  );
-  if (
-    uploaded.clientRunId !== state.runId ||
-    uploaded.serverRunId !== created.serverRunId ||
-    uploaded.sizeBytes !== trace.sizeBytes ||
-    uploaded.state !== "trace_uploaded" ||
-    uploaded.traceSha256 !== trace.sha256 ||
-    uploaded.traceObjectId !== `sha256:${trace.sha256}`
-  ) {
-    fail("trace upload returned mismatched evidence");
+      [
+        "clientRunId",
+        "serverRunId",
+        "sizeBytes",
+        "state",
+        "traceObjectId",
+        "traceSha256",
+      ],
+      "trace upload",
+    );
+    if (
+      uploaded.clientRunId !== state.runId ||
+      uploaded.serverRunId !== created.serverRunId ||
+      uploaded.sizeBytes !== trace.sizeBytes ||
+      uploaded.state !== "trace_uploaded" ||
+      uploaded.traceSha256 !== trace.sha256 ||
+      uploaded.traceObjectId !== `sha256:${trace.sha256}`
+    ) {
+      fail("trace upload returned mismatched evidence");
+    }
   }
   const finalized = await jsonRequest(
     fetchImpl,
