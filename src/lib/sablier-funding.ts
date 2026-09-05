@@ -11,7 +11,7 @@ import type { SABLIER_LOCKUP_V4_CONTRACTS } from "./funding-instruments.mjs";
 export { SABLIER_LOCKUP_V4_CONTRACTS } from "./funding-instruments.mjs";
 
 export const COMMITMENT_SABLIER_VERIFIER_VERSION =
-  "commitment-sablier-v1" as const;
+  "commitment-sablier-v2" as const;
 
 export type SablierNetwork = keyof typeof SABLIER_LOCKUP_V4_CONTRACTS;
 
@@ -42,6 +42,8 @@ export const SABLIER_STREAM_SELECTORS = Object.freeze({
   refundedAmount: "0xd4dbd20b",
   /** keccak256("getEndTime(uint256)")[0..4] */
   endTime: "0x9067b677",
+  /** keccak256("isCancelable(uint256)")[0..4] */
+  isCancelable: "0x4857501f",
   /** keccak256("wasCanceled(uint256)")[0..4] */
   wasCanceled: "0xf590c176",
   /** keccak256("isDepleted(uint256)")[0..4] */
@@ -131,8 +133,11 @@ function wordBoolean(value: unknown, field: string): boolean {
 /**
  * Validates one authority's finalized `eth_call` results for a Sablier
  * Lockup v4 stream: the canonical USDC token, the exact expected recipient,
- * bounded canonical integers, and a non-negative locked balance
- * (deposited minus withdrawn minus refunded).
+ * bounded canonical integers, a non-negative locked balance (deposited minus
+ * withdrawn minus refunded), and a stream the sender can no longer cancel.
+ * A cancelable stream lets the funder reclaim the undistributed balance at
+ * any time, so it can never back a positive `committedMinor`; it fails closed
+ * here before any evidence is emitted.
  */
 export function assertSablierStreamState(
   callResults: SablierStreamCallResults,
@@ -184,6 +189,11 @@ export function assertSablierStreamState(
     throw new TypeError("stream locked balance is negative");
   }
   const endTime = wordUint(callResults.endTime, MAX_UINT40, "stream end time");
+  if (wordBoolean(callResults.isCancelable, "stream cancelable flag")) {
+    throw new TypeError(
+      "stream is cancelable and cannot back committed funding",
+    );
+  }
   return {
     blockNumber: expected.blockNumber,
     depositedMinor: deposited.toString(),

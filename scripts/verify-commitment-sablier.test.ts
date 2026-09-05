@@ -55,6 +55,7 @@ function streamCallWords(
     withdrawnAmount: uintWord(2_000_000n),
     refundedAmount: uintWord(1_000_000n),
     endTime: uintWord(1_800_000_000),
+    isCancelable: BOOL_FALSE,
     wasCanceled: BOOL_FALSE,
     isDepleted: BOOL_FALSE,
     ...overrides,
@@ -161,6 +162,34 @@ describe("Sablier stream state assertions", () => {
     ).toThrow(/recipient is not the expected project address/u);
   });
 
+  it("refuses a cancelable stream before emitting any evidence", () => {
+    const expected = { blockNumber: 100, recipient: RECIPIENT };
+    expect(() =>
+      assertSablierStreamState(
+        streamCallWords("base", { isCancelable: BOOL_TRUE }),
+        "base",
+        STREAM_ID,
+        expected,
+      ),
+    ).toThrow(/cancelable and cannot back committed funding/u);
+    expect(() =>
+      assertSablierStreamState(
+        streamCallWords("ethereum", { isCancelable: BOOL_TRUE }),
+        "ethereum",
+        STREAM_ID,
+        expected,
+      ),
+    ).toThrow(/cancelable and cannot back committed funding/u);
+    expect(() =>
+      assertSablierStreamState(
+        streamCallWords("base", { isCancelable: uintWord(2) }),
+        "base",
+        STREAM_ID,
+        expected,
+      ),
+    ).toThrow(/not a canonical boolean word/u);
+  });
+
   it("fails closed on malformed or non-canonical return data", () => {
     const expected = { blockNumber: 100, recipient: RECIPIENT };
     expect(() =>
@@ -236,7 +265,7 @@ describe("Sablier commitment verifier", () => {
       ...VERIFIED_STREAM,
       blockNumber: 102,
       verifier: {
-        version: "commitment-sablier-v1",
+        version: "commitment-sablier-v2",
         evidenceUrl: `https://basescan.org/address/${SABLIER_LOCKUP_V4_CONTRACTS.base}`,
         reason: null,
       },
@@ -294,6 +323,23 @@ describe("Sablier commitment verifier", () => {
         withdrawnAmount: uintWord(3_000_000n),
       }),
       [BASE_HOSTS[2]]: new Error("authority offline"),
+    });
+    await expect(
+      verifyCommitmentSablier({
+        network: "base",
+        streamId: STREAM_ID,
+        recipient: RECIPIENT,
+        fetchImpl,
+      }),
+    ).rejects.toThrow(/did not reach commitment quorum/u);
+  });
+
+  it("refuses a quorum of authorities that all report a cancelable stream", async () => {
+    const cancelable = { isCancelable: BOOL_TRUE };
+    const { fetchImpl } = fetchByAuthority({
+      [BASE_HOSTS[0]]: authorityFixture("base", 101, cancelable),
+      [BASE_HOSTS[1]]: authorityFixture("base", 102, cancelable),
+      [BASE_HOSTS[2]]: authorityFixture("base", 103, cancelable),
     });
     await expect(
       verifyCommitmentSablier({
