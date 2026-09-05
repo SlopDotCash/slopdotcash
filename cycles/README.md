@@ -72,6 +72,11 @@ automatically. An unfinished review or unresolved proposed row fails the next
 cycle closed instead of guessing a reviewed balance; an unfunded record with
 no carried amount is exempt because it contains no monetary allocation.
 
+The public cycle index carries `carriedMinor` separately from the new cycle's
+cap. Shared-pool approvals may total at most cap plus carry. An additive review
+line publishes its own `reviewBudgetCapMinor`, the smaller of its committed
+amount and cap; shared-pool carry never increases that separate limit.
+
 - `allocation.json` — reviewed and approved payout intents;
 - `execution-plan.json` — an unsigned, exact Solana USDC transfer plan;
 - `transactions.json` — submitted public transaction signatures;

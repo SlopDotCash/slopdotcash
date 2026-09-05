@@ -463,11 +463,9 @@ async function buildCycle(
       reward: {
         currency: "USDC",
         carriedMinor: proposal.carriedMinor ?? "0",
-        fundingBasis: proposal.fundingBasis ?? {
-          fundingState: "pledged",
-          committedMinor: "0",
-          monthlyCapMinor: proposal.capMinor,
-        },
+        ...(proposal.fundingBasis
+          ? { fundingBasis: proposal.fundingBasis }
+          : {}),
         capMinor: proposal.capMinor,
         suggestedMinor: proposal.totals.suggestedMinor,
         approvedMinor: allocation?.totals.approvedMinor ?? "0",
@@ -476,6 +474,12 @@ async function buildCycle(
         sharePartsPerMillion: null,
         ...(proposal.rewardLines
           ? {
+              reviewBudgetCapMinor: (BigInt(
+                proposal.rewardLines.reviewBudget.capMinor,
+              ) < BigInt(proposal.rewardLines.reviewBudget.committedMinor)
+                ? BigInt(proposal.rewardLines.reviewBudget.capMinor)
+                : BigInt(proposal.rewardLines.reviewBudget.committedMinor)
+              ).toString(),
               lines: {
                 sharedPool: {
                   suggestedMinor:
