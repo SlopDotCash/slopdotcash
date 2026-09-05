@@ -82,12 +82,15 @@ function assertionDatabase(options: {
   };
 }
 
-describe("D1 identity persistence", () => {  it.each([
+describe("D1 identity persistence", () => {
+  it.each([
     { insertSuccess: false, stored: false },
     { insertSuccess: true, stored: false },
   ])("does not confirm an assertion absent from D1", async (options) => {
     await expect(
-      new D1IdentityPersistence(assertionDatabase(options)).createAssertion(assertion),
+      new D1IdentityPersistence(assertionDatabase(options)).createAssertion(
+        assertion,
+      ),
     ).resolves.toBeNull();
   });
 
