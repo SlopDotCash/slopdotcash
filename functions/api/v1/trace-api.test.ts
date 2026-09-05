@@ -1489,6 +1489,34 @@ describe("private trace API", () => {
     });
   });
 
+  it("rejects an operator wallet observation from the future", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const operator = await token("99", "slop-operator", ["operator"]);
+    const response = await handleTraceApi(
+      request(
+        "operator/wallet-claims",
+        "POST",
+        operator,
+        JSON.stringify({
+          githubActorId: "42",
+          githubLogin: "octocat",
+          address: "11111111111111111111111111111111",
+          observedAt: new Date(NOW.getTime() + 1).toISOString(),
+          sourceBodySha256: "b".repeat(64),
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: "invalid_request",
+    });
+    expect(store.claims.size).toBe(0);
+  });
+
   it("lets a GitHub-authenticated contributor create and supersede one wallet lineage", async () => {
     const deps = dependencies();
     const contributor = await token("42", "octocat", ["contributor"]);
