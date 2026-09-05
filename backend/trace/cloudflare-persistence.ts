@@ -545,6 +545,37 @@ export class CloudflareTracePersistence implements TracePersistence {
       .first<UploadIntentRow>();
     if (existing !== null) {
       const mapped = mapUploadIntent(existing);
+      if (
+        mapped.runId !== intent.runId ||
+        mapped.sha256 !== intent.sha256 ||
+        mapped.sizeBytes !== intent.sizeBytes ||
+        mapped.contentType !== intent.contentType
+      ) {
+        return { status: "conflict" };
+      }
+      if (mapped.consumedAt === null && mapped.expiresAt <= intent.createdAt) {
+        await this.db
+          .prepare(
+            `UPDATE trace_upload_intents SET expires_at = ?
+             WHERE token_hash = ? AND consumed_at IS NULL AND expires_at <= ?`,
+          )
+          .bind(intent.expiresAt, mapped.tokenHash, intent.createdAt)
+          .run();
+        const renewed = await this.db
+          .prepare("SELECT * FROM trace_upload_intents WHERE token_hash = ?")
+          .bind(mapped.tokenHash)
+          .first<UploadIntentRow>();
+        if (renewed === null) return { status: "conflict" };
+        const renewedIntent = mapUploadIntent(renewed);
+        return renewedIntent.runId === intent.runId &&
+          renewedIntent.sha256 === intent.sha256 &&
+          renewedIntent.sizeBytes === intent.sizeBytes &&
+          renewedIntent.contentType === intent.contentType &&
+          renewedIntent.consumedAt === null &&
+          renewedIntent.expiresAt > intent.createdAt
+          ? { status: "existing", value: renewedIntent }
+          : { status: "conflict" };
+      }
       return mapped.runId === intent.runId &&
         mapped.sha256 === intent.sha256 &&
         mapped.sizeBytes === intent.sizeBytes &&

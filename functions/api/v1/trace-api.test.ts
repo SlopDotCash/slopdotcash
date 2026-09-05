@@ -202,6 +202,14 @@ class MemoryPersistence implements TracePersistence {
       ) {
         return { status: "conflict" };
       }
+      if (prior.consumedAt === null && prior.expiresAt <= intent.createdAt) {
+        const renewed = {
+          ...prior,
+          expiresAt: intent.expiresAt,
+        };
+        this.intents.set(priorHash, renewed);
+        return { status: "existing", value: renewed };
+      }
       return { status: "existing", value: prior };
     }
     this.intents.set(intent.tokenHash, { ...intent });
@@ -432,6 +440,64 @@ async function uploadTrace(
 }
 
 describe("private trace API", () => {
+  it("renews an expired unconsumed upload intent on an idempotent retry", async () => {
+    const store = new MemoryPersistence();
+    let current = new Date(NOW);
+    const deps = { ...dependencies(store), now: () => new Date(current) };
+    const bearer = await token("42", "octocat", ["contributor"]);
+    const runResponse = await createRun(deps, bearer);
+    const { serverRunId } = (await runResponse.json()) as {
+      serverRunId: string;
+    };
+    const bytes = new TextEncoder().encode("recoverable trace");
+    const digest = await sha256Hex(bytes);
+    const intentRequest = () =>
+      request(
+        `runs/${serverRunId}/trace-intents`,
+        "POST",
+        bearer,
+        JSON.stringify({
+          sha256: digest,
+          sizeBytes: bytes.byteLength,
+          contentType: "text/plain",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "expired_intent_retry_key_0001",
+        },
+      );
+    const first = await handleTraceApi(intentRequest(), deps);
+    const firstIntent = (await first.json()) as {
+      expiresAt: string;
+      uploadUrl: string;
+    };
+
+    current = new Date(NOW.getTime() + 6 * 60 * 1000);
+    const retried = await handleTraceApi(intentRequest(), deps);
+    const renewedIntent = (await retried.json()) as {
+      expiresAt: string;
+      uploadUrl: string;
+    };
+
+    expect(retried.status).toBe(200);
+    expect(renewedIntent.uploadUrl).toBe(firstIntent.uploadUrl);
+    expect(renewedIntent.expiresAt).toBe(
+      new Date(current.getTime() + 5 * 60 * 1000).toISOString(),
+    );
+    const uploaded = await handleTraceApi(
+      new Request(renewedIntent.uploadUrl, {
+        method: "PUT",
+        body: bytes,
+        headers: {
+          "content-type": "text/plain",
+          digest: `sha-256=${digest}`,
+        },
+      }),
+      deps,
+    );
+    expect(uploaded.status).toBe(201);
+  });
+
   it("serves the fresh private intake attestation from the exact Pages bundle", async () => {
     let requestedUrl = "";
     const verifiedAt = new Date().toISOString();

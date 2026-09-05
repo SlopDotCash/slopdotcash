@@ -26,6 +26,67 @@ function body(text: string): ReadableStream<Uint8Array> {
 }
 
 describe("Cloudflare trace object persistence", () => {
+  it("renews an expired unconsumed upload intent without changing its capability", async () => {
+    const expired = {
+      token_hash: "a".repeat(64),
+      run_id: "run-1",
+      github_user_id: "42",
+      trace_sha256: object.sha256,
+      size_bytes: object.sizeBytes,
+      content_type: object.contentType,
+      idempotency_key: "intent-key-0001",
+      created_at: "2026-08-15T12:00:00.000Z",
+      expires_at: "2026-08-15T12:05:00.000Z",
+      consumed_at: null,
+    };
+    let renewed = false;
+    const db: D1Database = {
+      batch: async () => [],
+      prepare(query) {
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<T>() {
+            return {
+              ...expired,
+              ...(renewed
+                ? {
+                    expires_at: "2026-08-15T12:11:00.000Z",
+                  }
+                : {}),
+            } as T;
+          },
+          async run() {
+            expect(query).toContain("UPDATE trace_upload_intents");
+            renewed = true;
+            return { success: true };
+          },
+        };
+        return statement;
+      },
+    };
+    const result = await new CloudflareTracePersistence(
+      db,
+      {} as R2Bucket,
+    ).createUploadIntent({
+      tokenHash: expired.token_hash,
+      runId: expired.run_id,
+      githubId: expired.github_user_id,
+      sha256: expired.trace_sha256,
+      sizeBytes: expired.size_bytes,
+      contentType: expired.content_type,
+      idempotencyKey: expired.idempotency_key,
+      createdAt: "2026-08-15T12:06:00.000Z",
+      expiresAt: "2026-08-15T12:11:00.000Z",
+      consumedAt: null,
+    });
+    expect(result.status).toBe("existing");
+    expect(result.status === "existing" && result.value.expiresAt).toBe(
+      "2026-08-15T12:11:00.000Z",
+    );
+  });
+
   it("does not disguise a missing atomic-attachment migration as replay", async () => {
     const db: D1Database = {
       batch: async () => {
