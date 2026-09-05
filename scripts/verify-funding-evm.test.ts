@@ -32,7 +32,11 @@ function chainResponses(
       number: overrides.finalizedNumber ?? "0x1000",
       hash: FINALIZED_HASH,
     },
-    canonicalBlock: { number: "0x100", hash: blockHash },
+    canonicalBlock: {
+      number: "0x100",
+      hash: blockHash,
+      timestamp: "0x6553f100",
+    },
     receipt:
       overrides.receipt === undefined
         ? {
@@ -112,6 +116,20 @@ function verification(fetchImpl: ReturnType<typeof fetchFor>) {
 }
 
 describe("EVM funding verifier", () => {
+  it("requires authorities to agree on the canonical inclusion timestamp", async () => {
+    await expect(
+      verification(
+        fetchFor((url) => {
+          const responses = chainResponses();
+          const index = EVM_FUNDING_RPC_AUTHORITIES.ethereum.findIndex(
+            (authority) => new URL(authority).hostname === url.hostname,
+          );
+          responses.canonicalBlock.timestamp = `0x${(1700000000 + index).toString(16)}`;
+          return responses;
+        }),
+      ),
+    ).rejects.toThrow(/quorum/u);
+  });
   it("requires fixed authorities and emits conservative canonical evidence", async () => {
     const calls: RpcCall[] = [];
     const result = await verification(
@@ -146,6 +164,7 @@ describe("EVM funding verifier", () => {
         transactionHash: HASH,
         blockNumber: 0x100,
         blockHash: BLOCK_HASH,
+        blockTime: 1700000000,
         authorities: [{}, {}, {}],
       },
     });

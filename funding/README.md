@@ -17,6 +17,11 @@ integer minor-unit amount, observation time, attribution choice, finality, and
 verifier version. A correction appends a new record that names the prior record
 in `supersedes`; committed records are never edited in place.
 
+The [trusted funding-record PR gate](../protocol/funding-record-pr-verification.md) can independently
+reverify a narrow append-only proposal and retain an exact-head decision log.
+It has no review-approval or merge authority; every decision preserves human
+and repository-controlled merge review.
+
 An authenticated GitHub user reports a transfer by opening a pull request that
 adds the first record at this path. The pull request is the public human review;
 GitHub authentication identifies the author but does not prove control of the

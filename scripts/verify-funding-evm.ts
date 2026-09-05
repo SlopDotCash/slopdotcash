@@ -11,6 +11,7 @@ import {
   isEvmTransactionHash,
 } from "../src/lib/evm-funding";
 import { isFundingAddress } from "../src/lib/funding-address.mjs";
+import { assertFundingBlockTime } from "./funding-block-time";
 
 export const EVM_FUNDING_RPC_AUTHORITIES = {
   base: [
@@ -202,9 +203,21 @@ async function verifyWithAuthority(
   }
   const receiptBlockNumber = (receipt as Record<string, unknown>).blockNumber;
   evmQuantity(receiptBlockNumber, "receipt.blockNumber");
+  const receiptBlockValue = await request("eth_getBlockByNumber", [
+    receiptBlockNumber,
+    false,
+  ]);
   const receiptBlock = assertEvmCanonicalBlock(
-    await request("eth_getBlockByNumber", [receiptBlockNumber, false]),
+    receiptBlockValue,
     "canonical receipt block",
+  );
+  const blockTime = assertFundingBlockTime(
+    Number(
+      evmQuantity(
+        (receiptBlockValue as Record<string, unknown>).timestamp,
+        "canonical receipt block.timestamp",
+      ),
+    ),
   );
   const verified = assertConfirmedUsdcFundingTransfer(
     receipt,
@@ -215,7 +228,11 @@ async function verifyWithAuthority(
     finalizedBlock,
     receiptBlock,
   );
-  return { authority: rpc.toString(), finalizedBlock, verified };
+  return {
+    authority: rpc.toString(),
+    finalizedBlock,
+    verified: { ...verified, blockTime },
+  };
 }
 
 export async function verifyFundingEvm(input: {
@@ -250,7 +267,7 @@ export async function verifyFundingEvm(input: {
   for (const result of settled) {
     if (result.status !== "fulfilled") continue;
     const { verified } = result.value;
-    const key = `${verified.transactionHash}:${verified.blockNumber}:${verified.blockHash}`;
+    const key = `${verified.transactionHash}:${verified.blockNumber}:${verified.blockHash}:${verified.blockTime}`;
     const group = groups.get(key) ?? [];
     group.push(result.value);
     groups.set(key, group);
