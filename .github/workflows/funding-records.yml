@@ -1,0 +1,61 @@
+name: Trusted funding record verification
+
+on:
+  pull_request_target:
+    branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# This job has no approval, merge, deployment, or signing authority.
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-funding-records-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  funding-records:
+    name: Trusted funding record verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable trusted base only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Install pinned Bun for the trusted verifier
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+
+      # Fetch the PR as Git objects. Never checkout its tree, install its
+      # dependencies, run its scripts, or derive an RPC endpoint from its files.
+      - name: Verify the exact funding-record proposal
+        env:
+          FUNDING_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FUNDING_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FUNDING_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FUNDING_BASE_SHA"
+          git fetch --no-tags origin \
+            "+refs/pull/$FUNDING_PR_NUMBER/head:refs/remotes/origin/slop-funding-head"
+          test "$(git rev-parse refs/remotes/origin/slop-funding-head)" = "$FUNDING_HEAD_SHA"
+          bun scripts/check-funding-record-pr.ts \
+            --base-sha "$FUNDING_BASE_SHA" \
+            --head-sha "$FUNDING_HEAD_SHA" \
+            --pr-number "$FUNDING_PR_NUMBER" \
+            --output "$RUNNER_TEMP/funding-record-decision.json"
+
+      - name: Retain the exact-head decision without approving or merging
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: funding-record-decision-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/funding-record-decision.json
+          if-no-files-found: error
+          retention-days: 30
