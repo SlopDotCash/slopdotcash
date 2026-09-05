@@ -281,7 +281,7 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   const homeLink = page.getByRole("link", { name: "Home", exact: true });
-  if ((page.viewportSize()?.width ?? 0) <= 680) {
+  if (await page.getByRole("button", { name: "Open navigation" }).isVisible()) {
     await page.getByRole("button", { name: "Open navigation" }).click();
     await expect(homeLink).toBeVisible();
     await expect(homeLink).toHaveAttribute("href", "/");
