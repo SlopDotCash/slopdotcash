@@ -2040,6 +2040,8 @@ describe("live report behavior", () => {
 
     assert.deepStrictEqual(report, { coherent: true });
     assert.deepStrictEqual(attemptBudgets, [MAX_API_READS, MAX_API_READS]);
+  });
+
   it("pins the authenticated identity lookup to github.com", () => {
     const calls: Array<{ command: string; args: string[] }> = [];
     const identity = readGhAuthenticatedIdentity((command, args) => {
