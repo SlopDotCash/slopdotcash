@@ -35,7 +35,7 @@
     "audit:dependencies": "bun audit",
     "verify": "bun run brand:check && bun run projects:check && bun run evaluations:check && bun run funding:check && bun run cycles:check && bun run protocol:check && bun run audit:dependencies && bun run typecheck && bun run format:check && bun run lint:check && bun run test && bun run build",
     "typecheck": "tsc -b",
-    "test": "vitest run && bun test --timeout 30000 ./skill-tests",
+    "test": "vitest run && bun test --timeout 30000 --max-concurrency 1 ./skill-tests",
     "test:e2e": "node scripts/run-e2e.mjs",
     "test:e2e:record": "node scripts/record-evidence.mjs --local",
     "test:e2e:record:production": "node scripts/record-evidence.mjs --production",
