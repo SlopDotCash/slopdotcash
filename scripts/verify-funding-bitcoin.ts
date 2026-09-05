@@ -7,6 +7,7 @@ import {
   isBitcoinTransactionId,
 } from "../src/lib/bitcoin-funding";
 import { isFundingAddress } from "../src/lib/funding-address.mjs";
+import { assertFundingBlockTime } from "./funding-block-time";
 
 export const BITCOIN_FUNDING_API_AUTHORITIES = [
   "https://mempool.space/api",
@@ -137,6 +138,11 @@ async function verifyWithAuthority(
     typeof status === "object" && status !== null
       ? (status as Record<string, unknown>).block_height
       : null;
+  const blockTime = assertFundingBlockTime(
+    typeof status === "object" && status !== null
+      ? (status as Record<string, unknown>).block_time
+      : null,
+  );
   if (!Number.isSafeInteger(blockHeight) || Number(blockHeight) < 0) {
     throw new TypeError("Bitcoin transaction is unconfirmed");
   }
@@ -154,7 +160,11 @@ async function verifyWithAuthority(
     tipHeight,
     bestChainHash,
   );
-  return { authority: api.toString(), tipHeight, verified };
+  return {
+    authority: api.toString(),
+    tipHeight,
+    verified: { ...verified, blockTime },
+  };
 }
 
 export async function verifyFundingBitcoin(input: {
@@ -184,7 +194,7 @@ export async function verifyFundingBitcoin(input: {
   for (const result of settled) {
     if (result.status !== "fulfilled") continue;
     const { verified } = result.value;
-    const key = `${verified.transactionId}:${verified.blockHeight}:${verified.blockHash}`;
+    const key = `${verified.transactionId}:${verified.blockHeight}:${verified.blockHash}:${verified.blockTime}`;
     const group = groups.get(key) ?? [];
     group.push(result.value);
     groups.set(key, group);

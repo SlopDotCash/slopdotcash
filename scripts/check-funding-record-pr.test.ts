@@ -24,6 +24,7 @@ import {
 } from "./check-funding-record-pr";
 
 const SIGNATURE = "3".repeat(88);
+const BLOCK_TIME = Date.parse("2026-07-31T00:00:00.000Z") / 1000;
 const SOLANA_RECIPIENT = "11111111111111111111111111111111";
 const SOLANA_SOURCE = "Vote111111111111111111111111111111111111111";
 const EVM_RECIPIENT = `0x${"1".repeat(40)}`;
@@ -175,6 +176,7 @@ function chainFetcher(network: FundingNetwork) {
               status: {
                 confirmed: true,
                 block_height: 800000,
+                block_time: BLOCK_TIME,
                 block_hash: "f".repeat(64),
               },
               vin: [
@@ -214,7 +216,7 @@ function chainFetcher(network: FundingNetwork) {
         });
         result = {
           slot: 123,
-          blockTime: 1786000000,
+          blockTime: BLOCK_TIME,
           meta: {
             err: null,
             preTokenBalances: [
@@ -234,7 +236,11 @@ function chainFetcher(network: FundingNetwork) {
         result =
           body.params[0] === "finalized"
             ? { number: "0x163", hash: `0x${"c".repeat(64)}` }
-            : { number: "0x100", hash: `0x${"b".repeat(64)}` };
+            : {
+                number: "0x100",
+                hash: `0x${"b".repeat(64)}`,
+                timestamp: `0x${BLOCK_TIME.toString(16)}`,
+              };
       else if (body.method === "eth_getTransactionReceipt") {
         const transactionHash = `0x${"a".repeat(64)}`;
         const blockHash = `0x${"b".repeat(64)}`;
@@ -268,6 +274,60 @@ function chainFetcher(network: FundingNetwork) {
 }
 
 describe("trusted funding-record PR gate", () => {
+  for (const network of ["solana", "base", "ethereum", "bitcoin"] as const) {
+    for (const temporalFault of [
+      "pre-inclusion",
+      "missing-inclusion",
+      "future-inclusion",
+    ] as const) {
+      it(`rejects ${network} ${temporalFault} evidence without granting authority`, async () => {
+        const repo = fixture();
+        try {
+          const record = repo.record(network);
+          if (temporalFault === "pre-inclusion") {
+            record.observedAt = "2026-07-30T00:00:00.000Z";
+            if (!record.verifier) throw new Error("missing fixture verifier");
+            record.verifier.checkedAt = record.observedAt;
+          }
+          const headSha = repo.proposal([record]);
+          const chain = chainFetcher(network);
+          const result = await checkFundingRecordPr({
+            repositoryRoot: repo.root,
+            baseSha: repo.baseSha,
+            headSha,
+            pullRequestNumber: 368,
+            fetchImpl: async (url, init) => {
+              const response = await chain.fetchImpl(url, init);
+              if (temporalFault === "pre-inclusion") return response;
+              const text = await response.text();
+              if (!text.startsWith("{")) return new Response(text);
+              const body = JSON.parse(text);
+              const value =
+                temporalFault === "missing-inclusion"
+                  ? undefined
+                  : Math.floor(Date.now() / 1000) + 86400;
+              if (network === "solana") body.result.blockTime = value;
+              else if (network === "bitcoin" && body.status)
+                body.status.block_time = value;
+              else if (
+                (network === "base" || network === "ethereum") &&
+                body.result?.number === "0x100"
+              )
+                body.result.timestamp =
+                  value === undefined ? undefined : `0x${value.toString(16)}`;
+              return new Response(JSON.stringify(body));
+            },
+          });
+          expect(result.decision, result.reason).toBe("verification-failed");
+          expect(result.mergeAuthorized).toBe(false);
+          if (temporalFault === "pre-inclusion")
+            expect(result.reason).toMatch(/predates chain inclusion/u);
+        } finally {
+          repo.cleanup();
+        }
+      });
+    }
+  }
   for (const network of ["solana", "base", "ethereum", "bitcoin"] as const) {
     it(`verifies a pure ${network} addition through its real read-only verifier`, async () => {
       const repo = fixture();

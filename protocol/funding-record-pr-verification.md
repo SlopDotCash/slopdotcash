@@ -44,6 +44,13 @@ For the automatic-verification subset:
   Only the verifier's fixed read-only mainnet endpoints are used; records cannot
   select RPC URLs or executable commands. Network errors and verifier failures
   fail closed.
+- Every successful output must contain a bounded integer inclusion block time.
+  Solana supplies `blockTime`; Bitcoin supplies `status.block_time`; EVM supplies
+  the timestamp of the canonical receipt block. EVM and Bitcoin authorities must
+  agree on that timestamp as well as the block identity. Missing timestamps,
+  future inclusion, observations before inclusion, and verification checks before
+  inclusion fail closed. This proves temporal consistency with inclusion, not the
+  historical instant that finality was reached; finality is independently rechecked.
 - The new output must match the record's state, transaction, verifier version,
   evidence URL, and finality exactly. The fresh check may occur later than the
   recorded check. An increased EVM or Bitcoin confirmation count is therefore

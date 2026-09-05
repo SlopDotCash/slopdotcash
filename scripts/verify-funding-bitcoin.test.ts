@@ -16,7 +16,12 @@ const BLOCK_HASH = "f".repeat(64);
 function transactionBody(blockHash = BLOCK_HASH) {
   return JSON.stringify({
     txid: TXID,
-    status: { confirmed: true, block_height: 800_000, block_hash: blockHash },
+    status: {
+      confirmed: true,
+      block_height: 800_000,
+      block_hash: blockHash,
+      block_time: 1700000000,
+    },
     vin: [
       {
         is_coinbase: false,
@@ -66,6 +71,26 @@ function allHosts(responses: Record<string, string>) {
 }
 
 describe("Bitcoin funding verifier", () => {
+  it("requires authorities to agree on the inclusion timestamp", async () => {
+    const perHost = Object.fromEntries(
+      HOSTS.map((host, index) => {
+        const transaction = JSON.parse(transactionBody());
+        transaction.status.block_time += index;
+        return [
+          host,
+          authorityResponses({ [`/tx/${TXID}`]: JSON.stringify(transaction) }),
+        ];
+      }),
+    );
+    await expect(
+      verifyFundingBitcoin({
+        transactionId: TXID,
+        recipient: RECIPIENT,
+        amountMinor: "150000",
+        fetchImpl: fetchFor(perHost),
+      }),
+    ).rejects.toThrow(/quorum/u);
+  });
   it("reaches quorum across fixed authorities and emits reviewed fields", async () => {
     const requests: string[] = [];
     const redirects: Array<RequestRedirect | undefined> = [];
@@ -93,6 +118,7 @@ describe("Bitcoin funding verifier", () => {
         transactionId: TXID,
         blockHeight: 800_000,
         blockHash: BLOCK_HASH,
+        blockTime: 1700000000,
       },
     });
     expect(result.chainEvidence.authorities).toHaveLength(HOSTS.length);

@@ -14,6 +14,7 @@ import {
   assertHistoricalProjectDefinition,
   assertProjectDefinition,
 } from "../src/lib/project-schema.mjs";
+import { assertFundingBlockTime } from "./funding-block-time";
 import { verifyFundingBitcoin } from "./verify-funding-bitcoin";
 import { verifyFundingEvm } from "./verify-funding-evm";
 import { verifyFundingSolana } from "./verify-funding-solana";
@@ -377,6 +378,21 @@ export async function checkFundingRecordPr(input: {
       evidence.verifierVersion = output.verifier.version;
       evidence.verifierOutputCanonical = canonicalFundingDecisionBytes(output);
       evidence.verifierOutputSha256 = digest(evidence.verifierOutputCanonical);
+      const includedAt = assertFundingBlockTime(chain.blockTime) * 1000;
+      const freshCheckedAt = Date.parse(output.verifier.checkedAt);
+      const completedNow = input.now ?? Date.now();
+      if (
+        includedAt > completedNow ||
+        Date.parse(record.observedAt) < includedAt ||
+        Date.parse(record.verifier.checkedAt) < includedAt ||
+        !Number.isFinite(freshCheckedAt) ||
+        freshCheckedAt < includedAt ||
+        freshCheckedAt > completedNow
+      ) {
+        throw new TypeError(
+          "funding observation or verification predates chain inclusion or claims a future time",
+        );
+      }
       if (
         output.state !== record.state ||
         transaction !== record.transactionId ||
@@ -405,6 +421,7 @@ export async function checkFundingRecordPr(input: {
         ? error.message
         : "unknown funding verification failure";
   }
+  decision.checkedAt = new Date(input.now ?? Date.now()).toISOString();
   return decision;
 }
 
