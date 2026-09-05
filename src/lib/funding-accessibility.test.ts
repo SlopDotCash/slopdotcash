@@ -66,6 +66,7 @@ describe("monthly commitment accessibility boundary", () => {
           asset: "USDC",
           contract: "0xc19a09a66887017f603e5df420ed3cb9a5c07c0a",
           streamId: String(index + 1),
+          recipient: "0x1111111111111111111111111111111111111111",
           monthlyCommitment: {
             cycleId: effectiveAt.slice(0, 7),
             amountMinor: "5000000",
@@ -218,6 +219,7 @@ describe("monthly commitment accessibility boundary", () => {
       asset: "USDC",
       contract: "0xc19a09a66887017f603e5df420ed3cb9a5c07c0a",
       streamId: "42",
+      recipient: "0x1111111111111111111111111111111111111111",
       monthlyCommitment: extra.monthlyCommitment,
       effectiveAt: extra.effectiveAt,
       deadline: extra.deadline,
