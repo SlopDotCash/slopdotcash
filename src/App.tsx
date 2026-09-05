@@ -1447,7 +1447,12 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
 }
 
 function projectAgentPrompt(project: ProjectDefinition): string {
-  const repository = project.repositories[0]?.id;
+  const target = project.repositories[0];
+  // The public registry the bootstrap skill matches against publishes
+  // `aliases.at(-1) ?? id`, so a transferred repository resolves to its current
+  // path. Emitting `id` here would hand the operator the pre-transfer path,
+  // whose origin has no exact registry match and stops the skill.
+  const repository = target?.aliases?.at(-1) ?? target?.id;
   if (!repository) {
     throw new TypeError(`Project ${project.id} has no contribution repository`);
   }

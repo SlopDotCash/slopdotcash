@@ -217,8 +217,8 @@ function augustRollingSnapshot() {
 }
 
 function septemberRollingSnapshot() {
-  const snapshot = snapshotFixture();
   const generatedAt = "2026-09-05T00:00:00.000Z";
+  const snapshot = snapshotFixture(generatedAt);
   const from = "2026-08-01T00:00:00.000Z";
   snapshot.generatedAt = generatedAt;
   snapshot.sourceUpdatedAt = generatedAt;
@@ -887,6 +887,23 @@ describe("project routes", () => {
     expect(
       screen.getByText(/The prize sponsor controls eligibility and payment/i),
     ).toBeInTheDocument();
+  });
+
+  it("prompts a transferred repository at its current path", async () => {
+    route("/projects/delta-star");
+    mockSnapshot();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Make money solving math." });
+
+    // The bootstrap skill resolves a project by exact-matching the operator's
+    // git origin against the published registry, which uses the newest alias.
+    // Prompting the pre-transfer path leaves that match empty and stops the run.
+    const prompt = screen.getByLabelText("Agent prompt");
+    expect(prompt).toHaveTextContent(
+      "contribute to github.com/SlopDotCash/proximityprize",
+    );
+    expect(prompt).not.toHaveTextContent("elizaOS/proximityprize");
   });
 });
 
