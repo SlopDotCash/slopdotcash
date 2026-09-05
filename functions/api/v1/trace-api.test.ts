@@ -44,6 +44,7 @@ class MemoryPersistence implements TracePersistence {
   readonly audits: AuditInput[] = [];
   readonly claims = new Map<string, WalletClaim>();
   failNextPut = false;
+  failNextAudit = false;
 
   async createRun(input: CreateRunInput): Promise<PersistenceResult<TraceRun>> {
     const key = `${input.githubId}:${input.idempotencyKey}`;
@@ -244,8 +245,16 @@ class MemoryPersistence implements TracePersistence {
     this.bytes.set(object.sha256, bytes.slice());
   }
 
-  async createReadGrant(input: CreateGrantInput): Promise<void> {
+  async createReadGrant(
+    input: CreateGrantInput,
+    audit: AuditInput,
+  ): Promise<void> {
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     this.grants.set(input.tokenHash, { ...input, consumed: false });
+    this.audits.push(audit);
   }
 
   async consumeReadGrant(
@@ -253,6 +262,7 @@ class MemoryPersistence implements TracePersistence {
     traceSha256: string,
     operatorGithubId: string,
     now: string,
+    audit: AuditInput,
   ): Promise<boolean> {
     const grant = this.grants.get(tokenHash);
     if (
@@ -264,7 +274,12 @@ class MemoryPersistence implements TracePersistence {
     ) {
       return false;
     }
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     grant.consumed = true;
+    this.audits.push(audit);
     return true;
   }
 
@@ -273,11 +288,16 @@ class MemoryPersistence implements TracePersistence {
   }
 
   async writeAudit(input: AuditInput): Promise<void> {
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     this.audits.push(input);
   }
 
   async createWalletClaim(
     claim: WalletClaim,
+    audit: AuditInput,
   ): Promise<PersistenceResult<WalletClaim>> {
     const existing = [...this.claims.values()].find(
       (item) => item.recordSha256 === claim.recordSha256,
@@ -296,7 +316,12 @@ class MemoryPersistence implements TracePersistence {
     ) {
       return { status: "conflict" };
     }
+    if (this.failNextAudit) {
+      this.failNextAudit = false;
+      throw new Error("injected audit failure");
+    }
     this.claims.set(claim.id, claim);
+    this.audits.push(audit);
     return { status: "created", value: claim };
   }
 
@@ -1331,6 +1356,72 @@ describe("private trace API", () => {
     });
   });
 
+  it("rejects a progress event beyond the server clock tolerance", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_future_event_run_key_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const response = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/events`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          kind: "run_completed",
+          occurredAt: new Date(NOW.getTime() + 5 * 60_000 + 1).toISOString(),
+          source: "agent",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "future_progress_event_key_0001",
+        },
+      ),
+      deps,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "invalid_request" });
+    expect(store.events.size).toBe(0);
+  });
+
+  it("rejects impossible calendar dates in progress events", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_invalid_date_run_key_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+
+    const response = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/events`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          kind: "checkpoint",
+          occurredAt: "2026-02-30T11:59:00.000Z",
+          source: "agent",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "invalid_date_event_key_0001",
+        },
+      ),
+      deps,
+    );
+
+    expect(response.status).toBe(400);
+    expect(deps.persistence).toBeInstanceOf(MemoryPersistence);
+    expect((deps.persistence as MemoryPersistence).events.size).toBe(0);
+  });
+
   it("rejects digest mismatches before retaining an object", async () => {
     const store = new MemoryPersistence();
     const deps = dependencies(store);
@@ -1415,6 +1506,61 @@ describe("private trace API", () => {
     store.failNextPut = true;
     expect((await handleTraceApi(uploadRequest(), deps)).status).toBe(500);
     expect((await handleTraceApi(uploadRequest(), deps)).status).toBe(201);
+  });
+
+  it("completes an upload authorized immediately before capability expiry", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_expiring_upload_run_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const bytes = new TextEncoder().encode("authorized before expiry");
+    const digest = await sha256Hex(bytes);
+    const intentResponse = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/trace-intents`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          sha256: digest,
+          sizeBytes: bytes.byteLength,
+          contentType: "text/plain",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "expiring_upload_key_0001",
+        },
+      ),
+      deps,
+    );
+    const { uploadUrl } = (await intentResponse.json()) as {
+      uploadUrl: string;
+    };
+    const intent = [...store.intents.values()][0];
+    intent.expiresAt = new Date(NOW.getTime() + 1).toISOString();
+    const times = [
+      NOW,
+      new Date(NOW.getTime() + 2),
+      new Date(NOW.getTime() + 3),
+    ];
+    deps.now = () => new Date(times.shift() ?? times.at(-1) ?? NOW);
+
+    const response = await handleTraceApi(
+      new Request(uploadUrl, {
+        method: "PUT",
+        body: bytes.slice().buffer,
+        headers: { "content-type": "text/plain", digest: `sha-256=${digest}` },
+      }),
+      deps,
+    );
+
+    expect(response.status).toBe(201);
+    expect(store.bytes.has(digest)).toBe(true);
+    expect(store.uploads.size).toBe(1);
   });
 
   it("atomically permits only one concurrent upload capability consumer", async () => {
@@ -1516,6 +1662,66 @@ describe("private trace API", () => {
     ]);
   });
 
+  it("does not activate or consume a read grant without its audit event", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const operator = await token("99", "slop-operator", ["operator"]);
+    const created = await createRun(deps, contributor);
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const bytes = new TextEncoder().encode("audited private trace");
+    const digest = await sha256Hex(bytes);
+    await uploadTrace(
+      deps,
+      contributor,
+      serverRunId,
+      bytes,
+      "upload_trace_key_audit_failure",
+    );
+
+    store.failNextAudit = true;
+    const failedGrant = await handleTraceApi(
+      request(
+        `operator/traces/${digest}/grant`,
+        "POST",
+        operator,
+        JSON.stringify({ reason: "verify atomic grant audit behavior" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(failedGrant.status).toBe(500);
+    expect(store.grants.size).toBe(0);
+
+    const grantResponse = await handleTraceApi(
+      request(
+        `operator/traces/${digest}/grant`,
+        "POST",
+        operator,
+        JSON.stringify({ reason: "verify atomic read audit behavior" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    const { grant } = (await grantResponse.json()) as { grant: string };
+    store.failNextAudit = true;
+    const failedRead = await handleTraceApi(
+      request(`operator/traces/${digest}`, "GET", operator, undefined, {
+        "x-trace-read-grant": grant,
+      }),
+      deps,
+    );
+    expect(failedRead.status).toBe(500);
+    const retriedRead = await handleTraceApi(
+      request(`operator/traces/${digest}`, "GET", operator, undefined, {
+        "x-trace-read-grant": grant,
+      }),
+      deps,
+    );
+    expect(retriedRead.status).toBe(200);
+    expect(await retriedRead.text()).toBe("audited private trace");
+  });
+
   it("publishes only immutable wallet claim metadata", async () => {
     const deps = dependencies();
     const operator = await token("99", "slop-operator", ["operator"]);
@@ -1553,6 +1759,34 @@ describe("private trace API", () => {
       source: "d1_registry",
       recordDigest: claim.recordDigest,
     });
+  });
+
+  it("rejects an operator wallet observation from the future", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const operator = await token("99", "slop-operator", ["operator"]);
+    const response = await handleTraceApi(
+      request(
+        "operator/wallet-claims",
+        "POST",
+        operator,
+        JSON.stringify({
+          githubActorId: "42",
+          githubLogin: "octocat",
+          address: "11111111111111111111111111111111",
+          observedAt: new Date(NOW.getTime() + 1).toISOString(),
+          sourceBodySha256: "b".repeat(64),
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: "invalid_request",
+    });
+    expect(store.claims.size).toBe(0);
   });
 
   it("lets a GitHub-authenticated contributor create and supersede one wallet lineage", async () => {
@@ -1650,6 +1884,44 @@ describe("private trace API", () => {
     expect(await stale.json()).toMatchObject({ error: "stale_wallet_claim" });
   });
 
+  it("refreshes an unchanged wallet claim after a GitHub login rename", async () => {
+    const deps = dependencies();
+    const originalActor = await token("42", "old-login", ["contributor"]);
+    const original = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        originalActor,
+        JSON.stringify({ address: "11111111111111111111111111111111" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    const originalClaim = (await original.json()) as { claimId: string };
+    const renamedActor = await token("42", "new-login", ["contributor"]);
+
+    const refreshed = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        renamedActor,
+        JSON.stringify({
+          address: "11111111111111111111111111111111",
+          supersedesClaimId: originalClaim.claimId,
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+
+    expect(refreshed.status).toBe(201);
+    expect(await refreshed.json()).toMatchObject({
+      githubActorId: "42",
+      githubLogin: "new-login",
+      supersedesClaimId: originalClaim.claimId,
+    });
+  });
+
   it("does not let an unauthenticated caller create a wallet claim", async () => {
     const response = await handleTraceApi(
       new Request("https://api.slop.cash/api/v1/wallet-claims", {
@@ -1662,6 +1934,26 @@ describe("private trace API", () => {
       dependencies(),
     );
     expect(response.status).toBe(401);
+  });
+
+  it("does not activate a wallet claim when its required audit write fails", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    store.failNextAudit = true;
+    const failed = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        contributor,
+        JSON.stringify({ address: "11111111111111111111111111111111" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(failed.status).toBe(500);
+    expect(await store.getCurrentWalletClaim("42")).toBeNull();
+    expect(store.audits).toEqual([]);
   });
 
   it("reports unknown paths as not found instead of demanding authentication", async () => {
