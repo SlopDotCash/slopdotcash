@@ -1037,6 +1037,93 @@ describe("project run usage", () => {
     }
   });
 
+  it("retries one transient trace-upload server failure on the same capability", async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-trace-upload-retry-"));
+    try {
+      const trajectory = join(fixtureRoot, "trace.ndjson");
+      const contents = '{"event":"complete"}\n';
+      writeFileSync(trajectory, contents);
+      const digest = createHash("sha256").update(contents).digest("hex");
+      const uploadUrl = "https://api.slop.cash/api/v1/trace-uploads/retry-test";
+      let uploadAttempts = 0;
+      const fetchImpl = async (url: RequestInfo | URL) => {
+        const target = String(url);
+        if (target.endsWith("private-request-intake")) {
+          return Response.json({
+            enabled: true,
+            source: "github-public-status",
+            verifiedAt: "2026-08-25T12:00:00.000Z",
+          });
+        }
+        if (target.endsWith("auth/session")) {
+          return Response.json({
+            token: "s".repeat(32),
+            tokenType: "Bearer",
+            expiresAt: "2030-01-01T00:00:00.000Z",
+          });
+        }
+        if (target.endsWith("/runs")) {
+          return Response.json({
+            serverRunId: "srv_retry",
+            clientRunId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            state: "awaiting_trace",
+          });
+        }
+        if (target.endsWith("trace-intents")) {
+          return Response.json({
+            serverRunId: "srv_retry",
+            uploadUrl,
+            expiresAt: "2030-01-01T00:00:00.000Z",
+            sha256: digest,
+            sizeBytes: Buffer.byteLength(contents),
+            contentType: "application/x-ndjson",
+          });
+        }
+        if (target === uploadUrl) {
+          uploadAttempts += 1;
+          if (uploadAttempts === 1)
+            return Response.json({ error: "internal_error" }, { status: 500 });
+          return Response.json({
+            serverRunId: "srv_retry",
+            clientRunId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            traceObjectId: `sha256:${digest}`,
+            traceSha256: digest,
+            sizeBytes: Buffer.byteLength(contents),
+            state: "trace_uploaded",
+          });
+        }
+        return Response.json({
+          serverRunId: "srv_retry",
+          clientRunId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          traceObjectId: `sha256:${digest}`,
+          traceSha256: digest,
+          state: "finalized",
+        });
+      };
+      await uploadPrivateTrace(
+        {
+          runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          projectId: "eliza",
+          repositoryId: "elizaOS/eliza",
+          revision: "a".repeat(40),
+          provider: "openai",
+          model: "gpt-5.6-sol",
+          client: "codex",
+        },
+        trajectory,
+        "1.2.3",
+        {
+          disclosure: () => {},
+          assertionProvider: () => "i".repeat(32),
+          fetchImpl,
+        },
+      );
+      assert.strictEqual(uploadAttempts, 2);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("reports private intake rate-limit reset before authorization", async () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-trace-intake-rate-"));
     try {

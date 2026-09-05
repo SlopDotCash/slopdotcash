@@ -1223,15 +1223,30 @@ async function boundedResponseText(response, field) {
   }
 }
 
-async function jsonRequest(fetchImpl, url, options, keys, field) {
+async function jsonRequest(
+  fetchImpl,
+  url,
+  options,
+  keys,
+  field,
+  retryServerErrors = 0,
+) {
   let response;
-  try {
-    response = await fetchImpl(url, {
-      ...options,
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch {
-    fail(`${field} request failed`);
+  for (let attempt = 0; attempt <= retryServerErrors; attempt += 1) {
+    try {
+      response = await fetchImpl(url, {
+        ...options,
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      fail(`${field} request failed`);
+    }
+    if (
+      response?.ok ||
+      (response?.status ?? 0) < 500 ||
+      attempt === retryServerErrors
+    )
+      break;
   }
   if (!response?.ok) fail(`${field} request returned HTTP ${response?.status}`);
   const source = await boundedResponseText(response, field);
@@ -1605,6 +1620,7 @@ export async function uploadPrivateTrace(
       "traceSha256",
     ],
     "trace upload",
+    1,
   );
   if (
     uploaded.clientRunId !== state.runId ||
