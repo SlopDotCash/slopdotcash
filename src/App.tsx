@@ -487,6 +487,30 @@ export function reviewBudgetLabel(
     : `${reviewBudget.monthlyCapDisplay} cap · additive review line · uncommitted pledge`;
 }
 
+/**
+ * A monthly pool prints a dollar figure only once funding is committed. A
+ * pledged pool, or a committed one with nothing behind it, is unfunded: its
+ * cap is a target, never a pool.
+ */
+export function monthlyPoolUnfunded(
+  reward: Pick<ProjectDefinition["reward"], "committedMinor" | "fundingState">,
+): boolean {
+  return (
+    reward.fundingState !== "committed" || BigInt(reward.committedMinor) === 0n
+  );
+}
+
+export function monthlyPoolLabel(
+  reward: Pick<
+    ProjectDefinition["reward"],
+    "committedMinor" | "fundingState" | "monthlyCapDisplay"
+  >,
+): string {
+  return monthlyPoolUnfunded(reward)
+    ? `unfunded, target ${reward.monthlyCapDisplay}`
+    : `${reward.monthlyCapDisplay} monthly pool`;
+}
+
 function formatPercent(partsPerMillion: number): string {
   return `${(partsPerMillion / 10_000).toFixed(2)}%`;
 }
@@ -716,9 +740,14 @@ function TypewriterHeroHeading() {
 }
 
 function ProjectCard({ project }: { project: ProjectDefinition }) {
+  const unfunded =
+    project.reward.kind === "monthly-pool" &&
+    monthlyPoolUnfunded(project.reward);
   const amount =
     project.reward.kind === "monthly-pool"
-      ? project.reward.monthlyCapDisplay
+      ? unfunded
+        ? "Unfunded"
+        : project.reward.monthlyCapDisplay
       : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
         "External");
   return (
@@ -740,15 +769,17 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
           <strong>{amount}</strong>
           <span>
             {project.reward.kind === "monthly-pool"
-              ? "/ month"
+              ? unfunded
+                ? `target ${project.reward.monthlyCapDisplay} / month`
+                : "/ month"
               : "external prize"}
           </span>
         </p>
         <small className="project-money-state">
           {project.reward.kind === "monthly-pool"
-            ? project.reward.fundingState === "committed"
-              ? "Committed funding · payment state published per cycle"
-              : "Projected cap · funding uncommitted"
+            ? unfunded
+              ? "Target cap · no funding committed"
+              : "Committed funding · payment state published per cycle"
             : "External sponsor controls eligibility and payment"}
         </small>
         {project.reward.reviewBudget ? (
@@ -882,7 +913,7 @@ function GlobalLeaderboard({
     : "Current month";
   const selectedRewardLabel = selectedView
     ? selectedView.reward.kind === "monthly-pool"
-      ? `${selectedView.project.reward.monthlyCapDisplay} monthly pool`
+      ? monthlyPoolLabel(selectedView.project.reward)
       : `${selectedView.reward.advertisedAmountDisplay} external opportunity`
     : "Current reward cycle";
   return (
@@ -940,7 +971,7 @@ function GlobalLeaderboard({
             {views.map((view) => {
               const rewardLabel =
                 view.reward.kind === "monthly-pool"
-                  ? `${view.project.reward.monthlyCapDisplay} monthly pool`
+                  ? monthlyPoolLabel(view.project.reward)
                   : "External prize share";
               return (
                 <button
@@ -1267,20 +1298,34 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             <article className="proof-object">
               <span className="proof-object-kicker">Pool</span>
               <strong>
-                {featuredProjects[0]?.reward.monthlyCapDisplay ?? "$0"}
+                {featuredProjects[0] &&
+                !monthlyPoolUnfunded(featuredProjects[0].reward)
+                  ? featuredProjects[0].reward.monthlyCapDisplay
+                  : "Unfunded"}
               </strong>
               <dl>
                 <div>
-                  <dt>Type</dt>
-                  <dd>Monthly contributor cap</dd>
+                  <dt>Target</dt>
+                  <dd>
+                    {featuredProjects[0]?.reward.monthlyCapDisplay ?? "$0"}{" "}
+                    monthly cap
+                  </dd>
                 </div>
                 <div>
                   <dt>Funding</dt>
-                  <dd>Uncommitted</dd>
+                  <dd>
+                    {featuredProjects[0]?.reward.fundingState === "committed"
+                      ? "Committed"
+                      : "Uncommitted"}
+                  </dd>
                 </div>
                 <div>
                   <dt>Payment</dt>
-                  <dd>Disabled</dd>
+                  <dd>
+                    {featuredProjects[0]?.reward.paymentMode === "enabled"
+                      ? "Enabled"
+                      : "Disabled"}
+                  </dd>
                 </div>
               </dl>
               <Link href="/#projects">
@@ -2255,12 +2300,16 @@ function ProjectPage({
                 }
               >
                 {project.reward.kind === "monthly-pool"
-                  ? project.reward.monthlyCapDisplay
+                  ? monthlyPoolUnfunded(project.reward)
+                    ? "Unfunded"
+                    : project.reward.monthlyCapDisplay
                   : project.reward.externalOpportunity?.advertisedAmountDisplay}
               </strong>
               <p>
                 {project.reward.kind === "monthly-pool"
-                  ? "Up to this amount is allocated each month. Unused funding rolls forward without raising the cap."
+                  ? monthlyPoolUnfunded(project.reward)
+                    ? `Target ${project.reward.monthlyCapDisplay} per month. No funding is committed, so no payment is scheduled until the project commits funds.`
+                    : "Up to this amount is allocated each month. Unused funding rolls forward without raising the cap."
                   : "10% of an award actually received is allocated to Slop Cash; the remaining 90% is shared among accepted contributors. The prize sponsor controls eligibility and payment."}
               </p>
               <div>
