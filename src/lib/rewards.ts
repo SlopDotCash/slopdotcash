@@ -875,13 +875,15 @@ export function assertRewardAllocationManifest(
     "allocation actor ids",
   );
   for (const allocation of allocations) {
+    // Wallet cut-off: a wallet observed after this proposal was generated
+    // applies to the next cycle. It never modifies the current proposal or
+    // restarts its review; the row stays unclaimed and carries instead.
     if (
       allocation.wallet &&
-      Date.parse(allocation.wallet.observedAt) >
-        Date.parse(lastMaterialChangeAt)
+      Date.parse(allocation.wallet.observedAt) > Date.parse(generatedAt)
     ) {
       throw new TypeError(
-        "wallet observation is newer than the declared material change",
+        "wallet observation is newer than the proposal generation time; it applies to the next cycle",
       );
     }
     if (
