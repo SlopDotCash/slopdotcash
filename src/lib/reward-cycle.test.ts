@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { snapshotFixture } from "../../tests/fixtures";
 import {
+  additiveReviewBudgetWeights,
   allocateReviewBudgetMinor,
   createRewardCycleProposal,
 } from "./reward-cycle";
@@ -59,6 +60,35 @@ describe("reward cycle proposals", () => {
         { actorId: "duplicate", scoreThirds: 2 },
       ]),
     ).toThrow(/unique non-negative/u);
+  });
+
+  it("keeps the additive review line tier-only when trace weight differs", () => {
+    const base = snapshotFixture().ledger[0];
+    const events = [
+      {
+        ...base,
+        id: "review-with-trace",
+        actor: { ...base.actor, id: "actor-a", login: "actor-a" },
+        category: "substantive-review" as const,
+        points: 1,
+        scoreThirds: 3,
+        evidenceBonusBasisPoints: 1_500 as const,
+      },
+      {
+        ...base,
+        id: "review-without-trace",
+        actor: { ...base.actor, id: "actor-b", login: "actor-b" },
+        category: "substantive-review" as const,
+        points: 1,
+        scoreThirds: 3,
+      },
+    ];
+
+    expect(
+      Object.fromEntries(
+        allocateReviewBudgetMinor(10n, additiveReviewBudgetWeights(events)),
+      ),
+    ).toEqual({ "actor-a": 5n, "actor-b": 5n });
   });
 
   it("proposes the exact Eliza pool without approving a payment", () => {

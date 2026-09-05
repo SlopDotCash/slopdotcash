@@ -86,6 +86,28 @@ export function allocateReviewBudgetMinor(
   return allocations;
 }
 
+/**
+ * The additive review line is tier-only: finalized-trace weight remains part
+ * of the shared-pool score and does not change this second allocation.
+ */
+export function additiveReviewBudgetWeights(
+  events: readonly LeaderboardSnapshot["ledger"][number][],
+): Array<{ actorId: string; scoreThirds: number }> {
+  const weights = new Map<string, number>();
+  for (const event of events) {
+    if (event.category !== "substantive-review") continue;
+    weights.set(
+      event.actor.id,
+      (weights.get(event.actor.id) ?? 0) +
+        (event.scoreThirds ?? Math.round(event.points * 3)),
+    );
+  }
+  return [...weights].map(([actorId, scoreThirds]) => ({
+    actorId,
+    scoreThirds,
+  }));
+}
+
 function cycleBounds(cycleId: string): { from: number; to: number } {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
     throw new TypeError(`Invalid reward cycle id: ${cycleId}`);
@@ -233,20 +255,9 @@ export function createRewardCycleProposal(
   const reviewEvents = view.ledger.filter(
     (event) => event.category === "substantive-review",
   );
-  const reviewScoreThirds = new Map<string, number>();
-  for (const event of reviewEvents) {
-    reviewScoreThirds.set(
-      event.actor.id,
-      (reviewScoreThirds.get(event.actor.id) ?? 0) +
-        (event.scoreThirds ?? Math.round(event.points * 3)),
-    );
-  }
   const reviewAllocations = allocateReviewBudgetMinor(
     reviewBudgetTotal,
-    [...reviewScoreThirds].map(([actorId, scoreThirds]) => ({
-      actorId,
-      scoreThirds,
-    })),
+    additiveReviewBudgetWeights(reviewEvents),
   );
   const reviewSuggestedTotal = [...reviewAllocations.values()].reduce(
     (total, amount) => total + amount,
