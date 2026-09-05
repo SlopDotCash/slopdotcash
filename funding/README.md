@@ -229,6 +229,22 @@ between months. Existing approved and paid allocation rows are unchanged.
 
 ### Still unresolved: authenticated loss and immutable lifecycle overlay
 
+The current schema also has an executable archival blocker: sixteen distinct
+monthly instruments fit the bounded manifest, but a seventeenth cannot be added.
+Deleting an old entry would violate the immutable prefix and make current public
+ledger validation lose its instrument reference. This draft intentionally does
+not increase the limit or permit deletion. It is not ready for ongoing monthly
+operation until a reviewed archive protocol exists.
+
+That protocol needs an append-only archive record binding the exact instrument,
+monthly period and amount to immutable reviewed manifest bytes, plus verifiable
+lifecycle references proving no open proposal, approved unpaid intent, or carry
+still depends on it. Existing commitment transaction records do not contain that
+complete monthly binding, and cycle records do not identify their backing
+instrument. Resolving those missing references is a schema decision; an archive
+marker alone cannot authorize removal. Historical readers must resolve archived
+instruments while active backing calculations continue to exclude them.
+
 Issue #333 remains open. Loss of either key in the reviewed no-config-authority
 2-of-2 can strand funds; no unilateral recovery, auto-refund, or new recovery
 authority is introduced. Monthly-sized, distinct instruments bound the declared

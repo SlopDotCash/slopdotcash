@@ -1,6 +1,7 @@
 /** Deterministic, non-custodial cycle and settler reminder copy. */
 
 export type SettlementReminder =
+  | { kind: "accessibility-unknown"; message: string }
   | { kind: "cycle-close"; message: string }
   | { kind: "overdue"; message: string }
   | { kind: "ready-to-sign"; message: string }
@@ -74,12 +75,12 @@ export function settlementReminder(
 
 /**
  * Suppresses signing language for cycles that never enter platform settlement
- * and replaces settler-deadline copy with the unfunded state while the pool
- * has no committed funding: a settlement can only be late once payments are
- * enabled.
+ * and distinguishes an unfunded pledge from committed but constrained funds.
+ * Disabled payments never imply an absent commitment or a settlement deadline.
  */
 export function cycleSettlementReminder(input: {
   closesAt: string;
+  fundingState: "committed" | "pledged" | "external-opportunity";
   kind: "external-prize-share" | "monthly-pool";
   now: string;
   paymentMode: "disabled" | "enabled";
@@ -101,10 +102,17 @@ export function cycleSettlementReminder(input: {
   );
   if (reminder === null) return null;
   if (input.paymentMode === "disabled") {
+    if (input.fundingState === "committed") {
+      return {
+        kind: "accessibility-unknown",
+        message:
+          "Committed funding reminder: funds remain constrained; accessibility and payability are not proven. Payments are disabled pending a reviewed authenticated accessibility evidence protocol.",
+      };
+    }
     return {
       kind: "unfunded",
       message:
-        "Unfunded pool reminder: no funding is committed and payments are disabled. Allocations remain projected; settlement deadlines begin once the project commits funding.",
+        "Unfunded pool reminder: no funding is committed and payments are disabled. Allocations remain projected; payments require reviewed accessibility evidence and activation.",
     };
   }
   return reminder;

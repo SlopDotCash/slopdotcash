@@ -52,6 +52,42 @@ function fixture() {
 }
 
 describe("monthly commitment accessibility boundary", () => {
+  it("demonstrates the unresolved seventeenth-month archival ceiling without deleting history", () => {
+    const withMonths = (count: number) => {
+      const project = fixture();
+      const commitments = Array.from({ length: count }, (_, index) => {
+        const effectiveAt = new Date(
+          Date.UTC(2026, 7 + index, 1),
+        ).toISOString();
+        const deadline = new Date(Date.UTC(2026, 8 + index, 1)).toISOString();
+        return {
+          kind: "sablier-lockup-v4",
+          network: "base",
+          asset: "USDC",
+          contract: "0xc19a09a66887017f603e5df420ed3cb9a5c07c0a",
+          streamId: String(index + 1),
+          monthlyCommitment: {
+            cycleId: effectiveAt.slice(0, 7),
+            amountMinor: "5000000",
+            accessibility: "unknown",
+          },
+          effectiveAt,
+          deadline,
+          replacedAt: index < count - 1 ? deadline : null,
+        };
+      });
+      return { ...project, funding: { ...project.funding, commitments } };
+    };
+    const sixteen = withMonths(16);
+    const seventeen = withMonths(17);
+    expect(assertProjectDefinition(sixteen).funding.commitments).toHaveLength(
+      16,
+    );
+    expect(() => assertProjectDefinition(seventeen)).toThrow(/at most 16/u);
+    expect(() => assertProjectPolicyTransition(sixteen, seventeen)).toThrow(
+      /at most 16/u,
+    );
+  });
   it("requires append-only monthly history and refuses relabeling an old instrument", () => {
     const before = fixture();
     const changed = fixture();

@@ -2928,6 +2928,10 @@ function CyclePage({
     record?.state ?? (view?.cycle.status === "live" ? "live" : "closed");
   const reminder = cycleSettlementReminder({
     closesAt: to,
+    fundingState:
+      project.reward.reviewBudget?.fundingState === "committed"
+        ? "committed"
+        : project.reward.fundingState,
     kind:
       record?.kind ??
       (view?.reward.kind === "external-prize-share"
