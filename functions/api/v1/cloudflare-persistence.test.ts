@@ -26,6 +26,49 @@ function body(text: string): ReadableStream<Uint8Array> {
 }
 
 describe("Cloudflare trace object persistence", () => {
+  it.each([
+    { success: false, meta: { changes: 1 } },
+    { success: true, meta: { changes: 0 } },
+  ])(
+    "does not report an upload intent that D1 did not insert",
+    async (result) => {
+      const db: D1Database = {
+        async batch() {
+          return [];
+        },
+        prepare() {
+          const statement = {
+            bind() {
+              return statement;
+            },
+            async first<T>() {
+              return null as T | null;
+            },
+            async run() {
+              return result;
+            },
+          };
+          return statement;
+        },
+      };
+
+      await expect(
+        new CloudflareTracePersistence(db, {} as R2Bucket).createUploadIntent({
+          tokenHash: "a".repeat(64),
+          runId: "run-1",
+          githubId: "42",
+          sha256: object.sha256,
+          sizeBytes: object.sizeBytes,
+          contentType: object.contentType,
+          idempotencyKey: "intent-key-0001",
+          createdAt: object.createdAt,
+          expiresAt: "2026-08-15T12:05:00.000Z",
+          consumedAt: null,
+        }),
+      ).rejects.toThrow(/upload intent insertion failed/u);
+    },
+  );
+
   it("does not disguise a missing atomic-attachment migration as replay", async () => {
     const db: D1Database = {
       batch: async () => {
