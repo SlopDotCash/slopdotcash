@@ -23,6 +23,32 @@ GitHub authentication identifies the author but does not prove control of the
 sending or receiving wallet. Never put private keys, seed phrases, private
 wallet metadata, or signing material in a record or pull request.
 
+## Trusted funding eligibility (evidence only)
+
+The `Trusted funding eligibility` workflow runs the immutable base branch's
+checker and lockfile dependencies; the proposed head is Git object data only.
+Its JSON artifact binds the exact base and head SHA and includes each fresh
+verifier's version, exact output bytes, and SHA-256 digest. It has read-only
+repository permissions and cannot approve, merge, sign, or broadcast.
+
+The initial gate accepts only up to 100 new anonymous `verified-on-chain`
+direct-funding records, with no other diff. Historical and current manifest
+routes must validate, the head must include its base, and transaction and record
+identities must be unused across the ledger (including commitments). Verifier
+failure or disagreement fails the check. Confirmation counts must match exactly;
+a later chain observation may therefore require a refreshed candidate record.
+The verifier's fresh `checkedAt` is logged, not required to equal the candidate's
+earlier check time; future candidate observations are rejected.
+
+Corrections, public donor attribution, commitments, mixed changes, and
+non-verified records remain on human review. An ineligible decision is not an
+approval, even when the workflow finishes successfully. Every decision currently
+has `mergeAuthorized: false`: connecting the separate protected approver and
+proving its exact-head positive and negative live canaries remain required by
+#368. That approver must re-read the current base/head, required terminal checks,
+and trusted workflow provenance before any SHA-locked merge. A green check alone
+must never be treated as permission to merge.
+
 The public states are deliberately separate:
 
 - `self-reported`: a donor or project supplied the transaction ID; Slop has not
