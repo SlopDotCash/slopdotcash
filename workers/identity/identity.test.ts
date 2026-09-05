@@ -19,6 +19,8 @@ const ASSERTION_SECRET = "B".repeat(43);
 class MemoryIdentityPersistence implements IdentityPersistence {
   readonly flows = new Map<string, OAuthFlow>();
   readonly assertions = new Map<string, IdentityAssertion>();
+  failAssertionCreate = false;
+  failAssertionIssueOnce = false;
 
   async createFlow(flow: OAuthFlow): Promise<boolean> {
     if (this.flows.has(flow.id)) return false;
@@ -92,16 +94,32 @@ class MemoryIdentityPersistence implements IdentityPersistence {
       : null;
   }
 
-  async createAssertion(assertion: IdentityAssertion): Promise<void> {
+  async createAssertion(
+    assertion: IdentityAssertion,
+  ): Promise<IdentityAssertion | null> {
+    if (this.failAssertionCreate) return null;
     if (!this.assertions.has(assertion.tokenHash)) {
       this.assertions.set(assertion.tokenHash, { ...assertion });
     }
+    const stored = this.assertions.get(assertion.tokenHash);
+    return stored &&
+      stored.tokenHash === assertion.tokenHash &&
+      stored.githubActorId === assertion.githubActorId &&
+      stored.githubLogin === assertion.githubLogin &&
+      stored.audience === assertion.audience &&
+      stored.consumedAt === null
+      ? { ...stored }
+      : null;
   }
 
   async markAssertionIssued(
     flowId: string,
     issuedAt: string,
   ): Promise<boolean> {
+    if (this.failAssertionIssueOnce) {
+      this.failAssertionIssueOnce = false;
+      throw new Error("simulated post-insert persistence failure");
+    }
     const flow = this.flows.get(flowId);
     if (flow?.status !== "callback_complete") return false;
     this.flows.set(flowId, {
@@ -351,6 +369,59 @@ describe("slop identity worker", () => {
       deps,
     );
     expect(consumeReplay.status).toBe(401);
+  });
+
+  it("does not issue an assertion that persistence refused to create", async () => {
+    const { deps, store } = dependencies();
+    const flow = await start(deps);
+    const { callback } = await authorizeAndCallback(deps, flow);
+    expect(callback.status).toBe(200);
+    store.failAssertionCreate = true;
+
+    const response = await handleIdentityRequest(
+      jsonRequest("identity.slop.cash", "/v1/oauth/poll", {
+        flowId: flow.flowId,
+        pollCapability: flow.pollCapability,
+        audience: IDENTITY_AUDIENCE,
+      }),
+      deps,
+    );
+
+    expect(response.status).toBe(503);
+    expect(store.flows.get(flow.flowId)?.status).toBe("callback_complete");
+    expect(store.assertions.size).toBe(0);
+  });
+
+  it("recovers the original durable assertion after a post-insert failure", async () => {
+    const { deps, store } = dependencies();
+    const flow = await start(deps);
+    const { callback } = await authorizeAndCallback(deps, flow);
+    expect(callback.status).toBe(200);
+    store.failAssertionIssueOnce = true;
+
+    const poll = () =>
+      handleIdentityRequest(
+        jsonRequest("identity.slop.cash", "/v1/oauth/poll", {
+          flowId: flow.flowId,
+          pollCapability: flow.pollCapability,
+          audience: IDENTITY_AUDIENCE,
+        }),
+        deps,
+      );
+    const failed = await poll();
+    expect(failed.status).toBe(500);
+    const [durable] = [...store.assertions.values()];
+    expect(durable).toBeDefined();
+
+    deps.now = () => new Date(NOW.getTime() + 2_000);
+    const recovered = await poll();
+    expect(recovered.status).toBe(200);
+    const completion = (await recovered.json()) as {
+      expiresAt: string;
+    };
+    expect(completion.expiresAt).toBe(durable?.expiresAt);
+    expect(store.assertions.size).toBe(1);
+    expect(store.flows.get(flow.flowId)?.status).toBe("assertion_issued");
   });
 
   it("requires the browser-bound CSRF cookie and consumes callback state once", async () => {

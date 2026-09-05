@@ -361,7 +361,7 @@ async function pollFlow(
     deps.assertionSecret,
   );
   const expiresAt = new Date(now.getTime() + ASSERTION_TTL_SECONDS * 1000);
-  await deps.persistence.createAssertion({
+  const storedAssertion = await deps.persistence.createAssertion({
     tokenHash: await sha256Hex(assertion),
     githubActorId: flow.githubActorId,
     githubLogin: flow.githubLogin,
@@ -370,6 +370,19 @@ async function pollFlow(
     expiresAt: expiresAt.toISOString(),
     consumedAt: null,
   });
+  const storedCreatedAt = Date.parse(storedAssertion?.createdAt ?? "");
+  const storedExpiresAt = Date.parse(storedAssertion?.expiresAt ?? "");
+  if (
+    storedAssertion === null ||
+    !Number.isFinite(storedCreatedAt) ||
+    !Number.isFinite(storedExpiresAt) ||
+    new Date(storedCreatedAt).toISOString() !== storedAssertion.createdAt ||
+    new Date(storedExpiresAt).toISOString() !== storedAssertion.expiresAt ||
+    storedCreatedAt > now.getTime() ||
+    storedExpiresAt <= now.getTime()
+  ) {
+    fail(503, "assertion_unavailable", "Could not create identity assertion");
+  }
   const issued = await deps.persistence.markAssertionIssued(
     flow.id,
     now.toISOString(),
@@ -379,7 +392,7 @@ async function pollFlow(
     status: "complete",
     assertion,
     assertionType: "SlopIdentity",
-    expiresAt: expiresAt.toISOString(),
+    expiresAt: storedAssertion.expiresAt,
   });
 }
 
