@@ -8,7 +8,7 @@ import {
 } from "./verify-identity-schedules.mjs";
 
 const cron = "17 * * * *";
-const valid = { success: true, result: [{ cron }] };
+const valid = { success: true, result: { schedules: [{ cron }] } };
 const options = {
   configuration: { name: "slop-identity", triggers: { crons: [cron] } },
   accountId: "a".repeat(32),
@@ -21,7 +21,7 @@ describe("identity cleanup schedule readback", () => {
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ success: true, result: [] }),
+        json: async () => ({ success: true, result: { schedules: [] } }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -55,8 +55,8 @@ describe("identity cleanup schedule readback", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
   it.each([
-    { success: false, result: [] },
-    { success: true, result: [{ cron: "0 * * * *" }] },
+    { success: false, result: { schedules: [] } },
+    { success: true, result: { schedules: [{ cron: "0 * * * *" }] } },
   ])(
     "never overwrites nonempty drift or an unsuccessful read %#",
     async (body) => {
@@ -78,7 +78,7 @@ describe("identity cleanup schedule readback", () => {
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ success: true, result: [] }),
+        json: async () => ({ success: true, result: { schedules: [] } }),
       })
       .mockRejectedValueOnce(new Error(options.token));
     await expect(
@@ -88,7 +88,7 @@ describe("identity cleanup schedule readback", () => {
   it("rejects a still-missing schedule after a successful write without retrying writes", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, result: [] }),
+      json: async () => ({ success: true, result: { schedules: [] } }),
     });
     await expect(
       verifyIdentitySchedules({ ...options, fetchImpl, restoreMissing: true }),
@@ -102,19 +102,19 @@ describe("identity cleanup schedule readback", () => {
   it("accepts the exact canonical schedule with API metadata", () => {
     expect(() =>
       validateIdentitySchedules(
-        { ...valid, result: [{ cron, created_on: "ignored" }] },
+        { ...valid, result: { schedules: [{ cron, created_on: "ignored" }] } },
         [cron],
       ),
     ).not.toThrow();
   });
   it.each([
     null,
-    { success: false, result: [{ cron }] },
-    { success: true, result: [] },
-    { success: true, result: [{ cron: "18 * * * *" }] },
-    { success: true, result: [{ cron }, { cron }] },
-    { success: true, result: [null] },
-    { success: true, result: { schedules: [{ cron }] } },
+    { success: false, result: { schedules: [{ cron }] } },
+    { success: true, result: { schedules: [] } },
+    { success: true, result: { schedules: [{ cron: "18 * * * *" }] } },
+    { success: true, result: { schedules: [{ cron }, { cron }] } },
+    { success: true, result: { schedules: [null] } },
+    { success: true, result: [{ cron }] },
   ])(
     "rejects missing, changed, extra, or malformed schedules %#",
     (response) => {

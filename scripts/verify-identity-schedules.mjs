@@ -12,9 +12,11 @@ export function validateIdentitySchedules(response, expected) {
   }
   if (
     response?.success !== true ||
-    !Array.isArray(response.result) ||
-    response.result.length !== expected.length ||
-    response.result.some((entry, index) => entry?.cron !== expected[index])
+    !Array.isArray(response.result?.schedules) ||
+    response.result.schedules.length !== expected.length ||
+    response.result.schedules.some(
+      (entry, index) => entry?.cron !== expected[index],
+    )
   ) {
     throw new Error(
       "Identity cleanup schedule differs from canonical configuration",
@@ -42,7 +44,9 @@ export async function verifyIdentitySchedules({
   validateIdentitySchedules(
     {
       success: true,
-      result: configuration.triggers?.crons?.map((cron) => ({ cron })),
+      result: {
+        schedules: configuration.triggers?.crons?.map((cron) => ({ cron })),
+      },
     },
     configuration.triggers?.crons,
   );
@@ -73,8 +77,8 @@ export async function verifyIdentitySchedules({
   if (
     restoreMissing &&
     body?.success === true &&
-    Array.isArray(body.result) &&
-    body.result.length === 0
+    Array.isArray(body.result?.schedules) &&
+    body.result.schedules.length === 0
   ) {
     let restored;
     try {
