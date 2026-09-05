@@ -89,6 +89,8 @@ export function validateProposalFundingTransitions(
     if (proposal.kind !== "reward-allocation") continue;
     if (priorFiles.has(path)) {
       const prior = JSON.parse(priorFiles.get(path));
+      if (prior.capMinor !== proposal.capMinor)
+        throw new TypeError("historical proposal cap cannot change");
       if (
         JSON.stringify(prior.fundingBasis) !==
         JSON.stringify(proposal.fundingBasis)

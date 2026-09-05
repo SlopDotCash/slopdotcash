@@ -365,6 +365,31 @@ describe("public cycle index", () => {
     });
 
     expect(() => assertCycleIndex(index([external]))).not.toThrow();
+    for (const monthlyFields of [
+      { carriedMinor: "2000000" },
+      { carriedMinor: "0" },
+      {
+        fundingBasis: {
+          fundingState: "committed" as const,
+          committedMinor: "2000000",
+          monthlyCapMinor: "2000000",
+        },
+      },
+      {
+        fundingBasis: {
+          fundingState: "pledged" as const,
+          committedMinor: "0",
+          monthlyCapMinor: "0",
+        },
+      },
+      { reviewBudgetCapMinor: "2000000" },
+    ]) {
+      const invalid = structuredClone(external);
+      Object.assign(invalid.reward, monthlyFields);
+      expect(() => assertCycleIndex(index([invalid]))).toThrow(
+        /reward differs from project policy/u,
+      );
+    }
     const dollarLarp = structuredClone(external);
     dollarLarp.reward.currency = "USDC";
     dollarLarp.reward.capMinor = "1";

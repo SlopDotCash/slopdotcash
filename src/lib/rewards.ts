@@ -8,6 +8,7 @@ import {
   type AllocationFundingBasis,
   allocationFundingMinor,
   assertAllocationFundingBasis,
+  LAST_LEGACY_CAP_CYCLE,
 } from "./allocation-funding";
 import { assertExactModelIdentity } from "./model-identity";
 import { findProject, type ProjectId } from "./projects.mjs";
@@ -868,7 +869,9 @@ export function assertRewardAllocationManifest(
     capMinor !==
     (fundingBasis
       ? allocationFundingMinor(fundingBasis).toString()
-      : project.reward.monthlyCapMinor)
+      : cycleId <= LAST_LEGACY_CAP_CYCLE
+        ? capMinor
+        : project.reward.monthlyCapMinor)
   ) {
     throw new TypeError("allocation cap differs from project policy");
   }

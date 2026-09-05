@@ -22,8 +22,10 @@ does not prevent the next snapshot or close and contributes no monetary carry.
 
 The existing July 2026 cap-based proposal is the grandfathered unfunded trial.
 Its original snapshot, score table, suggestions, and review dates remain intact;
-the old suggestions do not become carry without a reviewed allocation. Cycle
-validation retains the historical cap basis through July. From August onward,
+the old suggestions never become carry, even when a reviewed allocation exists.
+Cycle validation uses the cap recorded in the historical artifact through July,
+not the current project cap; the trusted transition gate forbids changing that
+recorded cap. From August onward,
 new cycle artifacts must include their frozen funding basis. The cycle index
 identifies the historical trial as unfunded without rewriting its artifacts.
 

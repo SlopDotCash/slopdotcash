@@ -8,6 +8,7 @@ import {
   type AllocationFundingBasis,
   allocationFundingMinor,
   assertAllocationFundingBasis,
+  LAST_LEGACY_CAP_CYCLE,
 } from "./allocation-funding";
 import { findProject } from "./projects.mjs";
 import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
@@ -739,6 +740,10 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   }
   const isExternal = entry.kind === "external-prize-share";
   const hasExternalMoney =
+    hasFundingBasis ||
+    hasCarry ||
+    hasReviewBudgetCap ||
+    hasRewardLines ||
     normalizedReward.currency !== null ||
     normalizedReward.capMinor !== "0" ||
     normalizedReward.suggestedMinor !== "0" ||
@@ -750,7 +755,9 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     normalizedReward.capMinor !==
       (normalizedReward.fundingBasis
         ? allocationFundingMinor(normalizedReward.fundingBasis).toString()
-        : project.reward.monthlyCapMinor) ||
+        : cycleId <= LAST_LEGACY_CAP_CYCLE
+          ? normalizedReward.capMinor
+          : project.reward.monthlyCapMinor) ||
     normalizedReward.sharePartsPerMillion !== null ||
     BigInt(normalizedReward.feeMinor) !==
       (BigInt(normalizedReward.approvedMinor) *
