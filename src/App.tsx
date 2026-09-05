@@ -26,6 +26,7 @@ import {
 } from "react";
 import {
   allocationFundingMinor,
+  deriveAllocationFundingBasis,
   type PromotionCycle,
   projectPromotionEligible,
 } from "./lib/allocation-funding";
@@ -153,6 +154,12 @@ function immutableProposalTermsUrl(
     parsed.pathname.startsWith(prefix) &&
     parsed.pathname.length > prefix.length
   );
+}
+
+// An async boundary turns an absent clipboard API or synchronous browser error
+// into the same rejected promise as a denied clipboard permission.
+async function copyText(value: string): Promise<void> {
+  await navigator.clipboard.writeText(value);
 }
 
 function boundedText(value: string, minimum: number, maximum: number): boolean {
@@ -1529,7 +1536,7 @@ function AgentPromptBox({ prompt }: { prompt: string }) {
   }, [copy]);
   const copyPrompt = async () => {
     try {
-      await navigator.clipboard.writeText(prompt);
+      await copyText(prompt);
       setCopy("copied");
     } catch {
       // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
@@ -1611,7 +1618,7 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
   const manualCommand = projectInstallCommand(project);
   const copyManualCommand = async () => {
     try {
-      await navigator.clipboard.writeText(manualCommand);
+      await copyText(manualCommand);
       setCopy("manual-copied");
     } catch {
       // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
@@ -1987,7 +1994,7 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
                   <button
                     className="text-button"
                     onClick={() => {
-                      void navigator.clipboard.writeText(route.address).then(
+                      void copyText(route.address).then(
                         () => setCopy({ key, status: "copied" }),
                         () => setCopy({ key, status: "error" }),
                       );
@@ -3163,6 +3170,7 @@ function microUsdcInput(value: string): string {
 }
 
 interface AllocationDraftRow {
+  review?: { amount: string; suggestedMinor: string };
   login: string;
   suggestedMinor: string;
   amount: string;
@@ -3186,8 +3194,23 @@ export function ProjectManagePage({
   const sourceRows: AllocationDraftRow[] = currentRecord
     ? currentRecord.contributors.map((contributor) => ({
         login: contributor.actor.login,
-        suggestedMinor: contributor.suggestedMinor,
-        amount: microUsdcInput(contributor.approvedMinor),
+        suggestedMinor:
+          contributor.lines?.sharedPool.suggestedMinor ??
+          contributor.suggestedMinor,
+        amount: microUsdcInput(
+          contributor.lines?.sharedPool.approvedMinor ??
+            contributor.approvedMinor,
+        ),
+        ...(contributor.lines
+          ? {
+              review: {
+                suggestedMinor: contributor.lines.reviewBudget.suggestedMinor,
+                amount: microUsdcInput(
+                  contributor.lines.reviewBudget.approvedMinor,
+                ),
+              },
+            }
+          : {}),
         reason: "",
       }))
     : (view?.leaders ?? []).map((leader) => ({
@@ -3203,7 +3226,10 @@ export function ProjectManagePage({
   );
   const [rows, setRows] = useState(sourceRows);
   const initialTotal = sourceRows.reduce(
-    (total, row) => total + BigInt(exactUsdc(row.amount) ?? "0"),
+    (total, row) =>
+      total +
+      BigInt(exactUsdc(row.amount) ?? "0") +
+      BigInt(exactUsdc(row.review?.amount ?? "0") ?? "0"),
     0n,
   );
   const [total, setTotal] = useState(microUsdcInput(initialTotal.toString()));
@@ -3216,10 +3242,19 @@ export function ProjectManagePage({
     row.login.toLowerCase().includes(allocationQuery.trim().toLowerCase()),
   );
   const visibleRows = matchingRows.slice(0, 10);
-  const parsedRows = rows.map((row) => ({
-    ...row,
-    approvedMinor: exactUsdc(row.amount),
-  }));
+  const parsedRows = rows.map((row) => {
+    const sharedMinor = exactUsdc(row.amount);
+    const reviewMinor = exactUsdc(row.review?.amount ?? "0");
+    return {
+      ...row,
+      sharedMinor,
+      reviewMinor,
+      approvedMinor:
+        sharedMinor === null || reviewMinor === null
+          ? null
+          : (BigInt(sharedMinor) + BigInt(reviewMinor)).toString(),
+    };
+  });
   const parsedTotal = exactUsdc(total);
   const allocated = parsedRows.reduce(
     (sum, row) => sum + BigInt(row.approvedMinor ?? "0"),
@@ -3228,11 +3263,39 @@ export function ProjectManagePage({
   const changedRowsHaveReasons = parsedRows.every(
     (row) =>
       row.approvedMinor === null ||
-      row.approvedMinor === row.suggestedMinor ||
+      (row.sharedMinor === row.suggestedMinor &&
+        row.reviewMinor === (row.review?.suggestedMinor ?? "0")) ||
       row.reason.trim().length > 0,
   );
+  const sharedPrincipalMinor = currentRecord
+    ? BigInt(currentRecord.reward.capMinor)
+    : project.reward.kind === "monthly-pool" && view
+      ? allocationFundingMinor(
+          deriveAllocationFundingBasis(project, view.cycle.id),
+        )
+      : 0n;
+  const carriedMinor = BigInt(currentRecord?.reward.carriedMinor ?? "0");
+  const reviewPrincipalMinor = currentRecord?.reward.lines
+    ? BigInt(currentRecord.reward.reviewBudgetCapMinor ?? "0")
+    : 0n;
+  const allocationLimitMinor = (
+    sharedPrincipalMinor +
+    carriedMinor +
+    reviewPrincipalMinor
+  ).toString();
+  const sharedAllocated = parsedRows.reduce(
+    (sum, row) => sum + BigInt(row.sharedMinor ?? "0"),
+    0n,
+  );
+  const reviewAllocated = parsedRows.reduce(
+    (sum, row) => sum + BigInt(row.reviewMinor ?? "0"),
+    0n,
+  );
   const validAllocation =
+    sharedAllocated <= sharedPrincipalMinor + carriedMinor &&
+    reviewAllocated <= reviewPrincipalMinor &&
     parsedTotal !== null &&
+    BigInt(parsedTotal) <= BigInt(allocationLimitMinor) &&
     parsedRows.every((row) => row.approvedMinor !== null) &&
     allocated === BigInt(parsedTotal) &&
     changedRowsHaveReasons;
@@ -3253,8 +3316,24 @@ export function ProjectManagePage({
       feeMinor,
       allocations: parsedRows.map((row) => ({
         login: row.login,
-        suggestedMinor: row.suggestedMinor,
+        suggestedMinor: (
+          BigInt(row.suggestedMinor) + BigInt(row.review?.suggestedMinor ?? "0")
+        ).toString(),
         approvedMinor: row.approvedMinor ?? "invalid",
+        ...(row.review
+          ? {
+              lines: {
+                sharedPool: {
+                  suggestedMinor: row.suggestedMinor,
+                  approvedMinor: row.sharedMinor ?? "invalid",
+                },
+                reviewBudget: {
+                  suggestedMinor: row.review.suggestedMinor,
+                  approvedMinor: row.reviewMinor ?? "invalid",
+                },
+              },
+            }
+          : {}),
         reason: row.reason.trim() || null,
       })),
     },
@@ -3264,7 +3343,7 @@ export function ProjectManagePage({
   const projectBrief = `Update ${project.id} through a reviewed Slop PR.\n\nHeadline: ${headline}\nGoal: ${goal}\nAcceptance criteria: ${criteria}\n\nKeep the project manifest, contributor skill, reviewer skill, goals, and criteria synchronized. Any model may contribute, but every run must publish its exact provider, model, and client. Every run must upload a permanent trace whose contents are restricted to Slop operators.`;
   const copy = async (kind: "allocation" | "project", value: string) => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       setCopyStatus({ kind, status: "copied" });
     } catch {
       setCopyStatus({ kind, status: "error" });
@@ -3348,7 +3427,7 @@ export function ProjectManagePage({
                 Edit {rows.length} contributor allocation
                 {rows.length === 1 ? "" : "s"}
               </summary>
-              {rows.length > 20 ? (
+              {rows.length > 10 ? (
                 <label className="allocation-search">
                   Find contributor
                   <input
@@ -3369,9 +3448,9 @@ export function ProjectManagePage({
                     <fieldset key={row.login}>
                       <legend>{row.login}</legend>
                       <label>
-                        Amount, USDC
+                        {row.review ? "Shared reward, USDC" : "Amount, USDC"}
                         <input
-                          aria-label={`${row.login} amount in USDC`}
+                          aria-label={`${row.login} ${row.review ? "shared reward" : "amount"} in USDC`}
                           inputMode="decimal"
                           min="0"
                           step="0.000001"
@@ -3391,6 +3470,35 @@ export function ProjectManagePage({
                           }
                         />
                       </label>
+                      {row.review ? (
+                        <label>
+                          Review reward, USDC
+                          <input
+                            aria-label={`${row.login} review reward in USDC`}
+                            inputMode="decimal"
+                            min="0"
+                            step="0.000001"
+                            type="number"
+                            value={row.review.amount}
+                            onChange={(event) =>
+                              setRows((current) =>
+                                current.map((candidate) =>
+                                  candidate.login === row.login &&
+                                  candidate.review
+                                    ? {
+                                        ...candidate,
+                                        review: {
+                                          ...candidate.review,
+                                          amount: event.target.value,
+                                        },
+                                      }
+                                    : candidate,
+                                ),
+                              )
+                            }
+                          />
+                        </label>
+                      ) : null}
                       <label>
                         Reason
                         <input
@@ -3433,8 +3541,12 @@ export function ProjectManagePage({
             </div>
             {!validAllocation && rows.length > 0 ? (
               <p className="form-error" role="alert">
-                Allocations must equal the total. Add a reason for every changed
-                amount.
+                Allocations must equal the total and stay within the{" "}
+                {formatMicroUsdc(allocationLimitMinor)} draft limit.
+                {currentRecord?.reward.lines
+                  ? ` Shared rewards cannot exceed ${formatMicroUsdc((sharedPrincipalMinor + carriedMinor).toString())}; review rewards cannot exceed ${formatMicroUsdc(reviewPrincipalMinor.toString())}.`
+                  : ""}{" "}
+                Add a reason for every changed amount.
               </p>
             ) : null}
             <button
@@ -4180,8 +4292,7 @@ ${manifestText}`;
               when payouts settle
             </p>
             <p>
-              Draft only · Signed in as: not yet · Project steward:{" "}
-              {stewardName || "not yet verified"}
+              Draft only · Project steward: {stewardName || "not yet verified"}
             </p>
             <p>
               Payment does not transfer IP. Material changes require a new
@@ -4197,7 +4308,7 @@ ${manifestText}`;
             className="text-button"
             disabled={!valid}
             onClick={() =>
-              void navigator.clipboard.writeText(agentBrief).then(
+              void copyText(agentBrief).then(
                 () => setCopyStatus({ kind: "brief", status: "copied" }),
                 () => setCopyStatus({ kind: "brief", status: "error" }),
               )
@@ -4216,7 +4327,7 @@ ${manifestText}`;
             <span>projects/{slug}/project.json</span>
             <button
               onClick={() =>
-                void navigator.clipboard.writeText(manifestText).then(
+                void copyText(manifestText).then(
                   () => setCopyStatus({ kind: "json", status: "copied" }),
                   () => setCopyStatus({ kind: "json", status: "error" }),
                 )
@@ -4537,7 +4648,7 @@ export function App() {
     const project = findProject(route.projectId ?? "");
     content = project ? (
       state.status === "ready" ? (
-        <ProjectManagePage project={project} state={state} />
+        <ProjectManagePage key={project.id} project={project} state={state} />
       ) : (
         <main className="shell route-main">
           <DataNotice retry={retry} state={state} />
