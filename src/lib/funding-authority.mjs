@@ -204,6 +204,24 @@ export async function verifyProjectFundingAuthority(
       "upstream authority bytes do not match the pinned digest",
     );
   }
+  if (ref.object.sha !== proof.commitSha) {
+    const currentFile = await githubJson(
+      `${prefix}/contents/.github/slop-project.json?ref=${ref.object.sha}`,
+      fetchImpl,
+    );
+    if (
+      currentFile.type !== "file" ||
+      currentFile.path !== ".github/slop-project.json" ||
+      currentFile.encoding !== "base64" ||
+      currentFile.size !== source.byteLength ||
+      typeof currentFile.content !== "string" ||
+      !Buffer.from(currentFile.content, "base64").equals(source)
+    ) {
+      throw new TypeError(
+        "pinned authority is no longer current on the upstream integration branch",
+      );
+    }
+  }
   const authority = assertProjectFundingAuthority(
     JSON.parse(source.toString("utf8")),
     project,

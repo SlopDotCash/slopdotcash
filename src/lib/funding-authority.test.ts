@@ -71,6 +71,13 @@ function fixture(addresses = [ADDRESS]) {
         content: source.toString("base64"),
       },
   };
+  responses[
+    `/repos/elizaOS/eliza/contents/.github/slop-project.json?ref=${HEAD}`
+  ] = structuredClone(
+    responses[
+      `/repos/elizaOS/eliza/contents/.github/slop-project.json?ref=${proof.commitSha}`
+    ],
+  );
   const fetchImpl = vi.fn<typeof fetch>(async (input, options) => {
     const url = new URL(String(input));
     expect(url.origin).toBe("https://api.github.com");
@@ -113,7 +120,7 @@ describe("receiving-address upstream authority", () => {
       new Map([[project.id, project]]),
       { fetchImpl },
     );
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
   });
 
   it("verifies rotations and replacement timestamps without rewriting their values", async () => {
@@ -197,6 +204,18 @@ describe("receiving-address upstream authority", () => {
     await expect(
       verifyProjectFundingAuthority(project, { fetchImpl }),
     ).rejects.toThrow(/could not be verified/u);
+  });
+
+  it("rejects an old address authority that has been withdrawn upstream", async () => {
+    const { project, responses, fetchImpl } = fixture();
+    const currentPath = `/repos/elizaOS/eliza/contents/.github/slop-project.json?ref=${HEAD}`;
+    responses[currentPath] = {
+      ...(responses[currentPath] as Record<string, unknown>),
+      content: Buffer.from("withdrawn").toString("base64"),
+    };
+    await expect(
+      verifyProjectFundingAuthority(project, { fetchImpl }),
+    ).rejects.toThrow(/no longer current/u);
   });
 
   it("rejects an oversized authority response before accepting its contents", async () => {
