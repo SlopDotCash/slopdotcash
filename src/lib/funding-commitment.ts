@@ -50,7 +50,7 @@ export interface ProjectCommitmentRecord {
         vault: string;
         vaultIndex: number;
       }
-    | { contract: string; streamId: string };
+    | { contract: string; recipient: string; streamId: string };
   transactionId: string;
   amountMinor: string;
   observedAt: string;
@@ -189,7 +189,8 @@ function matchesInstrument(
   }
   return (
     identity.contract === candidate.contract &&
-    identity.streamId === candidate.streamId
+    identity.streamId === candidate.streamId &&
+    identity.recipient === candidate.recipient
   );
 }
 
@@ -266,7 +267,7 @@ export function assertProjectCommitmentRecord(
     identity,
     network === "solana"
       ? ["funderMember", "multisig", "stewardMember", "vault", "vaultIndex"]
-      : ["contract", "streamId"],
+      : ["contract", "recipient", "streamId"],
     "commitment record instrument",
   );
   if (
@@ -378,7 +379,7 @@ function instrumentIdentityKey(record: ProjectCommitmentRecord): string {
   const identity = record.instrument as Record<string, unknown>;
   return record.network === "solana"
     ? `${identity.multisig}:${identity.vaultIndex}:${identity.vault}:${identity.funderMember}:${identity.stewardMember}`
-    : `${identity.contract}:${identity.streamId}`;
+    : `${identity.contract}:${identity.streamId}:${identity.recipient}`;
 }
 
 export function assertProjectCommitmentLedger(

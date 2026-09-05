@@ -19,6 +19,7 @@ const FUNDER_MEMBER = "Stake11111111111111111111111111111111111111";
 const STEWARD_MEMBER = "SysvarRent111111111111111111111111111111111";
 const DEPOSIT_SIGNATURE = "3".repeat(88);
 const RELEASE_SIGNATURE = "4".repeat(88);
+const SABLIER_RECIPIENT = `0x${"a".repeat(40)}`;
 
 function squadsInstrument(overrides: Record<string, unknown> = {}) {
   return {
@@ -44,6 +45,7 @@ function sablierInstrument(overrides: Record<string, unknown> = {}) {
     network: "base",
     asset: "USDC",
     contract: SABLIER_LOCKUP_V4_CONTRACTS.base,
+    recipient: SABLIER_RECIPIENT,
     streamId: "421",
     deadline: "2026-12-01T00:00:00.000Z",
     effectiveAt: "2026-08-01T00:00:00.000Z",
@@ -124,6 +126,11 @@ describe("funding commitment instruments", () => {
     ).toThrow(/streamId is invalid/u);
     expect(() =>
       assertFundingCommitments([
+        sablierInstrument({ recipient: `0x${"0".repeat(40)}` }),
+      ]),
+    ).toThrow(/recipient is invalid/u);
+    expect(() =>
+      assertFundingCommitments([
         sablierInstrument({
           network: "ethereum",
           contract: SABLIER_LOCKUP_V4_CONTRACTS.base,
@@ -142,6 +149,12 @@ describe("funding commitment instruments", () => {
     ).toThrow(/at most 16/u);
     expect(() =>
       assertFundingCommitments([sablierInstrument(), sablierInstrument()]),
+    ).toThrow(/duplicate instrument/u);
+    expect(() =>
+      assertFundingCommitments([
+        sablierInstrument(),
+        sablierInstrument({ recipient: `0x${"b".repeat(40)}` }),
+      ]),
     ).toThrow(/duplicate instrument/u);
     expect(() =>
       assertFundingCommitments([
@@ -250,6 +263,39 @@ describe("project commitment records", () => {
     expect(() =>
       assertProjectCommitmentRecord(record({ event: "sweep" }), instruments),
     ).toThrow(/event is invalid/u);
+
+    const sablierTransaction = `0x${"a".repeat(64)}`;
+    const sablierRecord = record({
+      network: "base",
+      instrument: {
+        contract: SABLIER_LOCKUP_V4_CONTRACTS.base,
+        recipient: SABLIER_RECIPIENT,
+        streamId: "421",
+      },
+      transactionId: sablierTransaction,
+      finality: { kind: "confirmations", confirmations: 12 },
+      verifier: {
+        version: "commitment-sablier-v1",
+        checkedAt: "2026-08-02T01:00:00.000Z",
+        evidenceUrl: `https://basescan.org/tx/${sablierTransaction}`,
+        reason: null,
+      },
+    });
+    expect(
+      assertProjectCommitmentRecord(sablierRecord, instruments).instrument,
+    ).toMatchObject({ recipient: SABLIER_RECIPIENT });
+    expect(() =>
+      assertProjectCommitmentRecord(
+        {
+          ...sablierRecord,
+          instrument: {
+            ...sablierRecord.instrument,
+            recipient: `0x${"b".repeat(40)}`,
+          },
+        },
+        instruments,
+      ),
+    ).toThrow(/not active/u);
   });
 
   it("requires independent finalized evidence before verification", () => {
