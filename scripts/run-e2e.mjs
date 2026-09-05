@@ -1,6 +1,6 @@
 /**
  * Runs the complete browser matrix against the stable built-site preview, then
- * gives the one redirect/header/artifact contract a focused Pages-emulator run.
+ * checks redirects, artifacts, and contributor API access with Pages headers.
  * Wrangler can terminate during long browser sessions on constrained hosted
  * runners, while that focused check still exercises the behavior only Pages
  * supplies instead of replacing it with a generic static-server assertion.
@@ -15,6 +15,11 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const playwright = join(packageRoot, "node_modules", ".bin", "playwright");
 const artifactContract =
   "serves byte-consistent install and read-only artifacts for every project";
+
+const pagesContracts = [
+  artifactContract,
+  "renders contributor and cycle records from validated public data",
+].join("|");
 
 function run(command, args, env = childEnvironment()) {
   const result = spawnSync(command, args, {
@@ -45,7 +50,7 @@ run(
     "test",
     "--project=wide-desktop-chromium",
     "--grep",
-    artifactContract,
+    pagesContracts,
     ...process.argv.slice(2),
   ],
   {

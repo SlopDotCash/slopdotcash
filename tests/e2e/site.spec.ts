@@ -626,6 +626,19 @@ test("serves byte-consistent install and read-only artifacts for every project",
   baseURL,
   request,
 }) => {
+  const documentResponse = await request.get("/");
+  const policy = documentResponse.headers()["content-security-policy"];
+  expect(policy).toBeDefined();
+  const connectSources = policy
+    .split(";")
+    .map((directive) => directive.trim().split(/\s+/u))
+    .find(([name]) => name === "connect-src");
+  expect(connectSources).toEqual([
+    "connect-src",
+    "'self'",
+    "https://api.slop.cash",
+  ]);
+
   const privateApiResponse = await request.post("/api/v1/runs", {
     data: {},
   });
