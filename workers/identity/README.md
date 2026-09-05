@@ -161,6 +161,17 @@ the protected workflow's `wrangler versions upload` followed by
 requesting zone-level Workers Routes authority or rewriting the established
 domain.
 
+The protected release verifies the live cleanup schedule against this Worker's
+canonical configuration before code/database deployment and after version activation.
+If the live schedule list is entirely empty, the release restores only the canonical
+cleanup schedule and independently reads it back. Additional or changed nonempty
+triggers fail closed without modification. Version activation itself does not
+repair trigger drift. The repair never modifies domains or broadens credentials;
+claim the deployment lever on the tracking issue before other trigger changes. Never enable
+invocation logs or publish OAuth capabilities to diagnose cleanup. A matching
+schedule is configuration evidence only; separately verify a scheduled execution
+removes expired metadata while preserving live flows and permanent trace objects.
+
 Before enabling clients, verify the custom domain's DNS and TLS separately and
 prove rate limiting, assertion replay, and CSRF rejection in production. The
 Workers Rate Limiting bindings are the fast approximate edge shield at a

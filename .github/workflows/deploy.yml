@@ -422,6 +422,9 @@ jobs:
             exit 1
           fi
 
+          # Restore only absent cleanup triggers; reject nonempty provisioning drift.
+          bun scripts/verify-identity-schedules.mjs --restore-missing
+
           identity_secrets="$RUNNER_TEMP/slop-identity-secrets.json"
           ./node_modules/.bin/wrangler secret list \
             --config workers/identity/wrangler.toml > "$identity_secrets"
@@ -560,6 +563,8 @@ jobs:
             throw new TypeError("identity Worker deployment is not bound to the tested commit");
           }
           NODE
+
+          bun scripts/verify-identity-schedules.mjs
 
           identity_rate_probe_started_at="$(date +%s)"
           if ! [[ "$identity_rate_probe_started_at" =~ ^[0-9]{10}$ ]]; then
