@@ -53,6 +53,7 @@
     "react-dom": "19.2.7"
   },
   "devDependencies": {
+    "@noble/curves": "2.4.0",
     "@axe-core/playwright": "^4.11.1",
     "@biomejs/biome": "2.5.6",
     "@playwright/test": "^1.61.0",
