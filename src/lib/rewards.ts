@@ -64,6 +64,21 @@ export type WalletProof =
   | GithubIssueWalletProof
   | SlopDatabaseWalletProof;
 
+/** Public evidence from a contributor-signed GitHub commit, never hold authority. */
+export interface UnsafeDestinationReport {
+  kind: "unsafe-destination";
+  projectId: string;
+  cycleId: string;
+  intentId: string;
+  suggestedMinor: string;
+  carryMinor: string;
+  reportedAt: string;
+  verifiedAt: string;
+  wallet: SlopDatabaseWalletProof;
+  sourceRepository: string;
+  sourceCommit: string;
+}
+
 export interface RewardAllocation {
   intentId: string;
   actor: { id: string; login: string };
@@ -73,6 +88,8 @@ export interface RewardAllocation {
   approvedMinor: string;
   state: AllocationState;
   wallet: WalletProof | null;
+  unsafeDestinationReports?: UnsafeDestinationReport[];
+  hold?: { kind: "unsafe-destination"; sourceCommit: string };
   evidenceEventIds: string[];
   adjustmentReason: string | null;
   relatedParty: boolean;
@@ -519,6 +536,128 @@ function assertWallet(
   };
 }
 
+export function sameWalletObservation(
+  left: WalletProof,
+  right: SlopDatabaseWalletProof,
+): boolean {
+  return (
+    "sourceClaimId" in left &&
+    left.sourceClaimId === right.sourceClaimId &&
+    left.sourceActorId === right.sourceActorId &&
+    left.sourceRecordSha256 === right.sourceRecordSha256 &&
+    left.address === right.address &&
+    left.observedAt === right.observedAt &&
+    left.sourceUrl === right.sourceUrl
+  );
+}
+
+export function isSafeSuccessorWallet(
+  wallet: WalletProof,
+  report: UnsafeDestinationReport,
+): boolean {
+  return (
+    "sourceClaimId" in wallet &&
+    wallet.sourceActorId === report.wallet.sourceActorId &&
+    wallet.sourceClaimId !== report.wallet.sourceClaimId &&
+    wallet.address !== report.wallet.address &&
+    Date.parse(wallet.observedAt) > Date.parse(report.verifiedAt)
+  );
+}
+
+export function assertUnsafeDestinationReport(
+  value: unknown,
+  actor: { id: string; login: string },
+  path = "unsafe destination report",
+): UnsafeDestinationReport {
+  const report = record(value, path);
+  exactKeys(
+    report,
+    [
+      "kind",
+      "projectId",
+      "cycleId",
+      "intentId",
+      "suggestedMinor",
+      "carryMinor",
+      "reportedAt",
+      "verifiedAt",
+      "wallet",
+      "sourceRepository",
+      "sourceCommit",
+    ],
+    path,
+  );
+  if (report.kind !== "unsafe-destination")
+    throw new TypeError(`${path}.kind is invalid`);
+  const wallet = assertWallet(report.wallet, `${path}.wallet`, actor);
+  if (!wallet || !("sourceClaimId" in wallet))
+    throw new TypeError(`${path} requires an actor-bound Slop wallet claim`);
+  const reportedAt = iso(report.reportedAt, `${path}.reportedAt`);
+  const verifiedAt = iso(report.verifiedAt, `${path}.verifiedAt`);
+  if (
+    Date.parse(reportedAt) < Date.parse(wallet.observedAt) ||
+    Date.parse(verifiedAt) < Date.parse(reportedAt)
+  ) {
+    throw new TypeError(`${path} has impossible report timestamps`);
+  }
+  const suggestedMinor = minor(report.suggestedMinor, `${path}.suggestedMinor`);
+  const carryMinor = minor(report.carryMinor, `${path}.carryMinor`);
+  if (BigInt(carryMinor) > BigInt(suggestedMinor)) {
+    throw new TypeError(`${path} carry exceeds the signed suggested amount`);
+  }
+  return {
+    kind: "unsafe-destination",
+    projectId: text(report.projectId, `${path}.projectId`, {
+      max: 128,
+      pattern: /^[a-z0-9][a-z0-9-]*$/u,
+    }),
+    cycleId: text(report.cycleId, `${path}.cycleId`, {
+      pattern: /^\d{4}-(?:0[1-9]|1[0-2])$/u,
+    }),
+    intentId: text(report.intentId, `${path}.intentId`, {
+      max: 160,
+      pattern: /^pay_[a-z0-9][a-z0-9_-]+$/u,
+    }),
+    suggestedMinor,
+    carryMinor,
+    reportedAt,
+    verifiedAt,
+    wallet,
+    sourceRepository: text(
+      report.sourceRepository,
+      `${path}.sourceRepository`,
+      { max: 200, pattern: /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/u },
+    ),
+    sourceCommit: text(report.sourceCommit, `${path}.sourceCommit`, {
+      pattern: /^[0-9a-f]{40}$/u,
+    }),
+  };
+}
+
+/** Exact signed commit message. It discloses only the report's public wallet evidence. */
+export function unsafeDestinationReportMessage(
+  report: Pick<
+    UnsafeDestinationReport,
+    | "projectId"
+    | "cycleId"
+    | "intentId"
+    | "suggestedMinor"
+    | "carryMinor"
+    | "reportedAt"
+    | "wallet"
+  >,
+): string {
+  return `slop-unsafe-destination:v1\n${JSON.stringify({
+    projectId: report.projectId,
+    cycleId: report.cycleId,
+    intentId: report.intentId,
+    suggestedMinor: report.suggestedMinor,
+    carryMinor: report.carryMinor,
+    reportedAt: report.reportedAt,
+    wallet: report.wallet,
+  })}`;
+}
+
 function assertAllocation(value: unknown, index: number): RewardAllocation {
   const path = `allocations[${index}]`;
   const allocation = record(value, path);
@@ -540,6 +679,10 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
       "wallet",
       ...(hasAccrual ? ["accruedMinor"] : []),
       ...(hasLines ? ["lines"] : []),
+      ...("unsafeDestinationReports" in allocation
+        ? ["unsafeDestinationReports"]
+        : []),
+      ...("hold" in allocation ? ["hold"] : []),
     ],
     path,
   );
@@ -685,6 +828,76 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
   }
   const actor = assertActor(allocation.actor, `${path}.actor`);
   const wallet = assertWallet(allocation.wallet, `${path}.wallet`, actor);
+  const unsafeDestinationReports =
+    "unsafeDestinationReports" in allocation
+      ? array(
+          allocation.unsafeDestinationReports,
+          `${path}.unsafeDestinationReports`,
+        ).map((value, index) =>
+          assertUnsafeDestinationReport(
+            value,
+            actor,
+            `${path}.unsafeDestinationReports[${index}]`,
+          ),
+        )
+      : undefined;
+  if (
+    unsafeDestinationReports &&
+    (unsafeDestinationReports.length === 0 ||
+      unsafeDestinationReports.length > 32)
+  ) {
+    throw new TypeError(
+      `${path} unsafe destination history must contain 1 to 32 reports`,
+    );
+  }
+  unique(
+    unsafeDestinationReports?.map((report) => report.sourceCommit) ?? [],
+    `${path} unsafe destination report commits`,
+  );
+  if (
+    unsafeDestinationReports &&
+    accruedMinor !== undefined &&
+    accruedMinor !== suggestedMinor
+  ) {
+    throw new TypeError(
+      `${path} unsafe destination carry must equal its reviewed suggested amount`,
+    );
+  }
+  let hold: RewardAllocation["hold"];
+  if ("hold" in allocation) {
+    const rawHold = record(allocation.hold, `${path}.hold`);
+    exactKeys(rawHold, ["kind", "sourceCommit"], `${path}.hold`);
+    const report = unsafeDestinationReports?.find(
+      (candidate) => candidate.sourceCommit === rawHold.sourceCommit,
+    );
+    if (
+      rawHold.kind !== "unsafe-destination" ||
+      state !== "held" ||
+      !report ||
+      !wallet ||
+      !sameWalletObservation(wallet, report.wallet) ||
+      report.suggestedMinor !== suggestedMinor ||
+      report.carryMinor !==
+        (lines?.sharedPool.suggestedMinor ?? accruedMinor ?? suggestedMinor) ||
+      !adjustmentReason
+    ) {
+      throw new TypeError(
+        `${path} unsafe-destination hold requires its original wallet, report, and maintainer reason`,
+      );
+    }
+    hold = { kind: "unsafe-destination", sourceCommit: report.sourceCommit };
+  }
+  if (
+    wallet &&
+    !hold &&
+    unsafeDestinationReports?.some(
+      (report) => !isSafeSuccessorWallet(wallet, report),
+    )
+  ) {
+    throw new TypeError(
+      `${path} wallet is not a safe successor to every reported destination`,
+    );
+  }
   if (state === "proposed" && wallet === null) {
     throw new TypeError(`${path} proposed payment needs a wallet observation`);
   }
@@ -730,6 +943,8 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
     approvedMinor,
     state,
     wallet,
+    ...(unsafeDestinationReports ? { unsafeDestinationReports } : {}),
+    ...(hold ? { hold } : {}),
     evidenceEventIds: assertEvidenceIds(
       allocation.evidenceEventIds,
       `${path}.evidenceEventIds`,
@@ -908,6 +1123,40 @@ export function assertRewardAllocationManifest(
     "allocation actor ids",
   );
   for (const allocation of allocations) {
+    for (const report of allocation.unsafeDestinationReports ?? []) {
+      if (
+        report.cycleId === cycleId &&
+        (allocation.state !== "held" ||
+          allocation.approvedMinor !== "0" ||
+          !allocation.wallet ||
+          !sameWalletObservation(allocation.wallet, report.wallet) ||
+          allocation.hold?.kind !== "unsafe-destination" ||
+          allocation.hold.sourceCommit !== report.sourceCommit)
+      ) {
+        throw new TypeError(
+          "current-cycle unsafe destination report must retain its original held row",
+        );
+      }
+      if (
+        report.projectId !== manifest.projectId ||
+        report.cycleId > cycleId ||
+        Date.parse(report.verifiedAt) > Date.parse(endsAt) ||
+        (report.cycleId === cycleId &&
+          (report.intentId !== allocation.intentId ||
+            report.suggestedMinor !== allocation.suggestedMinor ||
+            report.carryMinor !==
+              (allocation.lines?.sharedPool.suggestedMinor ??
+                allocation.accruedMinor ??
+                allocation.suggestedMinor) ||
+            Date.parse(report.reportedAt) < Date.parse(generatedAt))) ||
+        (report.cycleId < cycleId &&
+          Date.parse(report.verifiedAt) > Date.parse(generatedAt))
+      ) {
+        throw new TypeError(
+          "unsafe destination report is outside its contributor cycle review",
+        );
+      }
+    }
     // Wallet cut-off: a wallet observed after this proposal was generated
     // applies to the next cycle. It never modifies the current proposal or
     // restarts its review; the row stays unclaimed and carries instead.

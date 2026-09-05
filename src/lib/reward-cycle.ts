@@ -20,9 +20,11 @@ import {
   assertRewardAllocationManifest,
   type ExternalContributionShareManifest,
   feeForPrincipal,
+  isSafeSuccessorWallet,
   MINIMUM_TRANSFER_MINOR,
   REVIEW_WINDOW_DAYS,
   type RewardAllocationManifest,
+  type UnsafeDestinationReport,
   type WalletProof,
 } from "./rewards";
 
@@ -43,6 +45,23 @@ export interface CreateRewardCycleProposalInput {
   fundingBasis?: AllocationFundingBasis;
   /** Reconstruction only: immutable trial records predate instrument binding. */
   legacyCapMinor?: string;
+  priorUnsafeDestinationReports?: ReadonlyMap<
+    string,
+    UnsafeDestinationReport[]
+  >;
+}
+
+function resolvedWallet(
+  input: CreateRewardCycleProposalInput,
+  actorId: string,
+): WalletProof | null {
+  const wallet = input.wallets?.get(actorId) ?? null;
+  return wallet &&
+    (input.priorUnsafeDestinationReports?.get(actorId) ?? []).every((report) =>
+      isSafeSuccessorWallet(wallet, report),
+    )
+    ? wallet
+    : null;
 }
 
 export function allocateReviewBudgetMinor(
@@ -334,7 +353,7 @@ export function createRewardCycleProposal(
     sourceSnapshotSha256: input.sourceSnapshotSha256,
     allocations: view.leaders
       .map((leader, index) => {
-        const wallet = input.wallets?.get(leader.actor.id) ?? null;
+        const wallet = resolvedWallet(input, leader.actor.id);
         const sharedPoolMinor =
           BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
           BigInt(leader.projectedMinor ?? "0");
@@ -353,6 +372,12 @@ export function createRewardCycleProposal(
               : "proposed"
             : "unclaimed",
           wallet,
+          ...(input.priorUnsafeDestinationReports?.has(leader.actor.id)
+            ? {
+                unsafeDestinationReports:
+                  input.priorUnsafeDestinationReports.get(leader.actor.id),
+              }
+            : {}),
           evidenceEventIds: leader.evidenceEventIds,
           adjustmentReason: null,
           relatedParty:
@@ -385,7 +410,7 @@ export function createRewardCycleProposal(
               `carried accrual for ${actorId} has no prior login; pass priorActorLogins from the prior manifest`,
             );
           }
-          const wallet = input.wallets?.get(actorId) ?? null;
+          const wallet = resolvedWallet(input, actorId);
           const index = view.leaders.length + offset;
           return {
             intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(actorId)}`,
@@ -400,6 +425,12 @@ export function createRewardCycleProposal(
                 : ("proposed" as const)
               : ("unclaimed" as const),
             wallet,
+            ...(input.priorUnsafeDestinationReports?.has(actorId)
+              ? {
+                  unsafeDestinationReports:
+                    input.priorUnsafeDestinationReports.get(actorId),
+                }
+              : {}),
             evidenceEventIds: [],
             adjustmentReason: null,
             relatedParty: input.relatedPartyActorIds?.has(actorId) ?? false,

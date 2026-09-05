@@ -139,7 +139,7 @@ async function jsonFile(
   };
 }
 
-async function verifyProposalAgainstSnapshot(
+export async function verifyProposalAgainstSnapshot(
   proposal: RewardAllocationManifest,
   snapshot: LeaderboardSnapshot,
   snapshotDigest: string,
@@ -166,6 +166,7 @@ async function verifyProposalAgainstSnapshot(
     sourceSnapshotSha256: snapshotDigest,
     priorAccruedMinor: priorAccrual.accruedMinor,
     priorActorLogins: priorAccrual.actorLogins,
+    priorUnsafeDestinationReports: priorAccrual.unsafeDestinationReports,
   });
   if (baseline.kind !== "reward-allocation") {
     throw new TypeError("Monthly proposal regenerated as an external share");
@@ -184,6 +185,13 @@ async function verifyProposalAgainstSnapshot(
       allocation.actor.login !== expected.actor.login ||
       allocation.score !== expected.score ||
       allocation.suggestedMinor !== expected.suggestedMinor ||
+      allocation.accruedMinor !== expected.accruedMinor ||
+      (expected.unsafeDestinationReports ?? []).some(
+        (report) =>
+          !(allocation.unsafeDestinationReports ?? []).some(
+            (candidate) => canonical(candidate) === canonical(report),
+          ),
+      ) ||
       canonical(allocation.lines) !== canonical(expected.lines) ||
       canonical(allocation.evidenceEventIds) !==
         canonical(expected.evidenceEventIds)
@@ -199,6 +207,7 @@ async function verifyProposalAgainstSnapshot(
     proposal.contributionWindow.from !== baseline.contributionWindow.from ||
     proposal.contributionWindow.to !== baseline.contributionWindow.to ||
     proposal.capMinor !== baseline.capMinor ||
+    proposal.carriedMinor !== baseline.carriedMinor ||
     canonical(proposal.rewardLines) !== canonical(baseline.rewardLines) ||
     proposal.totals.suggestedMinor !== baseline.totals.suggestedMinor
   ) {

@@ -160,6 +160,18 @@ describe("public cycle index", () => {
     expect(() => assertCycleIndex(value)).not.toThrow();
   });
 
+  it("publishes held review rows without granting approval or payment", () => {
+    const held = entry();
+    held.contributors[0].state = "held";
+    expect(() => assertCycleIndex(index([held]))).not.toThrow();
+    for (const field of ["approvedMinor", "paidMinor"] as const) {
+      const invalid = structuredClone(held);
+      invalid.reward[field] = "1";
+      invalid.contributors[0][field] = "1";
+      expect(() => assertCycleIndex(index([invalid]))).toThrow();
+    }
+  });
+
   it("publishes additive review-budget money as reconciled line items", () => {
     const additive = entry();
     additive.reward.reviewBudgetCapMinor = "500000000";

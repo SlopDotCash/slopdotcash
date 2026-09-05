@@ -856,7 +856,9 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       normalizedReward.paidMinor !== "0" ||
       contributors.some(
         (contributor) =>
-          contributor.state !== "proposed" && contributor.state !== "unclaimed",
+          contributor.state !== "proposed" &&
+          contributor.state !== "unclaimed" &&
+          contributor.state !== "held",
       ));
   const paymentReadyStateInvalid =
     state === "payment-ready" &&
