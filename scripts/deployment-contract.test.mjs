@@ -368,7 +368,7 @@ describe("slop.cash deployment contract", () => {
     );
     expect(evidenceRecorder).not.toContain("env: process.env");
     expect(e2eRunner).toContain('"--grep-invert", artifactContract');
-    expect(e2eRunner).toContain('"--grep",\n    artifactContract');
+    expect(e2eRunner).toContain('"--grep",\n    pagesContracts');
     expect(qualityJob).toContain("run: bun run test:e2e");
     expect(qualityJob).toContain(
       "timeout --signal=TERM 10m ./node_modules/.bin/playwright install --with-deps chromium",
