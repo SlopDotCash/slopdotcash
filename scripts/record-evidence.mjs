@@ -536,8 +536,9 @@ try {
       timeout: 20_000,
     });
     await page
-      .locator(".hero-action")
+      .locator(".hero-typewriter:visible, .hero-mobile-action:visible")
       .filter({ hasText: /^SHIPPING OPEN SOURCE\.$/u })
+      .first()
       .waitFor({ state: "visible", timeout: 10_000 });
     await page.locator("#projects").waitFor({ state: "visible" });
     await page
