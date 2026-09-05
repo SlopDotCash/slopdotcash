@@ -7,8 +7,13 @@ import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import {
   type AllocationState,
   assertRewardAllocationManifest,
+  unsafeDestinationReportMessage,
 } from "../src/lib/rewards";
 import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
+import {
+  applyUnsafeDestinationHold,
+  verifyUnsafeDestinationReport,
+} from "./unsafe-destination-hold";
 
 vi.mock("../src/lib/projects.mjs", async (importOriginal) => {
   const original =
@@ -54,6 +59,7 @@ function proposal(state: AllocationState) {
     cycleId: "2026-07",
     intentId: "pay_eliza_2026_07_fixture",
     suggestedMinor: "1500000",
+    carryMinor: "1000000",
     reportedAt: "2026-08-03T00:00:00.000Z",
     verifiedAt: "2026-08-03T01:00:00.000Z",
     wallet,
@@ -139,6 +145,73 @@ function proposal(state: AllocationState) {
 }
 
 describe("review lines never enter carry", () => {
+  it("rejects repartitioned carry with an unchanged aggregate at every boundary", async () => {
+    const original = proposal("held");
+    const report = original.allocations[0].unsafeDestinationReports?.[0];
+    if (!report) throw new Error("missing report fixture");
+    const repartitioned = structuredClone(original);
+    const lines = repartitioned.allocations[0].lines;
+    if (!lines || !repartitioned.rewardLines)
+      throw new Error("missing line fixture");
+    lines.sharedPool.suggestedMinor = "1250000";
+    lines.reviewBudget.suggestedMinor = "250000";
+    repartitioned.rewardLines.sharedPool.suggestedMinor = "1250000";
+    repartitioned.rewardLines.reviewBudget.suggestedMinor = "250000";
+    expect(repartitioned.allocations[0].suggestedMinor).toBe(
+      original.allocations[0].suggestedMinor,
+    );
+    expect(() => assertRewardAllocationManifest(repartitioned)).toThrow(
+      /unsafe-destination hold/u,
+    );
+    expect(() =>
+      finalizeRewardAllocation(
+        repartitioned,
+        original.review.endsAt,
+        Date.parse(original.review.endsAt),
+      ),
+    ).toThrow(/unsafe-destination hold/u);
+    const root = await mkdtemp(join(tmpdir(), "slop-repartitioned-carry-"));
+    const directory = join(root, "eliza", "2026-07");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, "proposal.json"),
+      JSON.stringify(repartitioned),
+    );
+    await expect(
+      loadPriorCycleAccrual({
+        asOf: "2026-09-05T00:00:00.000Z",
+        cycleId: "2026-08",
+        cyclesRoot: root,
+        projectId: "eliza",
+      }),
+    ).rejects.toThrow(/not a valid reward allocation/u);
+    const signature = {
+      isValid: true,
+      state: "VALID",
+      signer: { id: "U_fixture", databaseId: 42 },
+    };
+    const changedReport = { ...report, carryMinor: "1250000" };
+    await expect(
+      verifyUnsafeDestinationReport(changedReport, async () => ({
+        oid: report.sourceCommit,
+        signature,
+        message: unsafeDestinationReportMessage(report),
+      })),
+    ).rejects.toThrow(/does not bind/u);
+    await expect(
+      applyUnsafeDestinationHold({
+        proposal: original,
+        report: changedReport,
+        reason: "Maintainer reviewed the unsafe destination report.",
+        now: report.verifiedAt,
+        readCommit: async () => ({
+          oid: report.sourceCommit,
+          signature,
+          message: unsafeDestinationReportMessage(changedReport),
+        }),
+      }),
+    ).rejects.toThrow(/does not match/u);
+  });
   it.each(["unclaimed", "held-below-minimum", "held"] as const)(
     "carries only the shared-pool line from %s",
     async (state) => {

@@ -65,6 +65,7 @@ export interface UnsafeDestinationReport {
   cycleId: string;
   intentId: string;
   suggestedMinor: string;
+  carryMinor: string;
   reportedAt: string;
   verifiedAt: string;
   wallet: SlopDatabaseWalletProof;
@@ -570,6 +571,7 @@ export function assertUnsafeDestinationReport(
       "cycleId",
       "intentId",
       "suggestedMinor",
+      "carryMinor",
       "reportedAt",
       "verifiedAt",
       "wallet",
@@ -591,6 +593,11 @@ export function assertUnsafeDestinationReport(
   ) {
     throw new TypeError(`${path} has impossible report timestamps`);
   }
+  const suggestedMinor = minor(report.suggestedMinor, `${path}.suggestedMinor`);
+  const carryMinor = minor(report.carryMinor, `${path}.carryMinor`);
+  if (BigInt(carryMinor) > BigInt(suggestedMinor)) {
+    throw new TypeError(`${path} carry exceeds the signed suggested amount`);
+  }
   return {
     kind: "unsafe-destination",
     projectId: text(report.projectId, `${path}.projectId`, {
@@ -604,7 +611,8 @@ export function assertUnsafeDestinationReport(
       max: 160,
       pattern: /^pay_[a-z0-9][a-z0-9_-]+$/u,
     }),
-    suggestedMinor: minor(report.suggestedMinor, `${path}.suggestedMinor`),
+    suggestedMinor,
+    carryMinor,
     reportedAt,
     verifiedAt,
     wallet,
@@ -627,6 +635,7 @@ export function unsafeDestinationReportMessage(
     | "cycleId"
     | "intentId"
     | "suggestedMinor"
+    | "carryMinor"
     | "reportedAt"
     | "wallet"
   >,
@@ -636,6 +645,7 @@ export function unsafeDestinationReportMessage(
     cycleId: report.cycleId,
     intentId: report.intentId,
     suggestedMinor: report.suggestedMinor,
+    carryMinor: report.carryMinor,
     reportedAt: report.reportedAt,
     wallet: report.wallet,
   })}`;
@@ -860,6 +870,8 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
       !wallet ||
       !sameWalletObservation(wallet, report.wallet) ||
       report.suggestedMinor !== suggestedMinor ||
+      report.carryMinor !==
+        (lines?.sharedPool.suggestedMinor ?? accruedMinor ?? suggestedMinor) ||
       !adjustmentReason
     ) {
       throw new TypeError(
@@ -1094,6 +1106,10 @@ export function assertRewardAllocationManifest(
         (report.cycleId === cycleId &&
           (report.intentId !== allocation.intentId ||
             report.suggestedMinor !== allocation.suggestedMinor ||
+            report.carryMinor !==
+              (allocation.lines?.sharedPool.suggestedMinor ??
+                allocation.accruedMinor ??
+                allocation.suggestedMinor) ||
             Date.parse(report.reportedAt) < Date.parse(generatedAt))) ||
         (report.cycleId < cycleId &&
           Date.parse(report.verifiedAt) > Date.parse(generatedAt))

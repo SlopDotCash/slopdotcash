@@ -86,6 +86,7 @@ function report(): UnsafeDestinationReport {
     cycleId: "2026-07",
     intentId: proposal().allocations[0].intentId,
     suggestedMinor: proposal().allocations[0].suggestedMinor,
+    carryMinor: proposal().allocations[0].suggestedMinor,
     reportedAt: REPORTED,
     verifiedAt: VERIFIED,
     wallet: wallet(),

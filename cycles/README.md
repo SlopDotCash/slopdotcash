@@ -73,7 +73,10 @@ closed if its commit or signer cannot be verified. This path requires `gh`
 authentication when reports are present. `unsafeDestinationReports` retains
 the signed evidence through carry; `hold` identifies the report selected by
 the maintainer for the original held row. The signed report binds the complete
-suggested amount; both reward lines are held with zero approved principal.
+suggested amount and an explicit `carryMinor` equal to the original shared-pool
+line (or the full accrued amount without reward lines); both reward lines are
+held with zero approved principal. Changing the split while keeping the total
+unchanged invalidates the signed report.
 The next cycle carries only the shared-pool amount exactly once. The additive
 review-budget line stays in its original cycle and never becomes shared-pool
 carry; this also applies to unclaimed and below-minimum rows. Until the registry supplies a different address in
