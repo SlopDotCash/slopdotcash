@@ -142,9 +142,9 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
   await expect(elizaCard.getByText("Unfunded", { exact: true })).toBeVisible();
   await expect(
-    elizaCard.getByText("target $10,000 / month", { exact: true }),
+    elizaCard.getByText("target $5,000 / month", { exact: true }),
   ).toBeVisible();
-  await expect(elizaCard.getByText("$10,000", { exact: true })).toHaveCount(0);
+  await expect(elizaCard.getByText("$5,000", { exact: true })).toHaveCount(0);
   await expect(
     elizaCard.getByText(/Build and verify the elizaOS framework/u),
   ).toBeVisible();
@@ -191,7 +191,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     "true",
   );
   await expect(
-    page.getByRole("tab", { name: "Eliza, unfunded, target $10,000" }),
+    page.getByRole("tab", { name: "Eliza, unfunded, target $5,000" }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
     page.getByRole("columnheader", { name: "Accepted score" }),

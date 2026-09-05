@@ -557,7 +557,7 @@ describe("discovery", () => {
       "true",
     );
     expect(
-      screen.getByRole("tab", { name: "Eliza, unfunded, target $10,000" }),
+      screen.getByRole("tab", { name: "Eliza, unfunded, target $5,000" }),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText(/July 2026 · Eliza/u)).toBeInTheDocument();
     const leaderboard = screen.getByRole("table", {
@@ -610,9 +610,9 @@ describe("discovery", () => {
     if (!elizaCard) throw new Error("Eliza project card is missing");
     expect(within(elizaCard).getByText("Unfunded")).toBeInTheDocument();
     expect(
-      within(elizaCard).getByText("target $10,000 / month"),
+      within(elizaCard).getByText("target $5,000 / month"),
     ).toBeInTheDocument();
-    expect(within(elizaCard).queryByText("$10,000")).not.toBeInTheDocument();
+    expect(within(elizaCard).queryByText("$5,000")).not.toBeInTheDocument();
     expect(
       within(elizaCard).getByText(/Build and verify the elizaOS framework/u),
     ).toBeInTheDocument();
@@ -863,7 +863,7 @@ describe("project routes", () => {
         ?.querySelector(".reward-amount-monthly"),
     ).toHaveTextContent("Unfunded");
     expect(
-      screen.getByText(/Target \$10,000 per month\. No funding is committed/u),
+      screen.getByText(/Target \$5,000 per month\. No funding is committed/u),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("simulated monthly pool"),
@@ -2138,13 +2138,13 @@ describe("public project draft workspace", () => {
       expect.stringContaining('"feeMinor": "123456"'),
     );
 
-    fireEvent.change(amount, { target: { value: "10000.000001" } });
-    fireEvent.change(total, { target: { value: "10000.000001" } });
+    fireEvent.change(amount, { target: { value: "5000.000001" } });
+    fireEvent.change(total, { target: { value: "5000.000001" } });
     expect(
       screen.getByRole("button", { name: "Allocation copied" }),
     ).toBeDisabled();
-    fireEvent.change(amount, { target: { value: "10000" } });
-    fireEvent.change(total, { target: { value: "10000" } });
+    fireEvent.change(amount, { target: { value: "5000" } });
+    fireEvent.change(total, { target: { value: "5000" } });
     expect(
       screen.getByRole("button", { name: "Allocation copied" }),
     ).toBeEnabled();
