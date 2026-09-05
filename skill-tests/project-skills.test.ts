@@ -1037,6 +1037,88 @@ describe("project run usage", () => {
     }
   });
 
+  it("finalizes an idempotently recovered run whose trace was already uploaded", async () => {
+    const fixtureRoot = mkdtempSync(
+      join(tmpdir(), "slop-trace-finalize-recovery-"),
+    );
+    try {
+      const trajectory = join(fixtureRoot, "trace.ndjson");
+      const contents = '{"event":"complete"}\n';
+      writeFileSync(trajectory, contents);
+      const digest = createHash("sha256").update(contents).digest("hex");
+      const serverRunId = "srv_recovered";
+      const requests: Array<{ method: string; url: string }> = [];
+      const responses = [
+        {
+          enabled: true,
+          source: "github-public-status",
+          verifiedAt: "2026-08-25T12:00:00.000Z",
+        },
+        {
+          token: "s".repeat(32),
+          tokenType: "Bearer",
+          expiresAt: "2030-01-01T00:00:00.000Z",
+        },
+        {
+          serverRunId,
+          clientRunId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          state: "trace_uploaded",
+        },
+        {
+          serverRunId,
+          clientRunId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          traceObjectId: `sha256:${digest}`,
+          traceSha256: digest,
+          state: "finalized",
+        },
+      ];
+      const evidence = await uploadPrivateTrace(
+        {
+          runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          projectId: "eliza",
+          repositoryId: "elizaOS/eliza",
+          revision: "a".repeat(40),
+          provider: "openai",
+          model: "gpt-5.6-sol",
+          client: "codex",
+        },
+        trajectory,
+        "1.2.3",
+        {
+          disclosure: () => {},
+          assertionProvider: () => "i".repeat(32),
+          fetchImpl: async (url, options = {}) => {
+            requests.push({
+              method: options.method ?? "GET",
+              url: String(url),
+            });
+            return Response.json(responses.shift(), { status: 200 });
+          },
+        },
+      );
+      assert.deepStrictEqual(evidence, {
+        authority: "https://api.slop.cash",
+        serverRunId,
+        objectId: `sha256:${digest}`,
+        sha256: digest,
+      });
+      assert.deepStrictEqual(
+        requests.map(({ method, url }) => ({
+          method,
+          path: new URL(url).pathname,
+        })),
+        [
+          { method: "GET", path: "/api/v1/private-request-intake" },
+          { method: "POST", path: "/api/v1/auth/session" },
+          { method: "POST", path: "/api/v1/runs" },
+          { method: "POST", path: `/api/v1/runs/${serverRunId}/finalize` },
+        ],
+      );
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("reports private intake rate-limit reset before authorization", async () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-trace-intake-rate-"));
     try {
