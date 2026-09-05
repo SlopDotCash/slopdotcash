@@ -7,6 +7,9 @@
 import {
   type AllocationFundingBasis,
   allocationFundingMinor,
+  assertAllocationFundingBasis,
+  deriveAllocationFundingBasis,
+  LAST_LEGACY_CAP_CYCLE,
 } from "./allocation-funding";
 import type { LeaderboardSnapshot } from "./leaderboard";
 import { createProjectView } from "./project-view";
@@ -38,6 +41,8 @@ export interface CreateRewardCycleProposalInput {
   priorAccruedMinor?: ReadonlyMap<string, string>;
   priorActorLogins?: ReadonlyMap<string, string>;
   fundingBasis?: AllocationFundingBasis;
+  /** Reconstruction only: immutable trial records predate instrument binding. */
+  legacyCapMinor?: string;
 }
 
 export function allocateReviewBudgetMinor(
@@ -190,20 +195,30 @@ export function createRewardCycleProposal(
   const project = findProject(input.projectId);
   const fundingBasis: AllocationFundingBasis | undefined =
     project?.reward.kind === "monthly-pool"
-      ? (input.fundingBasis ?? {
-          fundingState:
-            project.reward.fundingState === "committed"
-              ? "committed"
-              : "pledged",
-          committedMinor: project.reward.committedMinor,
-          monthlyCapMinor: project.reward.monthlyCapMinor,
-        })
+      ? input.fundingBasis
+        ? assertAllocationFundingBasis(input.fundingBasis)
+        : deriveAllocationFundingBasis(project, input.cycleId)
       : undefined;
+  if (fundingBasis && fundingBasis.cycleId !== input.cycleId)
+    throw new TypeError("funding basis cycle differs from proposal cycle");
+  if (
+    input.legacyCapMinor !== undefined &&
+    (input.cycleId > LAST_LEGACY_CAP_CYCLE || input.fundingBasis)
+  )
+    throw new TypeError(
+      "legacy cap reconstruction is restricted to historical trials",
+    );
   const view = createProjectView(
     input.snapshot,
     input.projectId,
     input.cycleId,
-    fundingBasis,
+    input.legacyCapMinor === undefined
+      ? fundingBasis
+      : {
+          fundingState: "committed",
+          committedMinor: input.legacyCapMinor,
+          monthlyCapMinor: input.legacyCapMinor,
+        },
   );
   ensureCompleteCycle(input, view);
 
@@ -309,8 +324,9 @@ export function createRewardCycleProposal(
     },
     currency: "USDC",
     chain: "solana",
-    capMinor: allocationFundingMinor(fundingBasis).toString(),
-    fundingBasis,
+    capMinor:
+      input.legacyCapMinor ?? allocationFundingMinor(fundingBasis).toString(),
+    ...(input.legacyCapMinor === undefined ? { fundingBasis } : {}),
     carriedMinor,
     minimumTransferMinor: MINIMUM_TRANSFER_MINOR,
     feeBasisPoints: view.project.reward.feeBasisPoints,
@@ -407,7 +423,9 @@ export function createRewardCycleProposal(
       ? {
           rewardLines: {
             sharedPool: {
-              capMinor: allocationFundingMinor(fundingBasis).toString(),
+              capMinor:
+                input.legacyCapMinor ??
+                allocationFundingMinor(fundingBasis).toString(),
               suggestedMinor,
               approvedMinor: "0",
             },

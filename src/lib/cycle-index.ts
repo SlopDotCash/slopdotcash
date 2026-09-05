@@ -751,6 +751,9 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     normalizedReward.paidMinor !== "0" ||
     normalizedReward.feeMinor !== "0";
   const hasMonthlyPolicyMismatch =
+    (!normalizedReward.fundingBasis && cycleId > LAST_LEGACY_CAP_CYCLE) ||
+    (normalizedReward.fundingBasis !== undefined &&
+      normalizedReward.fundingBasis.cycleId !== cycleId) ||
     normalizedReward.currency !== "USDC" ||
     normalizedReward.capMinor !==
       (normalizedReward.fundingBasis

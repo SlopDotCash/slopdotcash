@@ -78,6 +78,8 @@ describe("project transition gate", () => {
   it("binds new proposals to immutable-base funding and rejects self-declared commitment", () => {
     const path = "cycles/eliza/2026-08/proposal.json";
     const basis = {
+      cycleId: "2026-08",
+      instrumentId: null,
       fundingState: eliza.reward.fundingState,
       committedMinor: eliza.reward.committedMinor,
       monthlyCapMinor: eliza.reward.monthlyCapMinor,

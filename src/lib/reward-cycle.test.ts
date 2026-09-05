@@ -38,6 +38,8 @@ describe("reward cycle proposals", () => {
     const project = findProject("eliza");
     if (!project) throw new Error("Missing Eliza fixture");
     const basis = {
+      cycleId: "2026-09",
+      instrumentId: null,
       fundingState: "pledged" as const,
       committedMinor: "0",
       monthlyCapMinor: project.reward.monthlyCapMinor,
@@ -49,7 +51,7 @@ describe("reward cycle proposals", () => {
           projectId: project.id,
           cycleId,
           kind: "monthly-pool" as const,
-          reward: { fundingBasis: basis },
+          reward: { fundingBasis: { ...basis, cycleId } },
         })),
       ),
     ).toBe(false);

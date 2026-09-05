@@ -1571,6 +1571,8 @@ describe("direct project funding", () => {
       kind: "monthly-pool" as const,
       reward: {
         fundingBasis: {
+          cycleId,
+          instrumentId: null,
           fundingState: "pledged" as const,
           committedMinor: "0",
           monthlyCapMinor: "10000000000",

@@ -13,8 +13,14 @@ no work qualified, so a zero-award month is auditable and unused funding can
 roll forward without raising the next cap. Existing complete cycles are left
 untouched; a directory containing only one required file is refused as partial.
 
-New monthly proposals freeze `fundingBasis` (funding state, committed amount,
-and monthly cap). Their new shared-pool allocation is the smaller of committed
+New monthly proposals freeze `fundingBasis` (cycle ID, stable instrument ID,
+funding state, applicable committed amount, and monthly cap). Positive new
+principal requires exactly one unreplaced reviewed instrument whose
+`monthlyCommitment.cycleId` equals the proposal cycle. An instrument for an
+earlier or later month contributes zero, not retroactive or advance funding.
+The stable ID binds Squads kind/network/multisig/vault index/vault, or Sablier
+kind/network/contract/stream ID; an unfunded cycle records a null instrument ID.
+Their new shared-pool allocation is the smaller of committed
 funding and the cap when funding is committed, and zero otherwise. Accepted
 events, scores, evidence, and previously reviewed carry remain recorded even
 when this month's allocation is zero. A zero-funded proposal with no carry
@@ -32,7 +38,7 @@ identifies the historical trial as unfunded without rewriting its artifacts.
 The trusted project-transition gate executes from the immutable base commit.
 For each newly added monthly proposal it requires the frozen funding basis to
 equal that base commit's reviewed project manifest. Changes to that project's
-funding state, committed amount, or cap must land separately before a proposal;
+reward policy or instrument inventory must land separately before a proposal;
 the proposal cannot authorize its own funding. Historical funding bases remain
 unchanged when later manifests evolve. This migration activates that gate for
 subsequent proposal PRs and adds no proposal itself.
@@ -73,6 +79,9 @@ excluded and manually held rows never become new payment proposals
 automatically. An unfinished review or unresolved proposed row fails the next
 cycle closed instead of guessing a reviewed balance; an unfunded record with
 no carried amount is exempt because it contains no monetary allocation.
+For line-aware rows, only `lines.sharedPool.suggestedMinor` carries; additive
+review awards never become shared-pool principal. Rows without lines retain
+the historical `accruedMinor ?? suggestedMinor` interpretation.
 
 The public cycle index carries `carriedMinor` separately from the new cycle's
 cap. Shared-pool approvals may total at most cap plus carry. An additive review

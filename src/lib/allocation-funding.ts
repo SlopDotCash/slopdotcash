@@ -2,11 +2,11 @@
 import type { CycleIndexEntry } from "./cycle-index";
 import type { ProjectDefinition } from "./projects.mjs";
 
-export interface AllocationFundingBasis {
-  fundingState: "committed" | "pledged";
-  committedMinor: string;
-  monthlyCapMinor: string;
-}
+export type { AllocationFundingBasis } from "./allocation-funding-basis.mjs";
+export {
+  assertAllocationFundingBasis,
+  deriveAllocationFundingBasis,
+} from "./allocation-funding-basis.mjs";
 
 // July is the final historical cap-based cycle. Its artifacts are never rewritten.
 export const LAST_LEGACY_CAP_CYCLE = "2026-07";
@@ -16,7 +16,7 @@ export function allocationFundingMinor(basis: {
   committedMinor: string;
   monthlyCapMinor: string;
 }): bigint {
-  const validated = assertAllocationFundingBasis({
+  const validated = assertFundingAmounts({
     fundingState: basis.fundingState,
     committedMinor: basis.committedMinor,
     monthlyCapMinor: basis.monthlyCapMinor,
@@ -27,9 +27,11 @@ export function allocationFundingMinor(basis: {
   return committed < cap ? committed : cap;
 }
 
-export function assertAllocationFundingBasis(
-  value: unknown,
-): AllocationFundingBasis {
+function assertFundingAmounts(value: unknown): {
+  fundingState: "committed" | "pledged";
+  committedMinor: string;
+  monthlyCapMinor: string;
+} {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("allocation funding basis must be an object");
   }

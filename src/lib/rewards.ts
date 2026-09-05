@@ -865,6 +865,12 @@ export function assertRewardAllocationManifest(
   const fundingBasis = hasFundingBasis
     ? assertAllocationFundingBasis(manifest.fundingBasis)
     : undefined;
+  if (!fundingBasis && cycleId > LAST_LEGACY_CAP_CYCLE)
+    throw new TypeError("new allocation requires an exact-cycle funding basis");
+  if (fundingBasis && fundingBasis.cycleId !== cycleId)
+    throw new TypeError(
+      "allocation funding basis cycle differs from manifest cycle",
+    );
   if (
     capMinor !==
     (fundingBasis

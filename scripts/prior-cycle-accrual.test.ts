@@ -18,6 +18,8 @@ function julyProposal() {
     generatedAt: "2026-08-02T00:00:00.000Z",
     projectId: "eliza",
     fundingBasis: {
+      cycleId: "2026-07",
+      instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
       fundingState: "committed",
       committedMinor: "10000000000",
       monthlyCapMinor: "10000000000",
@@ -117,6 +119,8 @@ describe("prior cycle accrual", () => {
       snapshot,
       sourceSnapshotSha256: "b".repeat(64),
       fundingBasis: {
+        cycleId: "2026-08",
+        instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
         fundingState: "committed",
         committedMinor: "5000000",
         monthlyCapMinor: "10000000000",

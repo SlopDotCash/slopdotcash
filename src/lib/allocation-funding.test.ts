@@ -22,6 +22,11 @@ const cycle = (cycleId: string, committedMinor = "0"): PromotionCycle => ({
   reward: {
     fundingBasis: {
       ...unfunded,
+      cycleId,
+      instrumentId:
+        committedMinor === "0"
+          ? null
+          : `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
       committedMinor,
       fundingState: committedMinor === "0" ? "pledged" : "committed",
     },

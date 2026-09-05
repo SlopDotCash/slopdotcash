@@ -156,11 +156,9 @@ async function verifyProposalAgainstSnapshot(
     projectId: proposal.projectId as ProjectId,
   });
   const baseline = createRewardCycleProposal({
-    fundingBasis: proposal.fundingBasis ?? {
-      fundingState: "committed",
-      committedMinor: proposal.capMinor,
-      monthlyCapMinor: proposal.capMinor,
-    },
+    ...(proposal.fundingBasis
+      ? { fundingBasis: proposal.fundingBasis }
+      : { legacyCapMinor: proposal.capMinor }),
     cycleId: proposal.cycleId,
     generatedAt: proposal.generatedAt,
     projectId: proposal.projectId,

@@ -170,7 +170,10 @@ export async function loadPriorCycleAccrual(input: {
     if (row.state !== "held-below-minimum" && row.state !== "unclaimed") {
       continue;
     }
-    const amount = row.accruedMinor ?? row.suggestedMinor;
+    const amount =
+      row.lines?.sharedPool.suggestedMinor ??
+      row.accruedMinor ??
+      row.suggestedMinor;
     if (BigInt(amount) === 0n) continue;
     accruedMinor.set(row.actor.id, amount);
     actorLogins.set(row.actor.id, row.actor.login);

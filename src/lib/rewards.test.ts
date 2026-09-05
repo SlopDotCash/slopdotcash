@@ -39,6 +39,13 @@ function allocationManifest() {
     currency: "USDC",
     chain: "solana",
     capMinor: "10000000000",
+    fundingBasis: {
+      cycleId: "2026-08",
+      instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
+      fundingState: "committed",
+      committedMinor: "10000000000",
+      monthlyCapMinor: "10000000000",
+    },
     feeBasisPoints: 100,
     scoringRuleVersion: "outcome-compute-v1",
     sourceSnapshotSha256: "a".repeat(64),

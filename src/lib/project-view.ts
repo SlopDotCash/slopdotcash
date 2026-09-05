@@ -7,6 +7,7 @@
 import {
   type AllocationFundingBasis,
   allocationFundingMinor,
+  deriveAllocationFundingBasis,
 } from "./allocation-funding";
 import type {
   CapUsageStatus,
@@ -521,7 +522,10 @@ export function createProjectView(
   snapshot: LeaderboardSnapshot,
   projectId: ProjectId,
   requestedCycleId?: string,
-  fundingBasis?: AllocationFundingBasis,
+  fundingBasis?: Pick<
+    AllocationFundingBasis,
+    "fundingState" | "committedMinor" | "monthlyCapMinor"
+  >,
 ): ProjectView {
   const project = findProject(projectId);
   if (!project) throw new TypeError(`Unknown project: ${projectId}`);
@@ -643,7 +647,7 @@ export function createProjectView(
   let reward: ProjectRewardProjection;
   if (project.reward.kind === "monthly-pool") {
     const monthlyCapMinor = allocationFundingMinor(
-      fundingBasis ?? project.reward,
+      fundingBasis ?? deriveAllocationFundingBasis(project, cycleId),
     );
     const projected = allocateIntegerTotal(monthlyCapMinor, leaders);
     const projectedCents = allocateIntegerTotal(

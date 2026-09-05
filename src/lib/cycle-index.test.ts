@@ -93,6 +93,8 @@ describe("public cycle index", () => {
     };
     value.reward.capMinor = "1000000";
     value.reward.fundingBasis = {
+      cycleId: value.cycleId,
+      instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
       fundingState: "committed",
       committedMinor: "1000000",
       monthlyCapMinor: "10000000000",
@@ -131,6 +133,8 @@ describe("public cycle index", () => {
     );
     exact.cycles[0].reward.capMinor = "0";
     exact.cycles[0].reward.fundingBasis = {
+      cycleId: "2026-07",
+      instrumentId: null,
       fundingState: "pledged",
       committedMinor: "0",
       monthlyCapMinor: "10000000000",
@@ -371,6 +375,8 @@ describe("public cycle index", () => {
       {
         fundingBasis: {
           fundingState: "committed" as const,
+          cycleId: "2026-07",
+          instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
           committedMinor: "2000000",
           monthlyCapMinor: "2000000",
         },
@@ -378,6 +384,8 @@ describe("public cycle index", () => {
       {
         fundingBasis: {
           fundingState: "pledged" as const,
+          cycleId: "2026-07",
+          instrumentId: null,
           committedMinor: "0",
           monthlyCapMinor: "0",
         },
