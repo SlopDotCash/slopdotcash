@@ -1351,6 +1351,61 @@ describe("private trace API", () => {
     expect((await handleTraceApi(uploadRequest(), deps)).status).toBe(201);
   });
 
+  it("completes an upload authorized immediately before capability expiry", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_expiring_upload_run_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const bytes = new TextEncoder().encode("authorized before expiry");
+    const digest = await sha256Hex(bytes);
+    const intentResponse = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/trace-intents`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          sha256: digest,
+          sizeBytes: bytes.byteLength,
+          contentType: "text/plain",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "expiring_upload_key_0001",
+        },
+      ),
+      deps,
+    );
+    const { uploadUrl } = (await intentResponse.json()) as {
+      uploadUrl: string;
+    };
+    const intent = [...store.intents.values()][0];
+    intent.expiresAt = new Date(NOW.getTime() + 1).toISOString();
+    const times = [
+      NOW,
+      new Date(NOW.getTime() + 2),
+      new Date(NOW.getTime() + 3),
+    ];
+    deps.now = () => new Date(times.shift() ?? times.at(-1) ?? NOW);
+
+    const response = await handleTraceApi(
+      new Request(uploadUrl, {
+        method: "PUT",
+        body: bytes.slice().buffer,
+        headers: { "content-type": "text/plain", digest: `sha-256=${digest}` },
+      }),
+      deps,
+    );
+
+    expect(response.status).toBe(201);
+    expect(store.bytes.has(digest)).toBe(true);
+    expect(store.uploads.size).toBe(1);
+  });
+
   it("atomically permits only one concurrent upload capability consumer", async () => {
     const store = new MemoryPersistence();
     const deps = dependencies(store);

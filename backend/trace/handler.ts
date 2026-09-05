@@ -621,9 +621,10 @@ async function uploadTraceCapability(
     fail(404, "not_found", "Upload capability not found");
   }
   const tokenHash = await sha256Hex(new TextEncoder().encode(capability));
+  const authorizedAt = deps.now().toISOString();
   const intent = await deps.persistence.getUploadIntent(
     tokenHash,
-    deps.now().toISOString(),
+    authorizedAt,
   );
   if (intent === null) {
     fail(
@@ -679,12 +680,11 @@ async function uploadTraceCapability(
       createdAt: deps.now().toISOString(),
     } as const);
   await deps.persistence.putTraceBytes(object, bytes);
-  const intentConsumedAt = deps.now().toISOString();
   const result = await deps.persistence.attachTrace({
     runId: intent.runId,
     githubId: intent.githubId,
     idempotencyKey: tokenHash,
-    intentConsumedAt,
+    intentConsumedAt: authorizedAt,
     object,
   });
   if (result.status === "conflict") {
