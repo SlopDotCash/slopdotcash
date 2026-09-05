@@ -86,6 +86,13 @@ function proposal(state: AllocationState) {
     currency: "USDC",
     chain: "solana",
     capMinor: "10000000000",
+    fundingBasis: {
+      cycleId: "2026-07",
+      instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
+      fundingState: "committed",
+      committedMinor: "10000000000",
+      monthlyCapMinor: "10000000000",
+    },
     carriedMinor: "0",
     minimumTransferMinor: "2000000",
     feeBasisPoints: 100,

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createRewardCycleProposal } from "../src/lib/reward-cycle";
+import { createRewardCycleProposal as createCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import {
   assertRewardAllocationManifest,
@@ -24,6 +24,22 @@ import {
   applyUnsafeDestinationHold,
   verifyUnsafeDestinationReport,
 } from "./unsafe-destination-hold";
+
+// Synthetic reviewed funding only; production pledges never create money.
+function createRewardCycleProposal(
+  input: Parameters<typeof createCycleProposal>[0],
+) {
+  return createCycleProposal({
+    ...input,
+    fundingBasis: input.fundingBasis ?? {
+      cycleId: input.cycleId,
+      instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
+      fundingState: "committed",
+      committedMinor: "10000000000",
+      monthlyCapMinor: "10000000000",
+    },
+  });
+}
 
 const GENERATED = "2026-08-02T00:00:00.000Z";
 const REPORTED = "2026-08-03T00:00:00.000Z";

@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createRewardCycleProposal } from "../src/lib/reward-cycle";
+import { createRewardCycleProposal as createCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import {
   feeForPrincipal,
@@ -27,6 +27,22 @@ import {
   verifyUnsafeDestinationTransitionAuthorities,
 } from "./check-unsafe-destination-transitions";
 import { applyUnsafeDestinationHold } from "./unsafe-destination-hold";
+
+// Synthetic reviewed funding only; production pledges never create money.
+function createRewardCycleProposal(
+  input: Parameters<typeof createCycleProposal>[0],
+) {
+  return createCycleProposal({
+    ...input,
+    fundingBasis: input.fundingBasis ?? {
+      cycleId: input.cycleId,
+      instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
+      fundingState: "committed",
+      committedMinor: "10000000000",
+      monthlyCapMinor: "10000000000",
+    },
+  });
+}
 
 const PATH = "cycles/eliza/2026-07/proposal.json";
 async function fixture(acceptedHold = true) {
@@ -463,6 +479,7 @@ describe("trusted unsafe destination Git transitions", () => {
           );
           if (cycle === "2026-08") {
             value.cycleId = cycle;
+            if (value.fundingBasis) value.fundingBasis.cycleId = cycle;
             value.generatedAt = value.review.lastMaterialChangeAt =
               "2026-09-05T00:00:00.000Z";
             value.review.endsAt = "2026-09-19T00:00:00.000Z";
