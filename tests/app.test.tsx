@@ -239,8 +239,8 @@ function augustRollingSnapshot() {
 }
 
 function septemberRollingSnapshot() {
-  const snapshot = snapshotFixture();
   const generatedAt = "2026-09-05T00:00:00.000Z";
+  const snapshot = snapshotFixture(generatedAt);
   const from = "2026-08-01T00:00:00.000Z";
   snapshot.generatedAt = generatedAt;
   snapshot.sourceUpdatedAt = generatedAt;
