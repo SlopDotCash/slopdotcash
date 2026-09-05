@@ -43,6 +43,14 @@ Only accepted `substantive-review` score events participate in the additive
 line. Self-review, bot review, post-merge review, duplicates, and excluded
 evidence remain ineligible under the scoring contract.
 
+The dedicated line is tier-only: aggregate each actor's accepted review
+`scoreThirds` and allocate by deterministic largest remainder. The finalized
+trace bonus (`evidenceBonusBasisPoints`) applies to that event's shared-pool
+weight only, not to this additional line. Two equal review tiers receive equal
+dedicated-line weight even when only one has eligible finalized trace evidence.
+Changing this invariant requires a separately reviewed prospective policy;
+existing cycle allocations are not rewritten.
+
 Slop does not hold keys, sign, or broadcast either line. A review amount may be
 called paid only after finalized public evidence reconciles its immutable
 intent, source, destination, asset, principal, and fee. Projected, under review,

@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { snapshotFixture } from "../../tests/fixtures";
 import {
+  allocateReviewBudgetForEvents,
   allocateReviewBudgetMinor,
   createRewardCycleProposal,
 } from "./reward-cycle";
@@ -31,6 +32,42 @@ function wallet(): WalletProof {
 }
 
 describe("reward cycle proposals", () => {
+  it("keeps equal review tiers equal in the additive line despite trace evidence", () => {
+    const source = snapshotFixture().ledger[0];
+    const events = ([0, 1500] as const).map(
+      (evidenceBonusBasisPoints, index) => ({
+        ...source,
+        id: `review-${index}`,
+        actor: { ...source.actor, id: `actor-${index}` },
+        category: "substantive-review" as const,
+        scoreThirds: 9,
+        points: 3,
+        evidenceBonusBasisPoints,
+      }),
+    );
+    expect(
+      Object.fromEntries(allocateReviewBudgetForEvents(100n, events)),
+    ).toEqual({
+      "actor-0": 50n,
+      "actor-1": 50n,
+    });
+    expect(allocateReviewBudgetForEvents(100n, events)).toEqual(
+      allocateReviewBudgetForEvents(
+        100n,
+        events.map((event) => ({ ...event, evidenceBonusBasisPoints: 0 })),
+      ),
+    );
+    expect(
+      allocateReviewBudgetForEvents(
+        100n,
+        events.map((event) => ({
+          ...event,
+          category: "merged-pull-request" as const,
+        })),
+      ),
+    ).toEqual(new Map());
+  });
+
   it("allocates an additive review line with deterministic largest remainder", () => {
     expect(
       Object.fromEntries(

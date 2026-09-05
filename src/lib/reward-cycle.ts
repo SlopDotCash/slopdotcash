@@ -4,7 +4,7 @@
  * human review and on-chain settlement remain separate, auditable transitions.
  */
 
-import type { LeaderboardSnapshot } from "./leaderboard";
+import type { LeaderboardSnapshot, ScoreEvent } from "./leaderboard";
 import { createProjectView } from "./project-view";
 import type { ProjectId } from "./projects.mjs";
 import {
@@ -84,6 +84,26 @@ export function allocateReviewBudgetMinor(
     unallocated -= 1n;
   }
   return allocations;
+}
+
+/** The additive line rewards review tiers only; trace bonuses stay in the shared pool. */
+export function allocateReviewBudgetForEvents(
+  totalMinor: bigint,
+  events: readonly ScoreEvent[],
+): Map<string, bigint> {
+  const weights = new Map<string, number>();
+  for (const event of events) {
+    if (event.category !== "substantive-review") continue;
+    weights.set(
+      event.actor.id,
+      (weights.get(event.actor.id) ?? 0) +
+        (event.scoreThirds ?? Math.round(event.points * 3)),
+    );
+  }
+  return allocateReviewBudgetMinor(
+    totalMinor,
+    [...weights].map(([actorId, scoreThirds]) => ({ actorId, scoreThirds })),
+  );
 }
 
 function cycleBounds(cycleId: string): { from: number; to: number } {
@@ -233,20 +253,9 @@ export function createRewardCycleProposal(
   const reviewEvents = view.ledger.filter(
     (event) => event.category === "substantive-review",
   );
-  const reviewScoreThirds = new Map<string, number>();
-  for (const event of reviewEvents) {
-    reviewScoreThirds.set(
-      event.actor.id,
-      (reviewScoreThirds.get(event.actor.id) ?? 0) +
-        (event.scoreThirds ?? Math.round(event.points * 3)),
-    );
-  }
-  const reviewAllocations = allocateReviewBudgetMinor(
+  const reviewAllocations = allocateReviewBudgetForEvents(
     reviewBudgetTotal,
-    [...reviewScoreThirds].map(([actorId, scoreThirds]) => ({
-      actorId,
-      scoreThirds,
-    })),
+    reviewEvents,
   );
   const reviewSuggestedTotal = [...reviewAllocations.values()].reduce(
     (total, amount) => total + amount,

@@ -1550,6 +1550,33 @@ describe("direct project funding", () => {
     );
   });
 
+  it("explains why a project cannot receive direct funding without hiding its state", () => {
+    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+    if (!project) throw new TypeError("The Eliza project fixture is missing");
+    render(
+      <ProjectFunding
+        project={{ ...project, funding: { ...project.funding, addresses: [] } }}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Fund this project" }),
+    ).toBeVisible();
+    expect(screen.getByText("Not accepting direct funding yet.")).toBeVisible();
+    expect(
+      screen.getByText(
+        /Funding: pledged · Committed: \$0 · Payment: disabled/u,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /steward publishes a receiving address through a reviewed/u,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Copy address" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows an exact address, QR, copy feedback, and explorer without wallet control", async () => {
     const project = PROJECTS.find((candidate) => candidate.id === "eliza");
     if (!project) throw new TypeError("The Eliza project fixture is missing");

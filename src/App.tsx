@@ -1901,7 +1901,23 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
       Date.parse(route.effectiveAt) <= now &&
       (route.replacedAt === null || now < Date.parse(route.replacedAt)),
   );
-  if (activeRoutes.length === 0) return null;
+  if (activeRoutes.length === 0) {
+    return (
+      <section className="section project-funding">
+        <h2>Fund this project</h2>
+        <p>Not accepting direct funding yet.</p>
+        <p>
+          Funding: {project.reward.fundingState} · Committed:{" "}
+          {formatMicroUsdc(project.reward.committedMinor)} · Payment:{" "}
+          {project.reward.paymentMode}
+        </p>
+        <p>
+          The project steward publishes a receiving address through a reviewed
+          manifest change. A published address does not prove wallet control.
+        </p>
+      </section>
+    );
+  }
   return (
     <section className="section project-funding">
       <details>
