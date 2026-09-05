@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+  chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import {
@@ -19,11 +22,14 @@ import {
   unsafeDestinationReportMessage,
 } from "../src/lib/rewards";
 import { snapshotFixture } from "../tests/fixtures";
-import { checkUnsafeDestinationTransitions } from "./check-unsafe-destination-transitions";
+import {
+  checkUnsafeDestinationTransitions,
+  verifyUnsafeDestinationTransitionAuthorities,
+} from "./check-unsafe-destination-transitions";
 import { applyUnsafeDestinationHold } from "./unsafe-destination-hold";
 
 const PATH = "cycles/eliza/2026-07/proposal.json";
-async function fixture() {
+async function fixture(acceptedHold = true) {
   const root = mkdtempSync("/tmp/slop-unsafe-transition-");
   const git = (...args: string[]) =>
     execFileSync("git", args, {
@@ -92,7 +98,7 @@ async function fixture() {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), bytes);
   };
-  write(PATH, JSON.stringify(held));
+  write(PATH, JSON.stringify(acceptedHold ? held : proposal));
   git("add", ".");
   git("commit", "-qm", "accepted unsafe hold");
   const baseSha = git("rev-parse", "HEAD");
@@ -102,6 +108,7 @@ async function fixture() {
     held,
     report,
     wallet,
+    snapshot,
     write,
     baseSha,
     head(change: () => void) {
@@ -126,6 +133,142 @@ async function fixture() {
 }
 
 describe("trusted unsafe destination Git transitions", () => {
+  for (const outcome of [
+    "valid",
+    "wrong-signer",
+    "unsigned",
+    "wrong-message",
+    "unreachable",
+  ] as const) {
+    it(`explicit trusted online authorization handles ${outcome} evidence`, async () => {
+      const repo = await fixture(false);
+      try {
+        const headSha = repo.head(() => {
+          repo.write(PATH, JSON.stringify(repo.held));
+          repo.write(
+            "cycles/eliza/2026-07/allocation.json",
+            JSON.stringify(
+              finalizeRewardAllocation(
+                repo.held,
+                repo.held.review.endsAt,
+                Date.parse(repo.held.review.endsAt),
+              ),
+            ),
+          );
+          repo.write(
+            "scripts/unsafe-destination-hold.ts",
+            "throw new Error('untrusted head must never run');",
+          );
+        });
+        const readCommit = vi.fn(async (repository: string, commit: string) => {
+          expect(repository).toBe(repo.report.sourceRepository);
+          expect(commit).toBe(repo.report.sourceCommit);
+          if (outcome === "unreachable") throw new Error("GitHub unavailable");
+          return {
+            oid: commit,
+            message:
+              outcome === "wrong-message"
+                ? "forged report"
+                : unsafeDestinationReportMessage(repo.report),
+            signature: {
+              isValid: outcome !== "unsigned",
+              state: outcome === "unsigned" ? "UNSIGNED" : "VALID",
+              signer: {
+                id: outcome === "wrong-signer" ? "U_attacker" : "U_fixture",
+                databaseId: 42,
+              },
+            },
+          };
+        });
+        const result = verifyUnsafeDestinationTransitionAuthorities(
+          { repositoryRoot: repo.root, baseSha: repo.baseSha, headSha },
+          readCommit,
+        );
+        if (outcome === "valid")
+          await expect(result).resolves.toEqual({
+            preservedFiles: 1,
+            checkedFiles: 2,
+            verifiedReports: 1,
+          });
+        else await expect(result).rejects.toThrow();
+        expect(readCommit).toHaveBeenCalledTimes(1);
+      } finally {
+        repo.cleanup();
+      }
+    });
+  }
+
+  it("builds and verifies a real held cycle without credentials or GitHub execution", async () => {
+    const repo = await fixture();
+    try {
+      const packageRoot = process.cwd();
+      const paths = execFileSync("git", ["ls-files", "-z"], {
+        cwd: packageRoot,
+        encoding: "utf8",
+      })
+        .split("\0")
+        .filter(Boolean);
+      for (const path of paths) {
+        mkdirSync(dirname(join(repo.root, path)), { recursive: true });
+        cpSync(join(packageRoot, path), join(repo.root, path));
+      }
+      symlinkSync(
+        join(packageRoot, "node_modules"),
+        join(repo.root, "node_modules"),
+        "dir",
+      );
+      const snapshot = repo.snapshot;
+      for (const [index, event] of snapshot.ledger.entries()) {
+        event.scoreThirds = event.points * 3;
+        event.workUnitId = `wu_unsafe_packaging_${index}`;
+      }
+      snapshot.source.cutoffAt = snapshot.window.to;
+      const snapshotBytes = JSON.stringify(snapshot);
+      repo.held.sourceSnapshotSha256 = createHash("sha256")
+        .update(snapshotBytes)
+        .digest("hex");
+      repo.write(PATH, JSON.stringify(repo.held));
+      repo.write("cycles/eliza/2026-07/source-snapshot.json", snapshotBytes);
+      repo.git("add", ".");
+      repo.git("commit", "-qm", "complete credential-free packaging fixture");
+      const bin = join(repo.root, "test-bin");
+      repo.write(
+        "test-bin/gh",
+        "#!/bin/sh\nprintf 'unexpected GitHub execution' >&2\nexit 99\n",
+      );
+      chmodSync(join(bin, "gh"), 0o755);
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        GH_CONFIG_DIR: join(repo.root, "empty-gh-config"),
+      };
+      for (const key of [
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_ENTERPRISE_TOKEN",
+        "GITHUB_ENTERPRISE_TOKEN",
+      ])
+        delete env[key];
+      for (const command of ["cycles:check", "cycles:verify", "build"]) {
+        const output = execFileSync("bun", ["run", command], {
+          cwd: repo.root,
+          env,
+          encoding: "utf8",
+          timeout: 120_000,
+          maxBuffer: 4 * 1024 * 1024,
+        });
+        expect(output).toContain(
+          command === "build" ? "built in" : "validated 1 reward cycle",
+        );
+      }
+      expect(existsSync(join(repo.root, "dist/data/cycles/index.json"))).toBe(
+        true,
+      );
+    } finally {
+      repo.cleanup();
+    }
+  }, 120_000);
+
   for (const kind of [
     "whole-field-removal",
     "report-removal",
@@ -366,6 +509,8 @@ describe("trusted unsafe destination Git transitions", () => {
     );
     expect(workflow).toContain("persist-credentials: false");
     expect(workflow).toContain("contents: read");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression
+    expect(workflow).toContain("GH_TOKEN: ${{ github.token }}");
     expect(workflow).toContain(
       "bun --no-install scripts/check-unsafe-destination-transitions.ts",
     );
@@ -378,7 +523,7 @@ describe("trusted unsafe destination Git transitions", () => {
         "utf8",
       );
       expect(caller).toMatch(
-        /(?:Validate reward lifecycle|Verify immutable cycle chain)\n\s+env:\n\s+GH_TOKEN: \$\{\{ github.token \}\}\n\s+run: bun run cycles:check/u,
+        /(?:Validate reward lifecycle|Verify immutable cycle chain)\n\s+run: bun run cycles:check/u,
       );
     }
   });

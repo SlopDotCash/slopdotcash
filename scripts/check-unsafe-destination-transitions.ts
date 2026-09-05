@@ -7,6 +7,7 @@ import {
   assertRewardAllocationManifest,
   type UnsafeDestinationReport,
 } from "../src/lib/rewards";
+import { verifyUnsafeDestinationReport } from "./unsafe-destination-hold";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SHA = /^[0-9a-f]{40}$/u;
@@ -15,6 +16,7 @@ const MANIFEST_PATH =
 const MAX_FILES = 2400;
 const MAX_BLOB_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
+const MAX_REPORTS = 4096;
 
 function git(
   root: string,
@@ -113,11 +115,13 @@ function readManifest(root: string, oid: string, budget: { bytes: number }) {
 }
 
 /** All executable modules come from this checker revision, never the PR tree. */
-export function checkUnsafeDestinationTransitions(input: {
+interface TransitionInput {
   baseSha: string;
   headSha: string;
   repositoryRoot?: string;
-}): { preservedFiles: number; checkedFiles: number } {
+}
+
+function inspectUnsafeDestinationTransitions(input: TransitionInput) {
   const root = input.repositoryRoot ?? ROOT;
   if (!SHA.test(input.baseSha) || !SHA.test(input.headSha))
     throw new TypeError(
@@ -134,6 +138,24 @@ export function checkUnsafeDestinationTransitions(input: {
   const head = manifests(root, input.headSha);
   const budget = { bytes: 0 };
   const beforeValues = new Map<string, ReturnType<typeof readManifest>>();
+  const reports = new Map<string, UnsafeDestinationReport>();
+  function collectReports(value: ReturnType<typeof readManifest>) {
+    if (value.kind !== "reward-allocation") return;
+    for (const row of value.allocations) {
+      for (const report of row.unsafeDestinationReports ?? []) {
+        const previous = reports.get(report.sourceCommit);
+        if (previous && JSON.stringify(previous) !== JSON.stringify(report))
+          throw new TypeError(
+            "Cycle history contains conflicting report copies",
+          );
+        reports.set(report.sourceCommit, report);
+        if (reports.size > MAX_REPORTS)
+          throw new RangeError(
+            "Cycle transition report count exceeds its limit",
+          );
+      }
+    }
+  }
   const history = new Map<string, Map<string, UnsafeDestinationReport>>();
   let checkedFiles = 0;
   for (const [path, beforeOid] of base) {
@@ -142,6 +164,7 @@ export function checkUnsafeDestinationTransitions(input: {
         `Existing cycle manifest cannot be deleted or renamed: ${path}`,
       );
     const before = readManifest(root, beforeOid, budget);
+    collectReports(before);
     beforeValues.set(path, before);
     if (before.kind !== "reward-allocation") continue;
     for (const row of before.allocations) {
@@ -164,6 +187,7 @@ export function checkUnsafeDestinationTransitions(input: {
     checkedFiles += 1;
     const before = beforeValues.get(path);
     const after = readManifest(root, afterOid, budget);
+    collectReports(after);
     const [, projectId, cycleId] = path.split("/");
     if (after.projectId !== projectId || after.cycleId !== cycleId)
       throw new TypeError(
@@ -234,7 +258,27 @@ export function checkUnsafeDestinationTransitions(input: {
         );
     }
   }
-  return { preservedFiles: base.size, checkedFiles };
+  return { preservedFiles: base.size, checkedFiles, reports };
+}
+
+/** Credential-free preservation diagnostics do not authorize new signed reports. */
+export function checkUnsafeDestinationTransitions(input: TransitionInput) {
+  const { preservedFiles, checkedFiles } =
+    inspectUnsafeDestinationTransitions(input);
+  return { preservedFiles, checkedFiles };
+}
+
+/** Online authorization is explicit and runs only from the immutable trusted base. */
+export async function verifyUnsafeDestinationTransitionAuthorities(
+  input: TransitionInput,
+  readCommit?: Parameters<typeof verifyUnsafeDestinationReport>[1],
+) {
+  const { preservedFiles, checkedFiles, reports } =
+    inspectUnsafeDestinationTransitions(input);
+  for (const report of reports.values()) {
+    await verifyUnsafeDestinationReport(report, readCommit);
+  }
+  return { preservedFiles, checkedFiles, verifiedReports: reports.size };
 }
 
 if (import.meta.main) {
@@ -243,8 +287,11 @@ if (import.meta.main) {
     throw new TypeError(
       "Usage: check-unsafe-destination-transitions.ts <base-sha> <head-sha>",
     );
-  const result = checkUnsafeDestinationTransitions({ baseSha, headSha });
+  const result = await verifyUnsafeDestinationTransitionAuthorities({
+    baseSha,
+    headSha,
+  });
   process.stdout.write(
-    `[Slop] preserved unsafe destination history in ${result.preservedFiles} existing cycle manifests\n`,
+    `[Slop] preserved unsafe destination history in ${result.preservedFiles} existing cycle manifests; verified ${result.verifiedReports} signed reports\n`,
   );
 }

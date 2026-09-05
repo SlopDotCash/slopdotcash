@@ -68,9 +68,15 @@ Only public report and wallet metadata appear in the commit message.
    emits a candidate proposal on stdout. It writes no cycle file and grants no
    approval. The maintainer reviews and submits that proposal through GitHub.
 
-`cycles:check` independently re-verifies every report against GitHub and fails
-closed if its commit or signer cannot be verified. This path requires `gh`
-authentication when reports are present. `unsafeDestinationReports` retains
+The immutable trusted-base `pull_request_target` transition gate independently
+re-verifies every unique report against GitHub and fails closed if its exact
+commit, message, or signer cannot be verified. Only this trusted checker and the
+maintainer's explicit hold command require `gh` authentication. Ordinary PR
+`cycles:check`, index generation, `prepare:site`, and builds remain credential-free
+structural validation; `cycles:verify` additionally checks public finalized Solana
+transactions, not GitHub signatures. These packaging checks do not authorize a
+new report or replace the required trusted transition gate. No contributor code
+is executed with the gate's token. `unsafeDestinationReports` retains
 the signed evidence through carry; `hold` identifies the report selected by
 the maintainer for the original held row. The signed report binds the complete
 suggested amount and an explicit `carryMinor` equal to the original shared-pool
@@ -115,7 +121,8 @@ so adding a new cycle alongside weakened contributor-side validation cannot
 omit the block. External-prize share manifests retain their separate schema.
 
 The transition check bounds each tree to 2,400 cycle manifests, each decoded
-blob to 8 MiB, and all decoded base/head blobs to 32 MiB; malformed UTF-8 and
+blob to 8 MiB, all decoded base/head blobs to 32 MiB, and unique signed reports
+to 4,096 (each verified once per run); malformed UTF-8 and
 duplicate JSON keys fail closed. Merge this trusted checker before relying on
 it for later PRs and require its named check through repository-controlled
 policy. It supplies no review, merge, or deployment authority. Maintainer
