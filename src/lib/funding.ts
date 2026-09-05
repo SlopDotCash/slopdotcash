@@ -547,6 +547,20 @@ export function assertProjectFundingIndex(
     }
     commitmentTransactionProjects.set(key, record.projectId);
   }
+  const expectedGeneratedAt = [...records, ...commitments].reduce<
+    string | null
+  >(
+    (latest, record) =>
+      latest === null || record.observedAt > latest
+        ? record.observedAt
+        : latest,
+    null,
+  );
+  if (generatedAt !== expectedGeneratedAt) {
+    throw new TypeError(
+      "funding index generatedAt must equal its latest observation",
+    );
+  }
   return {
     schemaVersion: FUNDING_PROTOCOL_VERSION,
     generatedAt,
