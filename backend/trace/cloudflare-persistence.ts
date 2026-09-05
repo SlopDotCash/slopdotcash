@@ -499,12 +499,14 @@ export class CloudflareTracePersistence implements TracePersistence {
         : { status: "conflict" };
     }
     try {
-      await this.db
+      const inserted = await this.db
         .prepare(
           `INSERT INTO run_progress_events (
             id, run_id, github_user_id, kind, occurred_at, source,
             github_object_id, github_url, head_sha, created_at, idempotency_key
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            FROM trace_runs
+           WHERE id = ? AND github_user_id = ? AND state != 'finalized'`,
         )
         .bind(
           event.id,
@@ -518,8 +520,13 @@ export class CloudflareTracePersistence implements TracePersistence {
           event.headSha,
           event.createdAt,
           event.idempotencyKey,
+          event.runId,
+          event.githubId,
         )
         .run();
+      if ((inserted.meta?.changes ?? 0) !== 1) {
+        return { status: "conflict" };
+      }
     } catch {
       return { status: "conflict" };
     }
@@ -583,8 +590,9 @@ export class CloudflareTracePersistence implements TracePersistence {
         ? { status: "existing", value: mapped }
         : { status: "conflict" };
     }
+    let inserted: D1Result;
     try {
-      await this.db
+      inserted = await this.db
         .prepare(
           `INSERT INTO trace_upload_intents (
             token_hash, run_id, github_user_id, trace_sha256, size_bytes,
@@ -605,6 +613,9 @@ export class CloudflareTracePersistence implements TracePersistence {
         .run();
     } catch {
       return { status: "conflict" };
+    }
+    if (!inserted.success || (inserted.meta?.changes ?? 0) !== 1) {
+      throw new Error("Trace upload intent insertion failed");
     }
     return { status: "created", value: intent };
   }
@@ -665,8 +676,11 @@ export class CloudflareTracePersistence implements TracePersistence {
     }
   }
 
-  async createReadGrant(input: CreateGrantInput): Promise<void> {
-    await this.db
+  async createReadGrant(
+    input: CreateGrantInput,
+    audit: AuditInput,
+  ): Promise<void> {
+    const grantInsert = this.db
       .prepare(
         `INSERT INTO trace_read_grants (
           token_hash, trace_sha256, operator_github_id, reason, request_id,
@@ -681,8 +695,30 @@ export class CloudflareTracePersistence implements TracePersistence {
         input.requestId,
         input.createdAt,
         input.expiresAt,
+      );
+    const auditInsert = this.db
+      .prepare(
+        `INSERT INTO private_audit_events (
+          id, actor_github_id, action, target, request_id, created_at, details_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run();
+      .bind(
+        audit.id,
+        audit.actorGithubId,
+        audit.action,
+        audit.target,
+        audit.requestId,
+        audit.createdAt,
+        JSON.stringify(audit.details),
+      );
+    const results = await this.db.batch([grantInsert, auditInsert]);
+    if (
+      results.length !== 2 ||
+      results.some((result) => !result.success) ||
+      results.some((result) => (result.meta?.changes ?? 0) !== 1)
+    ) {
+      throw new Error("Atomic trace read grant creation failed");
+    }
   }
 
   async consumeReadGrant(
@@ -690,16 +726,50 @@ export class CloudflareTracePersistence implements TracePersistence {
     traceSha256: string,
     operatorGithubId: string,
     now: string,
+    audit: AuditInput,
   ): Promise<boolean> {
-    const result = await this.db
+    const auditInsert = this.db
+      .prepare(
+        `INSERT INTO private_audit_events (
+          id, actor_github_id, action, target, request_id, created_at, details_json
+        ) SELECT ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM trace_read_grants
+            WHERE token_hash = ? AND trace_sha256 = ? AND operator_github_id = ?
+              AND consumed_at IS NULL AND expires_at > ?
+          )`,
+      )
+      .bind(
+        audit.id,
+        audit.actorGithubId,
+        audit.action,
+        audit.target,
+        audit.requestId,
+        audit.createdAt,
+        JSON.stringify(audit.details),
+        tokenHash,
+        traceSha256,
+        operatorGithubId,
+        now,
+      );
+    const grantConsume = this.db
       .prepare(
         `UPDATE trace_read_grants SET consumed_at = ?
          WHERE token_hash = ? AND trace_sha256 = ? AND operator_github_id = ?
            AND consumed_at IS NULL AND expires_at > ?`,
       )
-      .bind(now, tokenHash, traceSha256, operatorGithubId, now)
-      .run();
-    return (result.meta?.changes ?? 0) === 1;
+      .bind(now, tokenHash, traceSha256, operatorGithubId, now);
+    const results = await this.db.batch([auditInsert, grantConsume]);
+    if (results.length !== 2 || results.some((result) => !result.success)) {
+      throw new Error("Atomic trace read grant consumption failed");
+    }
+    const auditChanges = results[0].meta?.changes ?? 0;
+    const grantChanges = results[1].meta?.changes ?? 0;
+    if (auditChanges === 0 && grantChanges === 0) return false;
+    if (auditChanges !== 1 || grantChanges !== 1) {
+      throw new Error("Trace read grant and audit state diverged");
+    }
+    return true;
   }
 
   async readTraceBytes(object: TraceObject): Promise<Uint8Array | null> {
@@ -766,6 +836,7 @@ export class CloudflareTracePersistence implements TracePersistence {
 
   async createWalletClaim(
     claim: WalletClaim,
+    audit: AuditInput,
   ): Promise<PersistenceResult<WalletClaim>> {
     const byDigest = await this.db
       .prepare("SELECT * FROM wallet_claims WHERE record_sha256 = ?")
@@ -779,32 +850,72 @@ export class CloudflareTracePersistence implements TracePersistence {
         return { status: "conflict" };
       }
     }
-    try {
-      await this.db
-        .prepare(
-          `INSERT INTO wallet_claims (
+    const claimInsert = this.db
+      .prepare(
+        `INSERT INTO wallet_claims (
             id, github_user_id, github_login, wallet_address, source,
             issue_repository, issue_number, source_body_sha256, observed_at,
             record_sha256, supersedes_claim_id, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        claim.id,
+        claim.githubId,
+        claim.githubLogin,
+        claim.walletAddress,
+        claim.source,
+        claim.issueRepository,
+        claim.issueNumber,
+        claim.sourceBodySha256,
+        claim.observedAt,
+        claim.recordSha256,
+        claim.supersedesClaimId,
+        claim.createdAt,
+      );
+    const auditInsert = this.db
+      .prepare(
+        `INSERT INTO private_audit_events (
+          id, actor_github_id, action, target, request_id, created_at, details_json
+        ) SELECT ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM wallet_claims WHERE id = ?)`,
+      )
+      .bind(
+        audit.id,
+        audit.actorGithubId,
+        audit.action,
+        audit.target,
+        audit.requestId,
+        audit.createdAt,
+        JSON.stringify(audit.details),
+        claim.id,
+      );
+    try {
+      const results = await this.db.batch([claimInsert, auditInsert]);
+      if (
+        results.length !== 2 ||
+        results.some((result) => !result.success) ||
+        results.some((result) => (result.meta?.changes ?? 0) !== 1)
+      ) {
+        throw new Error("Atomic wallet claim and audit did not both commit");
+      }
+    } catch (error) {
+      const raced = await this.db
+        .prepare("SELECT * FROM wallet_claims WHERE record_sha256 = ?")
+        .bind(claim.recordSha256)
+        .first<WalletClaimRow>();
+      if (raced !== null)
+        return { status: "existing", value: mapWalletClaim(raced) };
+      const competing = await this.db
+        .prepare(
+          claim.supersedesClaimId === null
+            ? `SELECT id FROM wallet_claims
+               WHERE github_user_id = ? AND supersedes_claim_id IS NULL`
+            : "SELECT id FROM wallet_claims WHERE supersedes_claim_id = ?",
         )
-        .bind(
-          claim.id,
-          claim.githubId,
-          claim.githubLogin,
-          claim.walletAddress,
-          claim.source,
-          claim.issueRepository,
-          claim.issueNumber,
-          claim.sourceBodySha256,
-          claim.observedAt,
-          claim.recordSha256,
-          claim.supersedesClaimId,
-          claim.createdAt,
-        )
-        .run();
-    } catch {
-      return { status: "conflict" };
+        .bind(claim.supersedesClaimId ?? claim.githubId)
+        .first<{ id: string }>();
+      if (competing !== null) return { status: "conflict" };
+      throw error;
     }
     return { status: "created", value: claim };
   }

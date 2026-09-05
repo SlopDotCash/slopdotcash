@@ -16,6 +16,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { LAST_LEGACY_CAP_CYCLE } from "../src/lib/allocation-funding";
 import {
   assertCycleIndex,
   CYCLE_INDEX_SCHEMA_VERSION,
@@ -138,11 +139,16 @@ async function jsonFile(
   };
 }
 
-async function verifyProposalAgainstSnapshot(
+export async function verifyProposalAgainstSnapshot(
   proposal: RewardAllocationManifest,
   snapshot: LeaderboardSnapshot,
   snapshotDigest: string,
 ): Promise<void> {
+  if (!proposal.fundingBasis && proposal.cycleId > LAST_LEGACY_CAP_CYCLE) {
+    throw new TypeError(
+      "New cycle proposals must freeze their committed funding basis",
+    );
+  }
   const priorAccrual = await loadPriorCycleAccrual({
     asOf: proposal.generatedAt,
     cycleId: proposal.cycleId,
@@ -150,6 +156,9 @@ async function verifyProposalAgainstSnapshot(
     projectId: proposal.projectId as ProjectId,
   });
   const baseline = createRewardCycleProposal({
+    ...(proposal.fundingBasis
+      ? { fundingBasis: proposal.fundingBasis }
+      : { legacyCapMinor: proposal.capMinor }),
     cycleId: proposal.cycleId,
     generatedAt: proposal.generatedAt,
     projectId: proposal.projectId,
@@ -157,6 +166,7 @@ async function verifyProposalAgainstSnapshot(
     sourceSnapshotSha256: snapshotDigest,
     priorAccruedMinor: priorAccrual.accruedMinor,
     priorActorLogins: priorAccrual.actorLogins,
+    priorUnsafeDestinationReports: priorAccrual.unsafeDestinationReports,
   });
   if (baseline.kind !== "reward-allocation") {
     throw new TypeError("Monthly proposal regenerated as an external share");
@@ -175,6 +185,13 @@ async function verifyProposalAgainstSnapshot(
       allocation.actor.login !== expected.actor.login ||
       allocation.score !== expected.score ||
       allocation.suggestedMinor !== expected.suggestedMinor ||
+      allocation.accruedMinor !== expected.accruedMinor ||
+      (expected.unsafeDestinationReports ?? []).some(
+        (report) =>
+          !(allocation.unsafeDestinationReports ?? []).some(
+            (candidate) => canonical(candidate) === canonical(report),
+          ),
+      ) ||
       canonical(allocation.lines) !== canonical(expected.lines) ||
       canonical(allocation.evidenceEventIds) !==
         canonical(expected.evidenceEventIds)
@@ -190,6 +207,7 @@ async function verifyProposalAgainstSnapshot(
     proposal.contributionWindow.from !== baseline.contributionWindow.from ||
     proposal.contributionWindow.to !== baseline.contributionWindow.to ||
     proposal.capMinor !== baseline.capMinor ||
+    proposal.carriedMinor !== baseline.carriedMinor ||
     canonical(proposal.rewardLines) !== canonical(baseline.rewardLines) ||
     proposal.totals.suggestedMinor !== baseline.totals.suggestedMinor
   ) {
@@ -451,6 +469,10 @@ async function buildCycle(
       settledAt: settlement?.settledAt ?? null,
       reward: {
         currency: "USDC",
+        carriedMinor: proposal.carriedMinor ?? "0",
+        ...(proposal.fundingBasis
+          ? { fundingBasis: proposal.fundingBasis }
+          : {}),
         capMinor: proposal.capMinor,
         suggestedMinor: proposal.totals.suggestedMinor,
         approvedMinor: allocation?.totals.approvedMinor ?? "0",
@@ -459,6 +481,12 @@ async function buildCycle(
         sharePartsPerMillion: null,
         ...(proposal.rewardLines
           ? {
+              reviewBudgetCapMinor: (BigInt(
+                proposal.rewardLines.reviewBudget.capMinor,
+              ) < BigInt(proposal.rewardLines.reviewBudget.committedMinor)
+                ? BigInt(proposal.rewardLines.reviewBudget.capMinor)
+                : BigInt(proposal.rewardLines.reviewBudget.committedMinor)
+              ).toString(),
               lines: {
                 sharedPool: {
                   suggestedMinor:

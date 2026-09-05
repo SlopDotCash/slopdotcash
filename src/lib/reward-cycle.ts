@@ -4,17 +4,27 @@
  * human review and on-chain settlement remain separate, auditable transitions.
  */
 
+import {
+  type AllocationFundingBasis,
+  allocationFundingMinor,
+  assertAllocationFundingBasis,
+  deriveAllocationFundingBasis,
+  LAST_LEGACY_CAP_CYCLE,
+} from "./allocation-funding";
 import type { LeaderboardSnapshot } from "./leaderboard";
 import { createProjectView } from "./project-view";
 import type { ProjectId } from "./projects.mjs";
+import { findProject } from "./projects.mjs";
 import {
   assertExternalContributionShareManifest,
   assertRewardAllocationManifest,
   type ExternalContributionShareManifest,
   feeForPrincipal,
+  isSafeSuccessorWallet,
   MINIMUM_TRANSFER_MINOR,
   REVIEW_WINDOW_DAYS,
   type RewardAllocationManifest,
+  type UnsafeDestinationReport,
   type WalletProof,
 } from "./rewards";
 
@@ -32,6 +42,26 @@ export interface CreateRewardCycleProposalInput {
   wallets?: ReadonlyMap<string, WalletProof>;
   priorAccruedMinor?: ReadonlyMap<string, string>;
   priorActorLogins?: ReadonlyMap<string, string>;
+  fundingBasis?: AllocationFundingBasis;
+  /** Reconstruction only: immutable trial records predate instrument binding. */
+  legacyCapMinor?: string;
+  priorUnsafeDestinationReports?: ReadonlyMap<
+    string,
+    UnsafeDestinationReport[]
+  >;
+}
+
+function resolvedWallet(
+  input: CreateRewardCycleProposalInput,
+  actorId: string,
+): WalletProof | null {
+  const wallet = input.wallets?.get(actorId) ?? null;
+  return wallet &&
+    (input.priorUnsafeDestinationReports?.get(actorId) ?? []).every((report) =>
+      isSafeSuccessorWallet(wallet, report),
+    )
+    ? wallet
+    : null;
 }
 
 export function allocateReviewBudgetMinor(
@@ -181,10 +211,33 @@ function ensureCompleteCycle(
 export function createRewardCycleProposal(
   input: CreateRewardCycleProposalInput,
 ): RewardCycleProposal {
+  const project = findProject(input.projectId);
+  const fundingBasis: AllocationFundingBasis | undefined =
+    project?.reward.kind === "monthly-pool"
+      ? input.fundingBasis
+        ? assertAllocationFundingBasis(input.fundingBasis)
+        : deriveAllocationFundingBasis(project, input.cycleId)
+      : undefined;
+  if (fundingBasis && fundingBasis.cycleId !== input.cycleId)
+    throw new TypeError("funding basis cycle differs from proposal cycle");
+  if (
+    input.legacyCapMinor !== undefined &&
+    (input.cycleId > LAST_LEGACY_CAP_CYCLE || input.fundingBasis)
+  )
+    throw new TypeError(
+      "legacy cap reconstruction is restricted to historical trials",
+    );
   const view = createProjectView(
     input.snapshot,
     input.projectId,
     input.cycleId,
+    input.legacyCapMinor === undefined
+      ? fundingBasis
+      : {
+          fundingState: "committed",
+          committedMinor: input.legacyCapMinor,
+          monthlyCapMinor: input.legacyCapMinor,
+        },
   );
   ensureCompleteCycle(input, view);
 
@@ -215,8 +268,9 @@ export function createRewardCycleProposal(
     });
   }
 
-  // Accrual is a debt to the actor, not a reward for this cycle's activity:
-  // a positive prior balance must survive a quiet month, so carried-only
+  if (!fundingBasis)
+    throw new TypeError("Monthly proposal needs a funding basis");
+  // A previously reviewed balance survives a quiet month, so carried-only
   // actors get their own allocation rows after the leaders.
   const leaderIds = new Set(view.leaders.map((leader) => leader.actor.id));
   const carriedOnly = [...(input.priorAccruedMinor ?? [])]
@@ -289,7 +343,9 @@ export function createRewardCycleProposal(
     },
     currency: "USDC",
     chain: "solana",
-    capMinor: view.project.reward.monthlyCapMinor,
+    capMinor:
+      input.legacyCapMinor ?? allocationFundingMinor(fundingBasis).toString(),
+    ...(input.legacyCapMinor === undefined ? { fundingBasis } : {}),
     carriedMinor,
     minimumTransferMinor: MINIMUM_TRANSFER_MINOR,
     feeBasisPoints: view.project.reward.feeBasisPoints,
@@ -297,7 +353,7 @@ export function createRewardCycleProposal(
     sourceSnapshotSha256: input.sourceSnapshotSha256,
     allocations: view.leaders
       .map((leader, index) => {
-        const wallet = input.wallets?.get(leader.actor.id) ?? null;
+        const wallet = resolvedWallet(input, leader.actor.id);
         const sharedPoolMinor =
           BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
           BigInt(leader.projectedMinor ?? "0");
@@ -316,6 +372,12 @@ export function createRewardCycleProposal(
               : "proposed"
             : "unclaimed",
           wallet,
+          ...(input.priorUnsafeDestinationReports?.has(leader.actor.id)
+            ? {
+                unsafeDestinationReports:
+                  input.priorUnsafeDestinationReports.get(leader.actor.id),
+              }
+            : {}),
           evidenceEventIds: leader.evidenceEventIds,
           adjustmentReason: null,
           relatedParty:
@@ -348,7 +410,7 @@ export function createRewardCycleProposal(
               `carried accrual for ${actorId} has no prior login; pass priorActorLogins from the prior manifest`,
             );
           }
-          const wallet = input.wallets?.get(actorId) ?? null;
+          const wallet = resolvedWallet(input, actorId);
           const index = view.leaders.length + offset;
           return {
             intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(actorId)}`,
@@ -363,6 +425,12 @@ export function createRewardCycleProposal(
                 : ("proposed" as const)
               : ("unclaimed" as const),
             wallet,
+            ...(input.priorUnsafeDestinationReports?.has(actorId)
+              ? {
+                  unsafeDestinationReports:
+                    input.priorUnsafeDestinationReports.get(actorId),
+                }
+              : {}),
             evidenceEventIds: [],
             adjustmentReason: null,
             relatedParty: input.relatedPartyActorIds?.has(actorId) ?? false,
@@ -386,7 +454,9 @@ export function createRewardCycleProposal(
       ? {
           rewardLines: {
             sharedPool: {
-              capMinor: view.project.reward.monthlyCapMinor,
+              capMinor:
+                input.legacyCapMinor ??
+                allocationFundingMinor(fundingBasis).toString(),
               suggestedMinor,
               approvedMinor: "0",
             },

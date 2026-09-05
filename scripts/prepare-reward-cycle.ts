@@ -269,6 +269,10 @@ export async function prepareRewardCycle(
     wallets,
     priorAccruedMinor: priorAccrual.accruedMinor,
     priorActorLogins: priorAccrual.actorLogins,
+    priorUnsafeDestinationReports:
+      "unsafeDestinationReports" in priorAccrual
+        ? priorAccrual.unsafeDestinationReports
+        : undefined,
   });
   await (options.writeSnapshot ?? writeImmutableBytes)(
     arguments_.snapshotArchivePath,

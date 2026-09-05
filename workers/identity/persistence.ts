@@ -76,7 +76,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
 
   async createFlow(flow: OAuthFlow): Promise<boolean> {
     try {
-      await this.db
+      const result = await this.db
         .prepare(
           `INSERT INTO identity_oauth_flows (
             id, state_hash, poll_capability_hash, encrypted_pkce_verifier,
@@ -96,7 +96,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
           flow.expiresAt,
         )
         .run();
-      return true;
+      return result.success && (result.meta?.changes ?? 0) === 1;
     } catch {
       return false;
     }
@@ -173,8 +173,10 @@ export class D1IdentityPersistence implements IdentityPersistence {
     return row === null ? null : mapFlow(row);
   }
 
-  async createAssertion(assertion: IdentityAssertion): Promise<void> {
-    await this.db
+  async createAssertion(
+    assertion: IdentityAssertion,
+  ): Promise<IdentityAssertion | null> {
+    const result = await this.db
       .prepare(
         `INSERT INTO identity_assertions (
           token_hash, github_actor_id, github_login, audience, created_at,
@@ -190,6 +192,22 @@ export class D1IdentityPersistence implements IdentityPersistence {
         assertion.expiresAt,
       )
       .run();
+    if (!result.success) return null;
+    const row = await this.db
+      .prepare("SELECT * FROM identity_assertions WHERE token_hash = ?")
+      .bind(assertion.tokenHash)
+      .first<AssertionRow>();
+    if (
+      row !== null &&
+      row.token_hash === assertion.tokenHash &&
+      row.github_actor_id === assertion.githubActorId &&
+      row.github_login === assertion.githubLogin &&
+      row.audience === assertion.audience &&
+      row.consumed_at === null
+    ) {
+      return mapAssertion(row);
+    }
+    return null;
   }
 
   async markAssertionIssued(
@@ -212,17 +230,13 @@ export class D1IdentityPersistence implements IdentityPersistence {
     audience: string,
     now: string,
   ): Promise<IdentityAssertion | null> {
-    const result = await this.db
+    const row = await this.db
       .prepare(
         `UPDATE identity_assertions SET consumed_at = ?
-         WHERE token_hash = ? AND audience = ? AND consumed_at IS NULL AND expires_at > ?`,
+         WHERE token_hash = ? AND audience = ? AND consumed_at IS NULL AND expires_at > ?
+         RETURNING *`,
       )
       .bind(now, tokenHash, audience, now)
-      .run();
-    if ((result.meta?.changes ?? 0) !== 1) return null;
-    const row = await this.db
-      .prepare("SELECT * FROM identity_assertions WHERE token_hash = ?")
-      .bind(tokenHash)
       .first<AssertionRow>();
     return row === null ? null : mapAssertion(row);
   }

@@ -4,6 +4,11 @@
  * trace can earn a fixed evidence bonus; token usage never changes scoring.
  */
 
+import {
+  type AllocationFundingBasis,
+  allocationFundingMinor,
+  deriveAllocationFundingBasis,
+} from "./allocation-funding";
 import type {
   CapUsageStatus,
   GitHubActor,
@@ -517,6 +522,10 @@ export function createProjectView(
   snapshot: LeaderboardSnapshot,
   projectId: ProjectId,
   requestedCycleId?: string,
+  fundingBasis?: Pick<
+    AllocationFundingBasis,
+    "fundingState" | "committedMinor" | "monthlyCapMinor"
+  >,
 ): ProjectView {
   const project = findProject(projectId);
   if (!project) throw new TypeError(`Unknown project: ${projectId}`);
@@ -637,7 +646,9 @@ export function createProjectView(
 
   let reward: ProjectRewardProjection;
   if (project.reward.kind === "monthly-pool") {
-    const monthlyCapMinor = BigInt(project.reward.monthlyCapMinor);
+    const monthlyCapMinor = allocationFundingMinor(
+      fundingBasis ?? deriveAllocationFundingBasis(project, cycleId),
+    );
     const projected = allocateIntegerTotal(monthlyCapMinor, leaders);
     const projectedCents = allocateIntegerTotal(
       monthlyCapMinor / 10_000n,
@@ -658,8 +669,7 @@ export function createProjectView(
         .reduce((total, amount) => total + amount, 0n)
         .toString(),
       platformFeeMinor: (
-        (BigInt(project.reward.monthlyCapMinor) *
-          BigInt(project.reward.feeBasisPoints)) /
+        (monthlyCapMinor * BigInt(project.reward.feeBasisPoints)) /
         10_000n
       ).toString(),
       status: "simulation",

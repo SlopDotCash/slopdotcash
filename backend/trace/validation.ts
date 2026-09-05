@@ -78,11 +78,20 @@ export function validEventKind(value: unknown): value is RunEventKind {
 }
 
 export function validIsoTimestamp(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value) &&
-    Number.isFinite(Date.parse(value))
-  );
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
+  ) {
+    return false;
+  }
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return false;
+  const canonical = value.endsWith(".000Z")
+    ? value
+    : value.endsWith("Z") && !value.includes(".")
+      ? `${value.slice(0, -1)}.000Z`
+      : value;
+  return new Date(milliseconds).toISOString() === canonical;
 }
 
 export async function readJsonObject(

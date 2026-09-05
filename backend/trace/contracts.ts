@@ -165,19 +165,22 @@ export interface TracePersistence {
     now: string,
   ): Promise<TraceUploadIntent | null>;
   putTraceBytes(object: TraceObject, bytes: Uint8Array): Promise<void>;
-  createReadGrant(input: CreateGrantInput): Promise<void>;
+  createReadGrant(input: CreateGrantInput, audit: AuditInput): Promise<void>;
   consumeReadGrant(
     tokenHash: string,
     traceSha256: string,
     operatorGithubId: string,
     now: string,
+    audit: AuditInput,
   ): Promise<boolean>;
   readTraceBytes(
     object: TraceObject,
   ): Promise<ReadableStream<Uint8Array> | Uint8Array | null>;
   writeAudit(input: AuditInput): Promise<void>;
+  /** Atomically commits a wallet claim and its required audit event. */
   createWalletClaim(
     claim: WalletClaim,
+    audit: AuditInput,
   ): Promise<PersistenceResult<WalletClaim>>;
   getWalletClaim(claimId: string): Promise<WalletClaim | null>;
   getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null>;

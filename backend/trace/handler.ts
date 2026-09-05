@@ -2,6 +2,7 @@ import { isSolanaAddress } from "../../src/lib/wallets";
 import { signApiToken, verifyApiToken } from "./auth";
 import {
   type ApiRole,
+  type AuditInput,
   type AuthenticatedActor,
   MAX_TRACE_BYTES,
   OPERATOR_GRANT_TTL_SECONDS,
@@ -46,6 +47,7 @@ export type TraceApiDependencies = {
 type ApiError = Error & { status?: number; code?: string };
 
 export const TRACE_API_CONTRACT_VERSION = "private-trace-v1-opaque-hmac-v1";
+const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function fail(status: number, code: string, message: string): never {
   const error: ApiError = new Error(message);
@@ -265,7 +267,10 @@ async function createContributorWalletClaim(
       "Wallet claim changed; reload the current claim before submitting",
     );
   }
-  if (current?.walletAddress === walletAddress) {
+  if (
+    current?.walletAddress === walletAddress &&
+    current.githubLogin.toLowerCase() === actor.githubLogin.toLowerCase()
+  ) {
     return json(200, publicWalletClaim(current));
   }
 
@@ -305,7 +310,19 @@ async function createContributorWalletClaim(
     supersedesClaimId: requestedPredecessor,
     createdAt: observedAt,
   };
-  const result = await deps.persistence.createWalletClaim(claim);
+  const audit: AuditInput = {
+    id: deps.randomId(),
+    actorGithubId: actor.githubId,
+    action: "wallet_claim.created",
+    target: `wallet-claim:${claim.id}`,
+    requestId: deps.randomId(),
+    createdAt: observedAt,
+    details: {
+      recordDigest: claim.recordSha256,
+      supersedesClaimId: claim.supersedesClaimId,
+    },
+  };
+  const result = await deps.persistence.createWalletClaim(claim, audit);
   if (result.status === "conflict") {
     fail(
       409,
@@ -313,18 +330,6 @@ async function createContributorWalletClaim(
       "Wallet claim changed; reload the current claim before submitting",
     );
   }
-  await deps.persistence.writeAudit({
-    id: deps.randomId(),
-    actorGithubId: actor.githubId,
-    action: "wallet_claim.created",
-    target: `wallet-claim:${result.value.id}`,
-    requestId: deps.randomId(),
-    createdAt: observedAt,
-    details: {
-      recordDigest: result.value.recordSha256,
-      supersedesClaimId: result.value.supersedesClaimId,
-    },
-  });
   return json(
     result.status === "created" ? 201 : 200,
     publicWalletClaim(result.value),
@@ -354,6 +359,10 @@ async function createFallbackWalletClaim(
     fail(400, "invalid_request", "Invalid Solana address");
   }
   const observedAt = requiredString(body, "observedAt", validIsoTimestamp);
+  const createdAt = deps.now();
+  if (Date.parse(observedAt) > createdAt.getTime()) {
+    fail(400, "invalid_request", "Wallet observation cannot be in the future");
+  }
   const sourceBodySha256 = requiredString(
     body,
     "sourceBodySha256",
@@ -414,26 +423,26 @@ async function createFallbackWalletClaim(
     observedAt,
     recordSha256: await sha256Hex(new TextEncoder().encode(canonicalRecord)),
     supersedesClaimId,
-    createdAt: deps.now().toISOString(),
+    createdAt: createdAt.toISOString(),
   };
-  const result = await deps.persistence.createWalletClaim(claim);
-  if (result.status === "conflict")
-    fail(409, "claim_conflict", "Wallet claim conflicts");
-  await deps.persistence.writeAudit({
+  const audit: AuditInput = {
     id: deps.randomId(),
     actorGithubId: actor.githubId,
     action:
       source === "github_issue"
         ? "wallet_claim.historical_issue_migrated"
         : "wallet_claim.operator_recovery_created",
-    target: `wallet-claim:${result.value.id}`,
+    target: `wallet-claim:${claim.id}`,
     requestId: deps.randomId(),
-    createdAt: deps.now().toISOString(),
+    createdAt: createdAt.toISOString(),
     details: {
-      githubActorId: result.value.githubId,
-      recordDigest: result.value.recordSha256,
+      githubActorId: claim.githubId,
+      recordDigest: claim.recordSha256,
     },
-  });
+  };
+  const result = await deps.persistence.createWalletClaim(claim, audit);
+  if (result.status === "conflict")
+    fail(409, "claim_conflict", "Wallet claim conflicts");
   return json(
     result.status === "created" ? 201 : 200,
     publicWalletClaim(result.value),
@@ -621,9 +630,10 @@ async function uploadTraceCapability(
     fail(404, "not_found", "Upload capability not found");
   }
   const tokenHash = await sha256Hex(new TextEncoder().encode(capability));
+  const authorizedAt = deps.now().toISOString();
   const intent = await deps.persistence.getUploadIntent(
     tokenHash,
-    deps.now().toISOString(),
+    authorizedAt,
   );
   if (intent === null) {
     fail(
@@ -679,12 +689,11 @@ async function uploadTraceCapability(
       createdAt: deps.now().toISOString(),
     } as const);
   await deps.persistence.putTraceBytes(object, bytes);
-  const intentConsumedAt = deps.now().toISOString();
   const result = await deps.persistence.attachTrace({
     runId: intent.runId,
     githubId: intent.githubId,
     idempotencyKey: tokenHash,
-    intentConsumedAt,
+    intentConsumedAt: authorizedAt,
     object,
   });
   if (result.status === "conflict") {
@@ -745,6 +754,10 @@ async function appendEvent(
   const kind = body.kind;
   if (!validEventKind(kind)) fail(400, "invalid_request", "Invalid event kind");
   const occurredAt = requiredString(body, "occurredAt", validIsoTimestamp);
+  const createdAt = deps.now();
+  if (Date.parse(occurredAt) > createdAt.getTime() + MAX_EVENT_CLOCK_SKEW_MS) {
+    fail(400, "invalid_request", "Event time is too far in the future");
+  }
   const source = body.source;
   // GitHub-authoritative events are written only by the webhook processor,
   // never by this contributor endpoint.
@@ -770,7 +783,7 @@ async function appendEvent(
     }),
     headSha: optionalString(body, "headSha", validGitSha),
     idempotencyKey: idempotencyKey(request),
-    createdAt: deps.now().toISOString(),
+    createdAt: createdAt.toISOString(),
   });
   if (result.status === "conflict") {
     fail(409, "idempotency_conflict", "Idempotency key was reused");
@@ -808,24 +821,26 @@ async function createReadGrant(
   const expiresAt = new Date(
     createdAt.getTime() + OPERATOR_GRANT_TTL_SECONDS * 1000,
   );
-  await deps.persistence.createReadGrant({
-    tokenHash,
-    traceSha256: sha256,
-    operatorGithubId: actor.githubId,
-    reason,
-    requestId,
-    createdAt: createdAt.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-  });
-  await deps.persistence.writeAudit({
-    id: deps.randomId(),
-    actorGithubId: actor.githubId,
-    action: "trace.read_grant.created",
-    target: `sha256:${sha256}`,
-    requestId,
-    createdAt: createdAt.toISOString(),
-    details: { reason, expiresAt: expiresAt.toISOString() },
-  });
+  await deps.persistence.createReadGrant(
+    {
+      tokenHash,
+      traceSha256: sha256,
+      operatorGithubId: actor.githubId,
+      reason,
+      requestId,
+      createdAt: createdAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    },
+    {
+      id: deps.randomId(),
+      actorGithubId: actor.githubId,
+      action: "trace.read_grant.created",
+      target: `sha256:${sha256}`,
+      requestId,
+      createdAt: createdAt.toISOString(),
+      details: { reason, expiresAt: expiresAt.toISOString() },
+    },
+  );
   return json(201, {
     grant,
     expiresAt: expiresAt.toISOString(),
@@ -846,29 +861,30 @@ async function readTrace(
     fail(403, "read_grant_required", "A one-time trace read grant is required");
   }
   const tokenHash = await sha256Hex(new TextEncoder().encode(grant));
-  const consumed = await deps.persistence.consumeReadGrant(
-    tokenHash,
-    sha256,
-    actor.githubId,
-    deps.now().toISOString(),
-  );
-  if (!consumed)
-    fail(403, "invalid_read_grant", "Trace read grant is invalid or expired");
   const object = await deps.persistence.getTraceObject(sha256);
   if (object === null) fail(404, "not_found", "Trace not found");
   const bytes = await deps.persistence.readTraceBytes(object);
   if (bytes === null)
     fail(503, "object_unavailable", "Trace object is unavailable");
   const requestId = deps.randomId();
-  await deps.persistence.writeAudit({
-    id: deps.randomId(),
-    actorGithubId: actor.githubId,
-    action: "trace.read_grant.consumed",
-    target: `sha256:${sha256}`,
-    requestId,
-    createdAt: deps.now().toISOString(),
-    details: { sizeBytes: object.sizeBytes },
-  });
+  const consumedAt = deps.now().toISOString();
+  const consumed = await deps.persistence.consumeReadGrant(
+    tokenHash,
+    sha256,
+    actor.githubId,
+    consumedAt,
+    {
+      id: deps.randomId(),
+      actorGithubId: actor.githubId,
+      action: "trace.read_grant.consumed",
+      target: `sha256:${sha256}`,
+      requestId,
+      createdAt: consumedAt,
+      details: { sizeBytes: object.sizeBytes },
+    },
+  );
+  if (!consumed)
+    fail(403, "invalid_read_grant", "Trace read grant is invalid or expired");
   const responseBody =
     bytes instanceof Uint8Array ? bytes.slice().buffer : bytes;
   return new Response(responseBody, {

@@ -542,28 +542,35 @@ describe("trusted funding-record PR gate", () => {
     }
   });
 
-  it("rejects a fresh confirmation count different from the submitted finality", async () => {
-    const repo = fixture();
-    try {
-      const record = {
-        ...repo.record("bitcoin"),
-        finality: { kind: "confirmations" as const, confirmations: 10 },
-      };
-      const headSha = repo.proposal([record]);
-      const result = await checkFundingRecordPr({
-        repositoryRoot: repo.root,
-        baseSha: repo.baseSha,
-        headSha,
-        pullRequestNumber: 368,
-        fetchImpl: chainFetcher("bitcoin").fetchImpl,
-      });
-      expect(result.decision).toBe("verification-failed");
-      expect(result.reason).toMatch(/finality/u);
-      expect(result.records[0].verifierOutputSha256).toMatch(/^[a-f0-9]{64}$/u);
-    } finally {
-      repo.cleanup();
-    }
-  });
+  it.each([10, 11, 12])(
+    "accepts only nondecreasing fresh confirmations for submitted count %i",
+    async (confirmations) => {
+      const repo = fixture();
+      try {
+        const record = {
+          ...repo.record("bitcoin"),
+          finality: { kind: "confirmations" as const, confirmations },
+        };
+        const headSha = repo.proposal([record]);
+        const result = await checkFundingRecordPr({
+          repositoryRoot: repo.root,
+          baseSha: repo.baseSha,
+          headSha,
+          pullRequestNumber: 368,
+          fetchImpl: chainFetcher("bitcoin").fetchImpl,
+        });
+        expect(result.decision).toBe(
+          confirmations <= 11 ? "verified-records" : "verification-failed",
+        );
+        if (confirmations > 11) expect(result.reason).toMatch(/finality/u);
+        expect(result.records[0].verifierOutputSha256).toMatch(
+          /^[a-f0-9]{64}$/u,
+        );
+      } finally {
+        repo.cleanup();
+      }
+    },
+  );
 
   for (const kind of [
     "manifest",
@@ -693,6 +700,120 @@ describe("trusted funding-record PR gate", () => {
       }
     }
   });
+
+  it.each(["solana", "base", "ethereum"] as const)(
+    "rejects %s transaction reuse from another project's commitment before querying the chain",
+    async (network) => {
+      const repo = fixture();
+      try {
+        const record = repo.record(network);
+        const recordId = "cmt_fixture01";
+        repo.write(
+          `funding/other/commitments/${network}/${record.transactionId}/${recordId}.json`,
+          canonicalFundingDecisionBytes({
+            kind: "project-commitment",
+            schemaVersion: "1",
+            projectId: "other",
+            network,
+            transactionId: record.transactionId,
+            recordId,
+          }),
+        );
+        repo.commitBase([]);
+        const headSha = repo.proposal([record]);
+        const result = await checkFundingRecordPr({
+          repositoryRoot: repo.root,
+          baseSha: repo.baseSha,
+          headSha,
+          pullRequestNumber: 368,
+          fetchImpl: async () => {
+            throw new Error("must not query the chain");
+          },
+        });
+        expect(result.decision).toBe("verification-failed");
+        expect(result.reason).toMatch(/duplicates/u);
+      } finally {
+        repo.cleanup();
+      }
+    },
+  );
+
+  it("does not confuse identical transaction bytes on different networks", async () => {
+    const repo = fixture();
+    try {
+      const record = repo.record("base");
+      repo.write(
+        `funding/other/commitments/ethereum/${record.transactionId}/cmt_fixture01.json`,
+        canonicalFundingDecisionBytes({
+          kind: "project-commitment",
+          schemaVersion: "1",
+          projectId: "other",
+          network: "ethereum",
+          transactionId: record.transactionId,
+          recordId: "cmt_fixture01",
+        }),
+      );
+      repo.commitBase([]);
+      const headSha = repo.proposal([record]);
+      const result = await checkFundingRecordPr({
+        repositoryRoot: repo.root,
+        baseSha: repo.baseSha,
+        headSha,
+        pullRequestNumber: 368,
+        fetchImpl: chainFetcher("base").fetchImpl,
+      });
+      expect(result.decision, result.reason).toBe("verified-records");
+    } finally {
+      repo.cleanup();
+    }
+  });
+
+  it.each([
+    "project",
+    "network",
+    "transaction",
+    "record",
+    "kind",
+    "path",
+    "mode",
+  ])(
+    "holds ambiguous existing commitment %s on human review",
+    async (change) => {
+      const repo = fixture();
+      try {
+        const record = repo.record();
+        const path = `funding/other/commitments/solana/${record.transactionId}/${change === "path" ? "bad" : "cmt_fixture01"}.json`;
+        repo.write(
+          path,
+          canonicalFundingDecisionBytes({
+            kind: change === "kind" ? "project-funding" : "project-commitment",
+            schemaVersion: "1",
+            projectId: change === "project" ? "eliza" : "other",
+            network: change === "network" ? "base" : "solana",
+            transactionId:
+              change === "transaction" ? "4".repeat(88) : record.transactionId,
+            recordId: change === "record" ? "cmt_fixture02" : "cmt_fixture01",
+          }),
+        );
+        if (change === "mode") chmodSync(join(repo.root, path), 0o755);
+        repo.commitBase([]);
+        const headSha = repo.proposal([record]);
+        const result = await checkFundingRecordPr({
+          repositoryRoot: repo.root,
+          baseSha: repo.baseSha,
+          headSha,
+          pullRequestNumber: 368,
+          fetchImpl: async () => {
+            throw new Error("must not query");
+          },
+        });
+        expect(result.decision, result.reason).toBe("human-review-required");
+        expect(result.reason).toMatch(/commitment/u);
+      } finally {
+        repo.cleanup();
+      }
+    },
+  );
 
   it("refuses a manifest commit present only in unreviewed PR history", async () => {
     const repo = fixture();

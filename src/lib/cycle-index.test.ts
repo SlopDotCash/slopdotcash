@@ -79,13 +79,102 @@ function index(cycles: CycleIndexEntry[] = [entry()]): CycleIndex {
 }
 
 describe("public cycle index", () => {
+  function approvedCarry(
+    shared: bigint,
+    review: bigint | null = null,
+  ): CycleIndex {
+    const value = entry();
+    const total = shared + (review ?? 0n);
+    value.state = "payment-ready";
+    value.approvedAt = "2026-08-16T00:00:00.000Z";
+    value.files.allocation = {
+      sha256: DIGEST,
+      url: "/data/cycles/eliza/2026-07/allocation.json",
+    };
+    value.reward.capMinor = "1000000";
+    value.reward.fundingBasis = {
+      cycleId: value.cycleId,
+      instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
+      fundingState: "committed",
+      committedMinor: "1000000",
+      monthlyCapMinor: "10000000000",
+    };
+    value.reward.carriedMinor = "2000000";
+    value.reward.suggestedMinor = total.toString();
+    value.reward.approvedMinor = total.toString();
+    value.reward.feeMinor = (total / 100n).toString();
+    value.contributors[0].state = "approved";
+    value.contributors[0].suggestedMinor = total.toString();
+    value.contributors[0].approvedMinor = total.toString();
+    if (review !== null) {
+      value.reward.reviewBudgetCapMinor = "700000";
+      value.reward.lines = {
+        sharedPool: {
+          suggestedMinor: shared.toString(),
+          approvedMinor: shared.toString(),
+          paidMinor: "0",
+        },
+        reviewBudget: {
+          suggestedMinor: review.toString(),
+          approvedMinor: review.toString(),
+          paidMinor: "0",
+        },
+      };
+      value.contributors[0].lines = structuredClone(value.reward.lines);
+    }
+    return { ...index([value]), generatedAt: "2026-08-20T00:00:00.000Z" };
+  }
+
+  it("accepts exactly cap plus carry and rejects one micro-unit more", () => {
+    const exact = approvedCarry(3000000n);
+    expect(() => assertCycleIndex(exact)).not.toThrow();
+    expect(() => assertCycleIndex(approvedCarry(3000001n))).toThrow(
+      /money totals do not reconcile/u,
+    );
+    exact.cycles[0].reward.capMinor = "0";
+    exact.cycles[0].reward.fundingBasis = {
+      cycleId: "2026-07",
+      instrumentId: null,
+      fundingState: "pledged",
+      committedMinor: "0",
+      monthlyCapMinor: "10000000000",
+    };
+    exact.cycles[0].reward.carriedMinor = "3000000";
+    expect(() => assertCycleIndex(exact)).not.toThrow();
+  });
+
+  it("applies carry only to the shared-pool cap and independently caps additive review", () => {
+    expect(() =>
+      assertCycleIndex(approvedCarry(3000000n, 700000n)),
+    ).not.toThrow();
+    expect(() => assertCycleIndex(approvedCarry(3000001n, 700000n))).toThrow(
+      /money totals do not reconcile/u,
+    );
+    expect(() => assertCycleIndex(approvedCarry(1000000n, 700001n))).toThrow(
+      /review budget exceeds its separate allocation cap/u,
+    );
+  });
+
   it("accepts a bounded public review state", () => {
     const value: unknown = index();
     expect(() => assertCycleIndex(value)).not.toThrow();
   });
 
+  it("publishes held review rows without granting approval or payment", () => {
+    const held = entry();
+    held.contributors[0].state = "held";
+    expect(() => assertCycleIndex(index([held]))).not.toThrow();
+    for (const field of ["approvedMinor", "paidMinor"] as const) {
+      const invalid = structuredClone(held);
+      invalid.reward[field] = "1";
+      invalid.contributors[0][field] = "1";
+      expect(() => assertCycleIndex(index([invalid]))).toThrow();
+    }
+  });
+
   it("publishes additive review-budget money as reconciled line items", () => {
     const additive = entry();
+    additive.reward.reviewBudgetCapMinor = "500000000";
     additive.reward.suggestedMinor = "10500000000";
     additive.reward.lines = {
       sharedPool: {
@@ -343,6 +432,35 @@ describe("public cycle index", () => {
     });
 
     expect(() => assertCycleIndex(index([external]))).not.toThrow();
+    for (const monthlyFields of [
+      { carriedMinor: "2000000" },
+      { carriedMinor: "0" },
+      {
+        fundingBasis: {
+          fundingState: "committed" as const,
+          cycleId: "2026-07",
+          instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
+          committedMinor: "2000000",
+          monthlyCapMinor: "2000000",
+        },
+      },
+      {
+        fundingBasis: {
+          fundingState: "pledged" as const,
+          cycleId: "2026-07",
+          instrumentId: null,
+          committedMinor: "0",
+          monthlyCapMinor: "0",
+        },
+      },
+      { reviewBudgetCapMinor: "2000000" },
+    ]) {
+      const invalid = structuredClone(external);
+      Object.assign(invalid.reward, monthlyFields);
+      expect(() => assertCycleIndex(index([invalid]))).toThrow(
+        /reward differs from project policy/u,
+      );
+    }
     const dollarLarp = structuredClone(external);
     dollarLarp.reward.currency = "USDC";
     dollarLarp.reward.capMinor = "1";

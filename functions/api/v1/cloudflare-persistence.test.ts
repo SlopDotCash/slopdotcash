@@ -4,7 +4,13 @@ import {
   type D1Database,
   type R2Bucket,
 } from "../../../backend/trace/cloudflare-persistence";
-import type { TraceObject } from "../../../backend/trace/contracts";
+import type {
+  AuditInput,
+  CreateGrantInput,
+  RunProgressEvent,
+  TraceObject,
+  WalletClaim,
+} from "../../../backend/trace/contracts";
 
 const object: TraceObject = {
   sha256: "eafe895eb8119e6e5d06463590b2ef81b3651c157d5c8e18f1889186c7fd0ac0",
@@ -26,6 +32,209 @@ function body(text: string): ReadableStream<Uint8Array> {
 }
 
 describe("Cloudflare trace object persistence", () => {
+  it("creates read grants and their audit records in one D1 batch", async () => {
+    const queries: string[] = [];
+    const batches: string[][] = [];
+    const db: D1Database = {
+      async batch(statements) {
+        batches.push(queries.slice(-statements.length));
+        return statements.map(() => ({ success: true, meta: { changes: 1 } }));
+      },
+      prepare(query) {
+        queries.push(query);
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<T>() {
+            return null as T | null;
+          },
+          async run() {
+            return { success: true };
+          },
+        };
+        return statement;
+      },
+    };
+    const grant: CreateGrantInput = {
+      tokenHash: "a".repeat(64),
+      traceSha256: object.sha256,
+      operatorGithubId: "99",
+      reason: "investigate payout dispute",
+      requestId: "request-1",
+      createdAt: object.createdAt,
+      expiresAt: "2026-08-15T12:05:00.000Z",
+    };
+    const audit: AuditInput = {
+      id: "audit-1",
+      actorGithubId: "99",
+      action: "trace.read_grant.created",
+      target: `sha256:${object.sha256}`,
+      requestId: grant.requestId,
+      createdAt: grant.createdAt,
+      details: { reason: grant.reason, expiresAt: grant.expiresAt },
+    };
+
+    await new CloudflareTracePersistence(db, {} as R2Bucket).createReadGrant(
+      grant,
+      audit,
+    );
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(2);
+    expect(batches[0][0]).toContain("INSERT INTO trace_read_grants");
+    expect(batches[0][1]).toContain("INSERT INTO private_audit_events");
+  });
+
+  it("fails closed when read-grant consumption and audit results diverge", async () => {
+    const db: D1Database = {
+      async batch() {
+        return [
+          { success: true, meta: { changes: 1 } },
+          { success: true, meta: { changes: 0 } },
+        ];
+      },
+      prepare() {
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<T>() {
+            return null as T | null;
+          },
+          async run() {
+            return { success: true };
+          },
+        };
+        return statement;
+      },
+    };
+    const audit: AuditInput = {
+      id: "audit-2",
+      actorGithubId: "99",
+      action: "trace.read_grant.consumed",
+      target: `sha256:${object.sha256}`,
+      requestId: "request-2",
+      createdAt: object.createdAt,
+      details: { sizeBytes: object.sizeBytes },
+    };
+
+    await expect(
+      new CloudflareTracePersistence(db, {} as R2Bucket).consumeReadGrant(
+        "a".repeat(64),
+        object.sha256,
+        "99",
+        object.createdAt,
+        audit,
+      ),
+    ).rejects.toThrow("Trace read grant and audit state diverged");
+  });
+
+  it("submits wallet claim and audit writes in one atomic D1 batch", async () => {
+    const queries: string[] = [];
+    const db: D1Database = {
+      async batch(statements) {
+        expect(statements).toHaveLength(2);
+        return statements.map(() => ({ success: true, meta: { changes: 1 } }));
+      },
+      prepare(query) {
+        queries.push(query);
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<T>() {
+            return null as T;
+          },
+          async run() {
+            throw new Error("wallet writes must use the atomic batch");
+          },
+        };
+        return statement;
+      },
+    };
+    const claim: WalletClaim = {
+      id: "claim-1",
+      githubId: "42",
+      githubLogin: "octocat",
+      walletAddress: "11111111111111111111111111111111",
+      source: "d1_registry",
+      issueRepository: null,
+      issueNumber: null,
+      sourceBodySha256: "b".repeat(64),
+      observedAt: object.createdAt,
+      recordSha256: "c".repeat(64),
+      supersedesClaimId: null,
+      createdAt: object.createdAt,
+    };
+    const audit: AuditInput = {
+      id: "audit-1",
+      actorGithubId: "42",
+      action: "wallet_claim.created",
+      target: "wallet-claim:claim-1",
+      requestId: "request-1",
+      createdAt: object.createdAt,
+      details: { recordDigest: claim.recordSha256 },
+    };
+
+    await expect(
+      new CloudflareTracePersistence(db, {} as R2Bucket).createWalletClaim(
+        claim,
+        audit,
+      ),
+    ).resolves.toEqual({ status: "created", value: claim });
+    expect(
+      queries.some((query) => query.includes("INSERT INTO wallet_claims")),
+    ).toBe(true);
+    expect(
+      queries.some((query) =>
+        query.includes("INSERT INTO private_audit_events"),
+      ),
+    ).toBe(true);
+  });
+  it.each([
+    { success: false, meta: { changes: 1 } },
+    { success: true, meta: { changes: 0 } },
+  ])(
+    "does not report an upload intent that D1 did not insert",
+    async (result) => {
+      const db: D1Database = {
+        async batch() {
+          return [];
+        },
+        prepare() {
+          const statement = {
+            bind() {
+              return statement;
+            },
+            async first<T>() {
+              return null as T | null;
+            },
+            async run() {
+              return result;
+            },
+          };
+          return statement;
+        },
+      };
+
+      await expect(
+        new CloudflareTracePersistence(db, {} as R2Bucket).createUploadIntent({
+          tokenHash: "a".repeat(64),
+          runId: "run-1",
+          githubId: "42",
+          sha256: object.sha256,
+          sizeBytes: object.sizeBytes,
+          contentType: object.contentType,
+          idempotencyKey: "intent-key-0001",
+          createdAt: object.createdAt,
+          expiresAt: "2026-08-15T12:05:00.000Z",
+          consumedAt: null,
+        }),
+      ).rejects.toThrow(/upload intent insertion failed/u);
+    },
+  );
+
   it("renews an expired unconsumed upload intent without changing its capability", async () => {
     const expired = {
       token_hash: "a".repeat(64),
@@ -85,6 +294,46 @@ describe("Cloudflare trace object persistence", () => {
     expect(result.status === "existing" && result.value.expiresAt).toBe(
       "2026-08-15T12:11:00.000Z",
     );
+  });
+
+  it("rejects an event when its run finalized before the atomic insert", async () => {
+    const db: D1Database = {
+      batch: async () => [],
+      prepare(query) {
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<_T>() {
+            if (query.includes("FROM run_progress_events")) return null;
+            throw new Error(`Unexpected query: ${query}`);
+          },
+          async run() {
+            expect(query).toMatch(/FROM trace_runs/u);
+            expect(query).toMatch(/state != 'finalized'/u);
+            return { success: true, meta: { changes: 0 } };
+          },
+        };
+        return statement;
+      },
+    };
+    const event: RunProgressEvent & { idempotencyKey: string } = {
+      id: "event-1",
+      runId: "run-1",
+      githubId: "42",
+      kind: "checkpoint",
+      occurredAt: object.createdAt,
+      source: "agent",
+      githubObjectId: null,
+      githubUrl: null,
+      headSha: null,
+      createdAt: object.createdAt,
+      idempotencyKey: "event-key-0001",
+    };
+
+    await expect(
+      new CloudflareTracePersistence(db, {} as R2Bucket).appendEvent(event),
+    ).resolves.toEqual({ status: "conflict" });
   });
 
   it("does not disguise a missing atomic-attachment migration as replay", async () => {
