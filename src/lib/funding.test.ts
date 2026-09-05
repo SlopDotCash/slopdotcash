@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertProjectFundingAddresses,
+  assertProjectFundingIndex,
   assertProjectFundingLedger,
   assertProjectFundingRecord,
   currentProjectFundingRecords,
@@ -352,5 +353,92 @@ describe("project funding records", () => {
     expect(
       publicFundingRecordsForDonor(ledger, "MDQ6VXNlcjE4NjMzMjY1"),
     ).toEqual([]);
+  });
+
+  it("rejects one transaction recorded as both direct and committed funding", () => {
+    const vault = "Vote111111111111111111111111111111111111111";
+    const multisig = "11111111111111111111111111111111";
+    const funderMember = "Stake11111111111111111111111111111111111111";
+    const stewardMember = "SysvarRent111111111111111111111111111111111";
+    const transactionId = "3".repeat(88);
+    const solanaRoutes = assertProjectFundingAddresses([
+      {
+        network: "solana",
+        asset: "USDC",
+        address: vault,
+        effectiveAt: "2026-08-01T00:00:00.000Z",
+        replacedAt: null,
+      },
+    ]);
+    const direct = record({
+      network: "solana",
+      transactionId,
+      recipient: vault,
+      amountMinor: "5000000",
+      state: "verified-on-chain",
+      finality: { kind: "finalized" },
+      verifier: {
+        version: "funding-solana-v1",
+        checkedAt: "2026-08-02T01:00:00.000Z",
+        evidenceUrl: `https://solscan.io/tx/${transactionId}`,
+        reason: null,
+      },
+    });
+    const instrument = {
+      kind: "squads-v4-vault",
+      network: "solana",
+      asset: "USDC",
+      multisig,
+      vault,
+      vaultIndex: 0,
+      funderMember,
+      stewardMember,
+      funderActorId: "18633264",
+      deadline: "2026-12-01T00:00:00.000Z",
+      effectiveAt: "2026-08-01T00:00:00.000Z",
+      replacedAt: null,
+    } as const;
+    const commitment = {
+      schemaVersion: "1",
+      kind: "project-commitment",
+      recordId: "cmt_duplicate_transaction_01",
+      projectId: "eliza",
+      manifestRevision: "b".repeat(40),
+      event: "deposit",
+      network: "solana",
+      asset: "USDC",
+      instrument: {
+        funderMember,
+        multisig,
+        stewardMember,
+        vault,
+        vaultIndex: 0,
+      },
+      transactionId,
+      amountMinor: "5000000",
+      observedAt: "2026-08-02T00:00:00.000Z",
+      state: "verified-on-chain",
+      finality: { kind: "finalized" },
+      verifier: {
+        version: "commitment-squads-v2",
+        checkedAt: "2026-08-02T01:00:00.000Z",
+        evidenceUrl: `https://solscan.io/tx/${transactionId}`,
+        reason: null,
+      },
+      supersedes: null,
+    };
+
+    expect(() =>
+      assertProjectFundingIndex(
+        {
+          schemaVersion: "1",
+          generatedAt: "2026-08-03T00:00:00.000Z",
+          records: [direct],
+          commitments: [commitment],
+        },
+        new Map([["eliza", solanaRoutes]]),
+        new Map([["eliza", [instrument]]]),
+      ),
+    ).toThrow(/transaction.*multiple funding ledgers/u);
   });
 });

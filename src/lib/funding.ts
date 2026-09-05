@@ -539,6 +539,11 @@ export function assertProjectFundingIndex(
   const commitmentTransactionProjects = new Map<string, string>();
   for (const record of commitments) {
     const key = `${record.network}:${record.transactionId}`;
+    if (transactionProjects.has(key)) {
+      throw new TypeError(
+        "funding index records one transaction in multiple funding ledgers",
+      );
+    }
     const projectId = commitmentTransactionProjects.get(key);
     if (projectId !== undefined && projectId !== record.projectId) {
       throw new TypeError(
