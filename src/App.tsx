@@ -3104,8 +3104,15 @@ export function ProjectManagePage({
       row.approvedMinor === row.suggestedMinor ||
       row.reason.trim().length > 0,
   );
-  const allocationCapMinor =
-    currentRecord?.reward.capMinor ?? project.reward.monthlyCapMinor;
+  const reviewBudget = project.reward.reviewBudget;
+  const reviewCapMinor =
+    currentRecord?.reward.lines && reviewBudget
+      ? BigInt(reviewBudget.monthlyCapMinor)
+      : 0n;
+  const allocationCapMinor = (
+    BigInt(currentRecord?.reward.capMinor ?? project.reward.monthlyCapMinor) +
+    reviewCapMinor
+  ).toString();
   const validAllocation =
     parsedTotal !== null &&
     BigInt(parsedTotal) <= BigInt(allocationCapMinor) &&
