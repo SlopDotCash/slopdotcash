@@ -51,7 +51,7 @@ describe("D1 identity persistence", () => {
   ])("does not confirm an assertion absent from D1", async (options) => {
     await expect(
       new D1IdentityPersistence(database(options)).createAssertion(assertion),
-    ).resolves.toBe(false);
+    ).resolves.toBeNull();
   });
 
   it("confirms the exact durable assertion", async () => {
@@ -59,6 +59,19 @@ describe("D1 identity persistence", () => {
       new D1IdentityPersistence(
         database({ insertSuccess: true, stored: true }),
       ).createAssertion(assertion),
-    ).resolves.toBe(true);
+    ).resolves.toEqual(assertion);
+  });
+
+  it("returns the original assertion when a later retry finds its token", async () => {
+    const retry = {
+      ...assertion,
+      createdAt: "2026-08-15T20:00:02.000Z",
+      expiresAt: "2026-08-15T20:01:32.000Z",
+    };
+    await expect(
+      new D1IdentityPersistence(
+        database({ insertSuccess: true, stored: true }),
+      ).createAssertion(retry),
+    ).resolves.toEqual(assertion);
   });
 });

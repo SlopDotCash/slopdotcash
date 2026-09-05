@@ -56,7 +56,9 @@ export interface IdentityPersistence {
     pollCapabilityHash: string,
     now: string,
   ): Promise<OAuthFlow | null>;
-  createAssertion(assertion: IdentityAssertion): Promise<boolean>;
+  createAssertion(
+    assertion: IdentityAssertion,
+  ): Promise<IdentityAssertion | null>;
   markAssertionIssued(flowId: string, issuedAt: string): Promise<boolean>;
   consumeAssertion(
     tokenHash: string,
