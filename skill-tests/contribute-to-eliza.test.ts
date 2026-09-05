@@ -5,7 +5,7 @@
 
 import assert from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -21,10 +21,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  acquireLiveReportLock,
   auditCommentDisclosures,
   auditPrEvidence,
   CLAIM_RECENCY_DAYS,
@@ -33,6 +34,7 @@ import {
   completeReviewEpoch,
   createGhCommandBudget,
   createReviewEpoch,
+  ensureLiveReportLockRoot,
   isBotAccount,
   LiveInventoryChangedError,
   MAX_ACTIVITY_CONNECTION_ITEMS,
@@ -44,9 +46,11 @@ import {
   parseModelDisclosure,
   parsePaginatedJson,
   REQUIRED_EVIDENCE_ROWS,
+  readGhAuthenticatedIdentity,
   readGhOpenActivity,
   readGhPages,
   readLivePullHead,
+  readLiveReportProcessIdentity,
   readProjectSelectionPolicy,
   recheckReviewEpochCandidate,
   renderMarkdown,
@@ -66,6 +70,161 @@ const runReceiptPath = join(skillDir, "scripts", "run-receipt.mjs");
 const NOW = new Date("2026-01-20T12:00:00.000Z");
 const HEAD_SHA = "a".repeat(40);
 const PRIOR_SHA = "b".repeat(40);
+
+const configuredNodeExecutable = process.env.SLOP_TEST_NODE ?? "node";
+const nodeExecutable = configuredNodeExecutable;
+let pinnedNodeRuntimeChecked = false;
+
+function assertPinnedNodeRuntime(): void {
+  if (pinnedNodeRuntimeChecked) return;
+  const configuredNodeRuntime = spawnSync(
+    configuredNodeExecutable,
+    [
+      "-p",
+      "JSON.stringify({ executable: process.execPath, version: process.versions.node })",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.strictEqual(
+    configuredNodeRuntime.status,
+    0,
+    configuredNodeRuntime.stderr,
+  );
+  const nodeRuntime = JSON.parse(configuredNodeRuntime.stdout) as {
+    version: string;
+  };
+  assert.strictEqual(nodeRuntime.version, "24.15.0");
+  pinnedNodeRuntimeChecked = true;
+}
+
+function createLiveReportGhFixture() {
+  assertPinnedNodeRuntime();
+  const root = mkdtempSync(join(tmpdir(), "slop-live-report-lock-test-"));
+  const identityId = Number.parseInt(randomBytes(6).toString("hex"), 16);
+  const shimDirectory = join(root, "bin");
+  const logPath = join(root, "gh-commands.ndjson");
+  const readyPath = join(root, "discovery-ready");
+  const releasePath = join(root, "discovery-release");
+  const donePath = join(root, "discovery-done");
+  const pidPath = join(root, "discovery-pid");
+  const scriptPath = join(shimDirectory, "gh-fixture.mjs");
+  mkdirSync(shimDirectory);
+  writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+const identityId = Number(process.env.SLOP_GH_ID);
+const restGraphqlRemaining = Number(process.env.SLOP_GH_REST_GRAPHQL_REMAINING ?? "5000");
+const directGraphqlRemaining = Number(process.env.SLOP_GH_DIRECT_GRAPHQL_REMAINING ?? "5000");
+appendFileSync(process.env.SLOP_GH_LOG, \`\${JSON.stringify(args)}\\n\`);
+if (args.at(-1) === "user") {
+  process.stdout.write(\`\${JSON.stringify({ id: identityId, login: "fixture-user" })}\\n\`);
+} else if (args.at(-1) === "rate_limit") {
+  if (process.env.SLOP_GH_HOLD === "1") {
+    writeFileSync(process.env.SLOP_GH_PID, \`\${process.pid}\\n\`);
+    writeFileSync(process.env.SLOP_GH_READY, "ready\\n");
+    const sleeper = new Int32Array(new SharedArrayBuffer(4));
+    while (!existsSync(process.env.SLOP_GH_RELEASE)) {
+      Atomics.wait(sleeper, 0, 0, 10);
+    }
+    writeFileSync(process.env.SLOP_GH_DONE, "done\\n");
+  }
+  if (process.env.SLOP_GH_FAIL_RATE === "1") {
+    process.stderr.write("fixture rate-limit failure\\n");
+    process.exit(9);
+  }
+  process.stdout.write(JSON.stringify({ resources: {
+    graphql: { limit: 5000, remaining: restGraphqlRemaining, reset: 1800000000 },
+    core: { limit: 5000, remaining: 5000, reset: 1800000000 },
+    search: { limit: 30, remaining: 30, reset: 1800000000 }
+  } }));
+} else if (args.some((value) => value.includes("SlopActivityRateLimit"))) {
+  process.stdout.write(\`\${JSON.stringify({ limit: 5000, remaining: directGraphqlRemaining, resetAt: "2027-01-15T08:00:00.000Z" })}\\n\`);
+}
+`,
+  );
+  const shimPath = join(
+    shimDirectory,
+    process.platform === "win32" ? "gh.cmd" : "gh",
+  );
+  if (process.platform === "win32") {
+    writeFileSync(shimPath, `@node "%~dp0\\gh-fixture.mjs" %*\r\n`);
+  } else {
+    symlinkSync(scriptPath, shimPath);
+    chmodSync(scriptPath, 0o755);
+  }
+  return {
+    root,
+    logPath,
+    readyPath,
+    releasePath,
+    donePath,
+    environment: {
+      ...process.env,
+      PATH: `${shimDirectory}${delimiter}${dirname(nodeExecutable)}${delimiter}${process.env.PATH ?? ""}`,
+      SLOP_GH_LOG: logPath,
+      SLOP_GH_READY: readyPath,
+      SLOP_GH_RELEASE: releasePath,
+      SLOP_GH_DONE: donePath,
+      SLOP_GH_ID: String(identityId),
+      SLOP_GH_PID: pidPath,
+      TMPDIR: root,
+      TEMP: root,
+      TMP: root,
+    },
+    identityId,
+    pidPath,
+  };
+}
+
+function collectChild(child: ReturnType<typeof spawn>) {
+  return new Promise<{
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    stderr: string;
+    stdout: string;
+  }>((resolvePromise) => {
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("close", (status, signal) => {
+      resolvePromise({ status, signal, stderr, stdout });
+    });
+  });
+}
+
+async function waitForFixturePath(path: string, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) assert.fail(`timed out waiting for ${path}`);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+}
+
+async function waitForProcessExit(
+  pid: number,
+  expectedIdentity: string,
+  timeoutMs = 5_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (readLiveReportProcessIdentity(pid) === expectedIdentity) {
+    if (Date.now() >= deadline) assert.fail(`timed out waiting for PID ${pid}`);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+}
+
+function liveReportLockPath(root: string, identityId: number) {
+  const key = createHash("sha256")
+    .update(`github.com:${identityId}`)
+    .digest("hex");
+  return join(root, `${key}.lock`);
+}
 
 function account(login: string, type = "User") {
   const id = [...login.toLowerCase()].reduce(
@@ -1769,6 +1928,440 @@ describe("live report behavior", () => {
       /changed while collecting the live report after 2 attempts/,
     );
   });
+  it("pins the authenticated identity lookup to github.com", () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const identity = readGhAuthenticatedIdentity((command, args) => {
+      calls.push({ command, args });
+      return {
+        status: 0,
+        stderr: "",
+        stdout: '{"id":42,"login":"fixture-user"}\n',
+      };
+    });
+
+    assert.deepStrictEqual(identity, {
+      host: "github.com",
+      id: 42,
+      login: "fixture-user",
+    });
+    assert.deepStrictEqual(calls, [
+      {
+        command: "gh",
+        args: [
+          "api",
+          "--hostname",
+          "github.com",
+          "--method",
+          "GET",
+          "--jq",
+          "{id: .id, login: .login}",
+          "user",
+        ],
+      },
+    ]);
+  });
+
+  it("keeps all four live-report implementations byte-identical", () => {
+    const implementations = [
+      "contribute-to-asi",
+      "contribute-to-delta-star",
+      "contribute-to-eliza",
+      "contribute-to-heir-elements-sdk",
+    ].map((skill) =>
+      readFileSync(join(skillDir, "..", skill, "scripts", "live-report.mjs")),
+    );
+
+    for (const implementation of implementations.slice(1)) {
+      assert.deepStrictEqual(implementation, implementations[0]);
+    }
+  });
+
+  it("executes locked commands from an explicit secure root", () => {
+    const fixture = createLiveReportGhFixture();
+    const lockRoot = join(fixture.root, "locks");
+    mkdirSync(lockRoot, { mode: 0o700 });
+    const lock = acquireLiveReportLock(
+      {
+        host: "github.com",
+        id: fixture.identityId,
+        login: "fixture-user",
+      },
+      { rootPath: lockRoot },
+    );
+    try {
+      const result = lock.spawn("gh", ["api", "user"], {
+        encoding: "utf8",
+        env: fixture.environment,
+      });
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.deepStrictEqual(JSON.parse(result.stdout), {
+        id: fixture.identityId,
+        login: "fixture-user",
+      });
+    } finally {
+      lock.release();
+      rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("does not let a delayed stale reaper displace a successor lock", () => {
+    const result = spawnSync(
+      nodeExecutable,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import assert from "node:assert/strict";
+      import fs from "node:fs";
+      import { syncBuiltinESMExports } from "node:module";
+      import { tmpdir } from "node:os";
+      import { join } from "node:path";
+      import { acquireLiveReportLock, LiveReportLockContentionError } from ${JSON.stringify(pathToFileURL(liveReportPath).href)};
+      const root = fs.mkdtempSync(join(tmpdir(), "slop-delayed-reaper-"));
+      const identity = { host: "github.com", id: 42, login: "fixture" };
+      acquireLiveReportLock(identity, { rootPath: root });
+      const lockPath = join(root, fs.readdirSync(root).find(name => name.endsWith(".lock")));
+      const ownerPath = join(lockPath, "owner.json");
+      const owner = JSON.parse(fs.readFileSync(ownerPath, "utf8"));
+      owner.processIdentity = "0".repeat(64);
+      fs.writeFileSync(ownerPath, JSON.stringify(owner));
+      const originalRename = fs.renameSync;
+      let successor;
+      let paused = false;
+      fs.renameSync = (from, to) => {
+        if (!paused && from === lockPath && String(to).includes(".stale-")) {
+          paused = true;
+          successor = acquireLiveReportLock(identity, { rootPath: root });
+        }
+        return originalRename(from, to);
+      };
+      syncBuiltinESMExports();
+      try {
+        assert.throws(() => acquireLiveReportLock(identity, { rootPath: root }), LiveReportLockContentionError);
+        assert.ok(successor);
+        successor.release();
+        assert.equal(fs.existsSync(lockPath), false);
+        assert.equal(fs.readdirSync(root).filter(name => name.includes(".stale-")).length, 1);
+      } finally {
+        fs.renameSync = originalRename;
+        syncBuiltinESMExports();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    `,
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    assert.strictEqual(result.status, 0, result.stderr);
+  });
+
+  it("reclaims a stale reused PID but preserves malformed lock evidence", () => {
+    const root = mkdtempSync(join(tmpdir(), "slop-live-report-metadata-test-"));
+    const identity = {
+      host: "github.com",
+      id: Number.parseInt(randomBytes(6).toString("hex"), 16),
+      login: "fixture-user",
+    };
+    const lockPath = liveReportLockPath(root, identity.id);
+    const ownerPath = join(lockPath, "owner.json");
+    try {
+      mkdirSync(join(lockPath, "commands"), { recursive: true, mode: 0o700 });
+      writeFileSync(ownerPath, "{malformed\n", { mode: 0o600 });
+      const malformed = readFileSync(ownerPath);
+      assert.throws(
+        () => acquireLiveReportLock(identity, { rootPath: root }),
+        SyntaxError,
+      );
+      assert.deepStrictEqual(readFileSync(ownerPath), malformed);
+
+      rmSync(lockPath, { force: true, recursive: true });
+      mkdirSync(join(lockPath, "commands"), { recursive: true, mode: 0o700 });
+      const currentIdentity = readLiveReportProcessIdentity(process.pid);
+      assert.ok(currentIdentity);
+      const staleIdentity =
+        currentIdentity === "0".repeat(64) ? "1".repeat(64) : "0".repeat(64);
+      writeFileSync(
+        ownerPath,
+        `${JSON.stringify({
+          schemaVersion: 2,
+          pid: process.pid,
+          processIdentity: staleIdentity,
+          ownerToken: randomBytes(16).toString("hex"),
+        })}\n`,
+        { mode: 0o600 },
+      );
+
+      const recovered = acquireLiveReportLock(identity, { rootPath: root });
+      recovered.release();
+      assert.strictEqual(existsSync(lockPath), false);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects symlinked and group-readable lock roots", () => {
+    const fixtureRoot = mkdtempSync(
+      join(tmpdir(), "slop-live-report-root-test-"),
+    );
+    const target = join(fixtureRoot, "target");
+    const symlink = join(fixtureRoot, "symlink");
+    const permissive = join(fixtureRoot, "permissive");
+    try {
+      mkdirSync(target, { mode: 0o700 });
+      symlinkSync(target, symlink);
+      assert.throws(
+        () => ensureLiveReportLockRoot(symlink),
+        /must be a real directory/u,
+      );
+      assert.deepStrictEqual(readdirSync(target), []);
+
+      mkdirSync(permissive, { mode: 0o700 });
+      chmodSync(permissive, 0o755);
+      if (process.platform !== "win32") {
+        assert.throws(
+          () => ensureLiveReportLockRoot(permissive),
+          /permissions must/u,
+        );
+      }
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps same-identity project reports out of simultaneous discovery", {
+    timeout: 15_000,
+  }, async () => {
+    const fixture = createLiveReportGhFixture();
+    const asiReportPath = join(
+      skillDir,
+      "..",
+      "contribute-to-asi",
+      "scripts",
+      "live-report.mjs",
+    );
+    const first = spawn(
+      nodeExecutable,
+      [liveReportPath, "--repo", "alpha/one", "--json"],
+      {
+        env: { ...fixture.environment, SLOP_GH_HOLD: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const firstResult = collectChild(first);
+    let testError: unknown = null;
+    try {
+      await waitForFixturePath(fixture.readyPath);
+      const alternateTmp = join(fixture.root, "alternate-tmp");
+      mkdirSync(alternateTmp, { mode: 0o700 });
+      const second = spawnSync(
+        nodeExecutable,
+        [asiReportPath, "--repo", "beta/two", "--json"],
+        {
+          encoding: "utf8",
+          env: {
+            ...fixture.environment,
+            TEMP: alternateTmp,
+            TMP: alternateTmp,
+            TMPDIR: alternateTmp,
+          },
+        },
+      );
+      assert.strictEqual(second.status, 2, second.stderr);
+      assert.match(second.stderr, /live report lock contention/iu);
+      const calls = readFileSync(fixture.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      assert.strictEqual(
+        calls.filter((args) => args.at(-1) === "rate_limit").length,
+        1,
+        "the contending report must stop before rate-budget discovery",
+      );
+    } catch (error) {
+      testError = error;
+    } finally {
+      writeFileSync(fixture.releasePath, "release\n");
+    }
+    const completed = await firstResult;
+    rmSync(fixture.root, { force: true, recursive: true });
+    if (testError) throw testError;
+    assert.strictEqual(completed.status, 0, completed.stderr);
+  });
+
+  it("releases the identity lock after a successful report", () => {
+    const fixture = createLiveReportGhFixture();
+    const deltaStarReportPath = join(
+      skillDir,
+      "..",
+      "contribute-to-delta-star",
+      "scripts",
+      "live-report.mjs",
+    );
+    try {
+      const first = spawnSync(nodeExecutable, [liveReportPath, "--json"], {
+        encoding: "utf8",
+        env: fixture.environment,
+      });
+      assert.strictEqual(first.status, 0, first.stderr);
+      const second = spawnSync(
+        nodeExecutable,
+        [deltaStarReportPath, "--json"],
+        {
+          encoding: "utf8",
+          env: {
+            ...fixture.environment,
+            SLOP_GH_DIRECT_GRAPHQL_REMAINING: "999",
+          },
+        },
+      );
+      assert.strictEqual(second.status, 0, second.stderr);
+      assert.match(second.stderr, /GraphQL 999\/5000.*activity source rest/su);
+      const calls = readFileSync(fixture.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      assert.strictEqual(
+        calls.filter((args) => args.at(-1) === "rate_limit").length,
+        2,
+      );
+      assert.strictEqual(
+        calls.filter((args) =>
+          args.some((value) => value.includes("SlopActivityRateLimit")),
+        ).length,
+        2,
+      );
+    } finally {
+      rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("releases the identity lock after a handled discovery failure", () => {
+    const fixture = createLiveReportGhFixture();
+    const asiReportPath = join(
+      skillDir,
+      "..",
+      "contribute-to-asi",
+      "scripts",
+      "live-report.mjs",
+    );
+    try {
+      const failed = spawnSync(nodeExecutable, [liveReportPath, "--json"], {
+        encoding: "utf8",
+        env: { ...fixture.environment, SLOP_GH_FAIL_RATE: "1" },
+      });
+      assert.strictEqual(failed.status, 1);
+      assert.match(failed.stderr, /fixture rate-limit failure/u);
+      const recovered = spawnSync(nodeExecutable, [asiReportPath, "--json"], {
+        encoding: "utf8",
+        env: fixture.environment,
+      });
+      assert.strictEqual(recovered.status, 0, recovered.stderr);
+      const calls = readFileSync(fixture.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      assert.strictEqual(
+        calls.filter((args) => args.at(-1) === "rate_limit").length,
+        2,
+      );
+    } finally {
+      rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("recovers the identity lock after an interrupted report", {
+    timeout: 15_000,
+  }, async () => {
+    const fixture = createLiveReportGhFixture();
+    const heirReportPath = join(
+      skillDir,
+      "..",
+      "contribute-to-heir-elements-sdk",
+      "scripts",
+      "live-report.mjs",
+    );
+    const interrupted = spawn(nodeExecutable, [liveReportPath, "--json"], {
+      env: { ...fixture.environment, SLOP_GH_HOLD: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const interruptedResult = collectChild(interrupted);
+    let heldGhPid: number | null = null;
+    let heldGhIdentity: string | null = null;
+    let discoveryStarted = false;
+    let testError: unknown = null;
+    try {
+      await waitForFixturePath(fixture.readyPath);
+      discoveryStarted = true;
+      heldGhPid = Number(readFileSync(fixture.pidPath, "utf8").trim());
+      assert.strictEqual(Number.isInteger(heldGhPid) && heldGhPid > 0, true);
+      heldGhIdentity = readLiveReportProcessIdentity(heldGhPid);
+      assert.ok(heldGhIdentity);
+      assert.strictEqual(interrupted.kill("SIGKILL"), true);
+      const killed = await interruptedResult;
+      assert.strictEqual(killed.status, null);
+      assert.strictEqual(killed.signal, "SIGKILL");
+      assert.strictEqual(
+        readLiveReportProcessIdentity(heldGhPid),
+        heldGhIdentity,
+      );
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_200));
+      assert.strictEqual(
+        readLiveReportProcessIdentity(heldGhPid),
+        heldGhIdentity,
+        "the held GitHub child must outlive the killed report owner",
+      );
+
+      const contending = spawnSync(nodeExecutable, [heirReportPath, "--json"], {
+        encoding: "utf8",
+        env: fixture.environment,
+      });
+      assert.strictEqual(contending.status, 2, contending.stderr);
+      assert.match(contending.stderr, /live report lock contention/iu);
+      const calls = readFileSync(fixture.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      assert.strictEqual(
+        calls.filter((args) => args.at(-1) === "rate_limit").length,
+        1,
+        "a surviving GitHub child must keep replacement discovery out",
+      );
+    } catch (error) {
+      testError = error;
+    } finally {
+      if (interrupted.exitCode === null) interrupted.kill("SIGKILL");
+      if (!existsSync(fixture.releasePath)) {
+        writeFileSync(fixture.releasePath, "release\n");
+      }
+      if (discoveryStarted) await waitForFixturePath(fixture.donePath);
+      if (heldGhPid !== null && heldGhIdentity !== null) {
+        await waitForProcessExit(heldGhPid, heldGhIdentity);
+      }
+    }
+    try {
+      if (testError) throw testError;
+      const recoveryDeadline = Date.now() + 5_000;
+      let recovered: ReturnType<typeof spawnSync>;
+      do {
+        recovered = spawnSync(nodeExecutable, [heirReportPath, "--json"], {
+          encoding: "utf8",
+          env: fixture.environment,
+        });
+        if (recovered.status !== 2) break;
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+      } while (Date.now() < recoveryDeadline);
+      assert.strictEqual(recovered.status, 0, recovered.stderr);
+      const calls = readFileSync(fixture.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      assert.strictEqual(
+        calls.filter((args) => args.at(-1) === "rate_limit").length,
+        2,
+      );
+    } finally {
+      rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
 
   it("freezes a finite oldest-first epoch and defers arrivals and overflow", () => {
     const candidates = Array.from(
@@ -3098,7 +3691,7 @@ describe("run receipt CLI", () => {
   });
 
   it("starts and finishes a measured run without passing --project to ccusage", {
-    timeout: 0,
+    timeout: 30_000,
   }, async () => {
     const fixtureRoot = realpathSync(
       mkdtempSync(join(tmpdir(), "contribute-to-eliza-start-")),
