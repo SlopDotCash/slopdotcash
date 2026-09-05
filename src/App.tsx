@@ -25,6 +25,11 @@ import {
   useState,
 } from "react";
 import {
+  allocationFundingMinor,
+  type PromotionCycle,
+  projectPromotionEligible,
+} from "./lib/allocation-funding";
+import {
   assertCycleIndex,
   type CycleIndex,
   type CycleIndexEntry,
@@ -781,6 +786,10 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
               : "Committed balance · accessibility unknown · payments disabled"
             : "External sponsor controls eligibility and payment"}
         </small>
+        {project.reward.kind === "monthly-pool" &&
+        allocationFundingMinor(project.reward) === 0n ? (
+          <small>Unfunded trial · score recording remains open</small>
+        ) : null}
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
             + {reviewBudgetLabel(project.reward.reviewBudget)}
@@ -1160,10 +1169,17 @@ function GlobalLeaderboard({
 
 function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   const views = state.status === "ready" ? state.views : [];
-  const featuredProjects = PROJECTS.filter(
+  const promotedProjects = PROJECTS.filter((project) =>
+    projectPromotionEligible(
+      project,
+      state.status === "ready" ? state.cycleIndex.cycles : null,
+      views.find((view) => view.project.id === project.id)?.cycle.id ?? null,
+    ),
+  );
+  const featuredProjects = promotedProjects.filter(
     (project) => project.listingTier === "featured",
   );
-  const communityProjects = PROJECTS.filter(
+  const communityProjects = promotedProjects.filter(
     (project) => project.listingTier === "community",
   );
   const latestReceipt =
@@ -1566,6 +1582,29 @@ function projectInstallCommand(project: ProjectDefinition): string {
   });
 }
 
+export function ProjectParticipation({
+  project,
+  cycles,
+  displayCycleId,
+}: {
+  project: ProjectDefinition;
+  cycles: readonly PromotionCycle[] | null;
+  displayCycleId: string | null;
+}) {
+  if (projectPromotionEligible(project, cycles, displayCycleId))
+    return <InstallPanel project={project} />;
+  return (
+    <section className="section" id="start">
+      <h2>Contribution record remains open</h2>
+      <p>
+        {cycles
+          ? "Skill promotion is paused after two unfunded cycles. Accepted work and scores continue to be recorded; committed funding is required to resume promotion."
+          : "Funding history must load before skill promotion is available."}
+      </p>
+    </section>
+  );
+}
+
 function InstallPanel({ project }: { project: ProjectDefinition }) {
   const [copy, setCopy] = useState<"manual-copied" | "error" | "idle">("idle");
   const origin = window.location.origin.replace(/\/$/u, "");
@@ -1592,6 +1631,13 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
         </div>
       </div>
       <AgentPromptBox prompt={projectAgentPrompt(project)} />
+      {project.reward.kind === "monthly-pool" &&
+      allocationFundingMinor(project.reward) === 0n ? (
+        <p>
+          Unfunded trial: this skill records accepted work and scores with a $0
+          funding-backed projection.
+        </p>
+      ) : null}
       <p className="install-note">
         Any model can join. The skill publishes the exact provider, model, and
         client. Every agent run uploads a permanent private trace; only Slop
@@ -1900,17 +1946,29 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
       Date.parse(route.effectiveAt) <= now &&
       (route.replacedAt === null || now < Date.parse(route.replacedAt)),
   );
-  if (activeRoutes.length === 0) return null;
   return (
     <section className="section project-funding">
-      <details>
+      <details open={activeRoutes.length === 0}>
         <summary>Fund this project</summary>
-        <p>{project.funding.disclosure}</p>
         <p>
-          Check the network, asset, and full address in your wallet before
-          sending. Transfers are irreversible. GitHub identity does not prove
-          wallet ownership.
+          Funding: {project.reward.fundingState} · Committed:{" "}
+          {formatMicroUsdc(project.reward.committedMinor)} · Payments:{" "}
+          {project.reward.paymentMode}
         </p>
+        {activeRoutes.length === 0 ? (
+          <p>
+            Not accepting direct funding yet. The steward publishes an address
+            through a reviewed manifest change.
+          </p>
+        ) : null}
+        <p>{project.funding.disclosure}</p>
+        {activeRoutes.length > 0 ? (
+          <p>
+            Check the network, asset, and full address in your wallet before
+            sending. Transfers are irreversible. GitHub identity does not prove
+            wallet ownership.
+          </p>
+        ) : null}
         <div className="funding-routes">
           {activeRoutes.map((route) => {
             const key = `${route.network}:${route.asset}:${route.address}:${route.effectiveAt}`;
@@ -2245,6 +2303,11 @@ function ProjectPage({
       ? state.views.find((candidate) => candidate.project.id === project.id)
       : undefined;
   const headlinePrefix = "Make money ";
+  const promotionEligible = projectPromotionEligible(
+    project,
+    state.status === "ready" ? state.cycleIndex.cycles : null,
+    view?.cycle.id ?? null,
+  );
   const headlineAction = project.headline.startsWith(headlinePrefix)
     ? project.headline.slice(headlinePrefix.length)
     : null;
@@ -2290,54 +2353,67 @@ function ProjectPage({
                 </p>
               ) : null}
             </div>
-            <aside className="reward-card">
-              <span>
-                {project.reward.kind === "monthly-pool"
-                  ? "MONTHLY POOL"
-                  : "EXTERNAL OPPORTUNITY"}
-              </span>
-              <strong
-                className={
-                  project.reward.kind === "monthly-pool"
-                    ? "reward-amount-monthly"
-                    : undefined
-                }
-              >
-                {project.reward.kind === "monthly-pool"
-                  ? monthlyPoolUnfunded(project.reward)
-                    ? "Unfunded"
-                    : "Accessibility unknown"
-                  : project.reward.externalOpportunity?.advertisedAmountDisplay}
-              </strong>
-              <p>
-                {project.reward.kind === "monthly-pool"
-                  ? monthlyPoolUnfunded(project.reward)
-                    ? `Target ${project.reward.monthlyCapDisplay} per month. No funding is committed, so no payment is scheduled until the project commits funds.`
-                    : `${formatMicroUsdc(project.reward.committedMinor)} committed against a ${project.reward.monthlyCapDisplay} monthly target. Accessibility is unknown; no payment is enabled.`
-                  : "10% of an award actually received is allocated to Slop Cash; the remaining 90% is shared among accepted contributors. The prize sponsor controls eligibility and payment."}
-              </p>
-              <div>
-                {project.reward.reviewBudget ? (
-                  <small>
-                    + {reviewBudgetLabel(project.reward.reviewBudget)}
-                  </small>
-                ) : null}
-                {project.reward.kind === "external-prize-share" ? (
-                  <small>No platform pool · no dollar projection</small>
-                ) : null}
-                <div className="reward-actions">
-                  <ExternalLinkAnchor href={project.links.repository}>
-                    View in GitHub
-                    <ExternalLink aria-hidden="true" size={14} />
-                  </ExternalLinkAnchor>
+            {promotionEligible ? (
+              <aside className="reward-card">
+                <span>
+                  {project.reward.kind === "monthly-pool"
+                    ? "MONTHLY POOL"
+                    : "EXTERNAL OPPORTUNITY"}
+                </span>
+                <strong
+                  className={
+                    project.reward.kind === "monthly-pool"
+                      ? "reward-amount-monthly"
+                      : undefined
+                  }
+                >
+                  {project.reward.kind === "monthly-pool"
+                    ? monthlyPoolUnfunded(project.reward)
+                      ? "Unfunded"
+                      : "Accessibility unknown"
+                    : project.reward.externalOpportunity
+                        ?.advertisedAmountDisplay}
+                </strong>
+                <p>
+                  {project.reward.kind === "monthly-pool"
+                    ? monthlyPoolUnfunded(project.reward)
+                      ? `Target ${project.reward.monthlyCapDisplay} per month. No funding is committed, so no payment is scheduled until the project commits funds.`
+                      : `${formatMicroUsdc(project.reward.committedMinor)} committed against a ${project.reward.monthlyCapDisplay} monthly target. Accessibility is unknown; no payment is enabled.`
+                    : "10% of an award actually received is allocated to Slop Cash; the remaining 90% is shared among accepted contributors. The prize sponsor controls eligibility and payment."}
+                </p>
+                <div>
+                  {project.reward.reviewBudget ? (
+                    <small>
+                      + {reviewBudgetLabel(project.reward.reviewBudget)}
+                    </small>
+                  ) : null}
+                  {project.reward.kind === "external-prize-share" ? (
+                    <small>No platform pool · no dollar projection</small>
+                  ) : null}
+                  <div className="reward-actions">
+                    <ExternalLinkAnchor href={project.links.repository}>
+                      View in GitHub
+                      <ExternalLink aria-hidden="true" size={14} />
+                    </ExternalLinkAnchor>
+                  </div>
                 </div>
-              </div>
-            </aside>
+              </aside>
+            ) : (
+              <aside className="reward-card">
+                <span>FUNDING PROMOTION PAUSED</span>
+                <strong>$0</strong>
+                <p>Accepted work and cycle history remain available.</p>
+              </aside>
+            )}
           </div>
         </div>
       </section>
       <div className="shell">
-        <InstallPanel project={project} />
+        <ProjectParticipation
+          project={project}
+          displayCycleId={view?.cycle.id ?? null}
+          cycles={state.status === "ready" ? state.cycleIndex.cycles : null}
+        />
         <ProjectFunding project={project} />
         <ProjectPaymentHistory project={project} state={state} />
         {view && state.status === "ready" ? (

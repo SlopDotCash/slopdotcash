@@ -1,5 +1,5 @@
 /**
- * Validates every project manifest transition against an immutable Git base.
+ * Validates project policy and new proposal funding against an immutable Git base.
  * Schema validation alone cannot protect append-only policy history because a
  * well-shaped manifest may still rewrite or delete an earlier binding.
  */
@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { deriveAllocationFundingBasis } from "../src/lib/allocation-funding-basis.mjs";
 import { verifyFundingAddressTransitions } from "../src/lib/funding-authority.mjs";
 import { assertProjectPolicyTransition } from "../src/lib/project-policy.mjs";
 import {
@@ -22,6 +23,108 @@ const PROJECT_PATH =
   /^projects\/([a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?)\/project\.json$/u;
 const MAX_PROJECTS = 100;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
+const MAX_PROPOSAL_FILES = 24_000;
+const MAX_PROPOSAL_INVENTORY_BYTES = 256 * 1024 * 1024;
+const PROPOSAL_PATH =
+  /^cycles\/([a-z0-9-]+)\/(\d{4}-(?:0[1-9]|1[0-2]))\/proposal\.json$/u;
+
+function sameFundingBasis(left, right) {
+  return (
+    left &&
+    right &&
+    Object.keys(left).length === 5 &&
+    Object.keys(right).length === 5 &&
+    left.cycleId === right.cycleId &&
+    left.instrumentId === right.instrumentId &&
+    left.fundingState === right.fundingState &&
+    left.committedMinor === right.committedMinor &&
+    left.monthlyCapMinor === right.monthlyCapMinor
+  );
+}
+
+/** Runs from the immutable base commit; proposal fields never authorize funds. */
+export function validateProposalFundingTransitions(
+  previousProjects,
+  currentProjects,
+  previousProposals,
+  currentProposals,
+) {
+  const previous = boundedProjectMap(previousProjects, { historical: true });
+  const current = boundedProjectMap(currentProjects);
+  const priorFiles = new Map(previousProposals);
+  const nextPaths = new Set(currentProposals.map(([path]) => path));
+  for (const path of priorFiles.keys()) {
+    if (!nextPaths.has(path))
+      throw new TypeError("historical cycle proposals cannot be deleted");
+  }
+  if (
+    currentProposals.length > MAX_PROPOSAL_FILES ||
+    priorFiles.size > MAX_PROPOSAL_FILES
+  )
+    throw new TypeError("cycle proposal inventory exceeds its bound");
+  let proposalBytes = 0;
+  for (const [, bytes] of [...previousProposals, ...currentProposals]) {
+    const size = Buffer.byteLength(bytes);
+    proposalBytes += size;
+    if (
+      size > MAX_MANIFEST_BYTES ||
+      proposalBytes > MAX_PROPOSAL_INVENTORY_BYTES
+    )
+      throw new TypeError("cycle proposal inventory exceeds its byte bound");
+  }
+  for (const [path, bytes] of currentProposals) {
+    const match = path.match(PROPOSAL_PATH);
+    if (!match || Buffer.byteLength(bytes) > MAX_MANIFEST_BYTES)
+      throw new TypeError("invalid cycle proposal path or size");
+    const proposal = JSON.parse(bytes);
+    if (
+      previous.get(match[1])?.reward.kind === "monthly-pool" &&
+      proposal.kind !== "reward-allocation"
+    )
+      throw new TypeError("monthly proposal must retain its allocation kind");
+    if (proposal.kind !== "reward-allocation") continue;
+    if (priorFiles.has(path)) {
+      const prior = JSON.parse(priorFiles.get(path));
+      if (prior.capMinor !== proposal.capMinor)
+        throw new TypeError("historical proposal cap cannot change");
+      if (
+        JSON.stringify(prior.fundingBasis) !==
+        JSON.stringify(proposal.fundingBasis)
+      )
+        throw new TypeError("historical proposal funding basis cannot change");
+      continue;
+    }
+    const prior = previous.get(match[1]);
+    const next = current.get(match[1]);
+    if (
+      !prior ||
+      !next ||
+      prior.reward.kind !== "monthly-pool" ||
+      proposal.projectId !== match[1] ||
+      proposal.cycleId !== match[2]
+    )
+      throw new TypeError(
+        "new proposal needs an existing reviewed monthly-pool project",
+      );
+    if (
+      JSON.stringify(prior.reward) !== JSON.stringify(next.reward) ||
+      JSON.stringify(prior.funding.commitments) !==
+        JSON.stringify(next.funding.commitments)
+    )
+      throw new TypeError(
+        "funding policy and a new proposal must land in separate reviewed changes",
+      );
+    if (
+      !sameFundingBasis(
+        proposal.fundingBasis,
+        deriveAllocationFundingBasis(prior, match[2]),
+      )
+    )
+      throw new TypeError(
+        "new proposal funding basis differs from the immutable base project policy",
+      );
+  }
+}
 
 function parseManifest(bytes, path, { historical = false } = {}) {
   if (Buffer.byteLength(bytes) > MAX_MANIFEST_BYTES) {
@@ -182,15 +285,59 @@ async function workingEntries() {
 }
 
 export async function checkProjectTransitions(baseRevision, currentRevision) {
-  const previousEntries = revisionEntries(baseRevision, "base revision");
-  const currentEntries =
+  const previous = revisionEntries(baseRevision, "base revision");
+  const current =
     currentRevision === undefined
       ? await workingEntries()
       : revisionEntries(currentRevision, "current revision");
-  const result = validateProjectTransitions(previousEntries, currentEntries);
+  const result = validateProjectTransitions(previous, current);
   await verifyFundingAddressTransitions(
-    boundedProjectMap(previousEntries, { historical: true }),
-    boundedProjectMap(currentEntries),
+    boundedProjectMap(previous, { historical: true }),
+    boundedProjectMap(current),
+  );
+  const proposalPaths = (revision) =>
+    git(
+      revision
+        ? ["ls-tree", "-r", "--name-only", revision, "--", "cycles"]
+        : [
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "cycles",
+          ],
+    )
+      .split("\n")
+      .filter((path) => PROPOSAL_PATH.test(path));
+  let aggregateBytes = 0;
+  const readProposals = async (revision) => {
+    const paths = proposalPaths(revision);
+    if (paths.length > MAX_PROPOSAL_FILES)
+      throw new TypeError("cycle proposal inventory exceeds its bound");
+    const entries = [];
+    for (const path of paths) {
+      const bytes = revision
+        ? git(["show", `${revision}:${path}`])
+        : await readFile(resolve(ROOT, path), "utf8");
+      const size = Buffer.byteLength(bytes);
+      aggregateBytes += size;
+      if (
+        size > MAX_MANIFEST_BYTES ||
+        aggregateBytes > MAX_PROPOSAL_INVENTORY_BYTES
+      )
+        throw new TypeError("cycle proposal inventory exceeds its byte bound");
+      entries.push([path, bytes]);
+    }
+    return entries;
+  };
+  const priorProposals = await readProposals(baseRevision);
+  const nextProposals = await readProposals(currentRevision);
+  validateProposalFundingTransitions(
+    previous,
+    current,
+    priorProposals,
+    nextProposals,
   );
   return result;
 }

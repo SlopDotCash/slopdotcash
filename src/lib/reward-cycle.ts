@@ -4,9 +4,17 @@
  * human review and on-chain settlement remain separate, auditable transitions.
  */
 
+import {
+  type AllocationFundingBasis,
+  allocationFundingMinor,
+  assertAllocationFundingBasis,
+  deriveAllocationFundingBasis,
+  LAST_LEGACY_CAP_CYCLE,
+} from "./allocation-funding";
 import type { LeaderboardSnapshot } from "./leaderboard";
 import { createProjectView } from "./project-view";
 import type { ProjectId } from "./projects.mjs";
+import { findProject } from "./projects.mjs";
 import {
   assertExternalContributionShareManifest,
   assertRewardAllocationManifest,
@@ -32,6 +40,9 @@ export interface CreateRewardCycleProposalInput {
   wallets?: ReadonlyMap<string, WalletProof>;
   priorAccruedMinor?: ReadonlyMap<string, string>;
   priorActorLogins?: ReadonlyMap<string, string>;
+  fundingBasis?: AllocationFundingBasis;
+  /** Reconstruction only: immutable trial records predate instrument binding. */
+  legacyCapMinor?: string;
 }
 
 export function allocateReviewBudgetMinor(
@@ -181,10 +192,33 @@ function ensureCompleteCycle(
 export function createRewardCycleProposal(
   input: CreateRewardCycleProposalInput,
 ): RewardCycleProposal {
+  const project = findProject(input.projectId);
+  const fundingBasis: AllocationFundingBasis | undefined =
+    project?.reward.kind === "monthly-pool"
+      ? input.fundingBasis
+        ? assertAllocationFundingBasis(input.fundingBasis)
+        : deriveAllocationFundingBasis(project, input.cycleId)
+      : undefined;
+  if (fundingBasis && fundingBasis.cycleId !== input.cycleId)
+    throw new TypeError("funding basis cycle differs from proposal cycle");
+  if (
+    input.legacyCapMinor !== undefined &&
+    (input.cycleId > LAST_LEGACY_CAP_CYCLE || input.fundingBasis)
+  )
+    throw new TypeError(
+      "legacy cap reconstruction is restricted to historical trials",
+    );
   const view = createProjectView(
     input.snapshot,
     input.projectId,
     input.cycleId,
+    input.legacyCapMinor === undefined
+      ? fundingBasis
+      : {
+          fundingState: "committed",
+          committedMinor: input.legacyCapMinor,
+          monthlyCapMinor: input.legacyCapMinor,
+        },
   );
   ensureCompleteCycle(input, view);
 
@@ -215,8 +249,9 @@ export function createRewardCycleProposal(
     });
   }
 
-  // Accrual is a debt to the actor, not a reward for this cycle's activity:
-  // a positive prior balance must survive a quiet month, so carried-only
+  if (!fundingBasis)
+    throw new TypeError("Monthly proposal needs a funding basis");
+  // A previously reviewed balance survives a quiet month, so carried-only
   // actors get their own allocation rows after the leaders.
   const leaderIds = new Set(view.leaders.map((leader) => leader.actor.id));
   const carriedOnly = [...(input.priorAccruedMinor ?? [])]
@@ -289,7 +324,9 @@ export function createRewardCycleProposal(
     },
     currency: "USDC",
     chain: "solana",
-    capMinor: view.project.reward.monthlyCapMinor,
+    capMinor:
+      input.legacyCapMinor ?? allocationFundingMinor(fundingBasis).toString(),
+    ...(input.legacyCapMinor === undefined ? { fundingBasis } : {}),
     carriedMinor,
     minimumTransferMinor: MINIMUM_TRANSFER_MINOR,
     feeBasisPoints: view.project.reward.feeBasisPoints,
@@ -386,7 +423,9 @@ export function createRewardCycleProposal(
       ? {
           rewardLines: {
             sharedPool: {
-              capMinor: view.project.reward.monthlyCapMinor,
+              capMinor:
+                input.legacyCapMinor ??
+                allocationFundingMinor(fundingBasis).toString(),
               suggestedMinor,
               approvedMinor: "0",
             },
