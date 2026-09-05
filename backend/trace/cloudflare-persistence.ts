@@ -634,8 +634,11 @@ export class CloudflareTracePersistence implements TracePersistence {
     }
   }
 
-  async createReadGrant(input: CreateGrantInput): Promise<void> {
-    await this.db
+  async createReadGrant(
+    input: CreateGrantInput,
+    audit: AuditInput,
+  ): Promise<void> {
+    const grantInsert = this.db
       .prepare(
         `INSERT INTO trace_read_grants (
           token_hash, trace_sha256, operator_github_id, reason, request_id,
@@ -650,8 +653,30 @@ export class CloudflareTracePersistence implements TracePersistence {
         input.requestId,
         input.createdAt,
         input.expiresAt,
+      );
+    const auditInsert = this.db
+      .prepare(
+        `INSERT INTO private_audit_events (
+          id, actor_github_id, action, target, request_id, created_at, details_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run();
+      .bind(
+        audit.id,
+        audit.actorGithubId,
+        audit.action,
+        audit.target,
+        audit.requestId,
+        audit.createdAt,
+        JSON.stringify(audit.details),
+      );
+    const results = await this.db.batch([grantInsert, auditInsert]);
+    if (
+      results.length !== 2 ||
+      results.some((result) => !result.success) ||
+      results.some((result) => (result.meta?.changes ?? 0) !== 1)
+    ) {
+      throw new Error("Atomic trace read grant creation failed");
+    }
   }
 
   async consumeReadGrant(
@@ -659,16 +684,50 @@ export class CloudflareTracePersistence implements TracePersistence {
     traceSha256: string,
     operatorGithubId: string,
     now: string,
+    audit: AuditInput,
   ): Promise<boolean> {
-    const result = await this.db
+    const auditInsert = this.db
+      .prepare(
+        `INSERT INTO private_audit_events (
+          id, actor_github_id, action, target, request_id, created_at, details_json
+        ) SELECT ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM trace_read_grants
+            WHERE token_hash = ? AND trace_sha256 = ? AND operator_github_id = ?
+              AND consumed_at IS NULL AND expires_at > ?
+          )`,
+      )
+      .bind(
+        audit.id,
+        audit.actorGithubId,
+        audit.action,
+        audit.target,
+        audit.requestId,
+        audit.createdAt,
+        JSON.stringify(audit.details),
+        tokenHash,
+        traceSha256,
+        operatorGithubId,
+        now,
+      );
+    const grantConsume = this.db
       .prepare(
         `UPDATE trace_read_grants SET consumed_at = ?
          WHERE token_hash = ? AND trace_sha256 = ? AND operator_github_id = ?
            AND consumed_at IS NULL AND expires_at > ?`,
       )
-      .bind(now, tokenHash, traceSha256, operatorGithubId, now)
-      .run();
-    return (result.meta?.changes ?? 0) === 1;
+      .bind(now, tokenHash, traceSha256, operatorGithubId, now);
+    const results = await this.db.batch([auditInsert, grantConsume]);
+    if (results.length !== 2 || results.some((result) => !result.success)) {
+      throw new Error("Atomic trace read grant consumption failed");
+    }
+    const auditChanges = results[0].meta?.changes ?? 0;
+    const grantChanges = results[1].meta?.changes ?? 0;
+    if (auditChanges === 0 && grantChanges === 0) return false;
+    if (auditChanges !== 1 || grantChanges !== 1) {
+      throw new Error("Trace read grant and audit state diverged");
+    }
+    return true;
   }
 
   async readTraceBytes(object: TraceObject): Promise<Uint8Array | null> {
