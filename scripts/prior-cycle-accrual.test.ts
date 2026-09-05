@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
+import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import { snapshotFixture } from "../tests/fixtures";
 import { loadPriorCycleAccrual, previousCycleId } from "./prior-cycle-accrual";
 
@@ -29,6 +30,32 @@ function julyProposal() {
 }
 
 describe("prior cycle accrual", () => {
+  it("never carries historical trial suggestions from a reviewed allocation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "slop-reviewed-trial-"));
+    const directory = join(root, "eliza", "2026-07");
+    await mkdir(directory, { recursive: true });
+    const proposal = julyProposal();
+    delete proposal.fundingBasis;
+    const allocation = finalizeRewardAllocation(
+      proposal,
+      "2026-08-17T00:00:00.000Z",
+      Date.parse("2026-08-17T00:00:00.000Z"),
+    );
+    expect(allocation.allocations[0].state).toBe("unclaimed");
+    expect(allocation.allocations[0].suggestedMinor).toBe("10000000000");
+    await writeFile(join(directory, "proposal.json"), JSON.stringify(proposal));
+    await writeFile(
+      join(directory, "allocation.json"),
+      JSON.stringify(allocation),
+    );
+    const result = await loadPriorCycleAccrual({
+      asOf: "2026-09-05T00:00:00.000Z",
+      cycleId: "2026-08",
+      cyclesRoot: root,
+      projectId: "eliza",
+    });
+    expect([...result.accruedMinor]).toEqual([]);
+  });
   it("never carries the immutable historical trial suggestion", async () => {
     const cyclesRoot = join(process.cwd(), "cycles");
     const proposalPath = join(cyclesRoot, "eliza", "2026-07", "proposal.json");

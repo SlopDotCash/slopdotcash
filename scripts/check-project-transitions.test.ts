@@ -13,6 +13,43 @@ function entry(value: { id: string }): [string, string] {
 }
 
 describe("project transition gate", () => {
+  it("freezes legacy proposal caps independently of later project caps", () => {
+    const path = "cycles/eliza/2026-07/proposal.json";
+    const proposal = {
+      kind: "reward-allocation",
+      projectId: "eliza",
+      cycleId: "2026-07",
+      capMinor: eliza.reward.monthlyCapMinor,
+    };
+    const original: [string, string][] = [[path, JSON.stringify(proposal)]];
+    const changed = structuredClone(eliza);
+    changed.reward.monthlyCapMinor = "20000000000";
+    changed.reward.monthlyCapDisplay = "$20,000";
+    expect(() =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(changed)],
+        original,
+        original,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateProposalFundingTransitions(
+        [entry(eliza)],
+        [entry(changed)],
+        original,
+        [
+          [
+            path,
+            JSON.stringify({
+              ...proposal,
+              capMinor: changed.reward.monthlyCapMinor,
+            }),
+          ],
+        ],
+      ),
+    ).toThrow(/historical proposal cap cannot change/u);
+  });
   it("retains a multi-year proposal archive while bounding each artifact", () => {
     const historical: [string, string][] = Array.from(
       { length: 300 },

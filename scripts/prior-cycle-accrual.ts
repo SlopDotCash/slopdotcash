@@ -132,14 +132,17 @@ export async function loadPriorCycleAccrual(input: {
       `Prior cycle ${input.projectId}/${priorId} contains future review state`,
     );
   }
+  // The historical trial never creates a monetary balance, including when
+  // a later reviewed allocation retains its original unclaimed suggestions.
+  if (!proposal.fundingBasis && proposal.cycleId <= LAST_LEGACY_CAP_CYCLE) {
+    return { actorLogins: new Map(), accruedMinor: new Map() };
+  }
   if (!allocation) {
     // An unfunded score record has no reviewed monetary balance to carry.
-    // This also excludes the grandfathered cap-only trial suggestion.
     if (
-      (proposal.fundingBasis &&
-        allocationFundingMinor(proposal.fundingBasis) === 0n &&
-        BigInt(proposal.carriedMinor ?? "0") === 0n) ||
-      (!proposal.fundingBasis && proposal.cycleId <= LAST_LEGACY_CAP_CYCLE)
+      proposal.fundingBasis &&
+      allocationFundingMinor(proposal.fundingBasis) === 0n &&
+      BigInt(proposal.carriedMinor ?? "0") === 0n
     ) {
       return { actorLogins: new Map(), accruedMinor: new Map() };
     }
