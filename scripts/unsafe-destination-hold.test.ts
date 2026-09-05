@@ -18,6 +18,7 @@ import {
   prepareRewardCycle,
 } from "./prepare-reward-cycle";
 import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
+import { verifyProposalAgainstSnapshot } from "./sync-cycle-index";
 import {
   applyUnsafeDestinationHold,
   verifyUnsafeDestinationReport,
@@ -84,6 +85,7 @@ function report(): UnsafeDestinationReport {
     projectId: "eliza",
     cycleId: "2026-07",
     intentId: proposal().allocations[0].intentId,
+    suggestedMinor: proposal().allocations[0].suggestedMinor,
     reportedAt: REPORTED,
     verifiedAt: VERIFIED,
     wallet: wallet(),
@@ -116,6 +118,79 @@ async function heldProposal() {
 }
 
 describe("authenticated unsafe destination holds", () => {
+  it("rejects inflated principal in signed reports, standalone validation, finalization, and carry loading", async () => {
+    const held = await heldProposal();
+    held.allocations[0].accruedMinor = "999999999999999";
+    expect(() => assertRewardAllocationManifest(held)).toThrow(
+      /reviewed suggested amount/u,
+    );
+    expect(() =>
+      finalizeRewardAllocation(
+        held,
+        held.review.endsAt,
+        Date.parse(held.review.endsAt),
+      ),
+    ).toThrow(/reviewed suggested amount/u);
+    const root = await mkdtemp(join(tmpdir(), "slop-inflated-hold-"));
+    const directory = join(root, "eliza", "2026-07");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "proposal.json"), JSON.stringify(held));
+    await expect(
+      loadPriorCycleAccrual({
+        asOf: "2026-09-05T00:00:00.000Z",
+        cycleId: "2026-08",
+        cyclesRoot: root,
+        projectId: "eliza",
+      }),
+    ).rejects.toThrow(/not a valid reward allocation/u);
+    const inflated = { ...report(), suggestedMinor: "999999999999999" };
+    await expect(
+      verifyUnsafeDestinationReport(inflated, async () => signedCommit()),
+    ).rejects.toThrow(/does not bind/u);
+    await expect(
+      applyUnsafeDestinationHold({
+        proposal: proposal(),
+        report: inflated,
+        reason: "Maintainer-reviewed unsafe destination report.",
+        now: VERIFIED,
+        readCommit: async () => signedCommit(inflated),
+      }),
+    ).rejects.toThrow(/does not match/u);
+    const invalidTotal = await heldProposal();
+    invalidTotal.totals.suggestedMinor = "999999999999999";
+    expect(() => assertRewardAllocationManifest(invalidTotal)).toThrow(
+      /totals/u,
+    );
+  });
+
+  it("binds accrued principal and total carry to the frozen snapshot baseline", async () => {
+    const snapshot = snapshotFixture();
+    snapshot.window.from = "2026-06-28T00:00:00.000Z";
+    snapshot.window.to = GENERATED;
+    snapshot.source.verificationWindow.from = snapshot.window.from;
+    snapshot.source.verificationWindow.to = snapshot.window.to;
+    const baseline = createRewardCycleProposal({
+      cycleId: "2026-07",
+      generatedAt: GENERATED,
+      projectId: "eliza",
+      snapshot,
+      sourceSnapshotSha256: "a".repeat(64),
+    });
+    if (baseline.kind !== "reward-allocation") throw new Error("wrong fixture");
+    await expect(
+      verifyProposalAgainstSnapshot(baseline, snapshot, "a".repeat(64)),
+    ).resolves.toBeUndefined();
+    const inflatedAccrual = structuredClone(baseline);
+    inflatedAccrual.allocations[0].accruedMinor = "999999999999999";
+    await expect(
+      verifyProposalAgainstSnapshot(inflatedAccrual, snapshot, "a".repeat(64)),
+    ).rejects.toThrow(/frozen snapshot/u);
+    const inflatedCarry = structuredClone(baseline);
+    inflatedCarry.carriedMinor = "999999999999999";
+    await expect(
+      verifyProposalAgainstSnapshot(inflatedCarry, snapshot, "a".repeat(64)),
+    ).rejects.toThrow(/frozen snapshot/u);
+  });
   it("preserves the original wallet, other rows, and review clock while excluding the held payment", async () => {
     const before = proposal();
     const held = await heldProposal();

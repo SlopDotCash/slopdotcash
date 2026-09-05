@@ -107,6 +107,7 @@ export async function applyUnsafeDestinationHold(input: {
     report.projectId !== proposal.projectId ||
     report.cycleId !== proposal.cycleId ||
     !sameWalletObservation(row.wallet, report.wallet) ||
+    report.suggestedMinor !== row.suggestedMinor ||
     Date.parse(report.wallet.observedAt) > Date.parse(proposal.generatedAt) ||
     Date.parse(input.now) < Date.parse(proposal.generatedAt) ||
     Date.parse(input.now) > Date.parse(proposal.review.endsAt)
@@ -185,7 +186,7 @@ if (import.meta.main) {
         "Report requires the proposal's actor-bound Slop wallet claim",
       );
     process.stdout.write(
-      `${unsafeDestinationReportMessage({ projectId: proposal.projectId, cycleId: proposal.cycleId, intentId, reportedAt, wallet: row.wallet })}\n`,
+      `${unsafeDestinationReportMessage({ projectId: proposal.projectId, cycleId: proposal.cycleId, intentId, suggestedMinor: row.suggestedMinor, reportedAt, wallet: row.wallet })}\n`,
     );
   } else {
     const [proposalPath, reportPath, reason, ...extra] = process.argv.slice(2);

@@ -55,7 +55,7 @@ Only public report and wallet metadata appear in the commit message.
 
 1. Generate the exact commit message from the published proposal using
    `bun scripts/unsafe-destination-hold.ts --message <proposal.json> <intent-id> <UTC-report-time>`.
-   It includes the project, cycle, intent, report time, and complete original
+   It includes the project, cycle, intent, exact suggested amount, report time, and complete original
    actor-bound Slop wallet claim. Profile-README claims are not supported by
    this reporting path.
 2. The contributor signs a commit with that exact message in a public GitHub
@@ -72,8 +72,11 @@ Only public report and wallet metadata appear in the commit message.
 closed if its commit or signer cannot be verified. This path requires `gh`
 authentication when reports are present. `unsafeDestinationReports` retains
 the signed evidence through carry; `hold` identifies the report selected by
-the maintainer for the original held row. The next cycle carries the complete
-unpaid amount exactly once. Until the registry supplies a different address in
+the maintainer for the original held row. The signed report binds the complete
+suggested amount; both reward lines are held with zero approved principal.
+The next cycle carries only the shared-pool amount exactly once. The additive
+review-budget line stays in its original cycle and never becomes shared-pool
+carry; this also applies to unclaimed and below-minimum rows. Until the registry supplies a different address in
 a different actor-bound claim observed after report verification, the row is
 `unclaimed` and continues carrying. Republishing the compromised address in a
 new claim never makes it eligible. A safe successor starts a normal proposal
