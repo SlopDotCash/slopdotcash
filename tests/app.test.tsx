@@ -1411,6 +1411,19 @@ describe("project proposals", () => {
     expect(agentBrief?.indexOf("Operating rules:")).toBeLessThan(
       agentBrief?.indexOf("Untrusted proposal input") ?? -1,
     );
+    Object.defineProperty(navigator, "clipboard", { value: undefined });
+    fireEvent.click(screen.getByRole("button", { name: "Brief copied" }));
+    expect(
+      await screen.findByRole("button", {
+        name: "Copy unavailable; select the brief",
+      }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
+    expect(
+      await screen.findByRole("button", {
+        name: "Copy unavailable; select JSON",
+      }),
+    ).toBeVisible();
   });
 
   it("does not hand off an over-limit or imprecise money pool", () => {
@@ -1719,6 +1732,62 @@ describe("direct project funding", () => {
 });
 
 describe("public project draft workspace", () => {
+  it("resets the project brief when history navigates to another project", async () => {
+    route("/projects/eliza/manage");
+    mockSnapshot();
+    render(<App />);
+    const headline = await screen.findByLabelText("Headline");
+    fireEvent.change(headline, { target: { value: "Eliza-only draft" } });
+    await act(async () => {
+      window.history.pushState({}, "", "/projects/asi/manage");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const project = PROJECTS.find((candidate) => candidate.id === "asi");
+    expect(screen.getByLabelText("Headline")).toHaveValue(project?.headline);
+    fireEvent.click(screen.getByRole("button", { name: "Copy GitHub brief" }));
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining(`Headline: ${project?.headline}`),
+      ),
+    );
+  });
+
+  it("lets the owner find and edit the eleventh allocation", () => {
+    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+    if (!project) throw new TypeError("The Eliza project fixture is missing");
+    const snapshot = septemberRollingSnapshot();
+    const view = createProjectView(snapshot, project.id);
+    view.leaders = Array.from({ length: 11 }, (_, index) => ({
+      ...view.leaders[0],
+      actor: {
+        ...view.leaders[0].actor,
+        id: `U_${index}`,
+        login: `contributor-${index}`,
+      },
+    }));
+    render(
+      <ProjectManagePage
+        project={{
+          ...project,
+          reward: { ...project.reward, paymentMode: "enabled" },
+        }}
+        state={{
+          status: "ready",
+          snapshot,
+          views: [view],
+          cycleIndex: cycleIndexFixture(),
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByText("Edit 11 contributor allocations"));
+    fireEvent.change(screen.getByLabelText("Find contributor"), {
+      target: { value: "contributor-10" },
+    });
+    const amount = screen.getByLabelText("contributor-10 amount in USDC");
+    fireEvent.change(amount, { target: { value: "2" } });
+    expect(amount).toHaveValue(2);
+  });
+
   it("makes the public boundary explicit and hides disabled payout controls", async () => {
     route("/projects/eliza/manage");
     const index = archivedPaidCycleIndex();
@@ -1830,6 +1899,16 @@ describe("public project draft workspace", () => {
       expect.stringContaining('"feeMinor": "123456"'),
     );
 
+    fireEvent.change(amount, { target: { value: "10000.000001" } });
+    fireEvent.change(total, { target: { value: "10000.000001" } });
+    expect(
+      screen.getByRole("button", { name: "Allocation copied" }),
+    ).toBeDisabled();
+    fireEvent.change(amount, { target: { value: "10000" } });
+    fireEvent.change(total, { target: { value: "10000" } });
+    expect(
+      screen.getByRole("button", { name: "Allocation copied" }),
+    ).toBeEnabled();
     vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(
       new DOMException("denied", "NotAllowedError"),
     );
@@ -1838,6 +1917,94 @@ describe("public project draft workspace", () => {
       await screen.findByRole("button", { name: "Copy unavailable" }),
     ).toBeVisible();
   });
+
+  it.each([
+    {
+      committedMinor: "25000000",
+      fundingState: "committed",
+      paymentMode: "enabled",
+      ceiling: "10025",
+      over: "10025.000001",
+    },
+    {
+      committedMinor: "100000000",
+      fundingState: "committed",
+      paymentMode: "enabled",
+      ceiling: "10050",
+      over: "10050.000001",
+    },
+    {
+      committedMinor: "0",
+      fundingState: "pledged",
+      paymentMode: "disabled",
+      ceiling: "10000",
+      over: "10000.000001",
+    },
+  ] as const)(
+    "bounds archived review drafts by funded principal ($committedMinor)",
+    ({ committedMinor, fundingState, paymentMode, ceiling, over }) => {
+      const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+      if (!project) throw new TypeError("The Eliza project fixture is missing");
+      const snapshot = septemberRollingSnapshot();
+      const cycleIndex = archivedPaidCycleIndex();
+      const cycle = cycleIndex.cycles[0];
+      cycle.cycleId = "2026-09";
+      cycle.reward.lines = {
+        sharedPool: {
+          suggestedMinor: "1000000",
+          approvedMinor: "1000000",
+          paidMinor: "1000000",
+        },
+        reviewBudget: {
+          suggestedMinor: "0",
+          approvedMinor: "0",
+          paidMinor: "0",
+        },
+      };
+      render(
+        <ProjectManagePage
+          project={{
+            ...project,
+            reward: {
+              ...project.reward,
+              paymentMode: "enabled",
+              reviewBudget: {
+                effectiveAt: "2026-09-01T00:00:00.000Z",
+                monthlyCapMinor: "50000000",
+                monthlyCapDisplay: "$50",
+                committedMinor,
+                paymentMode,
+                fundingState,
+                unusedFunds: "rollover-without-cap-increase",
+              },
+            },
+          }}
+          state={{
+            status: "ready",
+            snapshot,
+            cycleIndex,
+            views: [createProjectView(snapshot, "eliza")],
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByText("Edit 1 contributor allocation"));
+      fireEvent.change(screen.getByLabelText("archive-only reason"), {
+        target: { value: "Reviewed shared pool and review allocation" },
+      });
+      const amount = screen.getByLabelText("archive-only amount in USDC");
+      const total = screen.getByLabelText("Draft total, USDC");
+      fireEvent.change(amount, { target: { value: ceiling } });
+      fireEvent.change(total, { target: { value: ceiling } });
+      expect(
+        screen.getByRole("button", { name: "Copy unsigned allocation" }),
+      ).toBeEnabled();
+      fireEvent.change(amount, { target: { value: over } });
+      fireEvent.change(total, { target: { value: over } });
+      expect(
+        screen.getByRole("button", { name: "Copy unsigned allocation" }),
+      ).toBeDisabled();
+    },
+  );
 
   it("shows project payment history without exposing trace contents", async () => {
     route("/projects/eliza");
