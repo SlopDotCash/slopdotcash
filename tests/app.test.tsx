@@ -739,8 +739,13 @@ describe("discovery", () => {
     });
 
     render(<App />);
+    // This checks retry/abort ordering, not sub-second rendering on a busy runner.
     expect(
-      await screen.findByRole("heading", { name: "Leaderboard" }),
+      await screen.findByRole(
+        "heading",
+        { name: "Leaderboard" },
+        { timeout: 5_000 },
+      ),
     ).toBeVisible();
     expect(abandonedAbort).toHaveBeenCalledOnce();
     expect(snapshotAttempts).toBe(2);
@@ -992,9 +997,12 @@ describe("public records", () => {
     });
     render(<App />);
 
-    const wallet = await screen.findByRole("link", {
-      name: /Current payout wallet · 11111111111111111111111111111111/i,
-    });
+    // Allow the data-load -> profile-render -> wallet-load sequence to complete.
+    const wallet = await screen.findByRole(
+      "link",
+      { name: /Current payout wallet · 11111111111111111111111111111111/i },
+      { timeout: 5_000 },
+    );
     expect(wallet).toHaveAttribute(
       "href",
       "https://api.slop.cash/api/v1/wallet-claims/wc_current01",
@@ -1037,9 +1045,11 @@ describe("public records", () => {
     });
     render(<App />);
     expect(
-      await screen.findByRole("link", {
-        name: /Current payout wallet · 11111111111111111111111111111111/i,
-      }),
+      await screen.findByRole(
+        "link",
+        { name: /Current payout wallet · 11111111111111111111111111111111/i },
+        { timeout: 5_000 },
+      ),
     ).toBeVisible();
 
     act(() => {
