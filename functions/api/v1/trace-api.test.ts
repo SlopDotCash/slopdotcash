@@ -1584,6 +1584,44 @@ describe("private trace API", () => {
     expect(await stale.json()).toMatchObject({ error: "stale_wallet_claim" });
   });
 
+  it("refreshes an unchanged wallet claim after a GitHub login rename", async () => {
+    const deps = dependencies();
+    const originalActor = await token("42", "old-login", ["contributor"]);
+    const original = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        originalActor,
+        JSON.stringify({ address: "11111111111111111111111111111111" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    const originalClaim = (await original.json()) as { claimId: string };
+    const renamedActor = await token("42", "new-login", ["contributor"]);
+
+    const refreshed = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        renamedActor,
+        JSON.stringify({
+          address: "11111111111111111111111111111111",
+          supersedesClaimId: originalClaim.claimId,
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+
+    expect(refreshed.status).toBe(201);
+    expect(await refreshed.json()).toMatchObject({
+      githubActorId: "42",
+      githubLogin: "new-login",
+      supersedesClaimId: originalClaim.claimId,
+    });
+  });
+
   it("does not let an unauthenticated caller create a wallet claim", async () => {
     const response = await handleTraceApi(
       new Request("https://api.slop.cash/api/v1/wallet-claims", {
