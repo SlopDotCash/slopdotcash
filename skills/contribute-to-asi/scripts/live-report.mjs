@@ -31,9 +31,24 @@ export const REVIEW_EPOCH_SCHEMA_VERSION = 1;
 export const MAX_REVIEW_EPOCH_FILE_BYTES = 262_144;
 export const MAX_API_READS = 16;
 export const MAX_ACTIVITY_CONNECTION_ITEMS = 1_000;
+// Large repositories can legitimately exceed Node's 64 MiB spawnSync default
+// after gh concatenates bounded pages. Keep one explicit ceiling high enough
+// for the 10,000-item inventory while still failing closed on runaway output.
+export const MAX_GH_REPORT_BYTES = 256 * 1024 * 1024;
 export const MIN_GRAPHQL_ACTIVITY_POINTS = 1_000;
 export const MIN_REST_ACTIVITY_REQUESTS = 100;
 export const MIN_SEARCH_ACTIVITY_REQUESTS = 2;
+export const MAX_LIVE_INVENTORY_ATTEMPTS = 2;
+
+export class LiveInventoryChangedError extends Error {
+  constructor(
+    message = "batched activity does not exactly match the live open-item inventory",
+    options,
+  ) {
+    super(message, options);
+    this.name = "LiveInventoryChangedError";
+  }
+}
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PLACEHOLDER_RE =
@@ -748,7 +763,7 @@ export function readGhPages(endpoint, spawn = spawnSync) {
   ];
   const result = spawn("gh", args, {
     encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: MAX_GH_REPORT_BYTES,
     windowsHide: true,
   });
   if (result.error) throw result.error;
@@ -959,7 +974,7 @@ function readGhActivityPage(endpoint, pageNumber, context, spawn) {
     ["api", "--method", "GET", "--jq", ".[]", pagedEndpoint],
     {
       encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer: MAX_GH_REPORT_BYTES,
       windowsHide: true,
     },
   );
@@ -1051,7 +1066,7 @@ function readGhSearchPullNumbers(repo, qualifier, spawn) {
     ],
     {
       encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer: MAX_GH_REPORT_BYTES,
       windowsHide: true,
     },
   );
@@ -1274,7 +1289,7 @@ function readGraphqlActivityNodes(repo, query, selector, spawn, context) {
     ],
     {
       encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer: MAX_GH_REPORT_BYTES,
       windowsHide: true,
     },
   );
@@ -2239,9 +2254,7 @@ export function collectLiveReport(
       [...issueNumbers].some((number) => !activity.issues.has(number)) ||
       [...pullNumbers].some((number) => !activity.pulls.has(number))
     ) {
-      throw new TypeError(
-        "batched activity does not exactly match the live open-item inventory",
-      );
+      throw new LiveInventoryChangedError();
     }
   }
   onProgress({ phase: "issues", current: 0, total: issueItems.length });
@@ -2744,6 +2757,25 @@ Options:
 `;
 }
 
+/** Repeats one complete read when GitHub changes its open-item inventory mid-snapshot. */
+export function retryChangedLiveInventory(collect, onRetry = () => {}) {
+  for (let attempt = 1; attempt <= MAX_LIVE_INVENTORY_ATTEMPTS; attempt += 1) {
+    try {
+      return collect(attempt);
+    } catch (cause) {
+      if (!(cause instanceof LiveInventoryChangedError)) throw cause;
+      if (attempt === MAX_LIVE_INVENTORY_ATTEMPTS) {
+        throw new LiveInventoryChangedError(
+          `Open GitHub inventory changed while collecting the live report after ${MAX_LIVE_INVENTORY_ATTEMPTS} attempts`,
+          { cause },
+        );
+      }
+      onRetry({ attempt, cause });
+    }
+  }
+  throw new Error("unreachable live inventory retry state");
+}
+
 export function main(args = process.argv.slice(2)) {
   const selectionPolicy = readProjectSelectionPolicy();
   const options = parseCliArguments(args, selectionPolicy.repositoryId);
@@ -2779,26 +2811,40 @@ export function main(args = process.argv.slice(2)) {
   const boundedRead = (endpoint) => {
     return readGhPages(endpoint, commandBudget.run);
   };
-  const openActivity = readGhOpenActivity(options.repo, commandBudget.run, {
-    preflight: true,
-  });
-  const limits = asRecord(openActivity.rateLimits, "GitHub rate limits");
-  process.stderr.write(
-    `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit} (${limits.graphqlBudgetSource}); REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
-  );
-  const report = collectLiveReport(
-    options.repo,
-    boundedRead,
-    new Date(),
-    ({ phase, current, total }) => {
-      if (current === 0 || current === total || current % 10 === 0) {
-        process.stderr.write(
-          `[Slop] scanning ${phase}: ${current}/${total} (${commandBudget.count} bounded GitHub commands)\n`,
-        );
-      }
+  let rateLimits = { preflight: true };
+  const { report } = retryChangedLiveInventory(
+    () => {
+      const openActivity = readGhOpenActivity(
+        options.repo,
+        commandBudget.run,
+        rateLimits,
+      );
+      rateLimits = openActivity.rateLimits;
+      const limits = asRecord(openActivity.rateLimits, "GitHub rate limits");
+      process.stderr.write(
+        `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit} (${limits.graphqlBudgetSource}); REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
+      );
+      return {
+        report: collectLiveReport(
+          options.repo,
+          boundedRead,
+          new Date(),
+          ({ phase, current, total }) => {
+            if (current === 0 || current === total || current % 10 === 0) {
+              process.stderr.write(
+                `[Slop] scanning ${phase}: ${current}/${total} (${commandBudget.count} bounded GitHub commands)\n`,
+              );
+            }
+          },
+          openActivity,
+          selectionPolicy.eligibleIssueLabels,
+        ),
+      };
     },
-    openActivity,
-    selectionPolicy.eligibleIssueLabels,
+    ({ attempt }) =>
+      process.stderr.write(
+        `[Slop] open-item inventory changed during snapshot attempt ${attempt}; retrying one complete read\n`,
+      ),
   );
   process.stdout.write(
     options.epochOnly
