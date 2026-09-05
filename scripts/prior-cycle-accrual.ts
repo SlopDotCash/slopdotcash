@@ -6,6 +6,7 @@ import type { ProjectId } from "../src/lib/projects.mjs";
 import {
   assertRewardAllocationManifest,
   type RewardAllocationManifest,
+  type UnsafeDestinationReport,
 } from "../src/lib/rewards";
 
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
@@ -13,6 +14,7 @@ const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
 export interface PriorCycleAccrual {
   actorLogins: ReadonlyMap<string, string>;
   accruedMinor: ReadonlyMap<string, string>;
+  unsafeDestinationReports?: ReadonlyMap<string, UnsafeDestinationReport[]>;
 }
 
 export type PriorCycleNotReadyReason = "under-review" | "unresolved-proposals";
@@ -73,7 +75,7 @@ async function readManifest(
 
 /**
  * Carries only reviewed, unpaid accrual states. Approved payout intents remain
- * attached to their original cycle, while exclusions and manual holds never
+ * attached to their original cycle, while exclusions and ordinary manual holds never
  * become new payment proposals automatically.
  */
 export async function loadPriorCycleAccrual(input: {
@@ -149,14 +151,21 @@ export async function loadPriorCycleAccrual(input: {
 
   const accruedMinor = new Map<string, string>();
   const actorLogins = new Map<string, string>();
+  const unsafeDestinationReports = new Map<string, UnsafeDestinationReport[]>();
   for (const row of proposal.allocations) {
-    if (row.state !== "held-below-minimum" && row.state !== "unclaimed") {
+    if (
+      row.state !== "held-below-minimum" &&
+      row.state !== "unclaimed" &&
+      !(row.state === "held" && row.hold?.kind === "unsafe-destination")
+    ) {
       continue;
     }
     const amount = row.accruedMinor ?? row.suggestedMinor;
     if (BigInt(amount) === 0n) continue;
     accruedMinor.set(row.actor.id, amount);
     actorLogins.set(row.actor.id, row.actor.login);
+    if (row.unsafeDestinationReports)
+      unsafeDestinationReports.set(row.actor.id, row.unsafeDestinationReports);
   }
-  return { actorLogins, accruedMinor };
+  return { actorLogins, accruedMinor, unsafeDestinationReports };
 }

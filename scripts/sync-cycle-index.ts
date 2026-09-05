@@ -47,6 +47,7 @@ import {
   DEFAULT_SOLANA_RPC_URL,
   fetchFinalizedSolanaTransaction,
 } from "./solana-rpc";
+import { verifyUnsafeDestinationReport } from "./unsafe-destination-hold";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const CYCLES_ROOT = resolve(REPOSITORY_ROOT, "cycles");
@@ -157,6 +158,7 @@ async function verifyProposalAgainstSnapshot(
     sourceSnapshotSha256: snapshotDigest,
     priorAccruedMinor: priorAccrual.accruedMinor,
     priorActorLogins: priorAccrual.actorLogins,
+    priorUnsafeDestinationReports: priorAccrual.unsafeDestinationReports,
   });
   if (baseline.kind !== "reward-allocation") {
     throw new TypeError("Monthly proposal regenerated as an external share");
@@ -168,6 +170,9 @@ async function verifyProposalAgainstSnapshot(
     throw new TypeError("Reward proposal adds or removes a scored contributor");
   }
   for (const allocation of proposal.allocations) {
+    for (const report of allocation.unsafeDestinationReports ?? []) {
+      await verifyUnsafeDestinationReport(report);
+    }
     const expected = byIntent.get(allocation.intentId);
     if (
       !expected ||
@@ -175,6 +180,12 @@ async function verifyProposalAgainstSnapshot(
       allocation.actor.login !== expected.actor.login ||
       allocation.score !== expected.score ||
       allocation.suggestedMinor !== expected.suggestedMinor ||
+      (expected.unsafeDestinationReports ?? []).some(
+        (report) =>
+          !(allocation.unsafeDestinationReports ?? []).some(
+            (candidate) => canonical(candidate) === canonical(report),
+          ),
+      ) ||
       canonical(allocation.lines) !== canonical(expected.lines) ||
       canonical(allocation.evidenceEventIds) !==
         canonical(expected.evidenceEventIds)

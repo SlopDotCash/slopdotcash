@@ -32,11 +32,52 @@ is at least 2 USDC. The 1% fee applies only to principal actually approved for
 payment.
 
 The next proposal derives carry only from the immediately preceding reviewed
-cycle. `held-below-minimum` and `unclaimed` balances carry even when the actor
-did no new work; approved payout intents stay in their original cycle, while
-excluded and manually held rows never become new payment proposals
+cycle. `held-below-minimum`, `unclaimed`, and authenticated unsafe-destination
+holds carry even when the actor did no new work; approved payout intents stay
+in their original cycle, while excluded and ordinary manually held rows never become new payment proposals
 automatically. An unfinished review or unresolved proposed row fails the next
 cycle closed instead of guessing what is owed.
+
+### Unsafe destination reports
+
+A contributor may report the exact Slop wallet claim on an open proposal as
+unsafe. The report is evidence; the maintainer chooses whether to hold the row
+with a public reason. No report endpoint or background job changes an award.
+The original wallet observation stays in the held row, `approvedMinor` becomes
+zero, and the other rows and the review clock stay unchanged. A held amount is
+carried, not owed. Ordinary `held` rows still do not carry.
+
+The supported authentication path is a GitHub-verified commit signed by the
+contributor's own registered signing key. Commit author email and login are
+insufficient: verification checks `signature.isValid`, `signature.state`, and
+the signature signer's immutable GitHub actor ID. Slop does not sign anything.
+Only public report and wallet metadata appear in the commit message.
+
+1. Generate the exact commit message from the published proposal using
+   `bun scripts/unsafe-destination-hold.ts --message <proposal.json> <intent-id> <UTC-report-time>`.
+   It includes the project, cycle, intent, report time, and complete original
+   actor-bound Slop wallet claim. Profile-README claims are not supported by
+   this reporting path.
+2. The contributor signs a commit with that exact message in a public GitHub
+   repository they control, then supplies its repository and immutable SHA.
+   The maintainer's report JSON contains the message's JSON fields plus
+   `kind: "unsafe-destination"`, `sourceRepository`, and `sourceCommit`.
+3. During the existing review window, the maintainer runs
+   `bun scripts/unsafe-destination-hold.ts <proposal.json> <signed-report.json> <public-reason>`.
+   This fetches the signed commit, verifies the exact message and signer, and
+   emits a candidate proposal on stdout. It writes no cycle file and grants no
+   approval. The maintainer reviews and submits that proposal through GitHub.
+
+`cycles:check` independently re-verifies every report against GitHub and fails
+closed if its commit or signer cannot be verified. This path requires `gh`
+authentication when reports are present. `unsafeDestinationReports` retains
+the signed evidence through carry; `hold` identifies the report selected by
+the maintainer for the original held row. The next cycle carries the complete
+unpaid amount exactly once. Until the registry supplies a different address in
+a different actor-bound claim observed after report verification, the row is
+`unclaimed` and continues carrying. Republishing the compromised address in a
+new claim never makes it eligible. A safe successor starts a normal proposal
+in the next cycle; it never substitutes a wallet within an existing review.
 
 - `allocation.json` — reviewed and approved payout intents;
 - `execution-plan.json` — an unsigned, exact Solana USDC transfer plan;
