@@ -71,10 +71,6 @@ function Frame({
       aria-label={`${index + 1} of ${SLIDE_COUNT}: ${label}`}
       tabIndex={0}
     >
-      <div className="deck-kicker">
-        <img src="/slop-mark.svg" alt="" />
-        <span>slop.cash</span>
-      </div>
       {children}
     </section>
   );

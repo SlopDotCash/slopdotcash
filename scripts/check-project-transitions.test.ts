@@ -281,8 +281,8 @@ describe("project transition gate", () => {
     };
 
     const reducedOnAdd = structuredClone(withPledgedReview);
-    reducedOnAdd.reward.monthlyCapMinor = "9999000000";
-    reducedOnAdd.reward.monthlyCapDisplay = "$9,999";
+    reducedOnAdd.reward.monthlyCapMinor = "4999000000";
+    reducedOnAdd.reward.monthlyCapDisplay = "$4,999";
     expect(() =>
       validateProjectTransitions([entry(eliza)], [entry(reducedOnAdd)]),
     ).toThrow(/review budget.*reducing the contributor pool cap/u);
@@ -312,8 +312,8 @@ describe("project transition gate", () => {
     funded.reward.reviewBudget.fundingState = "committed";
     funded.reward.reviewBudget.paymentMode = "disabled";
     funded.reward.reviewBudget.committedMinor = "1000000";
-    funded.reward.monthlyCapMinor = "9999000000";
-    funded.reward.monthlyCapDisplay = "$9,999";
+    funded.reward.monthlyCapMinor = "4999000000";
+    funded.reward.monthlyCapDisplay = "$4,999";
     (
       funded as unknown as { funding: { commitments: unknown[] } }
     ).funding.commitments = [
