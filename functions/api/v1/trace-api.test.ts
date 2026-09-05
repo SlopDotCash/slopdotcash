@@ -1265,6 +1265,39 @@ describe("private trace API", () => {
     });
   });
 
+  it("rejects impossible calendar dates in progress events", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_invalid_date_run_key_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+
+    const response = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/events`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          kind: "checkpoint",
+          occurredAt: "2026-02-30T11:59:00.000Z",
+          source: "agent",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "invalid_date_event_key_0001",
+        },
+      ),
+      deps,
+    );
+
+    expect(response.status).toBe(400);
+    expect(deps.persistence).toBeInstanceOf(MemoryPersistence);
+    expect((deps.persistence as MemoryPersistence).events.size).toBe(0);
+  });
+
   it("rejects digest mismatches before retaining an object", async () => {
     const store = new MemoryPersistence();
     const deps = dependencies(store);
