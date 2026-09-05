@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyFundingAddressTransitions } from "../src/lib/funding-authority.mjs";
 import { assertProjectPolicyTransition } from "../src/lib/project-policy.mjs";
 import {
   assertHistoricalProjectDefinition,
@@ -181,12 +182,17 @@ async function workingEntries() {
 }
 
 export async function checkProjectTransitions(baseRevision, currentRevision) {
-  return validateProjectTransitions(
-    revisionEntries(baseRevision, "base revision"),
+  const previousEntries = revisionEntries(baseRevision, "base revision");
+  const currentEntries =
     currentRevision === undefined
       ? await workingEntries()
-      : revisionEntries(currentRevision, "current revision"),
+      : revisionEntries(currentRevision, "current revision");
+  const result = validateProjectTransitions(previousEntries, currentEntries);
+  await verifyFundingAddressTransitions(
+    boundedProjectMap(previousEntries, { historical: true }),
+    boundedProjectMap(currentEntries),
   );
+  return result;
 }
 
 if (import.meta.main) {

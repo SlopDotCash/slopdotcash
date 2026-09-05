@@ -203,3 +203,24 @@ the declared-settler reminder inside seven days of close, the ready-to-sign
 reminder after 24 hours, and the overdue reminder after 72 hours. These are
 coordination notices only; they do not message a wallet, sign, broadcast, or
 upgrade settlement state.
+
+## Receiving-address authority
+
+A manifest change that adds, removes, rotates, or replaces a receiving route
+must pin an upstream `.github/slop-project.json` authority file containing
+the complete identical `funding.addresses` inventory. The optional extension
+uses the manifest's existing network, asset, address, effectiveAt, and replacedAt
+schema. Existing authority files without funding remain valid for unchanged
+address inventories.
+
+The trusted transition gate checks immutable repository identity, verifies that
+the pinned commit is in the registered integration branch's history, hashes the
+exact file bytes, checks project and steward bindings, and compares every route
+field including replacement times. Missing, unreachable, oversized, divergent,
+or mismatched evidence fails closed. Unchanged address inventories make no
+network request. This rule becomes enforceable for subsequent PRs after the
+trusted checker has landed on develop.
+
+This proves that the upstream repository published an address, not wallet
+control, signer independence, legal ownership, or authority to pay. Maintainer
+review and deterministic funding verification remain separate requirements.

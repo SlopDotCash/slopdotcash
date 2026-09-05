@@ -8,4 +8,5 @@ export declare function validateProjectTransitions(
 
 export declare function checkProjectTransitions(
   baseRevision: string,
+  currentRevision?: string,
 ): Promise<{ previous: number; current: number }>;
