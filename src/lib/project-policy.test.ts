@@ -50,6 +50,7 @@ describe("project policy transitions", () => {
     authority: unknown;
     terms: {
       revision: string;
+      effectiveAt: string;
       repositoryLicense: { fileSha256: string | null };
       inbound: { fileSha256: string | null };
       receiptPolicy: {
@@ -66,6 +67,7 @@ describe("project policy transitions", () => {
     ) as unknown as MutableActivePolicyFixture;
     const licenseSha256 = fixture.terms.repositoryLicense.fileSha256;
     if (!licenseSha256) throw new Error("missing fixture license digest");
+    fixture.terms.effectiveAt = "2026-08-19T00:00:00.000Z";
     fixture.authority = {
       state: "verified",
       reason: null,
@@ -326,6 +328,7 @@ describe("project policy transitions", () => {
     const previous = activePolicyFixture();
     const next = structuredClone(previous);
     next.terms.revision = `${previous.terms.revision}-appended`;
+    next.terms.effectiveAt = "2026-08-21T00:00:00.000Z";
     const licenseSha256 = next.terms.repositoryLicense.fileSha256;
     if (!licenseSha256) throw new Error("missing fixture license digest");
     const lastActivation = "2026-08-20T00:00:00.000Z";
