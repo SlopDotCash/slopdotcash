@@ -85,6 +85,43 @@ a different actor-bound claim observed after report verification, the row is
 new claim never makes it eligible. A safe successor starts a normal proposal
 in the next cycle; it never substitutes a wallet within an existing review.
 
+Safety history is independent of money carry. Proposal preparation and snapshot
+verification read every earlier immutable project cycle, including approved,
+paid, excluded, and zero-participation history. Every report must trace to its
+original held row; repeated copies must have identical normalized bytes and
+the same contributor. Approving a safe successor, paying its intent, exhausting
+the balance, or omitting the contributor from a later cycle never clears an
+unsafe claim or address. A zero-award cycle needs no synthetic allocation row:
+the older immutable reports remain the source of truth for the next proposal.
+The scan allows at most 1,200 project cycle directories, 32 MiB of prior proposal
+and allocation bytes, 4,096 unique reports, and 32 reports per contributor. It
+fails closed on missing originals, conflicting copies, symlinks, or exceeded
+limits; it never truncates safety history. Money still carries only from the
+immediately preceding reviewed cycle, with no review-budget carry.
+
+`Trusted unsafe destination transition gate` closes the deletion boundary that
+current-state validation alone cannot detect. Its `pull_request_target` workflow
+checks out only the immutable base SHA, fetches the exact PR head as Git objects,
+and runs only base-owned checker/schema code with read-only repository access.
+It never checks out the PR, installs contributor dependencies, or executes head
+code. Every existing `proposal.json` and `allocation.json` must retain its path
+and regular-file mode. Existing unsafe-report arrays must keep their exact
+normalized prefix in the same contributor row. An accepted hold keeps its hold
+reference, original wallet and amounts, held state, and zero approval. Removing
+the entire history field cannot reset this protection. Later safe-successor
+cycles append new records without changing the held origin. New and changed
+rows also inherit every applicable unsafe report found in the trusted base,
+so adding a new cycle alongside weakened contributor-side validation cannot
+omit the block. External-prize share manifests retain their separate schema.
+
+The transition check bounds each tree to 2,400 cycle manifests, each decoded
+blob to 8 MiB, and all decoded base/head blobs to 32 MiB; malformed UTF-8 and
+duplicate JSON keys fail closed. Merge this trusted checker before relying on
+it for later PRs and require its named check through repository-controlled
+policy. It supplies no review, merge, or deployment authority. Maintainer
+changes to the enforcement workflow or repository policy remain a separate
+GitHub trust boundary, not permission granted by this report mechanism.
+
 - `allocation.json` — reviewed and approved payout intents;
 - `execution-plan.json` — an unsigned, exact Solana USDC transfer plan;
 - `transactions.json` — submitted public transaction signatures;

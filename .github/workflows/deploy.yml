@@ -143,6 +143,8 @@ jobs:
           bun scripts/prepare-private-intake-attestation.ts --ensure-disabled
 
       - name: Validate reward lifecycle
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bun run cycles:check
 
       - name: Validate finalized Solana evidence on trusted revisions

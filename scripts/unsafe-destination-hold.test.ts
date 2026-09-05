@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import {
   assertRewardAllocationManifest,
+  feeForPrincipal,
   type RewardAllocationManifest,
   type SlopDatabaseWalletProof,
   type UnsafeDestinationReport,
@@ -119,6 +120,244 @@ async function heldProposal() {
 }
 
 describe("authenticated unsafe destination holds", () => {
+  it("fails closed on rewritten, orphaned, future, or symlinked historical evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "slop-unsafe-history-boundary-"));
+    const directory = join(root, "eliza", "2026-07");
+    await mkdir(directory, { recursive: true });
+    const held = await heldProposal();
+    await writeFile(join(directory, "proposal.json"), JSON.stringify(held));
+    const allocation = finalizeRewardAllocation(
+      held,
+      held.review.endsAt,
+      Date.parse(held.review.endsAt),
+    );
+    const historicalReport =
+      allocation.allocations[0].unsafeDestinationReports?.[0];
+    if (!historicalReport) throw new Error("missing report fixture");
+    historicalReport.verifiedAt = "2026-08-04T00:00:00.000Z";
+    await writeFile(
+      join(directory, "allocation.json"),
+      JSON.stringify(allocation),
+    );
+    const load = (asOf = "2026-09-05T00:00:00.000Z") =>
+      loadPriorCycleAccrual({
+        cyclesRoot: root,
+        projectId: "eliza",
+        cycleId: "2026-08",
+        asOf,
+      });
+    await expect(load()).rejects.toThrow(/changes an immutable report/u);
+    await writeFile(
+      join(directory, "allocation.json"),
+      JSON.stringify(
+        finalizeRewardAllocation(
+          held,
+          held.review.endsAt,
+          Date.parse(held.review.endsAt),
+        ),
+      ),
+    );
+    await expect(load("2026-08-03T00:00:00.000Z")).rejects.toThrow(
+      /future verification/u,
+    );
+    await symlink(directory, join(root, "eliza", "2026-06"), "dir");
+    await expect(load()).rejects.toThrow(/non-canonical cycle directory/u);
+
+    const orphanRoot = await mkdtemp(join(tmpdir(), "slop-unsafe-orphan-"));
+    const snapshot = snapshotFixture();
+    snapshot.window.from = "2026-08-01T00:00:00.000Z";
+    snapshot.window.to = "2026-09-05T00:00:00.000Z";
+    snapshot.source.verificationWindow.from = snapshot.window.from;
+    snapshot.source.verificationWindow.to = snapshot.window.to;
+    const orphan = createRewardCycleProposal({
+      cycleId: "2026-08",
+      generatedAt: snapshot.window.to,
+      projectId: "eliza",
+      snapshot,
+      sourceSnapshotSha256: "e".repeat(64),
+      priorAccruedMinor: new Map([["U_fixture", "5000000000"]]),
+      priorActorLogins: new Map([["U_fixture", "finish-line"]]),
+      priorUnsafeDestinationReports: new Map([["U_fixture", [report()]]]),
+    });
+    await mkdir(join(orphanRoot, "eliza", "2026-08"), { recursive: true });
+    await writeFile(
+      join(orphanRoot, "eliza", "2026-08", "proposal.json"),
+      JSON.stringify(orphan),
+    );
+    await expect(
+      loadPriorCycleAccrual({
+        cyclesRoot: orphanRoot,
+        projectId: "eliza",
+        cycleId: "2026-09",
+        asOf: "2026-10-05T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(/missing its original reviewed hold/u);
+  });
+
+  it("refuses excessive historical inventories rather than truncating old safety evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "slop-unsafe-history-limit-"));
+    await mkdir(join(root, "eliza"), { recursive: true });
+    for (let index = 0; index < 1201; index += 1) {
+      const year = 1900 + Math.floor(index / 12);
+      const month = String((index % 12) + 1).padStart(2, "0");
+      await mkdir(join(root, "eliza", `${year}-${month}`));
+    }
+    await expect(
+      loadPriorCycleAccrual({
+        cyclesRoot: root,
+        projectId: "eliza",
+        cycleId: "2026-08",
+        asOf: "2026-09-05T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(/cycle limit/u);
+  });
+
+  it("never forgets unsafe destinations after approval, a zero-participation cycle, or missing immediate carry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "slop-unsafe-persistent-"));
+    const writeCycle = async (
+      value: RewardAllocationManifest,
+      approve = false,
+    ) => {
+      const directory = join(root, "eliza", value.cycleId);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "proposal.json"), JSON.stringify(value));
+      if (approve)
+        await writeFile(
+          join(directory, "allocation.json"),
+          JSON.stringify(
+            finalizeRewardAllocation(
+              value,
+              value.review.endsAt,
+              Date.parse(value.review.endsAt),
+            ),
+          ),
+        );
+    };
+    const makeSnapshot = (
+      month: string,
+      nextMonth: string,
+      newWork = false,
+    ) => {
+      const bytes = JSON.stringify(snapshotFixture());
+      const snapshot = JSON.parse(
+        newWork ? bytes.replaceAll("2026-07-", `2026-${month}-`) : bytes,
+      );
+      snapshot.window.from = `2026-${month}-01T00:00:00.000Z`;
+      snapshot.window.to = `2026-${nextMonth}-05T00:00:00.000Z`;
+      snapshot.source.verificationWindow.from = snapshot.window.from;
+      snapshot.source.verificationWindow.to = snapshot.window.to;
+      return snapshot;
+    };
+    const load = (cycleId: string, asOf: string) =>
+      loadPriorCycleAccrual({
+        cyclesRoot: root,
+        projectId: "eliza",
+        cycleId,
+        asOf,
+      });
+    const create = (
+      cycleId: string,
+      snapshot: ReturnType<typeof makeSnapshot>,
+      prior: Awaited<ReturnType<typeof load>>,
+      candidate?: SlopDatabaseWalletProof,
+    ) => {
+      const result = createRewardCycleProposal({
+        cycleId,
+        generatedAt: snapshot.window.to,
+        projectId: "eliza",
+        snapshot,
+        sourceSnapshotSha256: "e".repeat(64),
+        wallets: candidate ? new Map([["U_fixture", candidate]]) : new Map(),
+        priorAccruedMinor: prior.accruedMinor,
+        priorActorLogins: prior.actorLogins,
+        priorUnsafeDestinationReports: prior.unsafeDestinationReports,
+      });
+      if (result.kind !== "reward-allocation") throw new Error("wrong fixture");
+      return result;
+    };
+    await writeCycle(await heldProposal(), true);
+    const august = create(
+      "2026-08",
+      makeSnapshot("08", "09"),
+      await load("2026-08", "2026-09-05T00:00:00.000Z"),
+      wallet(
+        "U_fixture",
+        "claim_safe_successor",
+        SAFE,
+        "2026-08-04T00:00:00.000Z",
+      ),
+    );
+    expect(august.allocations[0].state).toBe("proposed");
+    august.allocations[0].state = "approved";
+    august.allocations[0].approvedMinor = august.allocations[0].suggestedMinor;
+    august.totals.approvedMinor = august.allocations[0].approvedMinor;
+    august.totals.feeMinor = feeForPrincipal(
+      august.totals.approvedMinor,
+      august.feeBasisPoints,
+    );
+    await writeCycle(august, true);
+    const afterApproval = await load("2026-09", "2026-10-05T00:00:00.000Z");
+    expect([...afterApproval.accruedMinor]).toEqual([]);
+    expect(afterApproval.unsafeDestinationReports?.get("U_fixture")).toEqual([
+      report(),
+    ]);
+    const september = create(
+      "2026-09",
+      makeSnapshot("09", "10"),
+      afterApproval,
+    );
+    expect(september.allocations).toEqual([]);
+    await writeCycle(september);
+    const afterAbsence = await load("2026-10", "2026-11-05T00:00:00.000Z");
+    expect([...afterAbsence.accruedMinor]).toEqual([]);
+    expect(afterAbsence.unsafeDestinationReports?.get("U_fixture")).toEqual([
+      report(),
+    ]);
+    for (const candidate of [
+      wallet(),
+      wallet(
+        "U_fixture",
+        "claim_republished_unsafe",
+        UNSAFE,
+        "2026-10-20T00:00:00.000Z",
+      ),
+    ]) {
+      const returned = create(
+        "2026-10",
+        makeSnapshot("10", "11", true),
+        afterAbsence,
+        candidate,
+      );
+      expect(returned.allocations[0]).toMatchObject({
+        state: "unclaimed",
+        wallet: null,
+        unsafeDestinationReports: [report()],
+      });
+      expect(returned.carriedMinor).toBe("0");
+    }
+    const safeAgain = create(
+      "2026-10",
+      makeSnapshot("10", "11", true),
+      afterAbsence,
+      wallet(
+        "U_fixture",
+        "claim_safe_successor",
+        SAFE,
+        "2026-08-04T00:00:00.000Z",
+      ),
+    );
+    expect(safeAgain.allocations[0]).toMatchObject({
+      state: "proposed",
+      wallet: { address: SAFE },
+    });
+    // A gap in financial carry must not erase older safety history either.
+    const afterGap = await load("2026-11", "2026-12-05T00:00:00.000Z");
+    expect([...afterGap.accruedMinor]).toEqual([]);
+    expect(afterGap.unsafeDestinationReports?.get("U_fixture")).toEqual([
+      report(),
+    ]);
+  });
+
   it("rejects same-cycle wallet substitution even after advancing the review clock", async () => {
     const held = await heldProposal();
     const changed = structuredClone(held);

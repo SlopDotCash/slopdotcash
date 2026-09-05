@@ -109,6 +109,8 @@ jobs:
         run: bun run rewards:close-month -- --cycle "${{ steps.cycle.outputs.cycle }}"
 
       - name: Verify immutable cycle chain
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bun run cycles:check
 
       - name: Open review PR
