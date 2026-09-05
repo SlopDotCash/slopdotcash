@@ -2407,6 +2407,95 @@ describe("live report behavior", () => {
     }
   });
 
+  it("retains a surviving GitHub child when its helper is interrupted", {
+    timeout: 15_000,
+  }, async () => {
+    const fixture = createLiveReportGhFixture();
+    const rootPath = join(fixture.root, "locks");
+    const identity = {
+      host: "github.com",
+      id: fixture.identityId,
+      login: "fixture-user",
+    };
+    const owner = spawn(
+      nodeExecutable,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import { acquireLiveReportLock } from ${JSON.stringify(pathToFileURL(liveReportPath).href)};
+      const lock = acquireLiveReportLock(${JSON.stringify(identity)}, { rootPath: ${JSON.stringify(rootPath)} });
+      try {
+        const result = lock.spawn("gh", ["api", "rate_limit"], { encoding: "utf8" });
+        process.exitCode = result.status ?? 1;
+      } finally {
+        lock.release();
+      }
+    `,
+      ],
+      {
+        env: { ...fixture.environment, SLOP_GH_HOLD: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const ownerResult = collectChild(owner);
+    let childPid: number | null = null;
+    let childIdentity: string | null = null;
+    try {
+      await waitForFixturePath(fixture.readyPath);
+      childPid = Number(readFileSync(fixture.pidPath, "utf8").trim());
+      childIdentity = readLiveReportProcessIdentity(childPid);
+      assert.ok(childIdentity);
+      const commands = join(
+        liveReportLockPath(rootPath, identity.id),
+        "commands",
+      );
+      let helperPid: number | null = null;
+      const deadline = Date.now() + 5_000;
+      while (helperPid === null) {
+        for (const file of readdirSync(commands)) {
+          if (!/^lease-[a-f0-9]{32}\.json$/u.test(file)) continue;
+          const lease = JSON.parse(readFileSync(join(commands, file), "utf8"));
+          if (lease.child?.pid === childPid) helperPid = lease.helper.pid;
+        }
+        if (Date.now() >= deadline)
+          assert.fail("GitHub child lease was not published");
+        if (helperPid === null)
+          await new Promise((done) => setTimeout(done, 10));
+      }
+      process.kill(helperPid, "SIGKILL");
+      const result = await ownerResult;
+      assert.strictEqual(result.status, 1, result.stderr);
+      assert.strictEqual(
+        readLiveReportProcessIdentity(childPid),
+        childIdentity,
+      );
+      assert.throws(
+        () => acquireLiveReportLock(identity, { rootPath }),
+        /live report lock contention/u,
+        "owner cleanup must retain the lease of its surviving GitHub child",
+      );
+      writeFileSync(fixture.releasePath, "release\n");
+      await waitForFixturePath(fixture.donePath);
+      await waitForProcessExit(childPid, childIdentity);
+      const recovered = acquireLiveReportLock(identity, { rootPath });
+      recovered.release();
+      assert.strictEqual(
+        existsSync(liveReportLockPath(rootPath, identity.id)),
+        false,
+      );
+    } finally {
+      writeFileSync(fixture.releasePath, "release\n");
+      if (owner.exitCode === null && owner.signalCode === null)
+        owner.kill("SIGKILL");
+      await ownerResult;
+      if (childPid !== null && childIdentity !== null) {
+        await waitForProcessExit(childPid, childIdentity);
+      }
+      rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
   it("recovers the identity lock after an interrupted report", {
     timeout: 15_000,
   }, async () => {

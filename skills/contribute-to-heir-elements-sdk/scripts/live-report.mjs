@@ -1625,7 +1625,12 @@ function liveReportCommandIsActive(lease, ownerToken) {
   }
   if (processLeaseIsActive(lease.helper)) return true;
   if (lease.child !== null && processLeaseIsActive(lease.child)) return true;
-  return Date.now() - lease.startedAtMs < LIVE_REPORT_ORPHAN_COMMAND_GRACE_MS;
+  // Only an unpublished child needs a grace period. A recorded birth identity
+  // proves a known child is gone, so recovery need not wait for that period.
+  return (
+    lease.child === null &&
+    Date.now() - lease.startedAtMs < LIVE_REPORT_ORPHAN_COMMAND_GRACE_MS
+  );
 }
 
 function liveReportHasActiveCommand(lockPath, ownerToken) {
@@ -1852,6 +1857,10 @@ export function acquireLiveReportLock(identity, options = {}) {
         ) {
           throw new Error("live report lock ownership changed before release");
         }
+        // An interrupted helper can return before its GitHub child exits. Keep
+        // the owner and command leases so a replacement scan still sees it;
+        // normal stale-owner recovery can reclaim the lock after the child exits.
+        if (liveReportHasActiveCommand(lockPath, ownerToken)) return;
         const releasedPath = `${lockPath}.released-${process.pid}-${ownerToken}`;
         renameSync(lockPath, releasedPath);
         rmSync(releasedPath, { force: true, recursive: true });
