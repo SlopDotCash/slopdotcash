@@ -18,8 +18,9 @@ export function cycleIndexFixture(): CycleIndex {
   };
 }
 
-export function snapshotFixture(): LeaderboardSnapshot {
-  const generatedAt = new Date().toISOString();
+export function snapshotFixture(
+  generatedAt = new Date().toISOString(),
+): LeaderboardSnapshot {
   const windowTo = "2026-07-30T00:00:00.000Z";
   const leaderActor: LeaderboardSnapshot["leaders"][number]["actor"] = {
     id: "U_fixture",
