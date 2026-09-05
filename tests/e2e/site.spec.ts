@@ -926,6 +926,75 @@ test("shows an explicit error for invalid data and retries", async ({
   expect(attempts).toBe(failedAttempts + 1);
 });
 
+test("reflows at 320 CSS pixels and with independently enlarged text", async ({
+  page,
+}, testInfo) => {
+  // The scenarios set their own viewport; do not repeat them for each device.
+  test.skip(testInfo.project.name !== "wide-desktop-chromium");
+  // WCAG 1.4.10: 320 CSS px is equivalent to 1280px at 400% browser zoom.
+  // Text enlargement is a deterministic typography fixture, not native browser
+  // zoom. The combined scenario is additional stress coverage, not a claim
+  // that the reflow criterion requires an effective viewport below 320 CSS px.
+  for (const scenario of [
+    { name: "320 CSS px reflow", width: 320, textScale: 1 },
+    { name: "200% text enlargement", width: 1280, textScale: 2 },
+    { name: "combined narrow enlarged-text stress", width: 320, textScale: 2 },
+  ]) {
+    await page.setViewportSize({ width: scenario.width, height: 1000 });
+    for (const path of [
+      "/",
+      "/projects/eliza",
+      "/projects/new",
+      "/projects/eliza/funding",
+    ]) {
+      await page.goto(path, { waitUntil: "networkidle" });
+      if (scenario.textScale === 2) {
+        await page.evaluate(() => {
+          // Capture every original computed size before changing any ancestor,
+          // so nested text receives exactly 200%, not compounded enlargement.
+          const typography = [
+            ...document.querySelectorAll<HTMLElement>("body *"),
+          ]
+            .filter((element) => element instanceof HTMLElement)
+            .map((element) => ({
+              element,
+              font: getComputedStyle(element).fontSize,
+              line: getComputedStyle(element).lineHeight,
+            }));
+          for (const { element, font, line } of typography) {
+            element.style.setProperty(
+              "font-size",
+              `${Number.parseFloat(font) * 2}px`,
+            );
+            if (line !== "normal")
+              element.style.setProperty(
+                "line-height",
+                `${Number.parseFloat(line) * 2}px`,
+              );
+          }
+        });
+      }
+      await page.keyboard.press("Tab");
+      await expect(page.locator(":focus")).toHaveAttribute("href", "/");
+      const accessibility = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .analyze();
+      expect(
+        accessibility.violations,
+        `${scenario.name} ${path} accessibility`,
+      ).toEqual([]);
+      const geometry = await page.evaluate(() => ({
+        viewport: innerWidth,
+        page: document.documentElement.scrollWidth,
+      }));
+      expect(
+        geometry.page,
+        `${scenario.name} ${path} horizontal overflow`,
+      ).toBeLessThanOrEqual(geometry.viewport);
+    }
+  }
+});
+
 test("keeps primary routes accessible and inside the viewport", async ({
   page,
 }) => {
