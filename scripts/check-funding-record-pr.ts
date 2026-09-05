@@ -293,7 +293,10 @@ export async function checkFundingRecordPr(input: {
       decision.records.push(evidence);
       return { entry, bytes, evidence };
     });
-    const records: ProjectFundingRecord[] = [];
+    const records: Array<{
+      record: ProjectFundingRecord;
+      historicalAddresses: ReturnType<typeof assertProjectFundingAddresses>;
+    }> = [];
     for (const { entry, bytes, evidence } of pending) {
       const parsed = jsonBytes(bytes);
       if (!bytes.equals(Buffer.from(canonicalFundingDecisionBytes(parsed))))
@@ -314,9 +317,15 @@ export async function checkFundingRecordPr(input: {
         input.baseSha,
       ]);
       const historical = manifest(root, manifestRevision, path[1], true);
-      const record = assertProjectFundingRecord(
+      const historicalAddresses = assertProjectFundingAddresses(
+        historical.funding.addresses,
+      );
+      const record = assertProjectFundingRecord(parsed, historicalAddresses);
+      // An older manifest cannot undo a reviewed route replacement. This
+      // applies only to new proposals, not already-accepted historical records.
+      assertProjectFundingRecord(
         parsed,
-        assertProjectFundingAddresses(historical.funding.addresses),
+        assertProjectFundingAddresses(project.funding.addresses),
       );
       if (
         record.projectId !== project.id ||
@@ -361,9 +370,9 @@ export async function checkFundingRecordPr(input: {
         amountMinor: record.amountMinor,
       };
       evidence.verifierVersion = record.verifier.version;
-      records.push(record);
+      records.push({ record, historicalAddresses });
     }
-    for (const [index, record] of records.entries()) {
+    for (const [index, { record, historicalAddresses }] of records.entries()) {
       if (!record.verifier)
         throw new TypeError("verified funding record has no verifier evidence");
       const output = await verify(record, input.fetchImpl);
@@ -393,6 +402,12 @@ export async function checkFundingRecordPr(input: {
           "funding observation or verification predates chain inclusion or claims a future time",
         );
       }
+      // Observing an old transfer after a route becomes active does not turn
+      // that transfer into funding sent under the reviewed receiving policy.
+      assertProjectFundingRecord(
+        { ...record, observedAt: new Date(includedAt).toISOString() },
+        historicalAddresses,
+      );
       if (
         output.state !== record.state ||
         transaction !== record.transactionId ||

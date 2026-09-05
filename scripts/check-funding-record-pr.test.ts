@@ -403,6 +403,145 @@ describe("trusted funding-record PR gate", () => {
     }
   });
 
+  for (const replacedAt of [
+    "2026-07-01T00:00:00.000Z",
+    "2026-08-01T00:00:00.000Z",
+    "2026-08-02T00:00:00.000Z",
+  ]) {
+    it(`binds historical route observations to the trusted-base replacement at ${replacedAt}`, async () => {
+      const repo = fixture();
+      try {
+        const record = repo.record();
+        const current = structuredClone(repo.project);
+        const route = current.funding.addresses.find(
+          (address) => address.network === "solana",
+        );
+        if (!route) throw new Error("missing fixture route");
+        // The earlier manifest still has replacedAt:null, as it did when
+        // reviewed. A new record must also honor later reviewed history.
+        const addresses = current.funding.addresses.map((address) =>
+          address.network === "solana" ? { ...address, replacedAt } : address,
+        );
+        addresses.push({
+          ...route,
+          address: SOLANA_SOURCE,
+          effectiveAt: replacedAt,
+          replacedAt: null,
+        });
+        repo.write(
+          "projects/eliza/project.json",
+          JSON.stringify({
+            ...current,
+            funding: { ...current.funding, addresses },
+          }),
+        );
+        repo.commitBase([]);
+        const headSha = repo.proposal([record]);
+        const chain = chainFetcher("solana");
+        const result = await checkFundingRecordPr({
+          repositoryRoot: repo.root,
+          baseSha: repo.baseSha,
+          headSha,
+          pullRequestNumber: 368,
+          fetchImpl: chain.fetchImpl,
+        });
+        const beforeReplacement = record.observedAt < replacedAt;
+        expect(result.decision, result.reason).toBe(
+          beforeReplacement ? "verified-records" : "verification-failed",
+        );
+        expect(result.mergeAuthorized).toBe(false);
+        expect(chain.requests.length).toBe(beforeReplacement ? 1 : 0);
+      } finally {
+        repo.cleanup();
+      }
+    });
+  }
+
+  for (const offsetSeconds of [0, 1]) {
+    it(`requires the historical route to be active at inclusion, offset ${offsetSeconds}`, async () => {
+      const repo = fixture();
+      try {
+        const project = structuredClone(repo.project);
+        const route = project.funding.addresses.find(
+          (address) => address.network === "solana",
+        );
+        if (!route) throw new Error("missing fixture route");
+        route.effectiveAt = new Date(
+          (BLOCK_TIME + offsetSeconds) * 1000,
+        ).toISOString();
+        repo.write("projects/eliza/project.json", JSON.stringify(project));
+        repo.commitBase([]);
+        const headSha = repo.proposal([repo.record()]);
+        const chain = chainFetcher("solana");
+        const result = await checkFundingRecordPr({
+          repositoryRoot: repo.root,
+          baseSha: repo.baseSha,
+          headSha,
+          pullRequestNumber: 368,
+          fetchImpl: chain.fetchImpl,
+        });
+        expect(result.decision, result.reason).toBe(
+          offsetSeconds === 0 ? "verified-records" : "verification-failed",
+        );
+        expect(result.mergeAuthorized).toBe(false);
+        expect(chain.requests.length).toBe(1);
+      } finally {
+        repo.cleanup();
+      }
+    });
+  }
+
+  it("preserves accepted historical records without reviving their removed route for new records", async () => {
+    const repo = fixture();
+    try {
+      const previous = repo.record("bitcoin");
+      repo.commitBase([previous]);
+      const historicalRecord = repo.record("bitcoin");
+      const project = structuredClone(repo.project);
+      project.funding.addresses = project.funding.addresses.filter(
+        (address) => address.network !== "bitcoin",
+      );
+      repo.write("projects/eliza/project.json", JSON.stringify(project));
+      repo.commitBase([]);
+      const newRecord = { ...repo.record(), recordId: "fund_fixture02" };
+      const headSha = repo.proposal([newRecord]);
+      const chain = chainFetcher("solana");
+      const result = await checkFundingRecordPr({
+        repositoryRoot: repo.root,
+        baseSha: repo.baseSha,
+        headSha,
+        pullRequestNumber: 368,
+        fetchImpl: chain.fetchImpl,
+      });
+      expect(result.decision, result.reason).toBe("verified-records");
+      expect(chain.requests.length).toBe(1);
+      if (!historicalRecord.verifier)
+        throw new Error("missing fixture verifier");
+      const removedRouteRecord = {
+        ...historicalRecord,
+        recordId: "fund_fixture03",
+        transactionId: "b".repeat(64),
+        verifier: {
+          ...historicalRecord.verifier,
+          evidenceUrl: `https://mempool.space/tx/${"b".repeat(64)}`,
+        },
+      };
+      const removedRouteHead = repo.proposal([removedRouteRecord]);
+      const rejected = await checkFundingRecordPr({
+        repositoryRoot: repo.root,
+        baseSha: repo.baseSha,
+        headSha: removedRouteHead,
+        pullRequestNumber: 368,
+        fetchImpl: chain.fetchImpl,
+      });
+      expect(rejected.decision, rejected.reason).toBe("verification-failed");
+      expect(rejected.reason).toMatch(/recipient was not active/u);
+      expect(chain.requests.length).toBe(1);
+    } finally {
+      repo.cleanup();
+    }
+  });
+
   it("rejects a fresh confirmation count different from the submitted finality", async () => {
     const repo = fixture();
     try {

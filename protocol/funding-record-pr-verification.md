@@ -32,10 +32,14 @@ For the automatic-verification subset:
   require human review. A chain verifier cannot establish a donor's GitHub
   attribution or permission to publish it.
 - The project must exist in the trusted base inventory. The record's manifest
-  revision must already be an ancestor of that base, and its recipient must be
-  active at the observation time under that immutable manifest. A manifest
-  commit present only in a PR or fork is insufficient. Future observations or
-  verification timestamps are rejected.
+  revision must already be an ancestor of that base. Its recipient must be
+  active at chain inclusion and observation under that immutable manifest,
+  and at observation under the trusted base's current address history. An old
+  manifest cannot revive a route after maintainers replace it. Observations
+  before replacement remain eligible; already-accepted historical records are
+  not reclassified by this new-record check. A manifest commit present only in
+  a PR or fork is insufficient. Future observations or verification timestamps
+  are rejected.
 - Transaction identity and record IDs must not repeat within the proposal or
   the complete existing non-commitment funding inventory, including across
   projects. Any correction-chain ambiguity remains outside this subset.
