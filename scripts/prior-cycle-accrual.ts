@@ -1,6 +1,6 @@
-/** Loads the immediately preceding reviewed cycle state for deterministic carry. */
+/** Loads prior-cycle money and independent, persistent project safety history. */
 
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProjectId } from "../src/lib/projects.mjs";
 import {
@@ -10,6 +10,10 @@ import {
 } from "../src/lib/rewards";
 
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
+const MAX_HISTORY_BYTES = 32 * 1024 * 1024;
+const MAX_HISTORY_CYCLES = 1200;
+const MAX_HISTORY_REPORTS = 4096;
+const MAX_ACTOR_REPORTS = 32;
 
 export interface PriorCycleAccrual {
   actorLogins: ReadonlyMap<string, string>;
@@ -49,6 +53,7 @@ export function previousCycleId(cycleId: string): string {
 
 async function readManifest(
   path: string,
+  budget?: { bytes: number },
 ): Promise<RewardAllocationManifest | null> {
   const stats = await lstat(path).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
@@ -63,7 +68,16 @@ async function readManifest(
   ) {
     throw new TypeError(`${path} is not a bounded regular cycle manifest`);
   }
+  if (budget && budget.bytes + stats.size > MAX_HISTORY_BYTES)
+    throw new RangeError("Unsafe destination history exceeds its byte limit");
   const bytes = await readFile(path);
+  if (bytes.length > MAX_MANIFEST_BYTES)
+    throw new RangeError(`${path} exceeds its cycle manifest byte limit`);
+  if (budget) {
+    budget.bytes += bytes.length;
+    if (budget.bytes > MAX_HISTORY_BYTES)
+      throw new RangeError("Unsafe destination history exceeds its byte limit");
+  }
   try {
     return assertRewardAllocationManifest(JSON.parse(bytes.toString("utf8")));
   } catch (error) {
@@ -71,6 +85,127 @@ async function readManifest(
       cause: error,
     });
   }
+}
+
+/**
+ * Safety evidence outlives payment and participation. Read every earlier
+ * immutable cycle, never infer the history from the immediately prior balance.
+ * Repeated reports must retain exact normalized bytes and an original held row.
+ * Limits fail closed; dropping an old report could revive its unsafe address.
+ */
+async function loadUnsafeDestinationHistory(input: {
+  asOf: string;
+  cycleId: string;
+  cyclesRoot: string;
+  projectId: ProjectId;
+}): Promise<Map<string, UnsafeDestinationReport[]>> {
+  const directory = join(input.cyclesRoot, input.projectId);
+  const stats = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  const result = new Map<string, UnsafeDestinationReport[]>();
+  if (!stats) return result;
+  if (!stats.isDirectory() || stats.isSymbolicLink())
+    throw new TypeError(
+      "Unsafe destination history requires a real project directory",
+    );
+  const entries = await readdir(directory, { withFileTypes: true });
+  if (entries.length > MAX_HISTORY_CYCLES)
+    throw new RangeError("Unsafe destination history exceeds its cycle limit");
+  const reports = new Map<
+    string,
+    {
+      actorId: string;
+      report: UnsafeDestinationReport;
+      bytes: string;
+      original: boolean;
+    }
+  >();
+  const budget = { bytes: 0 };
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    if (
+      !entry.isDirectory() ||
+      entry.isSymbolicLink() ||
+      !/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(entry.name)
+    )
+      throw new TypeError(
+        "Unsafe destination history contains a non-canonical cycle directory",
+      );
+    if (entry.name >= input.cycleId) continue;
+    const proposal = await readManifest(
+      join(directory, entry.name, "proposal.json"),
+      budget,
+    );
+    if (!proposal)
+      throw new TypeError(
+        `Prior cycle ${input.projectId}/${entry.name} is partial`,
+      );
+    const allocation = await readManifest(
+      join(directory, entry.name, "allocation.json"),
+      budget,
+    );
+    if (
+      proposal.status !== "proposed" ||
+      (allocation && allocation.status !== "approved")
+    )
+      throw new TypeError(
+        "Unsafe destination history has an invalid lifecycle file status",
+      );
+    for (const manifest of allocation ? [proposal, allocation] : [proposal]) {
+      if (
+        manifest.projectId !== input.projectId ||
+        manifest.cycleId !== entry.name
+      )
+        throw new TypeError(
+          "Unsafe destination history manifest does not match its project and cycle",
+        );
+      for (const row of manifest.allocations) {
+        for (const report of row.unsafeDestinationReports ?? []) {
+          if (Date.parse(report.verifiedAt) > Date.parse(input.asOf))
+            throw new RangeError(
+              "Unsafe destination history contains future verification state",
+            );
+          const bytes = JSON.stringify(report);
+          const prior = reports.get(report.sourceCommit);
+          if (
+            prior &&
+            (prior.actorId !== row.actor.id || prior.bytes !== bytes)
+          )
+            throw new TypeError(
+              "Unsafe destination history changes an immutable report",
+            );
+          const original = report.cycleId === entry.name;
+          reports.set(report.sourceCommit, {
+            actorId: row.actor.id,
+            report,
+            bytes,
+            original: original || prior?.original === true,
+          });
+          if (reports.size > MAX_HISTORY_REPORTS)
+            throw new RangeError(
+              "Unsafe destination history exceeds its report limit",
+            );
+        }
+      }
+    }
+  }
+  for (const { actorId, report, original } of reports.values()) {
+    if (!original)
+      throw new TypeError(
+        "Unsafe destination history is missing its original reviewed hold",
+      );
+    const actorReports = result.get(actorId) ?? [];
+    actorReports.push(report);
+    if (actorReports.length > MAX_ACTOR_REPORTS)
+      throw new RangeError(
+        "Unsafe destination history exceeds its per-actor report limit",
+      );
+    result.set(actorId, actorReports);
+  }
+  return result;
 }
 
 /**
@@ -91,7 +226,10 @@ export async function loadPriorCycleAccrual(input: {
   ) {
     throw new TypeError("Prior accrual asOf must be an exact UTC timestamp");
   }
+  if (!/^[a-z0-9][a-z0-9-]{0,127}$/u.test(input.projectId))
+    throw new TypeError("Prior accrual project id is invalid");
   const priorId = previousCycleId(input.cycleId);
+  const unsafeDestinationReports = await loadUnsafeDestinationHistory(input);
   const directory = join(input.cyclesRoot, input.projectId, priorId);
   const directoryStats = await lstat(directory).catch(
     (error: NodeJS.ErrnoException) => {
@@ -100,7 +238,11 @@ export async function loadPriorCycleAccrual(input: {
     },
   );
   if (!directoryStats) {
-    return { actorLogins: new Map(), accruedMinor: new Map() };
+    return {
+      actorLogins: new Map(),
+      accruedMinor: new Map(),
+      unsafeDestinationReports,
+    };
   }
   if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink()) {
     throw new TypeError(`${directory} is not a real cycle directory`);
@@ -151,7 +293,6 @@ export async function loadPriorCycleAccrual(input: {
 
   const accruedMinor = new Map<string, string>();
   const actorLogins = new Map<string, string>();
-  const unsafeDestinationReports = new Map<string, UnsafeDestinationReport[]>();
   for (const row of proposal.allocations) {
     if (
       row.state !== "held-below-minimum" &&
@@ -168,8 +309,6 @@ export async function loadPriorCycleAccrual(input: {
     if (BigInt(amount) === 0n) continue;
     accruedMinor.set(row.actor.id, amount);
     actorLogins.set(row.actor.id, row.actor.login);
-    if (row.unsafeDestinationReports)
-      unsafeDestinationReports.set(row.actor.id, row.unsafeDestinationReports);
   }
   return { actorLogins, accruedMinor, unsafeDestinationReports };
 }
