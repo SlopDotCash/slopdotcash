@@ -4,6 +4,7 @@
  * never count as payment evidence.
  */
 
+import { isSolanaTransactionId } from "./funding-address.mjs";
 import type {
   RewardAllocationManifest,
   RewardSettlementManifest,
@@ -49,12 +50,7 @@ function safeInteger(value: unknown, field: string): number {
 }
 
 function signature(value: unknown, field: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length < 64 ||
-    value.length > 128 ||
-    !/^[1-9A-HJ-NP-Za-km-z]+$/u.test(value)
-  ) {
+  if (!isSolanaTransactionId(value)) {
     throw new TypeError(`${field} is not a Solana signature`);
   }
   return value;
@@ -147,7 +143,7 @@ export function assertFinalizedUsdcTransfer(
   );
   if (
     !Array.isArray(envelope.signatures) ||
-    !envelope.signatures.some((value) => value === expectedSignature)
+    envelope.signatures[0] !== expectedSignature
   ) {
     throw new TypeError(
       "Solana transaction signature does not match the receipt",
@@ -229,7 +225,7 @@ export function assertFinalizedUsdcFundingTransfer(
   );
   if (
     !Array.isArray(envelope.signatures) ||
-    !envelope.signatures.some((value) => value === expectedSignature)
+    envelope.signatures[0] !== expectedSignature
   ) {
     throw new TypeError(
       "Solana transaction signature does not match the funding record",

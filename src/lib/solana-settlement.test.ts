@@ -54,6 +54,26 @@ describe("finalized Solana settlement", () => {
     ).toEqual({ signature: SIGNATURE, slot: 123, blockTime: 1_786_000_000 });
   });
 
+  it("rejects base58 strings that do not decode to 64-byte signatures", () => {
+    const malformedSignature = "2".repeat(64);
+    const mislabeled = transaction();
+    mislabeled.transaction.signatures = [malformedSignature];
+
+    expect(() =>
+      assertFinalizedUsdcTransfer(mislabeled, malformedSignature, SOURCE, [
+        { recipientOwner: RECIPIENT, amountMinor: "1000000" },
+      ]),
+    ).toThrow(/signature/u);
+    expect(() =>
+      assertFinalizedUsdcFundingTransfer(
+        mislabeled,
+        malformedSignature,
+        RECIPIENT,
+        "1000000",
+      ),
+    ).toThrow(/signature/u);
+  });
+
   it("rejects failed, underpaid, replay-labeled, and padded transactions", () => {
     const failed = transaction();
     failed.meta.err = { InstructionError: [0, "Custom"] };
@@ -84,6 +104,25 @@ describe("finalized Solana settlement", () => {
         { recipientOwner: RECIPIENT, amountMinor: "1000000" },
       ]),
     ).toThrow(/source USDC debit|undeclared/u);
+  });
+
+  it("requires the receipt signature to be the transaction identifier", () => {
+    const cosigned = transaction();
+    cosigned.transaction.signatures = ["4".repeat(88), SIGNATURE];
+
+    expect(() =>
+      assertFinalizedUsdcTransfer(cosigned, SIGNATURE, SOURCE, [
+        { recipientOwner: RECIPIENT, amountMinor: "1000000" },
+      ]),
+    ).toThrow(/signature/u);
+    expect(() =>
+      assertFinalizedUsdcFundingTransfer(
+        cosigned,
+        SIGNATURE,
+        RECIPIENT,
+        "1000000",
+      ),
+    ).toThrow(/signature/u);
   });
 
   it("verifies an exact direct-funding credit without trusting the sender", () => {

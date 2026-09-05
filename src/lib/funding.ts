@@ -556,6 +556,11 @@ export function assertProjectFundingIndex(
   const commitmentTransactionProjects = new Map<string, string>();
   for (const record of commitments) {
     const key = `${record.network}:${record.transactionId}`;
+    if (transactionProjects.has(key)) {
+      throw new TypeError(
+        "funding index records one transaction in multiple funding ledgers",
+      );
+    }
     const projectId = commitmentTransactionProjects.get(key);
     if (projectId !== undefined && projectId !== record.projectId) {
       throw new TypeError(
@@ -563,6 +568,20 @@ export function assertProjectFundingIndex(
       );
     }
     commitmentTransactionProjects.set(key, record.projectId);
+  }
+  const expectedGeneratedAt = [...records, ...commitments].reduce<
+    string | null
+  >(
+    (latest, record) =>
+      latest === null || record.observedAt > latest
+        ? record.observedAt
+        : latest,
+    null,
+  );
+  if (generatedAt !== expectedGeneratedAt) {
+    throw new TypeError(
+      "funding index generatedAt must equal its latest observation",
+    );
   }
   return {
     schemaVersion: FUNDING_PROTOCOL_VERSION,

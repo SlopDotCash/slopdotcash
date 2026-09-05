@@ -33,6 +33,7 @@ export interface SablierLockupV4Instrument {
   readonly network: "base" | "ethereum";
   readonly asset: "USDC";
   readonly contract: string;
+  readonly recipient: string;
   readonly streamId: string;
   readonly deadline: string;
   readonly effectiveAt: string;

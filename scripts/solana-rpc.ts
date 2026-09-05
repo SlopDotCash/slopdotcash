@@ -3,6 +3,8 @@
  * JSON-RPC boundary with strict time, byte, encoding, and response checks.
  */
 
+import { isSolanaTransactionId } from "../src/lib/funding-address.mjs";
+
 export const DEFAULT_SOLANA_RPC_URL =
   "https://api.mainnet-beta.solana.com" as const;
 export const MAX_SOLANA_RPC_BYTES = 16 * 1024 * 1024;
@@ -29,7 +31,7 @@ function rpcUrl(value: string): string {
 }
 
 function signature(value: string): string {
-  if (!/^[1-9A-HJ-NP-Za-km-z]{64,128}$/u.test(value)) {
+  if (!isSolanaTransactionId(value)) {
     throw new TypeError("Solana transaction signature is invalid");
   }
   return value;
