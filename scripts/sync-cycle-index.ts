@@ -47,7 +47,6 @@ import {
   DEFAULT_SOLANA_RPC_URL,
   fetchFinalizedSolanaTransaction,
 } from "./solana-rpc";
-import { verifyUnsafeDestinationReport } from "./unsafe-destination-hold";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const CYCLES_ROOT = resolve(REPOSITORY_ROOT, "cycles");
@@ -170,9 +169,6 @@ export async function verifyProposalAgainstSnapshot(
     throw new TypeError("Reward proposal adds or removes a scored contributor");
   }
   for (const allocation of proposal.allocations) {
-    for (const report of allocation.unsafeDestinationReports ?? []) {
-      await verifyUnsafeDestinationReport(report);
-    }
     const expected = byIntent.get(allocation.intentId);
     if (
       !expected ||

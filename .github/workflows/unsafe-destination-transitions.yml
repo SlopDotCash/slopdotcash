@@ -35,6 +35,7 @@ jobs:
       # install its dependencies, or execute any contributor-controlled code.
       - name: Preserve accepted cycle and unsafe destination evidence
         env:
+          GH_TOKEN: ${{ github.token }}
           CYCLE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CYCLE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           CYCLE_PR_NUMBER: ${{ github.event.pull_request.number }}

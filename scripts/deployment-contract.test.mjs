@@ -416,6 +416,14 @@ describe("slop.cash deployment contract", () => {
   });
 
   it("keeps pull-request data checks live without exposing repository tokens", () => {
+    for (const step of qualityJob.split("      - name:")) {
+      if (/\$\{\{\s*(?:github\.token|secrets\.)/u.test(step)) {
+        expect(step).toContain("if: github.event_name != 'pull_request'");
+      }
+    }
+    expect(qualityJob).toContain(
+      "- name: Validate reward lifecycle\n        run: bun run cycles:check",
+    );
     expect(qualityJob).toContain(
       "- name: Generate live contribution data\n        # Pull-request code is untrusted",
     );
