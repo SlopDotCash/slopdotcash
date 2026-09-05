@@ -57,6 +57,8 @@ textarea:focus-visible {
 .shell {
   width: min(1180px, calc(100% - 48px));
   margin-inline: auto;
+  /* Enlarged text and public identifiers must not set a page-wide minimum. */
+  overflow-wrap: anywhere;
 }
 
 .site-header {
@@ -161,7 +163,7 @@ textarea:focus-visible {
 .proof-object-grid,
 .audience-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
 }
 
@@ -657,17 +659,13 @@ p {
 
 .hero-switch {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   color: var(--orange-dark);
   font-size: clamp(30px, 7vw, 94px);
   letter-spacing: -0.065em;
   line-height: 0.88;
   text-wrap: balance;
-}
-
-@media (min-width: 681px) {
-  .hero-switch {
-    white-space: nowrap;
-  }
 }
 
 .hero-switch-sizer,
@@ -1072,6 +1070,8 @@ p {
 .project-card {
   min-height: 190px;
   display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr;
   gap: 32px;
   padding: 28px;
@@ -2138,13 +2138,18 @@ small {
 
 .proposal-grid {
   display: grid;
-  grid-template-columns: 0.8fr 1.2fr;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
   gap: 24px;
   align-items: start;
 }
 
 .proposal-grid form {
+  min-width: 0;
   padding: 0;
+}
+
+.proposal-grid fieldset {
+  min-inline-size: 0;
 }
 
 .proposal-grid label {
@@ -2712,7 +2717,7 @@ small {
   .proposal-grid,
   .home-section-heading,
   .owner-section {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .cycle-status-grid,
@@ -2776,7 +2781,7 @@ small {
   }
 
   .project-card-content {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 32px;
   }
 
@@ -2976,7 +2981,7 @@ small {
   .project-grid,
   .cycle-status-grid,
   .proposal-checklist > div {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .project-card {
