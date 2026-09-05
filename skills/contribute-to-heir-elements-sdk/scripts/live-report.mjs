@@ -3471,10 +3471,15 @@ Options:
 }
 
 /** Repeats one complete read when GitHub changes its open-item inventory mid-snapshot. */
-export function retryChangedLiveInventory(collect, onRetry = () => {}) {
+export function retryChangedLiveInventory(
+  collect,
+  onRetry = () => {},
+  createCommandBudget = createGhCommandBudget,
+) {
   for (let attempt = 1; attempt <= MAX_LIVE_INVENTORY_ATTEMPTS; attempt += 1) {
+    const commandBudget = createCommandBudget();
     try {
-      return collect(attempt);
+      return collect({ attempt, commandBudget });
     } catch (cause) {
       if (!(cause instanceof LiveInventoryChangedError)) throw cause;
       if (attempt === MAX_LIVE_INVENTORY_ATTEMPTS) {
@@ -3524,12 +3529,11 @@ export function main(args = process.argv.slice(2)) {
   const authenticatedIdentity = readGhAuthenticatedIdentity();
   const liveReportLock = acquireLiveReportLock(authenticatedIdentity);
   try {
-    const commandBudget = createGhCommandBudget(liveReportLock.spawn);
-    const boundedRead = (endpoint) => {
-      return readGhPages(endpoint, commandBudget.run);
-    };
     const { report } = retryChangedLiveInventory(
-      () => {
+      ({ commandBudget }) => {
+        const boundedRead = (endpoint) => {
+          return readGhPages(endpoint, commandBudget.run);
+        };
         const openActivity = readGhOpenActivity(
           options.repo,
           commandBudget.run,
@@ -3562,6 +3566,7 @@ export function main(args = process.argv.slice(2)) {
         process.stderr.write(
           `[Slop] open-item inventory changed during snapshot attempt ${attempt}; retrying one complete read\n`,
         ),
+      () => createGhCommandBudget(liveReportLock.spawn),
     );
     process.stdout.write(
       options.epochOnly
