@@ -10,6 +10,7 @@ import {
   assertProjectFundingRecord,
   type ProjectFundingRecord,
 } from "../src/lib/funding";
+import { isSolanaTransactionId } from "../src/lib/funding-address.mjs";
 import {
   assertHistoricalProjectDefinition,
   assertProjectDefinition,
@@ -23,6 +24,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SHA = /^[0-9a-f]{40}$/u;
 const RECORD_PATH =
   /^funding\/([a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?)\/(base|bitcoin|ethereum|solana)\/([A-Za-z0-9]+)\/(fund_[a-z0-9][a-z0-9_-]{6,79})\.json$/u;
+const COMMITMENT_PATH =
+  /^funding\/([a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?)\/commitments\/(base|ethereum|solana)\/([A-Za-z0-9]+)\/(cmt_[a-z0-9][a-z0-9_-]{6,79})\.json$/u;
 const MAX_RECORD_BYTES = 64 * 1024;
 const MAX_RECORDS = 20;
 export const FUNDING_RECORD_GATE_VERSION = "funding-record-gate-v1";
@@ -266,11 +269,44 @@ export async function checkFundingRecordPr(input: {
     const transactions = new Set<string>();
     const recordIds = new Set<string>();
     for (const entry of treeEntries(root, input.baseSha, "funding")) {
-      if (
-        entry.path === "funding/README.md" ||
-        /^funding\/[^/]+\/commitments\//u.test(entry.path)
-      )
+      if (entry.path === "funding/README.md") continue;
+      if (/^funding\/[^/]+\/commitments\//u.test(entry.path)) {
+        const path = entry.path.match(COMMITMENT_PATH);
+        if (!path || entry.mode !== "100644")
+          throw new HumanReviewRequired(
+            "existing commitment inventory has ambiguous paths or file modes",
+          );
+        // Read only the immutable base's bounded identity projection. The
+        // funding index validates full instruments; no commitment is approved
+        // here. Its transaction must nevertheless remain unavailable for a
+        // second direct-funding entry, including under a different project.
+        const record = jsonBytes(blobBytes(root, entry.oid, MAX_RECORD_BYTES));
+        if (
+          !record ||
+          typeof record !== "object" ||
+          Array.isArray(record) ||
+          !("kind" in record) ||
+          record.kind !== "project-commitment" ||
+          !("schemaVersion" in record) ||
+          record.schemaVersion !== "1" ||
+          !("projectId" in record) ||
+          record.projectId !== path[1] ||
+          !("network" in record) ||
+          record.network !== path[2] ||
+          !("transactionId" in record) ||
+          record.transactionId !== path[3] ||
+          !("recordId" in record) ||
+          record.recordId !== path[4] ||
+          !(path[2] === "solana"
+            ? isSolanaTransactionId(path[3])
+            : /^0x[0-9a-f]{64}$/u.test(path[3]))
+        )
+          throw new HumanReviewRequired(
+            "existing commitment identity does not match its canonical path",
+          );
+        transactions.add(`${path[2]}:${path[3]}`);
         continue;
+      }
       const path = entry.path.match(RECORD_PATH);
       if (!path || entry.mode !== "100644")
         throw new HumanReviewRequired(
