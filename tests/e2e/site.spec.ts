@@ -116,7 +116,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", {
       exact: true,
-      name: "Projects worth shipping.",
+      name: "Projects",
     }),
   ).toBeVisible();
   await expect(

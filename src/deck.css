@@ -36,21 +36,7 @@
   min-height: 100svh;
   padding: clamp(80px, 7vw, 108px) clamp(28px, 5vw, 76px) clamp(76px, 6vw, 96px);
 }
-.deck-kicker {
-  position: absolute;
-  top: clamp(24px, 3.5vw, 46px);
-  left: clamp(28px, 5vw, 76px);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: -0.04em;
-}
-.deck-kicker img {
-  width: 24px;
-  height: 24px;
-}
+
 .deck h1,
 .deck h2,
 .deck h3,
@@ -917,9 +903,7 @@
   .deck-slide {
     padding: 76px 22px 74px;
   }
-  .deck-kicker {
-    left: 22px;
-  }
+
   .deck h2 {
     font-size: clamp(43px, 12vw, 66px);
   }

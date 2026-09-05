@@ -502,7 +502,6 @@ function Footer() {
       <div className="shell footer-grid">
         <div>
           <div className="wordmark footer-wordmark">{domain}</div>
-          <p className="footer-tagline">make money shipping open source</p>
           <p className="footer-copyright">
             © {new Date().getUTCFullYear()} slop.cash.
           </p>
@@ -592,10 +591,10 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
         <div>
+          <h3>{project.name}</h3>
           <span className="project-state">
             {project.status === "active" ? "Accepting work" : "Project paused"}
           </span>
-          <h3>{project.name}</h3>
         </div>
         <ArrowRight aria-hidden="true" />
       </div>
@@ -892,11 +891,10 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
     <main>
       <section className="hero shell">
         <DataNotice state={state} retry={retry} />
-        <p className="hero-eyebrow">Open-source incentives, built on GitHub</p>
         <TypewriterHeroHeading />
         <p className="hero-copy">
-          Pick valuable public work. Give it to your best coding agent. Ship an
-          accepted result and build a contributor record anyone can verify.
+          Use any coding agent to contribute on GitHub. Earn rewards for work
+          maintainers accept.
         </p>
         <div className="hero-actions">
           <Link className="button primary-button" href="/#projects">
@@ -906,17 +904,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             Fund a project
           </Link>
         </div>
-        <ol aria-label="How Slop works" className="hero-proof">
-          <li>
-            <strong>01</strong> Choose reviewed work
-          </li>
-          <li>
-            <strong>02</strong> Ship on GitHub
-          </li>
-          <li>
-            <strong>03</strong> Build a public record
-          </li>
-        </ol>
         {state.status === "ready" ? (
           <HomeStatusLine snapshot={state.snapshot} />
         ) : null}
@@ -925,13 +912,9 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
           <div>
-            <p className="eyebrow">Open work</p>
-            <h2 className="home-section-title">Projects worth shipping.</h2>
+            <h2 className="home-section-title">Projects</h2>
           </div>
-          <p>
-            Every listing is backed by a public repository, reviewed policy, and
-            visible acceptance history. Check live status before starting.
-          </p>
+          <p>Check project status and reward terms before starting.</p>
         </div>
         <div className="project-grid">
           {PROJECTS.map((project) => (
@@ -943,51 +926,38 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
         <div className="shell">
           <div className="home-section-heading inverse-heading">
             <div>
-              <p className="eyebrow">One public loop</p>
-              <h2 className="home-section-title">Work in. Proof out.</h2>
+              <h2 className="home-section-title">How it works</h2>
             </div>
-            <p>
-              GitHub stays the source of truth. Slop makes the opportunity,
-              accepted result, review state, and reward history legible.
-            </p>
           </div>
           <div className="how-grid">
             <article>
-              <span>01</span>
-              <h3>Choose the mission.</h3>
+              <h3>Choose work.</h3>
+              <p>Read the project terms and choose unblocked work on GitHub.</p>
+            </article>
+            <article>
+              <h3>Submit a PR.</h3>
               <p>
-                Read the repository, reward terms, and live work queue. There
-                are no platform reservations or hidden tasks.
+                Use the project skill to guide your agent through testing and
+                submission.
               </p>
             </article>
             <article>
-              <span>02</span>
-              <h3>Ship the outcome.</h3>
+              <h3>Get reviewed.</h3>
               <p>
-                Use any agent or model. The project skill guides scope, tests,
-                evidence, and exact attribution.
-              </p>
-            </article>
-            <article>
-              <span>03</span>
-              <h3>Earn the record.</h3>
-              <p>
-                Maintainers accept the work. Slop publishes score, review, and
-                verified payment state without rewarding busywork.
+                Maintainers review your PR. Track accepted work, scores, and
+                payments on Slop.
               </p>
             </article>
           </div>
           <div className="owner-callout">
             <div>
-              <p className="eyebrow">For maintainers and funders</p>
-              <h3>Turn your roadmap into an open invitation.</h3>
+              <h3>Add your project.</h3>
               <p>
-                Draft the project on Slop, then open a GitHub pull request for
-                public review. Your repository remains the authority.
+                Propose your repository and reward terms for review on GitHub.
               </p>
             </div>
             <Link className="button inverse-button" href="/projects/new">
-              Add your project <ArrowRight aria-hidden="true" />
+              Get started <ArrowRight aria-hidden="true" />
             </Link>
           </div>
         </div>
@@ -3027,12 +2997,10 @@ ${manifestText}`;
         <span>/</span>Add a project
       </p>
       <section className="proposal-intro">
-        <p className="eyebrow">Project onboarding</p>
         <h1>Add a project.</h1>
         <p>
-          Describe the work and its public authority here. Slop will generate a
-          project manifest and an agent-ready proposal, then send you to GitHub
-          for the reviewable pull request.
+          Enter your project details to generate a manifest and proposal for
+          review on GitHub.
         </p>
         <ol className="proposal-steps" aria-label="Project onboarding steps">
           <li>
