@@ -89,13 +89,14 @@ export function assertProjectFundingAuthority(value, project) {
   return authority;
 }
 
-async function githubJson(path, fetchImpl) {
+async function githubJson(path, fetchImpl, token) {
   const response = await fetchImpl(`https://api.github.com${path}`, {
     redirect: "error",
     signal: AbortSignal.timeout(20_000),
     headers: {
       Accept: "application/vnd.github+json",
       "User-Agent": "slop-funding-authority-check",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   });
   if (!response.ok || !response.body) {
@@ -127,7 +128,7 @@ async function githubJson(path, fetchImpl) {
 /** Requires the pinned file to belong to the live registered integration history. */
 export async function verifyProjectFundingAuthority(
   project,
-  { fetchImpl = fetch } = {},
+  { fetchImpl = fetch, token = process.env.GITHUB_TOKEN } = {},
 ) {
   const proof = project.authority.proof;
   if (
@@ -143,6 +144,7 @@ export async function verifyProjectFundingAuthority(
   const live = await githubJson(
     `/repositories/${project.authority.repositoryId}`,
     fetchImpl,
+    token,
   );
   const identities = [repository.id, ...(repository.aliases ?? [])];
   if (
@@ -159,6 +161,7 @@ export async function verifyProjectFundingAuthority(
   const ref = await githubJson(
     `${prefix}/git/ref/heads/${encodeURIComponent(branch)}`,
     fetchImpl,
+    token,
   );
   if (
     ref.ref !== `refs/heads/${branch}` ||
@@ -170,6 +173,7 @@ export async function verifyProjectFundingAuthority(
   const comparison = await githubJson(
     `${prefix}/compare/${proof.commitSha}...${ref.object.sha}?per_page=1`,
     fetchImpl,
+    token,
   );
   if (
     !["identical", "ahead"].includes(comparison.status) ||
@@ -183,6 +187,7 @@ export async function verifyProjectFundingAuthority(
   const file = await githubJson(
     `${prefix}/contents/.github/slop-project.json?ref=${proof.commitSha}`,
     fetchImpl,
+    token,
   );
   if (
     file.type !== "file" ||
@@ -208,6 +213,7 @@ export async function verifyProjectFundingAuthority(
     const currentFile = await githubJson(
       `${prefix}/contents/.github/slop-project.json?ref=${ref.object.sha}`,
       fetchImpl,
+      token,
     );
     if (
       currentFile.type !== "file" ||

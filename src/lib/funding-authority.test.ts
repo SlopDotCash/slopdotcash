@@ -118,9 +118,14 @@ describe("receiving-address upstream authority", () => {
     await verifyFundingAddressTransitions(
       new Map(),
       new Map([[project.id, project]]),
-      { fetchImpl },
+      { fetchImpl, token: "trusted-test-token" },
     );
     expect(fetchImpl).toHaveBeenCalledTimes(5);
+    for (const [, options] of fetchImpl.mock.calls) {
+      expect(new Headers(options?.headers).get("authorization")).toBe(
+        "Bearer trusted-test-token",
+      );
+    }
   });
 
   it("verifies rotations and replacement timestamps without rewriting their values", async () => {

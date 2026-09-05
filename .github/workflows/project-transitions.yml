@@ -30,6 +30,9 @@ jobs:
 
       - name: Validate immutable base and head manifests
         env:
+          # Exposed only to the immutable trusted-base checker. Contributor
+          # code is fetched as Git object data and is never executed.
+          GITHUB_TOKEN: ${{ github.token }}
           PROJECT_POLICY_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PROJECT_POLICY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PROJECT_POLICY_PR_NUMBER: ${{ github.event.pull_request.number }}
