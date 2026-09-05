@@ -542,28 +542,35 @@ describe("trusted funding-record PR gate", () => {
     }
   });
 
-  it("rejects a fresh confirmation count different from the submitted finality", async () => {
-    const repo = fixture();
-    try {
-      const record = {
-        ...repo.record("bitcoin"),
-        finality: { kind: "confirmations" as const, confirmations: 10 },
-      };
-      const headSha = repo.proposal([record]);
-      const result = await checkFundingRecordPr({
-        repositoryRoot: repo.root,
-        baseSha: repo.baseSha,
-        headSha,
-        pullRequestNumber: 368,
-        fetchImpl: chainFetcher("bitcoin").fetchImpl,
-      });
-      expect(result.decision).toBe("verification-failed");
-      expect(result.reason).toMatch(/finality/u);
-      expect(result.records[0].verifierOutputSha256).toMatch(/^[a-f0-9]{64}$/u);
-    } finally {
-      repo.cleanup();
-    }
-  });
+  it.each([10, 11, 12])(
+    "accepts only nondecreasing fresh confirmations for submitted count %i",
+    async (confirmations) => {
+      const repo = fixture();
+      try {
+        const record = {
+          ...repo.record("bitcoin"),
+          finality: { kind: "confirmations" as const, confirmations },
+        };
+        const headSha = repo.proposal([record]);
+        const result = await checkFundingRecordPr({
+          repositoryRoot: repo.root,
+          baseSha: repo.baseSha,
+          headSha,
+          pullRequestNumber: 368,
+          fetchImpl: chainFetcher("bitcoin").fetchImpl,
+        });
+        expect(result.decision).toBe(
+          confirmations <= 11 ? "verified-records" : "verification-failed",
+        );
+        if (confirmations > 11) expect(result.reason).toMatch(/finality/u);
+        expect(result.records[0].verifierOutputSha256).toMatch(
+          /^[a-f0-9]{64}$/u,
+        );
+      } finally {
+        repo.cleanup();
+      }
+    },
+  );
 
   for (const kind of [
     "manifest",

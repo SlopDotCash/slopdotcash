@@ -416,8 +416,13 @@ export async function checkFundingRecordPr(input: {
         output.verifier.reason !== null ||
         Date.parse(output.verifier.checkedAt) <
           Date.parse(record.verifier.checkedAt) ||
-        canonicalFundingDecisionBytes(output.finality) !==
-          canonicalFundingDecisionBytes(record.finality)
+        !(
+          canonicalFundingDecisionBytes(output.finality) ===
+            canonicalFundingDecisionBytes(record.finality) ||
+          (output.finality.kind === "confirmations" &&
+            record.finality.kind === "confirmations" &&
+            output.finality.confirmations >= record.finality.confirmations)
+        )
       )
         throw new TypeError(
           "fresh verifier output does not exactly match the record identity, version, or finality",
