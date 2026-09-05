@@ -150,6 +150,12 @@ function immutableProposalTermsUrl(
   );
 }
 
+// An async boundary turns an absent clipboard API or synchronous browser error
+// into the same rejected promise as a denied clipboard permission.
+async function copyText(value: string): Promise<void> {
+  await navigator.clipboard.writeText(value);
+}
+
 function boundedText(value: string, minimum: number, maximum: number): boolean {
   const length = value.trim().length;
   return length >= minimum && length <= maximum;
@@ -1469,7 +1475,7 @@ function AgentPromptBox({ prompt }: { prompt: string }) {
   }, [copy]);
   const copyPrompt = async () => {
     try {
-      await navigator.clipboard.writeText(prompt);
+      await copyText(prompt);
       setCopy("copied");
     } catch {
       // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
@@ -1528,7 +1534,7 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
   const manualCommand = projectInstallCommand(project);
   const copyManualCommand = async () => {
     try {
-      await navigator.clipboard.writeText(manualCommand);
+      await copyText(manualCommand);
       setCopy("manual-copied");
     } catch {
       // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
@@ -1885,7 +1891,7 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
                   <button
                     className="text-button"
                     onClick={() => {
-                      void navigator.clipboard.writeText(route.address).then(
+                      void copyText(route.address).then(
                         () => setCopy({ key, status: "copied" }),
                         () => setCopy({ key, status: "error" }),
                       );
@@ -3098,8 +3104,11 @@ export function ProjectManagePage({
       row.approvedMinor === row.suggestedMinor ||
       row.reason.trim().length > 0,
   );
+  const allocationCapMinor =
+    currentRecord?.reward.capMinor ?? project.reward.monthlyCapMinor;
   const validAllocation =
     parsedTotal !== null &&
+    BigInt(parsedTotal) <= BigInt(allocationCapMinor) &&
     parsedRows.every((row) => row.approvedMinor !== null) &&
     allocated === BigInt(parsedTotal) &&
     changedRowsHaveReasons;
@@ -3131,7 +3140,7 @@ export function ProjectManagePage({
   const projectBrief = `Update ${project.id} through a reviewed Slop PR.\n\nHeadline: ${headline}\nGoal: ${goal}\nAcceptance criteria: ${criteria}\n\nKeep the project manifest, contributor skill, reviewer skill, goals, and criteria synchronized. Any model may contribute, but every run must publish its exact provider, model, and client. Every run must upload a permanent trace whose contents are restricted to Slop operators.`;
   const copy = async (kind: "allocation" | "project", value: string) => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       setCopyStatus({ kind, status: "copied" });
     } catch {
       setCopyStatus({ kind, status: "error" });
@@ -3215,7 +3224,7 @@ export function ProjectManagePage({
                 Edit {rows.length} contributor allocation
                 {rows.length === 1 ? "" : "s"}
               </summary>
-              {rows.length > 20 ? (
+              {rows.length > 10 ? (
                 <label className="allocation-search">
                   Find contributor
                   <input
@@ -3300,8 +3309,9 @@ export function ProjectManagePage({
             </div>
             {!validAllocation && rows.length > 0 ? (
               <p className="form-error" role="alert">
-                Allocations must equal the total. Add a reason for every changed
-                amount.
+                Allocations must equal the total and stay within the{" "}
+                {formatMicroUsdc(allocationCapMinor)} monthly cap. Add a reason
+                for every changed amount.
               </p>
             ) : null}
             <button
@@ -4064,7 +4074,7 @@ ${manifestText}`;
             className="text-button"
             disabled={!valid}
             onClick={() =>
-              void navigator.clipboard.writeText(agentBrief).then(
+              void copyText(agentBrief).then(
                 () => setCopyStatus({ kind: "brief", status: "copied" }),
                 () => setCopyStatus({ kind: "brief", status: "error" }),
               )
@@ -4083,7 +4093,7 @@ ${manifestText}`;
             <span>projects/{slug}/project.json</span>
             <button
               onClick={() =>
-                void navigator.clipboard.writeText(manifestText).then(
+                void copyText(manifestText).then(
                   () => setCopyStatus({ kind: "json", status: "copied" }),
                   () => setCopyStatus({ kind: "json", status: "error" }),
                 )
@@ -4404,7 +4414,7 @@ export function App() {
     const project = findProject(route.projectId ?? "");
     content = project ? (
       state.status === "ready" ? (
-        <ProjectManagePage project={project} state={state} />
+        <ProjectManagePage key={project.id} project={project} state={state} />
       ) : (
         <main className="shell route-main">
           <DataNotice retry={retry} state={state} />

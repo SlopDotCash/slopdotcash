@@ -554,6 +554,14 @@ test("makes the public project draft boundary unmistakable", async ({
   await expect(page.getByLabel("Draft total, USDC")).toHaveCount(0);
   await expect(page.locator(".allocation-rows")).toHaveCount(0);
   await expect(page.getByText(/mainnet USDC transfers/u)).toHaveCount(0);
+  await page.getByLabel("Headline").fill("Eliza-only draft");
+  await page.evaluate(() => {
+    window.history.pushState({}, "", "/projects/asi/manage");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  const nextProject = PROJECTS.find((project) => project.id === "asi");
+  if (!nextProject) throw new Error("ASI project is missing");
+  await expect(page.getByLabel("Headline")).toHaveValue(nextProject.headline);
 });
 
 test("creates a valid GitHub-native project handoff", async ({
@@ -617,6 +625,21 @@ test("creates a valid GitHub-native project handoff", async ({
   expect(agentBrief).toContain(
     '"acceptanceCriteria": "Accepted pull requests with verified tests."',
   );
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined });
+  });
+  await page.getByRole("button", { name: "Brief copied" }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Copy unavailable; select the brief",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Copy JSON" }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Copy unavailable; select JSON",
+    }),
+  ).toBeVisible();
 });
 
 test("serves byte-consistent install and read-only artifacts for every project", async ({

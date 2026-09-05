@@ -1411,6 +1411,19 @@ describe("project proposals", () => {
     expect(agentBrief?.indexOf("Operating rules:")).toBeLessThan(
       agentBrief?.indexOf("Untrusted proposal input") ?? -1,
     );
+    Object.defineProperty(navigator, "clipboard", { value: undefined });
+    fireEvent.click(screen.getByRole("button", { name: "Brief copied" }));
+    expect(
+      await screen.findByRole("button", {
+        name: "Copy unavailable; select the brief",
+      }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /copy json/i }));
+    expect(
+      await screen.findByRole("button", {
+        name: "Copy unavailable; select JSON",
+      }),
+    ).toBeVisible();
   });
 
   it("does not hand off an over-limit or imprecise money pool", () => {
@@ -1719,6 +1732,62 @@ describe("direct project funding", () => {
 });
 
 describe("public project draft workspace", () => {
+  it("resets the project brief when history navigates to another project", async () => {
+    route("/projects/eliza/manage");
+    mockSnapshot();
+    render(<App />);
+    const headline = await screen.findByLabelText("Headline");
+    fireEvent.change(headline, { target: { value: "Eliza-only draft" } });
+    await act(async () => {
+      window.history.pushState({}, "", "/projects/asi/manage");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const project = PROJECTS.find((candidate) => candidate.id === "asi");
+    expect(screen.getByLabelText("Headline")).toHaveValue(project?.headline);
+    fireEvent.click(screen.getByRole("button", { name: "Copy GitHub brief" }));
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining(`Headline: ${project?.headline}`),
+      ),
+    );
+  });
+
+  it("lets the owner find and edit the eleventh allocation", () => {
+    const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+    if (!project) throw new TypeError("The Eliza project fixture is missing");
+    const snapshot = septemberRollingSnapshot();
+    const view = createProjectView(snapshot, project.id);
+    view.leaders = Array.from({ length: 11 }, (_, index) => ({
+      ...view.leaders[0],
+      actor: {
+        ...view.leaders[0].actor,
+        id: `U_${index}`,
+        login: `contributor-${index}`,
+      },
+    }));
+    render(
+      <ProjectManagePage
+        project={{
+          ...project,
+          reward: { ...project.reward, paymentMode: "enabled" },
+        }}
+        state={{
+          status: "ready",
+          snapshot,
+          views: [view],
+          cycleIndex: cycleIndexFixture(),
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByText("Edit 11 contributor allocations"));
+    fireEvent.change(screen.getByLabelText("Find contributor"), {
+      target: { value: "contributor-10" },
+    });
+    const amount = screen.getByLabelText("contributor-10 amount in USDC");
+    fireEvent.change(amount, { target: { value: "2" } });
+    expect(amount).toHaveValue(2);
+  });
+
   it("makes the public boundary explicit and hides disabled payout controls", async () => {
     route("/projects/eliza/manage");
     const index = archivedPaidCycleIndex();
@@ -1830,6 +1899,16 @@ describe("public project draft workspace", () => {
       expect.stringContaining('"feeMinor": "123456"'),
     );
 
+    fireEvent.change(amount, { target: { value: "10000.000001" } });
+    fireEvent.change(total, { target: { value: "10000.000001" } });
+    expect(
+      screen.getByRole("button", { name: "Allocation copied" }),
+    ).toBeDisabled();
+    fireEvent.change(amount, { target: { value: "10000" } });
+    fireEvent.change(total, { target: { value: "10000" } });
+    expect(
+      screen.getByRole("button", { name: "Allocation copied" }),
+    ).toBeEnabled();
     vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(
       new DOMException("denied", "NotAllowedError"),
     );
