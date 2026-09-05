@@ -13,6 +13,18 @@ function entry(value: { id: string }): [string, string] {
 }
 
 describe("project transition gate", () => {
+  it("bounds manifest bytes on both sides without a lifetime instrument count", () => {
+    const oversized: [string, string] = [
+      "projects/eliza/project.json",
+      `${JSON.stringify(eliza)}${" ".repeat(1024 * 1024)}`,
+    ];
+    expect(() =>
+      validateProjectTransitions([entry(eliza)], [oversized]),
+    ).toThrow(/manifest byte limit/u);
+    expect(() =>
+      validateProjectTransitions([oversized], [entry(eliza)]),
+    ).toThrow(/manifest byte limit/u);
+  });
   it("freezes legacy proposal caps independently of later project caps", () => {
     const path = "cycles/eliza/2026-07/proposal.json";
     const proposal = {

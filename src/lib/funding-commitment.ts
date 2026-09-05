@@ -21,7 +21,6 @@ export type {
 export {
   assertFundingCommitments,
   hasActiveFundingCommitment,
-  MAX_FUNDING_COMMITMENTS,
   SABLIER_LOCKUP_V4_CONTRACTS,
 } from "./funding-instruments.mjs";
 
