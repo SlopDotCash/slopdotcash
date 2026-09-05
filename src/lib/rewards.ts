@@ -1092,6 +1092,19 @@ export function assertRewardAllocationManifest(
   for (const allocation of allocations) {
     for (const report of allocation.unsafeDestinationReports ?? []) {
       if (
+        report.cycleId === cycleId &&
+        (allocation.state !== "held" ||
+          allocation.approvedMinor !== "0" ||
+          !allocation.wallet ||
+          !sameWalletObservation(allocation.wallet, report.wallet) ||
+          allocation.hold?.kind !== "unsafe-destination" ||
+          allocation.hold.sourceCommit !== report.sourceCommit)
+      ) {
+        throw new TypeError(
+          "current-cycle unsafe destination report must retain its original held row",
+        );
+      }
+      if (
         report.projectId !== manifest.projectId ||
         report.cycleId > cycleId ||
         Date.parse(report.verifiedAt) > Date.parse(endsAt) ||

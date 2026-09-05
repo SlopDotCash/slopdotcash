@@ -119,6 +119,42 @@ async function heldProposal() {
 }
 
 describe("authenticated unsafe destination holds", () => {
+  it("rejects same-cycle wallet substitution even after advancing the review clock", async () => {
+    const held = await heldProposal();
+    const changed = structuredClone(held);
+    const row = changed.allocations[0];
+    delete row.hold;
+    row.wallet = wallet(
+      "U_fixture",
+      "claim_safe_same_cycle",
+      SAFE,
+      "2026-08-04T00:00:00.000Z",
+    );
+    row.state = "approved";
+    row.approvedMinor = row.suggestedMinor;
+    changed.review.lastMaterialChangeAt = "2026-08-04T00:00:00.000Z";
+    changed.review.endsAt = "2026-08-18T00:00:00.000Z";
+    changed.totals.approvedMinor = "10000000000";
+    changed.totals.feeMinor = "100000000";
+    expect(() => assertRewardAllocationManifest(changed)).toThrow(
+      /current-cycle unsafe destination/u,
+    );
+    expect(() =>
+      finalizeRewardAllocation(
+        changed,
+        changed.review.endsAt,
+        Date.parse(changed.review.endsAt),
+      ),
+    ).toThrow(/current-cycle unsafe destination/u);
+    row.state = "unclaimed";
+    row.wallet = null;
+    row.approvedMinor = "0";
+    changed.totals.approvedMinor = "5000000000";
+    changed.totals.feeMinor = "50000000";
+    expect(() => assertRewardAllocationManifest(changed)).toThrow(
+      /current-cycle unsafe destination/u,
+    );
+  });
   it("rejects inflated principal in signed reports, standalone validation, finalization, and carry loading", async () => {
     const held = await heldProposal();
     held.allocations[0].accruedMinor = "999999999999999";
