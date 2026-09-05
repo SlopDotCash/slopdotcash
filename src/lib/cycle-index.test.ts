@@ -79,6 +79,78 @@ function index(cycles: CycleIndexEntry[] = [entry()]): CycleIndex {
 }
 
 describe("public cycle index", () => {
+  function approvedCarry(
+    shared: bigint,
+    review: bigint | null = null,
+  ): CycleIndex {
+    const value = entry();
+    const total = shared + (review ?? 0n);
+    value.state = "payment-ready";
+    value.approvedAt = "2026-08-16T00:00:00.000Z";
+    value.files.allocation = {
+      sha256: DIGEST,
+      url: "/data/cycles/eliza/2026-07/allocation.json",
+    };
+    value.reward.capMinor = "1000000";
+    value.reward.fundingBasis = {
+      fundingState: "committed",
+      committedMinor: "1000000",
+      monthlyCapMinor: "10000000000",
+    };
+    value.reward.carriedMinor = "2000000";
+    value.reward.suggestedMinor = total.toString();
+    value.reward.approvedMinor = total.toString();
+    value.reward.feeMinor = (total / 100n).toString();
+    value.contributors[0].state = "approved";
+    value.contributors[0].suggestedMinor = total.toString();
+    value.contributors[0].approvedMinor = total.toString();
+    if (review !== null) {
+      value.reward.reviewBudgetCapMinor = "700000";
+      value.reward.lines = {
+        sharedPool: {
+          suggestedMinor: shared.toString(),
+          approvedMinor: shared.toString(),
+          paidMinor: "0",
+        },
+        reviewBudget: {
+          suggestedMinor: review.toString(),
+          approvedMinor: review.toString(),
+          paidMinor: "0",
+        },
+      };
+      value.contributors[0].lines = structuredClone(value.reward.lines);
+    }
+    return { ...index([value]), generatedAt: "2026-08-20T00:00:00.000Z" };
+  }
+
+  it("accepts exactly cap plus carry and rejects one micro-unit more", () => {
+    const exact = approvedCarry(3000000n);
+    expect(() => assertCycleIndex(exact)).not.toThrow();
+    expect(() => assertCycleIndex(approvedCarry(3000001n))).toThrow(
+      /money totals do not reconcile/u,
+    );
+    exact.cycles[0].reward.capMinor = "0";
+    exact.cycles[0].reward.fundingBasis = {
+      fundingState: "pledged",
+      committedMinor: "0",
+      monthlyCapMinor: "10000000000",
+    };
+    exact.cycles[0].reward.carriedMinor = "3000000";
+    expect(() => assertCycleIndex(exact)).not.toThrow();
+  });
+
+  it("applies carry only to the shared-pool cap and independently caps additive review", () => {
+    expect(() =>
+      assertCycleIndex(approvedCarry(3000000n, 700000n)),
+    ).not.toThrow();
+    expect(() => assertCycleIndex(approvedCarry(3000001n, 700000n))).toThrow(
+      /money totals do not reconcile/u,
+    );
+    expect(() => assertCycleIndex(approvedCarry(1000000n, 700001n))).toThrow(
+      /review budget exceeds its separate allocation cap/u,
+    );
+  });
+
   it("accepts a bounded public review state", () => {
     const value: unknown = index();
     expect(() => assertCycleIndex(value)).not.toThrow();
@@ -86,6 +158,7 @@ describe("public cycle index", () => {
 
   it("publishes additive review-budget money as reconciled line items", () => {
     const additive = entry();
+    additive.reward.reviewBudgetCapMinor = "500000000";
     additive.reward.suggestedMinor = "10500000000";
     additive.reward.lines = {
       sharedPool: {
