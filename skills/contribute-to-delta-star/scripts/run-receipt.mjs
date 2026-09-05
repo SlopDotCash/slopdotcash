@@ -1585,7 +1585,7 @@ export async function uploadPrivateTrace(
         headers: {
           ...jsonHeaders,
           "Idempotency-Key": sha256(
-            `intent:${created.serverRunId}:${trace.sha256}`,
+            `intent:${created.serverRunId}:${trace.sha256}:${randomBytes(16).toString("hex")}`,
           ),
         },
         body: JSON.stringify(intentBody),

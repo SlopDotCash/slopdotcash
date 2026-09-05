@@ -508,7 +508,7 @@ export function monthlyPoolLabel(
 ): string {
   return monthlyPoolUnfunded(reward)
     ? `unfunded, target ${reward.monthlyCapDisplay}`
-    : `${reward.monthlyCapDisplay} monthly pool`;
+    : `${formatMicroUsdc(reward.committedMinor)} committed · ${reward.monthlyCapDisplay} monthly target`;
 }
 
 function formatPercent(partsPerMillion: number): string {
@@ -747,7 +747,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
     project.reward.kind === "monthly-pool"
       ? unfunded
         ? "Unfunded"
-        : project.reward.monthlyCapDisplay
+        : formatMicroUsdc(project.reward.committedMinor)
       : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
         "External");
   return (
@@ -771,7 +771,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
             {project.reward.kind === "monthly-pool"
               ? unfunded
                 ? `target ${project.reward.monthlyCapDisplay} / month`
-                : "/ month"
+                : `committed · target ${project.reward.monthlyCapDisplay} / month`
               : "external prize"}
           </span>
         </p>
@@ -1300,7 +1300,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
               <strong>
                 {featuredProjects[0] &&
                 !monthlyPoolUnfunded(featuredProjects[0].reward)
-                  ? featuredProjects[0].reward.monthlyCapDisplay
+                  ? formatMicroUsdc(featuredProjects[0].reward.committedMinor)
                   : "Unfunded"}
               </strong>
               <dl>
@@ -2302,14 +2302,14 @@ function ProjectPage({
                 {project.reward.kind === "monthly-pool"
                   ? monthlyPoolUnfunded(project.reward)
                     ? "Unfunded"
-                    : project.reward.monthlyCapDisplay
+                    : formatMicroUsdc(project.reward.committedMinor)
                   : project.reward.externalOpportunity?.advertisedAmountDisplay}
               </strong>
               <p>
                 {project.reward.kind === "monthly-pool"
                   ? monthlyPoolUnfunded(project.reward)
                     ? `Target ${project.reward.monthlyCapDisplay} per month. No funding is committed, so no payment is scheduled until the project commits funds.`
-                    : "Up to this amount is allocated each month. Unused funding rolls forward without raising the cap."
+                    : `Committed funding toward a ${project.reward.monthlyCapDisplay} monthly cap. Payment requires the published cycle approval and settlement evidence.`
                   : "10% of an award actually received is allocated to Slop Cash; the remaining 90% is shared among accepted contributors. The prize sponsor controls eligibility and payment."}
               </p>
               <div>

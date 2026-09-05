@@ -1037,6 +1037,100 @@ describe("project run usage", () => {
     }
   });
 
+  it("requests a fresh upload capability when retrying a failed run", async () => {
+    const root = mkdtempSync(join(tmpdir(), "slop-trace-resume-"));
+    try {
+      const path = join(root, "trace.ndjson");
+      const contents = '{"event":"complete"}\n';
+      writeFileSync(path, contents);
+      const digest = createHash("sha256").update(contents).digest("hex");
+      const state = {
+        runId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        projectId: "eliza",
+        repositoryId: "elizaOS/eliza",
+        revision: "a".repeat(40),
+        provider: "openai",
+        model: "gpt-6-astra",
+        client: "codex",
+      };
+      const keys: string[] = [];
+      let failed = false;
+      const options = {
+        disclosure: () => {},
+        assertionProvider: () => "i".repeat(32),
+        fetchImpl: async (
+          url: RequestInfo | URL,
+          request: RequestInit = {},
+        ) => {
+          const target = String(url);
+          const identity = {
+            serverRunId: "srv_resume",
+            clientRunId: state.runId,
+          };
+          if (target.endsWith("private-request-intake"))
+            return Response.json({
+              enabled: true,
+              source: "github-public-status",
+              verifiedAt: "2026-08-25T12:00:00.000Z",
+            });
+          if (target.endsWith("auth/session"))
+            return Response.json({
+              token: "s".repeat(32),
+              tokenType: "Bearer",
+              expiresAt: "2030-01-01T00:00:00.000Z",
+            });
+          if (target.endsWith("/runs"))
+            return Response.json({ ...identity, state: "awaiting_trace" });
+          if (target.endsWith("trace-intents")) {
+            keys.push(
+              new Headers(request.headers).get("Idempotency-Key") ?? "",
+            );
+            return Response.json({
+              serverRunId: identity.serverRunId,
+              uploadUrl: "https://api.slop.cash/api/v1/trace-uploads/fresh",
+              expiresAt: "2030-01-01T00:00:00.000Z",
+              sha256: digest,
+              sizeBytes: Buffer.byteLength(contents),
+              contentType: "application/x-ndjson",
+            });
+          }
+          if (request.method === "PUT") {
+            if (!failed) {
+              failed = true;
+              return Response.json(
+                { error: "internal_error" },
+                { status: 500 },
+              );
+            }
+            return Response.json({
+              ...identity,
+              state: "trace_uploaded",
+              traceSha256: digest,
+              traceObjectId: `sha256:${digest}`,
+              sizeBytes: Buffer.byteLength(contents),
+            });
+          }
+          return Response.json({
+            ...identity,
+            state: "finalized",
+            traceSha256: digest,
+            traceObjectId: `sha256:${digest}`,
+          });
+        },
+      };
+      await assert.rejects(
+        uploadPrivateTrace(state, path, "1.2.3", options),
+        /HTTP 500/u,
+      );
+      const recovered = await uploadPrivateTrace(state, path, "1.2.3", options);
+      assert.strictEqual(recovered.sha256, digest);
+      assert.strictEqual(keys.length, 2);
+      assert.notStrictEqual(keys[0], keys[1]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("finalizes an idempotently recovered run whose trace was already uploaded", async () => {
     const fixtureRoot = mkdtempSync(
       join(tmpdir(), "slop-trace-finalize-recovery-"),

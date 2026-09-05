@@ -2811,15 +2811,11 @@ export function main(args = process.argv.slice(2)) {
   const boundedRead = (endpoint) => {
     return readGhPages(endpoint, commandBudget.run);
   };
-  let rateLimits = { preflight: true };
   const { report } = retryChangedLiveInventory(
     () => {
-      const openActivity = readGhOpenActivity(
-        options.repo,
-        commandBudget.run,
-        rateLimits,
-      );
-      rateLimits = openActivity.rateLimits;
+      const openActivity = readGhOpenActivity(options.repo, commandBudget.run, {
+        preflight: true,
+      });
       const limits = asRecord(openActivity.rateLimits, "GitHub rate limits");
       process.stderr.write(
         `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit} (${limits.graphqlBudgetSource}); REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
