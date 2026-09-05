@@ -7,6 +7,7 @@
 import { assertFundingAddresses } from "./funding-address.mjs";
 import {
   assertFundingCommitments,
+  assertMonthlyCommitmentPolicy,
   hasActiveFundingCommitment,
 } from "./funding-instruments.mjs";
 
@@ -797,7 +798,10 @@ function validateReviewBudget(value, field, poolPaymentMode) {
     !effectiveAt.endsWith("-01T00:00:00.000Z") ||
     budget.unusedFunds !== "rollover-without-cap-increase" ||
     (paymentsDisabled
-      ? budget.fundingState !== "pledged" || committedMinor !== "0"
+      ? !(
+          (budget.fundingState === "pledged" && committedMinor === "0") ||
+          (budget.fundingState === "committed" && BigInt(committedMinor) > 0n)
+        )
       : budget.fundingState !== "committed" || BigInt(committedMinor) <= 0n) ||
     (budget.paymentMode === "enabled" && poolPaymentMode !== "enabled") ||
     budget.monthlyCapDisplay !== formatMonthlyCapDisplay(monthlyCapMinor)
@@ -869,7 +873,10 @@ function validateReward(
       reward.chain !== "solana" ||
       reward.unusedFunds !== "rollover-without-cap-increase" ||
       (paymentsDisabled
-        ? reward.fundingState !== "pledged" || committedMinor !== "0"
+        ? !(
+            (reward.fundingState === "pledged" && committedMinor === "0") ||
+            (reward.fundingState === "committed" && BigInt(committedMinor) > 0n)
+          )
         : reward.fundingState !== "committed" ||
           BigInt(committedMinor) <= 0n) ||
       reward.monthlyCapDisplay !== formatMonthlyCapDisplay(monthlyCapMinor)
@@ -961,6 +968,7 @@ function validateProjectDefinition(
     allowLegacyMissingPublishAtRoot = false,
     allowLegacyExternalPrizeFee = false,
     allowLegacyUnsupportedOwnershipClaim = false,
+    allowLegacyCommitmentPolicy = false,
   } = {},
 ) {
   const project = record(value, "project");
@@ -1035,6 +1043,7 @@ function validateProjectDefinition(
     );
   }
   validateSteward(project.steward);
+  if (!allowLegacyCommitmentPolicy) assertMonthlyCommitmentPolicy(project);
   validateAuthority(project.authority, repositories[0]);
   validateTerms(
     project.terms,
@@ -1111,6 +1120,7 @@ export function assertHistoricalProjectDefinition(value) {
     allowLegacyMissingPublishAtRoot: true,
     allowLegacyExternalPrizeFee: true,
     allowLegacyUnsupportedOwnershipClaim: true,
+    allowLegacyCommitmentPolicy: true,
   });
 }
 

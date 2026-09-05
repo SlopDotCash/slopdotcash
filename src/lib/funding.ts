@@ -62,6 +62,7 @@ export interface ProjectFundingRecord {
 }
 
 export interface ProjectFundingIndex {
+  commitmentAccessibility?: "unknown";
   schemaVersion: typeof FUNDING_PROTOCOL_VERSION;
   generatedAt: string | null;
   records: readonly ProjectFundingRecord[];
@@ -474,11 +475,27 @@ export function assertProjectFundingIndex(
   const index = object(value, "funding index");
   exactKeys(
     index,
-    ["commitments", "generatedAt", "records", "schemaVersion"],
+    [
+      "commitments",
+      "generatedAt",
+      "records",
+      "schemaVersion",
+      ...(Object.hasOwn(index, "commitmentAccessibility")
+        ? ["commitmentAccessibility"]
+        : []),
+    ],
     "funding index",
   );
   if (index.schemaVersion !== FUNDING_PROTOCOL_VERSION) {
     throw new TypeError("funding index protocol is unsupported");
+  }
+  if (
+    Object.hasOwn(index, "commitmentAccessibility") &&
+    index.commitmentAccessibility !== "unknown"
+  ) {
+    throw new TypeError(
+      "funding index commitment accessibility must remain unknown",
+    );
   }
   const generatedAt =
     index.generatedAt === null
@@ -549,6 +566,7 @@ export function assertProjectFundingIndex(
   }
   return {
     schemaVersion: FUNDING_PROTOCOL_VERSION,
+    commitmentAccessibility: "unknown",
     generatedAt,
     records,
     commitments,

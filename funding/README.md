@@ -98,7 +98,7 @@ A project may additionally declare reviewed commitment instruments in
 `project.funding.commitments`. Each instrument is a third-party on-chain
 mechanism that Slop does not control: an autonomous Squads v4 multisig vault
 holding USDC on Solana or a Sablier Lockup v4 USDC stream on Base or Ethereum.
-A Squads commitment requires an exact 2-of-2 funder and project-steward
+A Squads commitment requires an exact 2-of-2 funder and independently reviewed steward
 multisig with no configuration authority; a Sablier commitment uses a
 non-upgradeable, non-cancelable stream. Slop holds no key, admin, or fee position in any
 instrument; it publishes the reviewed reference and read-only evidence only.
@@ -184,6 +184,67 @@ A manifest may set `fundingState: "committed"` only while an active instrument
 is declared and the verified commitment ledger (deposits minus releases and
 refunds) covers `committedMinor`. The check is deterministic ledger arithmetic
 and fails closed in CI.
+
+### Monthly instrument review and accessibility boundary
+
+Current active instruments must declare `monthlyCommitment` with an exact
+`cycleId` (`YYYY-MM`), positive integer USDC `amountMinor`, and
+`accessibility: "unknown"`. `effectiveAt` is that month's UTC start and
+`deadline` the following month's UTC start. These are reviewed funding-period
+boundaries, not an automatic refund, on-chain spending limit, or expiry of an
+earned allocation. Exactly one instrument may back a monthly commitment across
+all networks. An instrument identity cannot be reused in another month.
+The declared amount may not exceed the shared-pool plus additive-review caps;
+the active instrument amount must equal the sum of amounts claimed committed.
+Only that active instrument's verified ledger can cover the claim. Donations,
+old vault balances, and other instruments cannot cover a new monthly claim.
+
+A current Squads instrument also names `stewardGithub` with the reviewed
+numeric `actorId`, immutable `nodeId`, and display `login`. The actor must
+differ from the declared funder actor and project steward; project node-ID and
+case-insensitive login collisions are rejected too. Its `stewardMember` must
+differ from every manifest receiving address (including replaced routes) and
+every declared Squads funder, multisig, and vault address. These are only
+deterministic contradiction checks. Distinct keys and GitHub identities do not
+prove independent control. The manifest PR must review the identity-to-key
+binding and actual independence. The current project schema does not declare a
+settler wallet or the funder's separate wallet claims, so those exclusions
+remain an activation blocker; no values are inferred or fabricated.
+
+The public distinction is explicit: a pledge is a target without committed
+backing; committed is a verified instrument-balance claim; accessible would
+add authenticated evidence that the required signers can act. No such
+accessibility evidence protocol has been reviewed in this version. Therefore
+the funding index always publishes `commitmentAccessibility: "unknown"`, all
+new instrument bindings retain `accessibility: "unknown"`, and current project
+policy rejects payment activation, including an additive review budget.
+Committed balances may still be disclosed with payments disabled. Neither a
+balance nor a GitHub statement is automatically upgraded to accessible.
+
+Historical manifests and ledger records are not rewritten. Legacy instrument
+references remain parseable for historical verification; a replaced legacy
+reference may remain in current history but cannot back a current commitment.
+New monthly references cannot be used to relabel old records or move balances
+between months. Existing approved and paid allocation rows are unchanged.
+
+### Still unresolved: authenticated loss and immutable lifecycle overlay
+
+Issue #333 remains open. Loss of either key in the reviewed no-config-authority
+2-of-2 can strand funds; no unilateral recovery, auto-refund, or new recovery
+authority is introduced. Monthly-sized, distinct instruments bound the declared
+exposure, but do not prove an on-chain balance cannot exceed that amount.
+
+A future reviewed protocol must bind each signer identity to its member key,
+authenticate a capability-loss report without requiring a lost key, identify
+the exact instrument and affected cycle funding basis, and retain the public
+reason in an append-only inaccessible-state record. It must distinguish
+pre-approval holds from already approved, scheduled, partially settled, or paid
+intents: approved/paid history must never be rewritten. A settlement gate and
+exact-once carry must prevent both old-intent payment and successor-cycle
+payment of the same principal; review-budget amounts must not carry. The new
+cycle must use a fresh instrument. Until that protocol and authority are
+reviewed, `inaccessible` and `accessible` claims are rejected, no report changes
+allocations automatically, and no new held/carry behavior is enabled here.
 
 Project payout plans remain unsigned and are executed outside Slop by the
 declared project settler. A transaction signature is only reported evidence;

@@ -1,5 +1,11 @@
 /** Types the shared reviewed committed-funding instrument validator. */
 
+export interface MonthlyCommitmentBinding {
+  readonly cycleId: string;
+  readonly amountMinor: string;
+  readonly accessibility: "unknown";
+}
+
 export interface SquadsV4VaultInstrument {
   readonly kind: "squads-v4-vault";
   readonly network: "solana";
@@ -10,12 +16,19 @@ export interface SquadsV4VaultInstrument {
   readonly funderActorId: string;
   readonly funderMember: string;
   readonly stewardMember: string;
+  readonly stewardGithub?: {
+    readonly actorId: string;
+    readonly nodeId: string;
+    readonly login: string;
+  };
+  readonly monthlyCommitment?: MonthlyCommitmentBinding;
   readonly deadline: string;
   readonly effectiveAt: string;
   readonly replacedAt: string | null;
 }
 
 export interface SablierLockupV4Instrument {
+  readonly monthlyCommitment?: MonthlyCommitmentBinding;
   readonly kind: "sablier-lockup-v4";
   readonly network: "base" | "ethereum";
   readonly asset: "USDC";
@@ -43,3 +56,7 @@ export declare function assertFundingCommitments(
 ): readonly FundingCommitmentInstrument[];
 
 export declare function hasActiveFundingCommitment(value: unknown): boolean;
+
+export declare function assertMonthlyCommitmentPolicy(
+  value: import("./projects.mjs").ProjectDefinition,
+): void;

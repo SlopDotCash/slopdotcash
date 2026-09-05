@@ -375,7 +375,17 @@ describe("project proposal schema", () => {
       funderMember: "Stake11111111111111111111111111111111111111",
       stewardMember: "SysvarRent111111111111111111111111111111111",
       funderActorId: "18633264",
-      deadline: "2026-12-01T00:00:00.000Z",
+      stewardGithub: {
+        actorId: "42",
+        nodeId: "U_fixture_42",
+        login: "independent-fixture",
+      },
+      monthlyCommitment: {
+        cycleId: "2026-08",
+        amountMinor: "5000000",
+        accessibility: "unknown",
+      },
+      deadline: "2026-09-01T00:00:00.000Z",
       effectiveAt: "2026-08-01T00:00:00.000Z",
       replacedAt: null,
     };
@@ -383,7 +393,7 @@ describe("project proposal schema", () => {
       reward: Record<string, unknown>;
       funding: Record<string, unknown>;
     };
-    committed.reward.paymentMode = "enabled";
+    committed.reward.paymentMode = "disabled";
     committed.reward.fundingState = "committed";
     committed.reward.committedMinor = "5000000";
     committed.funding.commitments = [instrument];

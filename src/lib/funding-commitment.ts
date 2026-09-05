@@ -500,7 +500,21 @@ export function assertCommittedFundingBound(
     );
   }
   const committed = BigInt(reward.committedMinor);
-  const verifiedNet = commitmentVerifiedNetMinor(records);
+  // A monthly claim cannot borrow deposits from an old or unrelated vault.
+  // Legacy immutable manifests remain readable under their original contract.
+  const monthly = instruments.filter(
+    (instrument) =>
+      instrument.replacedAt === null && instrument.monthlyCommitment,
+  );
+  const backingRecords =
+    monthly.length > 0
+      ? records.filter((record) =>
+          monthly.some((instrument) =>
+            matchesInstrument(instrument, record.network, record.instrument),
+          ),
+        )
+      : records;
+  const verifiedNet = commitmentVerifiedNetMinor(backingRecords);
   if (committed > verifiedNet) {
     throw new TypeError(
       `project ${projectId} committedMinor ${committed} exceeds the verified commitment balance ${verifiedNet}`,

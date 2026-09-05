@@ -1019,6 +1019,9 @@ test("keeps primary routes accessible and inside the viewport", async ({
       await expect(
         page.getByRole("heading", { exact: true, name: "Project funding" }),
       ).toBeVisible();
+      await expect(
+        page.getByText(/Commitment accessibility: unknown/u),
+      ).toBeVisible();
     }
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])

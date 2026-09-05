@@ -87,6 +87,32 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 
+function assertCommitmentTransition(previous, next) {
+  if (next.length < previous.length || next.length > previous.length + 1) {
+    throw new TypeError(
+      "commitment history must remain an append-only prefix with at most one successor",
+    );
+  }
+  const successor = next[previous.length];
+  if (successor && successor.replacedAt !== null)
+    throw new TypeError("new commitment must be active");
+  for (let index = 0; index < previous.length; index += 1) {
+    const { replacedAt: before, ...priorIdentity } = previous[index];
+    const { replacedAt: after, ...nextIdentity } = next[index];
+    if (canonical(priorIdentity) !== canonical(nextIdentity)) {
+      throw new TypeError(
+        "historical commitment identity, monthly binding, and authority are immutable",
+      );
+    }
+    if (before === after) continue;
+    if (before !== null || !successor || after !== successor.effectiveAt) {
+      throw new TypeError(
+        "a commitment may close only at an appended successor's activation; closed history is immutable",
+      );
+    }
+  }
+}
+
 function assertRepositoryTransition(previousRepositories, nextRepositories) {
   if (previousRepositories.length !== nextRepositories.length) {
     throw new TypeError("repository inventory cannot change");
@@ -152,6 +178,10 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
   assertFundingRouteTransition(
     previous.funding.addresses,
     next.funding.addresses,
+  );
+  assertCommitmentTransition(
+    previous.funding.commitments ?? [],
+    next.funding.commitments ?? [],
   );
   if (
     previous.authority.repositoryId !== next.authority.repositoryId ||
