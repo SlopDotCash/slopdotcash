@@ -281,6 +281,7 @@ export interface GeneratorDependencies {
     options?: GenerateOptions,
   ) => Promise<LeaderboardSnapshot>;
   write: (snapshot: LeaderboardSnapshot, outputPath: string) => Promise<void>;
+  onCensusRetry?: () => void;
 }
 
 const ACTOR_FRAGMENT = `
@@ -2726,12 +2727,19 @@ export async function planMergedPullRequestHydration(
   return { detailEligibleIds, hydratedIds, reviewCounts };
 }
 
+/** Only final census churn may restart a complete, unpublished collection. */
+export class ReviewCensusChangedError extends Error {
+  override readonly name = "ReviewCensusChangedError";
+}
+
 export function assertReviewCensusStable(
   before: ReadonlyMap<string, ReviewCensusEntry>,
   after: ReadonlyMap<string, ReviewCensusEntry>,
 ): void {
   if (before.size !== after.size) {
-    throw new Error("Review census changed identity before snapshot assembly");
+    throw new ReviewCensusChangedError(
+      "Review census changed identity before snapshot assembly",
+    );
   }
   for (const [id, entry] of before) {
     const current = after.get(id);
@@ -2740,7 +2748,7 @@ export function assertReviewCensusStable(
       current.reviewCount !== entry.reviewCount ||
       current.updatedAt !== entry.updatedAt
     ) {
-      throw new Error(
+      throw new ReviewCensusChangedError(
         `Review census changed for ${id} before snapshot assembly`,
       );
     }
@@ -3607,15 +3615,32 @@ export async function runGenerator(
     createClient: (token) => new GitHubGraphqlClient(token),
     generate: generateLeaderboardFromGitHub,
     write: writeLeaderboardAtomically,
+    onCensusRetry: () => {
+      process.stderr.write(
+        "[slop.cash] final review census changed; recollecting once with the existing GraphQL budget\n",
+      );
+    },
   },
   options: GenerateOptions = {},
 ): Promise<LeaderboardSnapshot> {
   const token = await dependencies.getToken();
   const client = dependencies.createClient(token);
-  const snapshot = await dependencies.generate(client, {
+  const generationOptions = {
     ...options,
     evidenceToken: options.evidenceToken ?? token,
-  });
+  };
+  let snapshot: LeaderboardSnapshot;
+  try {
+    snapshot = await dependencies.generate(client, generationOptions);
+  } catch (error) {
+    // error-policy:J2 recover only classified census churn, once, with no budget reset.
+    if (!(error instanceof ReviewCensusChangedError)) throw error;
+    dependencies.onCensusRetry?.();
+    // Recollect every source; never reuse a partially assembled first attempt.
+    // The same client retains consumed cost, request counts, reserve and reset state.
+    snapshot = await dependencies.generate(client, generationOptions);
+  }
+  // Publication is outside the retry boundary: a write failure never regenerates.
   await dependencies.write(snapshot, outputPath);
   return snapshot;
 }
