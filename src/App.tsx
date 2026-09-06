@@ -638,7 +638,7 @@ function Footer() {
   return (
     <footer className="site-footer">
       <div className="shell footer-grid">
-        <div>
+        <div className="footer-brand-row">
           <div className="wordmark footer-wordmark">{domain}</div>
           <p className="footer-copyright">
             © {new Date().getUTCFullYear()} slop.cash.
@@ -661,11 +661,6 @@ function Footer() {
             Telegram
           </ExternalLinkAnchor>
         </div>
-        <p className="footer-fine">
-          Projections are estimates, not wages or guarantees. Project owners
-          approve rewards; public manifests and Solana settlement signatures are
-          the record.
-        </p>
       </div>
     </footer>
   );
@@ -673,11 +668,7 @@ function Footer() {
 
 function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
   if (state.status === "loading") {
-    return (
-      <div className="data-notice" role="status">
-        <span className="pulse" /> Reading the public GitHub ledger…
-      </div>
-    );
+    return null;
   }
   if (state.status === "error") {
     return (
@@ -792,17 +783,13 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
         </span>
         <p className="project-bounty">
           <strong>{amount}</strong>
-          <span>
-            {project.reward.kind === "monthly-pool" ? "/ mo" : "external prize"}
-          </span>
+          {project.reward.kind === "monthly-pool" ? <span>/mo</span> : null}
         </p>
-        <small className="project-money-state">
-          {project.reward.kind === "monthly-pool"
-            ? unfunded
-              ? "Target cap · no funding committed"
-              : "Committed balance · accessibility unknown · payments disabled"
-            : "External sponsor controls eligibility and payment"}
-        </small>
+        {project.reward.kind === "monthly-pool" && !unfunded ? (
+          <small className="project-money-state">
+            Committed balance · accessibility unknown · payments disabled
+          </small>
+        ) : null}
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
             + {reviewBudgetLabel(project.reward.reviewBudget)}
@@ -1195,13 +1182,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   const communityProjects = promotedProjects.filter(
     (project) => project.listingTier === "community",
   );
-  const paidMinor =
-    state.status === "ready"
-      ? state.cycleIndex.cycles.reduce(
-          (total, cycle) => total + BigInt(cycle.reward.paidMinor),
-          0n,
-        )
-      : 0n;
   return (
     <main>
       <section className="hero shell">
@@ -1220,37 +1200,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             Fund a project
           </Link>
         </div>
-        {state.status === "ready" ? (
-          <dl className="system-strip">
-            <div>
-              <dt>Accepted events</dt>
-              <dd>{state.snapshot.ledger.length}</dd>
-            </div>
-            <div>
-              <dt>Signed receipts</dt>
-              <dd>
-                {
-                  state.snapshot.attributions.filter((entry) => entry.run)
-                    .length
-                }
-              </dd>
-            </div>
-            <div>
-              <dt>Project pools</dt>
-              <dd>
-                {
-                  PROJECTS.filter(
-                    (project) => project.reward.kind === "monthly-pool",
-                  ).length
-                }
-              </dd>
-            </div>
-            <div>
-              <dt>Verified paid</dt>
-              <dd>{formatMicroUsdc(paidMinor.toString())}</dd>
-            </div>
-          </dl>
-        ) : null}
       </section>
 
       <section className="section shell home-projects-section" id="projects">
@@ -1277,11 +1226,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
         </section>
       </section>
       <section className="section shell audience-section">
-        <div className="home-section-heading">
-          <div>
-            <h2 className="home-section-title">One ledger. Three jobs.</h2>
-          </div>
-        </div>
         <div className="audience-grid">
           <article>
             <h3>Pay for accepted outcomes.</h3>
@@ -1339,9 +1283,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
           <div className="owner-callout">
             <div>
               <h3>Add your project.</h3>
-              <p>
-                Propose your repository and reward terms for review on GitHub.
-              </p>
             </div>
             <Link className="button inverse-button" href="/projects/new">
               Get started <ArrowRight aria-hidden="true" />
