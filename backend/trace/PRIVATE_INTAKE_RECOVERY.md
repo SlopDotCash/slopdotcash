@@ -17,16 +17,22 @@ or let automation approve its own deployment.
 2. Confirm `Skill, data, build, and browser checks` succeeded for the current
    `develop` SHA. Do not approve a run from a pull request, fork, tag, stale SHA,
    or a run whose quality job failed.
-3. A designated `eliza-army-production` reviewer inspects and approves the
-   waiting `Deploy trusted production bundle` job.
+3. For push/manual code releases, a designated `eliza-army-production` reviewer
+   inspects and approves the waiting `Deploy trusted production bundle` job.
+   Scheduled data-only refreshes use `slop-data-refresh` without human approval,
+   but require an already-released exact SHA and unchanged non-data bundle bytes.
 4. Wait for that exact run to finish successfully. A merge, successful quality
    job, or environment approval alone is not deployment evidence.
 5. Run the verification sequence below and record the workflow run URL, tested
    SHA, `verifiedAt`, and verification time on the operations issue.
 
-The scheduled deployment runs every six hours. The hourly freshness watch
-fails when fewer than nine hours remain, so at least one reviewed scheduled
-run is available inside the renewal window before expiry.
+The scheduled deployment runs every six hours. The separate develop-only
+`slop-data-refresh` environment needs its own `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`; do not move code-release secrets out of their protected
+environment. Schedules skip identity, database and cleanup mutations. The hourly
+freshness watch fails when fewer than nine hours remain. If the baseline artifact
+has expired after a prolonged outage, approve a fresh code release to reestablish
+the baseline; never bypass the data-only comparison.
 
 ## Designated reviewer unavailable
 

@@ -411,8 +411,34 @@ describe("slop.cash deployment contract", () => {
       'if [ "$GITHUB_REF" != "refs/heads/develop" ]; then',
     );
     expect(deployJob).toContain("group: slop-production");
-    expect(deployJob).toContain("cancel-in-progress: true");
-    expect(deployJob).toContain("name: eliza-army-production");
+    expect(deployJob).toContain("cancel-in-progress: false");
+    expect(deployJob).toContain(
+      `name: ${"$"}{{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}`,
+    );
+  });
+
+  it("limits unattended refreshes to released source and data-only bundles", () => {
+    expect(deployJob).toContain('--branch develop --commit "$GITHUB_SHA"');
+    expect(deployJob).toContain("--status success");
+    expect(deployJob).toContain("node scripts/check-data-refresh-bundle.mjs");
+    const check = deployJob.indexOf(
+      "node scripts/check-data-refresh-bundle.mjs",
+    );
+    expect(check).toBeLessThan(
+      deployJob.indexOf("- name: Require scoped Cloudflare credentials"),
+    );
+    const guard = deployJob.indexOf(
+      'if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then',
+    );
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(
+      deployJob.indexOf(
+        "bun scripts/verify-identity-schedules.mjs --restore-missing",
+      ),
+    );
+    expect(deployJob).toContain(
+      "- name: Require public identity OAuth app\n        if: github.event_name != 'schedule'",
+    );
   });
 
   it("keeps pull-request data checks live without exposing repository tokens", () => {

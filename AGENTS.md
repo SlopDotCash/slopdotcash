@@ -215,6 +215,12 @@ designated reviewer, and disallows administrator bypass. Repository rules
 require a pull request, resolved threads, and non-fast-forward history with no
 bypass actors.
 
+Scheduled data-only refreshes use the separate develop-only `slop-data-refresh`
+environment, with its own scoped Cloudflare secrets and no reviewer gate. They
+require a prior successful release of the exact source SHA and a byte-identical
+bundle except the explicit generated data allowlist. They never mutate identity,
+D1, or cleanup schedules. Push and manual code releases retain production approval.
+
 Push, schedule, and manual releases use the exact checked-out `develop` SHA.
 The workflow installs lockfile-pinned Wrangler without lifecycle scripts,
 deploys the verified build selected by `wrangler.toml`, and waits for a new,
