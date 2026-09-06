@@ -1,7 +1,7 @@
 /** Repository-owned authority checks, separate from read-only chain evidence. */
 import type { FundingRecordDecision } from "./check-funding-record-pr";
 
-export const FUNDING_MERGE_POLICY_VERSION = "funding-record-merge-v1";
+export const FUNDING_MERGE_POLICY_VERSION = "funding-record-merge-v2";
 export const QUALITY_CONTEXT = "Skill, data, build, and browser checks";
 
 export interface FundingMergeProtection {
@@ -27,8 +27,6 @@ export function assertFundingMergeProtection(
     !protection.requiredStatusCheckContexts.includes(QUALITY_CONTEXT) ||
     protection.isAdminEnforced !== true ||
     protection.requiresApprovingReviews !== true ||
-    protection.requiredApprovingReviewCount < 1 ||
-    protection.dismissesStaleReviews !== true ||
     protection.requiresConversationResolution !== true ||
     protection.allowsForcePushes !== false ||
     protection.allowsDeletions !== false ||

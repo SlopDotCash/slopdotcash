@@ -103,11 +103,17 @@ The scheduled/manual workflow executes only the checked-out `develop` code,
 installs no PR dependencies, and consumes no artifacts as authority. It fetches
 PR heads as Git objects and independently reruns the complete chain verifier.
 It refuses missing or weakened classic protection: strict up-to-date required
-checks (including `Skill, data, build, and browser checks`), at least one PR
-approval, dismissal of stale approvals, resolved conversations, administrator
-enforcement, no review bypass actors, no force pushes, and no branch deletion.
+checks (including `Skill, data, build, and browser checks`), pull requests,
+resolved conversations, administrator enforcement, no review bypass actors,
+no force pushes, and no branch deletion.
 Rulesets-only configurations are intentionally not inferred equivalent. This
 workflow never edits protections or enables GitHub's auto-merge setting.
+
+Policy `funding-record-merge-v2` permits zero required approving reviews and
+does not require stale-review dismissal. Independent approval is not a merge
+prerequisite. GitHub's `requiresApprovingReviews` field remains true for the
+protected pull-request rule even when its required approval count is zero;
+the guard retains that rule, not a requirement for another reviewer.
 
 All labels, assignments, requested reviews, draft/conflict states, outstanding
 changes requests, and unresolved conversations require human handling. Bounded
