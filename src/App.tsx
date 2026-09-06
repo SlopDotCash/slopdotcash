@@ -776,11 +776,6 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
       </div>
       <div className="project-card-content">
         <p className="project-summary">{project.description}</p>
-        <span className={`funding-kind funding-kind-${project.reward.kind}`}>
-          {project.reward.kind === "monthly-pool"
-            ? "Monthly contributor pool"
-            : "External sponsor prize"}
-        </span>
         <p className="project-bounty">
           <strong>{amount}</strong>
           {project.reward.kind === "monthly-pool" ? <span>/mo</span> : null}

@@ -630,8 +630,8 @@ describe("discovery", () => {
     if (!deltaCard) throw new Error("Delta Star project card is missing");
     expect(within(deltaCard).getByText("$1,000,000")).toBeInTheDocument();
     expect(
-      within(deltaCard).getByText("External sponsor prize"),
-    ).toBeInTheDocument();
+      within(deltaCard).queryByText("External sponsor prize"),
+    ).not.toBeInTheDocument();
     expect(
       within(deltaCard).getByText(/dedicated Proximity Prize repository/u),
     ).toBeInTheDocument();
