@@ -218,15 +218,18 @@ jobs:
       (github.event_name == 'schedule' && github.ref == 'refs/heads/develop') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop')
     needs: quality
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
-      # Cloudflare Pages publishes atomically; newest trusted develop wins and
-      # replaces an obsolete run that is still waiting for environment review.
+      # Serialize publication without letting a schedule cancel a code release
+      # awaiting approval. Live-source equivalence rejects obsolete releases.
       group: slop-production
-      cancel-in-progress: true
+      cancel-in-progress: false
     environment:
-      name: eliza-army-production
+      name: ${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}
       url: https://slop.cash
     steps:
       - name: Checkout exact deployment tooling
@@ -311,6 +314,30 @@ jobs:
       - name: Verify downloaded Pages bundle
         run: node scripts/dist-manifest.mjs verify-local dist
 
+      - name: Require already released source and data-only artifact changes
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The first successful run for a SHA must be an approved push/manual
+          # release. Later successful schedules preserve that exact code and
+          # renew the baseline artifact so quiet branches outlive retention.
+          approved_run="$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow deploy.yml --branch develop --commit "$GITHUB_SHA" \
+            --status success --limit 100 --json databaseId,event,headSha \
+            --jq '[.[] | select(.event == "push" or .event == "workflow_dispatch" or .event == "schedule")][0].databaseId // empty')"
+          if ! [[ "$approved_run" =~ ^[0-9]+$ ]]; then
+            echo "::error::This source revision has no successful production release; a code release must be approved first."
+            exit 1
+          fi
+          approved_bundle="$RUNNER_TEMP/slop-approved-$approved_run"
+          mkdir "$approved_bundle"
+          gh run download "$approved_run" --repo "$GITHUB_REPOSITORY" \
+            --name "slop-pages-$approved_run" --dir "$approved_bundle"
+          node scripts/dist-manifest.mjs verify-local "$approved_bundle"
+          node scripts/check-data-refresh-bundle.mjs "$approved_bundle" dist
+
       - name: Require live release-input equivalence
         run: |
           set -euo pipefail
@@ -339,7 +366,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$HAS_TOKEN" != "true" ] || [ "$HAS_ACCOUNT" != "true" ]; then
-            echo "::error::The eliza-army-production environment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID."
+            echo "::error::The selected release environment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID."
             exit 1
           fi
 
@@ -431,6 +458,8 @@ jobs:
             exit 1
           fi
 
+          # Scheduled publication never mutates identity, D1, or cleanup schedules.
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then
           # Restore only absent cleanup triggers; reject nonempty provisioning drift.
           bun scripts/verify-identity-schedules.mjs --restore-missing
 
@@ -736,6 +765,8 @@ jobs:
           }
           NODE
 
+          fi
+
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
               https://github.com/SlopDotCash/slopdotcash.git refs/heads/develop |
@@ -1023,6 +1054,7 @@ jobs:
           exit 1
 
       - name: Require public identity OAuth app
+        if: github.event_name != 'schedule'
         env:
           GITHUB_CLIENT_ID: ${{ steps.pages-deploy.outputs.github_client_id }}
         run: |
