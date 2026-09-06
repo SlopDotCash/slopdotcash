@@ -37,8 +37,8 @@ export function assertPublicSignerReport(value: unknown): PublicSignerReport {
     !/^squads-v4-vault:solana:[1-9A-HJ-NP-Za-km-z]{32,44}:(?:0|[1-9][0-9]*):[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(
       r.instrumentId,
     ) ||
-    !["funder", "steward"].includes(String(r.role)) ||
-    !["can-sign", "lost-access"].includes(String(r.capability)) ||
+    (r.role !== "funder" && r.role !== "steward") ||
+    (r.capability !== "can-sign" && r.capability !== "lost-access") ||
     typeof r.reason !== "string" ||
     r.reason.trim() !== r.reason ||
     r.reason.length < 1 ||

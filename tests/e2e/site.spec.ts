@@ -77,6 +77,95 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.goto("/", { waitUntil: "networkidle" });
 });
 
+test("shows signer loss and expired capability without payout availability", async ({
+  page,
+}, testInfo) => {
+  const project = PROJECTS.find(
+    (candidate) => candidate.reward.kind === "monthly-pool",
+  );
+  if (!project) throw new Error("Monthly project fixture is unavailable");
+  const reportedAt = new Date(Date.now() - 3600000).toISOString();
+  const expiresAt = new Date(Date.now() - 1800000).toISOString();
+  const report = {
+    projectId: project.id,
+    cycleId: reportedAt.slice(0, 7),
+    instrumentId:
+      "squads-v4-vault:solana:11111111111111111111111111111111:0:Vote111111111111111111111111111111111111111",
+    role: "funder",
+    capability: "lost-access",
+    reportedAt,
+    expiresAt: null,
+    reason: "Synthetic browser fixture: signing capability was lost.",
+    sourceRepository: "example/evidence",
+    sourceCommit: "a".repeat(40),
+  };
+  await page.route("**/data/funding.json", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        schemaVersion: "1",
+        generatedAt: reportedAt,
+        records: [],
+        commitments: [],
+        signerReports: [
+          report,
+          {
+            ...report,
+            role: "steward",
+            capability: "can-sign",
+            expiresAt,
+            sourceCommit: "b".repeat(40),
+          },
+        ],
+      }),
+    }),
+  );
+  await page.goto(`/projects/${project.slug}/funding`, {
+    waitUntil: "networkidle",
+  });
+  const section = page.getByRole("region", {
+    name: "Signer capability reports",
+  });
+  await expect(
+    section.getByRole("heading", { name: /Inaccessible/u }),
+  ).toBeVisible();
+  await expect(section.getByText(/capability report expired/u)).toBeVisible();
+  await expect(section.getByText(/Payments remain disabled/u)).toBeVisible();
+  const source = section.getByRole("link", { name: "Signed report" }).first();
+  await expect(source).toHaveAttribute(
+    "href",
+    `https://github.com/example/evidence/commit/${"a".repeat(40)}`,
+  );
+  await source.focus();
+  await expect(source).toBeFocused();
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  if (testInfo.project.name === "wide-desktop-chromium") {
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  }
+  await page.screenshot({
+    path: testInfo.outputPath("signer-loss.png"),
+    fullPage: true,
+  });
+});
+
 test("discovers both reward models and a score-ranked global ledger", async ({
   page,
   request,

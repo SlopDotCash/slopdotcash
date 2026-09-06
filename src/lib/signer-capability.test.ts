@@ -62,6 +62,8 @@ describe("public signer capability, never payment availability", () => {
   it("rejects unsafe source links, extended lifetimes, and expiring losses", () => {
     for (const change of [
       { sourceRepository: "https://evil.invalid" },
+      { role: ["funder"] },
+      { capability: ["can-sign"] },
       { sourceCommit: "main" },
       { expiresAt: "2026-09-07T20:00:00.000Z" },
       { capability: "lost-access" },

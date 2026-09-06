@@ -103,6 +103,17 @@ remaining principal and prevent both an old intent and a successor cycle from
 paying it. Only eligible shared-pool principal carries, exactly once; review
 budget does not carry. The successor monthly cycle requires a fresh instrument.
 
+The current unsigned execution-plan schema does not bind `sourceOwner` to the
+frozen funding instrument or record a signed transaction's lifetime, nonce, or
+Squads proposal retirement. Consequently an issued or partially settled plan
+cannot become carry merely because a signer reports loss or time passes.
+[Solana durable nonces](https://solana.com/developers/cookbook/transactions/confirmation)
+can outlive ordinary blockhash expiration. A reviewed retirement/reconciliation
+protocol must establish the exact remaining principal and prevent execution
+through both old and successor intents before this carry path can open. No
+such retirement proof is implemented here; existing plans and paid history
+remain unchanged and this acceptance gate remains unresolved.
+
 Until those gates, complete public readback, and settlement/carry regressions
 are in place, the existing `unknown` accessibility and disabled-payment policy
 remain unchanged. #333 is not closed by authentication alone. There is no
