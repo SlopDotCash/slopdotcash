@@ -92,7 +92,6 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
-.proof-object-kicker,
 .funding-kind,
 .receipt-card dt,
 .cycle-archive-card dt {
@@ -127,7 +126,6 @@ textarea:focus-visible {
 }
 
 .system-strip dt,
-.proof-object dt,
 .equation-card dt {
   color: var(--muted);
   font-size: 11px;
@@ -135,7 +133,6 @@ textarea:focus-visible {
 }
 
 .system-strip dd,
-.proof-object dd,
 .equation-card dd,
 .receipt-card dd,
 .cycle-archive-card dd {
@@ -144,24 +141,12 @@ textarea:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.proof-object-section {
-  padding-top: 22px;
-}
-
-.proof-object-section .home-section-heading > p {
-  max-width: 58ch;
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.proof-object-grid,
 .audience-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
 }
 
-.proof-object,
 .audience-grid article,
 .receipt-card,
 .cycle-archive-card,
@@ -171,27 +156,6 @@ textarea:focus-visible {
   background: var(--white);
 }
 
-.proof-object {
-  min-height: 340px;
-  display: flex;
-  flex-direction: column;
-  padding: 28px;
-}
-
-.proof-object > strong {
-  margin-top: 20px;
-  overflow-wrap: anywhere;
-  font-family: var(--brand-font-data);
-  font-size: clamp(18px, 2vw, 25px);
-}
-
-.proof-object dl {
-  display: grid;
-  gap: 13px;
-  margin: 28px 0;
-}
-
-.proof-object dl div,
 .receipt-card dl div,
 .cycle-archive-card dl div,
 .equation-card div {
@@ -203,7 +167,6 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
-.proof-object > a,
 .audience-grid a,
 .cycle-archive-card > a {
   display: inline-flex;
@@ -215,7 +178,6 @@ textarea:focus-visible {
   font-weight: 700;
 }
 
-.proof-object > a svg,
 .cycle-archive-card > a svg {
   width: 15px;
 }
@@ -442,7 +404,6 @@ textarea:focus-visible {
 }
 
 @media (max-width: 900px) {
-  .proof-object-grid,
   .audience-grid,
   .mechanism-flow {
     grid-template-columns: 1fr 1fr;
@@ -459,7 +420,6 @@ textarea:focus-visible {
 
 @media (max-width: 680px) {
   .system-strip,
-  .proof-object-grid,
   .audience-grid,
   .mechanism-flow,
   .worked-example,
@@ -480,7 +440,6 @@ textarea:focus-visible {
     border-bottom: 0;
   }
 
-  .proof-object,
   .audience-grid article,
   .mechanism-flow li {
     min-height: 0;

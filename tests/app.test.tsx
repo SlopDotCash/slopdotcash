@@ -608,11 +608,16 @@ describe("discovery", () => {
       .closest("a");
     expect(elizaCard).not.toBeNull();
     if (!elizaCard) throw new Error("Eliza project card is missing");
-    expect(within(elizaCard).getByText("Unfunded")).toBeInTheDocument();
+    expect(within(elizaCard).queryByText(/Unfunded/u)).not.toBeInTheDocument();
+    expect(within(elizaCard).getByText("$5k")).toBeInTheDocument();
+    expect(within(elizaCard).getByText("/ mo")).toBeInTheDocument();
     expect(
-      within(elizaCard).getByText("target $5,000 / month"),
+      within(elizaCard).getByText("Target cap · no funding committed"),
     ).toBeInTheDocument();
-    expect(within(elizaCard).queryByText("$5,000")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("The proof is the product."),
+    ).not.toBeInTheDocument();
+    expect(document.querySelector(".proof-object-section")).toBeNull();
     expect(
       within(elizaCard).getByText(/Build and verify the elizaOS framework/u),
     ).toBeInTheDocument();
@@ -866,7 +871,7 @@ describe("project routes", () => {
         .getByText("MONTHLY POOL")
         .closest("aside")
         ?.querySelector(".reward-amount-monthly"),
-    ).toHaveTextContent("Unfunded");
+    ).toHaveTextContent("$5k / mo");
     expect(
       screen.getByText(/Target \$5,000 per month\. No funding is committed/u),
     ).toBeInTheDocument();
