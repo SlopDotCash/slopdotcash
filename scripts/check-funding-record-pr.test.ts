@@ -983,7 +983,13 @@ describe("trusted funding-record PR gate", () => {
       'test "$(git rev-parse refs/remotes/origin/slop-funding-head)" = "$FUNDING_HEAD_SHA"',
     );
     expect(workflow).not.toMatch(
-      /contents: write|pull-requests: write|gh pr merge|gh pr review|environment:|bun install|ref:.*head.sha/u,
+      /contents: write|pull-requests: write|gh pr merge|gh pr review|environment:|ref:.*head.sha/u,
+    );
+    expect(workflow.match(/bun install[^\n]*/gu)).toEqual([
+      "bun install --frozen-lockfile --ignore-scripts",
+    ]);
+    expect(workflow).toContain(
+      "bun --no-install scripts/check-signer-access-transitions.ts",
     );
   });
 });

@@ -23,6 +23,7 @@
     "src/lib/evaluator-awards.ts",
     "src/lib/evm-funding.ts",
     "src/lib/funding.ts",
+    "src/lib/signer-capability.ts",
     "src/lib/funding-commitment.ts",
     "src/lib/sablier-funding.ts",
     "src/lib/squads-funding.ts",

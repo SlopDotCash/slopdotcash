@@ -68,10 +68,29 @@ instrument balance, legal ownership, or a transferable payment approval.
 
 ## Lifecycle integration still required before activation
 
-Reports must enter a complete append-only, trusted-base-validated ledger before
-they can drive public state. An omitted loss report must never be replaced by a
-caller-selected pair of positive reports. Loss by either signer is terminal for
-that instrument; later capability reports cannot silently undo it. Positive
+Reports are stored as canonical JSON at
+`funding/<project>/signer-access/<sha256-of-canonical-report-bytes>.json`.
+The trusted funding PR gate reads the complete proposed Git tree with
+`scripts/check-signer-access-transitions.ts`, requires every accepted base blob
+to survive unchanged, and authenticates every report against a manifest already
+reviewed in the trusted base history. Symlinks, duplicate source commits,
+noncanonical bytes, and missing GitHub authority fail the whole read. Working
+tree bytes cannot replace committed evidence. `funding:check` performs offline
+structural validation only; it is not proof of signer authentication.
+Trusted publication reauthenticates the committed history. Before preparing a
+new Squads-backed settlement plan, the command fetches current `develop`, reads
+its complete history, and requires both current member proofs. This check uses
+the actual evaluation time, not the caller's plan timestamp. Lost or expired
+capability blocks new plans, but this necessary check does not activate payment,
+prove backing, revoke an existing external signature, or replace settlement
+reconciliation. The immutable hold overlay and carry integration below remain
+required.
+
+The diagnostic reducer accepts only a complete ledger authenticated in-process,
+not a caller-selected pair of positive reports. Loss by either signer is
+terminal for that instrument; later capability reports cannot undo it. Its
+`both-signers-current` result is explicitly not an `accessible` or payable claim.
+At the exact expiry timestamp a positive report ceases to count. Positive
 accessibility requires both unexpired member proofs plus independently verified
 instrument configuration and backing. Expiry returns positive evidence to
 unknown, never silently extends it.
@@ -83,6 +102,17 @@ history must stay immutable: an append-only hold overlay must reconcile exact
 remaining principal and prevent both an old intent and a successor cycle from
 paying it. Only eligible shared-pool principal carries, exactly once; review
 budget does not carry. The successor monthly cycle requires a fresh instrument.
+
+The current unsigned execution-plan schema does not bind `sourceOwner` to the
+frozen funding instrument or record a signed transaction's lifetime, nonce, or
+Squads proposal retirement. Consequently an issued or partially settled plan
+cannot become carry merely because a signer reports loss or time passes.
+[Solana durable nonces](https://solana.com/developers/cookbook/transactions/confirmation)
+can outlive ordinary blockhash expiration. A reviewed retirement/reconciliation
+protocol must establish the exact remaining principal and prevent execution
+through both old and successor intents before this carry path can open. No
+such retirement proof is implemented here; existing plans and paid history
+remain unchanged and this acceptance gate remains unresolved.
 
 Until those gates, complete public readback, and settlement/carry regressions
 are in place, the existing `unknown` accessibility and disabled-payment policy

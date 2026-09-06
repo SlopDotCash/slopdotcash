@@ -110,6 +110,15 @@ jobs:
           done
           bun test ./skill-tests
 
+      - name: Authenticate signer history before trusted publication
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bun --no-install scripts/check-signer-access-transitions.ts "$GITHUB_SHA" "$GITHUB_SHA"
+
       - name: Generate live contribution data
         # Pull-request code is untrusted, so this step never explicitly injects
         # a repository-scoped token into it. Trusted develop runs refresh the
