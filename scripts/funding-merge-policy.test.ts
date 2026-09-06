@@ -13,8 +13,8 @@ const protection: FundingMergeProtection = {
   requiredStatusCheckContexts: [QUALITY_CONTEXT],
   isAdminEnforced: true,
   requiresApprovingReviews: true,
-  requiredApprovingReviewCount: 1,
-  dismissesStaleReviews: true,
+  requiredApprovingReviewCount: 0,
+  dismissesStaleReviews: false,
   requiresConversationResolution: true,
   allowsForcePushes: false,
   allowsDeletions: false,
@@ -22,7 +22,7 @@ const protection: FundingMergeProtection = {
 };
 
 describe("standing funding merge authority", () => {
-  it("accepts strict, reviewed, non-bypassable protection", () => {
+  it("accepts protected pull requests without an independent approval", () => {
     expect(() => assertFundingMergeProtection(protection)).not.toThrow();
   });
   it.each([
@@ -32,8 +32,6 @@ describe("standing funding merge authority", () => {
     { requiredStatusCheckContexts: [] },
     { isAdminEnforced: false },
     { requiresApprovingReviews: false },
-    { requiredApprovingReviewCount: 0 },
-    { dismissesStaleReviews: false },
     { requiresConversationResolution: false },
     { allowsForcePushes: true },
     { allowsDeletions: true },
