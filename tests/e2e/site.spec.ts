@@ -1134,7 +1134,9 @@ test("keeps primary routes accessible and inside the viewport", async ({
         page.getByRole("heading", { exact: true, name: "Project funding" }),
       ).toBeVisible();
       await expect(
-        page.getByText(/Commitment accessibility: unknown/u),
+        page.getByText(
+          /On-chain balance does not establish signer capability/u,
+        ),
       ).toBeVisible();
     }
     const results = await new AxeBuilder({ page })
