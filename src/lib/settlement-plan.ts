@@ -128,6 +128,22 @@ export function createSettlementExecutionPlan(input: {
     throw new TypeError("Settlement allocation digest is invalid");
   }
   const sourceOwner = address(input.sourceOwner, "sourceOwner");
+  if (allocation.fundingBasis) {
+    // The allocation validator has already checked the complete identity syntax.
+    // A caller-supplied wallet cannot substitute for the frozen funding source.
+    const instrumentId = allocation.fundingBasis.instrumentId;
+    if (!instrumentId?.startsWith("squads-v4-vault:solana:")) {
+      throw new TypeError(
+        "Settlement requires a frozen Solana Squads funding instrument",
+      );
+    }
+    const vault = instrumentId.split(":")[4];
+    if (sourceOwner !== vault) {
+      throw new TypeError(
+        "Settlement source owner must match the frozen funding vault",
+      );
+    }
+  }
   const approved = allocation.allocations.filter(
     (row) => row.state === "approved",
   );

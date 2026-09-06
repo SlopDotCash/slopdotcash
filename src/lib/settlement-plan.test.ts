@@ -11,6 +11,7 @@ import {
 
 const RECIPIENT = "11111111111111111111111111111111";
 const SOURCE = "Vote111111111111111111111111111111111111111";
+const OTHER_SOURCE = "SysvarRent111111111111111111111111111111111";
 const FEE = "Stake11111111111111111111111111111111111111";
 const COMMIT = "a".repeat(40);
 
@@ -68,6 +69,62 @@ function approvedAllocation() {
 }
 
 describe("settlement execution plans", () => {
+  function fundedAllocation(instrumentId: string) {
+    const allocation = approvedAllocation();
+    return assertRewardAllocationManifest({
+      ...allocation,
+      fundingBasis: {
+        cycleId: allocation.cycleId,
+        fundingState: "committed",
+        committedMinor: allocation.capMinor,
+        monthlyCapMinor: allocation.capMinor,
+        instrumentId,
+      },
+    });
+  }
+
+  it("binds creation and readback to the frozen Squads vault, not any valid wallet", () => {
+    const allocation = fundedAllocation(
+      `squads-v4-vault:solana:${RECIPIENT}:0:${SOURCE}`,
+    );
+    const input = {
+      allocation,
+      allocationSha256: "c".repeat(64),
+      createdAt: "2026-08-15T00:01:00.000Z",
+      feeRecipient: FEE,
+      sourceOwner: SOURCE,
+    };
+    const plan = createSettlementExecutionPlan(input);
+    expect(assertSettlementExecutionPlan(plan, allocation)).toEqual(plan);
+    expect(() =>
+      createSettlementExecutionPlan({ ...input, sourceOwner: OTHER_SOURCE }),
+    ).toThrow(/source owner must match the frozen funding vault/u);
+    expect(() =>
+      assertSettlementExecutionPlan(
+        { ...plan, sourceOwner: OTHER_SOURCE },
+        allocation,
+      ),
+    ).toThrow(/source owner must match the frozen funding vault/u);
+  });
+
+  it.each(["base", "ethereum"])(
+    "does not invent a Solana source for a %s stream",
+    (network) => {
+      const allocation = fundedAllocation(
+        `sablier-lockup-v4:${network}:0x${"a".repeat(40)}:1`,
+      );
+      expect(() =>
+        createSettlementExecutionPlan({
+          allocation,
+          allocationSha256: "c".repeat(64),
+          createdAt: "2026-08-15T00:01:00.000Z",
+          feeRecipient: FEE,
+          sourceOwner: SOURCE,
+        }),
+      ).toThrow(/requires a frozen Solana Squads funding instrument/u);
+    },
+  );
+
   it("includes exact contributor principal and the fee on top", () => {
     const allocation = approvedAllocation();
     const plan = createSettlementExecutionPlan({

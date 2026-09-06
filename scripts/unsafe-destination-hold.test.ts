@@ -33,7 +33,7 @@ function createRewardCycleProposal(
     ...input,
     fundingBasis: input.fundingBasis ?? {
       cycleId: input.cycleId,
-      instrumentId: `sablier-lockup-v4:base:0x${"1".repeat(40)}:1`,
+      instrumentId: `squads-v4-vault:solana:${UNSAFE}:0:${FUNDING_SOURCE}`,
       fundingState: "committed",
       committedMinor: "10000000000",
       monthlyCapMinor: "10000000000",
@@ -46,6 +46,7 @@ const REPORTED = "2026-08-03T00:00:00.000Z";
 const VERIFIED = "2026-08-03T01:00:00.000Z";
 const UNSAFE = "11111111111111111111111111111111";
 const SAFE = "Vote111111111111111111111111111111111111111";
+const FUNDING_SOURCE = "Stake11111111111111111111111111111111111111";
 
 function wallet(
   actor = "U_fixture",
@@ -505,7 +506,7 @@ describe("authenticated unsafe destination holds", () => {
       allocation: approved,
       allocationSha256: "d".repeat(64),
       createdAt: held.review.endsAt,
-      sourceOwner: "Stake11111111111111111111111111111111111111",
+      sourceOwner: FUNDING_SOURCE,
       feeRecipient: "SysvarRent111111111111111111111111111111111",
     });
     expect(
