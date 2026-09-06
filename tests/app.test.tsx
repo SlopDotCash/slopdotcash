@@ -455,9 +455,9 @@ describe("discovery", () => {
     );
     render(<App />);
 
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Reading the public GitHub ledger",
-    );
+    expect(
+      screen.queryByText("Reading the public GitHub ledger…"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/No accepted outcomes/u)).not.toBeInTheDocument();
   });
