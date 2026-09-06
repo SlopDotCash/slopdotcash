@@ -12,6 +12,31 @@ const refreshPaths = new Set([
   "data/cycles/index.json",
 ]);
 
+function isSkillManifest(path) {
+  return (
+    path === "skill-manifest.json" ||
+    /^projects\/[a-z0-9-]+\/(?:review-)?skill-manifest\.json$/u.test(path)
+  );
+}
+
+async function stableSkillManifest(root, path) {
+  const manifest = JSON.parse(await readFile(join(root, path), "utf8"));
+  if (
+    !manifest ||
+    Array.isArray(manifest) ||
+    typeof manifest !== "object" ||
+    typeof manifest.generatedAt !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(
+      manifest.generatedAt,
+    ) ||
+    !Number.isFinite(Date.parse(manifest.generatedAt))
+  ) {
+    throw new Error(`Invalid skill manifest timestamp: ${path}`);
+  }
+  delete manifest.generatedAt;
+  return JSON.stringify(manifest);
+}
+
 async function inventory(root) {
   const files = new Map();
   let directories = 0;
@@ -61,6 +86,14 @@ export async function assertDataOnlyRefresh(approvedRoot, candidateRoot) {
   const changed = [];
   for (const [path, hash] of candidate) {
     if (approved.get(path) === hash) continue;
+    if (
+      isSkillManifest(path) &&
+      (await stableSkillManifest(approvedRoot, path)) ===
+        (await stableSkillManifest(candidateRoot, path))
+    ) {
+      changed.push(path);
+      continue;
+    }
     if (!refreshPaths.has(path))
       throw new Error(`Scheduled refresh changes non-data file: ${path}`);
     changed.push(path);

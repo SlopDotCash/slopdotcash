@@ -27,6 +27,53 @@ async function fixture() {
   return [join(root, "approved"), join(root, "candidate")];
 }
 describe("scheduled data-only bundle boundary", () => {
+  for (const path of [
+    "skill-manifest.json",
+    "projects/example/skill-manifest.json",
+    "projects/example/review-skill-manifest.json",
+  ]) {
+    it(`allows only generatedAt in ${path}`, async () => {
+      const [approved, candidate] = await fixture();
+      for (const root of [approved, candidate]) {
+        await mkdir(join(root, "projects/example"), { recursive: true });
+        await writeFile(
+          join(root, path),
+          JSON.stringify({
+            generatedAt: "2026-09-06T00:00:00.000Z",
+            source: { sha256: "original" },
+          }),
+        );
+      }
+      await writeFile(
+        join(candidate, path),
+        JSON.stringify({
+          generatedAt: "2026-09-06T06:00:00.000Z",
+          source: { sha256: "original" },
+        }),
+      );
+      expect(await assertDataOnlyRefresh(approved, candidate)).toEqual([path]);
+      await writeFile(
+        join(candidate, path),
+        JSON.stringify({
+          generatedAt: "2026-09-06T06:00:00.000Z",
+          source: { sha256: "substituted" },
+        }),
+      );
+      await expect(assertDataOnlyRefresh(approved, candidate)).rejects.toThrow(
+        "non-data file",
+      );
+      await writeFile(
+        join(candidate, path),
+        JSON.stringify({
+          generatedAt: "invalid",
+          source: { sha256: "original" },
+        }),
+      );
+      await expect(assertDataOnlyRefresh(approved, candidate)).rejects.toThrow(
+        "timestamp",
+      );
+    });
+  }
   it("accepts identical bundles and explicit data changes", async () => {
     const [approved, candidate] = await fixture();
     expect(await assertDataOnlyRefresh(approved, candidate)).toEqual([]);
