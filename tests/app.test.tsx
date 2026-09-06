@@ -1750,7 +1750,9 @@ describe("direct project funding", () => {
       screen.getByText(/Funds go directly to the project wallet/u),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Commitment accessibility: unknown/u),
+      screen.getByText(
+        /On-chain balance does not establish signer capability/u,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(

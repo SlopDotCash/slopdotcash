@@ -16,6 +16,10 @@ import {
   assertProjectCommitmentRecord,
 } from "../src/lib/funding-commitment";
 import { PROJECTS } from "../src/lib/projects.mjs";
+import {
+  type PublicSignerReport,
+  publicSignerReport,
+} from "../src/lib/signer-capability";
 import { canonicalFundingDecisionBytes } from "./check-funding-record-pr";
 import { signerReportPath } from "./signer-access-ledger";
 import {
@@ -233,6 +237,7 @@ export async function buildFundingIndex(
   const fundingRoot = join(repositoryRoot, "funding");
   const records: unknown[] = [];
   const commitments: unknown[] = [];
+  const signerReports: PublicSignerReport[] = [];
   for (const projectId of await directories(fundingRoot, ["README.md"])) {
     const project = projects.find((candidate) => candidate.id === projectId);
     if (!project || project.funding.recordsPath !== `funding/${projectId}`) {
@@ -257,6 +262,7 @@ export async function buildFundingIndex(
       const report = assertSignerAccessReport(
         await readRecordFile(path, { projectId }),
       );
+      signerReports.push(publicSignerReport(report));
       const bytes = await readFile(path);
       if (
         bytes.length > 16 * 1024 ||
@@ -383,7 +389,13 @@ export async function buildFundingIndex(
   );
   const generatedAt = latestObservedAt(
     commitments,
-    latestObservedAt(records, null),
+    latestObservedAt(
+      records,
+      latestObservedAt(
+        signerReports.map((r) => ({ observedAt: r.reportedAt })),
+        null,
+      ),
+    ),
   );
   const index = assertProjectFundingIndex(
     {
@@ -391,6 +403,7 @@ export async function buildFundingIndex(
       generatedAt,
       records,
       commitments,
+      ...(signerReports.length ? { signerReports } : {}),
     },
     addresses,
     instruments,

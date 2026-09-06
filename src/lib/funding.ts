@@ -11,6 +11,10 @@ import {
   type ProjectCommitmentRecord,
 } from "./funding-commitment";
 import type { FundingCommitmentInstrument } from "./funding-instruments.mjs";
+import {
+  assertPublicSignerReport,
+  type PublicSignerReport,
+} from "./signer-capability";
 
 export { isFundingAddress } from "./funding-address.mjs";
 
@@ -62,6 +66,7 @@ export interface ProjectFundingRecord {
 }
 
 export interface ProjectFundingIndex {
+  signerReports?: readonly PublicSignerReport[];
   commitmentAccessibility?: "unknown";
   schemaVersion: typeof FUNDING_PROTOCOL_VERSION;
   generatedAt: string | null;
@@ -480,6 +485,7 @@ export function assertProjectFundingIndex(
       "generatedAt",
       "records",
       "schemaVersion",
+      ...(Object.hasOwn(index, "signerReports") ? ["signerReports"] : []),
       ...(Object.hasOwn(index, "commitmentAccessibility")
         ? ["commitmentAccessibility"]
         : []),
@@ -569,9 +575,30 @@ export function assertProjectFundingIndex(
     }
     commitmentTransactionProjects.set(key, record.projectId);
   }
-  const expectedGeneratedAt = [...records, ...commitments].reduce<
-    string | null
-  >(
+  const signerReports: PublicSignerReport[] = [];
+  if (Object.hasOwn(index, "signerReports")) {
+    if (
+      !Array.isArray(index.signerReports) ||
+      index.signerReports.length > 100_000
+    )
+      throw new TypeError("Signer reports are invalid or unbounded");
+    const sources = new Set<string>();
+    for (const value of index.signerReports) {
+      const report = assertPublicSignerReport(value);
+      const source = `${report.sourceRepository.toLowerCase()}@${report.sourceCommit}`;
+      if (!addressesByProject.has(report.projectId) || sources.has(source))
+        throw new TypeError(
+          "Signer reports require known projects and unique sources",
+        );
+      sources.add(source);
+      signerReports.push(report);
+    }
+  }
+  const expectedGeneratedAt = [
+    ...records,
+    ...commitments,
+    ...signerReports.map((r) => ({ observedAt: r.reportedAt })),
+  ].reduce<string | null>(
     (latest, record) =>
       latest === null || record.observedAt > latest
         ? record.observedAt
@@ -585,6 +612,7 @@ export function assertProjectFundingIndex(
   }
   return {
     schemaVersion: FUNDING_PROTOCOL_VERSION,
+    ...(signerReports.length ? { signerReports } : {}),
     commitmentAccessibility: "unknown",
     generatedAt,
     records,

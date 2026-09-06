@@ -73,6 +73,10 @@ import {
 } from "./lib/projects.mjs";
 import { formatThirds, selectReviewerLeaders } from "./lib/reviewer-leaders";
 import { feeForPrincipal, PLATFORM_FEE_BASIS_POINTS } from "./lib/rewards";
+import {
+  type PublicSignerReport,
+  publicSignerStatus,
+} from "./lib/signer-capability";
 
 const SOURCE_REPOSITORY = "https://github.com/SlopDotCash/slopdotcash";
 const SOCIAL_X = "https://x.com/SlopCash";
@@ -2166,6 +2170,85 @@ function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
   return wallet;
 }
 
+export function SignerReports({
+  reports,
+}: {
+  reports: readonly PublicSignerReport[];
+}) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const refresh = () => setNow(Date.now());
+    const timer = window.setInterval(refresh, 1000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  const groups = new Map<string, PublicSignerReport[]>();
+  for (const report of reports) {
+    const key = `${report.cycleId}:${report.instrumentId}`;
+    const group = groups.get(key) ?? [];
+    group.push(report);
+    groups.set(key, group);
+  }
+  return (
+    <section aria-label="Signer capability reports">
+      <h2>Signer capability</h2>
+      <p>
+        These reports do not prove available balance or authorize payment.
+        Payments remain disabled.
+      </p>
+      {[...groups.entries()].map(([key, group]) => {
+        const state = publicSignerStatus(group, now);
+        return (
+          <article key={key}>
+            <h3>
+              <span aria-live="polite">
+                {group[0].cycleId} ·{" "}
+                {state === "inaccessible"
+                  ? "Inaccessible"
+                  : state === "both-signers-current"
+                    ? "Both signers reported capability"
+                    : "Current capability unknown"}
+              </span>
+            </h3>
+            <p>Instrument: {group[0].instrumentId}</p>
+            <ul>
+              {group.map((report) => (
+                <li key={`${report.sourceRepository}:${report.sourceCommit}`}>
+                  {report.role}:{" "}
+                  {report.capability === "lost-access"
+                    ? "reported lost access"
+                    : report.expiresAt !== null &&
+                        Date.parse(report.expiresAt) <= now
+                      ? "capability report expired"
+                      : "reported signing capability"}
+                  . {report.reason}{" "}
+                  <ExternalLinkAnchor
+                    href={`https://github.com/${report.sourceRepository}/commit/${report.sourceCommit}`}
+                  >
+                    Signed report
+                  </ExternalLinkAnchor>
+                  {report.expiresAt && (
+                    <>
+                      {" "}
+                      · Expires{" "}
+                      <time dateTime={report.expiresAt}>
+                        {report.expiresAt}
+                      </time>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </article>
+        );
+      })}
+    </section>
+  );
+}
+
 function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
   const funding = useFundingIndex();
   const records =
@@ -2195,10 +2278,20 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
         payment.
       </p>
       <p>
-        Commitment accessibility: unknown. On-chain balance does not establish
-        that both signers can act. No commitment is available payout funding
-        until an authenticated accessibility evidence protocol is reviewed.
+        On-chain balance does not establish signer capability or payout
+        availability. Published signer reports do not activate payments;
+        settlement and funding safeguards must also be satisfied.
       </p>
+      {funding.status === "ready" &&
+        funding.index.signerReports?.some(
+          (r) => r.projectId === project.id,
+        ) && (
+          <SignerReports
+            reports={funding.index.signerReports.filter(
+              (r) => r.projectId === project.id,
+            )}
+          />
+        )}
       {funding.status === "loading" ? (
         <div className="data-notice" role="status">
           <span className="pulse" /> Reading funding records…
