@@ -208,3 +208,12 @@ bun run cycles:verify
 
 No command reads a private key or signs a transaction. Keep seed phrases and
 private keys out of Git, issues, CI, skills, prompts, and local telemetry.
+
+For an allocation with a frozen funding basis, a Solana execution plan must
+use that exact Squads vault as `sourceOwner`. The same check applies when
+reading a stored plan; another valid wallet is not a substitute. A pledged or
+Sablier/EVM basis cannot produce a Solana plan without a separately reviewed
+funding transition. Historical allocations predating the funding-basis schema
+retain their existing validation; this does not migrate or rewrite records.
+Source binding does not prove current backing, signing capability, transaction
+retirement, or safe carry, and does not enable payments.

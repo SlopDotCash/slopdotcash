@@ -103,9 +103,12 @@ remaining principal and prevent both an old intent and a successor cycle from
 paying it. Only eligible shared-pool principal carries, exactly once; review
 budget does not carry. The successor monthly cycle requires a fresh instrument.
 
-The current unsigned execution-plan schema does not bind `sourceOwner` to the
-frozen funding instrument or record a signed transaction's lifetime, nonce, or
-Squads proposal retirement. Consequently an issued or partially settled plan
+New funding-basis Solana plans bind `sourceOwner` to the exact frozen Squads
+vault, including when revalidating a stored plan. A Sablier/EVM or unfunded basis
+cannot supply an arbitrary Solana source. Historical pre-basis plans retain
+their original validation. The unsigned execution-plan schema still does not
+record a signed transaction's lifetime, nonce, or Squads proposal retirement.
+Consequently an issued or partially settled plan
 cannot become carry merely because a signer reports loss or time passes.
 [Solana durable nonces](https://solana.com/developers/cookbook/transactions/confirmation)
 can outlive ordinary blockhash expiration. A reviewed retirement/reconciliation
