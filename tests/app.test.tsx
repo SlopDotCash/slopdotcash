@@ -610,10 +610,10 @@ describe("discovery", () => {
     if (!elizaCard) throw new Error("Eliza project card is missing");
     expect(within(elizaCard).queryByText(/Unfunded/u)).not.toBeInTheDocument();
     expect(within(elizaCard).getByText("$5k")).toBeInTheDocument();
-    expect(within(elizaCard).getByText("/ mo")).toBeInTheDocument();
+    expect(within(elizaCard).getByText("/mo")).toBeInTheDocument();
     expect(
-      within(elizaCard).getByText("Target cap · no funding committed"),
-    ).toBeInTheDocument();
+      within(elizaCard).queryByText("Target cap · no funding committed"),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText("The proof is the product."),
     ).not.toBeInTheDocument();
@@ -629,7 +629,9 @@ describe("discovery", () => {
     expect(deltaCard).not.toBeNull();
     if (!deltaCard) throw new Error("Delta Star project card is missing");
     expect(within(deltaCard).getByText("$1,000,000")).toBeInTheDocument();
-    expect(within(deltaCard).getByText("external prize")).toBeInTheDocument();
+    expect(
+      within(deltaCard).getByText("External sponsor prize"),
+    ).toBeInTheDocument();
     expect(
       within(deltaCard).getByText(/dedicated Proximity Prize repository/u),
     ).toBeInTheDocument();
