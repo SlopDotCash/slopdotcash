@@ -16,6 +16,12 @@ import {
   assertProjectCommitmentRecord,
 } from "../src/lib/funding-commitment";
 import { PROJECTS } from "../src/lib/projects.mjs";
+import { canonicalFundingDecisionBytes } from "./check-funding-record-pr";
+import { signerReportPath } from "./signer-access-ledger";
+import {
+  assertSignerAccessReport,
+  squadsAccessInstrumentId,
+} from "./verify-signer-access";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT = join(ROOT, "public", "data", "funding.json");
@@ -234,10 +240,52 @@ export async function buildFundingIndex(
         `funding/${projectId} is not a registered project path`,
       );
     }
+    // Offline structural validation is not signature authentication. The trusted
+    // PR gate authenticates the complete immutable history before acceptance.
+    const signerRoot = join(fundingRoot, projectId, "signer-access");
+    let signerFiles: string[] = [];
+    try {
+      const stat = await lstat(signerRoot);
+      if (!stat.isDirectory() || stat.isSymbolicLink())
+        throw new TypeError("Signer history must be a real directory");
+      signerFiles = await recordFiles(signerRoot, /^[a-f0-9]{64}\.json$/u);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    for (const file of signerFiles) {
+      const path = join(signerRoot, file);
+      const report = assertSignerAccessReport(
+        await readRecordFile(path, { projectId }),
+      );
+      const bytes = await readFile(path);
+      if (
+        bytes.length > 16 * 1024 ||
+        !bytes.equals(Buffer.from(canonicalFundingDecisionBytes(report))) ||
+        signerReportPath(report) !==
+          `funding/${projectId}/signer-access/${file}`
+      )
+        throw new TypeError(
+          "Signer report bytes or content-addressed path are invalid",
+        );
+      const instruments = fundingCommitmentsAtRevision(
+        projectId,
+        report.manifestRevision,
+        repositoryRoot,
+      );
+      if (
+        !instruments.some(
+          (instrument) =>
+            instrument.kind === "squads-v4-vault" &&
+            squadsAccessInstrumentId(instrument) === report.instrumentId &&
+            instrument.monthlyCommitment?.cycleId === report.cycleId,
+        )
+      )
+        throw new TypeError("Signer report has no exact historical instrument");
+    }
     for (const network of await directories(
       join(fundingRoot, projectId),
       [],
-      [COMMITMENTS_DIRECTORY],
+      [COMMITMENTS_DIRECTORY, "signer-access"],
     )) {
       for (const transactionId of await directories(
         join(fundingRoot, projectId, network),

@@ -13,7 +13,12 @@ import {
   findProject,
   type ProjectId,
 } from "../src/lib/projects.mjs";
+import { assertRewardAllocationManifest } from "../src/lib/rewards";
 import { createSettlementExecutionPlan } from "../src/lib/settlement-plan";
+import {
+  assertSignerCapabilityForSettlement,
+  readCurrentSignerAccessLedger,
+} from "./signer-access-ledger";
 import { validateCycleTransition } from "./sync-cycle-index";
 import { writeNewJsonFile } from "./write-new-file";
 
@@ -115,6 +120,19 @@ export async function prepareSettlementPlan(
     allocation = JSON.parse(source.toString("utf8"));
   } catch (error) {
     throw new TypeError("Allocation is not valid JSON", { cause: error });
+  }
+  const reviewedAllocation = assertRewardAllocationManifest(allocation);
+  if (
+    reviewedAllocation.fundingBasis?.instrumentId?.startsWith(
+      "squads-v4-vault:",
+    )
+  ) {
+    const ledger = await readCurrentSignerAccessLedger(REPOSITORY_ROOT);
+    assertSignerCapabilityForSettlement(
+      ledger,
+      reviewedAllocation,
+      new Date().toISOString(),
+    );
   }
   const plan = createSettlementExecutionPlan({
     allocation,

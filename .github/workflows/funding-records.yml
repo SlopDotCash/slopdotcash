@@ -59,3 +59,17 @@ jobs:
           path: ${{ runner.temp }}/funding-record-decision.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: Install only trusted lockfile dependencies for signer verification
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Authenticate complete append-only signer history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FUNDING_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FUNDING_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FUNDING_BASE_SHA"
+          bun --no-install scripts/check-signer-access-transitions.ts \
+            "$FUNDING_BASE_SHA" "$FUNDING_HEAD_SHA"
