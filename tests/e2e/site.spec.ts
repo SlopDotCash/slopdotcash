@@ -241,7 +241,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   ).toBeVisible();
   await expect(
     deltaCard.getByText("External sponsor prize", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     deltaCard.getByText(/Advance machine-checked Reed–Solomon/u),
   ).toBeVisible();

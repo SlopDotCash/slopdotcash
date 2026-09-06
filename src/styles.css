@@ -934,7 +934,7 @@ p {
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr;
-  gap: 32px;
+  gap: 24px;
   padding: 28px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1057,8 +1057,12 @@ p {
 .project-card-content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 40px;
+  align-items: center;
+  gap: 24px 40px;
+}
+
+.project-card-content > small {
+  grid-column: 1 / -1;
 }
 
 .project-summary {
@@ -2662,7 +2666,7 @@ small {
 
   .project-card-content {
     grid-template-columns: minmax(0, 1fr);
-    gap: 32px;
+    gap: 24px;
   }
 
   .project-bounty {
