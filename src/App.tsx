@@ -753,15 +753,26 @@ function TypewriterHeroHeading() {
   );
 }
 
+function monthlyPoolCapLabel(reward: ProjectDefinition["reward"]): string {
+  const minor = BigInt(reward.monthlyCapMinor);
+  if (minor % 1_000_000n !== 0n) return reward.monthlyCapDisplay;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    notation: "compact",
+    maximumFractionDigits: 2,
+  })
+    .format(minor / 1_000_000n)
+    .replace(/K$/u, "k");
+}
+
 function ProjectCard({ project }: { project: ProjectDefinition }) {
   const unfunded =
     project.reward.kind === "monthly-pool" &&
     monthlyPoolUnfunded(project.reward);
   const amount =
     project.reward.kind === "monthly-pool"
-      ? unfunded
-        ? "Unfunded"
-        : "Accessibility unknown"
+      ? monthlyPoolCapLabel(project.reward)
       : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
         "External");
   return (
@@ -782,11 +793,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
         <p className="project-bounty">
           <strong>{amount}</strong>
           <span>
-            {project.reward.kind === "monthly-pool"
-              ? unfunded
-                ? `target ${project.reward.monthlyCapDisplay} / month`
-                : `${formatMicroUsdc(project.reward.committedMinor)} committed`
-              : "external prize"}
+            {project.reward.kind === "monthly-pool" ? "/ mo" : "external prize"}
           </span>
         </p>
         <small className="project-money-state">
@@ -796,10 +803,6 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
               : "Committed balance · accessibility unknown · payments disabled"
             : "External sponsor controls eligibility and payment"}
         </small>
-        {project.reward.kind === "monthly-pool" &&
-        allocationFundingMinor(project.reward) === 0n ? (
-          <small>Unfunded trial · score recording remains open</small>
-        ) : null}
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
             + {reviewBudgetLabel(project.reward.reviewBudget)}
@@ -1192,18 +1195,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   const communityProjects = promotedProjects.filter(
     (project) => project.listingTier === "community",
   );
-  const latestReceipt =
-    state.status === "ready"
-      ? (state.snapshot.attributions.find((entry) => entry.run !== null)?.run ??
-        null)
-      : null;
-  const latestCycle =
-    state.status === "ready"
-      ? [...state.cycleIndex.cycles].sort(
-          (left, right) =>
-            Date.parse(right.generatedAt) - Date.parse(left.generatedAt),
-        )[0]
-      : undefined;
   const paidMinor =
     state.status === "ready"
       ? state.cycleIndex.cycles.reduce(
@@ -1261,129 +1252,6 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
           </dl>
         ) : null}
       </section>
-
-      {state.status === "ready" ? (
-        <section className="section shell proof-object-section">
-          <div className="home-section-heading">
-            <div>
-              <h2 className="home-section-title">The proof is the product.</h2>
-            </div>
-            <p>
-              Every number names its source, state, and authority. Private trace
-              bodies stay private; only safe receipt metadata is public.
-            </p>
-          </div>
-          <div className="proof-object-grid">
-            <article className="proof-object">
-              <span className="proof-object-kicker">Receipt</span>
-              {latestReceipt ? (
-                <>
-                  <strong>{latestReceipt.runId}</strong>
-                  <dl>
-                    <div>
-                      <dt>Model</dt>
-                      <dd>
-                        {latestReceipt.provider}/{latestReceipt.model}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Client</dt>
-                      <dd>{latestReceipt.client}</dd>
-                    </div>
-                    <div>
-                      <dt>Trace</dt>
-                      <dd>
-                        {latestReceipt.traceUpload
-                          ? "digest verified"
-                          : "unavailable"}
-                      </dd>
-                    </div>
-                  </dl>
-                </>
-              ) : (
-                <p>No publishable signed receipt in this snapshot.</p>
-              )}
-              <Link href="/receipts">
-                Inspect receipts <ArrowRight aria-hidden="true" />
-              </Link>
-            </article>
-            <article className="proof-object">
-              <span className="proof-object-kicker">Pool</span>
-              <strong>
-                {featuredProjects[0] &&
-                !monthlyPoolUnfunded(featuredProjects[0].reward)
-                  ? "Accessibility unknown"
-                  : "Unfunded"}
-              </strong>
-              <dl>
-                <div>
-                  <dt>Target</dt>
-                  <dd>
-                    {featuredProjects[0]?.reward.monthlyCapDisplay ?? "$0"}{" "}
-                    monthly cap
-                  </dd>
-                </div>
-                <div>
-                  <dt>Funding</dt>
-                  <dd>
-                    {featuredProjects[0]?.reward.fundingState === "committed"
-                      ? "Committed · accessibility unknown"
-                      : "Uncommitted"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Payment</dt>
-                  <dd>
-                    {featuredProjects[0]?.reward.paymentMode === "enabled"
-                      ? "Enabled"
-                      : "Disabled"}
-                  </dd>
-                </div>
-              </dl>
-              <Link href="/#projects">
-                Compare pools <ArrowRight aria-hidden="true" />
-              </Link>
-            </article>
-            <article className="proof-object">
-              <span className="proof-object-kicker">Cycle</span>
-              <strong>
-                {latestCycle
-                  ? `${latestCycle.projectId} · ${latestCycle.cycleId}`
-                  : "No closed cycle"}
-              </strong>
-              <dl>
-                <div>
-                  <dt>State</dt>
-                  <dd>
-                    {latestCycle
-                      ? cycleStateLabel(latestCycle.state)
-                      : "Unavailable"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Suggested</dt>
-                  <dd>
-                    {latestCycle
-                      ? formatMicroUsdc(latestCycle.reward.suggestedMinor)
-                      : "$0"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Paid</dt>
-                  <dd>
-                    {latestCycle
-                      ? formatMicroUsdc(latestCycle.reward.paidMinor)
-                      : "$0"}
-                  </dd>
-                </div>
-              </dl>
-              <Link href="/cycles">
-                Open archive <ArrowRight aria-hidden="true" />
-              </Link>
-            </article>
-          </div>
-        </section>
-      ) : null}
 
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
@@ -2443,9 +2311,7 @@ function ProjectPage({
                   }
                 >
                   {project.reward.kind === "monthly-pool"
-                    ? monthlyPoolUnfunded(project.reward)
-                      ? "Unfunded"
-                      : "Accessibility unknown"
+                    ? `${monthlyPoolCapLabel(project.reward)} / mo`
                     : project.reward.externalOpportunity
                         ?.advertisedAmountDisplay}
                 </strong>
