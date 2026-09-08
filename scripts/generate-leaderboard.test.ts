@@ -26,6 +26,7 @@ import {
   estimateFirstPageDetailCost,
   estimateReviewFirstPageDetailCost,
   GitHubGraphqlClient,
+  GRAPHQL_PAGE_SIZE,
   type GraphqlExecutor,
   generateLeaderboardFromGitHub,
   LEADERBOARD_QUERY_DOCUMENTS,
@@ -882,6 +883,96 @@ describe("GitHub GraphQL boundary", () => {
     expect(client.getRateLimit().consumedDuringRun).toBe(1);
   });
 
+  // Reproduces the 2026-09-06 outage: GitHub Search 502s while building a
+  // 100-node page of `repo:SlopDotCash/proximityprize is:pr is:merged` but
+  // serves the same slice at 50, so identical retries could never recover.
+  it("narrows the requested page until GitHub can build it", async () => {
+    const requestedPageSizes: unknown[] = [];
+    const fetcher = async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const { pageSize } = JSON.parse(String(init?.body ?? "{}")).variables;
+      requestedPageSizes.push(pageSize);
+      if (pageSize > 50) {
+        return new Response(
+          "<html><head><title>502 Bad Gateway</title></head></html>",
+          { status: 502, headers: { "Content-Type": "text/html" } },
+        );
+      }
+      return successResponse();
+    };
+    const client = new GitHubGraphqlClient("secret-token", fetcher, {
+      retryBaseDelayMs: 0,
+    });
+
+    await expect(
+      client.execute("query Search($pageSize: Int!) { search { id } }", {
+        searchQuery: "repo:owner/name is:pr is:merged",
+        after: null,
+        pageSize: GRAPHQL_PAGE_SIZE,
+      }),
+    ).resolves.toMatchObject({ viewer: { login: "eliza" } });
+    expect(requestedPageSizes).toEqual([100, 50]);
+  });
+
+  it("reports the exhausted attempt count and final page size", async () => {
+    const requestedPageSizes: unknown[] = [];
+    const fetcher = async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const { variables } = JSON.parse(String(init?.body ?? "{}"));
+      requestedPageSizes.push(variables.pageSize);
+      return new Response("<html>bad gateway</html>", {
+        status: 502,
+        headers: { "Content-Type": "text/html" },
+      });
+    };
+    const client = new GitHubGraphqlClient("secret-token", fetcher, {
+      retryBaseDelayMs: 0,
+    });
+
+    await expect(
+      client.execute("query Search($pageSize: Int!) { search { id } }", {
+        after: null,
+        pageSize: GRAPHQL_PAGE_SIZE,
+      }),
+    ).rejects.toThrow(
+      "GitHub GraphQL HTTP 502 returned a non-JSON response (5/5; text/html; page size 6)",
+    );
+    expect(requestedPageSizes).toEqual([100, 50, 25, 12, 6]);
+  });
+
+  it("retries an unpaginated query without inventing a page size", async () => {
+    const bodies: string[] = [];
+    let attempts = 0;
+    const fetcher = async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      attempts += 1;
+      bodies.push(String(init?.body ?? ""));
+      if (attempts === 1) {
+        return new Response("<html>bad gateway</html>", {
+          status: 502,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      return successResponse();
+    };
+    const client = new GitHubGraphqlClient("secret-token", fetcher, {
+      retryBaseDelayMs: 0,
+    });
+
+    await expect(
+      client.execute("query { viewer { login } }", { owner: "elizaOS" }),
+    ).resolves.toMatchObject({ viewer: { login: "eliza" } });
+    expect(JSON.parse(bodies[1] ?? "{}").variables).toEqual({
+      owner: "elizaOS",
+    });
+  });
+
   it("honors GitHub secondary-limit retry guidance before returning data", async () => {
     let attempts = 0;
     const fetcher = async () => {
@@ -990,7 +1081,7 @@ describe("GitHub GraphQL boundary", () => {
     });
 
     await expect(client.execute("query { viewer { login } }")).rejects.toThrow(
-      "GitHub GraphQL HTTP 200 returned a non-JSON response (text/html)",
+      "GitHub GraphQL HTTP 200 returned a non-JSON response (1/5; text/html)",
     );
     expect(attempts).toBe(1);
     expect(client.getRequestCount()).toBe(1);
@@ -1010,7 +1101,7 @@ describe("GitHub GraphQL boundary", () => {
     });
 
     await expect(client.execute("query { viewer { login } }")).rejects.toThrow(
-      "GitHub GraphQL HTTP 401 returned a non-JSON response (application/json)",
+      "GitHub GraphQL HTTP 401 returned a non-JSON response (1/5; application/json)",
     );
     expect(attempts).toBe(1);
     expect(client.getRequestCount()).toBe(1);
