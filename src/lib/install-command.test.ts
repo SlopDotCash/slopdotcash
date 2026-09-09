@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -1539,6 +1540,300 @@ time.sleep(60)
       );
     } finally {
       server.kill();
+    }
+  });
+
+  const headerLoggingServerScript = `
+    const http = require("node:http");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const [kind, source, logPath, forbidPattern, redirectTarget] =
+      process.argv.slice(1);
+    const responses =
+      kind === "json" ? JSON.parse(fs.readFileSync(source, "utf8")) : null;
+    const server = http.createServer((request, response) => {
+      fs.appendFileSync(
+        logPath,
+        request.url + "\\t" + (request.headers.authorization || "-") + "\\n",
+      );
+      if (redirectTarget && request.url.includes("/git/ref/")) {
+        response.statusCode = 302;
+        response.setHeader("location", redirectTarget + request.url);
+        response.end();
+        return;
+      }
+      if (forbidPattern && request.url.includes(forbidPattern)) {
+        response.statusCode = 403;
+        response.setHeader("x-ratelimit-limit", "60");
+        response.setHeader("x-ratelimit-remaining", "0");
+        response.setHeader("x-ratelimit-reset", "1800000000");
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ message: "API rate limit exceeded" }));
+        return;
+      }
+      if (responses) {
+        if (!(request.url in responses)) {
+          response.statusCode = 404;
+          response.end("{}");
+          return;
+        }
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify(responses[request.url]));
+        return;
+      }
+      const file = path.join(source, decodeURIComponent(request.url));
+      if (!file.startsWith(source) || !fs.existsSync(file)) {
+        response.statusCode = 404;
+        response.end();
+        return;
+      }
+      response.end(fs.readFileSync(file));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      console.log("PORT " + server.address().port);
+    });
+  `;
+
+  async function startHeaderLoggingServer(options: {
+    kind: "json" | "static";
+    source: string;
+    requestLog: string;
+    forbidPattern?: string;
+    redirectTarget?: string;
+  }): Promise<{ port: number; kill: () => void }> {
+    writeFileSync(options.requestLog, "");
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        headerLoggingServerScript,
+        options.kind,
+        options.source,
+        options.requestLog,
+        options.forbidPattern ?? "",
+        options.redirectTarget ?? "",
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const port = await new Promise<number>((resolvePort, rejectPort) => {
+      let buffered = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        buffered += chunk.toString("utf8");
+        const match = buffered.match(/PORT (\d+)/u);
+        if (match) resolvePort(Number(match[1]));
+      });
+      child.once("exit", () =>
+        rejectPort(new Error("header-logging server exited before listening")),
+      );
+    });
+    return { port, kill: () => child.kill("SIGKILL") };
+  }
+
+  function loggedRequests(logPath: string): Array<[string, string]> {
+    return readFileSync(logPath, "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const [url, authorization] = line.split("\t");
+        return [url ?? "", authorization ?? ""];
+      });
+  }
+
+  function freshInstallFixture(root: string) {
+    const installRoot = join(root, "install");
+    const filesA = baseFiles("revision-a");
+    const artifactA = writeArtifact(root, revisionA, filesA);
+    const authority = configureAuthority(root, {
+      developHead: revisionA,
+      revisions: { [revisionA]: { files: filesA } },
+    });
+    return {
+      artifactA,
+      installRoot,
+      apiResponses: join(fileURLToPath(authority.apiOrigin), "responses.json"),
+      rawRoot: fileURLToPath(authority.rawOrigin),
+    };
+  }
+
+  function listFilesRecursively(directory: string): string[] {
+    const found: string[] = [];
+    const pending = [directory];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (!current) break;
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const path = join(current, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) pending.push(path);
+        else found.push(path);
+      }
+    }
+    return found;
+  }
+
+  it("sends a configured GitHub token only to the API authority and never persists it", async () => {
+    const root = freshRoot("token-scope");
+    const { artifactA, installRoot, apiResponses, rawRoot } =
+      freshInstallFixture(root);
+    const api = await startHeaderLoggingServer({
+      kind: "json",
+      source: apiResponses,
+      requestLog: join(root, "api.log"),
+    });
+    const raw = await startHeaderLoggingServer({
+      kind: "static",
+      source: rawRoot,
+      requestLog: join(root, "raw.log"),
+    });
+    try {
+      const install = run(
+        loopbackCommand(artifactA, api.port, `http://127.0.0.1:${raw.port}`),
+        installRoot,
+        { GH_TOKEN: " ghp_scoped_token ", GITHUB_TOKEN: "ghp_fallback_token" },
+      );
+      expect(install.status, install.stderr).toBe(0);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionA}`,
+      );
+      const apiRequests = loggedRequests(join(root, "api.log"));
+      expect(apiRequests.length).toBeGreaterThan(0);
+      for (const [, authorization] of apiRequests) {
+        expect(authorization).toBe("Bearer ghp_scoped_token");
+      }
+      const rawRequests = loggedRequests(join(root, "raw.log"));
+      expect(rawRequests.length).toBeGreaterThan(0);
+      for (const [, authorization] of rawRequests) {
+        expect(authorization).toBe("-");
+      }
+      for (const file of listFilesRecursively(
+        join(installRoot, "codex", "skills"),
+      )) {
+        expect(readFileSync(file, "utf8")).not.toContain("ghp_");
+      }
+    } finally {
+      api.kill();
+      raw.kill();
+    }
+  });
+
+  it("falls back to GITHUB_TOKEN and rejects a token that cannot be sent as a header", async () => {
+    const root = freshRoot("token-fallback");
+    const { artifactA, installRoot, apiResponses, rawRoot } =
+      freshInstallFixture(root);
+    const api = await startHeaderLoggingServer({
+      kind: "json",
+      source: apiResponses,
+      requestLog: join(root, "api.log"),
+    });
+    try {
+      const install = run(
+        loopbackCommand(artifactA, api.port, pathToFileURL(rawRoot).href),
+        installRoot,
+        { GH_TOKEN: "   ", GITHUB_TOKEN: "ghp_fallback_token" },
+      );
+      expect(install.status, install.stderr).toBe(0);
+      for (const [, authorization] of loggedRequests(join(root, "api.log"))) {
+        expect(authorization).toBe("Bearer ghp_fallback_token");
+      }
+      const malformed = run(
+        loopbackCommand(artifactA, api.port, pathToFileURL(rawRoot).href),
+        installRoot,
+        { GH_TOKEN: "ghp_bad\ntoken", GITHUB_TOKEN: "" },
+      );
+      expect(malformed.status).not.toBe(0);
+      expect(malformed.stderr).toContain(
+        "GH_TOKEN contains characters that cannot be sent in an Authorization header",
+      );
+    } finally {
+      api.kill();
+    }
+  });
+
+  it("names an exhausted GitHub rate limit, its reset time, and the token remedy without retrying", async () => {
+    const root = freshRoot("rate-limit");
+    const { artifactA, installRoot, apiResponses, rawRoot } =
+      freshInstallFixture(root);
+    const api = await startHeaderLoggingServer({
+      kind: "json",
+      source: apiResponses,
+      requestLog: join(root, "api.log"),
+      forbidPattern: "/git/ref/heads/develop",
+    });
+    try {
+      const anonymous = run(
+        loopbackCommand(artifactA, api.port, pathToFileURL(rawRoot).href),
+        installRoot,
+        { GH_TOKEN: "", GITHUB_TOKEN: "" },
+      );
+      expect(anonymous.status).not.toBe(0);
+      expect(anonymous.stderr).toContain(
+        "GitHub API rate limit exhausted (anonymous budget, 60 requests per hour)",
+      );
+      expect(anonymous.stderr).toContain(
+        "shared by every process behind this public IP",
+      );
+      expect(anonymous.stderr).toContain("resets at 2027-01-15T08:00:00Z");
+      expect(anonymous.stderr).toContain("set GH_TOKEN or GITHUB_TOKEN");
+      expect(
+        existsSync(join(installRoot, "codex", "skills", "contribute-to-eliza")),
+      ).toBe(false);
+      expect(
+        loggedRequests(join(root, "api.log")).filter(([url]) =>
+          url.includes("/git/ref/heads/develop"),
+        ),
+      ).toHaveLength(1);
+
+      const authenticated = run(
+        loopbackCommand(artifactA, api.port, pathToFileURL(rawRoot).href),
+        installRoot,
+        { GH_TOKEN: "ghp_scoped_token", GITHUB_TOKEN: "" },
+      );
+      expect(authenticated.status).not.toBe(0);
+      expect(authenticated.stderr).toContain(
+        "GitHub API rate limit exhausted (authenticated budget, 60 requests per hour)",
+      );
+      expect(authenticated.stderr).not.toContain(
+        "set GH_TOKEN or GITHUB_TOKEN",
+      );
+    } finally {
+      api.kill();
+    }
+  });
+
+  it("refuses a cross-origin API redirect before forwarding any header", async () => {
+    const root = freshRoot("redirect-guard");
+    const { artifactA, installRoot, apiResponses, rawRoot } =
+      freshInstallFixture(root);
+    const decoyRoot = join(root, "decoy");
+    mkdirSync(decoyRoot, { recursive: true });
+    const decoy = await startHeaderLoggingServer({
+      kind: "static",
+      source: decoyRoot,
+      requestLog: join(root, "decoy.log"),
+    });
+    const api = await startHeaderLoggingServer({
+      kind: "json",
+      source: apiResponses,
+      requestLog: join(root, "api.log"),
+      redirectTarget: `http://127.0.0.1:${decoy.port}`,
+    });
+    try {
+      const install = run(
+        loopbackCommand(artifactA, api.port, pathToFileURL(rawRoot).href),
+        installRoot,
+        { GH_TOKEN: "ghp_scoped_token", GITHUB_TOKEN: "" },
+      );
+      expect(install.status).not.toBe(0);
+      expect(install.stderr).toContain(
+        "authenticated request redirected to another authority",
+      );
+      expect(loggedRequests(join(root, "decoy.log"))).toHaveLength(0);
+      expect(
+        existsSync(join(installRoot, "codex", "skills", "contribute-to-eliza")),
+      ).toBe(false);
+    } finally {
+      api.kill();
+      decoy.kill();
     }
   });
 });

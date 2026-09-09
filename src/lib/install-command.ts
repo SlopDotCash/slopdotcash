@@ -180,6 +180,27 @@ local_signature = 0x04034B50
 api_fixture = None
 
 
+def configured_github_token():
+    # Optional. Moves GitHub API verification from the anonymous core budget,
+    # which every process behind one public IP shares, to the caller's own
+    # authenticated budget. The token is sent only to the GitHub API authority,
+    # never to raw or artifact origins, and is never written to disk.
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(name)
+        if value is None:
+            continue
+        value = value.strip()
+        if not value:
+            continue
+        if not re.fullmatch(r"[\\x21-\\x7e]+", value):
+            raise ValueError(f"{name} contains characters that cannot be sent in an Authorization header")
+        return value
+    return None
+
+
+github_token = configured_github_token()
+
+
 def require_sha(value, context):
     if not isinstance(value, str) or not sha_pattern.fullmatch(value):
         raise ValueError(f"{context} is not a full lowercase commit SHA")
@@ -220,18 +241,59 @@ class RetryableDownloadError(Exception):
         self.reason = reason
 
 
-def fetch_bytes_once(url, limit, expected_origin):
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "slop-skill-installer/1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-        method="GET",
-    )
+class AuthorityRedirectHandler(urllib.request.HTTPRedirectHandler):
+    # urllib forwards every request header, including Authorization, to a
+    # redirect target on any host. Refuse to leave the issuing origin before
+    # the redirected request is built, so no header can cross authorities.
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        if origin_identity(newurl) != origin_identity(request.full_url):
+            raise ValueError("authenticated request redirected to another authority")
+        return super().redirect_request(request, fp, code, msg, headers, newurl)
+
+
+opener = urllib.request.build_opener(AuthorityRedirectHandler)
+
+
+def rate_limit_detail(error, authenticated):
+    if error.code not in (403, 429):
+        return None
+    remaining = error.headers.get("X-RateLimit-Remaining")
+    retry_after = error.headers.get("Retry-After")
+    if remaining != "0" and retry_after is None:
+        return None
+    token_sent = authenticated and github_token is not None
+    budget = "authenticated" if token_sent else "anonymous"
+    limit = error.headers.get("X-RateLimit-Limit")
+    if limit is not None and re.fullmatch(r"[0-9]+", limit):
+        parts = [f"GitHub API rate limit exhausted ({budget} budget, {limit} requests per hour)"]
+    else:
+        parts = [f"GitHub API rate limit exhausted ({budget} budget)"]
+    if not token_sent:
+        parts.append("the anonymous budget is shared by every process behind this public IP")
+    reset = error.headers.get("X-RateLimit-Reset")
+    if reset is not None and re.fullmatch(r"[0-9]+", reset):
+        reset_at = int(reset)
+        reset_text = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(reset_at))
+        wait_minutes = max(0, math.ceil((reset_at - time.time()) / 60))
+        parts.append(f"resets at {reset_text} (about {wait_minutes} min)")
+    elif retry_after is not None:
+        parts.append(f"retry after {retry_after}s")
+    if not token_sent:
+        parts.append("set GH_TOKEN or GITHUB_TOKEN to verify with your own authenticated budget")
+    return "; ".join(parts)
+
+
+def fetch_bytes_once(url, limit, expected_origin, authenticated=False):
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "slop-skill-installer/1",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if authenticated and github_token is not None:
+        headers["Authorization"] = f"Bearer {github_token}"
+    request = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=request_timeout_seconds) as response:
+        with opener.open(request, timeout=request_timeout_seconds) as response:
             final_url = response.geturl()
             expected = urllib.parse.urlsplit(expected_origin)
             final = urllib.parse.urlsplit(final_url)
@@ -254,6 +316,11 @@ def fetch_bytes_once(url, limit, expected_origin):
     except urllib.error.HTTPError as error:
         if error.code >= 500:
             raise RetryableDownloadError(f"HTTP {error.code}") from error
+        detail = rate_limit_detail(error, authenticated)
+        if detail is not None:
+            raise ValueError(
+                f"authenticated download failed: HTTP {error.code}: {url}: {detail}"
+            ) from error
         raise ValueError(f"authenticated download failed: HTTP {error.code}: {url}") from error
     except (TimeoutError, socket.timeout) as error:
         raise RetryableDownloadError(
@@ -276,13 +343,13 @@ def fetch_bytes_once(url, limit, expected_origin):
     return contents
 
 
-def fetch_bytes(url, limit, expected_origin):
+def fetch_bytes(url, limit, expected_origin, authenticated=False):
     # Integrity, authority, and size violations above raise ValueError and are
     # never retried; only per-attempt timeouts and HTTP 5xx repeat, bounded.
     last_reason = None
     for attempt in range(1, download_attempts + 1):
         try:
-            return fetch_bytes_once(url, limit, expected_origin)
+            return fetch_bytes_once(url, limit, expected_origin, authenticated)
         except RetryableDownloadError as error:
             last_reason = error.reason
             if attempt < download_attempts:
@@ -319,7 +386,10 @@ def api_json(path, query=()):
     url = f"{api_origin}{path}"
     if query_string:
         url = f"{url}?{query_string}"
-    return decode_json(fetch_bytes(url, max_api_bytes, api_origin), f"GitHub API response for {path}")
+    return decode_json(
+        fetch_bytes(url, max_api_bytes, api_origin, authenticated=True),
+        f"GitHub API response for {path}",
+    )
 
 
 def pull_records(revision):
