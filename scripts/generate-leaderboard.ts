@@ -52,6 +52,7 @@ import { verifyRunReceiptSignature } from "./run-receipt-crypto";
 export const SEARCH_SAFE_RESULT_LIMIT = 950;
 export const MINIMUM_SEARCH_SLICE_MS = 60_000;
 export const GRAPHQL_PAGE_SIZE = 100;
+export const MINIMUM_GRAPHQL_PAGE_SIZE = 1;
 export const DETAIL_BATCH_SIZE = 25;
 export const REVIEW_DETAIL_BATCH_SIZE = 100;
 export const MAX_TRANSIENT_ATTEMPTS = 3;
@@ -1320,6 +1321,29 @@ async function readGraphqlResponseBody(response: Response): Promise<string> {
   return body;
 }
 
+// A 502/503/504 on a paginated read is usually GitHub timing out while it
+// builds the requested page, not a transient edge fault: repeating the
+// identical page reliably repeats the timeout. Halving `pageSize` keeps the
+// opaque `after` cursor valid, because a smaller `first` returns fewer nodes
+// from the same position, so callers page more times over an unchanged result
+// set and every reported total stays comparable.
+function narrowedPageSize(
+  variables: GraphqlVariables,
+): GraphqlVariables | null {
+  const current = variables.pageSize;
+  if (typeof current !== "number" || !Number.isInteger(current)) return null;
+  if (current <= MINIMUM_GRAPHQL_PAGE_SIZE) return null;
+  return {
+    ...variables,
+    pageSize: Math.max(MINIMUM_GRAPHQL_PAGE_SIZE, Math.floor(current / 2)),
+  };
+}
+
+function describePageSize(variables: GraphqlVariables): string {
+  const current = variables.pageSize;
+  return typeof current === "number" ? `; page size ${current}` : "";
+}
+
 export class GitHubGraphqlClient implements GraphqlExecutor {
   readonly #token: string;
   readonly #fetch: FetchLike;
@@ -1414,6 +1438,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     let response: Response | null = null;
     let payload: unknown;
     let parsedResponse = false;
+    let activeVariables = variables;
     for (
       let attempt = 1;
       attempt <= MAX_GRAPHQL_REQUEST_ATTEMPTS;
@@ -1436,7 +1461,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
             "User-Agent": "eliza-computer-leaderboard",
             "X-GitHub-Api-Version": "2022-11-28",
           },
-          body: JSON.stringify({ query: document, variables }),
+          body: JSON.stringify({ query: document, variables: activeVariables }),
           signal: controller.signal,
         });
         responseBody = await readGraphqlResponseBody(response);
@@ -1461,6 +1486,10 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       }
       const retryableStatus = [502, 503, 504].includes(response.status);
       if (retryableStatus && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+        // error-policy:J2 Retrying the identical page cannot clear a
+        // server-side page-build timeout, so narrow the request before backing
+        // off. Requests without a page size retry unchanged.
+        activeVariables = narrowedPageSize(activeVariables) ?? activeVariables;
         await retryDelay(this.#retryBaseDelayMs * 2 ** (attempt - 1));
         continue;
       }
@@ -1493,7 +1522,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         throw new Error(
           retryableMalformedJson
             ? `GitHub GraphQL HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"})`
-            : `GitHub GraphQL HTTP ${response.status} returned a non-JSON response (${contentType ?? "unknown content type"})`,
+            : `GitHub GraphQL HTTP ${response.status} returned a non-JSON response (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`,
           { cause },
         );
       }
