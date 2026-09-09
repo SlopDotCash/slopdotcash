@@ -478,6 +478,9 @@ describe("contribution skill package", () => {
     expect(redirects).toContain("/projects/:project/funding / 200");
     expect(redirects).toContain("/projects/:project / 200");
     expect(redirects).toContain("/cycles/:project/:cycle / 200");
+    expect(redirects).toContain("/how-it-works / 200");
+    expect(redirects).toContain("/receipts / 200");
+    expect(redirects).toContain("/cycles / 200");
     expect(readFileSync(join(publicRoot, "404.html"), "utf8")).toContain(
       "The requested Slop page or artifact does not exist.",
     );
