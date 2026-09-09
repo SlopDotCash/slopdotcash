@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { signApiToken, verifyApiToken } from "../../../backend/trace/auth";
 import type {
   AttachTraceInput,
@@ -1460,6 +1460,107 @@ describe("private trace API", () => {
     expect(response.status).toBe(422);
     expect(store.bytes.size).toBe(0);
     expect(store.objects.size).toBe(0);
+  });
+
+  it("logs the cause of an unexpected failure without echoing it to the client", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const deps: TraceApiDependencies = {
+        ...dependencies(),
+        privateIntakeStatus: async () => {
+          throw new Error("intake probe exploded");
+        },
+      };
+      const response = await handleTraceApi(
+        new Request("https://api.slop.cash/api/v1/private-request-intake"),
+        deps,
+      );
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: "internal_error",
+        message: "Internal error",
+      });
+      expect(logged).toHaveBeenCalledTimes(1);
+      const [label, detail] = logged.mock.calls[0] as [
+        string,
+        Record<string, unknown>,
+      ];
+      expect(label).toBe("private trace API failure");
+      expect(detail).toMatchObject({
+        status: 500,
+        method: "GET",
+        route: "private-request-intake",
+        pathSegments: 1,
+        code: null,
+        name: "Error",
+        message: "intake probe exploded",
+      });
+      expect(typeof detail.stack).toBe("string");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("keeps upload capabilities out of the failure log", async () => {
+    const store = new MemoryPersistence();
+    const deps = dependencies(store);
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const created = await createRun(
+      deps,
+      contributor,
+      "create_log_run_key_0001",
+    );
+    const { serverRunId } = (await created.json()) as { serverRunId: string };
+    const bytes = new TextEncoder().encode(
+      "private trace that must not be logged",
+    );
+    const digest = await sha256Hex(bytes);
+    const intent = await handleTraceApi(
+      request(
+        `runs/${serverRunId}/trace-intents`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          sha256: digest,
+          sizeBytes: bytes.byteLength,
+          contentType: "text/plain",
+        }),
+        {
+          "content-type": "application/json",
+          "idempotency-key": "upload_log_key_0001",
+        },
+      ),
+      deps,
+    );
+    const { uploadUrl } = (await intent.json()) as { uploadUrl: string };
+    const capability = new URL(uploadUrl).pathname.split("/").at(-1) ?? "";
+    expect(capability.length).toBeGreaterThan(0);
+
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      store.failNextPut = true;
+      const response = await handleTraceApi(
+        new Request(uploadUrl, {
+          method: "PUT",
+          body: bytes.slice().buffer,
+          headers: {
+            "content-type": "text/plain",
+            digest: `sha-256=${digest}`,
+          },
+        }),
+        deps,
+      );
+      expect(response.status).toBe(500);
+      expect(logged).toHaveBeenCalledTimes(1);
+      const serialized = JSON.stringify(logged.mock.calls[0]);
+      expect(serialized).toContain('"route":"trace-uploads"');
+      expect(serialized).toContain('"pathSegments":2');
+      expect(serialized).toContain("transient R2 failure");
+      expect(serialized).not.toContain(capability);
+      expect(serialized).not.toContain("private trace that must not be logged");
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("does not burn an upload capability on validation or transient storage failure", async () => {
