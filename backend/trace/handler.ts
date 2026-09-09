@@ -69,6 +69,34 @@ function json(status: number, body: Record<string, unknown>): Response {
   });
 }
 
+const MAX_LOGGED_MESSAGE_CHARS = 1000;
+
+// Server-side detail for 5xx responses. The client still receives only
+// "Internal error"; this object is what an operator reads in Workers logs.
+// Path segments after the route family are dropped because one-time upload
+// capabilities travel in the path. Headers and bodies are never logged.
+function describeApiFailure(
+  request: Request,
+  parts: readonly string[],
+  status: number,
+  caught: unknown,
+): Record<string, unknown> {
+  const error = caught instanceof Error ? caught : null;
+  const code = (caught as Partial<ApiError> | null)?.code;
+  const message =
+    error?.message ?? (typeof caught === "string" ? caught : String(caught));
+  return {
+    status,
+    method: request.method,
+    route: parts[0] ?? null,
+    pathSegments: parts.length,
+    code: typeof code === "string" ? code : null,
+    name: error?.name ?? typeof caught,
+    message: message.slice(0, MAX_LOGGED_MESSAGE_CHARS),
+    stack: error?.stack ?? null,
+  };
+}
+
 async function readPrivateIntakeStatus(
   deps: TraceApiDependencies,
 ): Promise<Response> {
@@ -1063,7 +1091,12 @@ export async function handleTraceApi(
       Number(error.status) <= 599
         ? Number(error.status)
         : 500;
-    if (status >= 500) console.error("private trace API failure");
+    if (status >= 500) {
+      console.error(
+        "private trace API failure",
+        describeApiFailure(request, parts, status, caught),
+      );
+    }
     const response = json(status, {
       error:
         typeof error.code === "string" &&
