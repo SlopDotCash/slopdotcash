@@ -7,7 +7,8 @@ export { assertAdmissionReceipt } from "./payment-admission-receipt";
  * after reviewing a complete canonical checkpoint with an empty reservation
  * ledger, no activation policies, and this exact trusted workflow installed.
  * A value read from a candidate branch, environment or CLI is not a trust root. */
-export const PAYMENT_BOOTSTRAP_CHECKPOINT: string | null = null;
+export const PAYMENT_BOOTSTRAP_CHECKPOINT: string | null =
+  "614d983be2ae703ea4d5b4240191ce84be5d244a";
 export function requirePaymentBootstrapCheckpoint(): string {
   if (!PAYMENT_BOOTSTRAP_CHECKPOINT)
     throw new TypeError(

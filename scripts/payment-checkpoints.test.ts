@@ -444,7 +444,14 @@ describe("reviewed payment checkpoint migration", () => {
       /already exists/,
     );
   });
-  it("CLI requires a new artifact directory and does not configure a real pin", async () => {
+  it("CLI rejects invalid arguments and an unconfigured bootstrap", async () => {
+    vi.spyOn(admission, "requirePaymentBootstrapCheckpoint").mockImplementation(
+      () => {
+        throw new TypeError(
+          "Configure reviewed bootstrap before checkpoint migration",
+        );
+      },
+    );
     expect(() =>
       parsePaymentCheckpointArguments(["--revision", "a".repeat(40)]),
     ).toThrow(/Usage/);

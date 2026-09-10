@@ -24,7 +24,7 @@ const run = {
 describe("historical payment admission", () => {
   it("requires an explicitly reviewed bootstrap, not current protection alone", async () => {
     await expect(
-      verifyHistoricalPaymentAdmission("/unused", "a".repeat(40)),
+      verifyHistoricalPaymentAdmission("/unused", "a".repeat(40), null),
     ).rejects.toThrow(/bootstrap/);
   });
   it("accepts the exact base workflow with a separately bound receipt", () => {
