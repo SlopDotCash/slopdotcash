@@ -45,6 +45,9 @@ export interface ProjectContributor {
   rank: number;
   actor: GitHubActor;
   score: number;
+  scoreThirds: number;
+  simulatedMinor: string | null;
+  simulatedDisplayMinor: string | null;
   adjustedWeight: number;
   computeBonusBasisPoints: number;
   points: Record<ScoreCategory, number>;
@@ -592,7 +595,10 @@ export function createProjectView(
       rank: 0,
       actor,
       score,
-      adjustedWeight: Math.floor(weightedThirdBasisPoints / 3),
+      scoreThirds: rawThirds,
+      simulatedMinor: null,
+      simulatedDisplayMinor: null,
+      adjustedWeight: weightedThirdBasisPoints,
       computeBonusBasisPoints: computeBonus,
       points,
       acceptedOutcomeCount: events.length,
@@ -654,7 +660,21 @@ export function createProjectView(
       monthlyCapMinor / 10_000n,
       leaders,
     );
+    // A cap-based simulation is informational. Only the funding-backed
+    // projection may flow into a reward proposal.
+    const simulated = allocateIntegerTotal(
+      BigInt(project.reward.monthlyCapMinor),
+      leaders,
+    );
+    const simulatedCents = allocateIntegerTotal(
+      BigInt(project.reward.monthlyCapMinor) / 10_000n,
+      leaders,
+    );
     for (const entry of leaders) {
+      entry.simulatedMinor = (simulated.get(entry.actor.id) ?? 0n).toString();
+      entry.simulatedDisplayMinor = (
+        (simulatedCents.get(entry.actor.id) ?? 0n) * 10_000n
+      ).toString();
       entry.projectedMinor = (projected.get(entry.actor.id) ?? 0n).toString();
       entry.projectedDisplayMinor = (
         (projectedCents.get(entry.actor.id) ?? 0n) * 10_000n

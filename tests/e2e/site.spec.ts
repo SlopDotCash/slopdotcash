@@ -174,6 +174,11 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await page.reload({ waitUntil: "networkidle" });
   const snapshot = await loadSnapshot(request);
   await loadCycles(request);
+  await expect(
+    page.locator(
+      ".global-leader-grid .global-leader-row:not(.reviewer-leader-row)",
+    ),
+  ).toHaveCount(createProjectView(snapshot, "eliza").leaders.length);
 
   await expect(
     page.getByRole("heading", {
@@ -290,7 +295,9 @@ test("discovers both reward models and a score-ranked global ledger", async ({
     .locator(".leaderboard-methodology")
     .getByText("How it works")
     .click();
-  await expect(page.getByText(/Payouts are off during beta/u)).toBeVisible();
+  await expect(
+    page.getByText(/Funding-backed proposals use verified committed funds/u),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "View more" })).toHaveAttribute(
     "href",
     "/projects/eliza",
@@ -367,6 +374,7 @@ test("discovers both reward models and a score-ranked global ledger", async ({
 test("starts Eliza with one prompt and no separate payout form", async ({
   context,
   page,
+  request,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
@@ -515,9 +523,16 @@ test("starts Eliza with one prompt and no separate payout form", async ({
         );
       }, 0),
     );
-  // The project cap is policy, not funded principal. With no reviewed
-  // commitment, the leaderboard must not turn that cap into projected money.
-  expect(displayedProjectionCents).toBe(0);
+  const view = createProjectView(await loadSnapshot(request), "eliza");
+  expect(displayedProjectionCents).toBe(
+    view.leaders.length
+      ? Number(BigInt(view.project.reward.monthlyCapMinor) / 10_000n)
+      : 0,
+  );
+  expect(view.leaders.every((leader) => leader.projectedMinor === "0")).toBe(
+    true,
+  );
+  await expect(page.getByText(/Shares simulate the/u)).toBeVisible();
   await expect(page.getByText("Live from GitHub")).toHaveCount(0);
   await expect(page.getByText("How credit survives review")).toHaveCount(0);
 });

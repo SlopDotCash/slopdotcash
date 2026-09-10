@@ -28,6 +28,7 @@ import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import { createProjectView } from "../src/lib/project-view";
 import { findProject, type ProjectId } from "../src/lib/projects.mjs";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
@@ -259,6 +260,12 @@ async function buildCycle(
     throw new Error("required cycle files vanished");
   assertLeaderboardSnapshot(snapshotFile.value);
   const snapshot = snapshotFile.value;
+  const exactScores = new Map(
+    createProjectView(snapshot, projectId, cycleId).leaders.map((leader) => [
+      leader.actor.id,
+      leader.scoreThirds,
+    ]),
+  );
   const rawProposal = proposalFile.value as { kind?: unknown };
   const files = new Map(
     [...loaded.entries()]
@@ -322,6 +329,7 @@ async function buildCycle(
         contributors: proposal.entries.map((entry) => ({
           actor: entry.actor,
           score: entry.score,
+          scoreThirds: exactScores.get(entry.actor.id) ?? 0,
           state: "external-share",
           suggestedMinor: "0",
           approvedMinor: "0",
@@ -512,6 +520,7 @@ async function buildCycle(
         return {
           actor: entry.actor,
           score: entry.score,
+          scoreThirds: exactScores.get(entry.actor.id) ?? 0,
           state:
             paid?.state === "paid" ? "paid" : (approved?.state ?? entry.state),
           suggestedMinor: entry.suggestedMinor,

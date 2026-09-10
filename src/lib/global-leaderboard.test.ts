@@ -101,4 +101,26 @@ describe("createGlobalLeaders", () => {
     expect(leader.projects).toBe(2);
     expect(leader.cycles).toBe(3);
   });
+  it("retains an archived contributor whose fractional score was stored as zero", () => {
+    const { snapshot, views } = projectViews();
+    const cycle = archivedElizaCycle("2026-06", 0);
+    cycle.contributors[0].scoreThirds = 1;
+    cycle.contributors[0].actor = {
+      id: "U_archived_fraction",
+      login: "fraction-only",
+    };
+    const index = cycleIndexFixture();
+    index.cycles = [cycle];
+    expect(
+      createGlobalLeaders(snapshot, views, index).find(
+        (leader) => leader.actor.id === "U_archived_fraction",
+      ),
+    ).toMatchObject({
+      actor: { login: "fraction-only" },
+      projects: 1,
+      cycles: 1,
+      paidMinor: 0n,
+      score: 1 / 3,
+    });
+  });
 });

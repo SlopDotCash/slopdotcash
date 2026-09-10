@@ -582,8 +582,11 @@ describe("discovery", () => {
       screen.getByText("How it works", { selector: "summary" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Payouts are off during beta/u),
+      screen.getByText(
+        /Funding-backed proposals use verified committed funds/u,
+      ),
     ).toBeInTheDocument();
+    expect(within(leaderboard).getByText("$5,000")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View more" })).toHaveAttribute(
       "href",
       "/projects/eliza",
