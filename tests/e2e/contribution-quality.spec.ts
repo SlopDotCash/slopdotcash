@@ -83,7 +83,20 @@ test("quality review groups duplicate accepted work and carries an exact source-
     ).violations,
   ).toEqual([]);
   await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
+    // Resize text independently; root CSS zoom at a 320px viewport creates
+    // a 160 CSS-pixel layout, below the site's 320px reflow contract.
+    const sizes = [...document.querySelectorAll<HTMLElement>("body *")].map(
+      (element) => ({
+        element,
+        font: getComputedStyle(element).fontSize,
+        line: getComputedStyle(element).lineHeight,
+      }),
+    );
+    for (const { element, font, line } of sizes) {
+      element.style.fontSize = `${Number.parseFloat(font) * 2}px`;
+      if (line !== "normal")
+        element.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
+    }
   });
   expect(
     await page.evaluate(
