@@ -125,8 +125,9 @@ checkpoint descriptor, snapshot or project activation is supplied in this change
    conflicting bytes cannot be overwritten. No new intent is generated on retry.
 
 Distinct monthly instruments keep truthful later replacement timestamps. Window
-overlap remains forbidden within the same exact month, and monthly/unscoped
-histories cannot mix. A later fresh month needs its own distinct reviewed policy
+overlap remains forbidden within the same exact month. Retired unscoped
+instruments may remain as historical evidence only when their active intervals
+do not overlap monthly instruments. Their balances never back a current monthly claim. A later fresh month needs its own distinct reviewed policy
 and unused instrument; the prior cycle policy cannot be rewritten to reprice it.
 Historical ledger and issued plan records remain immutable. Switching the current
 policy does not authorize releasing the older instrument again.

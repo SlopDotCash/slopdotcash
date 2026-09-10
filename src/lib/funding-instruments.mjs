@@ -383,8 +383,8 @@ function instrumentIdentity(instrument) {
  * reader bounds input bytes; a lifetime entry cap would eventually require
  * deleting append-only monthly evidence. Replaced
  * instruments stay listed so historical commitment records remain
- * independently verifiable, while windows for the same network and asset may
- * never overlap.
+ * independently verifiable. Windows cannot overlap within one monthly bucket
+ * or between monthly instruments and retired unscoped history.
  */
 export function assertFundingCommitments(
   value,
@@ -421,17 +421,27 @@ export function assertFundingCommitments(
   });
   for (const instrument of instruments) {
     if (instrument.monthlyCommitment) continue;
-    if (
-      instruments.some(
-        (other) =>
-          other.network === instrument.network &&
-          other.asset === instrument.asset &&
-          other.monthlyCommitment,
+    for (const monthly of instruments) {
+      if (
+        monthly.network !== instrument.network ||
+        monthly.asset !== instrument.asset ||
+        !monthly.monthlyCommitment
       )
-    )
-      throw new TypeError(
-        `${field} cannot mix monthly and unscoped instrument histories`,
-      );
+        continue;
+      // Preserve retired legacy evidence without allowing its active interval
+      // to overlap any monthly instrument or back a current monthly claim.
+      if (
+        instrument.replacedAt === null ||
+        !(
+          instrument.replacedAt <= monthly.effectiveAt ||
+          (monthly.replacedAt !== null &&
+            monthly.replacedAt <= instrument.effectiveAt)
+        )
+      )
+        throw new TypeError(
+          `${field} require retired nonoverlapping unscoped history alongside monthly instruments`,
+        );
+    }
   }
   for (const history of histories.values()) {
     history.sort((left, right) =>
