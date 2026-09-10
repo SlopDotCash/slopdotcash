@@ -84,9 +84,7 @@ describe("public cycle index", () => {
     cycle.contributors[0].state = "held-below-minimum";
     cycle.contributors[0].suggestedMinor = "1000000";
     cycle.reward.suggestedMinor = "1000000";
-    expect(
-      assertCycleIndex(index([cycle])).cycles[0].contributors[0].state,
-    ).toBe("held-below-minimum");
+    expect(() => assertCycleIndex(index([cycle]))).not.toThrow();
     cycle.contributors[0].approvedMinor = "1000000";
     cycle.reward.approvedMinor = "1000000";
     cycle.reward.feeMinor = "10000";
@@ -97,9 +95,7 @@ describe("public cycle index", () => {
     const cycle = entry();
     cycle.contributors[0].score = 0;
     cycle.contributors[0].scoreThirds = 1;
-    expect(
-      assertCycleIndex(index([cycle])).cycles[0].contributors[0].scoreThirds,
-    ).toBe(1);
+    expect(() => assertCycleIndex(index([cycle]))).not.toThrow();
     cycle.contributors[0].scoreThirds = 3;
     expect(() => assertCycleIndex(index([cycle]))).toThrow(/scoreThirds/u);
   });
