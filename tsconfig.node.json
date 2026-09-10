@@ -15,6 +15,7 @@
     "src/lib/squads-execution-registry.ts",
     "src/lib/allocation-funding.ts",
     "src/lib/funding-review-data.ts",
+    "src/lib/contribution-quality.ts",
     "src/lib/browser-json.ts",
     "vite.config.ts",
     "vitest.config.ts",

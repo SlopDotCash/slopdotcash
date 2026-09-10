@@ -925,6 +925,7 @@ run("bun", [
 ]);
 run("bun", [join(repositoryRoot, "scripts", "sync-funding-index.ts")]);
 run("bun", [join(repositoryRoot, "scripts", "prepare-funding-review.ts")]);
+run("bun", [join(repositoryRoot, "scripts", "sync-contribution-quality.ts")]);
 
 console.log(
   `[Slop] prepared ${archiveName} (${archiveDigest.slice(0, 12)}) from ${commit.slice(0, 12)}`,
