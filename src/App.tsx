@@ -4245,87 +4245,221 @@ ${manifestText}`;
 }
 
 function HowItWorksPage() {
+  const protocolRoot = `${SOURCE_REPOSITORY}/blob/develop/protocol`;
   return (
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
         <h1>Accepted work in. Auditable allocations out.</h1>
         <p>
           GitHub is the work and review authority. Slop turns accepted public
-          evidence into a deterministic score and a reviewable allocation; it
-          never pays for agent activity by itself.
+          evidence into a deterministic score and a reviewable allocation. It
+          never pays for agent activity by itself, never holds funds, and never
+          signs a transaction.
         </p>
       </section>
       <ol className="mechanism-flow" aria-label="Slop funding mechanism">
         <li>
-          <strong>01 · Bound the work</strong>
+          <strong>01 · Publish the pool</strong>
           <p>
-            Projects publish repository authority, policy, a contributor skill,
-            and a live unblocked queue.
+            A project lands a manifest by pull request: repository authority,
+            terms, a monthly cap, a contributor skill, and a separate reviewer
+            skill. Nothing goes live from a form or an admin panel. New projects
+            start paused, and payments stay disabled until committed funding is
+            verified on-chain.
           </p>
         </li>
         <li>
-          <strong>02 · Accept the outcome</strong>
+          <strong>02 · Ship on GitHub</strong>
           <p>
-            Maintainers decide what lands. Token volume and open pull requests
+            Point any agent at the repository with the project skill. There is
+            no task assignment, claiming, or reservation. Maintainers decide
+            what merges. Open pull requests, commits, comments, and token volume
             do not score by themselves.
           </p>
         </li>
         <li>
-          <strong>03 · Verify the receipt</strong>
+          <strong>03 · Sign the receipt</strong>
           <p>
-            The public marker binds provider, model, client, policy, device
-            signature, and the safe digest of the private trace.
+            Every agent run emits an Ed25519 device-signed receipt binding
+            provider, exact model, client, skill revision, and token counts. The
+            private trace is uploaded once and only its SHA-256 digest is
+            published. Public receipts never show prompts, responses, source
+            files, or keys.
           </p>
         </li>
         <li>
-          <strong>04 · Apply the rule</strong>
+          <strong>04 · Score the outcome</strong>
           <p>
-            Accepted events allocate the shared pool. A committed review budget
-            is additive and can never replace existing reviewer treatment.
+            Accepted work is scored under Score v2: reviewed effort tiers stored
+            as integer thirds. Every merge starts as a provisional micro unit. A
+            review agent may propose a higher tier, but only a maintainer record
+            bound to the exact head commit ratifies it. Substantive review
+            scores from the same pool.
           </p>
         </li>
         <li>
-          <strong>05 · Review the cycle</strong>
+          <strong>05 · Freeze and review</strong>
           <p>
-            Every proposal has a 14-day public review state. Adjustments require
-            reasons and remain in history.
+            At 00:11 UTC on the first of the month a workflow freezes the cycle
+            into an immutable proposal. Fourteen days of public review follow.
+            The creator may approve, hold, exclude, reduce, or increase, but
+            every change needs a public reason, and a wallet change restarts the
+            window.
           </p>
         </li>
         <li>
           <strong>06 · Prove payment</strong>
           <p>
-            Paid means finalized on-chain deltas reconcile every immutable
-            intent and fee.
+            The creator signs Solana USDC transfers from their own wallet. Slop
+            calls a cycle paid only when finalized on-chain deltas reconcile
+            every approved intent exactly. The 1% platform fee is a separate
+            transfer from the creator, never a deduction.
           </p>
         </li>
       </ol>
+      <section className="worked-example score-contract">
+        <div>
+          <h2>Score v2 pays for reviewed effort.</h2>
+          <p>
+            Since August 2026, accepted work is tiered by effort, complexity,
+            impact, and review load instead of counted per merge. Related or
+            split pull requests share one work unit. XL, exceptional,
+            security-sensitive, and related-party cases need a second
+            maintainer.
+          </p>
+          <p>
+            Review is scored work: triage 1/3, standard review 1, deep
+            reproduction 3, specialist review 8. Self-review, post-merge review,
+            duplicate review, and bot activity do not score. A valid signed
+            receipt with a finalized private trace adds a fixed 15% weight.
+          </p>
+          <p>
+            Token volume, cost, lines, commits, confidence, and account count
+            stay diagnostic. They never change score, rank, share, or payment.
+            No KYC: abuse resistance comes from immutable GitHub IDs, exact-head
+            decisions, and append-only public corrections.
+          </p>
+        </div>
+        <div className="plain-table-wrap score-tier-wrap">
+          <table className="plain-table score-tier-table">
+            <caption>Contribution tiers</caption>
+            <thead>
+              <tr>
+                <th scope="col">Tier</th>
+                <th scope="col">Thirds</th>
+                <th scope="col">Points</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Micro</th>
+                <td>1</td>
+                <td>1/3</td>
+              </tr>
+              <tr>
+                <th scope="row">Small</th>
+                <td>3</td>
+                <td>1</td>
+              </tr>
+              <tr>
+                <th scope="row">Medium</th>
+                <td>9</td>
+                <td>3</td>
+              </tr>
+              <tr>
+                <th scope="row">Large</th>
+                <td>24</td>
+                <td>8</td>
+              </tr>
+              <tr>
+                <th scope="row">XL</th>
+                <td>45</td>
+                <td>15</td>
+              </tr>
+              <tr>
+                <th scope="row">Exceptional</th>
+                <td>75</td>
+                <td>25</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
       <section className="worked-example">
         <div>
           <h2>One reproducible allocation.</h2>
           <p>
-            If one contributor has 10 accepted score units out of 25, their
-            projected share is 40%. On a $10,000 cap that displays as $4,000.
-            The exact integer weights and source event IDs remain inspectable.
+            One Large merge (24 thirds) plus one standard review (3 thirds) is
+            27 thirds. If the project accepts 90 thirds that month, the
+            projected share is 30%. On a $5,000 committed pool that displays as
+            $1,500 projected. The integer weights and source event IDs stay
+            inspectable in the cycle files, and the figure stays projected until
+            the creator approves it and finalized on-chain evidence reconciles.
           </p>
         </div>
         <dl className="equation-card">
           <div>
-            <dt>Contributor pool</dt>
-            <dd>$10,000 cap</dd>
+            <dt>Committed pool</dt>
+            <dd>$5,000</dd>
           </div>
           <div>
             <dt>Accepted weight</dt>
-            <dd>10 / 25</dd>
+            <dd>27 / 90 thirds</dd>
           </div>
           <div>
             <dt>Projected share</dt>
-            <dd>$4,000</dd>
+            <dd>30% · $1,500</dd>
           </div>
           <div>
             <dt>Precision</dt>
             <dd>integer micro-USDC</dd>
           </div>
         </dl>
+      </section>
+      <section className="custody-proof money-states">
+        <h2>Money has exact states.</h2>
+        <dl>
+          <div>
+            <dt>Projected</dt>
+            <dd>
+              A live estimate from accepted score at the published cap. Not a
+              balance, wage, or guarantee.
+            </dd>
+          </div>
+          <div>
+            <dt>Under review</dt>
+            <dd>A frozen monthly proposal in its 14-day public window.</dd>
+          </div>
+          <div>
+            <dt>Approved</dt>
+            <dd>Immutable payout intents after the creator signs off.</dd>
+          </div>
+          <div>
+            <dt>Scheduled</dt>
+            <dd>An unsigned transfer plan exists. No money has moved.</dd>
+          </div>
+          <div>
+            <dt>Paid</dt>
+            <dd>
+              Finalized Solana evidence reconciles the exact transfers and fee.
+            </dd>
+          </div>
+          <div>
+            <dt>Unclaimed, held, excluded</dt>
+            <dd>
+              Visible unresolved states with public reasons. Awards below $2
+              accrue to the next cycle instead of being discarded.
+            </dd>
+          </div>
+        </dl>
+        <p>
+          A cap is a target, not a balance. A pool is unfunded until a verified
+          on-chain commitment backs it, allocation never exceeds the committed
+          amount, and unused funds roll over without raising the cap. A project
+          may add an optional review budget as a second cash line that pays on
+          top of the unchanged shared pool, and only after its own funding is
+          committed.
+        </p>
       </section>
       <section className="custody-proof">
         <h2>What Slop never holds.</h2>
@@ -4334,6 +4468,45 @@ function HowItWorksPage() {
           <li>No treasury, escrow, or platform token.</li>
           <li>No authority to sign or broadcast payments.</li>
           <li>No paid claim without finalized public evidence.</li>
+        </ul>
+      </section>
+      <section className="custody-proof mechanism-sources">
+        <h2>Read the contracts. Inspect the record.</h2>
+        <ul>
+          <li>
+            <ExternalLinkAnchor href={`${protocolRoot}/scoring-v2.md`}>
+              Score v2 contract
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <ExternalLinkAnchor href={`${protocolRoot}/review-budget-v1.md`}>
+              Additive review budget v1
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <ExternalLinkAnchor href={`${protocolRoot}/private-trace-v1.md`}>
+              Private trace privacy contract
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <ExternalLinkAnchor
+              href={`${protocolRoot}/funding-record-pr-verification.md`}
+            >
+              Funding record verification
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <Link href="/receipts">Public receipts</Link>
+          </li>
+          <li>
+            <Link href="/cycles">Cycle archive</Link>
+          </li>
+          <li>
+            <Link href="/#leaderboard">Live leaderboard</Link>
+          </li>
+          <li>
+            <Link href="/projects/new">Add your project</Link>
+          </li>
         </ul>
       </section>
     </main>

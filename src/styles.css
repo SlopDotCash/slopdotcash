@@ -302,6 +302,63 @@ textarea:focus-visible {
   padding-left: 20px;
 }
 
+.score-contract p + p {
+  margin-top: 14px;
+}
+
+.score-tier-wrap {
+  align-self: start;
+  border-block: 0;
+}
+
+.score-tier-table {
+  min-width: 0;
+}
+
+.score-tier-table caption {
+  padding-bottom: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.score-tier-table td {
+  font-family: var(--brand-font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.money-states dl {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px 40px;
+  margin: 0;
+}
+
+.money-states dt {
+  font-weight: 700;
+}
+
+.money-states dd {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.money-states > p {
+  max-width: 70ch;
+  margin: 28px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.mechanism-sources a {
+  border-bottom: 1px solid var(--ink);
+  font-weight: 700;
+}
+
 .receipt-grid,
 .cycle-archive-list {
   display: grid;
@@ -399,7 +456,8 @@ textarea:focus-visible {
   .worked-example,
   .receipt-grid,
   .cycle-archive-list,
-  .custody-proof ul {
+  .custody-proof ul,
+  .money-states dl {
     grid-template-columns: 1fr;
   }
 
