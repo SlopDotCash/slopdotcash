@@ -9,6 +9,23 @@ const address = "11111111111111111111111111111111";
 const sha = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+test("serves wallet registration on direct navigation and reload", async ({
+  page,
+}) => {
+  for (const path of ["/wallet", "/wallet/"]) {
+    const response = await page.goto(path, { waitUntil: "networkidle" });
+    expect(response?.status()).toBe(200);
+    await expect(
+      page.getByRole("heading", { name: "Register your wallet" }),
+    ).toBeVisible();
+    const reloaded = await page.reload({ waitUntil: "networkidle" });
+    expect(reloaded?.status()).toBe(200);
+    await expect(
+      page.getByRole("button", { name: "Continue with GitHub" }),
+    ).toBeVisible();
+  }
+});
+
 function observe(page: Page) {
   const errors: string[] = [];
   const network: { path: string; status: number }[] = [];

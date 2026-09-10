@@ -19,6 +19,7 @@ const artifactContract =
 const pagesContracts = [
   artifactContract,
   "renders contributor and cycle records from validated public data",
+  "serves wallet registration on direct navigation and reload",
 ].join("|");
 
 function run(command, args, env = childEnvironment()) {
