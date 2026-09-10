@@ -1,3 +1,4 @@
+import type { VerificationAdmissionInput } from "./verification-admission";
 export const TRACE_CONTENT_TYPES = [
   "text/plain",
   "application/x-ndjson",
@@ -145,6 +146,9 @@ export type PersistenceResult<T> =
   | { status: "conflict" };
 
 export interface TracePersistence {
+  consumeVerificationAdmission?(
+    input: VerificationAdmissionInput,
+  ): Promise<{ allowed: boolean; retryAfterSeconds: number }>;
   createRun(input: CreateRunInput): Promise<PersistenceResult<TraceRun>>;
   getRun(runId: string): Promise<TraceRun | null>;
   attachTrace(input: AttachTraceInput): Promise<PersistenceResult<TraceRun>>;

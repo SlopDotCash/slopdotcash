@@ -764,6 +764,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
     "connect-src",
     "'self'",
     "https://api.slop.cash",
+    "https://identity.slop.cash",
   ]);
 
   const privateApiResponse = await request.post("/api/v1/runs", {

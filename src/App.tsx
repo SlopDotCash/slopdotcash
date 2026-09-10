@@ -16,6 +16,12 @@ import {
   X,
 } from "lucide-react";
 import QRCode from "qrcode";
+import { FundingReview } from "./FundingReview";
+import { readBoundedJson } from "./lib/browser-json";
+import { WalletRegistration } from "./WalletRegistration";
+
+export { readBoundedJson } from "./lib/browser-json";
+
 import {
   type ReactNode,
   useCallback,
@@ -181,63 +187,10 @@ type DataState =
       cycleIndex: CycleIndex;
     };
 
-export async function readBoundedJson(
-  response: Response,
-  maxBytes: number,
-  label: string,
-): Promise<unknown> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null) {
-    if (!/^[0-9]+$/u.test(declaredLength)) {
-      throw new Error(`${label} returned an invalid content length`);
-    }
-    if (BigInt(declaredLength) > BigInt(maxBytes)) {
-      throw new Error(`${label} exceeded the ${maxBytes}-byte limit`);
-    }
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error(`${label} returned no readable body`);
-  }
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  let byteLength = 0;
-  let source = "";
-  let complete = false;
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      byteLength += chunk.value.byteLength;
-      if (byteLength > maxBytes) {
-        throw new Error(`${label} exceeded the ${maxBytes}-byte limit`);
-      }
-      source += decoder.decode(chunk.value, { stream: true });
-    }
-    source += decoder.decode();
-    complete = true;
-  } finally {
-    if (!complete) {
-      try {
-        await reader.cancel();
-      } catch {
-        // The original read/decoding failure is the actionable error.
-      }
-    }
-    reader.releaseLock();
-  }
-
-  try {
-    return JSON.parse(source) as unknown;
-  } catch (error: unknown) {
-    // error-policy:J1 Invalid public JSON becomes an explicit unavailable state.
-    throw new Error(`${label} returned invalid JSON`, { cause: error });
-  }
-}
-
 interface Route {
   kind:
     | "cycle"
+    | "wallet"
     | "funding-project"
     | "home"
     | "how-it-works"
@@ -261,6 +214,8 @@ function internalRoute(pathname: string): Route {
     return { kind: "unknown" };
   }
   if (segments.length === 0) return { kind: "home" };
+  if (segments.length === 1 && segments[0] === "wallet")
+    return { kind: "wallet" };
   if (segments.length === 1 && segments[0] === "how-it-works") {
     return { kind: "how-it-works" };
   }
@@ -1623,7 +1578,10 @@ function ProjectPaymentHistory({
     <section className="section payment-history">
       <div className="simple-heading">
         <h2>Payment history</h2>
-        <Link href={`/projects/${project.slug}/manage`}>Draft an update</Link>
+        <Link href={`/projects/${project.slug}/funding`}>Manage payouts</Link>
+        <Link href={`/projects/${project.slug}/manage`}>
+          Draft a project update
+        </Link>
       </div>
       <p className="money-summary">
         <strong>{formatMicroUsdc(paid.toString())} paid</strong>
@@ -2067,7 +2025,13 @@ export function SignerReports({
   );
 }
 
-function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
+function ProjectFundingPage({
+  project,
+  state,
+}: {
+  project: ProjectDefinition;
+  state: DataState;
+}) {
   const funding = useFundingIndex();
   const records =
     funding.status === "ready"
@@ -2090,6 +2054,14 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
           <p>{project.funding.disclosure}</p>
         </div>
       </section>
+      <FundingReview
+        key={project.id}
+        project={project}
+        sourceRepositoryUrl={SOURCE_REPOSITORY}
+        cycleIndex={state.status === "ready" ? state.cycleIndex : null}
+        funding={funding.status === "ready" ? funding.index : null}
+      />
+      <h2>Funding records</h2>
       <p>
         Verified and self-reported amounts are always shown separately. A GitHub
         login or submitted transaction ID does not prove wallet ownership or
@@ -2526,6 +2498,7 @@ function ProfilePage({
             ) : (
               <span>No current payout wallet registered</span>
             )}
+            <Link href="/wallet">Register or update your wallet</Link>
           </div>
         </div>
       </section>
@@ -4718,10 +4691,16 @@ export function App() {
     ) : (
       <NotFound title="Project not found" />
     );
+  } else if (route.kind === "wallet") {
+    content = (
+      <main className="shell route-main">
+        <WalletRegistration />
+      </main>
+    );
   } else if (route.kind === "funding-project") {
     const project = findProject(route.projectId ?? "");
     content = project ? (
-      <ProjectFundingPage project={project} />
+      <ProjectFundingPage project={project} state={state} />
     ) : (
       <NotFound title="Project not found" />
     );

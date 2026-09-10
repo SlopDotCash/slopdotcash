@@ -3177,3 +3177,177 @@ small {
     transition-duration: 0.01ms;
   }
 }
+
+/* The maintainer flow shares the public funding route and its evidence. */
+.funding-workbench {
+  margin-block: 2rem 4rem;
+  border-block: 1px solid var(--border, #777);
+  padding-block: 2rem;
+}
+.payout-steps {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-block: 1.5rem;
+}
+.payout-steps button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.payout-steps button[aria-current="step"] {
+  background: #d4ff62;
+  color: #17210a;
+}
+.payout-steps button span {
+  font-weight: 700;
+}
+.payout-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-block: 1.5rem;
+}
+.payout-summary p {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+}
+.payout-summary strong {
+  font-size: 1.3rem;
+}
+.review-cycle-selector,
+.funding-workbench label {
+  display: grid;
+  gap: 0.4rem;
+  margin-block: 0.6rem;
+}
+.funding-workbench input,
+.funding-workbench select,
+.funding-workbench textarea {
+  font: inherit;
+  padding: 0.6rem;
+  max-width: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid #888;
+}
+.funding-workbench select {
+  min-height: 44px;
+}
+.funding-workbench td label {
+  font-size: 0.8rem;
+}
+.funding-workbench td input,
+.funding-workbench textarea {
+  width: 180px;
+}
+.funding-workbench textarea {
+  min-height: 70px;
+  display: block;
+  margin-top: 0.5rem;
+}
+.funding-workbench td small {
+  display: block;
+  margin-block: 0.4rem;
+}
+.wallet-address {
+  display: block;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+  max-width: 230px;
+  margin-top: 0.4rem;
+}
+.review-filters,
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-block: 1rem;
+}
+.review-filters label {
+  min-width: 0;
+  max-width: 100%;
+}
+.funding-workbench input {
+  min-width: 0;
+}
+.review-filters label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+}
+.funding-workbench button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.funding-workbench details {
+  margin-block: 1rem;
+}
+.funding-workbench details code {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 650px) {
+  .payout-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .payout-steps {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .review-cycle-selector select {
+    width: 100%;
+  }
+}
+.funding-workbench .simple-heading h2 {
+  font-size: 2rem;
+  line-height: 1.2;
+  margin-bottom: 0.75rem;
+}
+.funding-workbench .plain-table-wrap {
+  position: relative;
+  max-height: 65vh;
+  overflow: auto;
+}
+.funding-workbench .plain-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  z-index: 1;
+}
+.funding-review {
+  max-width: 850px;
+}
+.funding-review p {
+  margin-block: 1rem;
+}
+.funding-review form {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 640px;
+  margin-block: 1.5rem;
+}
+.funding-review input {
+  padding: 0.8rem;
+  font: inherit;
+  min-width: 0;
+  width: 100%;
+}
+.funding-review button,
+.funding-workbench .review-actions button {
+  min-height: 44px;
+  padding: 0.65rem 1rem;
+  font: inherit;
+  cursor: pointer;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
+}
+.funding-review code {
+  overflow-wrap: anywhere;
+}

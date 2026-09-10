@@ -10,7 +10,12 @@
     "types": ["node", "bun-types"]
   },
   "include": [
+    "src/lib/squads-batch-message.ts",
+    "src/lib/squads-execution-registry.generated.ts",
+    "src/lib/squads-execution-registry.ts",
     "src/lib/allocation-funding.ts",
+    "src/lib/funding-review-data.ts",
+    "src/lib/browser-json.ts",
     "vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
@@ -23,10 +28,15 @@
     "src/lib/evaluator-awards.ts",
     "src/lib/evm-funding.ts",
     "src/lib/funding.ts",
+    "src/lib/funding-review-submission.ts",
     "src/lib/signer-capability.ts",
     "src/lib/funding-commitment.ts",
     "src/lib/sablier-funding.ts",
     "src/lib/squads-funding.ts",
+    "src/lib/squads-execution.ts",
+    "src/lib/squads-execution-verifier.ts",
+    "src/lib/squads-batch-message.ts",
+    "src/lib/squads-batch-handoff.ts",
     "src/lib/leaderboard.ts",
     "src/lib/model-identity.ts",
     "src/lib/install-command.ts",
@@ -39,9 +49,12 @@
     "src/lib/score-records.ts",
     "src/lib/run-receipts.ts",
     "src/lib/settlement-plan.ts",
+    "src/lib/payment-reservations.ts",
+    "src/lib/browser-json.ts",
     "src/lib/solana-settlement.ts",
     "src/lib/wallets.ts",
     "tests/fixtures.ts",
+    "tests/squads-execution-context.ts",
     "tests/install-authority-fixture.ts"
   ]
 }

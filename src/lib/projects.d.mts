@@ -7,6 +7,8 @@ export type ProjectStatus = "active" | "paused";
 export type RewardKind = "monthly-pool" | "external-prize-share";
 
 export interface ProjectFundingPolicy {
+  /** Exact-cycle opt-in; release additionally requires protected reservation and live readiness. */
+  readonly freshCyclePaymentPolicy?: import("./funding-readiness").FreshCyclePaymentPolicy;
   readonly mode: "direct-noncustodial";
   readonly disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.";
   readonly recordsPath: string;
@@ -227,4 +229,5 @@ export declare function findProjectByRepositoryId(
 
 export declare function assertProjectPaymentsEnabled(
   projectId: ProjectId,
+  cycleId?: string,
 ): ProjectDefinition;

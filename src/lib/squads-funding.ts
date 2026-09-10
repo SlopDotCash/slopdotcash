@@ -166,6 +166,30 @@ export async function deriveSquadsVaultAddress(
   }
   throw new TypeError("Squads vault PDA could not be derived");
 }
+/** Canonical classic-token USDC ATA; vault PDAs need not be on curve. */
+export async function deriveVaultUsdcTokenAccount(
+  vault: string,
+): Promise<string> {
+  const seeds = [
+    decodeBase58(vault),
+    decodeBase58(SPL_TOKEN_PROGRAM_ID),
+    decodeBase58(SOLANA_MAINNET_USDC_MINT),
+  ];
+  const program = decodeBase58("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+  for (let bump = 255; bump >= 0; bump -= 1) {
+    const digest = new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        concat([...seeds, new Uint8Array([bump]), program, PDA_MARKER]),
+      ),
+    );
+    if (!isEd25519Point(digest)) return encodeBase58(digest);
+  }
+  throw new TypeError(
+    "Vault USDC associated token account could not be derived",
+  );
+}
+
 function decodeBase64(value: unknown): Uint8Array {
   if (typeof value !== "string" || value.length > 4096)
     throw new TypeError("Squads multisig account data is invalid");

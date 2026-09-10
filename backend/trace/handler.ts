@@ -10,6 +10,8 @@ import {
   type TraceUploadIntent,
   type WalletClaim,
 } from "./contracts";
+import { readExecutionVerification } from "./execution-verification";
+import { readFundingVerification } from "./funding-verification";
 import {
   isExactClientIdentifier,
   isExactClientVersion,
@@ -27,6 +29,7 @@ import {
   validRepository,
   validSha256,
 } from "./validation";
+import { applyVerificationAdmission } from "./verification-admission";
 
 export type TraceApiDependencies = {
   persistence: TracePersistence;
@@ -189,23 +192,27 @@ function pathParts(request: Request): string[] {
   return path.slice("/api/v1/".length).split("/").filter(Boolean);
 }
 
-const PUBLIC_WALLET_BROWSER_ORIGINS = new Set([
+const PUBLIC_BROWSER_ORIGINS = new Set([
   "https://slop.cash",
   "https://www.slop.cash",
   "https://slop.tech",
   "https://www.slop.tech",
+  "https://eliza.army",
 ]);
 
-function publicWalletBrowserResponse(
-  request: Request,
-  response: Response,
-): Response {
+function publicBrowserResponse(request: Request, response: Response): Response {
   const origin = request.headers.get("origin");
-  if (origin === null || !PUBLIC_WALLET_BROWSER_ORIGINS.has(origin)) {
+  if (origin === null || !PUBLIC_BROWSER_ORIGINS.has(origin)) {
     return response;
   }
   response.headers.set("access-control-allow-origin", origin);
-  response.headers.append("vary", "Origin");
+  if (
+    !(response.headers.get("vary") ?? "")
+      .toLowerCase()
+      .split(",")
+      .some((value) => value.trim() === "origin")
+  )
+    response.headers.append("vary", "Origin");
   return response;
 }
 
@@ -1008,7 +1015,83 @@ function matchAuthenticatedRoute(
   return null;
 }
 
+function browserRouteHeaders(
+  parts: readonly string[],
+  method: string,
+): readonly string[] | null {
+  if (
+    method === "GET" &&
+    ((parts[0] === "wallet-claims" &&
+      (parts.length === 2 ||
+        (parts.length === 4 &&
+          parts[1] === "actors" &&
+          parts[3] === "current"))) ||
+      (parts.length === 4 &&
+        parts[0] === "projects" &&
+        (parts[2] === "funding" || parts[2] === "executions")))
+  )
+    return ["authorization"];
+  if (
+    method === "POST" &&
+    parts.length === 2 &&
+    parts[0] === "auth" &&
+    parts[1] === "session"
+  )
+    return ["x-slop-identity-assertion", "content-type"];
+  if (method === "POST" && parts.length === 1 && parts[0] === "wallet-claims")
+    return ["authorization", "content-type"];
+  return null;
+}
+
+/** Browser access is limited to these explicit wallet and funding routes. */
 export async function handleTraceApi(
+  request: Request,
+  deps: TraceApiDependencies,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const origin = request.headers.get("origin");
+  const preflight = request.method === "OPTIONS";
+  const method = preflight
+    ? (request.headers.get("access-control-request-method") ?? "")
+    : request.method;
+  const allowedHeaders = browserRouteHeaders(pathParts(request), method);
+  if (
+    allowedHeaders === null ||
+    (url.host !== "api.slop.cash" && url.hostname !== "localhost") ||
+    (url.protocol !== "https:" && url.hostname !== "localhost")
+  ) {
+    return handleTraceApiInternal(request, deps);
+  }
+  if (origin !== null && !PUBLIC_BROWSER_ORIGINS.has(origin))
+    return json(403, { error: "origin_not_allowed" });
+  if (preflight) {
+    if (origin === null) return json(403, { error: "origin_not_allowed" });
+    const requestedHeaders = (
+      request.headers.get("access-control-request-headers") ?? ""
+    )
+      .split(",")
+      .map((header) => header.trim().toLowerCase())
+      .filter(Boolean);
+    if (requestedHeaders.some((header) => !allowedHeaders.includes(header)))
+      return json(403, { error: "headers_not_allowed" });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "access-control-allow-origin": origin,
+        "access-control-allow-methods": method,
+        "access-control-allow-headers": allowedHeaders.join(", "),
+        vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+        "cache-control": "no-store",
+      },
+    });
+  }
+  return publicBrowserResponse(
+    request,
+    await handleTraceApiInternal(request, deps),
+  );
+}
+
+async function handleTraceApiInternal(
   request: Request,
   deps: TraceApiDependencies,
 ): Promise<Response> {
@@ -1023,7 +1106,29 @@ export async function handleTraceApi(
     return json(404, { error: "not_found" });
   }
   const publicWalletRead = isPublicWalletRead(request, parts);
+  const publicFundingRead =
+    request.method === "GET" &&
+    parts.length === 4 &&
+    parts[0] === "projects" &&
+    parts[2] === "funding";
   try {
+    if (
+      request.method === "GET" &&
+      parts.length === 4 &&
+      parts[0] === "projects" &&
+      parts[2] === "executions"
+    )
+      return await readExecutionVerification(request, parts[1], parts[3], () =>
+        applyVerificationAdmission(request, deps),
+      );
+    if (publicFundingRead) {
+      return publicBrowserResponse(
+        request,
+        await readFundingVerification(request, parts[1], parts[3], () =>
+          applyVerificationAdmission(request, deps),
+        ),
+      );
+    }
     if (
       request.method === "GET" &&
       parts.length === 1 &&
@@ -1038,7 +1143,7 @@ export async function handleTraceApi(
       parts[1] === "actors" &&
       parts[3] === "current"
     ) {
-      return publicWalletBrowserResponse(
+      return publicBrowserResponse(
         request,
         await readCurrentWalletClaim(deps, parts[2]),
       );
@@ -1049,7 +1154,7 @@ export async function handleTraceApi(
       parts[0] === "wallet-claims" &&
       parts[1] !== "current"
     ) {
-      return publicWalletBrowserResponse(
+      return publicBrowserResponse(
         request,
         await readPublicWalletClaim(deps, parts[1]),
       );
@@ -1108,8 +1213,8 @@ export async function handleTraceApi(
           ? "Internal error"
           : error.message,
     });
-    return publicWalletRead
-      ? publicWalletBrowserResponse(request, response)
+    return publicWalletRead || publicFundingRead
+      ? publicBrowserResponse(request, response)
       : response;
   }
 }

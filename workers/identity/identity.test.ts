@@ -581,3 +581,110 @@ describe("slop identity worker", () => {
     expect(wrongAudience.status).toBe(400);
   });
 });
+
+describe("identity browser CORS boundary", () => {
+  it.each(["https://slop.cash", "https://slop.tech", "https://eliza.army"])(
+    "allows only start/poll JSON preflight for %s",
+    async (origin) => {
+      const { deps, store } = dependencies();
+      const response = await handleIdentityRequest(
+        new Request("https://identity.slop.cash/v1/oauth/start", {
+          method: "OPTIONS",
+          headers: {
+            origin,
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "content-type",
+          },
+        }),
+        deps,
+      );
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(response.headers.get("access-control-allow-headers")).toBe(
+        "Content-Type",
+      );
+      expect(response.headers.has("access-control-allow-credentials")).toBe(
+        false,
+      );
+      expect(store.flows.size).toBe(0);
+    },
+  );
+  it("rejects arbitrary origins and unneeded credentials headers before creating state", async () => {
+    const { deps, store } = dependencies();
+    for (const origin of [
+      "https://evil.example",
+      "null",
+      "https://slop.cash.evil.example",
+      "http://slop.cash",
+      "https://slop.cash:444",
+    ]) {
+      const response = await handleIdentityRequest(
+        new Request("https://identity.slop.cash/v1/oauth/start", {
+          method: "POST",
+          headers: { origin, "content-type": "application/json" },
+          body: JSON.stringify({ audience: IDENTITY_AUDIENCE }),
+        }),
+        deps,
+      );
+      expect(response.status).toBe(403);
+      expect(response.headers.has("access-control-allow-origin")).toBe(false);
+    }
+    const preflight = await handleIdentityRequest(
+      new Request("https://identity.slop.cash/v1/oauth/start", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://slop.cash",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization",
+        },
+      }),
+      deps,
+    );
+    expect(preflight.status).toBe(403);
+    expect(store.flows.size).toBe(0);
+  });
+  it("adds CORS to ordinary success/error responses, never exposing internal consume or callback routes", async () => {
+    const { deps } = dependencies();
+    const request = new Request("https://identity.slop.cash/v1/oauth/start", {
+      method: "POST",
+      headers: {
+        origin: "https://slop.cash",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ audience: IDENTITY_AUDIENCE }),
+    });
+    const success = await handleIdentityRequest(request, deps);
+    expect(success.status).toBe(201);
+    expect(success.headers.get("access-control-allow-origin")).toBe(
+      "https://slop.cash",
+    );
+    const invalid = await handleIdentityRequest(
+      new Request("https://identity.slop.cash/v1/oauth/poll", {
+        method: "POST",
+        headers: { origin: "https://slop.cash" },
+        body: "{}",
+      }),
+      deps,
+    );
+    expect(invalid.status).toBe(400);
+    expect(invalid.headers.get("access-control-allow-origin")).toBe(
+      "https://slop.cash",
+    );
+    for (const url of [
+      "https://identity.internal/v1/assertions/consume",
+      "https://identity.slop.cash/v1/oauth/callback",
+    ]) {
+      const response = await handleIdentityRequest(
+        new Request(url, {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://slop.cash",
+            "access-control-request-method": "POST",
+          },
+        }),
+        deps,
+      );
+      expect(response.headers.has("access-control-allow-origin")).toBe(false);
+    }
+  });
+});

@@ -1,0 +1,217 @@
+name: Prepare monthly funding review
+
+# Only trusted develop code runs with write credentials. No proposal is frozen.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Create new preparation or refresh only existing wallet observations"
+        required: true
+        default: prepare
+        type: choice
+        options:
+          - prepare
+          - refresh-wallets
+      cycle:
+        description: "Closed UTC month (YYYY-MM); blank means previous month"
+        required: false
+        type: string
+      project:
+        description: "Canonical project ID; blank means every launched project"
+        required: false
+        type: string
+
+concurrency:
+  group: funding-preparation
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: write
+
+env:
+  CI: "true"
+  BUN_VERSION: "1.3.14"
+  NODE_VERSION: "24.15.0"
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout trusted develop
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify trusted checkout
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/develop'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Validate registry and dependency safety
+        run: |
+          set -euo pipefail
+          bun run audit:dependencies
+          bun run projects:check
+          bun run evaluations:check
+
+      - name: Validate requested month and project
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          REQUESTED_CYCLE: ${{ inputs.cycle }}
+          REQUESTED_PROJECT: ${{ inputs.project }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016
+          bun --eval '
+            import { appendFileSync, existsSync } from "node:fs";
+            import { PROJECTS } from "./src/lib/projects.mjs";
+            import { fundingCycle } from "./scripts/prepare-monthly-funding.ts";
+            const now = new Date();
+            const prior = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()-1, 1));
+            const cycle = process.env.REQUESTED_CYCLE || prior.toISOString().slice(0,7);
+            const project = process.env.REQUESTED_PROJECT || "";
+            const mode = process.env.REQUESTED_MODE || "prepare";
+            if (!["prepare", "refresh-wallets"].includes(mode)) throw Error("Invalid mode");
+            if (mode === "refresh-wallets" && (!project || !process.env.REQUESTED_CYCLE)) throw Error("Wallet refresh requires explicit project and cycle");
+            if (project && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(project)) throw Error("Invalid project ID");
+            const period = fundingCycle(cycle, now.toISOString());
+            const selected = PROJECTS.filter(p => (!project || p.id === project) && p.reward.rewardStartAt < period.end);
+            if (!selected.length) throw Error("Unknown or unopened project period");
+            for (const p of selected) {
+              const exists = existsSync(`funding/preparations/${p.id}-${cycle}.json`);
+              if (mode === "prepare" && exists) throw Error(`Preparation already exists for ${p.id}/${cycle}; use wallet refresh for registrations only`);
+              if (mode === "refresh-wallets" && !exists) throw Error("Wallet refresh requires an existing preparation");
+            }
+            const artifact = `funding-preparation-${cycle}-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
+            appendFileSync(process.env.GITHUB_ENV, `PREPARATION_MODE=${mode}\nPREPARATION_CYCLE=${cycle}\nPREPARATION_PROJECT=${project}\nPREPARATION_CUTOFF=${period.end}\nPREPARATION_ARTIFACT=${artifact}\n`);
+          '
+
+      - name: Generate complete public ledger at exact cutoff
+        if: env.PREPARATION_MODE == 'prepare'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bun scripts/generate-leaderboard.ts --cutoff "$PREPARATION_CUTOFF"
+
+      - name: Derive preparation with fresh actor-bound wallet observations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=(--cycle "$PREPARATION_CYCLE")
+          if [ "$PREPARATION_MODE" = "refresh-wallets" ]; then
+            args+=(--refresh-wallets)
+          else
+            args+=(--snapshot public/data/leaderboard.json)
+          fi
+          args+=(--evidence-directory evidence/monthly-funding)
+          args+=(--evidence-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")
+          args+=(--evidence-artifact "$PREPARATION_ARTIFACT")
+          if [ -n "$PREPARATION_PROJECT" ]; then
+            args+=(--project "$PREPARATION_PROJECT")
+          fi
+          bun scripts/prepare-monthly-funding.ts "${args[@]}"
+          bun scripts/prepare-funding-review.ts
+          bun scripts/prepare-funding-review.ts --check
+
+      - name: Retain exact public source and wallet proofs
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.PREPARATION_ARTIFACT }}
+          path: evidence/monthly-funding/
+          if-no-files-found: error
+          retention-days: 90
+          include-hidden-files: false
+
+      - name: Open scoped preparation PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}
+          EVIDENCE_ARTIFACT_DIGEST: ${{ steps.evidence.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          branch="codex/funding-preparation-${PREPARATION_CYCLE}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git switch -c "$branch"
+          git add -- funding/preparations
+          python3 - <<'PY'
+          import copy, json, os, re, subprocess
+          rows = subprocess.check_output(["git", "diff", "--cached", "--name-status", "--no-renames"], text=True).splitlines()
+          if not rows:
+              raise SystemExit("No new preparations")
+          pattern = r"funding/preparations/[a-z0-9]+(?:-[a-z0-9]+)*-" + re.escape(os.environ["PREPARATION_CYCLE"]) + r"\.json"
+          for row in rows:
+              status, path = row.split("\t")
+              if os.environ["PREPARATION_MODE"] == "prepare":
+                  if status != "A" or not re.fullmatch(pattern, path):
+                      raise SystemExit("Refusing any change other than new preparation inputs")
+              else:
+                  expected = f"funding/preparations/{os.environ['PREPARATION_PROJECT']}-{os.environ['PREPARATION_CYCLE']}.json"
+                  if len(rows) != 1 or status != "M" or path != expected:
+                      raise SystemExit("Wallet refresh must modify only its exact project and month")
+                  before = json.loads(subprocess.check_output(["git", "show", f"HEAD:{path}"]))
+                  after = json.loads(subprocess.check_output(["git", "show", f":{path}"]))
+                  def immutable(value):
+                      result = copy.deepcopy(value)
+                      result.pop("observedAt")
+                      result["provenance"].pop("walletObservationsSha256")
+                      for contributor in result["contributors"]:
+                          contributor.pop("wallet")
+                          contributor.pop("lookupUnavailable")
+                      return result
+                  if immutable(before) != immutable(after):
+                      raise SystemExit("Wallet refresh altered immutable census, scores or source provenance")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: prepare ${PREPARATION_CYCLE} funding review"
+          git push --set-upstream origin "$branch"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          text = (
+              f"Prepares {os.environ['PREPARATION_CYCLE']} contributor allocations from a complete cutoff snapshot and fresh wallet registrations. "
+              "This is a snapshot-derived preparation, not an independent audit, canonical reward proposal, approval, or payment. "
+              "Missing-wallet contributors remain included. New-source ingestion never overwrites an existing preparation.\n\n"
+              f"Exact source snapshot, wallet proofs, compact inputs and SHA256SUMS: {os.environ['EVIDENCE_ARTIFACT_URL']}\n"
+              f"Actions artifact digest: {os.environ['EVIDENCE_ARTIFACT_DIGEST']}\n\n"
+              "Download and retain this evidence before the 90-day artifact retention expires. GitHub sign-in may be required. "
+              "The preparation binds the run URL, artifact name and exact file digests. Maintainers must review the source before merging.\n"
+          )
+          if os.environ["PREPARATION_MODE"] == "refresh-wallets":
+              text = (
+                  f"Refreshes wallet observations only for {os.environ['PREPARATION_PROJECT']}/{os.environ['PREPARATION_CYCLE']}. "
+                  "Original actor census, scores, weights, event digests, source snapshot and audit hashes remain unchanged. "
+                  "Lookup failures remain explicit. Git history retains the previous preparation; published cycle wallets remain locked.\n\n"
+                  f"Before/after inputs, exact wallet observations and SHA256SUMS: {os.environ['EVIDENCE_ARTIFACT_URL']}\n"
+                  f"Actions artifact digest: {os.environ['EVIDENCE_ARTIFACT_DIGEST']}\n\n"
+                  "This PR is not payment approval. Evidence may require GitHub sign-in and expires after 90 days; retain it for review.\n"
+              )
+          Path("evidence/funding-review-pr.md").write_text(text)
+          PY
+          gh pr create --draft --base develop --head "$branch" \
+            --title "chore: prepare ${PREPARATION_CYCLE} funding review" \
+            --body-file evidence/funding-review-pr.md

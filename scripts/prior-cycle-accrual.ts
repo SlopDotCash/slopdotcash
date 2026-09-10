@@ -97,12 +97,22 @@ async function readManifest(
  * Repeated reports must retain exact normalized bytes and an original held row.
  * Limits fail closed; dropping an old report could revive its unsafe address.
  */
-async function loadUnsafeDestinationHistory(input: {
+export async function loadUnsafeDestinationHistory(input: {
   asOf: string;
   cycleId: string;
   cyclesRoot: string;
   projectId: ProjectId;
 }): Promise<Map<string, UnsafeDestinationReport[]>> {
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(input.asOf) ||
+    !Number.isFinite(Date.parse(input.asOf)) ||
+    new Date(input.asOf).toISOString() !== input.asOf
+  ) {
+    throw new TypeError("Prior accrual asOf must be an exact UTC timestamp");
+  }
+  if (!/^[a-z0-9][a-z0-9-]{0,127}$/u.test(input.projectId))
+    throw new TypeError("Prior accrual project id is invalid");
+  previousCycleId(input.cycleId);
   const directory = join(input.cyclesRoot, input.projectId);
   const stats = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
@@ -223,15 +233,6 @@ export async function loadPriorCycleAccrual(input: {
   cyclesRoot: string;
   projectId: ProjectId;
 }): Promise<PriorCycleAccrual> {
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(input.asOf) ||
-    !Number.isFinite(Date.parse(input.asOf)) ||
-    new Date(input.asOf).toISOString() !== input.asOf
-  ) {
-    throw new TypeError("Prior accrual asOf must be an exact UTC timestamp");
-  }
-  if (!/^[a-z0-9][a-z0-9-]{0,127}$/u.test(input.projectId))
-    throw new TypeError("Prior accrual project id is invalid");
   const priorId = previousCycleId(input.cycleId);
   const unsafeDestinationReports = await loadUnsafeDestinationHistory(input);
   const directory = join(input.cyclesRoot, input.projectId, priorId);

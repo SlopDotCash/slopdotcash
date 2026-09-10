@@ -1,0 +1,77 @@
+{
+  "projectId": "heir-elements-sdk",
+  "cycleId": "2026-08",
+  "sourceSnapshotSha256": "01d1e6c42b11112561fc65bea9672b6966737bf95425ef97c9d9d0aa371cf37e",
+  "sourceAuditSha256": "474bcebe04deb6b7575e9daba0b47e4b117122b20e19e86d5ecb409faedf6a17",
+  "observedAt": "2026-09-10T14:51:03.923Z",
+  "provenance": {
+    "ruleVersion": "slop-score-v2",
+    "walletObservationsSha256": "88a43f4c498890dadf390d1baa0e427c2584b93dda8a0e4b4643065711bec10d",
+    "snapshotFrom": "2026-07-28T00:00:00.000Z",
+    "snapshotTo": "2026-09-01T00:00:00.000Z",
+    "periodFrom": "2026-08-16T01:15:28.387Z",
+    "periodTo": "2026-09-01T00:00:00.000Z",
+    "snapshotLedgerCount": 8442,
+    "sourceMergedPullRequests": 5788,
+    "mergedCensus": 3,
+    "scoredMerges": 3
+  },
+  "counts": {
+    "contributors": 3,
+    "events": 5,
+    "scoreThirds": "9",
+    "weight": "90000"
+  },
+  "contributors": [
+    {
+      "actor": {
+        "id": "U_kgDOD2nrjw",
+        "login": "agent-cortex"
+      },
+      "scoreThirds": "6",
+      "weight": "60000",
+      "eventCount": 2,
+      "eventIdsSha256": "3f8fe312a687173bdf0d35a5a33c882565b2179e58a62d5a186d2496541e42cf",
+      "wallet": {
+        "address": "ZtdooyCSVFtdbz5Y4msPuanVyZYV2zaHCJnjZgyVU96",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "1d4ec274c05f9dbbf0e547c0ed38b5377fbdfe0e",
+        "sourceUrl": "https://github.com/agent-cortex/agent-cortex/blob/1d4ec274c05f9dbbf0e547c0ed38b5377fbdfe0e/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "MDQ6VXNlcjU4ODc0OTM1",
+        "login": "awidearray"
+      },
+      "scoreThirds": "2",
+      "weight": "20000",
+      "eventCount": 2,
+      "eventIdsSha256": "cec0649883a9682815d10da46d0738329d9a472bac5a31d008f5a4207bd411aa",
+      "wallet": null,
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCjmdhQ",
+        "login": "mtcow"
+      },
+      "scoreThirds": "1",
+      "weight": "10000",
+      "eventCount": 1,
+      "eventIdsSha256": "6add52aa790bf1a2cdf6533b114994b24d5c5ce1924c15d1ee6a59a93bd9c3e7",
+      "wallet": {
+        "address": "AU7vapY4eyDrEjUZWzKKdBiivme7Fpzy9wPob4ASsWqC",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOCjmdhQ",
+        "sourceClaimId": "e248ab4d-db71-4183-8333-9ddec17b02ec",
+        "sourceRecordSha256": "a5e2a5aab2c918b18b337d697a1b699166d77b7ee393b776b3554a706fa1734f",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/e248ab4d-db71-4183-8333-9ddec17b02ec"
+      },
+      "lookupUnavailable": false
+    }
+  ]
+}

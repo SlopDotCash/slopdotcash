@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as projects from "../src/lib/projects.mjs";
 import { createRewardCycleProposal as createCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import {
@@ -18,7 +19,10 @@ import {
   parsePrepareRewardCycleArguments,
   prepareRewardCycle,
 } from "./prepare-reward-cycle";
-import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
+import {
+  loadPriorCycleAccrual,
+  loadUnsafeDestinationHistory,
+} from "./prior-cycle-accrual";
 import { verifyProposalAgainstSnapshot } from "./sync-cycle-index";
 import {
   applyUnsafeDestinationHold,
@@ -137,6 +141,174 @@ async function heldProposal() {
 }
 
 describe("authenticated unsafe destination holds", () => {
+  it("validates standalone safety history inputs before reading directories", async () => {
+    const root = await mkdtemp(join(tmpdir(), "slop-unsafe-inputs-"));
+    for (const override of [
+      { asOf: "invalid" },
+      { cycleId: "2026-13" },
+      { projectId: "../eliza" },
+    ]) {
+      await expect(
+        loadUnsafeDestinationHistory({
+          asOf: "2026-09-05T00:00:00.000Z",
+          cycleId: "2026-08",
+          projectId: "eliza",
+          cyclesRoot: root,
+          ...override,
+        }),
+      ).rejects.toThrow();
+    }
+  });
+  it("fresh principal retains historical safety across a zero-funded proposal still under review", async () => {
+    const root = await mkdtemp(join(tmpdir(), "slop-fresh-unsafe-"));
+    const realFind = projects.findProject;
+    const lookup = vi
+      .spyOn(projects, "findProject")
+      .mockImplementation((id) => {
+        const project = realFind(id);
+        if (!project || id !== "eliza") return project;
+        return {
+          ...project,
+          reward: {
+            ...project.reward,
+            rewardStartAt: "2026-06-01T00:00:00.000Z",
+          },
+          funding: {
+            ...project.funding,
+            freshCyclePaymentPolicy: {
+              schemaVersion: "1",
+              kind: "fresh-cycle-payment-policy",
+              projectId: id,
+              cycleId: "2026-08",
+              effectiveAt: "2026-09-01T00:00:00.000Z",
+              planningExpiresAt: "2026-10-01T00:00:00.000Z",
+              instrumentSha256: "d".repeat(64),
+              feeRecipient: SAFE,
+            },
+          },
+        };
+      });
+    try {
+      const historical = assertRewardAllocationManifest(
+        JSON.parse(
+          JSON.stringify(await heldProposal())
+            .replaceAll("2026-07", "2026-06")
+            .replaceAll("2026-08", "2026-07")
+            .replaceAll("2026_07", "2026_06"),
+        ),
+      );
+      await mkdir(join(root, "eliza", "2026-06"), { recursive: true });
+      await writeFile(
+        join(root, "eliza", "2026-06", "proposal.json"),
+        JSON.stringify(historical),
+      );
+      const julySnapshot = snapshotFixture();
+      julySnapshot.window.from = "2026-06-28T00:00:00.000Z";
+      julySnapshot.window.to = GENERATED;
+      julySnapshot.source.verificationWindow = { ...julySnapshot.window };
+      const zero = createCycleProposal({
+        cycleId: "2026-07",
+        generatedAt: "2026-09-01T00:00:00.000Z",
+        projectId: "eliza",
+        snapshot: julySnapshot,
+        sourceSnapshotSha256: "a".repeat(64),
+      });
+      if (zero.kind !== "reward-allocation") throw new Error("wrong fixture");
+      expect(zero.totals.suggestedMinor).toBe("0");
+      expect(zero.review.endsAt > "2026-09-05T00:00:00.000Z").toBe(true);
+      await mkdir(join(root, "eliza", "2026-07"), { recursive: true });
+      const original = JSON.stringify(zero);
+      await writeFile(
+        join(root, "eliza", "2026-07", "proposal.json"),
+        original,
+      );
+      const snapshot = JSON.parse(
+        JSON.stringify(snapshotFixture()).replaceAll("2026-07-", "2026-08-"),
+      );
+      for (const [index, event] of snapshot.ledger.entries()) {
+        event.scoreThirds = event.points * 3;
+        event.workUnitId = `wu_fresh_safety_${index}`;
+      }
+      snapshot.window.from = "2026-08-01T00:00:00.000Z";
+      snapshot.window.to = "2026-09-05T00:00:00.000Z";
+      snapshot.source.cutoffAt = snapshot.window.to;
+      snapshot.source.fetchedAt = snapshot.generatedAt;
+      snapshot.source.verificationWindow = { ...snapshot.window };
+      const snapshotPath = join(root, "snapshot.json");
+      await writeFile(snapshotPath, JSON.stringify(snapshot));
+      const loadPriorAccrual = vi.fn(async () => {
+        throw new Error("Fresh policy must not load monetary carry");
+      });
+      const loadUnsafeHistory = vi.fn(
+        (input: Parameters<typeof loadUnsafeDestinationHistory>[0]) =>
+          loadUnsafeDestinationHistory({ ...input, cyclesRoot: root }),
+      );
+      const observed: string[] = [];
+      const prepared = await prepareRewardCycle(
+        parsePrepareRewardCycleArguments([
+          "--project",
+          "eliza",
+          "--cycle",
+          "2026-08",
+          "--snapshot",
+          snapshotPath,
+        ]),
+        {
+          generatedAt: snapshot.window.to,
+          loadPriorAccrual,
+          loadUnsafeHistory,
+          observeWallet: async (actorId) => {
+            observed.push(actorId);
+            return wallet();
+          },
+          write: async () => undefined,
+          writeSnapshot: async () => undefined,
+        },
+      );
+      if (prepared.kind !== "reward-allocation")
+        throw new Error("wrong fixture");
+      expect(loadPriorAccrual).not.toHaveBeenCalled();
+      expect(loadUnsafeHistory).toHaveBeenCalledOnce();
+      expect(observed).toEqual(["U_fixture"]);
+      expect(prepared.carriedMinor).toBe("0");
+      expect(prepared.capMinor).toBe("0");
+      expect(prepared.totals.suggestedMinor).toBe("0");
+      expect(prepared.allocations[0]).toMatchObject({
+        wallet: null,
+        state: "unclaimed",
+        unsafeDestinationReports:
+          historical.allocations[0].unsafeDestinationReports,
+      });
+      expect(
+        await readFile(join(root, "eliza", "2026-07", "proposal.json"), "utf8"),
+      ).toBe(original);
+      loadUnsafeHistory.mockRejectedValueOnce(
+        new Error("Invalid immutable safety history"),
+      );
+      const write = vi.fn();
+      await expect(
+        prepareRewardCycle(
+          parsePrepareRewardCycleArguments([
+            "--project",
+            "eliza",
+            "--cycle",
+            "2026-08",
+            "--snapshot",
+            snapshotPath,
+          ]),
+          {
+            generatedAt: snapshot.window.to,
+            loadUnsafeHistory,
+            write,
+            writeSnapshot: write,
+          },
+        ),
+      ).rejects.toThrow("Invalid immutable safety history");
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
   it("fails closed on rewritten, orphaned, future, or symlinked historical evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "slop-unsafe-history-boundary-"));
     const directory = join(root, "eliza", "2026-07");

@@ -70,7 +70,7 @@ export function findProjectByRepositoryId(repositoryId) {
 }
 
 /** Refuses every money-state transition until a reviewed project enables it. */
-export function assertProjectPaymentsEnabled(projectId) {
+export function assertProjectPaymentsEnabled(projectId, cycleId) {
   const project = findProject(projectId);
   if (
     project?.reward.kind !== "monthly-pool" ||
@@ -80,6 +80,13 @@ export function assertProjectPaymentsEnabled(projectId) {
   ) {
     throw new TypeError(`Payments are disabled for project ${projectId}`);
   }
+  if (
+    !project.funding.freshCyclePaymentPolicy ||
+    project.funding.freshCyclePaymentPolicy.cycleId !== cycleId
+  )
+    throw new TypeError(
+      `Payments require the exact reviewed fresh cycle for project ${projectId}`,
+    );
   return project;
 }
 

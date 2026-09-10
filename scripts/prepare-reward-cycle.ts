@@ -15,7 +15,10 @@ import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import type { WalletProof } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
 import type { PriorCycleAccrual } from "./prior-cycle-accrual";
-import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
+import {
+  loadPriorCycleAccrual,
+  loadUnsafeDestinationHistory,
+} from "./prior-cycle-accrual";
 import {
   ExistingFileError,
   writeNewFile,
@@ -158,6 +161,7 @@ export async function prepareRewardCycle(
       cyclesRoot: string;
       projectId: ProjectId;
     }) => Promise<PriorCycleAccrual>;
+    loadUnsafeHistory?: typeof loadUnsafeDestinationHistory;
     observeWallet?: (
       actorId: string,
       login: string,
@@ -207,18 +211,30 @@ export async function prepareRewardCycle(
   const project = findProject(arguments_.projectId);
   if (!project) throw new TypeError(`Unknown project: ${arguments_.projectId}`);
 
-  const priorAccrual =
-    project.reward.kind === "monthly-pool"
-      ? await (options.loadPriorAccrual ?? loadPriorCycleAccrual)({
-          asOf: generatedAt,
-          cycleId: arguments_.cycleId,
-          cyclesRoot: CYCLES_ROOT,
-          projectId: arguments_.projectId,
-        })
-      : {
-          actorLogins: new Map<string, string>(),
-          accruedMinor: new Map<string, string>(),
-        };
+  const historyInput = {
+    asOf: generatedAt,
+    cycleId: arguments_.cycleId,
+    cyclesRoot: CYCLES_ROOT,
+    projectId: arguments_.projectId,
+  };
+  let priorAccrual: PriorCycleAccrual = {
+    actorLogins: new Map<string, string>(),
+    accruedMinor: new Map<string, string>(),
+  };
+  if (project.reward.kind === "monthly-pool") {
+    if (
+      project.funding.freshCyclePaymentPolicy?.cycleId === arguments_.cycleId
+    ) {
+      // Fresh principal excludes carry, but cannot revive an unsafe destination.
+      priorAccrual.unsafeDestinationReports = await (
+        options.loadUnsafeHistory ?? loadUnsafeDestinationHistory
+      )(historyInput);
+    } else {
+      priorAccrual = await (options.loadPriorAccrual ?? loadPriorCycleAccrual)(
+        historyInput,
+      );
+    }
+  }
 
   const wallets = new Map<string, WalletProof>();
   if (project.reward.kind === "monthly-pool") {

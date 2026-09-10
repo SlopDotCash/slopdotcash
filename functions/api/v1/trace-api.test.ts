@@ -1000,7 +1000,11 @@ describe("private trace API", () => {
     expect(created.status).toBe(201);
     const { claimId } = (await created.json()) as { claimId: string };
 
-    for (const origin of ["https://slop.cash", "https://slop.tech"]) {
+    for (const origin of [
+      "https://slop.cash",
+      "https://slop.tech",
+      "https://eliza.army",
+    ]) {
       const current = await handleTraceApi(
         new Request(
           "https://api.slop.cash/api/v1/wallet-claims/actors/42/current",
@@ -1041,7 +1045,7 @@ describe("private trace API", () => {
       ),
       deps,
     );
-    expect(untrusted.status).toBe(200);
+    expect(untrusted.status).toBe(403);
     expect(untrusted.headers.get("access-control-allow-origin")).toBeNull();
   });
 

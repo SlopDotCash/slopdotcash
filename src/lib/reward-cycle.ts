@@ -212,6 +212,16 @@ export function createRewardCycleProposal(
   input: CreateRewardCycleProposalInput,
 ): RewardCycleProposal {
   const project = findProject(input.projectId);
+  if (
+    project?.funding.freshCyclePaymentPolicy?.cycleId === input.cycleId &&
+    (input.legacyCapMinor !== undefined ||
+      [...(input.priorAccruedMinor?.values() ?? [])].some(
+        (v) => BigInt(v) !== 0n,
+      ))
+  )
+    throw new TypeError(
+      "Fresh-cycle policy forbids importing accrued principal or legacy caps",
+    );
   const fundingBasis: AllocationFundingBasis | undefined =
     project?.reward.kind === "monthly-pool"
       ? input.fundingBasis

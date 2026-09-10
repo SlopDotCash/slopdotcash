@@ -1,3 +1,4 @@
+import { assertFreshCyclePaymentPolicy } from "./fresh-cycle-policy.mjs";
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 
 /**
@@ -267,7 +268,7 @@ function monthlyCommitment(candidate, field) {
  * Current manifest policy, not a claim of independent control or key access.
  * Identity/key control still requires human review; inequalities only reject
  * contradictions already visible in the manifest. No accessibility evidence
- * type is accepted in this version, so all payment activation fails closed.
+ * permits only an explicit fresh-cycle policy; runtime readiness stays mandatory.
  */
 export function assertMonthlyCommitmentPolicy(project) {
   const instruments = assertFundingCommitments(
@@ -333,9 +334,25 @@ export function assertMonthlyCommitmentPolicy(project) {
     project.reward.paymentMode === "enabled" ||
     project.reward.reviewBudget?.paymentMode === "enabled"
   ) {
-    throw new TypeError(
-      "funding accessibility is unknown; payment activation requires a reviewed authenticated evidence protocol",
+    if (!project.funding.freshCyclePaymentPolicy)
+      throw new TypeError(
+        "funding accessibility is unknown; payment activation requires a reviewed authenticated evidence protocol",
+      );
+    const policy = assertFreshCyclePaymentPolicy(
+      project.funding.freshCyclePaymentPolicy,
     );
+    const active = instruments.filter((v) => v.replacedAt === null);
+    if (
+      project.reward.kind !== "monthly-pool" ||
+      project.reward.reviewBudget ||
+      policy.projectId !== project.id ||
+      active.length !== 1 ||
+      active[0].kind !== "squads-v4-vault" ||
+      active[0].monthlyCommitment?.cycleId !== policy.cycleId
+    )
+      throw new TypeError(
+        "Fresh-cycle payment activation requires one matching reviewed Squads instrument without a review budget",
+      );
   }
   const claimed =
     BigInt(project.reward.committedMinor) +
@@ -394,12 +411,28 @@ export function assertFundingCommitments(
       throw new TypeError(`${field} contain a duplicate instrument`);
     }
     seenIdentities.add(identity);
-    const historyKey = `${result.network}:${result.asset}`;
+    // Monthly buckets describe contribution windows, not the later review or
+    // replacement event. Distinct exact months cannot spend one another's cap.
+    const historyKey = `${result.network}:${result.asset}:${result.monthlyCommitment?.cycleId ?? "unscoped"}`;
     const history = histories.get(historyKey) ?? [];
     history.push(result);
     histories.set(historyKey, history);
     return result;
   });
+  for (const instrument of instruments) {
+    if (instrument.monthlyCommitment) continue;
+    if (
+      instruments.some(
+        (other) =>
+          other.network === instrument.network &&
+          other.asset === instrument.asset &&
+          other.monthlyCommitment,
+      )
+    )
+      throw new TypeError(
+        `${field} cannot mix monthly and unscoped instrument histories`,
+      );
+  }
   for (const history of histories.values()) {
     history.sort((left, right) =>
       left.effectiveAt.localeCompare(right.effectiveAt),

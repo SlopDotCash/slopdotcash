@@ -1,0 +1,139 @@
+name: Verify funding deposit
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Canonical project ID with a reviewed Squads instrument"
+        required: true
+        type: string
+      cycle:
+        description: "Instrument commitment cycle (YYYY-MM)"
+        required: true
+        type: string
+      signature:
+        description: "Public Solana mainnet deposit transaction signature"
+        required: true
+        type: string
+      amount_minor:
+        description: "Exact USDC micro-units; blank uses reviewed monthly commitment"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Serialize deposit preparations without cancelling an evidence-producing run.
+concurrency:
+  group: verify-funding-deposit
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact trusted develop
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          submodules: false
+      - name: Require trusted checkout
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/develop'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch --no-tags origin develop
+          test "$(git rev-parse origin/develop)" = "$GITHUB_SHA"
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24.15.0"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - name: Install locked trusted dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check existing funding authority
+        run: |
+          set -euo pipefail
+          bun run audit:dependencies
+          bun run projects:check
+          bun run funding:check
+      - name: Verify exact deposit and prepare append-only evidence
+        id: deposit
+        env:
+          DEPOSIT_PROJECT: ${{ inputs.project }}
+          DEPOSIT_CYCLE: ${{ inputs.cycle }}
+          DEPOSIT_SIGNATURE: ${{ inputs.signature }}
+          DEPOSIT_AMOUNT_MINOR: ${{ inputs.amount_minor }}
+          DEPOSIT_EVIDENCE_DIRECTORY: ${{ runner.temp }}/funding-deposit-evidence
+        run: bun --no-install scripts/prepare-funding-deposit.ts
+      - name: Validate candidate funding ledger
+        run: bun scripts/sync-funding-index.ts
+      - name: Retain verification evidence
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: funding-deposit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/funding-deposit-evidence/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Open evidence PR without changing activation or cycles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECORD_PATH: ${{ steps.deposit.outputs.record_path }}
+          RECORD_ID: ${{ steps.deposit.outputs.record_id }}
+          AMOUNT_MINOR: ${{ steps.deposit.outputs.amount_minor }}
+          DEPOSIT_PROJECT: ${{ inputs.project }}
+          DEPOSIT_CYCLE: ${{ inputs.cycle }}
+          DEPOSIT_SIGNATURE: ${{ inputs.signature }}
+          EVIDENCE_URL: ${{ steps.evidence.outputs.artifact-url }}
+          EVIDENCE_DIGEST: ${{ steps.evidence.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin develop
+          test "$(git rev-parse origin/develop)" = "$GITHUB_SHA"
+          branch="codex/funding-deposit-${RECORD_ID}"
+          # A deterministic branch prevents duplicate pending PRs for one signature.
+          if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null; then
+            echo 'An evidence branch already exists for this signature; review it instead.' >&2
+            exit 1
+          fi
+          git switch -c "$branch"
+          git add -- "$RECORD_PATH"
+          python3 - <<'PY'
+          import os, subprocess
+          expected = 'A\t' + os.environ['RECORD_PATH']
+          changed = subprocess.check_output(['git', 'diff', '--cached', '--name-status', '--no-renames'], text=True).splitlines()
+          if changed != [expected]:
+              raise SystemExit('Only the one new verified deposit record may be committed')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: verify funding deposit ${DEPOSIT_PROJECT}/${DEPOSIT_CYCLE}"
+          # Create-only push: an existing remote branch must never be advanced.
+          git push --force-with-lease="refs/heads/$branch:" origin "HEAD:refs/heads/$branch"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          body = (
+              f"Records a finalized {os.environ['AMOUNT_MINOR']} USDC micro-unit deposit for {os.environ['DEPOSIT_PROJECT']}/{os.environ['DEPOSIT_CYCLE']}. "
+              "The destination and Squads members come from the reviewed exact-cycle instrument, not workflow inputs. "
+              "The existing Squads quorum and direct-transfer verifiers agreed on the transaction.\n\n"
+              f"Trusted develop revision: {os.environ['GITHUB_SHA']}\n"
+              f"Public signature: {os.environ['DEPOSIT_SIGNATURE']}\n"
+              f"Evidence: {os.environ['EVIDENCE_URL']}\nArtifact digest: {os.environ['EVIDENCE_DIGEST']}\n\n"
+              "This PR adds one immutable deposit record. It does not activate funding, alter project policy, approve rewards, sign, or pay anyone. "
+              "Maintainers must review and retain the evidence before its 90-day artifact expiry. A deposit is not proof of present spendable balance.\n"
+          )
+          Path(os.environ['RUNNER_TEMP'], 'funding-deposit-pr.md').write_text(body)
+          PY
+          gh pr create --draft --base develop --head "$branch" \
+            --title "chore: verify ${DEPOSIT_PROJECT}/${DEPOSIT_CYCLE} funding deposit" \
+            --body-file "$RUNNER_TEMP/funding-deposit-pr.md"

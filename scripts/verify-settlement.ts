@@ -219,7 +219,7 @@ export async function verifySettlement(
     write?: (path: string, value: unknown) => Promise<void>;
   } = {},
 ) {
-  assertProjectPaymentsEnabled(arguments_.projectId);
+  assertProjectPaymentsEnabled(arguments_.projectId, arguments_.cycleId);
   const cycle = await (options.validate ?? validateCycleTransition)(
     arguments_.projectId,
     arguments_.cycleId,
