@@ -3,6 +3,8 @@ import asi from "../projects/asi/project.json";
 import deltaStar from "../projects/delta-star/project.json";
 import eliza from "../projects/eliza/project.json";
 import heirElementsSdk from "../projects/heir-elements-sdk/project.json";
+import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
+import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import {
   validateProjectTransitions,
   validateProposalFundingTransitions,
@@ -94,7 +96,10 @@ describe("project transition gate", () => {
       instrumentId: null,
       fundingState: eliza.reward.fundingState,
       committedMinor: eliza.reward.committedMinor,
-      monthlyCapMinor: eliza.reward.monthlyCapMinor,
+      monthlyCapMinor: resolveRewardCapMinor(
+        assertProjectDefinition(eliza),
+        "2026-08",
+      ),
     };
     const proposal = {
       kind: "reward-allocation",

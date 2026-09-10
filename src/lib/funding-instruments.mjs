@@ -1,3 +1,5 @@
+import { resolveRewardCapMinor } from "./reward-cap.mjs";
+
 /**
  * Validates reviewed committed-funding instrument references. Each instrument
  * points at a third-party, immutable, audited on-chain contract that Slop
@@ -282,9 +284,6 @@ export function assertMonthlyCommitmentPolicy(project) {
     }
   }
   const cycles = new Set();
-  const cap =
-    BigInt(project.reward.monthlyCapMinor) +
-    BigInt(project.reward.reviewBudget?.monthlyCapMinor ?? "0");
   for (const instrument of instruments) {
     const monthly = instrument.monthlyCommitment;
     if (!monthly) {
@@ -300,6 +299,9 @@ export function assertMonthlyCommitmentPolicy(project) {
     cycles.add(monthly.cycleId);
     // Do not reinterpret immutable historical authority or caps under today's policy.
     if (instrument.replacedAt !== null) continue;
+    const cap =
+      BigInt(resolveRewardCapMinor(project, monthly.cycleId)) +
+      BigInt(project.reward.reviewBudget?.monthlyCapMinor ?? "0");
     if (BigInt(monthly.amountMinor) > cap)
       throw new TypeError(
         "monthly instrument amount exceeds the monthly reward caps",

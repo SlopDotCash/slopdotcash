@@ -85,6 +85,41 @@ function proposal(cycleId: string) {
 }
 afterEach(() => vi.restoreAllMocks());
 describe("exact-cycle reviewed funding", () => {
+  it("validates an August instrument against August's cap instead of September's", () => {
+    const baseline = structuredClone(fundedProject());
+    const candidate = {
+      ...baseline,
+      reward: {
+        ...baseline.reward,
+        cycleCaps: [
+          { cycleId: "2026-08", monthlyCapMinor: "10000000000" },
+          { cycleId: "2026-09", monthlyCapMinor: "5000000000" },
+        ],
+      },
+    };
+    const instrument = candidate.funding.commitments?.[0];
+    if (!instrument?.monthlyCommitment) throw new Error("missing instrument");
+    const withAmount = (amountMinor: string) => ({
+      ...candidate,
+      reward: { ...candidate.reward, committedMinor: amountMinor },
+      funding: {
+        ...candidate.funding,
+        commitments: [
+          {
+            ...instrument,
+            monthlyCommitment: { ...instrument.monthlyCommitment, amountMinor },
+          },
+        ],
+      },
+    });
+    expect(() =>
+      assertProjectDefinition(withAmount("10000000000")),
+    ).not.toThrow();
+    expect(() => assertProjectDefinition(withAmount("10000010000"))).toThrow(
+      /monthly reward caps/,
+    );
+  });
+
   it("keeps September promotion paused when only June was funded", () => {
     const project = fundedProject();
     const instrument = project.funding.commitments?.[0];

@@ -25,6 +25,7 @@ import {
   type ProjectDefinition,
   type ProjectId,
 } from "./projects.mjs";
+import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 
 export const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
@@ -652,6 +653,8 @@ export function createProjectView(
 
   let reward: ProjectRewardProjection;
   if (project.reward.kind === "monthly-pool") {
+    const capMinor =
+      fundingBasis?.monthlyCapMinor ?? resolveRewardCapMinor(project, cycleId);
     const monthlyCapMinor = allocationFundingMinor(
       fundingBasis ?? deriveAllocationFundingBasis(project, cycleId),
     );
@@ -662,12 +665,9 @@ export function createProjectView(
     );
     // A cap-based simulation is informational. Only the funding-backed
     // projection may flow into a reward proposal.
-    const simulated = allocateIntegerTotal(
-      BigInt(project.reward.monthlyCapMinor),
-      leaders,
-    );
+    const simulated = allocateIntegerTotal(BigInt(capMinor), leaders);
     const simulatedCents = allocateIntegerTotal(
-      BigInt(project.reward.monthlyCapMinor) / 10_000n,
+      BigInt(capMinor) / 10_000n,
       leaders,
     );
     for (const entry of leaders) {
@@ -684,7 +684,7 @@ export function createProjectView(
       kind: "monthly-pool",
       currency: "USDC",
       chain: "solana",
-      capMinor: project.reward.monthlyCapMinor,
+      capMinor,
       projectedPrincipalMinor: [...projected.values()]
         .reduce((total, amount) => total + amount, 0n)
         .toString(),
