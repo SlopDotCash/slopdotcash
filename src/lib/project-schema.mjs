@@ -820,6 +820,7 @@ function validateReward(
   const reward = record(value, field);
   const hasExternal = Object.hasOwn(reward, "externalOpportunity");
   const hasReviewBudget = Object.hasOwn(reward, "reviewBudget");
+  const hasCycleCaps = Object.hasOwn(reward, "cycleCaps");
   exactKeys(
     reward,
     [
@@ -828,6 +829,7 @@ function validateReward(
       "currency",
       "cycle",
       ...(hasExternal ? ["externalOpportunity"] : []),
+      ...(hasCycleCaps ? ["cycleCaps"] : []),
       "feeBasisPoints",
       "fundingState",
       "kind",
@@ -884,6 +886,31 @@ function validateReward(
     ) {
       throw new TypeError(`${field} monthly pool policy is inconsistent`);
     }
+    if (hasCycleCaps) {
+      if (!Array.isArray(reward.cycleCaps) || reward.cycleCaps.length === 0) {
+        throw new TypeError(`${field}.cycleCaps must be a nonempty array`);
+      }
+      let previousCycle = "";
+      for (const entry of reward.cycleCaps) {
+        const cap = record(entry, `${field}.cycleCaps entry`);
+        exactKeys(
+          cap,
+          ["cycleId", "monthlyCapMinor"],
+          `${field}.cycleCaps entry`,
+        );
+        if (
+          typeof cap.cycleId !== "string" ||
+          !/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cap.cycleId) ||
+          cap.cycleId <= previousCycle
+        ) {
+          throw new TypeError(
+            `${field}.cycleCaps must have unique chronological UTC months`,
+          );
+        }
+        formatMonthlyCapDisplay(cap.monthlyCapMinor);
+        previousCycle = cap.cycleId;
+      }
+    }
     if (hasReviewBudget) {
       validateReviewBudget(
         reward.reviewBudget,
@@ -894,6 +921,7 @@ function validateReward(
   } else if (reward.kind === "external-prize-share") {
     if (
       hasReviewBudget ||
+      hasCycleCaps ||
       !hasExternal ||
       reward.currency !== null ||
       reward.chain !== null ||

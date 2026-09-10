@@ -1,3 +1,5 @@
+import { resolveRewardCapMinor } from "./reward-cap.mjs";
+
 /** Stable public identity, never a mutable list index or observed balance. */
 function instrumentIdentity(instrument) {
   return instrument.kind === "squads-v4-vault"
@@ -61,6 +63,6 @@ export function deriveAllocationFundingBasis(project, cycleId) {
       BigInt(committedMinor) > 0n ? instrumentIdentity(instrument) : null,
     fundingState: project.reward.fundingState,
     committedMinor,
-    monthlyCapMinor: project.reward.monthlyCapMinor,
+    monthlyCapMinor: resolveRewardCapMinor(project, cycleId),
   });
 }

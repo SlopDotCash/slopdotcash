@@ -31,6 +31,11 @@ export interface ProjectReviewBudgetPolicy {
 }
 
 export interface ProjectRewardPolicy {
+  /** Exact-cycle overrides; unlisted cycles use monthlyCapMinor. */
+  readonly cycleCaps?: readonly {
+    readonly cycleId: string;
+    readonly monthlyCapMinor: string;
+  }[];
   readonly kind: RewardKind;
   readonly currency: "USDC" | null;
   readonly chain: "solana" | null;
