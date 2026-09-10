@@ -3351,3 +3351,50 @@ small {
 .funding-review code {
   overflow-wrap: anywhere;
 }
+
+.funding-quality-review {
+  margin-block: 1rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.funding-quality-review summary {
+  cursor: pointer;
+  min-height: 44px;
+}
+.funding-quality-review label {
+  display: grid;
+  gap: 0.4rem;
+  margin-block: 0.8rem;
+}
+.funding-quality-review input:not([type="checkbox"]),
+.funding-quality-review select,
+.funding-quality-review textarea {
+  font: inherit;
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+}
+.funding-quality-review input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  margin-right: 0.5rem;
+}
+.funding-quality-review li {
+  padding-block: 0.5rem;
+}
+.funding-quality-review button {
+  min-height: 44px;
+  margin: 0.25rem;
+  padding: 0.5rem;
+}
+.funding-quality-review fieldset {
+  min-width: 0;
+}
+.funding-quality-review .table-scroll {
+  overflow-x: auto;
+}
+.funding-quality-review td,
+.funding-quality-review th {
+  padding: 0.4rem;
+  text-align: left;
+}

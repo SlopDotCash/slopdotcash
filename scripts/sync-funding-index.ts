@@ -241,7 +241,7 @@ export async function buildFundingIndex(
   for (const projectId of await directories(
     fundingRoot,
     ["README.md", "maintainer-payouts.md", "payment-reservations.json"],
-    ["preparations", "executions"],
+    ["preparations", "executions", "quality"],
   )) {
     const project = projects.find((candidate) => candidate.id === projectId);
     if (!project || project.funding.recordsPath !== `funding/${projectId}`) {

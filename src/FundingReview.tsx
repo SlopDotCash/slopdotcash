@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ContributionQualityReview } from "./ContributionQualityReview";
 import { readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
 import type { ProjectFundingIndex } from "./lib/funding";
@@ -494,6 +495,30 @@ export function FundingReview({
               {step === 1 && (
                 <>
                   <h3>Review recipients</h3>
+                  {review &&
+                    review.rewardKind === "monthly-pool" &&
+                    !published &&
+                    canEdit && (
+                      <ContributionQualityReview
+                        key={`${review.projectId}:${review.cycleId}:${review.sourceSnapshotSha256}`}
+                        preparation={review}
+                        capMinor={capMinor}
+                        onApply={(rows) => {
+                          setAdjustments((previous) =>
+                            Object.fromEntries(
+                              rows.map((row) => [
+                                row.actorId,
+                                previous[row.actorId]?.decision === "exclude"
+                                  ? previous[row.actorId]
+                                  : row,
+                              ]),
+                            ),
+                          );
+                          setRawAmounts({});
+                          setInvalidAmounts({});
+                        }}
+                      />
+                    )}
                   {published?.reward.carriedMinor &&
                     published.reward.carriedMinor !== "0" && (
                       <p>
