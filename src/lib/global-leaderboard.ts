@@ -79,9 +79,12 @@ export function createGlobalLeaders(
         currentActors.get(contributor.actor.id) ??
         actorFromCycle(contributor.actor);
       const current = byActor.get(actor.id) ?? emptyLeader(actor);
-      current.score += contributor.score;
+      current.score += contributor.scoreThirds ?? contributor.score * 3;
       current.paidMinor += BigInt(contributor.paidMinor);
-      if (contributor.score > 0) {
+      if (
+        (contributor.scoreThirds ?? contributor.score * 3) > 0 ||
+        contributor.state !== "excluded"
+      ) {
         current.cycleKeys.add(key);
         current.projectIds.add(cycle.projectId);
       }
@@ -100,7 +103,7 @@ export function createGlobalLeaders(
     if (archivedCycleKeys.has(key)) continue;
     const current = byActor.get(event.actor.id) ?? emptyLeader(event.actor);
     current.actor = event.actor;
-    current.score += event.points;
+    current.score += event.scoreThirds ?? Math.round(event.points * 3);
     current.cycleKeys.add(key);
     current.projectIds.add(project.id);
     byActor.set(event.actor.id, current);
@@ -122,11 +125,12 @@ export function createGlobalLeaders(
         leader.score > 0 ||
         leader.tokens > 0 ||
         leader.projectedMinor > 0n ||
-        leader.paidMinor > 0n,
+        leader.paidMinor > 0n ||
+        leader.cycleKeys.size > 0,
     )
     .map<GlobalLeader>((leader) => ({
       actor: leader.actor,
-      score: leader.score,
+      score: leader.score / 3,
       tokens: leader.tokens,
       projectedMinor: leader.projectedMinor,
       paidMinor: leader.paidMinor,

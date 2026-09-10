@@ -96,6 +96,8 @@ describe("project views", () => {
       score: 24,
       projectedMinor: "0",
       projectedDisplayMinor: "0",
+      simulatedMinor: "5000000000",
+      simulatedDisplayMinor: "5000000000",
       projectedSharePartsPerMillion: null,
     });
     expect(eliza.ledger).toHaveLength(6);
@@ -119,6 +121,42 @@ describe("project views", () => {
       totalSharePartsPerMillion: 900_000,
       platformSharePartsPerMillion: 100_000,
     });
+  });
+
+  it("keeps one-third contributors in exact simulations without funding a payout", () => {
+    const snapshot = snapshotFixture();
+    const event = snapshot.ledger[0];
+    snapshot.ledger = [
+      { ...event, points: 1 / 3, scoreThirds: 1 },
+      {
+        ...event,
+        id: "second-event",
+        actor: SECOND_ACTOR,
+        points: 2 / 3,
+        scoreThirds: 2,
+      },
+    ];
+    const view = createProjectView(snapshot, "eliza", "2026-07");
+    expect(
+      view.leaders.map((entry) => [entry.actor.id, entry.simulatedMinor]),
+    ).toEqual([
+      [SECOND_ACTOR.id, "3333333333"],
+      [event.actor.id, "1666666667"],
+    ]);
+    expect(view.leaders.map((entry) => entry.projectedMinor)).toEqual([
+      "0",
+      "0",
+    ]);
+    expect(
+      view.leaders.reduce(
+        (sum, entry) => sum + BigInt(entry.simulatedDisplayMinor ?? "0"),
+        0n,
+      ),
+    ).toBe(5_000_000_000n);
+    snapshot.ledger.reverse();
+    expect(createProjectView(snapshot, "eliza", "2026-07").leaders).toEqual(
+      view.leaders,
+    );
   });
 
   it("keeps still-open opportunities across cycle bounds and reports cap fill", () => {
@@ -249,7 +287,7 @@ describe("project views", () => {
       confidence: "verified-device",
     });
     expect(view.leaders[0].computeBonusBasisPoints).toBe(0);
-    expect(view.leaders[0].adjustedWeight).toBe(240_000);
+    expect(view.leaders[0].adjustedWeight).toBe(720_000);
   });
 
   it("binds a private-trace evidence bonus to its exact scored outcome", () => {
@@ -262,7 +300,7 @@ describe("project views", () => {
 
     const view = createProjectView(snapshot, "eliza", "2026-07");
     expect(view.leaders[0].adjustedWeight).toBe(
-      baseline.leaders[0].adjustedWeight + event.points * 1_500,
+      baseline.leaders[0].adjustedWeight + event.points * 4_500,
     );
     expect(view.leaders[0].computeBonusBasisPoints).toBe(
       Math.floor((event.points * 3 * 1_500) / (baseline.leaders[0].score * 3)),

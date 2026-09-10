@@ -861,7 +861,7 @@ function ReviewerLeaderboard({
               </tr>
             </thead>
             <tbody>
-              {reviewers.slice(0, 20).map((reviewer) => (
+              {reviewers.map((reviewer) => (
                 <tr
                   className="leader-row global-leader-row reviewer-leader-row"
                   key={reviewer.actor.id}
@@ -957,7 +957,8 @@ function GlobalLeaderboard({
         <summary>How it works</summary>
         <p>
           Accepted contributions earn points. Current rankings show today's
-          estimated shares. Payouts are off during beta.
+          estimated shares at the published monthly cap, not approved payouts.
+          Funding-backed proposals use verified committed funds.
         </p>
       </details>
       {mode === "current" ? (
@@ -1006,6 +1007,11 @@ function GlobalLeaderboard({
                   </strong>
                   <span>{selectedRewardLabel}</span>
                 </div>
+                {selectedView.reward.kind === "monthly-pool" ? (
+                  <p>
+                    Simulated at {selectedRewardLabel}. Not an approved payout.
+                  </p>
+                ) : null}
                 {selectedView.reward.kind === "external-prize-share" ? (
                   <p>Prize sponsor controls eligibility and payment.</p>
                 ) : null}
@@ -1029,7 +1035,7 @@ function GlobalLeaderboard({
                         </tr>
                       </thead>
                       <tbody>
-                        {selectedView.leaders.slice(0, 20).map((leader) => (
+                        {selectedView.leaders.map((leader) => (
                           <tr
                             className="leader-row global-leader-row"
                             key={leader.actor.id}
@@ -1053,8 +1059,10 @@ function GlobalLeaderboard({
                               </Link>
                             </td>
                             <td data-label="Accepted score">
-                              <strong title={`Exact score ${leader.score}`}>
-                                {formatScore(leader.score)}
+                              <strong
+                                title={`Exact score ${leader.scoreThirds}/3`}
+                              >
+                                {formatThirds(leader.scoreThirds)}
                               </strong>
                             </td>
                             <td data-label="Simulated share">
@@ -1117,7 +1125,7 @@ function GlobalLeaderboard({
                   </tr>
                 </thead>
                 <tbody>
-                  {leaders.slice(0, 20).map((leader, index) => (
+                  {leaders.map((leader, index) => (
                     <tr
                       className="leader-row global-leader-row global-record-row"
                       key={leader.actor.id}
@@ -1489,8 +1497,8 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
 }
 
 function RewardValue({ leader }: { leader: ProjectContributor }) {
-  return leader.projectedMinor !== null ? (
-    formatMicroUsdc(leader.projectedDisplayMinor ?? leader.projectedMinor)
+  return leader.simulatedMinor !== null ? (
+    formatMicroUsdc(leader.simulatedDisplayMinor ?? leader.simulatedMinor)
   ) : (
     <>{formatPercent(leader.projectedSharePartsPerMillion ?? 0)} share</>
   );
@@ -1508,6 +1516,12 @@ function ProjectLeaderboard({
       <div className="section-heading">
         <h2>{formatCycleMonth(view.cycle.id)} leaderboard.</h2>
         <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
+        {view.reward.kind === "monthly-pool" ? (
+          <p>
+            Shares simulate the {monthlyPoolLabel(view.project.reward)} cap. Not
+            approved payouts.
+          </p>
+        ) : null}
       </div>
       {view.leaders.length === 0 ? (
         <EmptyState text="No accepted outcomes in this cycle yet." />
@@ -1547,8 +1561,8 @@ function ProjectLeaderboard({
                     </Link>
                   </td>
                   <td>
-                    <strong title={`Exact score ${leader.score}`}>
-                      {formatScore(leader.score)}
+                    <strong title={`Exact score ${leader.scoreThirds}/3`}>
+                      {formatThirds(leader.scoreThirds)}
                     </strong>
                     {leader.computeBonusBasisPoints > 0 ? (
                       <small>
@@ -2556,8 +2570,8 @@ function ProfilePage({
                       <small>{view.cycle.id}</small>
                     </span>
                     <span className="profile-project-stat">
-                      <strong title={`Exact score ${leader.score}`}>
-                        {formatScore(leader.score)} score
+                      <strong title={`Exact score ${leader.scoreThirds}/3`}>
+                        {formatThirds(leader.scoreThirds)} score
                       </strong>
                       <small>
                         {leader.acceptedOutcomeCount} accepted outcome
@@ -2754,7 +2768,11 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                       {contributor.actor.login}
                     </Link>
                   </th>
-                  <td>{contributor.score}</td>
+                  <td>
+                    {formatThirds(
+                      contributor.scoreThirds ?? contributor.score * 3,
+                    )}
+                  </td>
                   <td>
                     {formatMicroUsdc(contributor.suggestedMinor)}
                     {contributor.lines ? (

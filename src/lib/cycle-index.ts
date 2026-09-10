@@ -100,6 +100,7 @@ export interface CycleIndexEntry {
   contributors: Array<{
     actor: { id: string; login: string };
     score: number;
+    scoreThirds?: number;
     state:
       | "approved"
       | "excluded"
@@ -608,6 +609,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
         "approvedMinor",
         "paidMinor",
         "score",
+        ...(Object.hasOwn(contributor, "scoreThirds") ? ["scoreThirds"] : []),
         "sharePartsPerMillion",
         "state",
         "suggestedMinor",
@@ -629,6 +631,15 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       Number(contributor.score) < 0
     ) {
       throw new TypeError(`${contributorField}.score is invalid`);
+    }
+    const scoreThirds = contributor.scoreThirds;
+    if (
+      Object.hasOwn(contributor, "scoreThirds") &&
+      (!Number.isSafeInteger(scoreThirds) ||
+        Number(scoreThirds) < 0 ||
+        Math.floor(Number(scoreThirds) / 3) !== contributor.score)
+    ) {
+      throw new TypeError(`${contributorField}.scoreThirds is invalid`);
     }
     if (!contributorStates.has(String(contributor.state))) {
       throw new TypeError(`${contributorField}.state is invalid`);
@@ -694,6 +705,9 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     return {
       actor: { id: actorId, login },
       score: Number(contributor.score),
+      ...(scoreThirds === undefined
+        ? {}
+        : { scoreThirds: Number(scoreThirds) }),
       state,
       suggestedMinor,
       approvedMinor,
@@ -858,6 +872,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
         (contributor) =>
           contributor.state !== "proposed" &&
           contributor.state !== "unclaimed" &&
+          contributor.state !== "held-below-minimum" &&
           contributor.state !== "held",
       ));
   const paymentReadyStateInvalid =
