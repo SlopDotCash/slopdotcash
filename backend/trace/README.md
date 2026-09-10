@@ -169,3 +169,58 @@ the 49-hour gate and protected-environment review fail-closed.
 The Cloudflare account and bucket permissions remain limited to designated
 Slop operators. Application authorization does not replace Cloudflare account
 access control and audit logging.
+
+### Public funding and execution observation admission
+
+The two public project/cycle verification routes consume the existing atomic
+D1 `identity_rate_limits` counter before Solana RPC fanout. They share a budget
+of 24 attempts per 60-second window, plus four per secret-hashed client bucket.
+There are 1,024 fixed client buckets; collisions conservatively share a quota,
+and no IP address is stored. The edge-supplied `CF-Connecting-IP` is required;
+forwarded headers do not replace it. Counters use separate verification scopes
+from OAuth and at most 1,025 rows per auth-secret revision. Admission rejection
+returns 429 with `Retry-After`; missing D1 migration 0004, absent trusted IP,
+invalid counters, or a two-second admission timeout return 503 without RPC.
+Both verification routes must pass through this gate; absent admission fails
+closed. These counters authorize observations only, never payments or writes.
+
+### Execution API and registry compatibility
+
+`GET /api/v1/projects/:projectId/executions/:cycleId` returns the shared
+`SquadsExecutionObservation` directly, never an additional response envelope.
+The public index remains `{ schemaVersion: 1, executions: [...] }`; each entry
+contains the reviewed binding and exact allocation and full-plan SHA-256 hashes.
+The Worker registry stores the full allocation and execution-plan bytes once per
+project/cycle, with the complete canonical binding ledger. It delegates binding
+variants to `assertSquadsBindingLedger` and `validateSquadsExecutionContext` and
+live verification to `verifySquadsExecution`. The API must not infer support for
+a new binding variant from extra fields or caller input: the shared validators
+and exact decoder must accept it first. Existing single-transaction bindings
+retain their representation when new variants are introduced.
+
+The admission budget applies to the entire observation request. Any multi-account
+or batch decoder must also bound transaction count, account count, response bytes,
+RPC fanout and total work; additional instructions never bypass admission or
+replace the exact approved full plan. A partial observation must not be returned
+as `instructionVerification: "verified"`. Neither a proposal status nor matching
+instructions promote `paymentVerified` or `retirementVerified`; finalized
+settlement evidence remains the authority for paid state.
+
+The batch binding contract is backward compatible: schema version `"1"` keeps
+`kind: "squads-execution-binding"` and its `vaultTransactionAccount`. Version
+`"2"` uses `kind: "squads-batch-execution-binding"`, substitutes `batchAccount`,
+and includes ordered `children` records with `transactionIndex` (one-based
+number), `transactionAccount`, `messageSha256`, and `transferIndexes`. Each child
+covers at most five transfers; the complete list must cover every full-plan
+transfer exactly once in order. The shared validators own these constraints.
+The numeric public-index version stays `1`, and no new API route is needed.
+
+Verified batch observations contain `batchProgress: { totalChildren,
+executedChildren }`; unresolved batch observations contain `batchProgress: null`.
+Single-transaction observations omit that field. The backend passes this field through from the exact shared
+verifier without deriving it from a proposal status. An executed child or a fully
+executed batch still has `paymentVerified: false` and `retirementVerified: false`;
+the UI may display progress but must not promote it to paid. Partial execution is
+distinct from partial instruction verification: `instructionVerification` may
+be verified only after all bound child messages match the complete frozen plan,
+regardless of how many have been executed.

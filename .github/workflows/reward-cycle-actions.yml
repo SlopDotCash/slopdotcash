@@ -1,0 +1,197 @@
+name: Review reward cycle transition
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Prepare an approval PR or verify finalized settlement evidence"
+        required: true
+        type: choice
+        options:
+          - propose
+          - finalize-allocation
+          - reserve-settlement
+          - prepare-settlement
+          - verify-settlement
+      project:
+        description: "Canonical monthly-pool project ID"
+        required: true
+        type: string
+      cycle:
+        description: "Contribution month (YYYY-MM)"
+        required: true
+        type: string
+      source_sha256:
+        description: "Snapshot SHA-256 for propose; proposal SHA-256 for finalization; allocation SHA-256 for reservation/release; execution-plan SHA-256 for verification"
+        required: true
+        type: string
+      snapshot_run_id:
+        description: "Propose only: same-repository Actions run containing the original snapshot artifact"
+        required: false
+        type: string
+      snapshot_artifact:
+        description: "Propose only: exact artifact name containing source-snapshot.json"
+        required: false
+        type: string
+      transactions_json:
+        description: "Verification only: solana-settlement-evidence JSON (attemptId, intentIds, signature; platformFeeSignature)"
+        required: false
+        type: string
+
+concurrency:
+  group: reward-cycle-actions
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+
+env:
+  CI: "true"
+
+jobs:
+  transition:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout immutable trusted develop
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify trusted checkout
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/develop'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24.15.0"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install and validate trusted dependencies and registry
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts
+          bun run audit:dependencies
+          bun run projects:check
+
+      - name: Retrieve original proposal source artifact
+        if: inputs.action == 'propose'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SNAPSHOT_RUN_ID: ${{ inputs.snapshot_run_id }}
+          SNAPSHOT_ARTIFACT: ${{ inputs.snapshot_artifact }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          if not re.fullmatch(r"[1-9][0-9]{0,19}", os.environ["SNAPSHOT_RUN_ID"]):
+              raise SystemExit("Propose requires a source Actions run ID")
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", os.environ["SNAPSHOT_ARTIFACT"]):
+              raise SystemExit("Propose requires an exact bounded artifact name")
+          PY
+          gh run download "$SNAPSHOT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$SNAPSHOT_ARTIFACT" --dir evidence/input-snapshot
+
+      - name: Prepare exact-source lifecycle transition
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CYCLE_ACTION: ${{ inputs.action }}
+          CYCLE_PROJECT: ${{ inputs.project }}
+          CYCLE_MONTH: ${{ inputs.cycle }}
+          CYCLE_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          CYCLE_TRANSACTIONS_JSON: ${{ inputs.transactions_json }}
+        run: bun scripts/prepare-cycle-action.ts
+
+      - name: Retain exact lifecycle sources and verified output
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cycle-transition-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/cycle-action/
+          if-no-files-found: error
+          retention-days: 90
+          include-hidden-files: false
+
+      - name: Open reviewable transition PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          branch="codex/cycle-transition-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git switch -c "$branch"
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          result = json.loads(Path("evidence/cycle-action/action.json").read_text())
+          reserving = result["action"] == "reserve-settlement"
+          if reserving:
+              if result.get("newFiles") or result.get("modifiedFiles") != ["funding/payment-reservations.json"]:
+                  raise SystemExit("Invalid reservation output scope")
+              subprocess.check_call(["git", "add", "--", "funding/payment-reservations.json"])
+          else:
+              subprocess.check_call(["git", "add", "--", "cycles"])
+          expected = set(result["newFiles"]) | set(result.get("modifiedFiles", []))
+          changes = subprocess.check_output(["git", "diff", "--cached", "--name-status", "--no-renames"], text=True).splitlines()
+          actual = set()
+          for change in changes:
+              status, path = change.split("\t")
+              if status != ("M" if reserving else "A") or path not in expected:
+                  raise SystemExit("Refusing any staged change outside the exact new lifecycle outputs")
+              actual.add(path)
+          if actual != expected:
+              raise SystemExit("Incomplete lifecycle output")
+          action = result["action"]
+          title = f"chore: {action} {result['project']}/{result['cycle']}"
+          detail = (
+              "Runs the existing finalization CLI using runner time. Payment activation, full cycle validation and the 14-day review rule remain enforced. The allocation is a proposed repository change until maintainers accept this PR."
+              if action == "finalize-allocation" else
+              "Runs the existing verifier against finalized Solana RPC evidence. Intent coverage, allocation/plan hashes, mint, owners, exact principal and fee deltas must reconcile before output is written. Submitted signatures alone do not establish payment."
+          )
+          if action == "propose":
+              detail = (
+                  "Proposes one selected funded project/month using the exact archived snapshot bound by its reviewed preparation. "
+                  "Positive canonical funding, payment activation, verified commitment ledger and current signer checks are required. "
+                  "The existing proposal CLI preserves unclaimed contributors and the complete cycle census; it does not approve or pay awards."
+              )
+          if action == "reserve-settlement":
+              detail = (
+                  "Appends one reservation candidate to the global ledger using the exact canonical approved allocation and reviewed policy. "
+                  "It releases no execution plan. The trusted payment reservation gate and maintainer merge must accept this PR before a separate prepare-settlement action can release the reserved plan."
+              )
+          if action == "prepare-settlement":
+              detail = (
+                  "Releases only the exact unsigned plan reserved on canonical develop. The existing CLI authenticates reservation and policy history, "
+                  "rechecks live finalized vault funding and current signer access, and refuses stale or mismatched reservations. "
+                  "Vault and fee destinations come from canonical reserved inputs; none are supplied by the requester. No transaction is signed or broadcast."
+              )
+          body = (
+              f"{detail}\n\nProject/month: {result['project']}/{result['cycle']}\n"
+              f"Exact source SHA-256: {result['sourceSha256']}\nTrusted develop SHA: {os.environ['GITHUB_SHA']}\n\n"
+              f"Exact source files, outputs and SHA256SUMS: {os.environ['ARTIFACT_URL']}\n\n"
+              "No transaction was signed or broadcast by this workflow. Review and merge remain required. "
+              "Artifact downloads may require GitHub sign-in and expire after 90 days; retain them for review.\n"
+          )
+          Path("evidence/cycle-action-title.txt").write_text(title)
+          Path("evidence/cycle-action-pr.md").write_text(body)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -F evidence/cycle-action-title.txt
+          git push --set-upstream origin "$branch"
+          gh pr create --draft --base develop --head "$branch" \
+            --title "$(cat evidence/cycle-action-title.txt)" \
+            --body-file evidence/cycle-action-pr.md

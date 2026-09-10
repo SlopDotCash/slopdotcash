@@ -428,7 +428,7 @@ async function consumeAssertion(
   });
 }
 
-export async function handleIdentityRequest(
+async function handleIdentityRequestCore(
   request: Request,
   deps: IdentityWorkerDependencies,
 ): Promise<Response> {
@@ -483,4 +483,80 @@ export async function handleIdentityRequest(
           : error.message,
     });
   }
+}
+
+// Public product origins only. CLI requests without Origin retain their protocol.
+const WALLET_APP_ORIGINS = new Set([
+  "https://slop.cash",
+  "https://slop.tech",
+  "https://eliza.army",
+]);
+function browserIdentityEndpoint(request: Request): boolean {
+  const url = new URL(request.url);
+  return (
+    url.origin === IDENTITY_PUBLIC_ORIGIN &&
+    ["/v1/oauth/start", "/v1/oauth/poll"].includes(url.pathname)
+  );
+}
+/** Also used by the entrypoint for rate-limit responses before core dispatch. */
+export function identityBrowserResponse(
+  request: Request,
+  response: Response,
+): Response {
+  const origin = request.headers.get("origin");
+  if (
+    !browserIdentityEndpoint(request) ||
+    !origin ||
+    !WALLET_APP_ORIGINS.has(origin)
+  )
+    return response;
+  const headers = new Headers(response.headers);
+  headers.set("access-control-allow-origin", origin);
+  headers.append("vary", "Origin");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+export async function handleIdentityRequest(
+  request: Request,
+  deps: IdentityWorkerDependencies,
+): Promise<Response> {
+  const origin = request.headers.get("origin");
+  if (browserIdentityEndpoint(request) && origin) {
+    if (!WALLET_APP_ORIGINS.has(origin))
+      return json(403, { error: "origin_forbidden" });
+    if (request.method === "OPTIONS") {
+      const requestedHeaders = (
+        request.headers.get("access-control-request-headers") ?? ""
+      )
+        .split(",")
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+      if (
+        request.headers.get("access-control-request-method") !== "POST" ||
+        requestedHeaders.some((name) => name !== "content-type")
+      )
+        return identityBrowserResponse(
+          request,
+          json(403, { error: "preflight_forbidden" }),
+        );
+      const headers = securityHeaders("text/plain; charset=utf-8");
+      headers.set("access-control-allow-methods", "POST");
+      headers.set("access-control-allow-headers", "Content-Type");
+      headers.set(
+        "vary",
+        "Access-Control-Request-Method, Access-Control-Request-Headers",
+      );
+      return identityBrowserResponse(
+        request,
+        new Response(null, { status: 204, headers }),
+      );
+    }
+  }
+  return identityBrowserResponse(
+    request,
+    await handleIdentityRequestCore(request, deps),
+  );
 }

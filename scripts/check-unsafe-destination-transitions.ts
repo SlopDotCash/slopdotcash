@@ -121,13 +121,17 @@ interface TransitionInput {
   repositoryRoot?: string;
 }
 
-function inspectUnsafeDestinationTransitions(input: TransitionInput) {
+function inspectUnsafeDestinationTransitions(
+  input: TransitionInput,
+  requireBaseCheckout = true,
+) {
   const root = input.repositoryRoot ?? ROOT;
   if (!SHA.test(input.baseSha) || !SHA.test(input.headSha))
     throw new TypeError(
       "Cycle transition requires immutable base and head SHAs",
     );
   if (
+    requireBaseCheckout &&
     git(root, ["rev-parse", "HEAD"]).toString("utf8").trim() !== input.baseSha
   )
     throw new TypeError(
@@ -281,6 +285,27 @@ export async function verifyUnsafeDestinationTransitionAuthorities(
   return { preservedFiles, checkedFiles, verifiedReports: reports.size };
 }
 
+/** Deployed trusted verifier reads historical immutable blobs without checking
+ * out or executing historical code. The standalone CLI retains its base check. */
+export async function verifyUnsafeDestinationHistoryAuthorities(
+  input: TransitionInput,
+  readCommit?: Parameters<typeof verifyUnsafeDestinationReport>[1],
+) {
+  const root = input.repositoryRoot ?? ROOT;
+  if (
+    git(root, ["rev-parse", "--is-shallow-repository"]).toString().trim() !==
+    "false"
+  )
+    throw new TypeError(
+      "Unsafe destination history requires complete nonshallow history",
+    );
+  git(root, ["merge-base", "--is-ancestor", input.baseSha, input.headSha]);
+  const { preservedFiles, checkedFiles, reports } =
+    inspectUnsafeDestinationTransitions(input, false);
+  for (const report of reports.values())
+    await verifyUnsafeDestinationReport(report, readCommit);
+  return { preservedFiles, checkedFiles, verifiedReports: reports.size };
+}
 if (import.meta.main) {
   const [baseSha, headSha, ...extra] = process.argv.slice(2);
   if (!baseSha || !headSha || extra.length)

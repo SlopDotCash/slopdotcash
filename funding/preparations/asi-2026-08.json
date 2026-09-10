@@ -1,0 +1,467 @@
+{
+  "projectId": "asi",
+  "cycleId": "2026-08",
+  "sourceSnapshotSha256": "01d1e6c42b11112561fc65bea9672b6966737bf95425ef97c9d9d0aa371cf37e",
+  "sourceAuditSha256": "474bcebe04deb6b7575e9daba0b47e4b117122b20e19e86d5ecb409faedf6a17",
+  "observedAt": "2026-09-10T14:51:03.923Z",
+  "provenance": {
+    "ruleVersion": "slop-score-v2",
+    "walletObservationsSha256": "88a43f4c498890dadf390d1baa0e427c2584b93dda8a0e4b4643065711bec10d",
+    "snapshotFrom": "2026-07-28T00:00:00.000Z",
+    "snapshotTo": "2026-09-01T00:00:00.000Z",
+    "periodFrom": "2026-08-12T00:00:00.000Z",
+    "periodTo": "2026-09-01T00:00:00.000Z",
+    "snapshotLedgerCount": 8442,
+    "sourceMergedPullRequests": 5788,
+    "mergedCensus": 920,
+    "scoredMerges": 920
+  },
+  "counts": {
+    "contributors": 26,
+    "events": 1211,
+    "scoreThirds": "1793",
+    "weight": "17973500"
+  },
+  "contributors": [
+    {
+      "actor": {
+        "id": "MDQ6VXNlcjE4NjMzMjY0",
+        "login": "lalalune"
+      },
+      "scoreThirds": "972",
+      "weight": "9720000",
+      "eventCount": 642,
+      "eventIdsSha256": "a4d8e2e7c2d1dfbbdd689dea6d00a219b64e3f9e8e87cd48bed93032c1ff1042",
+      "wallet": null,
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOBZsSVw",
+        "login": "Prabhat1308"
+      },
+      "scoreThirds": "139",
+      "weight": "1390000",
+      "eventCount": 77,
+      "eventIdsSha256": "bfaa77c007a2748d453246161f6748eba40d6de420d5ae6f47448be6eba8f72c",
+      "wallet": {
+        "address": "4V9YdVwMEgit4QLmYae4tAX1H1bnBmxM4XbZkL2ucNWZ",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "adc48e9ad136ad261d7b426edca0d3cbb6f7e3cd",
+        "sourceUrl": "https://github.com/Prabhat1308/Prabhat1308/blob/adc48e9ad136ad261d7b426edca0d3cbb6f7e3cd/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "MDQ6VXNlcjMyNDM3ODg0",
+        "login": "ss251"
+      },
+      "scoreThirds": "126",
+      "weight": "1260000",
+      "eventCount": 110,
+      "eventIdsSha256": "010ba211857a8fbe7d70601aa7f7914787902985b3c937c77d2f534e0fe68750",
+      "wallet": {
+        "address": "8UeRuQdqVCVwxERmajGkLon92Y8Ax3oJbDZQPGENzJkf",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "MDQ6VXNlcjMyNDM3ODg0",
+        "sourceClaimId": "4e64506b-2781-4ced-b2c6-f955d7886b42",
+        "sourceRecordSha256": "9cfc471ab2eb945310c725d04c491ab6394f9fdfbd6c03371ca25aeef5f9b72c",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/4e64506b-2781-4ced-b2c6-f955d7886b42"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOB1sUFQ",
+        "login": "Kayvan-Zahiri"
+      },
+      "scoreThirds": "124",
+      "weight": "1240000",
+      "eventCount": 124,
+      "eventIdsSha256": "4672e69ed66df1aaa2649fbd63d2391bc1807fb8f93cd478f5c49d0fbe9215f8",
+      "wallet": null,
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCZkWfQ",
+        "login": "Svector-anu"
+      },
+      "scoreThirds": "83",
+      "weight": "830000",
+      "eventCount": 83,
+      "eventIdsSha256": "843ecbe6dc055cc3335d145a34b85f6f68125f1ccf2d5c99c023eefd7d962296",
+      "wallet": null,
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCJdw7g",
+        "login": "kenjohnscreates"
+      },
+      "scoreThirds": "80",
+      "weight": "800000",
+      "eventCount": 32,
+      "eventIdsSha256": "0bbad072fcd76e7993e97b759abe5c2aea86a29f1526e91e6eb9d480118b07ed",
+      "wallet": {
+        "address": "2GH44MmRLnuVaYPPoGpZiWzmdzSAtoxA5hnU2xFUciDx",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOCJdw7g",
+        "sourceClaimId": "6c9175d4-b4c9-4e14-be52-5e03501fe58c",
+        "sourceRecordSha256": "fa397d1dc8d51b84f8307ba83d3e9df028a69450c252969bbf0889ab6925beae",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/6c9175d4-b4c9-4e14-be52-5e03501fe58c"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOBYutFg",
+        "login": "deepanshu-yd"
+      },
+      "scoreThirds": "55",
+      "weight": "550000",
+      "eventCount": 37,
+      "eventIdsSha256": "2d0db9706c3a27eeefc77d169bebc2c54c2ec20e6f6ee8df881163f23ad079e0",
+      "wallet": {
+        "address": "2eFE3feeepWZ43zPtPMuKSc7ZCRzndeogjwkU7nW7H1p",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOBYutFg",
+        "sourceClaimId": "0a5f3583-59fe-4e12-bd9f-2ef41beaf4af",
+        "sourceRecordSha256": "454ef2312dfbe61b23090f2cfe5fb885a9a12b9327ea932e2749dc3dcf7222a0",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/0a5f3583-59fe-4e12-bd9f-2ef41beaf4af"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCdwEPw",
+        "login": "shabbydev"
+      },
+      "scoreThirds": "45",
+      "weight": "450000",
+      "eventCount": 15,
+      "eventIdsSha256": "fe642a4a51464291c62dde9af705ec9f46d22ad89aacb28593816a3ccb9f1a56",
+      "wallet": null,
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCeXcZg",
+        "login": "swissyai"
+      },
+      "scoreThirds": "32",
+      "weight": "333500",
+      "eventCount": 12,
+      "eventIdsSha256": "1e8ba5382108af84f3c873679efad85e42d9a74b33282a6608e63df92c5988e2",
+      "wallet": {
+        "address": "BVCrxJVHSYvRijYtQPBYAefG16AyQT1AnmE9vccTqBQR",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOCeXcZg",
+        "sourceClaimId": "5ee1659d-a0e4-46e9-86a5-acfff5006695",
+        "sourceRecordSha256": "c5d0478552f409fb81d6dec5f52e63a44b6b57966d75b5d40292e265b4905392",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/5ee1659d-a0e4-46e9-86a5-acfff5006695"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCYMVCA",
+        "login": "fid1699"
+      },
+      "scoreThirds": "27",
+      "weight": "270000",
+      "eventCount": 9,
+      "eventIdsSha256": "dc75fe6b28551976bef545bd35874a6ce36e154cd21e6da2087d0789379df443",
+      "wallet": {
+        "address": "4h9sXJmFbEw4cSbJv5p5Dg7K4icTRC45sqyefZnrRiBr",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "f50ef4fdd6ef9a6913be16b7d695fe70292589ba",
+        "sourceUrl": "https://github.com/fid1699/fid1699/blob/f50ef4fdd6ef9a6913be16b7d695fe70292589ba/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCEc2SA",
+        "login": "rama0x1"
+      },
+      "scoreThirds": "18",
+      "weight": "196500",
+      "eventCount": 18,
+      "eventIdsSha256": "dc7c49435c6c121845d499c6e6056797662bd931cefa2458ececa673cc505f0e",
+      "wallet": {
+        "address": "B8bkEjD2igGRgtqmzjKXSUxgvQkATRkfKifh9HM11vdV",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOCEc2SA",
+        "sourceClaimId": "990bd339-9762-4d92-bba5-67d812518e69",
+        "sourceRecordSha256": "e86e5d754a1a8df1308950dc762f368e2bb494da51f18f266bbe2fcab4f87098",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/990bd339-9762-4d92-bba5-67d812518e69"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOBfwMKg",
+        "login": "0xcii"
+      },
+      "scoreThirds": "15",
+      "weight": "150000",
+      "eventCount": 5,
+      "eventIdsSha256": "6e5c68bc4f49205bd2904a3d663cae79512373028182216896bc733b20972ce0",
+      "wallet": {
+        "address": "BtCv9ZbDk95cowQhxB9ZRxqZDR38yBjdUsUDvEZXPZdt",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOBfwMKg",
+        "sourceClaimId": "9c0c46d4-6d29-400d-94d7-05e129198296",
+        "sourceRecordSha256": "813148f305f279072bdd38f3ce23a43dcac9e99a1723629a89e98c4939fd1c92",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/9c0c46d4-6d29-400d-94d7-05e129198296"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "MDQ6VXNlcjgwMzEwNDk=",
+        "login": "Uuriko"
+      },
+      "scoreThirds": "12",
+      "weight": "120000",
+      "eventCount": 6,
+      "eventIdsSha256": "2d9ef35f376716030f496155b685c14e4a03199fdccad22cab5c7a22e992748b",
+      "wallet": {
+        "address": "4t6Bp7Eb4sh926Xzvrj95yXMXn6mV18HhyVFDVb2FBHY",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "888b4971cb919bea5b2ba330e17e790d7e0d3a05",
+        "sourceUrl": "https://github.com/Uuriko/Uuriko/blob/888b4971cb919bea5b2ba330e17e790d7e0d3a05/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOBkL2_w",
+        "login": "techforky"
+      },
+      "scoreThirds": "10",
+      "weight": "106000",
+      "eventCount": 6,
+      "eventIdsSha256": "e7340c06d0c235ea15ae28c65dd9d6de7bde345f11c11d27852173abcb2e00a8",
+      "wallet": null,
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "MDQ6VXNlcjMxODE2MzUy",
+        "login": "nishimweprince"
+      },
+      "scoreThirds": "10",
+      "weight": "104500",
+      "eventCount": 4,
+      "eventIdsSha256": "ad7658220fa06dfb9a66f9452207122b35bf968238b472de16aa961d1ab7551a",
+      "wallet": {
+        "address": "2q1AF2QVG1kFLrogeVmJ8nYwFG7uFy5u29pdpTxoR1ey",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "8c6c56ad0fbb867b8940006686506cf19f09ceda",
+        "sourceUrl": "https://github.com/nishimweprince/nishimweprince/blob/8c6c56ad0fbb867b8940006686506cf19f09ceda/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOB-kLQw",
+        "login": "FreeSolDev"
+      },
+      "scoreThirds": "9",
+      "weight": "90000",
+      "eventCount": 5,
+      "eventIdsSha256": "26bcd8b774c66ebe085bbd9d55ce29feb49267c6c0dbfb46273171af5345f8f6",
+      "wallet": {
+        "address": "EU8ZXW65rMfw8o7py5kzahJiGqh8Dh9uaGcMAysu3hXi",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "a7051a6165fe5ff741ac677bba1666c052ffc230",
+        "sourceUrl": "https://github.com/FreeSolDev/FreeSolDev/blob/a7051a6165fe5ff741ac677bba1666c052ffc230/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOEOd4mA",
+        "login": "hermesagent270-commits"
+      },
+      "scoreThirds": "9",
+      "weight": "90000",
+      "eventCount": 3,
+      "eventIdsSha256": "5f6a4f0d3c32dee4bff46b3ecdce072c7e2e7016f4509d5c3d2c1323e72d0a39",
+      "wallet": {
+        "address": "73SUereGr4EAuQxftTAUn4EBdQggdyjXQhv8rYeB6GCH",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOEOd4mA",
+        "sourceClaimId": "2ca81235-6faa-46aa-99c0-fe4667233f18",
+        "sourceRecordSha256": "0b97b935c5240c45484ac4d72c2c76354c9f84a1cf9e21d9b85e8e8cc9d78ff4",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/2ca81235-6faa-46aa-99c0-fe4667233f18"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCF9y2A",
+        "login": "nothingxnowhere"
+      },
+      "scoreThirds": "6",
+      "weight": "60000",
+      "eventCount": 6,
+      "eventIdsSha256": "3708d99ce60144edf97d58e8bdbc7bf422a8d8478b1c2a67c948595aa5d61ffa",
+      "wallet": {
+        "address": "J3HwVEQkZqjqztGnQW6VwXKx79ingmXHBL1E4ibDRnmt",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOCF9y2A",
+        "sourceClaimId": "3e883463-b630-4f9f-bb74-8f7256b94b8c",
+        "sourceRecordSha256": "bdf0360e4d1a2e3cbbf2d50d1f69e4e7895c5c3a8634cfda415aa62bbc6a5e8e",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/3e883463-b630-4f9f-bb74-8f7256b94b8c"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOC3LhVQ",
+        "login": "SYMBaiEX"
+      },
+      "scoreThirds": "6",
+      "weight": "60000",
+      "eventCount": 6,
+      "eventIdsSha256": "8c2395294c08a223ea0d3b7dcb8a06bbb59c8a9e589606e66c43b0839d94b0ee",
+      "wallet": {
+        "address": "DkEjgLSHrMZagMkNtSekzF2335g8q7wMJq1VeZc5DR5n",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "5c7f2c0a4424c49c65c5e9f4f74b915488fdcd44",
+        "sourceUrl": "https://github.com/SYMBaiEX/SYMBaiEX/blob/5c7f2c0a4424c49c65c5e9f4f74b915488fdcd44/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "MDQ6VXNlcjczMDI5MTU0",
+        "login": "renzo4web"
+      },
+      "scoreThirds": "4",
+      "weight": "40000",
+      "eventCount": 2,
+      "eventIdsSha256": "606a4e4df829853cb42a8f20254171725e3d442236a74981fa54a9cdd4a6eaee",
+      "wallet": null,
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "MDQ6VXNlcjEyNDcxNTI=",
+        "login": "leo-guinan"
+      },
+      "scoreThirds": "3",
+      "weight": "30000",
+      "eventCount": 1,
+      "eventIdsSha256": "63d80765c24dd5d8bb926c6c244241fb5f3e613266e48b72a1a4f1588d293486",
+      "wallet": null,
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOEYwrvA",
+        "login": "ngngocnhan1997-hub"
+      },
+      "scoreThirds": "3",
+      "weight": "30000",
+      "eventCount": 3,
+      "eventIdsSha256": "c1c192bd2e482f053376c5a8e9042ceb8c206b2acfcb00bbf5ceca11974d1553",
+      "wallet": {
+        "address": "8VXbZi3RMj2QcTmGF4cmBvojWy7ZYWo8uKYvRo2Zhum8",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOEYwrvA",
+        "sourceClaimId": "5f1e1e17-7932-4353-9523-7ed385350f83",
+        "sourceRecordSha256": "c7a8d39afe6080c11a70213bee5397ff9033558ab12d8ff39354446ed6f7b3bb",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/5f1e1e17-7932-4353-9523-7ed385350f83"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOEtGEfg",
+        "login": "tokenmaxxor"
+      },
+      "scoreThirds": "2",
+      "weight": "23000",
+      "eventCount": 2,
+      "eventIdsSha256": "16c9554c1bb3866d5980464d269a2b1729d72614beefdb03af6f80c41fac1114",
+      "wallet": {
+        "address": "5h6LapuyAfbJaiczZa2fbvsiib2HVrTzZ1ZcQnU7jKHc",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceActorId": "U_kgDOEtGEfg",
+        "sourceClaimId": "b978518e-7421-4c94-9e65-0ac0d1114d68",
+        "sourceRecordSha256": "765e379314f265f02ded5d582c8ed08deb581027124cfbb573b51d8857db227d",
+        "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/b978518e-7421-4c94-9e65-0ac0d1114d68"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOB6PmfA",
+        "login": "PrototypicNoise"
+      },
+      "scoreThirds": "1",
+      "weight": "10000",
+      "eventCount": 1,
+      "eventIdsSha256": "b5702a660430feb607e368b136792910f54bf7cd05d0e35ab6be4a3168f0c25b",
+      "wallet": {
+        "address": "GXCJYhMJ5NYp9fYBSyafJWWRB9wjFyW3PNZFUPN2HoVE",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "4e7ddb28c46b386fea246ed01316b17fc51de2d3",
+        "sourceUrl": "https://github.com/PrototypicNoise/PrototypicNoise/blob/4e7ddb28c46b386fea246ed01316b17fc51de2d3/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDOCZYLFA",
+        "login": "sharkwon"
+      },
+      "scoreThirds": "1",
+      "weight": "10000",
+      "eventCount": 1,
+      "eventIdsSha256": "82ed323dd2eaa38bfcc9d8db2de8ee2f5ed1fdf2b12636562835ed9bc8f97100",
+      "wallet": {
+        "address": "EwihoFKv3YkWYuo912NdfApNaAnuzdNWMKPGQFxR8HdF",
+        "chain": "solana",
+        "observedAt": "2026-09-10T14:51:03.923Z",
+        "sourceCommit": "dcac16ec848864e95d17fd3300fdb3ffcbb5c4da",
+        "sourceUrl": "https://github.com/sharkwon/sharkwon/blob/dcac16ec848864e95d17fd3300fdb3ffcbb5c4da/README.md"
+      },
+      "lookupUnavailable": false
+    },
+    {
+      "actor": {
+        "id": "U_kgDODRz5dw",
+        "login": "tioczech"
+      },
+      "scoreThirds": "1",
+      "weight": "10000",
+      "eventCount": 1,
+      "eventIdsSha256": "f12db95e87089ae239ef3144e0e5fd437b8cbd06c159d8112bdbaaf91a80fc67",
+      "wallet": null,
+      "lookupUnavailable": false
+    }
+  ]
+}

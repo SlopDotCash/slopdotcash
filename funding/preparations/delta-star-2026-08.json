@@ -1,0 +1,39 @@
+{
+  "projectId": "delta-star",
+  "cycleId": "2026-08",
+  "sourceSnapshotSha256": "01d1e6c42b11112561fc65bea9672b6966737bf95425ef97c9d9d0aa371cf37e",
+  "sourceAuditSha256": "474bcebe04deb6b7575e9daba0b47e4b117122b20e19e86d5ecb409faedf6a17",
+  "observedAt": "2026-09-10T14:51:03.923Z",
+  "provenance": {
+    "ruleVersion": "slop-score-v2",
+    "walletObservationsSha256": "88a43f4c498890dadf390d1baa0e427c2584b93dda8a0e4b4643065711bec10d",
+    "snapshotFrom": "2026-07-28T00:00:00.000Z",
+    "snapshotTo": "2026-09-01T00:00:00.000Z",
+    "periodFrom": "2026-08-01T00:00:00.000Z",
+    "periodTo": "2026-09-01T00:00:00.000Z",
+    "snapshotLedgerCount": 8442,
+    "sourceMergedPullRequests": 5788,
+    "mergedCensus": 13,
+    "scoredMerges": 0
+  },
+  "counts": {
+    "contributors": 1,
+    "events": 1,
+    "scoreThirds": "24",
+    "weight": "240000"
+  },
+  "contributors": [
+    {
+      "actor": {
+        "id": "MDQ6VXNlcjEyNDcxNTI=",
+        "login": "leo-guinan"
+      },
+      "scoreThirds": "24",
+      "weight": "240000",
+      "eventCount": 1,
+      "eventIdsSha256": "df7ed6a65c2e64fda287d6bf7159075bcef58c69a8c02ba323db3fa470a83b0b",
+      "wallet": null,
+      "lookupUnavailable": false
+    }
+  ]
+}

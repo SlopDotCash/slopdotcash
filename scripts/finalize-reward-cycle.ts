@@ -91,7 +91,7 @@ export async function finalizeRewardCycle(
     write?: (path: string, value: unknown) => Promise<void>;
   } = {},
 ) {
-  assertProjectPaymentsEnabled(arguments_.projectId);
+  assertProjectPaymentsEnabled(arguments_.projectId, arguments_.cycleId);
   const expectedInput = resolve(
     CYCLES_ROOT,
     arguments_.projectId,
@@ -132,7 +132,10 @@ export async function finalizeRewardCycle(
     arguments_.approvedAt,
     options.now,
   );
-  if (allocation.projectId !== arguments_.projectId) {
+  if (
+    allocation.projectId !== arguments_.projectId ||
+    allocation.cycleId !== arguments_.cycleId
+  ) {
     throw new TypeError(
       "Reward proposal project does not match its cycle path",
     );

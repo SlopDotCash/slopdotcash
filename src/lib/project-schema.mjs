@@ -1,3 +1,4 @@
+import { assertFreshCyclePaymentPolicy } from "./fresh-cycle-policy.mjs";
 /**
  * Validates untrusted project folders before they enter discovery, ingestion,
  * skills, or money-shaped views. The schema is intentionally narrow so a pull
@@ -961,11 +962,13 @@ function validateReward(
 function validateFunding(value, projectId) {
   const funding = record(value, "project.funding");
   const hasCommitments = Object.hasOwn(funding, "commitments");
+  const hasPaymentPolicy = Object.hasOwn(funding, "freshCyclePaymentPolicy");
   exactKeys(
     funding,
     [
       "addresses",
       ...(hasCommitments ? ["commitments"] : []),
+      ...(hasPaymentPolicy ? ["freshCyclePaymentPolicy"] : []),
       "disclosure",
       "mode",
       "recordsPath",
@@ -986,6 +989,23 @@ function validateFunding(value, projectId) {
       funding.commitments,
       "project.funding.commitments",
     );
+  }
+  if (hasPaymentPolicy) {
+    const policy = assertFreshCyclePaymentPolicy(
+      funding.freshCyclePaymentPolicy,
+    );
+    if (
+      policy.projectId !== projectId ||
+      !(funding.commitments ?? []).some(
+        (v) =>
+          v.kind === "squads-v4-vault" &&
+          v.replacedAt === null &&
+          v.monthlyCommitment?.cycleId === policy.cycleId,
+      )
+    )
+      throw new TypeError(
+        "Fresh-cycle policy requires its exact active monthly Squads instrument",
+      );
   }
   return funding;
 }

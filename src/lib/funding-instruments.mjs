@@ -1,3 +1,4 @@
+import { assertFreshCyclePaymentPolicy } from "./fresh-cycle-policy.mjs";
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 
 /**
@@ -267,7 +268,7 @@ function monthlyCommitment(candidate, field) {
  * Current manifest policy, not a claim of independent control or key access.
  * Identity/key control still requires human review; inequalities only reject
  * contradictions already visible in the manifest. No accessibility evidence
- * type is accepted in this version, so all payment activation fails closed.
+ * permits only an explicit fresh-cycle policy; runtime readiness stays mandatory.
  */
 export function assertMonthlyCommitmentPolicy(project) {
   const instruments = assertFundingCommitments(
@@ -333,9 +334,25 @@ export function assertMonthlyCommitmentPolicy(project) {
     project.reward.paymentMode === "enabled" ||
     project.reward.reviewBudget?.paymentMode === "enabled"
   ) {
-    throw new TypeError(
-      "funding accessibility is unknown; payment activation requires a reviewed authenticated evidence protocol",
+    if (!project.funding.freshCyclePaymentPolicy)
+      throw new TypeError(
+        "funding accessibility is unknown; payment activation requires a reviewed authenticated evidence protocol",
+      );
+    const policy = assertFreshCyclePaymentPolicy(
+      project.funding.freshCyclePaymentPolicy,
     );
+    const active = instruments.filter((v) => v.replacedAt === null);
+    if (
+      project.reward.kind !== "monthly-pool" ||
+      project.reward.reviewBudget ||
+      policy.projectId !== project.id ||
+      active.length !== 1 ||
+      active[0].kind !== "squads-v4-vault" ||
+      active[0].monthlyCommitment?.cycleId !== policy.cycleId
+    )
+      throw new TypeError(
+        "Fresh-cycle payment activation requires one matching reviewed Squads instrument without a review budget",
+      );
   }
   const claimed =
     BigInt(project.reward.committedMinor) +
@@ -366,8 +383,8 @@ function instrumentIdentity(instrument) {
  * reader bounds input bytes; a lifetime entry cap would eventually require
  * deleting append-only monthly evidence. Replaced
  * instruments stay listed so historical commitment records remain
- * independently verifiable, while windows for the same network and asset may
- * never overlap.
+ * independently verifiable. Windows cannot overlap within one monthly bucket
+ * or between monthly instruments and retired unscoped history.
  */
 export function assertFundingCommitments(
   value,
@@ -394,12 +411,38 @@ export function assertFundingCommitments(
       throw new TypeError(`${field} contain a duplicate instrument`);
     }
     seenIdentities.add(identity);
-    const historyKey = `${result.network}:${result.asset}`;
+    // Monthly buckets describe contribution windows, not the later review or
+    // replacement event. Distinct exact months cannot spend one another's cap.
+    const historyKey = `${result.network}:${result.asset}:${result.monthlyCommitment?.cycleId ?? "unscoped"}`;
     const history = histories.get(historyKey) ?? [];
     history.push(result);
     histories.set(historyKey, history);
     return result;
   });
+  for (const instrument of instruments) {
+    if (instrument.monthlyCommitment) continue;
+    for (const monthly of instruments) {
+      if (
+        monthly.network !== instrument.network ||
+        monthly.asset !== instrument.asset ||
+        !monthly.monthlyCommitment
+      )
+        continue;
+      // Preserve retired legacy evidence without allowing its active interval
+      // to overlap any monthly instrument or back a current monthly claim.
+      if (
+        instrument.replacedAt === null ||
+        !(
+          instrument.replacedAt <= monthly.effectiveAt ||
+          (monthly.replacedAt !== null &&
+            monthly.replacedAt <= instrument.effectiveAt)
+        )
+      )
+        throw new TypeError(
+          `${field} require retired nonoverlapping unscoped history alongside monthly instruments`,
+        );
+    }
+  }
   for (const history of histories.values()) {
     history.sort((left, right) =>
       left.effectiveAt.localeCompare(right.effectiveAt),

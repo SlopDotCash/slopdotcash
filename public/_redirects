@@ -2,6 +2,8 @@
 /how-it-works / 200
 /receipts / 200
 /cycles / 200
+/wallet / 200
+/wallet/ / 200
 /projects/new / 200
 /projects/:project/funding/ / 200
 /projects/:project/funding / 200

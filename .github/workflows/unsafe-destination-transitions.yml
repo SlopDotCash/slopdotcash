@@ -47,3 +47,5 @@ jobs:
           test "$(git rev-parse refs/remotes/origin/slop-cycle-head)" = "$CYCLE_HEAD_SHA"
           bun --no-install scripts/check-unsafe-destination-transitions.ts \
             "$CYCLE_BASE_SHA" "$CYCLE_HEAD_SHA"
+          bun --no-install scripts/check-squads-execution-transitions.ts \
+            "$CYCLE_BASE_SHA" "$CYCLE_HEAD_SHA"

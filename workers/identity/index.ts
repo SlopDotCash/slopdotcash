@@ -1,5 +1,5 @@
 import { randomToken } from "./crypto";
-import { handleIdentityRequest } from "./handler";
+import { handleIdentityRequest, identityBrowserResponse } from "./handler";
 import { type D1Database, D1IdentityPersistence } from "./persistence";
 import { consumeExactRateLimit, deleteExpiredRateLimits } from "./rate-limit";
 
@@ -243,7 +243,7 @@ function dependencies(env: Env) {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const limited = await applyIdentityRateLimit(request, env);
-    if (limited !== null) return limited;
+    if (limited !== null) return identityBrowserResponse(request, limited);
     return handleIdentityRequest(request, dependencies(env));
   },
   async scheduled(_controller: unknown, env: Env): Promise<void> {

@@ -103,10 +103,10 @@ describe("monthly commitment accessibility boundary", () => {
       /historical commitment.*immutable/u,
     );
 
-    const overlapping = structuredClone(seventeen);
-    overlapping.funding.commitments[0].replacedAt = null;
-    expect(() => assertProjectDefinition(overlapping)).toThrow(
-      /overlapping active instruments/u,
+    const twoUnreplacedMonths = structuredClone(seventeen);
+    twoUnreplacedMonths.funding.commitments[0].replacedAt = null;
+    expect(() => assertProjectDefinition(twoUnreplacedMonths)).toThrow(
+      /exactly one active monthly instrument amount/u,
     );
   });
   it("requires append-only monthly history and refuses relabeling an old instrument", () => {

@@ -238,7 +238,11 @@ export async function buildFundingIndex(
   const records: unknown[] = [];
   const commitments: unknown[] = [];
   const signerReports: PublicSignerReport[] = [];
-  for (const projectId of await directories(fundingRoot, ["README.md"])) {
+  for (const projectId of await directories(
+    fundingRoot,
+    ["README.md", "maintainer-payouts.md", "payment-reservations.json"],
+    ["preparations", "executions"],
+  )) {
     const project = projects.find((candidate) => candidate.id === projectId);
     if (!project || project.funding.recordsPath !== `funding/${projectId}`) {
       throw new TypeError(

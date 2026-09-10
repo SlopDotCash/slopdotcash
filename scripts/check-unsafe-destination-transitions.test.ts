@@ -22,8 +22,10 @@ import {
   unsafeDestinationReportMessage,
 } from "../src/lib/rewards";
 import { snapshotFixture } from "../tests/fixtures";
+import { checkPaymentReservations } from "./check-payment-reservations";
 import {
   checkUnsafeDestinationTransitions,
+  verifyUnsafeDestinationHistoryAuthorities,
   verifyUnsafeDestinationTransitionAuthorities,
 } from "./check-unsafe-destination-transitions";
 import { applyUnsafeDestinationHold } from "./unsafe-destination-hold";
@@ -448,6 +450,27 @@ describe("trusted unsafe destination Git transitions", () => {
     }
   });
 
+  it("the mandatory payment gate rejects erasing accepted unsafe destination evidence", async () => {
+    const repo = await fixture();
+    try {
+      const headSha = repo.head(() => unlinkSync(join(repo.root, PATH)));
+      await expect(
+        checkPaymentReservations(repo.root, repo.baseSha, headSha),
+      ).rejects.toThrow(/cannot be deleted/);
+      // Historical reads use deployed code and immutable blobs, not a checkout
+      // of the old checker. Changing local HEAD cannot hide the erased report.
+      repo.git("switch", "--detach", headSha);
+      await expect(
+        verifyUnsafeDestinationHistoryAuthorities({
+          repositoryRoot: repo.root,
+          baseSha: repo.baseSha,
+          headSha,
+        }),
+      ).rejects.toThrow(/cannot be deleted/);
+    } finally {
+      repo.cleanup();
+    }
+  });
   it("rejects execution from the contributor checkout", async () => {
     const repo = await fixture();
     try {

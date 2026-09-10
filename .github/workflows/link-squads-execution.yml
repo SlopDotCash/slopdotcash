@@ -1,0 +1,134 @@
+name: Link Squads execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Canonical project ID"
+        required: true
+        type: string
+      cycle:
+        description: "Approved cycle (YYYY-MM)"
+        required: true
+        type: string
+      transaction_index:
+        description: "Public Squads transaction or batch index (positive decimal u64)"
+        required: true
+        type: string
+      mode:
+        description: "External proposal layout"
+        required: true
+        type: choice
+        options:
+          - single
+          - batch
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Serialize append-only binding proposals without cancelling verification.
+concurrency:
+  group: link-squads-execution
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact trusted develop
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          submodules: false
+      - name: Require trusted checkout
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/develop'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch --no-tags origin develop
+          test "$(git rev-parse origin/develop)" = "$GITHUB_SHA"
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24.15.0"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - name: Install locked trusted dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Verify external proposal against canonical artifacts
+        id: binding
+        env:
+          BINDING_PROJECT: ${{ inputs.project }}
+          BINDING_CYCLE: ${{ inputs.cycle }}
+          BINDING_TRANSACTION_INDEX: ${{ inputs.transaction_index }}
+          BINDING_MODE: ${{ inputs.mode }}
+          BINDING_EVIDENCE_DIRECTORY: ${{ runner.temp }}/squads-binding-evidence
+        run: bun --no-install scripts/prepare-squads-binding.ts
+      - name: Validate complete candidate execution registry
+        run: bun --no-install scripts/sync-squads-execution-registry.ts
+      - name: Retain finalized verification evidence
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: squads-binding-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/squads-binding-evidence/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Open append-only binding PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_SHA256: ${{ steps.binding.outputs.plan_sha256 }}
+          ALLOCATION_SHA256: ${{ steps.binding.outputs.allocation_sha256 }}
+          BINDING_PROJECT: ${{ inputs.project }}
+          BINDING_CYCLE: ${{ inputs.cycle }}
+          BINDING_TRANSACTION_INDEX: ${{ inputs.transaction_index }}
+          BINDING_MODE: ${{ inputs.mode }}
+          EVIDENCE_URL: ${{ steps.evidence.outputs.artifact-url }}
+          EVIDENCE_DIGEST: ${{ steps.evidence.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin develop
+          test "$(git rev-parse origin/develop)" = "$GITHUB_SHA"
+          branch="codex/squads-binding-${PLAN_SHA256}"
+          if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null; then
+            echo 'A binding branch already exists for this plan; review it instead.' >&2
+            exit 1
+          fi
+          git switch -c "$branch"
+          git add -- funding/executions/ledger.json
+          python3 - <<'PYCODE'
+          import subprocess
+          changed = subprocess.check_output(['git', 'diff', '--cached', '--name-status', '--no-renames'], text=True).splitlines()
+          if changed != ['M\tfunding/executions/ledger.json']:
+              raise SystemExit('Only the existing binding ledger may change')
+          PYCODE
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: link Squads execution ${BINDING_PROJECT}/${BINDING_CYCLE}"
+          git push --force-with-lease="refs/heads/$branch:" origin "HEAD:refs/heads/$branch"
+          python3 - <<'PYCODE'
+          import os
+          from pathlib import Path
+          body = (
+              f"Links the externally created Squads {os.environ['BINDING_MODE']} proposal at public index {os.environ['BINDING_TRANSACTION_INDEX']} "
+              f"to the reviewed {os.environ['BINDING_PROJECT']}/{os.environ['BINDING_CYCLE']} allocation and execution plan. "
+              "The fixed finalized RPC quorum verified exact instructions, amounts, mint, owners and canonical accounts.\n\n"
+              f"Trusted develop: {os.environ['GITHUB_SHA']}\n"
+              f"Allocation SHA256: {os.environ['ALLOCATION_SHA256']}\n"
+              f"Plan SHA256: {os.environ['PLAN_SHA256']}\n"
+              f"Evidence: {os.environ['EVIDENCE_URL']}\nArtifact digest: {os.environ['EVIDENCE_DIGEST']}\n\n"
+              "This appends one binding. It does not approve rewards, sign, broadcast, prove payment or retire reservations. "
+              "GitHub maintainers review this binding before publication. Retain the evidence before its 90-day artifact expiry; RPC observations are point-in-time.\n"
+          )
+          Path(os.environ['RUNNER_TEMP'], 'squads-binding-pr.md').write_text(body)
+          PYCODE
+          gh pr create --draft --base develop --head "$branch" \
+            --title "chore: link ${BINDING_PROJECT}/${BINDING_CYCLE} Squads execution" \
+            --body-file "$RUNNER_TEMP/squads-binding-pr.md"

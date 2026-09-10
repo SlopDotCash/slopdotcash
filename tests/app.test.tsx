@@ -1584,6 +1584,15 @@ describe("direct project funding", () => {
     vi.useFakeTimers();
     route("/projects/eliza/funding");
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input).includes("/data/funding-reviews.json")) {
+        return Promise.resolve(
+          Response.json({
+            schemaVersion: "1",
+            generatedAt: "2026-09-10T00:00:00.000Z",
+            reviews: [],
+          }),
+        );
+      }
       if (String(input).includes("/data/funding.json")) {
         return new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener(

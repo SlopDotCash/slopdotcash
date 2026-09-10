@@ -1,26 +1,29 @@
+import { assertRewardAllocationManifest } from "../src/lib/rewards";
 /**
- * Produces the canonical unsigned transfer plan for an approved Eliza cycle.
+ * Releases the exact canonically reserved unsigned plan for a reviewed fresh cycle.
  * The creator signs it with an external Solana wallet; this process never reads
  * signing material or treats plan creation as payment.
  */
 
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fundingReviewProposalSha256 } from "../src/lib/funding-review-submission";
 import {
   assertProjectPaymentsEnabled,
   findProject,
   type ProjectId,
 } from "../src/lib/projects.mjs";
-import { assertRewardAllocationManifest } from "../src/lib/rewards";
-import { createSettlementExecutionPlan } from "../src/lib/settlement-plan";
+import { assertSettlementExecutionPlan } from "../src/lib/settlement-plan";
+import { loadCanonicalPaymentReservation } from "./load-payment-reservation";
 import {
-  assertSignerCapabilityForSettlement,
-  readCurrentSignerAccessLedger,
-} from "./signer-access-ledger";
-import { validateCycleTransition } from "./sync-cycle-index";
-import { writeNewJsonFile } from "./write-new-file";
+  reservationJson,
+  verifyPaymentAuthority,
+} from "./payment-reservation-history";
+import { assertCanonicalSettlementReadiness } from "./settlement-readiness";
+import { assertSignerCapabilityForSettlement } from "./signer-access-ledger";
+import { ExistingFileError, writeNewFile } from "./write-new-file";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CYCLES_ROOT = resolve(REPOSITORY_ROOT, "cycles");
@@ -29,6 +32,7 @@ const MAX_ALLOCATION_BYTES = 8 * 1024 * 1024;
 interface PlanArguments {
   allocationPath: string;
   createdAt: string;
+  createdAtExplicit?: boolean;
   cycleId: string;
   feeRecipient: string;
   outputPath: string;
@@ -83,6 +87,7 @@ export function parseSettlementPlanArguments(
   return {
     allocationPath: resolve(directory, "allocation.json"),
     createdAt,
+    createdAtExplicit: seen.has("--created-at"),
     cycleId,
     feeRecipient,
     outputPath: resolve(directory, "execution-plan.json"),
@@ -101,58 +106,99 @@ export async function prepareSettlementPlan(
     write?: (path: string, value: unknown) => Promise<void>;
   } = {},
 ) {
-  assertProjectPaymentsEnabled(arguments_.projectId);
-  const cycle = await (options.validate ?? validateCycleTransition)(
+  assertProjectPaymentsEnabled(arguments_.projectId, arguments_.cycleId);
+  if (Object.keys(options).length)
+    throw new TypeError(
+      "Configured settlement release does not accept validation or writer overrides",
+    );
+  if (
+    resolve(arguments_.outputPath) !==
+      resolve(dirname(arguments_.allocationPath), "execution-plan.json") ||
+    !resolve(arguments_.allocationPath).endsWith(
+      `/cycles/${arguments_.projectId}/${arguments_.cycleId}/allocation.json`,
+    )
+  )
+    throw new TypeError("Plan output must use its canonical cycle directory");
+  const loaded = await loadCanonicalPaymentReservation(
+    REPOSITORY_ROOT,
     arguments_.projectId,
     arguments_.cycleId,
   );
-  if (cycle.state !== "payment-ready") {
-    throw new TypeError(
-      "Only a verified approved allocation can produce a settlement plan",
-    );
-  }
-  const source = await readFile(arguments_.allocationPath);
-  if (source.byteLength > MAX_ALLOCATION_BYTES) {
-    throw new RangeError("Allocation exceeds its size limit");
-  }
-  let allocation: unknown;
-  try {
-    allocation = JSON.parse(source.toString("utf8"));
-  } catch (error) {
-    throw new TypeError("Allocation is not valid JSON", { cause: error });
-  }
-  const reviewedAllocation = assertRewardAllocationManifest(allocation);
   if (
-    reviewedAllocation.fundingBasis?.instrumentId?.startsWith(
-      "squads-v4-vault:",
-    )
-  ) {
-    const ledger = await readCurrentSignerAccessLedger(REPOSITORY_ROOT);
-    assertSignerCapabilityForSettlement(
-      ledger,
-      reviewedAllocation,
-      new Date().toISOString(),
+    arguments_.sourceOwner !== loaded.instrument.vault ||
+    arguments_.feeRecipient !== loaded.policy.feeRecipient ||
+    (arguments_.createdAtExplicit &&
+      arguments_.createdAt !== loaded.reservation.reservedAt)
+  )
+    throw new TypeError(
+      "Wallets and explicit timestamp must match the fixed reviewed reservation",
     );
+  const bytes = new Uint8Array(loaded.fixedPlanBytes);
+  if (
+    (await fundingReviewProposalSha256(bytes)) !== loaded.reservation.planSha256
+  )
+    throw new TypeError("Reserved plan bytes failed exact digest check");
+  const plan = assertSettlementExecutionPlan(
+    reservationJson(bytes),
+    assertRewardAllocationManifest(reservationJson(loaded.allocationBytes)),
+  );
+  const readiness = await assertCanonicalSettlementReadiness(
+    REPOSITORY_ROOT,
+    loaded,
+  );
+  if (verifyPaymentAuthority(REPOSITORY_ROOT) !== loaded.revision)
+    throw new TypeError(
+      "Canonical authority changed before release; retry the same reservation",
+    );
+  const now = new Date().toISOString();
+  assertSignerCapabilityForSettlement(
+    loaded.signerLedger,
+    {
+      projectId: arguments_.projectId,
+      cycleId: arguments_.cycleId,
+      fundingBasis: { instrumentId: loaded.reservation.instrumentId },
+    },
+    now,
+  );
+  if (
+    now >= loaded.policy.planningExpiresAt ||
+    Date.parse(now) - Date.parse(readiness.observedAt) > 300000
+  )
+    throw new TypeError(
+      "Readiness expired before release; reserved principal remains held",
+    );
+  const directory = await lstat(dirname(arguments_.outputPath));
+  if (!directory.isDirectory() || directory.isSymbolicLink())
+    throw new TypeError(
+      "Plan destination must be a real canonical cycle directory",
+    );
+  try {
+    await writeNewFile(
+      arguments_.outputPath,
+      bytes,
+      "A different plan already occupies the canonical cycle path",
+    );
+  } catch (error) {
+    if (!(error instanceof ExistingFileError)) throw error;
+    const handle = await open(
+      arguments_.outputPath,
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    );
+    try {
+      const stat = await handle.stat();
+      if (
+        !stat.isFile() ||
+        stat.size > MAX_ALLOCATION_BYTES ||
+        stat.size !== bytes.byteLength
+      )
+        throw new TypeError("Existing plan differs from reserved bytes");
+      const existing = await handle.readFile();
+      if (!existing.equals(Buffer.from(bytes)))
+        throw new TypeError("Existing plan differs from reserved bytes");
+    } finally {
+      await handle.close();
+    }
   }
-  const plan = createSettlementExecutionPlan({
-    allocation,
-    allocationSha256: createHash("sha256").update(source).digest("hex"),
-    createdAt: arguments_.createdAt,
-    feeRecipient: arguments_.feeRecipient,
-    sourceOwner: arguments_.sourceOwner,
-  });
-  if (plan.projectId !== arguments_.projectId) {
-    throw new TypeError("Allocation project does not match its cycle path");
-  }
-  await (
-    options.write ??
-    ((path, value) =>
-      writeNewJsonFile(
-        path,
-        value,
-        `Refusing to replace settlement plan ${path}`,
-      ))
-  )(arguments_.outputPath, plan);
   return plan;
 }
 

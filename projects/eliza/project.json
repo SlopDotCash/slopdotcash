@@ -104,6 +104,10 @@
     "cycle": "calendar-month-utc",
     "monthlyCapMinor": "5000000000",
     "monthlyCapDisplay": "$5,000",
+    "cycleCaps": [
+      { "cycleId": "2026-08", "monthlyCapMinor": "10000000000" },
+      { "cycleId": "2026-09", "monthlyCapMinor": "5000000000" }
+    ],
     "committedMinor": "0",
     "paymentMode": "disabled",
     "feeBasisPoints": 100,

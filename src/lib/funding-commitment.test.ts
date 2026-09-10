@@ -135,6 +135,31 @@ describe("funding commitment instruments", () => {
       ),
     ).not.toThrow();
   });
+  it("retains nonoverlapping retired unscoped history but rejects active or overlapping legacy windows", () => {
+    const monthly = squadsInstrument({
+      multisig: "SysvarC1ock11111111111111111111111111111111",
+      vaultIndex: 1,
+      effectiveAt: "2026-09-01T00:00:00.000Z",
+      deadline: "2026-10-01T00:00:00.000Z",
+      monthlyCommitment: {
+        cycleId: "2026-09",
+        amountMinor: "5000000",
+        accessibility: "unknown",
+      },
+    });
+    const retired = squadsInstrument({ replacedAt: monthly.effectiveAt });
+    expect(() => assertFundingCommitments([retired, monthly])).not.toThrow();
+    expect(() => assertFundingCommitments([monthly, retired])).not.toThrow();
+    expect(() =>
+      assertFundingCommitments([squadsInstrument(), monthly]),
+    ).toThrow(/retired nonoverlapping/);
+    expect(() =>
+      assertFundingCommitments([
+        squadsInstrument({ replacedAt: "2026-09-02T00:00:00.000Z" }),
+        monthly,
+      ]),
+    ).toThrow(/retired nonoverlapping/);
+  });
   it("accepts only the reviewed instrument kinds with exact fields", () => {
     expect(instruments).toHaveLength(2);
     expect(hasActiveFundingCommitment(instruments)).toBe(true);
