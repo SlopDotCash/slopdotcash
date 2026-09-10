@@ -69,8 +69,6 @@ describe("Cloudflare Pages redirect contract", () => {
     ...PROJECTS.map((project) => `/projects/${project.id}/funding/`),
     "/contributors/octocat",
     "/cycles/eliza/2026-07",
-    "/deck",
-    "/deck/2",
   ];
 
   it.each(spaDeepLinks)("rewrites %s to the app shell", (pathname) => {
@@ -115,7 +113,6 @@ describe("Cloudflare Pages redirect contract", () => {
       "/site.webmanifest",
       "/slop-mark.svg",
       "/og-open-source.png",
-      "/og-shipping-slop.png",
       "/brand/elizaos-mark.svg",
       "/downloads/eliza.skill",
       "/protocol/identity-v1.json",

@@ -10,7 +10,6 @@ import "@fontsource/poppins/800.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { Deck } from "./Deck";
 import { ErrorBoundary } from "./ErrorBoundary";
 import "./brand-tokens.css";
 import "./styles.css";
@@ -20,13 +19,16 @@ if (!root) {
   throw new Error("[Slop] #root is missing");
 }
 
-const isDeck =
-  window.location.hostname === "deck.slop.cash" ||
-  window.location.pathname === "/deck" ||
-  window.location.pathname.startsWith("/deck/");
+// The fundraising deck was retired on 10 Sep 2026. The reviewed
+// deck.slop.cash Pages domain still serves this bundle, so send visitors home.
+if (window.location.hostname === "deck.slop.cash") {
+  window.location.replace("https://slop.cash/");
+}
 
 createRoot(root).render(
   <StrictMode>
-    <ErrorBoundary>{isDeck ? <Deck /> : <App />}</ErrorBoundary>
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
