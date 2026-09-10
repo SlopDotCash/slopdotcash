@@ -175,7 +175,9 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   const snapshot = await loadSnapshot(request);
   await loadCycles(request);
   await expect(
-    page.locator(".global-leader-grid .global-leader-row"),
+    page.locator(
+      ".global-leader-grid .global-leader-row:not(.reviewer-leader-row)",
+    ),
   ).toHaveCount(createProjectView(snapshot, "eliza").leaders.length);
 
   await expect(
