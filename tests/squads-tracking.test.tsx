@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CycleIndexEntry } from "../src/lib/cycle-index";
 import {
@@ -110,15 +110,21 @@ describe("Squads tracker public contract", () => {
       );
     });
     vi.stubGlobal("fetch", fetcher);
+    const listeners = vi.spyOn(window, "addEventListener");
     render(<SquadsTracking cycle={cycle} />);
     expect(
       await screen.findByText("Proposal executed · settlement unverified"),
     ).toBeVisible();
+    await waitFor(() =>
+      expect(listeners).toHaveBeenCalledWith("focus", expect.any(Function)),
+    );
     expect(fetcher.mock.calls[1][0]).toBe(published.observationUrl);
     vi.spyOn(Date, "now").mockReturnValue(
       Date.parse(observation.observedAt) + 300000,
     );
-    act(() => window.dispatchEvent(new Event("focus")));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
     expect(
       screen.getByText("Execution observation stale · refresh required"),
     ).toBeVisible();
