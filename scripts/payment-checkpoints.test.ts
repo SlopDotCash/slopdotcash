@@ -230,6 +230,11 @@ function liveEvidence(f: ReturnType<typeof fixture>, expired = false) {
           },
         ],
       };
+    if (
+      path.includes("/actions/workflows/") &&
+      path.includes(`head_sha=${f.head}`)
+    )
+      return { total_count: 0, workflow_runs: [] };
     if (path.includes("/actions/runs/7/jobs"))
       return {
         total_count: 1,
