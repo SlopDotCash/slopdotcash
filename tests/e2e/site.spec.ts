@@ -916,7 +916,7 @@ test("serves byte-consistent install and read-only artifacts for every project",
   expect(await discoverySkillResponse.body()).toEqual(bootstrap);
   expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
   expect(bootstrap.toString()).toContain(
-    "mandatory permanent minimized trace upload",
+    "optional permanent minimized trace upload",
   );
   const projectDiscovery = await projectDiscoveryResponse.json();
   expect(projectDiscovery).toEqual({
