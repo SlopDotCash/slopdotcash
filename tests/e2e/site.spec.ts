@@ -222,12 +222,14 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", { exact: true, name: "Featured" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { exact: true, name: "Community" }),
-  ).toBeVisible();
+  const community = page.locator("details.community-projects");
+  await expect(community).not.toHaveAttribute("open", "");
+  await expect(community.locator("a.project-card")).toBeHidden();
+  await community.locator("summary").focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.locator(
-      '.project-tier[aria-labelledby="community-projects"] a.project-card[href="/projects/heir-elements-sdk"]',
+      'details.community-projects a.project-card[href="/projects/heir-elements-sdk"]',
     ),
   ).toBeVisible();
   await expect(
