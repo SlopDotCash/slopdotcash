@@ -27,6 +27,14 @@ const receipt = {
 };
 
 describe("wallet issue migration", () => {
+  it("refuses execution before contributor authentication or any import", async () => {
+    const fetchMock = vi.fn();
+    await expect(
+      main(["--execute", "--close"], { claims: [source], fetch: fetchMock }),
+    ).rejects.toThrow(/separate operator identity issuer/u);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("imports and refetches an exact public receipt before closure", async () => {
     const fetchMock = vi
       .fn()

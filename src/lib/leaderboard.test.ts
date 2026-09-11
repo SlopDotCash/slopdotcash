@@ -2640,6 +2640,58 @@ describe("scoring and limits", () => {
     );
   });
 
+  it("replays the seven verified issue 405 reviews once and lets live parents take precedence", () => {
+    const history = JSON.parse(
+      readFileSync(resolve("data/accepted-review-history.json"), "utf8"),
+    ) as { events: ScoreEvent[] };
+    const events = history.events.filter((event) =>
+      event.continuity?.decisionUrl.endsWith("/issues/405"),
+    );
+    expect(events).toHaveLength(7);
+    const historicalInput = input({
+      generatedAt: "2026-09-03T12:00:00.000Z",
+      windowFrom: "2026-07-30T12:00:00.000Z",
+      windowTo: "2026-09-03T12:00:00.000Z",
+      verificationWindowFrom: "2026-07-30T12:00:00.000Z",
+      retainedReviewEvents: [...events, ...events],
+    });
+    historicalInput.sourceUpdatedAt = historicalInput.generatedAt;
+    historicalInput.source.fetchedAt = historicalInput.generatedAt;
+    historicalInput.source.cutoffAt = historicalInput.windowTo;
+    historicalInput.source.verificationWindow.from = historicalInput.windowFrom;
+    historicalInput.source.verificationWindow.to = historicalInput.windowTo;
+    const snapshot = createLeaderboardSnapshot(historicalInput);
+    const restored = snapshot.ledger.filter((event) =>
+      events.some((retained) => retained.source.id === event.source.id),
+    );
+    expect(restored).toHaveLength(7);
+    expect(
+      restored.reduce((sum, event) => sum + (event.scoreThirds ?? 0), 0),
+    ).toBe(21);
+    expect(restored.every((event) => !event.evidenceBonusBasisPoints)).toBe(
+      true,
+    );
+    const currentParent = pullRequest({
+      id: events[0].id.split(":")[0],
+      number: events[0].source.number,
+      mergedAt: "2026-08-25T00:00:00.000Z",
+    });
+    const current = createLeaderboardSnapshot({
+      ...historicalInput,
+      ...input({ mergedPullRequests: [currentParent] }),
+      generatedAt: historicalInput.generatedAt,
+      windowFrom: historicalInput.windowFrom,
+      windowTo: historicalInput.windowTo,
+      verificationWindowFrom: historicalInput.verificationWindowFrom,
+      source: historicalInput.source,
+      sourceUpdatedAt: historicalInput.sourceUpdatedAt,
+      retainedReviewEvents: events,
+    });
+    expect(current.ledger.some((event) => event.id === events[0].id)).toBe(
+      false,
+    );
+  });
+
   it("retains accepted formal review credit when GitHub deletes the parent pull request", () => {
     const reviewer = actor("retained-reviewer");
     const retained: ScoreEvent = {

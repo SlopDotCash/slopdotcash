@@ -120,6 +120,202 @@
       },
       "scoreThirds": 3,
       "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkiidoa"
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAmbjtA:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-22T21:22:26Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKhZmaQ",
+        "kind": "review",
+        "number": 24021,
+        "title": "fix(cloud): strictly parse SMTP_PORT and reject empty port at initialization boundary",
+        "url": "https://github.com/elizaOS/eliza/pull/24021#pullrequestreview-5001078377"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkhzmaq",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAsGy7g:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T07:59:55Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKiOa0w",
+        "kind": "review",
+        "number": 25310,
+        "title": "fix(agent-orchestrator): safe NaN handling in task agent framework scoring and session paging",
+        "url": "https://github.com/elizaOS/eliza/pull/25310#pullrequestreview-5001943763"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkioa0w",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAsoqXw:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T11:01:01Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKif24A",
+        "kind": "review",
+        "number": 25685,
+        "title": "fix(cloud): use surrogate-safe truncateWellFormed on Docker node manager log output",
+        "url": "https://github.com/elizaOS/eliza/pull/25685#pullrequestreview-5002229472"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkif24a",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAsqi1w:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T11:48:32Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKiksQQ",
+        "kind": "review",
+        "number": 25712,
+        "title": "fix(native-llama): safe NaN handling in token tree node tokenId sort comparators",
+        "url": "https://github.com/elizaOS/eliza/pull/25712#pullrequestreview-5002308673"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkiksqq",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAs2pVA:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T13:28:05Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKivXtw",
+        "kind": "review",
+        "number": 25848,
+        "title": "fix(ui): handle max<=0 and max==1 in truncateMessageForDisplay",
+        "url": "https://github.com/elizaOS/eliza/pull/25848#pullrequestreview-5002483639"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkivxtw",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAvLwlQ:reviewer:U_kgDOCzOt4w",
+      "actor": {
+        "id": "U_kgDOCzOt4w",
+        "login": "GG100-eng",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187936227?v=4",
+        "url": "https://github.com/GG100-eng",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-24T04:56:26Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKkzU3Q",
+        "kind": "review",
+        "number": 26802,
+        "title": "test(ui): cover resolve cloud connection defaults",
+        "url": "https://github.com/elizaOS/eliza/pull/26802#pullrequestreview-5004645597"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkkzu3q",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAwtsVQ:reviewer:U_kgDOCzOt4w",
+      "actor": {
+        "id": "U_kgDOCzOt4w",
+        "login": "GG100-eng",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187936227?v=4",
+        "url": "https://github.com/GG100-eng",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-24T08:07:45Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKl0syw",
+        "kind": "review",
+        "number": 27335,
+        "title": "fix(core): aggregate context routing signal scores per context to prevent duplicate secondary contexts",
+        "url": "https://github.com/elizaOS/eliza/pull/27335#pullrequestreview-5005716683"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkl0syw",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
     }
   ]
 }
