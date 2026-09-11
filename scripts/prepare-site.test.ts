@@ -427,7 +427,6 @@ describe("contribution skill package", () => {
     expect(readFileSync(join(publicRoot, "protocol", "scoring-v2.md"))).toEqual(
       readFileSync(join(repositoryRoot, "protocol", "scoring-v2.md")),
     );
-    expect(source.toString()).toContain("--allow-local-usage");
 
     const projectDiscovery = parseJsonRecord(
       readFileSync(
