@@ -235,6 +235,19 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", { exact: true, name: "Delta Star" }),
   ).toBeVisible();
+  const scoreLineCounts = await page
+    .locator(".combined-score > strong")
+    .evaluateAll((scores) =>
+      scores.map((score) => {
+        const range = document.createRange();
+        range.selectNodeContents(score);
+        return new Set(
+          [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+        ).size;
+      }),
+    );
+  expect(scoreLineCounts.length).toBeGreaterThan(0);
+  expect(scoreLineCounts.every((count) => count === 1)).toBe(true);
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
   await expect(elizaCard.getByText("Unfunded", { exact: true })).toHaveCount(0);
   await expect(elizaCard.getByText("$5k", { exact: true })).toBeVisible();

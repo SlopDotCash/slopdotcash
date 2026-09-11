@@ -969,7 +969,10 @@ function GlobalLeaderboard({
                                 </span>
                               </Link>
                             </td>
-                            <td data-label="Accepted score">
+                            <td
+                              className="combined-score"
+                              data-label="Accepted score"
+                            >
                               <strong
                                 title={`Exact score ${leader.scoreThirds}/3`}
                               >
@@ -1056,7 +1059,10 @@ function GlobalLeaderboard({
                           </span>
                         </Link>
                       </td>
-                      <td data-label="Accepted score">
+                      <td
+                        className="combined-score"
+                        data-label="Accepted score"
+                      >
                         <strong title={`Exact score ${leader.score}`}>
                           {formatScore(leader.score)}
                         </strong>
