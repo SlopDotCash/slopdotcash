@@ -62,13 +62,16 @@ export function assertReservationRunProvenance(
   if (
     r.path !== WORKFLOW ||
     r.event !== "pull_request_target" ||
-    r.head_sha !== expected.base ||
+    ![expected.base, expected.head].includes(r.head_sha ?? "") ||
     r.status !== "completed" ||
     r.conclusion !== "success" ||
     r.repository?.full_name !== PAYMENT_REPOSITORY ||
     !r.run_started_at ||
     !r.updated_at ||
+    !Number.isFinite(Date.parse(r.run_started_at)) ||
     !Number.isFinite(Date.parse(r.updated_at)) ||
+    !Number.isFinite(Date.parse(expected.mergedAt)) ||
+    Date.parse(r.run_started_at) > Date.parse(r.updated_at) ||
     Date.parse(r.updated_at) > Date.parse(expected.mergedAt)
   )
     throw new TypeError(
@@ -206,55 +209,12 @@ export async function verifyHistoricalPaymentAdmission(
     if (matches.length !== 1)
       throw new TypeError("Cannot prove exact merged admission PR");
     const pr = matches[0];
-    const runs = reservationGithub(
-      `repos/${PAYMENT_REPOSITORY}/actions/workflows/payment-reservations.yml/runs?event=pull_request_target&head_sha=${base}&per_page=100`,
-    ) as {
-      total_count?: number;
-      workflow_runs?: ({ id: number } & Record<string, unknown>)[];
-    };
-    if (!Array.isArray(runs.workflow_runs) || (runs.total_count ?? 101) > 100)
-      throw new TypeError("Incomplete trusted workflow run inventory");
-    let proven = false;
-    for (const run of runs.workflow_runs) {
-      try {
-        assertReservationRunProvenance(run, {
-          base,
-          head: parents[1],
-          number: pr.number,
-          mergedAt: pr.merged_at,
-        });
-      } catch {
-        continue;
-      }
-      const jobs = reservationGithub(
-        `repos/${PAYMENT_REPOSITORY}/actions/runs/${run.id}/jobs?per_page=100`,
-      ) as {
-        total_count?: number;
-        jobs?: { name: string; conclusion: string; completed_at: string }[];
-      };
-      if (
-        (jobs.total_count ?? 101) <= 100 &&
-        jobs.jobs?.some(
-          (j) =>
-            j.name === PAYMENT_RESERVATION_CHECK &&
-            j.conclusion === "success" &&
-            Date.parse(j.completed_at) <= Date.parse(pr.merged_at),
-        )
-      ) {
-        verifyReceipt(run.id, {
-          base,
-          head: parents[1],
-          number: pr.number,
-          runId: run.id,
-          attempt: Number(run.run_attempt),
-        });
-        proven = true;
-      }
-    }
-    if (!proven)
-      throw new TypeError(
-        "No exact successful trusted reservation gate before merge",
-      );
+    verifyReservationAdmissionRuns({
+      base,
+      head: parents[1],
+      number: pr.number,
+      mergedAt: pr.merged_at,
+    });
     // Re-evaluate each historical admission using exact immutable inputs. Current
     // protection cannot bless a rewritten prefix or previously invalid policy.
     await checkPaymentReservationRecords(
@@ -267,4 +227,76 @@ export async function verifyHistoricalPaymentAdmission(
   }
   if (base !== revision)
     throw new TypeError("Bootstrap is not on canonical first-parent history");
+}
+
+/** REST run head_sha may identify the PR head instead of the trusted checkout.
+ * The immutable workflow and its digest-checked receipt bind the executed base.
+ * Search both exact revisions; never rely on a display status or PR list alone. */
+export function verifyReservationAdmissionRuns(expected: {
+  base: string;
+  head: string;
+  number: number;
+  mergedAt: string;
+}) {
+  const candidates = new Map<
+    number,
+    { id: number } & Record<string, unknown>
+  >();
+  for (const revision of new Set([expected.base, expected.head])) {
+    const runs = reservationGithub(
+      `repos/${PAYMENT_REPOSITORY}/actions/workflows/payment-reservations.yml/runs?event=pull_request_target&head_sha=${revision}&per_page=100`,
+    ) as {
+      total_count?: number;
+      workflow_runs?: ({ id: number } & Record<string, unknown>)[];
+    };
+    if (!Array.isArray(runs.workflow_runs) || (runs.total_count ?? 101) > 100)
+      throw new TypeError("Incomplete trusted workflow run inventory");
+    for (const run of runs.workflow_runs) {
+      if (!Number.isSafeInteger(run.id) || run.id < 1)
+        throw new TypeError("Invalid trusted workflow run identity");
+      candidates.set(run.id, run);
+    }
+  }
+  for (const run of candidates.values()) {
+    try {
+      assertReservationRunProvenance(run, expected);
+    } catch {
+      continue;
+    }
+    if (!Number.isSafeInteger(run.run_attempt) || Number(run.run_attempt) < 1)
+      continue;
+    const jobs = reservationGithub(
+      `repos/${PAYMENT_REPOSITORY}/actions/runs/${run.id}/jobs?per_page=100`,
+    ) as {
+      total_count?: number;
+      jobs?: { name: string; conclusion: string; completed_at: string }[];
+    };
+    if (
+      (jobs.total_count ?? 101) > 100 ||
+      !jobs.jobs?.some(
+        (job) =>
+          job.name === PAYMENT_RESERVATION_CHECK &&
+          job.conclusion === "success" &&
+          Date.parse(job.completed_at) <= Date.parse(expected.mergedAt),
+      )
+    )
+      continue;
+    try {
+      verifyReceipt(run.id, {
+        base: expected.base,
+        head: expected.head,
+        number: expected.number,
+        runId: run.id,
+        attempt: Number(run.run_attempt),
+      });
+    } catch {
+      // Another PR can have a successful run on the same base. Only an exact
+      // authenticated receipt admits this merge; unavailable evidence never does.
+      continue;
+    }
+    return;
+  }
+  throw new TypeError(
+    "No exact successful trusted reservation gate before merge",
+  );
 }
