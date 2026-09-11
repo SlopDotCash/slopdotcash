@@ -83,11 +83,10 @@ GitHub calls and must not post claims, comments, labels, reviews, or mutations.
 
 ## Attribution and payout evidence
 
-Start the bundled run-receipt script before work and finish it after proof. Use
-the emitted footer unchanged on the final score-bearing GitHub source. The Slop
-marker carries the declared provider, model, and client, repository identity,
-skill revision, diagnostic ccusage delta, required private-trace upload identity
-and digest, device public key, and signature.
+Generate ordinary attribution with `run-receipt.mjs disclose`. Signed run
+receipts, usage collection, and private traces are optional. If chosen, start
+a run before work and finish after proof; finish without trace arguments when
+no trace was uploaded. Never report missing evidence as finalized.
 
 The public simulation uses accepted outcome score only. A receipt cannot create
 score or change allocation weight.

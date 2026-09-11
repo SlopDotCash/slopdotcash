@@ -99,8 +99,8 @@ The public checksum detects corruption only. GitHub is the independent trust
 root. The generated installer may authorize:
 
 1. current `develop`;
-2. a `develop` ancestor whose complete canonical skill tree is byte-identical
-   to current `develop`; or
+2. a `develop` ancestor whose canonical skill tree is unchanged, or a successful
+   approved published revision not listed in `protocol/skill-revocations.json`; or
 3. an open, non-draft, same-repository PR head into `develop` with the
    maintainer-controlled `slop-release-candidate` label applied after the exact
    current-head commit event.
@@ -112,19 +112,17 @@ kernel lock, atomic relative-symlink activation, prior verified versions, and
 explicit rollback reauthorization. Tests may inject only deterministic
 `file://` authorities through the generator’s test option.
 
-Every project-skill contribution carries a
-`slop-contribution-attribution:v1` marker binding project, repository, run ID,
-timestamps, exact provider/model/client, skill revision and digest, aggregate
-pinned-ccusage figures, the private trace digest and upload identity, and an
-Ed25519 device signature. A device signature proves byte continuity—not
-provider billing truth. Token evidence is diagnostic and never changes score,
-rank, share, or payment. A finalized private trace adds a fixed 15% evidence
-bonus.
+Every contribution discloses exact provider, model, and client. Ordinary GitHub
+submission does not require a measured run, device key, policy acknowledgement,
+private trace, usage collection, or payout registration. Optional signed receipts
+bind their actual evidence; missing evidence never earns a trace bonus. A device
+signature proves byte continuity, not provider billing truth. Token evidence is
+diagnostic and never changes score, rank, share, or payment.
 
 ## Private traces
 
-Every run uploads the minimized contribution-specific trace defined by
-`protocol/private-trace-v1.md` before submission. The contributor inspects and
+Contributors may opt into the minimized contribution-specific trace defined by
+`protocol/private-trace-v1.md`. Declining or failing upload never blocks submission. The contributor inspects and
 redacts the selected file; the uploader stores its exact bytes and performs no
 automatic redaction.
 
@@ -135,8 +133,8 @@ separate operator-controlled path.
 
 The contributor upload route is write-only, bounded, authenticated,
 checksum-verified, and fail-closed. Public artifacts contain only safe metadata
-and the trace digest. Production activation remains blocked until the verified
-private request intake required by the protocol is publicly available.
+and the trace digest. Only optional trace collection depends on the independently renewed private
+request status. Website deployment and GitHub contribution remain independent.
 
 ## Scoring and work selection
 
@@ -215,17 +213,27 @@ designated reviewer, and disallows administrator bypass. Repository rules
 require a pull request, resolved threads, and non-fast-forward history with no
 bypass actors.
 
-Scheduled data-only refreshes use the separate develop-only `slop-data-refresh`
-environment, with its own scoped Cloudflare secrets and no reviewer gate. They
-require a prior successful release of the exact source SHA and a byte-identical
-bundle except the explicit generated data allowlist. They never mutate identity,
-D1, or cleanup schedules. Push and manual code releases retain production approval.
+Code releases require approval at `eliza-army-production` before entering the
+publication lock. Publication credentials live in the develop-only
+`slop-data-refresh` environment. Its scoped token must support Pages, identity and
+D1 release operations; never expose it to pull-request runs. The approval job
+has no publication lock, so waiting for a reviewer cannot starve data refreshes.
 
-Push, schedule, and manual releases use the exact checked-out `develop` SHA.
-The workflow installs lockfile-pinned Wrangler without lifecycle scripts,
-deploys the verified build selected by `wrangler.toml`, and waits for a new,
-clean Cloudflare production deployment bound to that SHA. Verify custom-domain
-DNS, TLS, redirects, headers, and deployed bytes separately.
+Scheduled refreshes build the currently published GitHub-approved ancestor of
+`develop`, compare the complete bundle against a successful retained baseline,
+and may change only allowlisted data. Recheck the deployed revision under the
+shared publication lock before publishing; discard superseded refreshes.
+Code releases still require current develop equivalence. Every Pages deployment
+is bound to its actual tested source SHA, not the schedule event SHA.
+
+The separate hourly health workflow authenticates GitHub private-reporting
+status and renews a D1 observation. It never publishes code or holds the site
+publication lock. Status older than 24 hours blocks optional trace collection
+only. Failed renewals are explicit operational failures.
+
+The workflow installs lockfile-pinned Wrangler without lifecycle scripts.
+Verify deployment identity, custom-domain DNS, TLS, redirects, headers, and
+served bytes separately.
 
 Claim the deploy/DNS lever on the issue before changing environment allowlists,
 Pages, zones, nameservers, DNSSEC, custom domains, registrar state, or release

@@ -1086,7 +1086,7 @@ describe("model attribution", () => {
     );
   });
 
-  it("rejects review ingestion without finalization or with a mismatched join", () => {
+  it("rejects review ingestion with an unbacked trace claim or mismatched join", () => {
     const missingFinalization = {
       ...textSource(
         "COMMENT_REVIEW_NO_TRACE",
@@ -1108,7 +1108,7 @@ describe("model attribution", () => {
     expect(result.invalidMarkers).toEqual([
       expect.objectContaining({
         sourceId: "COMMENT_REVIEW_NO_TRACE",
-        reason: expect.stringMatching(/finalized private trace upload/u),
+        reason: expect.stringMatching(/does not match its run receipt/u),
       }),
       expect.objectContaining({
         sourceId: "COMMENT_REVIEW_MISMATCH",

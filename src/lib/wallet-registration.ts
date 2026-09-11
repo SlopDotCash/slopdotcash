@@ -31,7 +31,17 @@ export interface WalletRegistrationSession {
   confirm: () => Promise<RegisteredWalletClaim>;
   cancel: () => void;
 }
+export interface WalletAuthorization {
+  flowId: string;
+  pollCapability: string;
+  authorizationUrl: string;
+  expiresAt: string;
+  pollAfterSeconds: number;
+}
 export interface WalletRegistrationOptions {
+  /** Short-lived per-tab state for same-tab navigation; never an API session token. */
+  resume?: unknown;
+  saveAuthorization?: (value: WalletAuthorization | null) => void;
   signal?: AbortSignal;
   fetch?: typeof fetch;
   now?: () => number;
@@ -237,13 +247,14 @@ export async function prepareWalletRegistration(
     };
   }
   try {
-    const started =
-      (
-        await request(
-          `${IDENTITY}/v1/oauth/start`,
-          post({ audience: AUDIENCE }),
-        )
-      )?.body ?? invalid();
+    const started = options.resume
+      ? record(options.resume)
+      : ((
+          await request(
+            `${IDENTITY}/v1/oauth/start`,
+            post({ audience: AUDIENCE }),
+          )
+        )?.body ?? invalid());
     const expires = timestamp(started.expiresAt);
     if (
       expires <= now() ||
@@ -277,7 +288,14 @@ export async function prepareWalletRegistration(
     let interval = Number(started.pollAfterSeconds);
     if (!Number.isSafeInteger(interval) || interval < 1 || interval > 10)
       invalid();
-    options.authorize(authorization.href);
+    options.saveAuthorization?.({
+      flowId: started.flowId as string,
+      pollCapability: started.pollCapability as string,
+      authorizationUrl: authorization.href,
+      expiresAt: started.expiresAt as string,
+      pollAfterSeconds: interval,
+    });
+    if (!options.resume) options.authorize(authorization.href);
     let assertion = "";
     while (now() < expires) {
       await delay(Math.min(interval * 1000, expires - now()), signal);
@@ -313,7 +331,11 @@ export async function prepareWalletRegistration(
       assertion = body.assertion;
       break;
     }
-    if (!assertion) throw new Error("GitHub sign-in expired. Start again.");
+    if (!assertion)
+      throw new Error(
+        "GitHub sign-in expired. Your address is saved; sign in again.",
+      );
+    options.saveAuthorization?.(null);
     const authenticated =
       (
         await request(`${API}/api/v1/auth/session`, {

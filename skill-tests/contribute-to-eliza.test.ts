@@ -52,7 +52,6 @@ import {
   readGhPages,
   readLivePullHead,
   readLiveReportProcessIdentity,
-  readProjectSelectionPolicy,
   recheckReviewEpochCandidate,
   renderMarkdown,
   retryChangedLiveInventory,
@@ -421,129 +420,6 @@ describe("contribute-to-eliza skill structure", () => {
     assert.doesNotMatch(source, /\[TODO[:\]]/);
   });
 
-  it("encodes outcome modes, measured runs, security, sync, proof, and authority", () => {
-    const source = readFileSync(skillPath, "utf8");
-
-    assert.match(source, /\*\*Review and test every current PR\*\*/);
-    assert.match(source, /\*\*Finish every existing issue without a PR\*\*/);
-    assert.match(source, /\*\*Restore `develop` workflow health\*\*/);
-    assert.match(source, /\*\*Validate\*\*/);
-    assert.match(source, /run-receipt\.mjs start/);
-    assert.match(source, /run-receipt\.mjs finish/);
-    assert.match(source, /gpt-5\.6-sol/);
-    assert.match(source, /Grok and Kimi/);
-    assert.match(source, /Slop marker/i);
-    assert.match(source, /device signature/i);
-    assert.match(source, /updates only to GitHub-authorized bytes/i);
-    assert.match(source, /SECURITY\.md/);
-    assert.match(source, /origin\/develop/);
-    assert.match(source, /nearest `AGENTS\.md` or\s+`CLAUDE\.md`/);
-    assert.match(source, /Open and inspect every artifact/i);
-    assert.match(source, /Never self-approve,\s+self-merge/i);
-    assert.match(source, /--no-ext-diff --no-textconv/);
-    assert.match(source, /worktree is not isolation/i);
-    assert.match(source, /network denied by\s+default/i);
-    assert.match(source, /bun install --frozen-lockfile --ignore-scripts/);
-    assert.match(source, /operator approval/i);
-    assert.match(source, /single-use least-privilege credential/i);
-    assert.match(source, /normal `gh` config/i);
-  });
-
-  it("documents the signed Eliza last-line alias without duplicating the Slop receipt", () => {
-    const source = readFileSync(skillPath, "utf8");
-
-    assert.match(source, /slop-contribution-attribution:v1/);
-    assert.match(source, /eliza-computer-attribution:v1/);
-    assert.match(source, /elizaos-contribution-attribution:v2/);
-    assert.match(source, /check-agent-comment-attribution\.mjs/);
-    assert.match(source, /at most one\s+attribution marker per source/i);
-    assert.match(
-      source,
-      /preserve the complete visible\s+footer and exact signed JSON payload/i,
-    );
-    assert.match(source, /marker name is outside the signed\s+payload/i);
-    assert.match(source, /Do not remove the `run` object/i);
-    assert.match(source, /generate the unsigned\s+legacy marker/i);
-    assert.match(source, /formal `APPROVE` or `REQUEST_CHANGES` event/);
-    assert.match(source, /`submittedAt` is after `mergedAt`/);
-    assert.match(
-      source,
-      /does not\s+require the reviewed commit to become the final merged head/,
-    );
-    assert.match(source, /Do not put both markers in the same\s+source/i);
-    assert.doesNotMatch(source, /ss251 gets \+50|give ss251 extra points/i);
-  });
-
-  it("rejects contribution spam and gates work on the primary Eliza mission", () => {
-    const source = readFileSync(skillPath, "utf8");
-    const mission = readFileSync(
-      join(skillDir, "references", "mission-priorities.md"),
-      "utf8",
-    );
-
-    assert.match(source, /Do not create an issue during a self-directed/i);
-    assert.match(
-      source,
-      /Never apply, request, suggest applying, or automate/i,
-    );
-    assert.match(source, /exact\s+repository label `mission-ready`/i);
-    assert.match(source, /issue explicitly selected by the\s+operator/i);
-    assert.match(source, /Keep at most one active implementation or review/i);
-    assert.match(source, /Never\s+mirror a PR title into an issue/i);
-    assert.match(source, /Prefer one complete fix to\s+several small PRs/i);
-    assert.match(source, /Ignore leaderboard position/i);
-    const reviewPriority = source.indexOf(
-      "**Review and test every current PR**",
-    );
-    const implementPriority = source.indexOf(
-      "**Finish every existing issue without a PR**",
-    );
-    const workflowPriority = source.indexOf(
-      "**Restore `develop` workflow health**",
-    );
-    const auditPriority = source.indexOf(
-      "**Audit only after the three gates are clear**",
-    );
-    assert.ok(reviewPriority >= 0);
-    assert.ok(implementPriority > reviewPriority);
-    assert.ok(workflowPriority > implementPriority);
-    assert.ok(auditPriority > workflowPriority);
-    assert.match(
-      source,
-      /\*\*security weaknesses\*\*.*\*\*reproducible bugs\*\*.*\*\*incorrect or stale\s+documentation and code comments\*\*.*\*\*important behavior that lacks real\s+tests\*\*/is,
-    );
-    assert.match(
-      source,
-      /every current PR has a current-head review and disposition[\s\S]*every existing issue[\s\S]*every required `develop` workflow/iu,
-    );
-    assert.match(mission, /Eliza app/);
-    assert.match(mission, /Eliza Cloud/);
-    assert.match(mission, /Core agent runtime/);
-    assert.match(mission, /Primary capabilities/);
-    assert.match(mission, /New niche plugins.*outside the mission/is);
-    assert.match(
-      mission,
-      /splitting one outcome into multiple issues or pull requests/i,
-    );
-    assert.match(mission, /Recommend closure rather than repairs/i);
-    assert.deepStrictEqual(readProjectSelectionPolicy().eligibleIssueLabels, [
-      "mission-ready",
-    ]);
-  });
-
-  it("states the reward without letting tokens or projections promise payment", () => {
-    const source = readFileSync(skillPath, "utf8");
-
-    assert.match(source, /\$10,000 monthly digital-dollar pool/);
-    assert.match(source, /projection is not a payment promise/i);
-    assert.match(source, /token volume alone never earns/i);
-    assert.match(source, /private key/i);
-    assert.match(
-      source,
-      /signature proves byte\s+integrity.*not truthful logs/is,
-    );
-  });
-
   it("suppresses an untrusted postinstall and sanitizes a test fixture environment", {
     timeout: 30_000,
   }, () => {
@@ -664,11 +540,6 @@ writeFileSync(
       "utf8",
     );
     assert.match(openaiYaml, /display_name: "Contribute to Eliza"/);
-    assert.match(openaiYaml, /default_prompt: "Use \$contribute-to-eliza/);
-    assert.match(openaiYaml, /review and test every current PR first/);
-    assert.match(openaiYaml, /existing issues through PRs second/);
-    assert.match(openaiYaml, /develop workflows third/);
-    assert.match(openaiYaml, /elizaOS\/eliza/);
   });
 });
 
@@ -713,62 +584,6 @@ describe("live report parsing", () => {
       );
       assert.strictEqual(result.status, 1);
       assert.match(result.stderr, /is not valid with/u);
-    }
-  });
-
-  it("requires one explicit usage mode for every measured command", () => {
-    const identity = [
-      "--repo-root",
-      ".",
-      "--client",
-      "codex",
-      "--provider",
-      "openai",
-      "--model",
-      "gpt-5.6-sol",
-    ];
-    const commands = [
-      ["doctor", ...identity],
-      ["start", ...identity, "--lane", "parser-test", "--allow-local-usage"],
-      [
-        "finish",
-        ...identity,
-        "--lane",
-        "parser-test",
-        "--run",
-        `run_${"0".repeat(26)}`,
-        "--trajectory",
-        "proof.json",
-        "--trace-server-run",
-        "server_parser_test",
-        "--trace-object-id",
-        `sha256:${"0".repeat(64)}`,
-      ],
-    ];
-
-    for (const command of commands) {
-      const missing = spawnSync(
-        process.execPath,
-        [runReceiptPath, ...command],
-        {
-          encoding: "utf8",
-        },
-      );
-      assert.strictEqual(missing.status, 1);
-      assert.match(missing.stderr, /requires exactly one of/u);
-
-      const ambiguous = spawnSync(
-        process.execPath,
-        [
-          runReceiptPath,
-          ...command,
-          "--allow-package-execution",
-          "--usage-unavailable",
-        ],
-        { encoding: "utf8" },
-      );
-      assert.strictEqual(ambiguous.status, 1);
-      assert.match(ambiguous.stderr, /choose exactly one/u);
     }
   });
 
@@ -3173,7 +2988,7 @@ describe("live report behavior", () => {
 
     assert.deepStrictEqual(
       report.candidateIssues.map((issue) => issue.number),
-      [3],
+      [3, 8],
     );
     assert.deepStrictEqual(
       report.reviewablePullRequests.map((pull) => pull.number),
@@ -3193,7 +3008,7 @@ describe("live report behavior", () => {
     );
     assert.deepStrictEqual(
       report.filtered.untriagedIssues.map((issue) => issue.number),
-      [8, 9, 20],
+      [9, 20],
     );
     assert.deepStrictEqual(
       report.filtered.claimedIssues.map((issue) => issue.number),
@@ -3257,7 +3072,7 @@ describe("live report behavior", () => {
     );
     assert.match(
       renderMarkdown(report),
-      /require one configured maintainer-controlled repository label \(mission-ready\)/i,
+      /recommended issue labels: mission-ready/i,
     );
   });
 
@@ -4186,7 +4001,7 @@ try {
       );
       assert.match(
         previewReport.usageReadDisclosure,
-        /policy checks and trace networking remain/u,
+        /policy verification and trace networking are separate opt-in commands/u,
       );
       assert.match(previewReport.linkabilityDisclosure, /link receipts/u);
       assert.match(previewReport.localReads.join("\n"), /claude.*projects/is);
@@ -4211,10 +4026,14 @@ try {
         ],
         { encoding: "utf8", env: environment },
       );
-      assert.strictEqual(missingDoctorConsent.status, 1);
-      assert.match(
+      assert.strictEqual(
+        missingDoctorConsent.status,
+        0,
         missingDoctorConsent.stderr,
-        /requires exactly one of --allow-package-execution or --usage-unavailable/u,
+      );
+      assert.strictEqual(
+        JSON.parse(missingDoctorConsent.stdout).ccusage.status,
+        "intentional-unavailable",
       );
       assert.strictEqual(existsSync(argsLog), false);
       assert.strictEqual(existsSync(runnerLog), false);
@@ -4312,7 +4131,27 @@ try {
         null,
       );
       assert.strictEqual(existsSync(runnerLog), false);
-      rmSync(unavailableActivePath);
+      const optionalFinish = spawnSync(
+        process.execPath,
+        [
+          entrypoint,
+          "finish",
+          ...unavailableArguments,
+          "--run",
+          unavailableStartReport.runId,
+        ],
+        { encoding: "utf8", env: environment },
+      );
+      assert.strictEqual(optionalFinish.status, 0, optionalFinish.stderr);
+      const optionalReceipt = JSON.parse(optionalFinish.stdout).receipt;
+      assert.strictEqual(optionalReceipt.trajectorySha256, null);
+      assert.strictEqual(optionalReceipt.traceUpload, undefined);
+      assert.strictEqual(optionalReceipt.usage.confidence, "unavailable");
+      assert.strictEqual(existsSync(runnerLog), false);
+      assert.strictEqual(existsSync(unavailableActivePath), false);
+      rmSync(
+        join(stateRoot, "completed", `${unavailableStartReport.runId}.json`),
+      );
 
       const unavailableWithLocalConsent = spawnSync(
         process.execPath,

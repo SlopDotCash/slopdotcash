@@ -97,6 +97,7 @@ const LEGACY_V1_RECEIPT_IDENTITIES = new Map([
 const HELP = `Usage: node scripts/run-receipt.mjs <command> [options]
 
 Commands:
+  disclose Print ordinary GitHub attribution without network or usage reads
   preview  Show local reads, writes, network access, and public receipt fields
   doctor   Verify repository, skill provenance, declarations, and local runners
   status   List this project's local active and completed measured runs
@@ -113,7 +114,7 @@ Common options:
   --json              Emit machine-readable JSON
 
 Start and finish also require --lane <public-lane>. Finish requires --run
-<run-id> and accepts a required --trajectory <path>, --trace-server-run <id>,
+<run-id>. Optional evidence uses --trajectory <path>, --trace-server-run <id>,
 and --trace-object-id sha256:<digest> returned by the finalized private Slop
 trace upload. Publish only this upload evidence and digest.
 
@@ -203,12 +204,6 @@ function projectPolicyPreflight(testOptions) {
     }
     throw error;
   }
-}
-
-function policyBinding(value) {
-  const { acknowledgedAt: _acknowledgedAt, ...binding } =
-    validatePolicyAcknowledgement(value);
-  return JSON.stringify(binding);
 }
 
 function canonicalIso(value = new Date()) {
@@ -1770,7 +1765,7 @@ export function footer(receipt, lane) {
     `Contribution skill revision: ${receipt.skillRevision}`,
     "Attribution status: self-reported",
     `— [${lane}]`,
-    `<!-- slop-contribution-attribution:v1 ${JSON.stringify(value)} -->`,
+    `<!-- ${PROJECT.projectId === "eliza" ? "elizaos-contribution-attribution:v2" : "slop-contribution-attribution:v1"} ${JSON.stringify(value)} -->`,
   ].join("\n");
 }
 
@@ -2010,8 +2005,8 @@ function validateCompletedState(value, options, repositoryRoot) {
     receipt.client !== options.client ||
     receipt.provider !== options.provider ||
     receipt.model !== options.model ||
-    receipt.traceUpload?.serverRunId !== options.traceServerRun ||
-    receipt.traceUpload?.objectId !== options.traceObjectId
+    (receipt.traceUpload?.serverRunId ?? null) !== options.traceServerRun ||
+    (receipt.traceUpload?.objectId ?? null) !== options.traceObjectId
   ) {
     fail(
       "completed run state does not match this project, repository, model, or lane",
@@ -2041,12 +2036,14 @@ function parseArguments(args) {
     traceServerRun: null,
     trajectory: null,
     usageUnavailable: false,
+    verifyPolicy: false,
   };
   for (let index = 1; index < args.length; index += 1) {
     const argument = args[index];
     if (provided.has(argument)) fail(`duplicate argument: ${argument}`);
     provided.add(argument);
-    if (argument === "--json") options.json = true;
+    if (argument === "--verify-policy") options.verifyPolicy = true;
+    else if (argument === "--json") options.json = true;
     else if (argument === "--allow-package-execution") {
       options.allowPackageExecution = true;
     } else if (argument === "--usage-unavailable") {
@@ -2084,6 +2081,7 @@ function parseArguments(args) {
   }
   if (
     ![
+      "disclose",
       "doctor",
       "finish",
       "help",
@@ -2096,6 +2094,13 @@ function parseArguments(args) {
     fail("command must be preview, doctor, status, start, trace, or finish");
   }
   const allowedArguments = {
+    disclose: new Set([
+      "--client",
+      "--provider",
+      "--model",
+      "--json",
+      "--repo-root",
+    ]),
     doctor: new Set([
       "--allow-package-execution",
       "--client",
@@ -2122,6 +2127,7 @@ function parseArguments(args) {
     help: new Set(),
     preview: new Set(["--client", "--json", "--repo-root"]),
     start: new Set([
+      "--verify-policy",
       "--allow-local-usage",
       "--allow-package-execution",
       "--client",
@@ -2147,13 +2153,17 @@ function parseArguments(args) {
   if (inapplicable.length > 0) {
     fail(`${inapplicable.join(", ")} is not valid with ${options.action}`);
   }
-  const needsClient = ["doctor", "finish", "preview", "start"].includes(
-    options.action,
-  );
+  const needsClient = [
+    "disclose",
+    "doctor",
+    "finish",
+    "preview",
+    "start",
+  ].includes(options.action);
   if (needsClient) {
     declaredIdentity(options.client, "--client", "client", 64);
   }
-  if (["doctor", "finish", "start"].includes(options.action)) {
+  if (["disclose", "doctor", "finish", "start"].includes(options.action)) {
     declaredIdentity(options.provider, "--provider", "provider", 64);
     declaredIdentity(options.model, "--model", "model");
   }
@@ -2171,9 +2181,6 @@ function parseArguments(args) {
   ) {
     fail("finish requires --run with the id returned by start");
   }
-  if (options.action === "finish" && options.trajectory === null) {
-    fail("finish requires --trajectory; every run must retain a private trace");
-  }
   if (
     options.action === "trace" &&
     (!RUN_ID_PATTERN.test(options.runId ?? "") || options.trajectory === null)
@@ -2185,12 +2192,23 @@ function parseArguments(args) {
   }
   if (
     options.action === "finish" &&
-    (options.traceServerRun === null || options.traceObjectId === null)
+    (options.trajectory !== null ||
+      options.traceServerRun !== null ||
+      options.traceObjectId !== null) &&
+    (options.trajectory === null ||
+      options.traceServerRun === null ||
+      options.traceObjectId === null)
   ) {
     fail(
-      "finish requires finalized --trace-server-run and --trace-object-id evidence",
+      "Optional trace evidence requires --trajectory, --trace-server-run and --trace-object-id together",
     );
   }
+  if (
+    ["doctor", "finish", "start"].includes(options.action) &&
+    usageAdapterFor(options.client) &&
+    !options.allowPackageExecution
+  )
+    options.usageUnavailable = true;
   const measuredAction = ["doctor", "finish", "start"].includes(options.action);
   const usageAdapter = usageAdapterFor(options.client);
   if (options.allowPackageExecution && options.usageUnavailable) {
@@ -2218,6 +2236,7 @@ function parseArguments(args) {
   }
   if (
     options.action === "start" &&
+    usageAdapter &&
     !options.usageUnavailable &&
     !options.allowLocalUsage
   ) {
@@ -2284,7 +2303,7 @@ function previewRun(options) {
     ],
     network: [
       `With --allow-package-execution, resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
-      `On start and finish, fetch current project terms from https://slop.cash/projects/${PROJECT.projectId}/terms.json and any digest-bound LICENSE, inbound terms, or prize rules from github.com, raw.githubusercontent.com, or proximityprize.org as named by that policy`,
+      `Only with start --verify-policy, fetch current project terms from https://slop.cash/projects/${PROJECT.projectId}/terms.json and any digest-bound LICENSE, inbound terms, or prize rules from github.com, raw.githubusercontent.com, or proximityprize.org as named by that policy`,
       `Verify the server-authoritative private-request intake gate at ${PRIVATE_REQUEST_INTAKE_STATUS}; trace upload remains blocked unless it reports enabled`,
       `After a local byte/digest disclosure, authenticate with GitHub and permanently upload the inspected trace through ${TRACE_AUTHORITY} under ${TRACE_PRIVACY_CONTRACT}`,
     ],
@@ -2296,7 +2315,7 @@ function previewRun(options) {
       "skill revision and SHA-256",
       "aggregate input/output/cache/total tokens and API-equivalent estimated cost",
       "session count and confidence",
-      "required private trajectory SHA-256",
+      "optional private trajectory SHA-256",
       "private trace authority, server run id, and immutable object id",
       "public Ed25519 device key and signature",
     ],
@@ -2309,7 +2328,7 @@ function previewRun(options) {
     packageExecutionConsentFlag: "--allow-package-execution",
     usageUnavailableFlag: "--usage-unavailable",
     usageReadDisclosure:
-      "--usage-unavailable invokes no package manager and reads no usage logs, but policy checks and trace networking remain; it records signed zero/unavailable usage, and usage never affects scoring.",
+      "--usage-unavailable invokes no package manager and reads no usage logs, policy verification and trace networking are separate opt-in commands; it records signed zero/unavailable usage, and usage never affects scoring.",
     localStateDisclosure:
       "Active baselines retain aggregate counters and SHA-256 session identifiers until finish.",
     linkabilityDisclosure:
@@ -2412,7 +2431,7 @@ function startRun(options, testOptions) {
   const usageAdapter = usageAdapterFor(options.client);
   const runId = createRunId();
   const state = validateActiveRecord({
-    schemaVersion: "2",
+    schemaVersion: options.verifyPolicy ? "2" : "1",
     runId,
     projectId: PROJECT.projectId,
     repositoryId: PROJECT.repositoryId,
@@ -2425,7 +2444,9 @@ function startRun(options, testOptions) {
     baseline: options.usageUnavailable
       ? null
       : collectUsage(options.client, repositoryRoot),
-    policyAcknowledgement: projectPolicyPreflight(testOptions),
+    ...(options.verifyPolicy
+      ? { policyAcknowledgement: projectPolicyPreflight(testOptions) }
+      : {}),
     ...provenance,
   });
   const directories = runDirectories();
@@ -2478,7 +2499,7 @@ async function traceRun(options) {
   );
 }
 
-function finishRun(options, testOptions) {
+function finishRun(options) {
   const provenance = resolveSkillProvenance();
   const repositoryRoot = requireRepository(options.repoRoot);
   const directories = runDirectories();
@@ -2560,15 +2581,10 @@ function finishRun(options, testOptions) {
         )
       : unavailableUsage("none");
   const key = deviceKey();
-  const trajectorySha256 = trajectoryDigest(options.trajectory);
-  const currentPolicy = projectPolicyPreflight(testOptions);
-  if (
-    policyBinding(currentPolicy) !== policyBinding(state.policyAcknowledgement)
-  ) {
-    fail("project terms changed during the run; start a new acknowledged run");
-  }
+  const trajectorySha256 =
+    options.trajectory === null ? null : trajectoryDigest(options.trajectory);
   const receipt = {
-    schemaVersion: "2",
+    schemaVersion: state.schemaVersion,
     runId: state.runId,
     projectId: state.projectId,
     repositoryId: state.repositoryId,
@@ -2579,14 +2595,20 @@ function finishRun(options, testOptions) {
     client: state.client,
     skillRevision: state.skillRevision,
     skillSha256: state.skillSha256,
-    policyAcknowledgement: state.policyAcknowledgement,
+    ...(state.policyAcknowledgement
+      ? { policyAcknowledgement: state.policyAcknowledgement }
+      : {}),
     usage,
     trajectorySha256,
-    traceUpload: traceUploadEvidence(
-      options.traceServerRun,
-      options.traceObjectId,
-      trajectorySha256,
-    ),
+    ...(trajectorySha256 === null
+      ? {}
+      : {
+          traceUpload: traceUploadEvidence(
+            options.traceServerRun,
+            options.traceObjectId,
+            trajectorySha256,
+          ),
+        }),
     signatureAlgorithm: "ed25519",
     devicePublicKey: key.publicKey,
     deviceKeyId: key.keyId,
@@ -2633,12 +2655,22 @@ function finishRun(options, testOptions) {
 export async function main(args = process.argv.slice(2), testOptions) {
   const options = parseArguments(args);
   if (options.action === "help") process.stdout.write(HELP);
-  else if (options.action === "preview") previewRun(options);
+  else if (options.action === "disclose") {
+    const value = {
+      provider: options.provider,
+      model: options.model,
+      client: options.client,
+      skill_revision:
+        "N/A - ordinary GitHub contribution without optional run evidence",
+    };
+    const rendered = `AI provider/model: ${value.provider} / ${value.model}\nClient / agent tooling: ${value.client}\nContribution skill revision: ${value.skill_revision}\nAttribution status: self-reported\n— [contributor]\n<!-- ${PROJECT.projectId === "eliza" ? "eliza-computer-attribution:v1" : "slop-contribution-attribution:v1"} ${JSON.stringify(value)} -->`;
+    renderResult({ footer: rendered, message: rendered }, options.json);
+  } else if (options.action === "preview") previewRun(options);
   else if (options.action === "doctor") doctorRun(options);
   else if (options.action === "status") statusRun(options);
   else if (options.action === "start") startRun(options, testOptions);
   else if (options.action === "trace") await traceRun(options);
-  else finishRun(options, testOptions);
+  else finishRun(options);
 }
 
 const invokedDirectly =

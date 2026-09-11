@@ -170,151 +170,186 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
   expect(evidence.network.filter((r) => r.status >= 400)).toEqual([]);
 });
 
-test("wallet popup preview requires confirmation and verifies the returned public proof", async ({
-  page,
-  context,
-}, info) => {
-  const evidence = observe(page);
-  let writes = 0;
-  const owner = { githubActorId: "123", githubLogin: "qa-fixture" };
-  const expiresAt = new Date(
-    Math.floor(Date.now() / 1000) * 1000 + 240_000,
-  ).toISOString();
-  const flowId = `flow_${"f".repeat(24)}`;
-  const canonical = {
-    schemaVersion: 1,
-    ...owner,
-    address,
-    source: "d1_registry",
-    issueRepository: null,
-    issueNumber: null,
-    sourceBodySha256: sha({
+for (const sameTab of [false, true]) {
+  test(`wallet ${sameTab ? "same-tab recovery" : "popup"} requires confirmation and verifies the returned public proof`, async ({
+    page,
+    context,
+  }, info) => {
+    const evidence = observe(page);
+    let writes = 0;
+    let starts = 0;
+    let authorized = false;
+    if (sameTab)
+      await page.addInitScript(() => {
+        window.open = () => null;
+      });
+    const owner = { githubActorId: "123", githubLogin: "qa-fixture" };
+    const expiresAt = new Date(
+      Math.floor(Date.now() / 1000) * 1000 + 240_000,
+    ).toISOString();
+    const flowId = `flow_${"f".repeat(24)}`;
+    const canonical = {
       schemaVersion: 1,
-      githubActorId: owner.githubActorId,
+      ...owner,
       address,
-      supersedesClaimId: null,
-    }),
-    observedAt: new Date().toISOString(),
-    supersedesClaimId: null,
-  };
-  const token = `fixture.${Buffer.from(
-    JSON.stringify({
-      githubId: owner.githubActorId,
-      githubLogin: owner.githubLogin,
-      iss: "slop.cash",
-      aud: "private-trace-api",
-      sub: "github:123",
-      exp: Date.parse(expiresAt) / 1000,
-    }),
-  ).toString("base64url")}.fixture`;
-  await context.route("https://identity.slop.cash/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === "/v1/oauth/authorize") {
-      await route.fulfill({
-        contentType: "text/html",
-        body: "<title>Synthetic OAuth fixture</title>Test sign-in complete",
-      });
-    } else if (path === "/v1/oauth/start") {
-      await route.fulfill({
-        json: {
-          flowId,
-          pollCapability: "p".repeat(48),
-          expiresAt,
-          pollAfterSeconds: 1,
-          authorizationUrl: `https://identity.slop.cash/v1/oauth/authorize?flow_id=${flowId}&state=${"s".repeat(48)}`,
-        },
-      });
-    } else if (path === "/v1/oauth/poll") {
-      await route.fulfill({
-        json: {
-          status: "complete",
-          assertionType: "SlopIdentity",
-          assertion: `slop_assert_v1_${"a".repeat(48)}`,
-          expiresAt,
-        },
-      });
-    } else throw new Error(`Unexpected identity request ${path}`);
-  });
-  await context.route("https://api.slop.cash/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === "/api/v1/auth/session") {
-      await route.fulfill({ json: { tokenType: "Bearer", token, expiresAt } });
-    } else if (path === "/api/v1/wallet-claims/current") {
-      // A real existing claim avoids treating an expected 404 as a console failure.
-      const oldAddress = "Vote111111111111111111111111111111111111111";
-      const old = { ...canonical, address: oldAddress };
-      await route.fulfill({
-        json: { ...old, claimId: "qa_old_claim", recordDigest: sha(old) },
-      });
-    } else if (path === "/api/v1/wallet-claims") {
-      writes++;
-      expect(route.request().postDataJSON()).toEqual({
+      source: "d1_registry",
+      issueRepository: null,
+      issueNumber: null,
+      sourceBodySha256: sha({
+        schemaVersion: 1,
+        githubActorId: owner.githubActorId,
         address,
-        supersedesClaimId: "qa_old_claim",
-      });
-      const next = {
-        ...canonical,
-        supersedesClaimId: "qa_old_claim",
-        sourceBodySha256: sha({
-          schemaVersion: 1,
-          githubActorId: owner.githubActorId,
+        supersedesClaimId: null,
+      }),
+      observedAt: new Date().toISOString(),
+      supersedesClaimId: null,
+    };
+    const token = `fixture.${Buffer.from(
+      JSON.stringify({
+        githubId: owner.githubActorId,
+        githubLogin: owner.githubLogin,
+        iss: "slop.cash",
+        aud: "private-trace-api",
+        sub: "github:123",
+        exp: Date.parse(expiresAt) / 1000,
+      }),
+    ).toString("base64url")}.fixture`;
+    await context.route("https://identity.slop.cash/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/v1/oauth/authorize") {
+        authorized = true;
+        await route.fulfill({
+          contentType: "text/html",
+          body: "<title>Synthetic OAuth fixture</title>Test sign-in complete",
+        });
+      } else if (path === "/v1/oauth/start") {
+        starts++;
+        authorized = false;
+        await route.fulfill({
+          json: {
+            flowId,
+            pollCapability: "p".repeat(48),
+            expiresAt,
+            pollAfterSeconds: 1,
+            authorizationUrl: `https://identity.slop.cash/v1/oauth/authorize?flow_id=${flowId}&state=${"s".repeat(48)}`,
+          },
+        });
+      } else if (path === "/v1/oauth/poll") {
+        if (!authorized) {
+          await route.fulfill({
+            status: 202,
+            json: { status: "pending", retryAfterSeconds: 1 },
+          });
+          return;
+        }
+        await route.fulfill({
+          json: {
+            status: "complete",
+            assertionType: "SlopIdentity",
+            assertion: `slop_assert_v1_${"a".repeat(48)}`,
+            expiresAt,
+          },
+        });
+      } else throw new Error(`Unexpected identity request ${path}`);
+    });
+    await context.route("https://api.slop.cash/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/v1/auth/session") {
+        await route.fulfill({
+          json: { tokenType: "Bearer", token, expiresAt },
+        });
+      } else if (path === "/api/v1/wallet-claims/current") {
+        // A real existing claim avoids treating an expected 404 as a console failure.
+        const oldAddress = "Vote111111111111111111111111111111111111111";
+        const old = { ...canonical, address: oldAddress };
+        await route.fulfill({
+          json: { ...old, claimId: "qa_old_claim", recordDigest: sha(old) },
+        });
+      } else if (path === "/api/v1/wallet-claims") {
+        writes++;
+        expect(route.request().postDataJSON()).toEqual({
           address,
           supersedesClaimId: "qa_old_claim",
-        }),
-      };
-      await route.fulfill({
-        json: { ...next, claimId: "qa_new_claim", recordDigest: sha(next) },
-      });
-    } else throw new Error(`Unexpected API request ${path}`);
+        });
+        const next = {
+          ...canonical,
+          supersedesClaimId: "qa_old_claim",
+          sourceBodySha256: sha({
+            schemaVersion: 1,
+            githubActorId: owner.githubActorId,
+            address,
+            supersedesClaimId: "qa_old_claim",
+          }),
+        };
+        await route.fulfill({
+          json: { ...next, claimId: "qa_new_claim", recordDigest: sha(next) },
+        });
+      } else throw new Error(`Unexpected API request ${path}`);
+    });
+    await page.goto("/wallet", { waitUntil: "networkidle" });
+    await keyboardTo(page, page.getByLabel("Solana public address"));
+    await page.keyboard.type(address);
+    await page.keyboard.press("Enter");
+    async function returnFromSameTab() {
+      if (!sameTab) return;
+      await page
+        .getByRole("link", { name: "Continue to GitHub in this tab" })
+        .click();
+      await expect(page).toHaveTitle("Synthetic OAuth fixture");
+      await page.goBack({ waitUntil: "networkidle" });
+      await expect(page.getByLabel("Solana public address")).toHaveValue(
+        address,
+      );
+    }
+    await returnFromSameTab();
+    await expect(
+      page.getByRole("heading", { name: "Confirm your public registration" }),
+    ).toBeVisible();
+    expect(writes).toBe(0);
+    expect(starts).toBe(1);
+    await expect(page.locator(".funding-workbench")).toContainText(
+      owner.githubLogin,
+    );
+    await audit(page, info, "wallet-preview");
+    await keyboardTo(
+      page,
+      page.getByRole("button", { name: "Cancel", exact: true }),
+    );
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("alert")).toContainText(
+      "No wallet claim was submitted",
+    );
+    expect(writes).toBe(0);
+    await keyboardTo(
+      page,
+      page.getByRole("button", { name: "Continue with GitHub" }),
+    );
+    await page.keyboard.press("Enter");
+    await returnFromSameTab();
+    const confirm = page.getByRole("button", {
+      name: "Confirm register",
+      exact: true,
+    });
+    await expect(confirm).toBeVisible();
+    await keyboardTo(page, confirm);
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("heading", { name: "Wallet registered", exact: true }),
+    ).toBeVisible();
+    expect(writes).toBe(1);
+    expect(starts).toBe(2);
+    await expect(
+      page.getByRole("link", { name: "View public claim" }),
+    ).toHaveAttribute(
+      "href",
+      "https://api.slop.cash/api/v1/wallet-claims/qa_new_claim",
+    );
+    await audit(page, info, "wallet-confirmed-synthetic");
+    await info.attach("console-network.json", {
+      body: JSON.stringify(evidence, null, 2),
+      contentType: "application/json",
+    });
+    expect(evidence.errors).toEqual([]);
+    expect(evidence.network.filter((r) => r.status >= 400)).toEqual([]);
   });
-  await page.goto("/wallet", { waitUntil: "networkidle" });
-  await keyboardTo(page, page.getByLabel("Solana public address"));
-  await page.keyboard.type(address);
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("heading", { name: "Confirm your public registration" }),
-  ).toBeVisible();
-  expect(writes).toBe(0);
-  await expect(page.locator(".funding-workbench")).toContainText(
-    owner.githubLogin,
-  );
-  await audit(page, info, "wallet-preview");
-  await keyboardTo(
-    page,
-    page.getByRole("button", { name: "Cancel", exact: true }),
-  );
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("alert")).toContainText(
-    "No wallet claim was submitted",
-  );
-  expect(writes).toBe(0);
-  await keyboardTo(
-    page,
-    page.getByRole("button", { name: "Continue with GitHub" }),
-  );
-  await page.keyboard.press("Enter");
-  const confirm = page.getByRole("button", {
-    name: "Confirm register",
-    exact: true,
-  });
-  await expect(confirm).toBeVisible();
-  await keyboardTo(page, confirm);
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("heading", { name: "Wallet registered", exact: true }),
-  ).toBeVisible();
-  expect(writes).toBe(1);
-  await expect(
-    page.getByRole("link", { name: "View public claim" }),
-  ).toHaveAttribute(
-    "href",
-    "https://api.slop.cash/api/v1/wallet-claims/qa_new_claim",
-  );
-  await audit(page, info, "wallet-confirmed-synthetic");
-  await info.attach("console-network.json", {
-    body: JSON.stringify(evidence, null, 2),
-    contentType: "application/json",
-  });
-  expect(evidence.errors).toEqual([]);
-  expect(evidence.network.filter((r) => r.status >= 400)).toEqual([]);
-});
+}

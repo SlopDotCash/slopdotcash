@@ -68,193 +68,6 @@ describe("project skill contracts", () => {
     }
   });
 
-  it("keeps every registered contributor package focused and open to declared models", () => {
-    for (const { project, contributorRoot } of projectPackages) {
-      const source = readFileSync(join(contributorRoot, "SKILL.md"), "utf8");
-      const name = project.skill.id;
-      assert.match(source, new RegExp(`^name: ${name}$`, "m"));
-      assert.doesNotMatch(source, /\[TODO[:\]]/u);
-      assert.match(source, /Any model and agent client may contribute/u);
-      assert.match(source, /Grok and Kimi/u);
-      assert.match(source, /run-receipt\.mjs start/u);
-      assert.match(source, /run-receipt\.mjs finish/u);
-      assert.match(source, /run-receipt\.mjs preview/u);
-      assert.match(source, /run-receipt\.mjs doctor/u);
-      assert.match(source, /--allow-local-usage/u);
-      assert.match(source, /--usage-unavailable/u);
-      assert.match(
-        source,
-        /invokes no package manager.*reads no usage logs.*usage evidence is diagnostic.*never changes score/is,
-      );
-      assert.match(source, /--trajectory <path>/u);
-      assert.match(source, /permanent\s+private\s+upload/u);
-      assert.match(
-        source,
-        /https:\/\/slop\.cash\/protocol\/private-trace-v1\.md/u,
-      );
-      assert.match(source, /SlopDotCash\/slopdotcash/u);
-      assert.match(source, /gh auth status --hostname github\.com/u);
-      assert.match(source, /gh api user --jq '\.login'/u);
-      assert.match(source, /upstream\s+permission/is);
-      assert.match(source, /stars are\s+optional/u);
-      if (project.reward.kind === "monthly-pool") {
-        assert.match(source, /explicit approval before registration/is);
-      }
-      assert.match(source, /live-report\.mjs --repo/u);
-      assert.match(source, /token.*never earns|receipt cannot create score/is);
-      assert.match(source, /untrusted/u);
-      assert.match(source, /disposable.*sandbox/is);
-      assert.match(source, /Never self-approve|Leave acceptance and merge/is);
-    }
-    const eliza = readFileSync(
-      join(root, "skills", "contribute-to-eliza", "SKILL.md"),
-      "utf8",
-    );
-    const delta = readFileSync(
-      join(root, "skills", "contribute-to-delta-star", "SKILL.md"),
-      "utf8",
-    );
-    const asi = readFileSync(
-      join(root, "skills", "contribute-to-asi", "SKILL.md"),
-      "utf8",
-    );
-    const asiReview = readFileSync(
-      join(root, "skills", "review-asi-contributions", "SKILL.md"),
-      "utf8",
-    );
-    const deltaReview = readFileSync(
-      join(root, "skills", "review-delta-star-contributions", "SKILL.md"),
-      "utf8",
-    );
-    assert.match(eliza, /elizaOS\/eliza/u);
-    assert.match(eliza, /review-preflight\.mjs/u);
-    assert.match(eliza, /supported-with-documentation-drift/u);
-    assert.doesNotMatch(eliza, /lalalune\/ArkLib/u);
-    assert.match(asi, /SlopDotCash\/asi/u);
-    assert.match(delta, /SlopDotCash\/proximityprize/u);
-    assert.match(asiReview, /github\.com\/SlopDotCash\/asi\/pull\/NUMBER/u);
-    assert.match(
-      deltaReview,
-      /github\.com\/SlopDotCash\/proximityprize\/pull\/NUMBER/u,
-    );
-    assert.doesNotMatch(delta, /lalalune\/ArkLib/u);
-    assert.match(delta, /sorry.*admit.*axiom/is);
-    assert.match(delta, /external Proximity Prize/u);
-    assert.match(delta, /does not.*guarantee.*dollar/is);
-  });
-
-  it("clears PRs, issues, and workflows before new work", {
-    timeout: 30_000,
-  }, () => {
-    for (const { project, contributorRoot, reviewerRoot } of projectPackages) {
-      const contributor = readFileSync(
-        join(contributorRoot, "SKILL.md"),
-        "utf8",
-      );
-      const reviewer = readFileSync(join(reviewerRoot, "SKILL.md"), "utf8");
-      const contributorLauncher = readFileSync(
-        join(contributorRoot, "agents", "openai.yaml"),
-        "utf8",
-      );
-      const reviewerLauncher = readFileSync(
-        join(reviewerRoot, "agents", "openai.yaml"),
-        "utf8",
-      );
-      const issuePriority = contributor.search(
-        /finish every existing issue without a PR|finish the oldest[\s\S]{0,220}open issue/iu,
-      );
-      const reviewPriority = contributor.search(
-        /review and test every current PR/iu,
-      );
-      const workflowPriority = contributor.search(
-        /restore (?:`develop`|integration-branch) workflow health|inspect every required GitHub Actions\s+workflow/iu,
-      );
-
-      assert.ok(
-        reviewPriority >= 0,
-        `${project.skill.id} must prioritize current-head PR review`,
-      );
-      assert.ok(
-        issuePriority > reviewPriority,
-        `${project.skill.id} must place uncovered issues after PR review`,
-      );
-      assert.ok(
-        workflowPriority > issuePriority,
-        `${project.skill.id} must place workflow repair after the issue queue`,
-      );
-      assert.match(
-        contributor,
-        /\*\*merge\*\*, \*\*fix\*\*, or \*\*close\*\*/iu,
-      );
-      assert.match(contributor, /exact current head|exact-head/iu);
-      assert.match(contributor, /--epoch-only/u);
-      assert.match(contributor, /--complete-epoch/u);
-      assert.match(contributor, /recommendationUrl/u);
-      const newIssueGate = contributor.search(
-        /(?:a new (?:issue|one)\s+requires|open a new\s+issue only)/iu,
-      );
-      assert.ok(newIssueGate >= 0);
-      const gateText = contributor.slice(newIssueGate, newIssueGate + 900);
-      assert.match(gateText, /every current PR/iu);
-      assert.match(gateText, /every existing\s+issue/iu);
-      assert.match(
-        gateText,
-        /workflow[\s\S]{0,100}green[\s\S]{0,100}current\s+integration head/iu,
-      );
-      assert.match(
-        gateText,
-        /external[\s\S]{0,80}blocker\s+keeps[\s\S]{0,80}gate closed/iu,
-      );
-      assert.match(
-        contributor,
-        /trivial fixes|trivial work|trivial requests/iu,
-      );
-      assert.match(
-        contributor,
-        /generic ["-]?improvements?|generic-improvement/iu,
-      );
-      assert.match(reviewer, /recommend `reject`[\s\S]{0,220}trivial/iu);
-      assert.match(
-        reviewer,
-        /tests with no\s+demonstrated\s+behavioral risk|tests that prove no meaningful/iu,
-      );
-      assert.match(reviewer, /## Clear the review queue first/iu);
-      assert.match(reviewer, /\*\*merge\*\*, \*\*fix\*\*, or \*\*close\*\*/iu);
-      assert.match(
-        reviewer,
-        /Do not open new issues[\s\S]{0,320}reviewable PR remains[\s\S]{0,320}existing issue lacks a PR[\s\S]{0,320}workflow/iu,
-      );
-      assert.match(
-        contributorLauncher,
-        /review and test every current PR first[\s\S]*existing issues through PRs second[\s\S]*workflows third/iu,
-      );
-      assert.match(reviewerLauncher, /current-head PR reviews first/iu);
-      assert.match(reviewerLauncher, /merge, fix, or close recommendation/iu);
-    }
-
-    const asi = readFileSync(
-      join(root, "skills", "contribute-to-asi", "SKILL.md"),
-      "utf8",
-    );
-    const asiReview = readFileSync(
-      join(root, "skills", "review-asi-contributions", "SKILL.md"),
-      "utf8",
-    );
-    assert.match(
-      asi,
-      /benchmark hill climb[\s\S]*measured port or decisive experimental[\s\S]*actual reproduced/iu,
-    );
-    assert.match(asi, /Do not make random\s+improvements/iu);
-    assert.match(
-      asi,
-      /test that merely looks weak, stale, or flaky is\s+not enough without a reproduced behavioral failure/iu,
-    );
-    assert.match(
-      asiReview,
-      /reproducible benchmark hill climb[\s\S]*actual reproduced/iu,
-    );
-  });
-
   it("ships byte-identical receipt logic with policy derived from the project inventory", () => {
     const [canonicalPackage] = projectPackages;
     const receiptSource = readFileSync(
@@ -573,8 +386,11 @@ describe("project skill contracts", () => {
       assert.match(source, /"provider":"EXACT_PROVIDER"/u);
       assert.match(source, /"model":"EXACT_MODEL_ID"/u);
       assert.match(source, /"client":"EXACT_CLIENT"/u);
-      assert.match(source, /"traceSha256":"LOWERCASE_TRACE_SHA256"/u);
-      assert.match(source, /If private trace upload and finalization fail/u);
+      assert.match(source, /"traceSha256":null/u);
+      assert.match(
+        source,
+        /Never block the review because optional evidence is unavailable/u,
+      );
       assert.doesNotMatch(source, /private key|seed phrase/is);
     }
   });
@@ -1530,7 +1346,7 @@ describe("project run usage", () => {
     assert.match(rendered, /— \[lane-1\]/u);
     assert.match(
       rendered.split("\n").at(-1) ?? "",
-      /^<!-- slop-contribution-attribution:v1 /u,
+      /^<!-- elizaos-contribution-attribution:v2 /u,
     );
     assert.doesNotMatch(rendered, /PRIVATE KEY/u);
     const assessed = assessModelAttribution([

@@ -33,13 +33,53 @@ env:
   NODE_VERSION: "24.15.0"
 
 jobs:
+  source:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      baseline: ${{ steps.source.outputs.baseline }}
+      baseline_name: ${{ steps.source.outputs.baseline_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24.15.0"
+      - id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            node scripts/released-source.mjs
+          else
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+  approve:
+    name: Approve code release
+    needs: [source, quality]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    environment: eliza-army-production
+    steps:
+      - run: echo "Approved tested code release"
+
   quality:
     name: Skill, data, build, and browser checks
+    needs: source
+    env:
+      RELEASE_SHA: ${{ needs.source.outputs.sha }}
     runs-on: ubuntu-24.04
     concurrency:
       # A newer trusted revision supersedes stale live-data generation, while
       # each pull request retains its own independently superseding lane.
-      group: slop-quality-${{ github.event.pull_request.number || 'trusted' }}
+      group: slop-quality-${{ github.event.pull_request.number || github.event_name }}
       cancel-in-progress: true
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Leave room for complete fail-closed hydration plus four browser projects.
@@ -48,7 +88,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.source.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
           submodules: false
@@ -57,7 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           checked_out_sha="$(git rev-parse HEAD)"
-          if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
+          if [ "$checked_out_sha" != "$RELEASE_SHA" ]; then
             echo "::error::Quality checkout $checked_out_sha does not match the event SHA $GITHUB_SHA."
             exit 1
           fi
@@ -116,8 +156,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          bun --no-install scripts/check-signer-access-transitions.ts "$GITHUB_SHA" "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          bun --no-install scripts/check-signer-access-transitions.ts "$RELEASE_SHA" "$RELEASE_SHA"
 
       - name: Generate live contribution data
         # Pull-request code is untrusted, so this step never explicitly injects
@@ -129,7 +169,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           bun run leaderboard:generate
-          bun scripts/prepare-private-intake-attestation.ts
+          # An older approved source still serves its legacy intake format.
+          # Renew it during the transition; new sources have no such builder.
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ -f scripts/prepare-private-intake-attestation.ts ]; then
+            GITHUB_SHA="$RELEASE_SHA" bun scripts/prepare-private-intake-attestation.ts
+          fi
 
       - name: Load deployed public ledger for pull-request checks
         if: github.event_name == 'pull_request'
@@ -149,7 +193,6 @@ jobs:
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json
-          bun scripts/prepare-private-intake-attestation.ts --ensure-disabled
 
       - name: Validate reward lifecycle
         run: bun run cycles:check
@@ -194,7 +237,7 @@ jobs:
       - name: Upload Cloudflare Pages bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: slop-pages-${{ github.run_id }}
+          name: slop-source-${{ needs.source.outputs.sha }}
           path: dist
           include-hidden-files: true
           if-no-files-found: error
@@ -214,22 +257,25 @@ jobs:
   deploy:
     name: Deploy trusted production bundle
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
+      always() && needs.quality.result == 'success' &&
+      (needs.approve.result == 'success' || github.event_name == 'schedule') &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
       (github.event_name == 'schedule' && github.ref == 'refs/heads/develop') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop')
-    needs: quality
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop'))
+    needs: [source, quality, approve]
+    env:
+      RELEASE_SHA: ${{ needs.source.outputs.sha }}
     permissions:
       contents: read
       actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
-      # Serialize publication without letting a schedule cancel a code release
-      # awaiting approval. Live-source equivalence rejects obsolete releases.
+      # Only publication holds this lock. Code approval waits in its own job.
       group: slop-production
       cancel-in-progress: false
     environment:
-      name: ${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}
+      name: slop-data-refresh
       url: https://slop.cash
     steps:
       - name: Checkout exact deployment tooling
@@ -269,34 +315,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Require public private-request intake
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          curl --fail --silent --show-error \
-            --connect-timeout 10 \
-            --max-time 30 \
-            --max-filesize 65536 \
-            --header "Accept: application/vnd.github+json" \
-            --header "Authorization: Bearer $GITHUB_TOKEN" \
-            --header "User-Agent: slop-release-intake-check" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting |
-            node -e '
-              let source = "";
-              process.stdin.setEncoding("utf8");
-              process.stdin.on("data", (chunk) => { source += chunk; });
-              process.stdin.on("end", () => {
-                let value;
-                try { value = JSON.parse(source); } catch { process.exit(1); }
-                if (value?.enabled !== true) {
-                  console.error("::error::No verified public private-request intake is enabled; production trace activation is blocked.");
-                  process.exit(1);
-                }
-              });
-            '
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -308,7 +326,7 @@ jobs:
       - name: Download verified Pages bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: slop-pages-${{ github.run_id }}
+          name: slop-source-${{ needs.source.outputs.sha }}
           path: dist
 
       - name: Verify downloaded Pages bundle
@@ -320,27 +338,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # The first successful run for a SHA must be an approved push/manual
-          # release. Later successful schedules preserve that exact code and
-          # renew the baseline artifact so quiet branches outlive retention.
-          approved_run="$(gh run list --repo "$GITHUB_REPOSITORY" \
-            --workflow deploy.yml --branch develop --commit "$GITHUB_SHA" \
-            --status success --limit 100 --json databaseId,event,headSha \
-            --jq '[.[] | select(.event == "push" or .event == "workflow_dispatch" or .event == "schedule")][0].databaseId // empty')"
-          if ! [[ "$approved_run" =~ ^[0-9]+$ ]]; then
-            echo "::error::This source revision has no successful production release; a code release must be approved first."
-            exit 1
-          fi
+          approved_run="${{ needs.source.outputs.baseline }}"
           approved_bundle="$RUNNER_TEMP/slop-approved-$approved_run"
           mkdir "$approved_bundle"
           gh run download "$approved_run" --repo "$GITHUB_REPOSITORY" \
-            --name "slop-pages-$approved_run" --dir "$approved_bundle"
+            --name "${{ needs.source.outputs.baseline_name }}" --dir "$approved_bundle"
           node scripts/dist-manifest.mjs verify-local "$approved_bundle"
           node scripts/check-data-refresh-bundle.mjs "$approved_bundle" dist
 
       - name: Require live release-input equivalence
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            node scripts/released-source.mjs --check
+          else
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
               https://github.com/SlopDotCash/slopdotcash.git refs/heads/develop |
@@ -356,8 +369,7 @@ jobs:
             echo "::error::Live develop changed a slop.cash release input after $GITHUB_SHA was tested."
             exit 1
           fi
-          bun scripts/prepare-private-intake-attestation.ts \
-            --check dist/data/private-intake-attestation.json
+          fi
 
       - name: Require scoped Cloudflare credentials
         env:
@@ -374,6 +386,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           response="$RUNNER_TEMP/eliza-computer-pages-project.json"
@@ -407,6 +421,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           response="$RUNNER_TEMP/eliza-computer-deck-domain.json"
@@ -438,10 +454,15 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         # wrangler.toml owns pages_build_output_dir. A positional directory
         # bypasses that deployment contract and must not be added here.
         run: |
           set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            node scripts/released-source.mjs --check
+          else
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
               https://github.com/SlopDotCash/slopdotcash.git refs/heads/develop |
@@ -456,6 +477,8 @@ jobs:
           if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
             echo "::error::Live develop changed a slop.cash release input immediately before deployment."
             exit 1
+          fi
+
           fi
 
           # Scheduled publication never mutates identity, D1, or cleanup schedules.
@@ -503,6 +526,7 @@ jobs:
           ./node_modules/.bin/wrangler d1 migrations apply slop-private \
             --remote \
             --config workers/identity/wrangler.toml
+          node scripts/renew-private-intake.mjs || echo "::warning::Optional trace intake renewal failed; ordinary contribution remains available."
           schema_response="$RUNNER_TEMP/slop-private-schema.json"
           ./node_modules/.bin/wrangler d1 execute slop-private \
             --remote \
@@ -767,6 +791,9 @@ jobs:
 
           fi
 
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            node scripts/released-source.mjs --check
+          else
           live_develop="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
               https://github.com/SlopDotCash/slopdotcash.git refs/heads/develop |
@@ -783,12 +810,14 @@ jobs:
             exit 1
           fi
 
+          fi
+
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"
           for attempt in 1 2 3; do
             if ./node_modules/.bin/wrangler pages deploy \
               --project-name=eliza-computer \
               --branch=develop \
-              --commit-hash="$GITHUB_SHA" \
+              --commit-hash="$RELEASE_SHA" \
               --commit-dirty=false; then
               exit 0
             fi
@@ -805,6 +834,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           DEPLOYMENT_NOT_BEFORE: ${{ steps.pages-deploy.outputs.started_at }}
         run: |
           set -euo pipefail
@@ -824,7 +855,7 @@ jobs:
             if [ "$status" = "200" ]; then
               if deployment="$(
                 node scripts/select-pages-deployment.mjs \
-                  "$response" "$GITHUB_SHA" "$DEPLOYMENT_NOT_BEFORE"
+                  "$response" "$RELEASE_SHA" "$DEPLOYMENT_NOT_BEFORE"
               )"; then
                 IFS=$'\t' read -r deployment_id deployment_url deployment_created_on <<< "$deployment"
                 printf '%s\n' "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
@@ -858,6 +889,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           domain_response="$RUNNER_TEMP/eliza-computer-deck-domain-active.json"
@@ -1014,44 +1047,12 @@ jobs:
           echo "::error::Active private trace API did not reach its fail-closed unauthenticated boundary."
           exit 1
 
-      - name: Verify authoritative private intake preflight
+      - name: Report optional intake health
         run: |
-          set -euo pipefail
-          response="$RUNNER_TEMP/slop-private-intake-preflight.json"
-          headers="$RUNNER_TEMP/slop-private-intake-preflight.headers"
-          for attempt in $(seq 1 18); do
-            status="$(
-              curl --silent --show-error \
-                --connect-timeout 10 \
-                --max-time 30 \
-                --max-filesize 65536 \
-                --output "$response" \
-                --dump-header "$headers" \
-                --write-out "%{http_code}" \
-                --header "Cache-Control: no-cache" \
-                "https://api.slop.cash/api/v1/private-request-intake?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-intake-$attempt"
-            )"
-            if [ "$status" = "200" ] && node - "$response" "$headers" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          const headers = readFileSync(process.argv[3], "utf8");
-          const contract = headers.match(/^x-slop-trace-api-contract:\s*([^\r\n]+)$/imu)?.[1]?.trim();
-          if (
-            JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(["enabled", "source", "verifiedAt"]) ||
-            value?.enabled !== true ||
-            value?.source !== "github-public-status" ||
-            !Number.isFinite(Date.parse(value?.verifiedAt)) ||
-            contract !== "private-trace-v1-opaque-hmac-v1"
-          ) process.exit(1);
-          NODE
-            then
-              exit 0
-            fi
-            echo "::warning::Authoritative private intake preflight returned HTTP $status (attempt $attempt/18)."
-            sleep 5
-          done
-          echo "::error::Private intake preflight did not become authoritative."
-          exit 1
+          status="$(curl --silent --show-error --max-time 30 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' https://api.slop.cash/api/v1/private-request-intake)"
+          if [ "$status" != "200" ]; then
+            echo "::warning::Optional trace intake unavailable (HTTP $status); GitHub contribution remains open. Check the independent health renewal workflow."
+          fi
 
       - name: Require public identity OAuth app
         if: github.event_name != 'schedule'

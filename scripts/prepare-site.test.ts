@@ -414,7 +414,7 @@ describe("contribution skill package", () => {
     expect(llms).toContain(`SHA-256: ${digest}`);
     expect(llms).toContain("never authorizes wallet creation");
     expect(source.toString()).toContain(
-      "mandatory permanent minimized trace upload",
+      "optional permanent minimized trace upload",
     );
     expect(source.toString()).toContain(
       "https://slop.cash/protocol/private-trace-v1.md",
@@ -427,7 +427,6 @@ describe("contribution skill package", () => {
     expect(readFileSync(join(publicRoot, "protocol", "scoring-v2.md"))).toEqual(
       readFileSync(join(repositoryRoot, "protocol", "scoring-v2.md")),
     );
-    expect(source.toString()).toContain("--allow-local-usage");
 
     const projectDiscovery = parseJsonRecord(
       readFileSync(
@@ -913,7 +912,7 @@ describe("contribution skill package", () => {
         source: { path: `${project.reviewSkill.sourcePath}/SKILL.md` },
         review: {
           policy:
-            "Advisory review only. The reviewer must post exact provider, model, and client identity plus finalized private-trace evidence. Maintainers decide acceptance, score, and every money-state transition.",
+            "Advisory review only. The reviewer must post exact provider, model, and client identity with optional finalized private-trace evidence. Maintainers decide acceptance, score, and every money-state transition.",
         },
         provenance: { status: "self-reported" },
         telemetry: { source: "ccusage@20.0.20" },

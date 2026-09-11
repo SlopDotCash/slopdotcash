@@ -111,14 +111,24 @@ describe("review records", () => {
     );
   });
 
-  it("rejects a missing finalized trace upload", () => {
+  it("accepts a signed review without optional trace evidence", () => {
+    const joined = assertReviewRecordReceiptJoin(
+      { ...record, traceSha256: null },
+      { ...receipt, traceUpload: null, trajectorySha256: null },
+      context,
+    );
+    expect(joined.runId).toBe(receipt.runId);
+    expect(joined.traceSha256).toBe("");
+  });
+
+  it("rejects a claimed trace when no finalized upload exists", () => {
     expect(() =>
       assertReviewRecordReceiptJoin(
         record,
         { ...receipt, traceUpload: null },
         context,
       ),
-    ).toThrow(/finalized private trace upload/u);
+    ).toThrow(/does not match its run receipt/u);
   });
 
   it.each([

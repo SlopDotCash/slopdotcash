@@ -2,14 +2,45 @@ import { useEffect, useId, useRef, useState } from "react";
 import {
   prepareWalletRegistration,
   type RegisteredWalletClaim,
+  type WalletAuthorization,
   type WalletRegistrationSession,
 } from "./lib/wallet-registration";
 import { isSolanaAddress } from "./lib/wallets";
 
+const PENDING_WALLET = "slop-wallet-authorization";
+const WALLET_ADDRESS = "slop-wallet-address";
+function pendingAuthorization(): WalletAuthorization | undefined {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(PENDING_WALLET) ?? "null");
+    if (value && Date.parse(value.expiresAt) > Date.now()) return value;
+    sessionStorage.removeItem(PENDING_WALLET);
+  } catch {
+    /* Storage may be disabled; ordinary popup sign-in still works. */
+  }
+  return undefined;
+}
+function savedAddress(): string {
+  try {
+    return sessionStorage.getItem(WALLET_ADDRESS) ?? "";
+  } catch {
+    return "";
+  }
+}
+function saveAuthorization(value: WalletAuthorization | null) {
+  try {
+    if (value) sessionStorage.setItem(PENDING_WALLET, JSON.stringify(value));
+    else sessionStorage.removeItem(PENDING_WALLET);
+  } catch {
+    /* Same-tab recovery requires tab storage; never persist a token elsewhere. */
+  }
+}
+
 /** Standalone route or profile section; routing belongs to the parent. */
 export function WalletRegistration() {
   const addressId = useId();
-  const [address, setAddress] = useState("");
+  const [address, setAddress] = useState(savedAddress);
+  const [canResume, setCanResume] = useState(false);
+  const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<
     "idle" | "signing-in" | "preview" | "registering" | "done"
   >("idle");
@@ -39,7 +70,7 @@ export function WalletRegistration() {
     },
     [],
   );
-  async function start() {
+  async function start(resume?: WalletAuthorization) {
     const exactAddress = address.trim();
     if (!isSolanaAddress(exactAddress)) {
       setMessage("Enter a valid Solana public address (32-byte base58).");
@@ -48,18 +79,16 @@ export function WalletRegistration() {
     release();
     // Reserve the popup during the user gesture; never place bearer credentials
     // in the application URL or communicate credentials via postMessage.
-    const popup = window.open(
-      "about:blank",
-      "_blank",
-      "popup,width=600,height=720",
-    );
-    if (!popup) {
-      setMessage("Allow the GitHub sign-in popup, then try again.");
-      return;
+    const popup = resume
+      ? null
+      : window.open("about:blank", "_blank", "popup,width=600,height=720");
+    if (popup) popup.opener = null;
+    setAuthorizationUrl(null);
+    try {
+      sessionStorage.setItem(WALLET_ADDRESS, exactAddress);
+    } catch {
+      /* Keep in component state. */
     }
-    // The identity origin isolates its opener. Do not read or close this window
-    // after navigation: Chromium reports unsafe cross-origin popup operations.
-    popup.opener = null;
     const run = {
       controller: new AbortController(),
       session: undefined as WalletRegistrationSession | undefined,
@@ -72,20 +101,29 @@ export function WalletRegistration() {
     try {
       const prepared = await prepareWalletRegistration(exactAddress, {
         signal: run.controller.signal,
+        resume,
+        saveAuthorization: (value) => {
+          saveAuthorization(value);
+          setCanResume(value !== null && pendingAuthorization() !== undefined);
+        },
         authorize: (url) => {
-          popup.location.replace(url);
+          if (popup) popup.location.replace(url);
+          else setAuthorizationUrl(url);
         },
       });
       if (active.current !== run) {
         prepared.cancel();
         return;
       }
+      setAuthorizationUrl(null);
       run.session = prepared;
       setSession(prepared);
       setPhase("preview");
     } catch (error) {
       if (active.current !== run) return;
       release();
+      saveAuthorization(null);
+      setAuthorizationUrl(null);
       setPhase("idle");
       setMessage(
         error instanceof Error
@@ -118,6 +156,15 @@ export function WalletRegistration() {
       );
     }
   }
+  useEffect(() => {
+    const resume = () => {
+      const pending = pendingAuthorization();
+      if (pending && !active.current) void start(pending);
+    };
+    resume();
+    window.addEventListener("pageshow", resume);
+    return () => window.removeEventListener("pageshow", resume);
+  });
   const busy = phase === "signing-in" || phase === "registering";
   return (
     <section
@@ -134,6 +181,24 @@ export function WalletRegistration() {
         Registration does not prove control of the address or authorize a
         payment. Existing cycle wallets stay locked.
       </p>
+      {authorizationUrl && (
+        <div role="status">
+          <a
+            className="button primary-button"
+            href={authorizationUrl}
+            target={canResume ? undefined : "_blank"}
+            rel="noreferrer"
+            referrerPolicy="no-referrer"
+          >
+            Continue to GitHub {canResume ? "in this tab" : "in another tab"}
+          </a>
+          <p>
+            {canResume
+              ? "After authorizing, use Back to return here. Your address is saved."
+              : "After authorizing, return to this tab to confirm your address."}
+          </p>
+        </div>
+      )}
       <form
         className="owner-form"
         onSubmit={(event) => {
@@ -159,11 +224,10 @@ export function WalletRegistration() {
           </button>
         )}
       </form>
-      {phase === "signing-in" && (
+      {phase === "signing-in" && !authorizationUrl && (
         <p role="status">
-          Complete GitHub sign-in in the popup using your own account. This
-          expires after five minutes. You can cancel here if you close the
-          popup.
+          Complete GitHub sign-in using your own account. This expires after
+          five minutes. You can cancel here if you close the popup.
         </p>
       )}
       {session && phase === "preview" && (
@@ -211,6 +275,8 @@ export function WalletRegistration() {
           onClick={() => {
             const submitted = phase === "registering";
             release();
+            saveAuthorization(null);
+            setAuthorizationUrl(null);
             setSession(null);
             setPhase("idle");
             setMessage(

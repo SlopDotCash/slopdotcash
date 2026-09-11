@@ -126,6 +126,7 @@ import io
 import json
 import math
 import os
+import base64
 import re
 import secrets
 import shutil
@@ -498,6 +499,14 @@ def develop_head():
 
 def authorize_revision(revision, canonical_files):
     current_develop = develop_head()
+    revocations = api_json(f"/repos/{github_repository}/contents/protocol/skill-revocations.json", (("ref", current_develop),))
+    if not isinstance(revocations, dict) or revocations.get("encoding") != "base64":
+        raise ValueError("Skill revocation list is unavailable")
+    revoked = decode_json(base64.b64decode(revocations["content"]), "skill revocations")
+    if not isinstance(revoked, list) or any(not isinstance(item, str) or not sha_pattern.fullmatch(item) for item in revoked):
+        raise ValueError("Skill revocation list is invalid")
+    if revision in revoked:
+        raise ValueError("This skill revision was explicitly revoked; install the replacement")
     if revision == current_develop:
         return {"kind": "develop", "develop": current_develop}
     matching = [
@@ -525,11 +534,26 @@ def authorize_revision(revision, canonical_files):
         return {"kind": "candidate", "develop": current_develop, "pull": approved[0]}
     if compare_is_ancestor(revision, current_develop):
         current_files = remote_skill_bytes(current_develop)
-        if current_files != canonical_files:
-            raise ValueError(
-                "deployed skill revision is stale because canonical skill bytes changed on develop"
-            )
-        return {"kind": "develop", "develop": current_develop}
+        if current_files == canonical_files:
+            return {"kind": "develop", "develop": current_develop}
+        # An approved published version remains usable while newer code awaits
+        # deployment. GitHub, independently of the download host, proves release.
+        response = api_json(
+            f"/repos/{github_repository}/actions/workflows/deploy.yml/runs",
+            (("head_sha", revision), ("status", "success"), ("per_page", "100")),
+        )
+        runs = response.get("workflow_runs") if isinstance(response, dict) else None
+        if not isinstance(runs, list):
+            raise ValueError("GitHub release history is invalid")
+        if any(isinstance(run, dict) and run.get("head_sha") == revision
+               and run.get("head_branch") == "develop"
+               and run.get("event") in ("push", "workflow_dispatch")
+               and run.get("conclusion") == "success"
+               and isinstance(run.get("head_repository"), dict)
+               and run["head_repository"].get("full_name") == github_repository
+               for run in runs):
+            return {"kind": "develop", "develop": current_develop}
+        raise ValueError("deployed skill revision is stale and has no successful approved release")
     raise ValueError(
         "archive revision is neither the current canonical develop skill nor an open labeled same-repository release candidate"
     )

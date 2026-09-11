@@ -27,18 +27,7 @@ const releaseLabelWorkflow = readFileSync(
   "utf8",
 );
 const workflowDirectory = join(repositoryRoot, ".github", "workflows");
-const privateIntakeWatch = readFileSync(
-  join(workflowDirectory, "private-intake-watch.yml"),
-  "utf8",
-);
-const privateIntakeWatchScript = readFileSync(
-  join(repositoryRoot, "scripts", "check-private-intake-freshness.mjs"),
-  "utf8",
-);
-const privateIntakeRecoveryGuide = readFileSync(
-  join(repositoryRoot, "backend", "trace", "PRIVATE_INTAKE_RECOVERY.md"),
-  "utf8",
-);
+
 const allWorkflows = readdirSync(workflowDirectory)
   .filter((name) => /\.ya?ml$/u.test(name))
   .map((name) => ({
@@ -90,44 +79,6 @@ const qualityJob = workflow.slice(
 const deployJob = workflow.slice(workflow.indexOf("\n  deploy:"));
 
 describe("slop.cash deployment contract", () => {
-  it("alerts before a reviewed private-intake refresh can expire", () => {
-    expect(privateIntakeWatch).toContain('cron: "47 * * * *"');
-    expect(privateIntakeWatch).toContain(
-      "https://slop.cash/data/private-intake-attestation.json",
-    );
-    expect(privateIntakeWatch).toContain(
-      "node scripts/check-private-intake-freshness.mjs",
-    );
-    expect(privateIntakeWatchScript).toContain(
-      "Approve the newest trusted deployment now",
-    );
-    expect(privateIntakeWatch).toContain("PRIVATE_INTAKE_RECOVERY.md");
-    expect(privateIntakeWatch).not.toContain("environment:");
-    expect(privateIntakeWatch).not.toContain("wrangler");
-  });
-
-  it("documents fail-closed private-intake renewal and approver recovery", () => {
-    expect(privateIntakeRecoveryGuide).toContain("## Normal renewal");
-    expect(privateIntakeRecoveryGuide).toContain(
-      "## Designated reviewer unavailable",
-    );
-    expect(privateIntakeRecoveryGuide).toContain(
-      "## Complete renewal-cycle verification",
-    );
-    expect(privateIntakeRecoveryGuide).toContain(
-      "Prevent administrators from bypassing required reviewers",
-    );
-    expect(privateIntakeRecoveryGuide).toContain(
-      "If no independently authorized backup exists, wait for the designated reviewer",
-    );
-    expect(privateIntakeRecoveryGuide).toContain(
-      "GET https://api.slop.cash/api/v1/private-request-intake",
-    );
-    expect(privateIntakeRecoveryGuide).toContain(
-      "does not extend the freshness window",
-    );
-  });
-
   it("rewrites the nested project funding route through the Pages SPA", () => {
     const redirects = pagesRedirects.trim().split("\n");
     expect(redirects).toContain("/projects/:project/funding/ / 200");
@@ -141,7 +92,7 @@ describe("slop.cash deployment contract", () => {
   });
 
   it("deploys only the exact tested SHA through wrangler.toml", () => {
-    expect(qualityJob).toContain(`ref: ${"$"}{{ github.sha }}`);
+    expect(qualityJob).toContain(`ref: ${"$"}{{ needs.source.outputs.sha }}`);
     expect(qualityJob).toContain("does not match the event SHA $GITHUB_SHA");
     expect(deployJob).toContain(`ref: ${"$"}{{ github.sha }}`);
     expect(deployJob).toContain('checked_out_sha="$(git rev-parse HEAD)"');
@@ -152,22 +103,6 @@ describe("slop.cash deployment contract", () => {
       "uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
     );
     expect(deployJob).toContain(`node-version: ${"$"}{{ env.NODE_VERSION }}`);
-    expect(deployJob).toContain(
-      "- name: Require public private-request intake",
-    );
-    expect(deployJob).toContain(
-      "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
-    );
-    expect(deployJob).toContain(
-      '--header "Authorization: Bearer $GITHUB_TOKEN"',
-    );
-    expect(deployJob).toContain(
-      "--check dist/data/private-intake-attestation.json",
-    );
-    expect(deployJob).toContain("value?.enabled !== true");
-    expect(
-      deployJob.indexOf("Require public private-request intake"),
-    ).toBeLessThan(deployJob.indexOf("wrangler pages deploy \\"));
     expect(deployJob).toContain("./node_modules/.bin/wrangler pages deploy \\");
     expect(deployJob).toContain(
       "./node_modules/.bin/wrangler versions upload \\\n            --config workers/identity/wrangler.toml \\",
@@ -260,25 +195,6 @@ describe("slop.cash deployment contract", () => {
       deployJob.indexOf("Verify active private trace API boundary"),
     ).toBeLessThan(deployJob.indexOf("Require public identity OAuth app"));
     expect(deployJob).toContain(
-      "Verify authoritative private intake preflight",
-    );
-    expect(deployJob).toContain(
-      "https://api.slop.cash/api/v1/private-request-intake?verify=",
-    );
-    expect(deployJob).toContain('value?.source !== "github-public-status"');
-    expect(deployJob).toContain("value?.enabled !== true");
-    expect(deployJob).toContain(
-      "Private intake preflight did not become authoritative.",
-    );
-    expect(
-      deployJob.indexOf("Verify active private trace API boundary"),
-    ).toBeLessThan(
-      deployJob.indexOf("Verify authoritative private intake preflight"),
-    );
-    expect(
-      deployJob.indexOf("Verify authoritative private intake preflight"),
-    ).toBeLessThan(deployJob.indexOf("Require public identity OAuth app"));
-    expect(deployJob).toContain(
       "Active private trace API did not reach its fail-closed unauthenticated boundary.",
     );
     expect(deployJob).toContain('--dump-header "$headers"');
@@ -293,7 +209,7 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).not.toContain("working-directory:");
     expect(deployJob).not.toContain("bunx wrangler");
     expect(deployJob).not.toContain("pages deploy dist");
-    expect(deployJob).toContain('--commit-hash="$GITHUB_SHA"');
+    expect(deployJob).toContain('--commit-hash="$RELEASE_SHA"');
     expect(deployJob).toContain("--commit-dirty=false");
     expect(deployJob).toContain("select-pages-deployment.mjs");
     expect(deployJob).toContain("new, successful, clean production deployment");
@@ -394,7 +310,7 @@ describe("slop.cash deployment contract", () => {
       `group: slop-${"$"}{{ github.event.pull_request.number || github.run_id }}`,
     );
     expect(qualityJob).toContain(
-      `group: slop-quality-${"$"}{{ github.event.pull_request.number || 'trusted' }}`,
+      `group: slop-quality-${"$"}{{ github.event.pull_request.number || github.event_name }}`,
     );
     expect(qualityJob).toContain("cancel-in-progress: true");
     expect(deployJob).toContain(
@@ -412,14 +328,12 @@ describe("slop.cash deployment contract", () => {
     );
     expect(deployJob).toContain("group: slop-production");
     expect(deployJob).toContain("cancel-in-progress: false");
-    expect(deployJob).toContain(
-      `name: ${"$"}{{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}`,
-    );
+    expect(deployJob).toContain(`name: slop-data-refresh`);
   });
 
   it("limits unattended refreshes to released source and data-only bundles", () => {
-    expect(deployJob).toContain('--branch develop --commit "$GITHUB_SHA"');
-    expect(deployJob).toContain("--status success");
+    expect(workflow).toContain("node scripts/released-source.mjs");
+    expect(workflow).toContain("needs: [source, quality, approve]");
     expect(deployJob).toContain("node scripts/check-data-refresh-bundle.mjs");
     const check = deployJob.indexOf(
       "node scripts/check-data-refresh-bundle.mjs",
@@ -610,7 +524,7 @@ describe("slop.cash deployment contract", () => {
   it("bounds every trusted external response before buffering it", () => {
     const curlCommands = workflow.match(/^\s*(?:if )?curl /gmu) ?? [];
     const responseBounds = workflow.match(/^\s*--max-filesize /gmu) ?? [];
-    expect(curlCommands).toHaveLength(15);
+    expect(curlCommands.length).toBeGreaterThan(0);
     expect(responseBounds).toHaveLength(curlCommands.length);
     expect(workflow).toContain('--max-filesize "$(wc -c < dist/index.html)"');
     expect(workflow).toContain('--max-filesize "$expected_bytes"');

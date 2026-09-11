@@ -15,6 +15,7 @@ const SKILL_PATH = "skills/contribute-to-eliza";
 export interface AuthorityRevision {
   files: Record<string, Buffer | string>;
   pulls?: unknown[];
+  released?: boolean;
 }
 
 export interface AuthorityFixtureOptions {
@@ -120,6 +121,24 @@ export function createInstallAuthorityFixture(
     },
   };
   for (const [revision, configuration] of Object.entries(options.revisions)) {
+    responses[
+      `/repos/${REPOSITORY}/actions/workflows/deploy.yml/runs?head_sha=${revision}&status=success&per_page=100`
+    ] = {
+      workflow_runs: configuration.released
+        ? [
+            {
+              head_sha: revision,
+              head_branch: "develop",
+              event: "push",
+              conclusion: "success",
+              head_repository: { full_name: REPOSITORY },
+            },
+          ]
+        : [],
+    };
+    responses[
+      `/repos/${REPOSITORY}/contents/protocol/skill-revocations.json?ref=${revision}`
+    ] = { encoding: "base64", content: Buffer.from("[]").toString("base64") };
     const files = normalizedFiles(configuration.files);
     Object.assign(responses, contentsResponses(revision, files));
     responses[

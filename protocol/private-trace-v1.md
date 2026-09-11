@@ -7,7 +7,7 @@ must not redefine it.
 
 ## Consent boundary
 
-Uploading is mandatory for an agent-authored contribution or review. It is not
+Uploading is optional for every contribution and review. It is not
 background synchronization: the contributor selects one local file and invokes
 the `trace` command. Before GitHub authorization starts, the command opens that
 path once without following a final symlink, verifies the opened descriptor is
@@ -20,7 +20,7 @@ The uploader sends those exact bytes without transformation, and a changed file
 has a different digest and requires a new upload intent.
 
 Do not authorize or upload if this contract or permanent retention is
-unacceptable. The contribution or review must then remain unsubmitted. A human
+unacceptable. Submit the contribution or review without private-trace evidence. A human
 who did not use an agent may declare a human-only contribution and does not
 upload an agent trace.
 
@@ -97,14 +97,11 @@ private report from a signed-in GitHub user without publishing the report as an
 issue. Do not put private data, trace contents, or request details in a public
 issue.
 
-The protected quality and deploy jobs query GitHub's public
-private-vulnerability-reporting status endpoint. The tested Pages bundle carries
-their bounded revision-bound attestation, and Slop's server-authoritative
-preflight accepts it for at most 49 hours. Trace upload and production
-activation fail closed if the attestation is missing, stale, malformed, or does
-not report exactly `enabled: true`; the preflight reports only safe state and
-never becomes an enabled result. The advisory URL alone is not evidence that
-intake is usable.
+An independent hourly Actions job authenticates to GitHub and records the
+private-reporting status in D1. Trace intake reads that status with a 24-hour
+maximum age. Missing, stale, malformed, or disabled status blocks only optional
+trace collection. Website deployments and GitHub contributions continue.
+The advisory URL alone is not evidence that intake is usable.
 Operators must authenticate the requester and handle any action required by
 applicable law outside the contributor API with an audit record. This channel
 does not create a voluntary deletion or contributor-read right that conflicts
@@ -115,6 +112,5 @@ with the permanent, write-only product contract.
 Minimization and redaction do not weaken the fail-closed receipt join. The API
 accepts only the exact declared byte count, media type, and SHA-256 digest;
 upload capabilities are short-lived and one-use; object creation is immutable;
-and finalization fails unless the object is attached. Contribution and review
-submission remains blocked if export, upload, finalization, or the public
-receipt join fails.
+and finalization fails unless the object is attached. Failed export, upload, finalization, or receipt joins do not block GitHub
+submission. They never qualify as finalized evidence or earn a trace bonus.

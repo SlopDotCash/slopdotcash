@@ -3039,10 +3039,7 @@ export function collectLiveReport(
     const epic =
       EPIC_TITLE_RE.test(summary.title) ||
       labels.some((label) => EPIC_LABEL_RE.test(label.trim()));
-    if (
-      epic ||
-      !labels.some((label) => candidateLabelSet.has(label.trim().toLowerCase()))
-    ) {
+    if (epic) {
       untriagedIssues.push({
         ...summary,
         reason: epic
@@ -3343,7 +3340,7 @@ export function renderMarkdown(report) {
   lines.push(gaps.length > 0 ? gaps.join("\n") : "_No audited gaps._");
   lines.push(
     "",
-    `_Read-only heuristic report: issue candidates require one configured maintainer-controlled repository label (${eligibleLabels.join(", ")}); titles, bodies, comments, Discussions, and other labels cannot substitute. Claim comments expire after ${CLAIM_RECENCY_DAYS} days and count only from repository owners, members, or collaborators unless durable repository state remains; active GitHub review requests persist until cleared. Verify live Project state and newest comments before claiming._`,
+    `_Read-only heuristic report: recommended issue labels: ${eligibleLabels.join(", ")}; labels do not gate otherwise unblocked work. Claim comments expire after ${CLAIM_RECENCY_DAYS} days and count only from repository owners, members, or collaborators unless durable repository state remains; active GitHub review requests persist until cleared. Verify live Project state and newest comments before claiming._`,
     "",
   );
   return lines.join("\n");
