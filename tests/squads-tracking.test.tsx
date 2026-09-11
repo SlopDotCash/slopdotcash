@@ -13,6 +13,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -119,15 +120,50 @@ describe("Squads tracker public contract", () => {
       expect(listeners).toHaveBeenCalledWith("focus", expect.any(Function)),
     );
     expect(fetcher.mock.calls[1][0]).toBe(published.observationUrl);
-    vi.spyOn(Date, "now").mockReturnValue(
-      Date.parse(observation.observedAt) + 300000,
-    );
+    const clock = vi.spyOn(Date, "now");
+    clock.mockReturnValue(Date.parse(observation.observedAt) + 299999);
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(
+      screen.getByText("Proposal executed · settlement unverified"),
+    ).toBeVisible();
+    clock.mockReturnValue(Date.parse(observation.observedAt) + 300000);
     await act(async () => {
       window.dispatchEvent(new Event("focus"));
     });
     expect(
       screen.getByText("Execution observation stale · refresh required"),
     ).toBeVisible();
+  });
+  it("expires observations on the interval without a focus event or new fetch", async () => {
+    const { published, observation, cycle } = await fixture();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const intervals = vi.spyOn(window, "setInterval");
+    const fetcher = vi.fn(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.startsWith("/data/")
+              ? { schemaVersion: 1, executions: [published] }
+              : observation,
+          ),
+        ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(<SquadsTracking cycle={cycle} />);
+    await screen.findByText("Proposal executed · settlement unverified");
+    await waitFor(() =>
+      expect(intervals).toHaveBeenCalledWith(expect.any(Function), 1000),
+    );
+    vi.spyOn(Date, "now").mockReturnValue(
+      Date.parse(observation.observedAt) + 300000,
+    );
+    act(() => vi.advanceTimersByTime(1000));
+    expect(
+      screen.getByText("Execution observation stale · refresh required"),
+    ).toBeVisible();
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
   it("shows partial batch execution without reporting settlement", async () => {
     const { published, observation, cycle } = await fixture(true);
