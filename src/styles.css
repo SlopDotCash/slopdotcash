@@ -3407,3 +3407,8 @@ small {
   font-weight: 600;
   padding: 12px 0;
 }
+
+.review-score-detail {
+  display: block;
+  margin-top: 4px;
+}

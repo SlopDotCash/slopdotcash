@@ -79,8 +79,8 @@ import {
 } from "./lib/projects.mjs";
 import {
   formatThirds,
-  selectReviewerLeaders,
   type ReviewerLeader,
+  selectReviewerLeaders,
 } from "./lib/reviewer-leaders";
 import { feeForPrincipal, PLATFORM_FEE_BASIS_POINTS } from "./lib/rewards";
 import {
@@ -784,9 +784,10 @@ function Avatar({
 function ReviewContribution({ reviewer }: { reviewer?: ReviewerLeader }) {
   if (!reviewer) return null;
   return (
-    <small>
-      Includes {formatThirds(reviewer.reviewThirds)} review points ·{" "}
-      {reviewer.reviewEventCount} scored review
+    <small className="review-score-detail">
+      Includes {formatThirds(reviewer.reviewThirds)} review point
+      {reviewer.reviewThirds === 3 ? "" : "s"} · {reviewer.reviewEventCount}{" "}
+      scored review
       {reviewer.reviewEventCount === 1 ? "" : "s"}
     </small>
   );
