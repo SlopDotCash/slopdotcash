@@ -326,7 +326,7 @@ describe("reviewed payment checkpoint migration", () => {
       verifyHistoricalPaymentAdmission(f.root, f.accepted, f.bootstrap, [
         f.pin,
       ]),
-    ).rejects.toThrow(/expired/);
+    ).rejects.toThrow(/No exact successful trusted reservation gate/);
   });
   it.each(["drop", "reprice", "omit-history"])(
     "rejects %s in a checkpoint snapshot even with a recomputed snapshot hash",
