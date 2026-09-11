@@ -215,7 +215,7 @@ bypass actors.
 
 Code releases require approval at `eliza-army-production` before entering the
 publication lock. Publication credentials live in the develop-only
-`slop-data-refresh` environment. Its scoped token supports Pages, identity and
+`slop-data-refresh` environment. Its scoped token must support Pages, identity and
 D1 release operations; never expose it to pull-request runs. The approval job
 has no publication lock, so waiting for a reviewer cannot starve data refreshes.
 

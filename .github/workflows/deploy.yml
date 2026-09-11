@@ -169,6 +169,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           bun run leaderboard:generate
+          # An older approved source still serves its legacy intake format.
+          # Renew it during the transition; new sources have no such builder.
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ -f scripts/prepare-private-intake-attestation.ts ]; then
+            GITHUB_SHA="$RELEASE_SHA" bun scripts/prepare-private-intake-attestation.ts
+          fi
 
       - name: Load deployed public ledger for pull-request checks
         if: github.event_name == 'pull_request'

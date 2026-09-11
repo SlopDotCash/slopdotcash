@@ -1,6 +1,14 @@
 /** Regression for approval starvation: validate the actual job graph and shells. */
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 function workflow(path) {
@@ -41,6 +49,46 @@ describe("independent release and intake paths", () => {
     expect(health.renew.concurrency.group).not.toBe(
       jobs.deploy.concurrency.group,
     );
+  });
+  it("renews the legacy format only while refreshing an older approved source", () => {
+    const { jobs } = workflow(".github/workflows/deploy.yml");
+    const command = jobs.quality.steps.find((step) =>
+      step.run?.includes("bun run leaderboard:generate"),
+    ).run;
+    const root = mkdtempSync(join(tmpdir(), "slop-legacy-refresh-"));
+    try {
+      mkdirSync(join(root, "scripts"));
+      writeFileSync(
+        join(root, "scripts/prepare-private-intake-attestation.ts"),
+        "",
+      );
+      writeFileSync(
+        join(root, "bun"),
+        '#!/bin/sh\nprintf \'%s:%s\\n\' "$GITHUB_SHA" "$*" >> "$TRACE"\n',
+        { mode: 0o700 },
+      );
+      const trace = join(root, "trace");
+      const env = {
+        ...process.env,
+        PATH: `${root}:${process.env.PATH}`,
+        TRACE: trace,
+        GITHUB_EVENT_NAME: "schedule",
+        GITHUB_SHA: "new-head",
+        RELEASE_SHA: "approved-source",
+      };
+      execFileSync("bash", ["-eu", "-c", command], { cwd: root, env });
+      expect(readFileSync(trace, "utf8")).toContain(
+        "approved-source:scripts/prepare-private-intake-attestation.ts",
+      );
+      rmSync(join(root, "scripts/prepare-private-intake-attestation.ts"));
+      rmSync(trace);
+      execFileSync("bash", ["-eu", "-c", command], { cwd: root, env });
+      expect(readFileSync(trace, "utf8").trim()).toBe(
+        "new-head:run leaderboard:generate",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
   it("parses every release shell after GitHub expression substitution", () => {
     for (const path of [
