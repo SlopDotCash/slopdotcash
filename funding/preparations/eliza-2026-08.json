@@ -3,10 +3,10 @@
   "cycleId": "2026-08",
   "sourceSnapshotSha256": "01d1e6c42b11112561fc65bea9672b6966737bf95425ef97c9d9d0aa371cf37e",
   "sourceAuditSha256": "474bcebe04deb6b7575e9daba0b47e4b117122b20e19e86d5ecb409faedf6a17",
-  "observedAt": "2026-09-10T14:51:03.923Z",
+  "observedAt": "2026-09-11T01:36:22.475Z",
   "provenance": {
     "ruleVersion": "slop-score-v2",
-    "walletObservationsSha256": "88a43f4c498890dadf390d1baa0e427c2584b93dda8a0e4b4643065711bec10d",
+    "walletObservationsSha256": "41e3a9a3bfd32ce75a19280438ae0d3befea71797333deef04a56501d3fe3762",
     "snapshotFrom": "2026-07-28T00:00:00.000Z",
     "snapshotTo": "2026-09-01T00:00:00.000Z",
     "periodFrom": "2026-08-01T00:00:00.000Z",
@@ -47,7 +47,7 @@
       "wallet": {
         "address": "8UeRuQdqVCVwxERmajGkLon92Y8Ax3oJbDZQPGENzJkf",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "MDQ6VXNlcjMyNDM3ODg0",
         "sourceClaimId": "4e64506b-2781-4ced-b2c6-f955d7886b42",
         "sourceRecordSha256": "9cfc471ab2eb945310c725d04c491ab6394f9fdfbd6c03371ca25aeef5f9b72c",
@@ -91,7 +91,7 @@
       "wallet": {
         "address": "AESTQvWniWxvr3sY9mPQPVEnv8eufVG3Zfy8SuzDa9kR",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOEuYLFw",
         "sourceClaimId": "e53fc2d2-2bb4-45fd-8961-d865c4492873",
         "sourceRecordSha256": "2d79e72f75237440c7729c903a1f254d537eaabfb774fa37cf08f131c4173bde",
@@ -123,7 +123,7 @@
       "wallet": {
         "address": "73SUereGr4EAuQxftTAUn4EBdQggdyjXQhv8rYeB6GCH",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOEOd4mA",
         "sourceClaimId": "2ca81235-6faa-46aa-99c0-fe4667233f18",
         "sourceRecordSha256": "0b97b935c5240c45484ac4d72c2c76354c9f84a1cf9e21d9b85e8e8cc9d78ff4",
@@ -143,7 +143,7 @@
       "wallet": {
         "address": "8VXbZi3RMj2QcTmGF4cmBvojWy7ZYWo8uKYvRo2Zhum8",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOEYwrvA",
         "sourceClaimId": "5f1e1e17-7932-4353-9523-7ed385350f83",
         "sourceRecordSha256": "c7a8d39afe6080c11a70213bee5397ff9033558ab12d8ff39354446ed6f7b3bb",
@@ -199,7 +199,7 @@
       "wallet": {
         "address": "8DLxX1HerhzkjmDhT2Q7ktVfgntNjpHD14swJ1PQuNHw",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOEsGgnQ",
         "sourceClaimId": "6fc6fd56-530e-408e-b464-1fcd0078addf",
         "sourceRecordSha256": "a152244e5a2897c08be8e2ed6a9ce5512cdd51f47e2a578658198106989a6d8f",
@@ -219,7 +219,7 @@
       "wallet": {
         "address": "ZtdooyCSVFtdbz5Y4msPuanVyZYV2zaHCJnjZgyVU96",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "1d4ec274c05f9dbbf0e547c0ed38b5377fbdfe0e",
         "sourceUrl": "https://github.com/agent-cortex/agent-cortex/blob/1d4ec274c05f9dbbf0e547c0ed38b5377fbdfe0e/README.md"
       },
@@ -237,7 +237,7 @@
       "wallet": {
         "address": "2eFE3feeepWZ43zPtPMuKSc7ZCRzndeogjwkU7nW7H1p",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOBYutFg",
         "sourceClaimId": "0a5f3583-59fe-4e12-bd9f-2ef41beaf4af",
         "sourceRecordSha256": "454ef2312dfbe61b23090f2cfe5fb885a9a12b9327ea932e2749dc3dcf7222a0",
@@ -257,7 +257,7 @@
       "wallet": {
         "address": "2H7EzHUeJHGoQUkYfBwdRnJvw7Xj19rdrGgzCaMESSJz",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "b6781e0623e13f7a4215031df6fb79db959000a1",
         "sourceUrl": "https://github.com/startrack3r/startrack3r/blob/b6781e0623e13f7a4215031df6fb79db959000a1/README.md"
       },
@@ -272,7 +272,13 @@
       "weight": "1430000",
       "eventCount": 131,
       "eventIdsSha256": "af5610e4061e43223ed33e428ea84ad329934df24b475d645d1fecfccc97936f",
-      "wallet": null,
+      "wallet": {
+        "address": "Ex6ePz4UvsdCnYKptbm7tuPg4YBExiqHNxU6ARibg1Wy",
+        "chain": "solana",
+        "observedAt": "2026-09-11T01:36:22.475Z",
+        "sourceCommit": "0057e19cbb2b6acd8549017f53b2c9c66505b992",
+        "sourceUrl": "https://github.com/Svector-anu/Svector-anu/blob/0057e19cbb2b6acd8549017f53b2c9c66505b992/README.md"
+      },
       "lookupUnavailable": false
     },
     {
@@ -287,7 +293,7 @@
       "wallet": {
         "address": "EwihoFKv3YkWYuo912NdfApNaAnuzdNWMKPGQFxR8HdF",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "dcac16ec848864e95d17fd3300fdb3ffcbb5c4da",
         "sourceUrl": "https://github.com/sharkwon/sharkwon/blob/dcac16ec848864e95d17fd3300fdb3ffcbb5c4da/README.md"
       },
@@ -305,7 +311,7 @@
       "wallet": {
         "address": "Grr65RJmr2ahDRRQenbeBwxQ8gqDRYKpqcLCrzd9ADE3",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "MDQ6VXNlcjM4OTkxMjQz",
         "sourceClaimId": "8152e505-1667-4fcf-8ed4-ad2ca901fd62",
         "sourceRecordSha256": "96e87831cf6aa11a9464638352b22bec4f8522872cd0bf9590b3078dffdf3454",
@@ -325,7 +331,7 @@
       "wallet": {
         "address": "CHNu8dYtU6YfCh8aH9Mmx12VRcPoDvcMKQa6CJ7Mq8xD",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "MDQ6VXNlcjMwMDUxMzU2",
         "sourceClaimId": "f8bcf4c4-9be7-44e7-b07a-ba634fb58175",
         "sourceRecordSha256": "57db08e3deabe7a86b0ebbde1b5496bb5e498f5817cc68a38eccf92fb2970d4d",
@@ -357,7 +363,7 @@
       "wallet": {
         "address": "4t6Bp7Eb4sh926Xzvrj95yXMXn6mV18HhyVFDVb2FBHY",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "888b4971cb919bea5b2ba330e17e790d7e0d3a05",
         "sourceUrl": "https://github.com/Uuriko/Uuriko/blob/888b4971cb919bea5b2ba330e17e790d7e0d3a05/README.md"
       },
@@ -387,7 +393,7 @@
       "wallet": {
         "address": "J3HwVEQkZqjqztGnQW6VwXKx79ingmXHBL1E4ibDRnmt",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCF9y2A",
         "sourceClaimId": "3e883463-b630-4f9f-bb74-8f7256b94b8c",
         "sourceRecordSha256": "bdf0360e4d1a2e3cbbf2d50d1f69e4e7895c5c3a8634cfda415aa62bbc6a5e8e",
@@ -407,7 +413,7 @@
       "wallet": {
         "address": "9ihN9VKxVApCVrdK5LuejAcqhJZ2TcKMUASB3UGkcQhU",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "154cd5078c28023a035e66ff9c8ba37f6b8396aa",
         "sourceUrl": "https://github.com/w1kke/w1kke/blob/154cd5078c28023a035e66ff9c8ba37f6b8396aa/README.md"
       },
@@ -425,7 +431,7 @@
       "wallet": {
         "address": "6DvpyBDc6sj1TnsD72Y63d1FTbbMEc22WNo8VcyqXC4Q",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "b8b565e027611814181dfe9a81dca2ae63b7c474",
         "sourceUrl": "https://github.com/Ansonhkg/Ansonhkg/blob/b8b565e027611814181dfe9a81dca2ae63b7c474/README.md"
       },
@@ -455,7 +461,7 @@
       "wallet": {
         "address": "6Sq2fnWJYxRgrgS8n2B1YMVm6sBXBxenZxoJyULezqLy",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "d025a03304c9f3eebf66dab45ca0fddd983b5852",
         "sourceUrl": "https://github.com/MarcoWorms/MarcoWorms/blob/d025a03304c9f3eebf66dab45ca0fddd983b5852/README.md"
       },
@@ -473,7 +479,7 @@
       "wallet": {
         "address": "Cp4kTpG5ZHdMD46tiCgNEegkc5eopn9RRBur2y1cBHUm",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "e4dd99d42654752ec1ecf36e24cdf25f0319d799",
         "sourceUrl": "https://github.com/hkc2023/hkc2023/blob/e4dd99d42654752ec1ecf36e24cdf25f0319d799/README.md"
       },
@@ -491,7 +497,7 @@
       "wallet": {
         "address": "2GH44MmRLnuVaYPPoGpZiWzmdzSAtoxA5hnU2xFUciDx",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCJdw7g",
         "sourceClaimId": "6c9175d4-b4c9-4e14-be52-5e03501fe58c",
         "sourceRecordSha256": "fa397d1dc8d51b84f8307ba83d3e9df028a69450c252969bbf0889ab6925beae",
@@ -511,7 +517,7 @@
       "wallet": {
         "address": "gcPnMacs1EWwZ3q8LJn2zFhVoTVNqvKLrwQyQKmfbMV",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCzScNQ",
         "sourceClaimId": "8437a7f7-1537-4391-aa3c-dd7c4961a813",
         "sourceRecordSha256": "f6f8dc2d0038c8a779600bb4a6e02e804455584cf132bdc050c99fed89ffeafb",
@@ -531,7 +537,7 @@
       "wallet": {
         "address": "5h6LapuyAfbJaiczZa2fbvsiib2HVrTzZ1ZcQnU7jKHc",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOEtGEfg",
         "sourceClaimId": "b978518e-7421-4c94-9e65-0ac0d1114d68",
         "sourceRecordSha256": "765e379314f265f02ded5d582c8ed08deb581027124cfbb573b51d8857db227d",
@@ -563,7 +569,7 @@
       "wallet": {
         "address": "B8bkEjD2igGRgtqmzjKXSUxgvQkATRkfKifh9HM11vdV",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCEc2SA",
         "sourceClaimId": "990bd339-9762-4d92-bba5-67d812518e69",
         "sourceRecordSha256": "e86e5d754a1a8df1308950dc762f368e2bb494da51f18f266bbe2fcab4f87098",
@@ -583,7 +589,7 @@
       "wallet": {
         "address": "9QV8UHGKTy1SbKjHWkeSERvD2TxiWXfSwXQ89CVZDmct",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "0544524b3031803ba7dc9bad41e78840fdf92706",
         "sourceUrl": "https://github.com/0xinBeta/0xinBeta/blob/0544524b3031803ba7dc9bad41e78840fdf92706/README.md"
       },
@@ -601,9 +607,9 @@
       "wallet": {
         "address": "DkEjgLSHrMZagMkNtSekzF2335g8q7wMJq1VeZc5DR5n",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
-        "sourceCommit": "5c7f2c0a4424c49c65c5e9f4f74b915488fdcd44",
-        "sourceUrl": "https://github.com/SYMBaiEX/SYMBaiEX/blob/5c7f2c0a4424c49c65c5e9f4f74b915488fdcd44/README.md"
+        "observedAt": "2026-09-11T01:36:22.475Z",
+        "sourceCommit": "095559bfcad38c9c4cb1f83814526988f79703c9",
+        "sourceUrl": "https://github.com/SYMBaiEX/SYMBaiEX/blob/095559bfcad38c9c4cb1f83814526988f79703c9/README.md"
       },
       "lookupUnavailable": false
     },
@@ -619,7 +625,7 @@
       "wallet": {
         "address": "4h9sXJmFbEw4cSbJv5p5Dg7K4icTRC45sqyefZnrRiBr",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "f50ef4fdd6ef9a6913be16b7d695fe70292589ba",
         "sourceUrl": "https://github.com/fid1699/fid1699/blob/f50ef4fdd6ef9a6913be16b7d695fe70292589ba/README.md"
       },
@@ -649,7 +655,7 @@
       "wallet": {
         "address": "54KHzKhnYfBQ1rsh9yBCVFK14eqTohwuJRXzUfPPWVyu",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "ab66fc007e5ea34cf80ad2ca6ef73ccbe218eaa1",
         "sourceUrl": "https://github.com/Zorba-the-buddhah/Zorba-the-buddhah/blob/ab66fc007e5ea34cf80ad2ca6ef73ccbe218eaa1/README.md"
       },
@@ -679,7 +685,7 @@
       "wallet": {
         "address": "5afDTAS9QMcQiigTQs4UWiCBJuU55pkqAb2ZJVs1WZjj",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "c639de979f30c73996e0571ddd124f7fb16a8691",
         "sourceUrl": "https://github.com/0takuc0mrade/0takuc0mrade/blob/c639de979f30c73996e0571ddd124f7fb16a8691/README.md"
       },
@@ -697,7 +703,7 @@
       "wallet": {
         "address": "6ap37TpuJHn4NofsFpPCDZhKBBLVP7aunMMPx1agE3iz",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "aaf7ef6514beb0c20ed2e76018f0957d53d805c3",
         "sourceUrl": "https://github.com/Finberg-Laurelin-CEO/Finberg-Laurelin-CEO/blob/aaf7ef6514beb0c20ed2e76018f0957d53d805c3/README.md"
       },
@@ -727,7 +733,7 @@
       "wallet": {
         "address": "DuUuqo7n16Dziz1eNLRat4qeeSk59JHjkoC7GJutHDEn",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCYbLRw",
         "sourceClaimId": "ff95f6af-fe46-47df-9ad9-167989f2b13b",
         "sourceRecordSha256": "e5cc274fcaaaf0e7113b3637818aed5adb383cfb081f5dc78c04ea3aba8c12c7",
@@ -771,7 +777,7 @@
       "wallet": {
         "address": "5MB8owEYxbEEWQg3dRU6qA5EWFFuJYmbrQUCBbf6cSky",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOEx4mAw",
         "sourceClaimId": "b752a0a5-61f1-4235-abe7-f7fde70c4e31",
         "sourceRecordSha256": "35863d804c05f4ad8b7f7272955874c10e9e83b36da36f1419ed80cd7e6e6cb5",
@@ -791,7 +797,7 @@
       "wallet": {
         "address": "Dgj6QnHeqykYGM9P1xCXxhaHH5JkJQnFy6i8argaLVzr",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "ec1ef03d4c044de147ccc3453abc0b18d06529e9",
         "sourceUrl": "https://github.com/fadhelcarlos/fadhelcarlos/blob/ec1ef03d4c044de147ccc3453abc0b18d06529e9/README.md"
       },
@@ -809,7 +815,7 @@
       "wallet": {
         "address": "59W5HpZu1FFqEHj8Qvkwd9UXb62aQMCt32LD4uarrRsc",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "3a169fa41826ac60956dbd9798c7646adb0ea65a",
         "sourceUrl": "https://github.com/odilitime/odilitime/blob/3a169fa41826ac60956dbd9798c7646adb0ea65a/README.md"
       },
@@ -825,11 +831,11 @@
       "eventCount": 8,
       "eventIdsSha256": "88ef8ca416a8fc3a9caa82764b6af105290bd1406d47dc923fccd8abc08ebbf2",
       "wallet": {
-        "address": "EU8ZXW65rMfw8o7py5kzahJiGqh8Dh9uaGcMAysu3hXi",
+        "address": "soAVqvYm8vceoycnVjnwYj74YRaWHMBYYSiz6hUFBCc",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
-        "sourceCommit": "a7051a6165fe5ff741ac677bba1666c052ffc230",
-        "sourceUrl": "https://github.com/FreeSolDev/FreeSolDev/blob/a7051a6165fe5ff741ac677bba1666c052ffc230/README.md"
+        "observedAt": "2026-09-11T01:36:22.475Z",
+        "sourceCommit": "7bdec82fc2d6f47116f4aadfbcc69695d00e0d13",
+        "sourceUrl": "https://github.com/FreeSolDev/FreeSolDev/blob/7bdec82fc2d6f47116f4aadfbcc69695d00e0d13/README.md"
       },
       "lookupUnavailable": false
     },
@@ -857,7 +863,7 @@
       "wallet": {
         "address": "3ZHCWc9qWDbmsen9rgBfwuDcvacnpdqv6nA4ewbuGWfs",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOEJGOyQ",
         "sourceClaimId": "4c2e7cf6-7218-414a-81b0-aeb92b0fcfce",
         "sourceRecordSha256": "0c65185a7200c988fd87949cc923206c8eca1bad48110783d07448e7c340ea8d",
@@ -889,7 +895,7 @@
       "wallet": {
         "address": "2RVtbntxT38W1BmoaqVB4P1JQc4H3scn2rvLZg87Uyeo",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "3da0c4d4ea21902f80c358384b98096af1661b33",
         "sourceUrl": "https://github.com/yizhengzhou/yizhengzhou/blob/3da0c4d4ea21902f80c358384b98096af1661b33/README.md"
       },
@@ -907,7 +913,7 @@
       "wallet": {
         "address": "E17ndFMnc8Zr5iEU4a1CKoV6ZZXpuLPxMUeMtYd8PHTT",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "03293377dfb94dee87dbeea8e51b7d23602b6c08",
         "sourceUrl": "https://github.com/awesamarth/awesamarth/blob/03293377dfb94dee87dbeea8e51b7d23602b6c08/README.md"
       },
@@ -925,7 +931,7 @@
       "wallet": {
         "address": "ExQrSw68xRsUvYtM1jDvY6W7TAjAx6YJgUJcrhxLGMqj",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "a70375c7cd4286135c09eeb395c66a4329f28610",
         "sourceUrl": "https://github.com/Illuminfti/Illuminfti/blob/a70375c7cd4286135c09eeb395c66a4329f28610/README.md"
       },
@@ -943,7 +949,7 @@
       "wallet": {
         "address": "FiDNZFCg3xoTKmANHhyEuW9YTNRFQenC5TWu9Nk6gdDK",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "762497a78a31c4387b6a81603ed11a94a9685eea",
         "sourceUrl": "https://github.com/leiws0822-stack/leiws0822-stack/blob/762497a78a31c4387b6a81603ed11a94a9685eea/README.md"
       },
@@ -973,7 +979,7 @@
       "wallet": {
         "address": "G4fZSp9tf6j1dFhrc6bVkLTszi6CuQPs5xCCFjXtLmaW",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "MDQ6VXNlcjI5NjEzMTY0",
         "sourceClaimId": "b7189412-2c67-4a1b-933a-97fd4af7af83",
         "sourceRecordSha256": "c7a885d451bb4970be97a191549ebd98a4349d96aaf62edc5c782208e9f4fe6d",
@@ -1005,7 +1011,7 @@
       "wallet": {
         "address": "7cLsUnjggJwH19dEAgNbvv8CDKRbQgcDS7cN5sAzh2ra",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "1b480282a5b981d0b1262c37c29beab781498e88",
         "sourceUrl": "https://github.com/mysteryjax/mysteryjax/blob/1b480282a5b981d0b1262c37c29beab781498e88/README.md"
       },
@@ -1023,7 +1029,7 @@
       "wallet": {
         "address": "8sV1CXsVMiAtMFPF5NAEJuLFjwkuMYDbEtTsYnQbQeq4",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "70d0eb6c1b23353028c3595a30424f9201714a39",
         "sourceUrl": "https://github.com/raynord22/raynord22/blob/70d0eb6c1b23353028c3595a30424f9201714a39/README.md"
       },
@@ -1053,7 +1059,7 @@
       "wallet": {
         "address": "Bm4h2oJbwB8F1XviTQCJFdfhPt1jdgJYPXu7d3pTfWdT",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "MDQ6VXNlcjExMDI4NDM=",
         "sourceClaimId": "53477355-9ea0-453c-bbb6-e99c592c08a4",
         "sourceRecordSha256": "f87a229da5559ec0a9986dd83b832f7afa428cea1e506c543ac3d102901ae930",
@@ -1085,7 +1091,7 @@
       "wallet": {
         "address": "BtCv9ZbDk95cowQhxB9ZRxqZDR38yBjdUsUDvEZXPZdt",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOBfwMKg",
         "sourceClaimId": "9c0c46d4-6d29-400d-94d7-05e129198296",
         "sourceRecordSha256": "813148f305f279072bdd38f3ce23a43dcac9e99a1723629a89e98c4939fd1c92",
@@ -1105,7 +1111,7 @@
       "wallet": {
         "address": "2q1AF2QVG1kFLrogeVmJ8nYwFG7uFy5u29pdpTxoR1ey",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "8c6c56ad0fbb867b8940006686506cf19f09ceda",
         "sourceUrl": "https://github.com/nishimweprince/nishimweprince/blob/8c6c56ad0fbb867b8940006686506cf19f09ceda/README.md"
       },
@@ -1183,7 +1189,7 @@
       "wallet": {
         "address": "Ffnn6LG4HZAgr77aoLMtYAXWwY87ud6szF69w4CVwQqX",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCqljIw",
         "sourceClaimId": "e6007777-76e3-472e-976f-4a56f7ce5567",
         "sourceRecordSha256": "9181c28ce12b7a499da67b13c8e528fe6eddf2cb636c49481d8af61350d42007",
@@ -1203,7 +1209,7 @@
       "wallet": {
         "address": "BVCrxJVHSYvRijYtQPBYAefG16AyQT1AnmE9vccTqBQR",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCeXcZg",
         "sourceClaimId": "5ee1659d-a0e4-46e9-86a5-acfff5006695",
         "sourceRecordSha256": "c5d0478552f409fb81d6dec5f52e63a44b6b57966d75b5d40292e265b4905392",
@@ -1271,7 +1277,7 @@
       "wallet": {
         "address": "7UwU9Zkud4ejrHK5KhgggV9hUjWt5BhewUHHaDHachES",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "MDQ6VXNlcjY2ODQwMTY1",
         "sourceClaimId": "ff2bcfe9-deab-4dee-b876-656c22faf54b",
         "sourceRecordSha256": "66f20f15ac8e6cba14406c47baa871261a8a2e97b885e7143c64c8f3ba372ff3",
@@ -1303,7 +1309,7 @@
       "wallet": {
         "address": "7umegDzpbpcps7reUkk3FV6ywfUEJ4iQwEHoGTbMZ1yj",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "f0806964b449756fd34f8ec92486227324984143",
         "sourceUrl": "https://github.com/LuciferMornigstar7/LuciferMornigstar7/blob/f0806964b449756fd34f8ec92486227324984143/README.md"
       },
@@ -1321,7 +1327,7 @@
       "wallet": {
         "address": "3YtL4RoEkfTKKHD8bjKXtLEC5rgoHMAFcnsancsxp1f4",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "MDQ6VXNlcjEzNTA5NjE3",
         "sourceClaimId": "13642142-24f3-4289-ba10-93cf60f54c99",
         "sourceRecordSha256": "b1704c42db4585373f521a6207d3d1ca1a730d707f43846867f1cd6913242101",
@@ -1341,7 +1347,7 @@
       "wallet": {
         "address": "8M1b9HzsPq9phEbqbr1KRXykqezrrPQsuKmrxnrFtPuG",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "2876664476588b1a64ce6224d9048d42279e886c",
         "sourceUrl": "https://github.com/mejiasd3v/mejiasd3v/blob/2876664476588b1a64ce6224d9048d42279e886c/README.md"
       },
@@ -1359,7 +1365,7 @@
       "wallet": {
         "address": "AU7vapY4eyDrEjUZWzKKdBiivme7Fpzy9wPob4ASsWqC",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCjmdhQ",
         "sourceClaimId": "e248ab4d-db71-4183-8333-9ddec17b02ec",
         "sourceRecordSha256": "a5e2a5aab2c918b18b337d697a1b699166d77b7ee393b776b3554a706fa1734f",
@@ -1391,7 +1397,7 @@
       "wallet": {
         "address": "2MFtJ4zFzjVohmrSXz8CQDY3aRiUeyM2Lh16crR7KXRM",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceActorId": "U_kgDOCtkWKw",
         "sourceClaimId": "6f3d5462-7c43-4d82-a52f-20c5315ac94d",
         "sourceRecordSha256": "3d699ca1102b14047bb1628154972ac0409e3f6604c39af9c4d1100ce701095f",
@@ -1411,7 +1417,7 @@
       "wallet": {
         "address": "2b4mrrH4uWSiKdeJPJ3RQrkawYpERGHtNYo1jLCnRuZ5",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "bee3d8a0a124dd2930527ae431c2095d70a73ba1",
         "sourceUrl": "https://github.com/tiequan12345/tiequan12345/blob/bee3d8a0a124dd2930527ae431c2095d70a73ba1/README.md"
       },
@@ -1465,7 +1471,7 @@
       "wallet": {
         "address": "38g9tzGvMstnc4Gqe38iYxSkq33ihfcKXMCCbZUArdBv",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "09bd56fbfbfe97be4e799a78236d679cd02f129a",
         "sourceUrl": "https://github.com/OxBenji/OxBenji/blob/09bd56fbfbfe97be4e799a78236d679cd02f129a/README.md"
       },
@@ -1555,7 +1561,7 @@
       "wallet": {
         "address": "EJ59A3w6fq36czypk6zF9zRZakY6iXNwp9o5woh7jc5d",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "ce25adb28e81d7dce09336ac45c4f228a9ef448c",
         "sourceUrl": "https://github.com/fishwishes/fishwishes/blob/ce25adb28e81d7dce09336ac45c4f228a9ef448c/README.md"
       },
@@ -1573,7 +1579,7 @@
       "wallet": {
         "address": "GK9e6npEi7JT8Sn4BbCHvmYoJnai22uHSCXRdZU3AMCF",
         "chain": "solana",
-        "observedAt": "2026-09-10T14:51:03.923Z",
+        "observedAt": "2026-09-11T01:36:22.475Z",
         "sourceCommit": "a3d8717d2bab72eaeff155f3c687e64d14eee3dc",
         "sourceUrl": "https://github.com/FLAVIEN66/FLAVIEN66/blob/a3d8717d2bab72eaeff155f3c687e64d14eee3dc/README.md"
       },
