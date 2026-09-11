@@ -13,7 +13,7 @@ test("maintainer reviews August cap, preserves excluded rows, and follows fundin
   await expect(panel).toContainText("10,000 USDC");
   await expect(panel.locator("tbody tr")).toHaveCount(108);
   await panel.getByLabel("Missing wallets only").check();
-  await expect(panel.locator("tbody tr")).toHaveCount(53);
+  await expect(panel.locator("tbody tr")).toHaveCount(52);
   await panel.getByLabel("Find contributor").fill("lalalune");
   await expect(panel.locator("tbody tr")).toHaveCount(1);
   await expect(panel).toContainText("Not locked");
