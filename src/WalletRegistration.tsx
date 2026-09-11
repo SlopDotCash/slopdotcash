@@ -182,8 +182,9 @@ export function WalletRegistration() {
         payment. Existing cycle wallets stay locked.
       </p>
       {authorizationUrl && (
-        <p role="status">
+        <div role="status">
           <a
+            className="button primary-button"
             href={authorizationUrl}
             target={canResume ? undefined : "_blank"}
             rel="noreferrer"
@@ -191,11 +192,12 @@ export function WalletRegistration() {
           >
             Continue to GitHub {canResume ? "in this tab" : "in another tab"}
           </a>
-          .{" "}
-          {canResume
-            ? "After authorizing, use Back to return here. Your address is saved."
-            : "After authorizing, return to this tab to confirm your address."}
-        </p>
+          <p>
+            {canResume
+              ? "After authorizing, use Back to return here. Your address is saved."
+              : "After authorizing, return to this tab to confirm your address."}
+          </p>
+        </div>
       )}
       <form
         className="owner-form"
@@ -222,7 +224,7 @@ export function WalletRegistration() {
           </button>
         )}
       </form>
-      {phase === "signing-in" && (
+      {phase === "signing-in" && !authorizationUrl && (
         <p role="status">
           Complete GitHub sign-in using your own account. This expires after
           five minutes. You can cancel here if you close the popup.
