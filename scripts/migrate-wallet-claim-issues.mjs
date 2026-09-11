@@ -1,13 +1,12 @@
 /**
  * Imports historical open GitHub wallet-claim issues into the authenticated,
  * append-only D1 registry. Planning is read-only. --execute performs the D1
- * import after operator OAuth; --close closes only claims whose public D1
+ * import through the separate operator issuer; --close closes only claims whose public D1
  * receipt was fetched and byte-checked after creation.
  */
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { PROJECTS } from "../src/lib/projects.mjs";
 import { parsePublishedWallet } from "../src/lib/wallets.ts";
 
 const REPOSITORY = "SlopDotCash/slopdotcash";
@@ -139,42 +138,10 @@ async function responseJson(response, field) {
   }
 }
 
-async function operatorToken(fetchImpl) {
-  const rootPublishedProjects = PROJECTS.filter(
-    (project) => project.skill.publishAtRoot,
+async function operatorToken() {
+  throw new Error(
+    "Wallet migration requires the separate operator identity issuer, which is not implemented. Contributor GitHub OAuth cannot authorize migration. Keep claim issues open; contributors can register their own address at https://slop.cash/wallet.",
   );
-  if (rootPublishedProjects.length !== 1) {
-    throw new TypeError(
-      "Wallet migration requires exactly one root-published project skill",
-    );
-  }
-  const identityClient = await import(
-    `../${rootPublishedProjects[0].skill.sourcePath}/scripts/run-receipt.mjs`
-  );
-  if (typeof identityClient.slopIdentityAssertion !== "function") {
-    throw new TypeError(
-      "Root-published project skill omitted the Slop identity client",
-    );
-  }
-  let assertion = await identityClient.slopIdentityAssertion(fetchImpl);
-  const response = await fetchImpl(`${API_ORIGIN}/api/v1/auth/session`, {
-    method: "POST",
-    headers: { "X-Slop-Identity-Assertion": assertion },
-    signal: AbortSignal.timeout(30_000),
-  });
-  assertion = "";
-  if (!response.ok)
-    throw new Error(`Operator authentication returned HTTP ${response.status}`);
-  const body = await responseJson(response, "Operator authentication");
-  if (
-    body.tokenType !== "Bearer" ||
-    typeof body.token !== "string" ||
-    body.token.length < 20 ||
-    body.token.length > 4096
-  ) {
-    throw new Error("Operator authentication returned invalid credentials");
-  }
-  return body.token;
 }
 
 function validateReceipt(value, source) {

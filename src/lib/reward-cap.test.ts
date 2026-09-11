@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import asi from "../../projects/asi/project.json";
 import delta from "../../projects/delta-star/project.json";
 import eliza from "../../projects/eliza/project.json";
 import { snapshotFixture } from "../../tests/fixtures";
@@ -37,6 +38,17 @@ function snapshotFor(cycleId: string, next: string) {
 }
 
 describe("manifest cycle caps", () => {
+  it("preserves ASI's August cap without treating it as committed funding", () => {
+    const actual = assertProjectDefinition(asi);
+    expect(resolveRewardCapMinor(actual, "2026-08")).toBe("5000000000");
+    expect(resolveRewardCapMinor(actual, "2026-09")).toBe("1000000000");
+    expect(resolveRewardCapMinor(actual, "2026-10")).toBe("1000000000");
+    expect(actual.reward).toMatchObject({
+      committedMinor: "0",
+      paymentMode: "disabled",
+    });
+  });
+
   it.each([
     ["2026-08", "2026-09", "10000000000"],
     ["2026-09", "2026-10", "5000000000"],
