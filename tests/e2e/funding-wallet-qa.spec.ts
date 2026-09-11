@@ -67,6 +67,28 @@ async function audit(page: Page, info: TestInfo, label: string) {
     contentType: "image/png",
   });
   expect(result.violations, label).toEqual([]);
+  const splitWords = await page.evaluate(() => {
+    const failures: string[] = [];
+    for (const element of document.querySelectorAll(
+      ".site-header a, .wordmark, .payout-steps button",
+    )) {
+      if (!(element as HTMLElement).offsetWidth) continue;
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        for (const match of (node.textContent ?? "").matchAll(/\S+/g)) {
+          const range = document.createRange();
+          range.setStart(node, match.index);
+          range.setEnd(node, match.index + match[0].length);
+          const lines = new Set(
+            [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+          );
+          if (lines.size > 1) failures.push(match[0]);
+        }
+      }
+    }
+    return failures;
+  });
+  expect(splitWords, `${label} keeps navigation words intact`).toEqual([]);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth - innerWidth,

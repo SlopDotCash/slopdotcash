@@ -72,12 +72,16 @@ textarea:focus-visible {
 
 .header-inner {
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   min-height: 64px;
   align-items: center;
   justify-content: space-between;
 }
 
 .wordmark {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 16px;
   font-weight: 800;
   letter-spacing: -0.04em;
@@ -85,11 +89,16 @@ textarea:focus-visible {
 
 .nav-links {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 22px;
   color: #4f4a41;
   font-size: 13px;
   font-weight: 600;
+}
+
+.nav-links a {
+  overflow-wrap: normal;
 }
 
 .funding-kind,
@@ -1308,6 +1317,7 @@ small {
 
 .footer-brand-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
@@ -3192,6 +3202,7 @@ small {
 }
 .payout-steps button {
   display: flex;
+  overflow-wrap: normal;
   align-items: center;
   gap: 0.5rem;
   padding: 0.8rem;
@@ -3298,7 +3309,7 @@ small {
   }
   .payout-steps {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12em), 1fr));
   }
   .review-cycle-selector select {
     width: 100%;
