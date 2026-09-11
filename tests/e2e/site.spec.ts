@@ -767,13 +767,19 @@ test("serves byte-consistent install and read-only artifacts for every project",
     "https://identity.slop.cash",
   ]);
 
-  const privateApiResponse = await request.post("/api/v1/runs", {
-    data: {},
-  });
-  const originProtocol = new URL(baseURL ?? "http://127.0.0.1:4466").protocol;
+  const siteOrigin = baseURL ?? "http://127.0.0.1:4466";
+  const originProtocol = new URL(siteOrigin).protocol;
   if (originProtocol !== "http:" && originProtocol !== "https:") {
     throw new Error(`unsupported test origin protocol: ${originProtocol}`);
   }
+  // Production clients use the API authority, not a website-host alias.
+  // Local Pages checks still exercise the local function's HTTPS rejection.
+  const privateApiOrigin =
+    originProtocol === "https:" ? "https://api.slop.cash" : siteOrigin;
+  const privateApiResponse = await request.post(
+    new URL("/api/v1/runs", privateApiOrigin).href,
+    { data: {} },
+  );
   const privateApiExpectation =
     originProtocol === "https:"
       ? { status: 401, error: "unauthorized" }
