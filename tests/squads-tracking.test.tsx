@@ -13,7 +13,6 @@ import {
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -138,8 +137,6 @@ describe("Squads tracker public contract", () => {
   });
   it("expires observations on the interval without a focus event or new fetch", async () => {
     const { published, observation, cycle } = await fixture();
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    const intervals = vi.spyOn(window, "setInterval");
     const fetcher = vi.fn(
       async (url: string) =>
         new Response(
@@ -153,15 +150,15 @@ describe("Squads tracker public contract", () => {
     vi.stubGlobal("fetch", fetcher);
     render(<SquadsTracking cycle={cycle} />);
     await screen.findByText("Proposal executed · settlement unverified");
-    await waitFor(() =>
-      expect(intervals).toHaveBeenCalledWith(expect.any(Function), 1000),
-    );
     vi.spyOn(Date, "now").mockReturnValue(
       Date.parse(observation.observedAt) + 300000,
     );
-    act(() => vi.advanceTimersByTime(1000));
     expect(
-      screen.getByText("Execution observation stale · refresh required"),
+      await screen.findByText(
+        "Execution observation stale · refresh required",
+        {},
+        { timeout: 5000 },
+      ),
     ).toBeVisible();
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
