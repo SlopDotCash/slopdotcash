@@ -523,312 +523,47 @@ describe("private trace API", () => {
     expect(uploaded.status).toBe(201);
   });
 
-  it("serves the fresh private intake attestation from the exact Pages bundle", async () => {
-    let requestedUrl = "";
+  it("renews intake independently of a deployment older than 49 hours", async () => {
     const verifiedAt = new Date().toISOString();
-    const response = await onPagesRequest({
-      request: new Request(
-        "https://api.slop.cash/api/v1/private-request-intake",
-      ),
-      env: {
-        SLOP_DB: {} as never,
-        PRIVATE_TRACES: {} as never,
-        TRACE_AUTH_SECRET: SECRET,
-        SLOP_IDENTITY: {
-          fetch: async () => new Response(null, { status: 401 }),
-        },
-        ASSETS: {
-          fetch: async (request) => {
-            requestedUrl = request.url;
-            return new Response(
-              JSON.stringify({
-                enabled: true,
-                source: "github-public-status",
-                verifiedAt,
-                revision: "a".repeat(40),
-              }),
-              { status: 200 },
-            );
+    let row: unknown = { enabled: 1, verified_at: verifiedAt };
+    const request = () =>
+      onPagesRequest({
+        request: new Request(
+          "https://api.slop.cash/api/v1/private-request-intake",
+        ),
+        env: {
+          SLOP_DB: { prepare: () => ({ first: async () => row }) } as never,
+          PRIVATE_TRACES: {} as never,
+          TRACE_AUTH_SECRET: SECRET,
+          SLOP_IDENTITY: {
+            fetch: async () => new Response(null, { status: 401 }),
+          },
+          ASSETS: {
+            fetch: async () => {
+              throw new Error("Site deployment is unavailable");
+            },
           },
         },
-      },
-    });
-
-    expect(requestedUrl).toBe(
-      "https://api.slop.cash/data/private-intake-attestation.json",
-    );
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+      });
+    const healthy = await request();
+    expect(healthy.status).toBe(200);
+    expect(await healthy.json()).toEqual({
       enabled: true,
       source: "github-public-status",
       verifiedAt,
     });
-  });
-
-  it("serves a cached public private intake verification", async () => {
-    const originalFetch = globalThis.fetch;
-    const originalCaches = Object.getOwnPropertyDescriptor(
-      globalThis,
-      "caches",
+    row = {
+      enabled: 1,
+      verified_at: new Date(Date.now() - 49 * 3600000).toISOString(),
+    };
+    expect((await request()).status).toBe(503);
+    row = { enabled: 0, verified_at: verifiedAt };
+    const disabled = await request();
+    expect(((await disabled.json()) as { enabled: boolean }).enabled).toBe(
+      false,
     );
-    const cache = new Map<string, Response>();
-    const requests: Array<{ url: string; init: RequestInit }> = [];
-    let cachedControl: string | null = null;
-    try {
-      globalThis.fetch = (async (input, init = {}) => {
-        requests.push({ url: String(input), init });
-        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
-      }) as typeof fetch;
-      Object.defineProperty(globalThis, "caches", {
-        configurable: true,
-        value: {
-          default: {
-            match: async (request: Request) => cache.get(request.url)?.clone(),
-            put: async (request: Request, response: Response) => {
-              cachedControl = response.headers.get("cache-control");
-              cache.set(request.url, response.clone());
-            },
-          },
-        },
-      });
-      const context = {
-        request: new Request(
-          "https://api.slop.cash/api/v1/private-request-intake",
-        ),
-        env: {
-          SLOP_DB: {} as never,
-          PRIVATE_TRACES: {} as never,
-          TRACE_AUTH_SECRET: SECRET,
-          SLOP_IDENTITY: {
-            fetch: async () => new Response(null, { status: 401 }),
-          },
-        },
-      };
-      const first = await onPagesRequest(context);
-      const second = await onPagesRequest(context);
-
-      expect(first.status).toBe(200);
-      expect(second.status).toBe(200);
-      await expect(first.json()).resolves.toEqual({
-        enabled: true,
-        source: "github-public-status",
-        verifiedAt: expect.any(String),
-      });
-      expect(requests).toHaveLength(1);
-      expect(requests[0]?.url).toBe(
-        "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting",
-      );
-      expect(requests[0]?.init).toMatchObject({
-        method: "GET",
-        redirect: "manual",
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "slop-private-intake-verifier",
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
-      });
-      expect(cachedControl).toBe("public, max-age=300");
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (originalCaches === undefined) {
-        Reflect.deleteProperty(globalThis, "caches");
-      } else {
-        Object.defineProperty(globalThis, "caches", originalCaches);
-      }
-    }
-  });
-
-  it("uses the public authority when the optional edge cache fails", async () => {
-    const originalFetch = globalThis.fetch;
-    const originalCaches = Object.getOwnPropertyDescriptor(
-      globalThis,
-      "caches",
-    );
-    let fetches = 0;
-    try {
-      globalThis.fetch = (async () => {
-        fetches += 1;
-        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
-      }) as unknown as typeof fetch;
-      Object.defineProperty(globalThis, "caches", {
-        configurable: true,
-        value: {
-          default: {
-            match: async () => {
-              throw new Error("cache unavailable");
-            },
-            put: async () => {
-              throw new Error("cache unavailable");
-            },
-          },
-        },
-      });
-
-      const response = await onPagesRequest({
-        request: new Request(
-          "https://api.slop.cash/api/v1/private-request-intake",
-        ),
-        env: {
-          SLOP_DB: {} as never,
-          PRIVATE_TRACES: {} as never,
-          TRACE_AUTH_SECRET: SECRET,
-          SLOP_IDENTITY: {
-            fetch: async () => new Response(null, { status: 401 }),
-          },
-        },
-      });
-
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({
-        enabled: true,
-        source: "github-public-status",
-        verifiedAt: expect.any(String),
-      });
-      expect(fetches).toBe(1);
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (originalCaches === undefined) {
-        Reflect.deleteProperty(globalThis, "caches");
-      } else {
-        Object.defineProperty(globalThis, "caches", originalCaches);
-      }
-    }
-  });
-
-  it("reports bounded reset diagnostics for an upstream GitHub rate limit", async () => {
-    const originalFetch = globalThis.fetch;
-    try {
-      globalThis.fetch = (async () =>
-        new Response(JSON.stringify({ message: "API rate limit exceeded" }), {
-          status: 403,
-          headers: {
-            "x-ratelimit-remaining": "0",
-            "x-ratelimit-reset": "1800000000",
-          },
-        })) as unknown as typeof fetch;
-      const response = await onPagesRequest({
-        request: new Request(
-          "https://api.slop.cash/api/v1/private-request-intake",
-        ),
-        env: {
-          SLOP_DB: {} as never,
-          PRIVATE_TRACES: {} as never,
-          TRACE_AUTH_SECRET: SECRET,
-          SLOP_IDENTITY: {
-            fetch: async () => new Response(null, { status: 401 }),
-          },
-        },
-      });
-
-      expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toEqual({
-        error: "private_intake_rate_limited",
-        resetAt: "2027-01-15T08:00:00.000Z",
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("fails closed when GitHub returns an invalid rate-limit reset", async () => {
-    const originalFetch = globalThis.fetch;
-    try {
-      globalThis.fetch = (async () =>
-        new Response(JSON.stringify({ message: "API rate limit exceeded" }), {
-          status: 403,
-          headers: {
-            "x-ratelimit-remaining": "0",
-            "x-ratelimit-reset": "999999999999",
-          },
-        })) as unknown as typeof fetch;
-      const response = await onPagesRequest({
-        request: new Request(
-          "https://api.slop.cash/api/v1/private-request-intake",
-        ),
-        env: {
-          SLOP_DB: {} as never,
-          PRIVATE_TRACES: {} as never,
-          TRACE_AUTH_SECRET: SECRET,
-          SLOP_IDENTITY: {
-            fetch: async () => new Response(null, { status: 401 }),
-          },
-        },
-      });
-
-      expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toEqual({
-        error: "private_intake_unavailable",
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("fails closed on a malformed GitHub response", async () => {
-    const originalFetch = globalThis.fetch;
-    try {
-      globalThis.fetch = (async () =>
-        new Response(JSON.stringify({ enabled: "yes" }), {
-          status: 200,
-        })) as unknown as typeof fetch;
-      const response = await onPagesRequest({
-        request: new Request(
-          "https://api.slop.cash/api/v1/private-request-intake",
-        ),
-        env: {
-          SLOP_DB: {} as never,
-          PRIVATE_TRACES: {} as never,
-          TRACE_AUTH_SECRET: SECRET,
-          SLOP_IDENTITY: {
-            fetch: async () => new Response(null, { status: 401 }),
-          },
-        },
-      });
-
-      expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toEqual({
-        error: "private_intake_unavailable",
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("rejects GitHub redirects without following them", async () => {
-    const originalFetch = globalThis.fetch;
-    try {
-      globalThis.fetch = (async (
-        _input: RequestInfo | URL,
-        init?: RequestInit,
-      ) => {
-        expect(init?.redirect).toBe("manual");
-        return new Response(null, {
-          status: 302,
-          headers: { location: "https://example.com/not-github" },
-        });
-      }) as unknown as typeof fetch;
-
-      const response = await onPagesRequest({
-        request: new Request(
-          "https://api.slop.cash/api/v1/private-request-intake",
-        ),
-        env: {
-          SLOP_DB: {} as never,
-          PRIVATE_TRACES: {} as never,
-          TRACE_AUTH_SECRET: SECRET,
-          SLOP_IDENTITY: {
-            fetch: async () => new Response(null, { status: 401 }),
-          },
-        },
-      });
-
-      expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toEqual({
-        error: "private_intake_unavailable",
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    row = null;
+    expect((await request()).status).toBe(503);
   });
 
   it("accepts arbitrary exact model identities and rejects placeholders", async () => {

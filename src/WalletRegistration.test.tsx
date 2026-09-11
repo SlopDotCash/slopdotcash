@@ -4,7 +4,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -67,6 +66,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   prepare.mockReset();
+  sessionStorage.clear();
 });
 
 describe("wallet registration confirmation UI", () => {
@@ -129,17 +129,38 @@ describe("wallet registration confirmation UI", () => {
     });
     expect(cancel).toHaveBeenCalled();
   });
-  it("handles blocked popups without starting OAuth", async () => {
-    setup();
+  it("offers same-tab authorization when a popup is blocked and preserves the address", async () => {
+    const { confirm } = setup();
     vi.mocked(window.open).mockReturnValue(null);
+    prepare.mockImplementation((_address, options) => {
+      options.saveAuthorization?.({
+        flowId: "synthetic",
+        pollCapability: "synthetic",
+        authorizationUrl:
+          "https://identity.slop.cash/v1/oauth/authorize?synthetic",
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+        pollAfterSeconds: 1,
+      });
+      options.authorize(
+        "https://identity.slop.cash/v1/oauth/authorize?synthetic",
+      );
+      return new Promise(() => {});
+    });
     fireEvent.click(
       screen.getByRole("button", { name: "Continue with GitHub" }),
     );
-    await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "Allow the GitHub sign-in popup",
-      ),
+    expect(
+      await screen.findByRole("link", {
+        name: "Continue to GitHub in this tab",
+      }),
+    ).toHaveAttribute(
+      "href",
+      "https://identity.slop.cash/v1/oauth/authorize?synthetic",
     );
-    expect(prepare).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("slop-wallet-address")).toBe(ADDRESS);
+    expect(confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByLabelText("Solana public address")).toHaveValue(ADDRESS);
+    expect(sessionStorage.getItem("slop-wallet-authorization")).toBeNull();
   });
 });

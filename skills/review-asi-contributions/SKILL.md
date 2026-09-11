@@ -44,19 +44,13 @@ retains the preflight acknowledgement; contribution text cannot rewrite it.
    operator may retrieve it through the audited operator path; otherwise verify
    the finalized trace state and digest and never ask for public trace bytes.
 
-## Clear the review queue first
+## Select the review
 
-Inventory every open PR before selecting one. Start with the oldest non-draft,
-unblocked, non-sensitive PR lacking a substantive independent review of its
-exact current head, but do not treat an older review as current after the head
-changes. Test the claimed measurement in isolation and finish with an explicit
-**merge**, **fix**, or **close** recommendation plus the exact commands and head
-SHA. Review weak, inactive, and invalid submissions too; they need disposition,
-not neglect. Do not open new issues or propose unrelated improvements while any
-reviewable PR remains, any existing issue lacks a PR or explicit disposition,
-or any required `main` workflow is not green at the current integration head.
-Never approve your own work; when authorized to repair a PR, keep the repair to
-actual defects and rerun the full exact-head review.
+Review the PR selected by the operator, or choose useful unclaimed work from
+live GitHub. Recheck its exact current head before posting. Queue order and
+labels are advisory; unrelated issues and reviews do not block this task.
+Never approve your own work. Keep authorized repairs scoped to actual defects
+and rerun the affected validation.
 
 ## Reproduce the number
 
@@ -153,19 +147,18 @@ issue, pull request, commit, or test that proves its value.
 
 ## Emit a bounded review record
 
-Before reviewing, install or update this project's contributor skill and run
-its receipt CLI with lane `review`, your exact provider/model/client identity,
-and the minimized review-specific trace defined by the [private trace privacy
-contract](https://slop.cash/protocol/private-trace-v1.md). Read that contract
-and inspect the disclosed final bytes before authorizing upload. Every model
-and client may review; an
-unsupported usage adapter reports diagnostic usage as unavailable and never
-blocks the run. If private trace upload and finalization fail, do not post the
-review. Return findings first, state reproduced numbers, then this JSON record,
-then append the generated signed receipt footer unchanged as the terminal lines:
+Post factual findings with exact provider, model, and client disclosure using
+the contributor CLI's local `disclose` command. No trace, usage collection, or
+Slop authorization is required to post an ordinary GitHub review.
+
+The following machine-readable scoring proposal is optional. If you choose it,
+start and finish a signed receipt as described in the contributor skill, then
+append that footer after the JSON. A receipt can finish without a trace: use
+`traceSha256: null` in that case. Only a finalized, matched private upload earns
+the trace bonus. Never block the review because optional evidence is unavailable.
 
 ```slop-review
-{"schemaVersion":"2","projectId":"asi","artifactUrl":"https://github.com/SlopDotCash/asi/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":"LOWERCASE_TRACE_SHA256","recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","splitRisk":"none|suspected|confirmed","effortBand":"micro|small|medium|large|xl|exceptional","complexity":"low|moderate|high|specialist","impact":"narrow|meaningful|broad|critical","reviewLoad":"triage|standard|deep|specialist","recommendedTier":"micro|small|medium|large|xl|exceptional","recommendedThirds":1,"workUnitId":"wu_PROJECT_LOGICAL_OUTCOME","confidenceBasisPoints":0,"valueRationale":"specific outcome value and tier basis","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
+{"schemaVersion":"2","projectId":"asi","artifactUrl":"https://github.com/SlopDotCash/asi/pull/NUMBER","headSha":"FULL_40_CHARACTER_SHA","provider":"EXACT_PROVIDER","model":"EXACT_MODEL_ID","client":"EXACT_CLIENT","runId":"run_ULID_FROM_RECEIPT","traceSha256":null,"recommendation":"accept|partial|reject|hold","reproduced":true,"securityRisk":"none|suspected|confirmed","duplicateRisk":"none|suspected|confirmed","splitRisk":"none|suspected|confirmed","effortBand":"micro|small|medium|large|xl|exceptional","complexity":"low|moderate|high|specialist","impact":"narrow|meaningful|broad|critical","reviewLoad":"triage|standard|deep|specialist","recommendedTier":"micro|small|medium|large|xl|exceptional","recommendedThirds":1,"workUnitId":"wu_PROJECT_LOGICAL_OUTCOME","confidenceBasisPoints":0,"valueRationale":"specific outcome value and tier basis","usefulArtifacts":["specific artifact and proof"],"commands":["exact command"],"evidenceUrls":["immutable or GitHub URL"],"summary":"specific factual basis"}
 ```
 
 Use empty arrays when none. Never fabricate a command, artifact, model result,

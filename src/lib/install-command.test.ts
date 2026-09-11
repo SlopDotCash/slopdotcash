@@ -559,7 +559,52 @@ describe("authenticated skill installer lifecycle", () => {
       join(staleRoot, "install"),
     );
     expect(rejected.status).not.toBe(0);
-    expect(rejected.stderr).toContain("canonical skill bytes changed");
+    expect(rejected.stderr).toContain("has no successful approved release");
+  });
+
+  it("installs approved published skills across unpublished changes and rejects explicit revocation", () => {
+    for (const revoked of [false, true]) {
+      const root = freshRoot(`published-${revoked}`);
+      const files = baseFiles("published");
+      const artifact = writeArtifact(root, revisionA, files);
+      const authority = configureAuthority(root, {
+        developHead: revisionB,
+        comparisons: {
+          [`${revisionA}...${revisionB}`]: aheadComparison(
+            revisionA,
+            revisionB,
+          ),
+        },
+        revisions: {
+          [revisionA]: { files, released: true },
+          [revisionB]: { files: baseFiles("unpublished") },
+        },
+        responseOverrides: revoked
+          ? {
+              [`/repos/SlopDotCash/slopdotcash/contents/protocol/skill-revocations.json?ref=${revisionB}`]:
+                {
+                  encoding: "base64",
+                  content: Buffer.from(JSON.stringify([revisionA])).toString(
+                    "base64",
+                  ),
+                },
+            }
+          : {},
+      });
+      const installed = run(
+        command(artifact, authority),
+        join(root, "install"),
+      );
+      if (revoked) {
+        expect(installed.status).not.toBe(0);
+        expect(installed.stderr).toContain("explicitly revoked");
+      } else {
+        expect(installed.status, installed.stderr).toBe(0);
+        expect(currentLink(join(root, "install"))).toBe(
+          `.contribute-to-eliza-versions/${revisionA}`,
+        );
+      }
+    }
   });
 
   it("accepts only an exact open labeled same-repository non-draft PR head", () => {
@@ -949,7 +994,7 @@ describe("authenticated skill installer lifecycle", () => {
       SLOP_SKILL_REVISION: revisionA,
     });
     expect(stale.status).not.toBe(0);
-    expect(stale.stderr).toContain("canonical skill bytes changed");
+    expect(stale.stderr).toContain("has no successful approved release");
     expect(currentLink(installRoot)).toBe(
       `.contribute-to-eliza-versions/${revisionB}`,
     );

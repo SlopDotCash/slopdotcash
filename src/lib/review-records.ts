@@ -177,10 +177,11 @@ export function assertReviewRecord(value: unknown): ReviewRecord {
     throw new TypeError("review record runId is invalid");
   }
   if (
-    ((!legacy || value.traceSha256 !== undefined) &&
+    value.traceSha256 !== null &&
+    (((!legacy || value.traceSha256 !== undefined) &&
       typeof value.traceSha256 !== "string") ||
-    ((!legacy || value.traceSha256 !== undefined) &&
-      !SHA256_PATTERN.test(String(value.traceSha256)))
+      ((!legacy || value.traceSha256 !== undefined) &&
+        !SHA256_PATTERN.test(String(value.traceSha256))))
   ) {
     throw new TypeError("review record traceSha256 is invalid");
   }
@@ -372,16 +373,11 @@ export function assertReviewRecordReceiptJoin(
   if (receipt === null) {
     throw new TypeError("slop-review requires a terminal signed run receipt");
   }
-  if (receipt.traceUpload === null) {
-    throw new TypeError(
-      "slop-review receipt requires finalized private trace upload evidence",
-    );
-  }
   if (
     record.projectId !== receipt.projectId ||
     (record.runId !== "" && record.runId !== receipt.runId) ||
     (record.traceSha256 !== "" &&
-      record.traceSha256 !== receipt.traceUpload.sha256) ||
+      record.traceSha256 !== receipt.traceUpload?.sha256) ||
     (record.provider !== "" && record.provider !== receipt.provider) ||
     (record.model !== "" && record.model !== receipt.model) ||
     (record.client !== "" && record.client !== receipt.client)
@@ -404,6 +400,6 @@ export function assertReviewRecordReceiptJoin(
     model: receipt.model,
     client: receipt.client,
     runId: receipt.runId,
-    traceSha256: receipt.traceUpload.sha256,
+    traceSha256: receipt.traceUpload?.sha256 ?? "",
   };
 }

@@ -123,6 +123,36 @@ afterEach(() => {
 });
 
 describe("wallet registration browser protocol", () => {
+  it("resumes same-tab authorization without creating another flow or registering automatically", async () => {
+    const h = harness();
+    const save = vi.fn();
+    const flowId = `flow_${"a".repeat(24)}`;
+    const promise = prepareWalletRegistration(ADDRESS, {
+      fetch: h.fetcher,
+      authorize: h.authorization,
+      saveAuthorization: save,
+      resume: {
+        flowId,
+        pollCapability: "p".repeat(43),
+        authorizationUrl: `https://identity.slop.cash/v1/oauth/authorize?flow_id=${flowId}&state=${"s".repeat(43)}`,
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+        pollAfterSeconds: 1,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    const session = await promise;
+    expect(h.calls.some((call) => call.url.endsWith("/oauth/start"))).toBe(
+      false,
+    );
+    expect(h.authorization).not.toHaveBeenCalled();
+    expect(h.calls.some((call) => call.url.endsWith("/wallet-claims"))).toBe(
+      false,
+    );
+    expect(save).toHaveBeenLastCalledWith(null);
+    expect(session.preview.address).toBe(ADDRESS);
+    session.cancel();
+  });
+
   it("authenticates and previews without writing; confirmation posts the exact declaration and verifies proof", async () => {
     const h = harness();
     const session = await preview(h);

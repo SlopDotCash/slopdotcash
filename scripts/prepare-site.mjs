@@ -173,6 +173,10 @@ function listRegularSkillFiles(root, prefix = "") {
 }
 
 mkdirSync(publicRoot, { recursive: true });
+// Retire the deployment-bound intake timer from existing build directories.
+rmSync(join(publicRoot, "data", "private-intake-attestation.json"), {
+  force: true,
+});
 mkdirSync(downloadsRoot, { recursive: true });
 mkdirSync(publicProtocolRoot, { recursive: true });
 const privateTraceContractPath = join(protocolRoot, "private-trace-v1.md");
@@ -591,7 +595,7 @@ const manifest = {
   telemetry: {
     source: "ccusage@20.0.20",
     policy:
-      "Every agent run permanently uploads its contributor-inspected, minimized run trace under https://slop.cash/protocol/private-trace-v1.md before submission; the uploader performs no automatic redaction. Public receipts contain aggregate locally reported usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. The fixed private-trace evidence bonus follows https://slop.cash/protocol/scoring-v2.md; token usage is diagnostic and never changes score, rank, reward share, or payment. Unsupported usage adapters never block participation.",
+      "Contribute through GitHub with exact provider, model, and client disclosure. Signed receipts, usage collection, private traces, and wallet registration are optional. Inspected traces require consent under https://slop.cash/protocol/private-trace-v1.md; only finalized evidence earns the trace bonus. Missing evidence never blocks submission.",
   },
 };
 
@@ -866,13 +870,13 @@ function publishAdditionalProject({
     telemetry: {
       source: "ccusage@20.0.20",
       policy:
-        "Every agent run permanently uploads its contributor-inspected, minimized run trace under https://slop.cash/protocol/private-trace-v1.md before submission; the uploader performs no automatic redaction. Public receipts contain only aggregate locally reported usage, exact self-reported identity, the required trace digest and upload identity, and a device signature. The fixed private-trace evidence bonus follows https://slop.cash/protocol/scoring-v2.md; token usage is diagnostic and never changes score, rank, reward share, or payment. Unsupported usage adapters never block participation.",
+        "Contribute through GitHub with exact provider, model, and client disclosure. Signed receipts, usage collection, private traces, and wallet registration are optional. Inspected traces require consent under https://slop.cash/protocol/private-trace-v1.md; only finalized evidence earns the trace bonus. Missing evidence never blocks submission.",
     },
     ...(publicationPrefix
       ? {
           review: {
             policy:
-              "Advisory review only. The reviewer must post exact provider, model, and client identity plus finalized private-trace evidence. Maintainers decide acceptance, score, and every money-state transition.",
+              "Advisory review only. The reviewer must post exact provider, model, and client identity with optional finalized private-trace evidence. Maintainers decide acceptance, score, and every money-state transition.",
           },
         }
       : {}),

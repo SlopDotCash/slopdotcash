@@ -1,4 +1,4 @@
 interface:
   display_name: "Contribute to Heir Elements SDK"
   short_description: "Clear SDK queues, then harden real behavior"
-  default_prompt: "Use $contribute-to-heir-elements-sdk to review and test every current PR first, finish valid existing issues through PRs second, restore main workflows third, then pursue only reproduced hardening, bug, or validator outcomes."
+  default_prompt: "Use this skill to choose useful unclaimed work, implement and test it, then submit a GitHub PR with exact model disclosure. Optional Slop evidence must not block contribution."
