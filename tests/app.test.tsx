@@ -597,9 +597,7 @@ describe("discovery", () => {
     expect(
       screen.getByRole("heading", { name: "Featured" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Community" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Community projects")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Eliza" })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Delta Star" }),
@@ -643,16 +641,14 @@ describe("discovery", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("THE GITARMY NETWORK")).not.toBeInTheDocument();
     expect(screen.queryByText("Work in. Money out.")).not.toBeInTheDocument();
-    expect(screen.getAllByText("finish-line")).toHaveLength(2);
-    const reviewerTable = screen.getByRole("table", {
-      name: /reviewer leaderboard/u,
-    });
-    const reviewerRow = within(reviewerTable)
-      .getByText("finish-line")
-      .closest("tr");
-    expect(reviewerRow).not.toBeNull();
-    expect(reviewerRow).toHaveTextContent("1 scored review");
-    expect(reviewerRow).toHaveTextContent("3");
+    expect(screen.getAllByText("finish-line")).toHaveLength(1);
+    expect(
+      screen.queryByRole("table", { name: /reviewer leaderboard/u }),
+    ).not.toBeInTheDocument();
+    const contributorRow = screen.getByText("finish-line").closest("tr");
+    expect(contributorRow).toHaveTextContent(
+      "Includes 3 review points · 1 scored review",
+    );
 
     fireEvent.click(screen.getByRole("tab", { name: "All-time record" }));
     const record = screen.getByRole("table", {

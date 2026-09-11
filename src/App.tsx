@@ -77,7 +77,11 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
-import { formatThirds, selectReviewerLeaders } from "./lib/reviewer-leaders";
+import {
+  formatThirds,
+  type ReviewerLeader,
+  selectReviewerLeaders,
+} from "./lib/reviewer-leaders";
 import { feeForPrincipal, PLATFORM_FEE_BASIS_POINTS } from "./lib/rewards";
 import {
   type PublicSignerReport,
@@ -777,76 +781,15 @@ function Avatar({
   );
 }
 
-function ReviewerLeaderboard({
-  caption,
-  cycleMonth,
-  ledger,
-  reviewBudget,
-}: {
-  caption: string;
-  cycleMonth: string;
-  ledger: readonly ScoreEvent[];
-  reviewBudget?: ProjectDefinition["reward"]["reviewBudget"];
-}) {
-  const reviewers = selectReviewerLeaders(ledger);
+function ReviewContribution({ reviewer }: { reviewer?: ReviewerLeader }) {
+  if (!reviewer) return null;
   return (
-    <div className="reviewer-leaderboard">
-      <div className="leaderboard-cycle-summary">
-        <div>
-          <strong>{cycleMonth} · Reviewers</strong>
-          <span>
-            Scored reviews keep their shared-pool treatment.{" "}
-            {reviewBudget
-              ? `${reviewBudgetLabel(reviewBudget)}.`
-              : "No additive review line is declared."}
-          </span>
-        </div>
-      </div>
-      {reviewers.length === 0 ? (
-        <EmptyState text="No scored reviews in this project cycle yet." />
-      ) : (
-        <div className="leader-table global-leader-table">
-          <table className="leader-grid global-leader-grid">
-            <caption className="visually-hidden">{caption}</caption>
-            <thead>
-              <tr className="leader-row leader-head global-leader-head reviewer-leader-row">
-                <th scope="col">Rank</th>
-                <th scope="col">Reviewer</th>
-                <th scope="col">Review score</th>
-              </tr>
-            </thead>
-            <tbody>
-              {reviewers.map((reviewer) => (
-                <tr
-                  className="leader-row global-leader-row reviewer-leader-row"
-                  key={reviewer.actor.id}
-                >
-                  <td className="rank-cell">#{reviewer.rank}</td>
-                  <td className="person-cell">
-                    <Link
-                      className="person-link"
-                      href={`/contributors/${encodeURIComponent(reviewer.actor.login)}`}
-                    >
-                      <Avatar actor={reviewer.actor} />
-                      <span>
-                        <strong>{reviewer.actor.login}</strong>
-                        <small>
-                          {reviewer.reviewEventCount} scored review
-                          {reviewer.reviewEventCount === 1 ? "" : "s"}
-                        </small>
-                      </span>
-                    </Link>
-                  </td>
-                  <td data-label="Review score">
-                    <strong>{formatThirds(reviewer.reviewThirds)}</strong>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+    <small className="review-score-detail">
+      Includes {formatThirds(reviewer.reviewThirds)} review point
+      {reviewer.reviewThirds === 3 ? "" : "s"} · {reviewer.reviewEventCount}{" "}
+      scored review
+      {reviewer.reviewEventCount === 1 ? "" : "s"}
+    </small>
   );
 }
 
@@ -866,6 +809,12 @@ function GlobalLeaderboard({
   );
   const selectedView =
     views.find((view) => view.project.id === selectedProjectId) ?? views[0];
+  const reviewers = new Map(
+    selectReviewerLeaders(selectedView?.ledger ?? []).map((reviewer) => [
+      reviewer.actor.id,
+      reviewer,
+    ]),
+  );
   const cycleMonth = selectedView
     ? formatCycleMonth(selectedView.cycle.id)
     : "Current month";
@@ -961,6 +910,13 @@ function GlobalLeaderboard({
                     {cycleMonth} · {selectedView.project.name}
                   </strong>
                   <span>{selectedRewardLabel}</span>
+                  {selectedView.project.reward.reviewBudget ? (
+                    <span>
+                      {reviewBudgetLabel(
+                        selectedView.project.reward.reviewBudget,
+                      )}
+                    </span>
+                  ) : null}
                 </div>
                 {selectedView.reward.kind === "monthly-pool" ? (
                   <p>
@@ -1013,12 +969,18 @@ function GlobalLeaderboard({
                                 </span>
                               </Link>
                             </td>
-                            <td data-label="Accepted score">
+                            <td
+                              className="combined-score"
+                              data-label="Accepted score"
+                            >
                               <strong
                                 title={`Exact score ${leader.scoreThirds}/3`}
                               >
                                 {formatThirds(leader.scoreThirds)}
                               </strong>
+                              <ReviewContribution
+                                reviewer={reviewers.get(leader.actor.id)}
+                              />
                             </td>
                             <td data-label="Simulated share">
                               <strong>
@@ -1030,12 +992,6 @@ function GlobalLeaderboard({
                       </tbody>
                     </table>
                   </div>
-                  <ReviewerLeaderboard
-                    caption={`${selectedView.project.name} ${cycleMonth} reviewer leaderboard`}
-                    cycleMonth={cycleMonth}
-                    ledger={selectedView.ledger}
-                    reviewBudget={selectedView.project.reward.reviewBudget}
-                  />
                   <Link
                     className="leaderboard-project-link"
                     href={`/projects/${selectedView.project.slug}`}
@@ -1103,7 +1059,10 @@ function GlobalLeaderboard({
                           </span>
                         </Link>
                       </td>
-                      <td data-label="Accepted score">
+                      <td
+                        className="combined-score"
+                        data-label="Accepted score"
+                      >
                         <strong title={`Exact score ${leader.score}`}>
                           {formatScore(leader.score)}
                         </strong>
@@ -1174,14 +1133,16 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
             ))}
           </div>
         </section>
-        <section className="project-tier" aria-labelledby="community-projects">
-          <h3 id="community-projects">Community</h3>
-          <div className="project-grid">
-            {communityProjects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
-            ))}
-          </div>
-        </section>
+        {communityProjects.length > 0 ? (
+          <details className="project-tier community-projects">
+            <summary>Community projects</summary>
+            <div className="project-grid">
+              {communityProjects.map((project) => (
+                <ProjectCard key={project.id} project={project} />
+              ))}
+            </div>
+          </details>
+        ) : null}
       </section>
       <section className="section shell audience-section">
         <div className="audience-grid">
@@ -1466,11 +1427,20 @@ function ProjectLeaderboard({
   updatedAt: string;
   view: ProjectView;
 }) {
+  const reviewers = new Map(
+    selectReviewerLeaders(view.ledger).map((reviewer) => [
+      reviewer.actor.id,
+      reviewer,
+    ]),
+  );
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
         <h2>{formatCycleMonth(view.cycle.id)} leaderboard.</h2>
         <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
+        {view.project.reward.reviewBudget ? (
+          <p>{reviewBudgetLabel(view.project.reward.reviewBudget)}</p>
+        ) : null}
         {view.reward.kind === "monthly-pool" ? (
           <p>
             Shares simulate the {monthlyPoolLabel(view.project.reward)} cap. Not
@@ -1519,6 +1489,9 @@ function ProjectLeaderboard({
                     <strong title={`Exact score ${leader.scoreThirds}/3`}>
                       {formatThirds(leader.scoreThirds)}
                     </strong>
+                    <ReviewContribution
+                      reviewer={reviewers.get(leader.actor.id)}
+                    />
                     {leader.computeBonusBasisPoints > 0 ? (
                       <small>
                         +{leader.computeBonusBasisPoints / 100}% receipt
@@ -1537,12 +1510,6 @@ function ProjectLeaderboard({
           </table>
         </div>
       )}
-      <ReviewerLeaderboard
-        caption={`${view.project.name} ${formatCycleMonth(view.cycle.id)} reviewer leaderboard`}
-        cycleMonth={formatCycleMonth(view.cycle.id)}
-        ledger={view.ledger}
-        reviewBudget={view.project.reward.reviewBudget}
-      />
     </section>
   );
 }
