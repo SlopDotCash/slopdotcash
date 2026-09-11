@@ -119,15 +119,48 @@ describe("Squads tracker public contract", () => {
       expect(listeners).toHaveBeenCalledWith("focus", expect.any(Function)),
     );
     expect(fetcher.mock.calls[1][0]).toBe(published.observationUrl);
-    vi.spyOn(Date, "now").mockReturnValue(
-      Date.parse(observation.observedAt) + 300000,
-    );
+    const clock = vi.spyOn(Date, "now");
+    clock.mockReturnValue(Date.parse(observation.observedAt) + 299999);
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(
+      screen.getByText("Proposal executed · settlement unverified"),
+    ).toBeVisible();
+    clock.mockReturnValue(Date.parse(observation.observedAt) + 300000);
     await act(async () => {
       window.dispatchEvent(new Event("focus"));
     });
     expect(
       screen.getByText("Execution observation stale · refresh required"),
     ).toBeVisible();
+  });
+  it("expires observations on the interval without a focus event or new fetch", async () => {
+    const { published, observation, cycle } = await fixture();
+    const fetcher = vi.fn(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.startsWith("/data/")
+              ? { schemaVersion: 1, executions: [published] }
+              : observation,
+          ),
+        ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(<SquadsTracking cycle={cycle} />);
+    await screen.findByText("Proposal executed · settlement unverified");
+    vi.spyOn(Date, "now").mockReturnValue(
+      Date.parse(observation.observedAt) + 300000,
+    );
+    expect(
+      await screen.findByText(
+        "Execution observation stale · refresh required",
+        {},
+        { timeout: 5000 },
+      ),
+    ).toBeVisible();
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
   it("shows partial batch execution without reporting settlement", async () => {
     const { published, observation, cycle } = await fixture(true);
