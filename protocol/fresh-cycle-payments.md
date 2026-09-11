@@ -18,19 +18,27 @@ Ruleset-only protection is not implemented by this bounded verifier.
 Review a complete canonical checkpoint with the workflow installed, an empty
 `funding/payment-reservations.json`, and no fresh-cycle policies. Pin its exact
 commit in `PAYMENT_BOOTSTRAP_CHECKPOINT` in `scripts/payment-admission.ts` through
-review and deploy the updated verifier. The default is deliberately unconfigured;
-no real checkpoint, fee wallet, instrument or project activation is supplied here.
+review and deploy the updated verifier. The selected bootstrap is canonical
+PR #425 merge
+`614d983be2ae703ea4d5b4240191ce84be5d244a`. Its full Git history is retained,
+its reservation ledger and migration descriptor chain are empty, and its four
+projects have no fresh-cycle policies and remain payment-disabled. This source
+pin requires operator review and deployment of the updated verifier; it does not
+configure branch protection, select fee wallets or instruments, or activate
+payments.
 The checkpoint is a reviewed trust root in verifier code, never a CLI argument,
 candidate manifest, or environment assertion.
 
 The loader rejects shallow history, requires continuous two-parent develop merges
 since that checkpoint, and replays every policy/allocation/reservation transition.
 For each merge it also verifies the actual successful `pull_request_target` run
-at the exact first-parent base, the pinned workflow bytes, successful named job,
+with a receipt bound to the exact first-parent base, the pinned workflow bytes, successful named job,
 and a digest-checked workflow receipt binding PR number, base, head, run and attempt.
 A context name and shared Actions app ID alone are insufficient provenance.
-GitHub sometimes reports an empty run `pull_requests` list; the receipt supplies
-that binding. Missing or expired evidence after the latest reviewed checkpoint
+GitHub can report the PR head in run `head_sha` and an empty `pull_requests`
+list. Lookup checks both exact base and head revisions; the digest-checked receipt
+supplies the base/head/PR binding. Unrelated runs on the same base cannot admit a
+merge or hide a later matching receipt. Missing or expired evidence after the latest reviewed checkpoint
 fails release closed. Workflow receipts currently have 90-day retention. The
 checkpoint migration below preserves verified admission through a later revision,
 including nonempty permanent reservations, so earlier receipt expiry does not
@@ -82,8 +90,9 @@ and verifies all pinned snapshots against complete first-parent history, retaini
 the permanent ledger, then checks live receipts only after the latest checkpoint.
 Migration cannot omit obligations, drop reservations, change principal/fees or
 existing plan bytes, reprice allocations, retire money, or reuse issued vaults.
-The initial empty bootstrap remains the original trust root. No actual bootstrap,
-checkpoint descriptor, snapshot or project activation is supplied in this change.
+The initial empty bootstrap remains the original trust root. The bootstrap pin
+above does not add a migration descriptor or snapshot, and does not activate a
+project.
 
 ## Exact cycle activation and release
 

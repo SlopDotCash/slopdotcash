@@ -230,6 +230,11 @@ function liveEvidence(f: ReturnType<typeof fixture>, expired = false) {
           },
         ],
       };
+    if (
+      path.includes("/actions/workflows/") &&
+      path.includes(`head_sha=${f.head}`)
+    )
+      return { total_count: 0, workflow_runs: [] };
     if (path.includes("/actions/runs/7/jobs"))
       return {
         total_count: 1,
@@ -321,7 +326,7 @@ describe("reviewed payment checkpoint migration", () => {
       verifyHistoricalPaymentAdmission(f.root, f.accepted, f.bootstrap, [
         f.pin,
       ]),
-    ).rejects.toThrow(/expired/);
+    ).rejects.toThrow(/No exact successful trusted reservation gate/);
   });
   it.each(["drop", "reprice", "omit-history"])(
     "rejects %s in a checkpoint snapshot even with a recomputed snapshot hash",
@@ -444,7 +449,14 @@ describe("reviewed payment checkpoint migration", () => {
       /already exists/,
     );
   });
-  it("CLI requires a new artifact directory and does not configure a real pin", async () => {
+  it("CLI rejects invalid arguments and an unconfigured bootstrap", async () => {
+    vi.spyOn(admission, "requirePaymentBootstrapCheckpoint").mockImplementation(
+      () => {
+        throw new TypeError(
+          "Configure reviewed bootstrap before checkpoint migration",
+        );
+      },
+    );
     expect(() =>
       parsePaymentCheckpointArguments(["--revision", "a".repeat(40)]),
     ).toThrow(/Usage/);
