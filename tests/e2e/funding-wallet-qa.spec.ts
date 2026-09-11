@@ -237,7 +237,8 @@ for (const sameTab of [false, true]) {
       } else if (path === "/v1/oauth/poll") {
         if (!authorized) {
           await route.fulfill({
-            json: { status: "pending", pollAfterSeconds: 1 },
+            status: 202,
+            json: { status: "pending", retryAfterSeconds: 1 },
           });
           return;
         }
