@@ -303,7 +303,7 @@ function cycleStateLabel(state: CycleIndexEntry["state"]): string {
     .join(" ");
 }
 
-function stale(snapshot: LeaderboardSnapshot): boolean {
+function stale(snapshot: Pick<LeaderboardSnapshot, "generatedAt">): boolean {
   return Date.now() - Date.parse(snapshot.generatedAt) > 8 * 60 * 60 * 1_000;
 }
 
@@ -3608,6 +3608,12 @@ function CycleArchivePage({
           </div>
         ) : cycles.length === 0 ? (
           <p>No published cycles yet.</p>
+        ) : null}
+        {state.status === "ready" && stale(state.cycleIndex) ? (
+          <p className="data-notice data-stale" role="status">
+            Cycle history may be outdated · updated{" "}
+            {formatDate(state.cycleIndex.generatedAt)}
+          </p>
         ) : null}
       </section>
       <div className="cycle-archive-list">

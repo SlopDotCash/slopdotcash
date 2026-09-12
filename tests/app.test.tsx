@@ -2300,6 +2300,21 @@ describe("public project draft workspace", () => {
 });
 
 describe("independent public data routes", () => {
+  it("distinguishes an outdated cycle index from a fresh empty archive", async () => {
+    route("/cycles");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        ...cycleIndexFixture(),
+        generatedAt: "2020-01-01T00:00:00.000Z",
+      }),
+    );
+    render(<App />);
+    expect(
+      await screen.findByText(/Cycle history may be outdated/),
+    ).toBeVisible();
+    expect(screen.getByText("No published cycles yet.")).toBeVisible();
+  });
+
   it.each(["/how-it-works", "/projects/new", "/missing-route"])(
     "keeps %s usable without reward data",
     async (path) => {
