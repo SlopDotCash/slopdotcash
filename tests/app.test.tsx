@@ -1156,6 +1156,15 @@ describe("public records", () => {
         hint: "Finish verified evidence categories before merge.",
       },
     ];
+    snapshot.opportunities.unshift({
+      ...snapshot.opportunities[0],
+      id: "PR_open_only:opportunity:near-material-test",
+      kind: "near-material-test",
+      category: "material-test-change",
+      potentialPoints: null,
+      reason: "Tests should demonstrate useful behavior.",
+      hint: "Test the behavior changed by this pull request. Do not add tests or lines merely to increase a score.",
+    });
     snapshot.workQueue.pullRequests[0] = {
       ...snapshot.workQueue.pullRequests[0],
       id: "PR_open_only",
@@ -1170,6 +1179,8 @@ describe("public records", () => {
     expect(
       await screen.findByRole("heading", { name: "open-only" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Test guidance")).toBeVisible();
+    expect(screen.queryByText(/if it qualifies/)).not.toBeInTheDocument();
     expect(document.querySelector(".avatar-large")?.tagName).toBe("IMG");
     expect(document.querySelector(".avatar-large")).toHaveAttribute(
       "src",

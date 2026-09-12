@@ -2417,7 +2417,9 @@ function opportunityPointsLabel(opportunity: ScoreOpportunity): string {
   ) {
     return "Evidence guidance";
   }
-  return `+${opportunity.potentialPoints} if it qualifies`;
+  return opportunity.kind === "expand-review"
+    ? "Review guidance"
+    : "Test guidance";
 }
 
 function OpportunityList({
