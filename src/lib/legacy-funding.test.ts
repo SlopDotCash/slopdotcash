@@ -1,6 +1,6 @@
-import { syncCycleIndex } from "../../scripts/sync-cycle-index";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
+import { syncCycleIndex } from "../../scripts/sync-cycle-index";
 import { assertCycleIndex } from "./cycle-index";
 import { assertRewardAllocationManifest } from "./rewards";
 
