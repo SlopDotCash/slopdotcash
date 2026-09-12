@@ -3421,3 +3421,69 @@ small {
   display: block;
   margin-top: 4px;
 }
+
+.model-outcomes-summary {
+  margin-bottom: 40px;
+}
+
+.model-outcomes-section {
+  margin-bottom: 56px;
+}
+
+.model-outcomes-section h2 {
+  margin: 0 0 12px;
+  font-size: clamp(24px, 3vw, 34px);
+  letter-spacing: -0.04em;
+}
+
+.model-outcomes-section > p {
+  max-width: 70ch;
+  margin: 0 0 20px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.model-outcomes-table th[scope="row"] {
+  font-weight: 700;
+}
+
+.model-identity {
+  font-family: var(--brand-font-data);
+  white-space: nowrap;
+}
+
+.model-identity > span {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.model-identity-list {
+  font-family: var(--brand-font-data);
+  min-width: 220px;
+}
+
+.model-share-high {
+  color: var(--orange-dark);
+  font-weight: 700;
+}
+
+.model-outcomes-note,
+.model-outcomes-notes {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.model-outcomes-note {
+  margin: 16px 0 0;
+  max-width: 70ch;
+}
+
+.model-outcomes-notes {
+  max-width: 76ch;
+  padding-left: 20px;
+}
+
+.model-outcomes-notes li + li {
+  margin-top: 10px;
+}
