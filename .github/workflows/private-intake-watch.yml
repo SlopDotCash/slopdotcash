@@ -1,4 +1,4 @@
-name: Private intake health renewal
+name: Private intake health watch
 on:
   schedule:
     - cron: "47 * * * *"
@@ -6,28 +6,30 @@ on:
 permissions:
   contents: read
 jobs:
-  renew:
+  watch:
     if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-24.04
-    environment: slop-data-refresh
     concurrency:
-      group: slop-intake-renewal
+      group: slop-intake-watch
       cancel-in-progress: false
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: "24.15.0"
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: "1.3.14"
-      - run: bun install --frozen-lockfile --ignore-scripts
-      - name: Renew authenticated intake status
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/renew-private-intake.mjs
+      - name: Read optional intake health
+        run: |
+          body="$RUNNER_TEMP/slop-intake-status.json"
+          status="$(curl --silent --show-error --max-time 30 --max-filesize 65536 --output "$body" --write-out '%{http_code}' https://api.slop.cash/api/v1/private-request-intake)"
+          if [ "$status" != "200" ]; then
+            echo "::error::Optional trace intake is unavailable (HTTP $status). GitHub contribution remains open. The slop-identity Worker renews the observation on its hourly cron; see backend/trace/PRIVATE_INTAKE_RECOVERY.md."
+            exit 1
+          fi
+          node - "$body" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (value?.enabled !== true || typeof value?.verifiedAt !== "string") {
+            throw new TypeError("Optional trace intake is not enabled; GitHub contribution remains open.");
+          }
+          const age = Date.now() - Date.parse(value.verifiedAt);
+          if (!Number.isFinite(age) || age > 3 * 60 * 60 * 1000) {
+            throw new TypeError("Optional trace intake observation is older than three hours; the hourly Worker renewal is not landing.");
+          }
+          NODE

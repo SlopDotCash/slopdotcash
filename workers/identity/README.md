@@ -161,6 +161,14 @@ the protected workflow's `wrangler versions upload` followed by
 requesting zone-level Workers Routes authority or rewriting the established
 domain.
 
+The same hourly trigger also renews the optional private intake observation
+(`private_intake_status` in the shared D1 database) from GitHub's public
+private-vulnerability-reporting status. Cleanup and renewal run independently;
+either failing is logged as a fixed string and fails the invocation without
+stopping the other. Renewal needs no GitHub or Cloudflare credential and never
+refreshes the observation on an unreachable, rate-limited, or malformed
+answer. See `backend/trace/PRIVATE_INTAKE_RECOVERY.md`.
+
 The protected release verifies the live cleanup schedule against this Worker's
 canonical configuration before code/database deployment and after version activation.
 If the live schedule list is entirely empty, the release restores only the canonical

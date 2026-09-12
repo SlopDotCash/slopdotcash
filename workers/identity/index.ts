@@ -18,6 +18,14 @@ type Env = {
 };
 
 export const MAX_GITHUB_RESPONSE_BYTES = 64 * 1024;
+export const PRIVATE_INTAKE_STATUS_URL =
+  "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting";
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+export type PrivateIntakeRenewal =
+  | { status: "renewed"; enabled: boolean; verifiedAt: string }
+  | { status: "skipped" };
 
 export async function readBoundedGithubJson(
   response: Response,
@@ -227,6 +235,107 @@ async function resolveGithubIdentity(
   }
 }
 
+/**
+ * Renews the singleton private intake observation from GitHub's public
+ * private-vulnerability-reporting status. The observation is read by the
+ * Pages trace API, which accepts it for 24 hours. Running inside the Worker's
+ * existing hourly cron keeps renewal independent of site releases and of any
+ * GitHub-held Cloudflare credential: the write goes through this Worker's own
+ * D1 binding. GitHub's answer is the only thing that changes the observation;
+ * an unreachable, rate-limited, or malformed response leaves the previous
+ * observation in place so that it expires on its own schedule.
+ */
+export async function renewPrivateIntakeStatus(options: {
+  db: Pick<D1Database, "prepare">;
+  fetchImpl?: FetchLike;
+  now?: () => Date;
+}): Promise<PrivateIntakeRenewal> {
+  const { db, fetchImpl = fetch, now = () => new Date() } = options;
+  let response: Response;
+  try {
+    response = await fetchImpl(PRIVATE_INTAKE_STATUS_URL, {
+      method: "GET",
+      // Workers support manual redirect handling; a 3xx is never followed and
+      // is rejected below because it is not a successful response.
+      redirect: "manual",
+      headers: {
+        accept: "application/vnd.github+json",
+        "user-agent": "slop-identity",
+        "x-github-api-version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return { status: "skipped" };
+  }
+  if (!response.ok) return { status: "skipped" };
+  let value: unknown;
+  try {
+    value = await readBoundedGithubJson(response);
+  } catch {
+    return { status: "skipped" };
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    typeof (value as { enabled?: unknown }).enabled !== "boolean"
+  ) {
+    return { status: "skipped" };
+  }
+  const enabled = (value as { enabled: boolean }).enabled;
+  const verifiedAt = now().toISOString();
+  await db
+    .prepare(
+      "INSERT INTO private_intake_status(singleton, enabled, verified_at) VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET enabled = excluded.enabled, verified_at = excluded.verified_at WHERE excluded.verified_at > private_intake_status.verified_at",
+    )
+    .bind(enabled ? 1 : 0, verifiedAt)
+    .run();
+  return { status: "renewed", enabled, verifiedAt };
+}
+
+async function deleteExpiredIdentityState(
+  env: Pick<Env, "IDENTITY_DB">,
+  now: Date,
+): Promise<void> {
+  await new D1IdentityPersistence(env.IDENTITY_DB).deleteExpired(
+    now.toISOString(),
+  );
+  await deleteExpiredRateLimits(
+    env.IDENTITY_DB,
+    Math.floor(now.getTime() / 1_000),
+  );
+}
+
+export async function runScheduledMaintenance(
+  env: Pick<Env, "IDENTITY_DB">,
+  now: Date,
+  fetchImpl: FetchLike = fetch,
+): Promise<void> {
+  // Cleanup and intake renewal are independent; one failing must not stop
+  // the other. Each failure is logged as a fixed string (error-policy:J2) and
+  // the invocation is still reported as failed so Cloudflare metrics show it.
+  const [cleanup, renewal] = await Promise.allSettled([
+    deleteExpiredIdentityState(env, now),
+    renewPrivateIntakeStatus({
+      db: env.IDENTITY_DB,
+      fetchImpl,
+      now: () => now,
+    }),
+  ]);
+  if (cleanup.status === "rejected") {
+    console.error("slop identity cleanup failed");
+  }
+  if (renewal.status === "rejected") {
+    console.error("slop private intake renewal failed");
+  } else if (renewal.value.status === "skipped") {
+    console.error("slop private intake renewal skipped");
+  }
+  if (cleanup.status === "rejected" || renewal.status === "rejected") {
+    throw new Error("slop identity scheduled maintenance failed");
+  }
+}
+
 function dependencies(env: Env) {
   return {
     persistence: new D1IdentityPersistence(env.IDENTITY_DB),
@@ -247,13 +356,6 @@ export default {
     return handleIdentityRequest(request, dependencies(env));
   },
   async scheduled(_controller: unknown, env: Env): Promise<void> {
-    const now = new Date();
-    await new D1IdentityPersistence(env.IDENTITY_DB).deleteExpired(
-      now.toISOString(),
-    );
-    await deleteExpiredRateLimits(
-      env.IDENTITY_DB,
-      Math.floor(now.getTime() / 1_000),
-    );
+    await runScheduledMaintenance(env, new Date());
   },
 };

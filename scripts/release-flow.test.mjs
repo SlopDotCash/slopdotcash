@@ -44,10 +44,12 @@ describe("independent release and intake paths", () => {
     const { jobs: health } = workflow(
       ".github/workflows/private-intake-watch.yml",
     );
-    expect(health.renew.needs).toBeUndefined();
-    expect(health.renew.concurrency.group).not.toBe(
+    expect(health.watch.needs).toBeUndefined();
+    expect(health.watch.environment).toBeUndefined();
+    expect(health.watch.concurrency.group).not.toBe(
       jobs.deploy.concurrency.group,
     );
+    expect(JSON.stringify(health)).not.toContain("CLOUDFLARE_API_TOKEN");
   });
   it("renews the legacy format only while refreshing an older approved source", () => {
     const { jobs } = workflow(".github/workflows/deploy.yml");
