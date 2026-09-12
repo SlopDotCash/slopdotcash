@@ -25,16 +25,15 @@ function workflow(path) {
 }
 
 describe("independent release and intake paths", () => {
-  it("waits for code approval outside the publication lock, while refreshes can publish", () => {
+  it("routes code releases to production credentials without a manual approval job, while refreshes can publish", () => {
     const { jobs } = workflow(".github/workflows/deploy.yml");
-    expect(jobs.approve.environment).toBe("eliza-army-production");
-    expect(jobs.approve.concurrency).toBeUndefined();
-    expect(jobs.deploy.needs).toContain("approve");
-    expect(jobs.deploy.if).toContain(
-      "needs.approve.result == 'success' || github.event_name == 'schedule'",
-    );
+    expect(jobs.approve).toBeUndefined();
+    expect(jobs.deploy.needs).toEqual(["source", "quality"]);
+    expect(jobs.deploy.if).not.toContain("needs.approve");
     expect(jobs.deploy.concurrency.group).toBe("slop-production");
-    expect(jobs.deploy.environment.name).toBe("slop-data-refresh");
+    expect(jobs.deploy.environment.name).toBe(
+      `\${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}`,
+    );
     const publication = jobs.deploy.steps.find(
       (step) => step.id === "pages-deploy",
     ).run;
