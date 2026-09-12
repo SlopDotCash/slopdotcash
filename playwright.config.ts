@@ -18,7 +18,7 @@ if (!new Set(["pages", "preview"]).has(localServer)) {
 const localServerCommand =
   localServer === "preview"
     ? "node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4466 --strictPort"
-    : "bunx wrangler pages dev dist --ip 127.0.0.1 --port 4466 --log-level warn --show-interactive-dev-session=false";
+    : "node node_modules/wrangler/bin/wrangler.js pages dev dist --ip 127.0.0.1 --port 4466 --log-level warn --show-interactive-dev-session=false";
 
 export default defineConfig({
   testDir: "./tests/e2e",
