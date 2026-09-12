@@ -21,3 +21,18 @@ The preview is deliberately not a `FundingPreparation`, a newly observed snapsho
 The source correction, authority for adopting it, and a versioned successor preparation contract require independent review before use in a funded proposal. That successor must bind the predecessor and correction digests, preserve source and wallet history, reconcile the independent merge census, invalidate stale quality/funding reviews and reset the applicable review period. New contributors, other score categories, inferred evidence bonuses and revisions of published cycles are outside this preview's scope. Do not copy preview rows into the canonical preparation to bypass those requirements.
 
 For August, the known recovery selects seven accepted reviews for two existing contributors. The expected transition is 7,061 to 7,068 events, 108 unchanged actors and +21 score-thirds. The cap stays 10,000 USDC. These fixture expectations are independently checked in the evidence bundle rather than hardcoded into this generic implementation.
+
+## Decision binding
+
+Quality proposals and saved browser decisions use `quality-evidence-v2:` followed
+by the SHA-256 of `JSON.stringify` of the complete validated evidence payload.
+Source snapshot and census digests alone do not bind recovered events or updated
+review context. Browser import, restoration, offline simulation, and historical
+correction previews all require this complete-payload binding. A changed payload
+(including reordered JSON fields) conservatively requires a fresh review.
+
+Legacy source-only bindings are rejected, not upgraded automatically. Export
+existing decisions for reference, clear the saved quality draft, load the current
+evidence, and reassess the decisions before exporting a new proposal. No historical
+preparation, award, or approval is rewritten. This prerequisite does not adopt the
+pending August correction or authorize a payment.
