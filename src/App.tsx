@@ -67,6 +67,10 @@ import {
   type ScoreOpportunity,
 } from "./lib/leaderboard";
 import {
+  type ModelOutcomeSummary,
+  summarizeModelOutcomes,
+} from "./lib/model-outcomes";
+import {
   createProjectView,
   type ProjectContributor,
   type ProjectView,
@@ -136,6 +140,7 @@ interface Route {
     | "profile"
     | "project"
     | "receipts"
+    | "models"
     | "cycle-archive"
     | "unknown";
   projectId?: string;
@@ -158,6 +163,9 @@ function internalRoute(pathname: string): Route {
   }
   if (segments.length === 1 && segments[0] === "receipts") {
     return { kind: "receipts" };
+  }
+  if (segments.length === 1 && segments[0] === "models") {
+    return { kind: "models" };
   }
   if (segments.length === 1 && segments[0] === "cycles") {
     return { kind: "cycle-archive" };
@@ -370,6 +378,9 @@ function Header({ isHome }: { isHome: boolean }) {
           <Link href="/receipts" onNavigate={closeMenu}>
             Receipts
           </Link>
+          <Link href="/models" onNavigate={closeMenu}>
+            Models
+          </Link>
           <Link href="/cycles" onNavigate={closeMenu}>
             Cycles
           </Link>
@@ -397,6 +408,7 @@ function Footer() {
           <Link href="/#projects">Projects</Link>
           <Link href="/how-it-works">How scoring works</Link>
           <Link href="/receipts">Receipts</Link>
+          <Link href="/models">Models</Link>
           <Link href="/cycles">Cycle archive</Link>
           <Link href="/projects/new">Add a project</Link>
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
@@ -3462,6 +3474,9 @@ function HowItWorksPage() {
             <Link href="/receipts">Public receipts</Link>
           </li>
           <li>
+            <Link href="/models">Models and harnesses</Link>
+          </li>
+          <li>
             <Link href="/cycles">Cycle archive</Link>
           </li>
           <li>
@@ -3578,6 +3593,231 @@ function ReceiptsPage({
   );
 }
 
+function ModelsPage({ state, retry }: { state: DataState; retry: () => void }) {
+  const summary =
+    state.status === "ready" ? summarizeModelOutcomes(state.snapshot) : null;
+  return (
+    <main className="shell evidence-page">
+      <section className="evidence-page-hero">
+        <h1>Which models merge. By the receipts.</h1>
+        <p>
+          Every merged pull request and accepted review on the leaderboard can
+          carry a model declaration by the person who did the work. This page
+          counts those declarations next to the outcomes they were made on.
+          Model identity is self-reported, adds no points, and is never checked
+          against the provider. A signed receipt is the harder evidence; a
+          declaration in the text is the broader picture.
+        </p>
+        <DataNotice retry={retry} state={state} />
+      </section>
+      {summary ? <ModelOutcomes summary={summary} /> : null}
+    </main>
+  );
+}
+
+function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
+  const { totals } = summary;
+  const count = new Intl.NumberFormat("en-US");
+  const percent = (part: number, whole: number) =>
+    `${whole > 0 ? Math.round((100 * part) / whole) : 0}%`;
+  const points = (value: number) => count.format(Math.round(value));
+  const modelRows = summary.models
+    .filter((row) => row.mergedPullRequests > 0 || row.acceptedReviews > 0)
+    .slice(0, 30);
+  const concentrated = modelRows.filter(
+    (row) =>
+      row.mergedPullRequests >= 40 && (row.topContributorShare ?? 0) >= 0.5,
+  );
+  if (totals.declarations === 0) {
+    return <EmptyState text="No model declarations in this snapshot." />;
+  }
+  return (
+    <>
+      <div className="money-summary model-outcomes-summary">
+        <span>
+          <strong>
+            {percent(
+              totals.mergedPullRequestsWithModel,
+              totals.mergedPullRequests,
+            )}
+          </strong>{" "}
+          of merged pull requests name a model (
+          {count.format(totals.mergedPullRequestsWithModel)} of{" "}
+          {count.format(totals.mergedPullRequests)})
+        </span>
+        <span>
+          <strong>
+            {count.format(totals.mergedPullRequestsWithSignedRun)}
+          </strong>{" "}
+          of those carry a signed receipt
+        </span>
+        <span>
+          <strong>
+            {percent(totals.acceptedReviewsWithModel, totals.acceptedReviews)}
+          </strong>{" "}
+          of accepted reviews name a model
+        </span>
+        <span>
+          <strong>{count.format(totals.declarations)}</strong> declarations by{" "}
+          {count.format(totals.declaringContributors)} contributors,{" "}
+          {count.format(totals.signedDeclarations)} signed across{" "}
+          {count.format(totals.distinctClients)} harnesses
+        </span>
+      </div>
+
+      <section className="model-outcomes-section">
+        <h2>Accepted outcomes by model</h2>
+        <p>
+          A pull request counts for a model when its author declared that model
+          on the pull request; a review counts when the reviewer declared it on
+          the review. Declarations by anyone else never count. Top contributor
+          share is the part of a model&apos;s outcomes that comes from its
+          single busiest contributor. Above 50% the model mostly measures one
+          person, and the row says so.
+        </p>
+        <div className="plain-table-wrap">
+          <table className="plain-table model-outcomes-table">
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                <th scope="col">Merged PRs</th>
+                <th scope="col">Signed PRs</th>
+                <th scope="col">PR points</th>
+                <th scope="col">Accepted reviews</th>
+                <th scope="col">Contributors</th>
+                <th scope="col">Top contributor share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {modelRows.map((row) => (
+                <tr key={row.key}>
+                  <th className="model-identity" scope="row">
+                    <span>{row.provider}/</span>
+                    {row.model}
+                  </th>
+                  <td>{count.format(row.mergedPullRequests)}</td>
+                  <td>
+                    {row.signedPullRequests > 0
+                      ? count.format(row.signedPullRequests)
+                      : "none"}
+                  </td>
+                  <td>{points(row.pullRequestPoints)}</td>
+                  <td>{count.format(row.acceptedReviews)}</td>
+                  <td>{count.format(row.contributors)}</td>
+                  <td
+                    className={
+                      (row.topContributorShare ?? 0) >= 0.5
+                        ? "model-share-high"
+                        : undefined
+                    }
+                  >
+                    {row.topContributorShare === null
+                      ? "n/a"
+                      : percent(row.topContributorShare, 1)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="model-outcomes-note">
+          {count.format(totals.distinctDeclaredIdentifiers)} distinct declared
+          strings fold to {count.format(totals.distinctModels)} models by case
+          and a short provider alias list. Some rows are still one model under
+          two names. The table shows models with at least one accepted outcome,
+          up to 30.
+        </p>
+      </section>
+
+      <section className="model-outcomes-section">
+        <h2>Harnesses, from signed receipts only</h2>
+        <p>
+          The client is known only when a run receipt exists, so this table
+          covers signed runs. Output tokens come from receipts that report exact
+          usage.
+        </p>
+        {summary.clients.length === 0 ? (
+          <EmptyState text="No signed receipts in this snapshot." />
+        ) : (
+          <div className="plain-table-wrap">
+            <table className="plain-table model-outcomes-table">
+              <thead>
+                <tr>
+                  <th scope="col">Harness</th>
+                  <th scope="col">Signed runs</th>
+                  <th scope="col">Contributors</th>
+                  <th scope="col">Models on those runs</th>
+                  <th scope="col">Merged PRs</th>
+                  <th scope="col">Median output tokens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.clients.map((row) => (
+                  <tr key={row.client}>
+                    <th className="model-identity" scope="row">
+                      {row.client}
+                    </th>
+                    <td>{count.format(row.signedRuns)}</td>
+                    <td>{count.format(row.contributors)}</td>
+                    <td className="model-identity-list">
+                      {row.models
+                        .slice(0, 3)
+                        .map((entry) => `${entry.key} (${entry.count})`)
+                        .join(", ")}
+                    </td>
+                    <td>{count.format(row.mergedPullRequests)}</td>
+                    <td>
+                      {row.medianOutputTokens === null
+                        ? "not reported"
+                        : `${count.format(row.medianOutputTokens)} (${row.runsWithExactUsage} runs)`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="model-outcomes-section">
+        <h2>Read before quoting</h2>
+        <ul className="model-outcomes-notes">
+          <li>
+            This is not a benchmark. Contributors choose their own tasks, repos
+            and models. A model with many merges is a model that busy
+            contributors happened to use on work they chose, scored by
+            maintainers who did not know which model wrote it.
+          </li>
+          <li>
+            Model is confounded with person.{" "}
+            {concentrated.length > 0
+              ? `Of the models with 40 or more merged PRs, ${concentrated
+                  .map(
+                    (row) =>
+                      `${row.key} (${percent(row.topContributorShare ?? 0, 1)})`,
+                  )
+                  .join(
+                    ", ",
+                  )} take over half of their outcomes from one contributor.`
+              : "No model with 40 or more merged PRs takes over half of its outcomes from one contributor in this snapshot."}
+          </li>
+          <li>
+            Neither a declaration nor a receipt is verified against the model
+            provider. A receipt proves that a device claimed a model at a time;
+            it does not prove the API served that model.
+          </li>
+          <li>
+            The leaderboard is a rolling window and regenerates on a schedule,
+            so every figure moves. Nothing here describes money. PR points are
+            the scoring input; what any pool pays is decided in a separate
+            public review.
+          </li>
+        </ul>
+      </section>
+    </>
+  );
+}
+
 function CycleArchivePage({
   state,
   retry,
@@ -3683,6 +3923,8 @@ export function App() {
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
   else if (route.kind === "receipts")
     content = <ReceiptsPage retry={retry} state={state} />;
+  else if (route.kind === "models")
+    content = <ModelsPage retry={retry} state={state} />;
   else if (route.kind === "cycle-archive")
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
