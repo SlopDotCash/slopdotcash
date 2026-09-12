@@ -105,6 +105,22 @@ test("quality review groups duplicate accepted work and carries an exact source-
         document.documentElement.clientWidth + 1,
     ),
   ).toBe(true);
+  await page.reload();
+  await panel.locator("summary").click();
+  await panel
+    .getByRole("button", { name: "Load cycle evidence", exact: true })
+    .click();
+  await expect(panel).toContainText("2 of 7061 source events reviewed");
+  await panel.getByLabel("Import saved quality decisions").setInputFiles({
+    name: "matching-evidence-decisions.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(proposal)),
+  });
+  await expect(panel.getByRole("status")).toContainText(
+    "Saved decisions imported and amounts recalculated",
+  );
+  await expect(panel).toContainText("2 of 7061 source events reviewed");
+
   // Historical recovery can change the reviewed payload without changing the
   // predecessor snapshot/census labels. Never replay decisions across that change.
   await page.route(
