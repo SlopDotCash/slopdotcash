@@ -7,7 +7,7 @@ import {
 } from "../src/lib/leaderboard";
 import { snapshotFixture } from "./fixtures";
 
-function fixture() {
+async function fixture() {
   const from = "2026-07-28T00:00:00.000Z",
     to = "2026-09-01T00:00:00.000Z";
   const actor = {
@@ -165,7 +165,7 @@ function fixture() {
       projectId: "eliza",
       cycleId: "2026-08",
       sourceSnapshotSha256: sha256(snapshotBytes),
-      sourceQualityBinding: qualityEvidenceBinding(evidence),
+      sourceQualityBinding: await qualityEvidenceBinding(evidence),
       capMinor: "10000000000",
       decisions: [],
       burdens: [],
@@ -185,7 +185,7 @@ function fixture() {
 }
 describe("historical source correction previews", () => {
   it("preserves original rows, includes recovered reviews in uncertainty, and conserves the cap", async () => {
-    const input = fixture();
+    const input = await fixture();
     const before = JSON.stringify(input);
     const result = await prepareSourceCorrection(input);
     expect(result.proposedEvents).toBe(2);
@@ -198,12 +198,12 @@ describe("historical source correction previews", () => {
     expect(JSON.stringify(input)).toBe(before);
   });
   it("rejects modified predecessor bytes", async () => {
-    const x = fixture();
+    const x = await fixture();
     x.preparationBytes += " ";
     await expect(prepareSourceCorrection(x)).rejects.toThrow("digest mismatch");
   });
   it("rejects duplicate requested IDs", async () => {
-    const x = fixture();
+    const x = await fixture();
     x.request.eventIds.push(x.request.eventIds[0]);
     await expect(prepareSourceCorrection(x)).rejects.toThrow("distinct");
   });
@@ -212,7 +212,7 @@ describe("historical source correction previews", () => {
       { reason: "Invented reason" },
       { evidenceBonusBasisPoints: 1000 },
     ]) {
-      const x = fixture();
+      const x = await fixture();
       const h = JSON.parse(x.historyBytes);
       Object.assign(h.events[0], mutation);
       x.historyBytes = JSON.stringify(h);
@@ -225,13 +225,13 @@ describe("historical source correction previews", () => {
       { sourceQualityBinding: "stale" },
       { paymentAuthorized: true },
     ]) {
-      const x = fixture();
+      const x = await fixture();
       Object.assign(x.proposals[0], mutation);
       await expect(prepareSourceCorrection(x)).rejects.toThrow("wrong source");
     }
   });
   it("rejects altered quality metadata despite matching actor totals and IDs", async () => {
-    const x = fixture();
+    const x = await fixture();
     const q = JSON.parse(x.qualityBytes);
     q.events[0].url =
       "https://github.com/elizaOS/eliza/pull/999#pullrequestreview-999";
@@ -241,7 +241,7 @@ describe("historical source correction previews", () => {
     );
   });
   it("rejects replay of an already credited source", async () => {
-    const x = fixture();
+    const x = await fixture();
     const archive = JSON.parse(x.archiveBytes);
     const existing = archive.ledger.find(
       (event: ScoreEvent) => event.source.number === 1,
@@ -258,7 +258,7 @@ describe("historical source correction previews", () => {
     );
   });
   it("rejects a request for another cycle and missing recovered IDs", async () => {
-    const x = fixture();
+    const x = await fixture();
     x.request.cycleId = "2026-07";
     await expect(prepareSourceCorrection(x)).rejects.toThrow(
       "Wrong correction cycle",
