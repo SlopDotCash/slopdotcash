@@ -410,10 +410,9 @@ if (mode === "production") {
   baseUrl = `http://127.0.0.1:${previewPort}`;
   previewState = { error: undefined };
   previewServer = spawn(
-    "bun",
+    process.execPath,
     [
-      "--bun",
-      "vite",
+      join(packageRoot, "node_modules", "vite", "bin", "vite.js"),
       "preview",
       "--host",
       "127.0.0.1",
