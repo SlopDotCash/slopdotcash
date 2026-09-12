@@ -332,12 +332,15 @@ describe("slop.cash deployment contract", () => {
     );
     expect(deployJob).toContain("group: slop-production");
     expect(deployJob).toContain("cancel-in-progress: false");
-    expect(deployJob).toContain(`name: slop-data-refresh`);
+    expect(deployJob).toContain(
+      "name: ${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}",
+    );
+    expect(workflow).not.toContain("environment: eliza-army-production");
   });
 
   it("limits unattended refreshes to released source and data-only bundles", () => {
     expect(workflow).toContain("node scripts/released-source.mjs");
-    expect(workflow).toContain("needs: [source, quality, approve]");
+    expect(workflow).toContain("needs: [source, quality]");
     expect(deployJob).toContain("node scripts/check-data-refresh-bundle.mjs");
     const check = deployJob.indexOf(
       "node scripts/check-data-refresh-bundle.mjs",

@@ -61,15 +61,6 @@ jobs:
             echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           fi
 
-  approve:
-    name: Approve code release
-    needs: [source, quality]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    environment: eliza-army-production
-    steps:
-      - run: echo "Approved tested code release"
-
   quality:
     name: Skill, data, build, and browser checks
     needs: source
@@ -262,12 +253,11 @@ jobs:
   deploy:
     name: Deploy trusted production bundle
     if: >-
-      always() && needs.quality.result == 'success' &&
-      (needs.approve.result == 'success' || github.event_name == 'schedule') &&
+      needs.quality.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
       (github.event_name == 'schedule' && github.ref == 'refs/heads/develop') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop'))
-    needs: [source, quality, approve]
+    needs: [source, quality]
     env:
       RELEASE_SHA: ${{ needs.source.outputs.sha }}
     permissions:
@@ -276,11 +266,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
-      # Only publication holds this lock. Code approval waits in its own job.
+      # Only publication holds this lock. Neither environment requires a
+      # manual reviewer: the protected develop merge is the release decision.
       group: slop-production
       cancel-in-progress: false
     environment:
-      name: slop-data-refresh
+      # Code releases need the Workers-scoped production credentials for the
+      # identity Worker; unattended refreshes get only the Pages-scoped token.
+      name: ${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}
       url: https://slop.cash
     steps:
       - name: Checkout exact deployment tooling
