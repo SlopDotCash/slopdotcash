@@ -1004,25 +1004,33 @@ describe("GitHub GraphQL boundary", () => {
     expect(client.getRequestCount()).toBe(2);
   });
 
-  it("retries transient network failures before returning validated data", async () => {
-    let attempts = 0;
-    const fetcher = async () => {
-      attempts += 1;
-      if (attempts < 3) {
-        throw new TypeError("socket disconnected");
-      }
-      return successResponse();
-    };
-    const client = new GitHubGraphqlClient("secret-token", fetcher, {
-      retryBaseDelayMs: 0,
-    });
+  it.each([
+    new TypeError("socket disconnected"),
+    Object.assign(new Error("Was there a typo in the url or port?"), {
+      code: "FailedToOpenSocket",
+    }),
+  ])(
+    "retries transient network failures before returning validated data: %s",
+    async (failure) => {
+      let attempts = 0;
+      const fetcher = async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw failure;
+        }
+        return successResponse();
+      };
+      const client = new GitHubGraphqlClient("secret-token", fetcher, {
+        retryBaseDelayMs: 0,
+      });
 
-    await expect(
-      client.execute("query { viewer { login } }"),
-    ).resolves.toMatchObject({ viewer: { login: "eliza" } });
-    expect(attempts).toBe(3);
-    expect(client.getRequestCount()).toBe(3);
-  });
+      await expect(
+        client.execute("query { viewer { login } }"),
+      ).resolves.toMatchObject({ viewer: { login: "eliza" } });
+      expect(attempts).toBe(3);
+      expect(client.getRequestCount()).toBe(3);
+    },
+  );
 
   it("retries a truncated successful JSON response before returning validated data", async () => {
     let attempts = 0;
