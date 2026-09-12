@@ -180,7 +180,7 @@ function opportunityPointsWithinCap(
     return null;
   }
   if (opportunity.potentialPoints === null) {
-    return 0;
+    return null;
   }
   if (
     opportunity.category === "material-test-change" &&

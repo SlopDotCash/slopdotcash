@@ -410,10 +410,9 @@ if (mode === "production") {
   baseUrl = `http://127.0.0.1:${previewPort}`;
   previewState = { error: undefined };
   previewServer = spawn(
-    "bun",
+    process.execPath,
     [
-      "--bun",
-      "vite",
+      join(packageRoot, "node_modules", "vite", "bin", "vite.js"),
       "preview",
       "--host",
       "127.0.0.1",
@@ -536,8 +535,9 @@ try {
       timeout: 20_000,
     });
     await page
-      .locator(".hero-action")
+      .locator(".hero-typewriter:visible, .hero-mobile-action:visible")
       .filter({ hasText: /^SHIPPING OPEN SOURCE\.$/u })
+      .first()
       .waitFor({ state: "visible", timeout: 10_000 });
     await page.locator("#projects").waitFor({ state: "visible" });
     await page

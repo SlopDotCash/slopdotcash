@@ -1217,6 +1217,7 @@ function isTransientNetworkError(value: unknown): boolean {
     error.name === "AbortError" ||
     [
       "ConnectionRefused",
+      "FailedToOpenSocket",
       "ECONNREFUSED",
       "ECONNRESET",
       "EHOSTUNREACH",

@@ -137,7 +137,10 @@ Generated files under `public/brand/`, `public/downloads/`,
 
 ## Local development
 
-Requirements: Bun 1.3.14 and Node.js 24 or newer.
+Requirements: Bun 1.3.14 and Node.js 24.15.0 (the CI-tested version).
+Installer validation also needs Python 3 with PyYAML 6.0.3. Create an isolated
+virtual environment, install `PyYAML==6.0.3`, and set `SLOP_PYTHON` to its Python
+executable. Put the tested Node and Bun binaries on `PATH` before running checks.
 
 ```bash
 bun install --frozen-lockfile
@@ -181,3 +184,26 @@ an issue or pull request.
 
 Slop is experimental software. The repository is licensed under the
 [MIT License](LICENSE).
+
+### Focused maintenance commands
+
+- `bun run check:unused` checks application locals and parameters; review exports,
+  generated entry points, CLI tools, and configuration before removing dependencies.
+- `bun run test:evidence` runs the planted evidence-verifier failure cases.
+- `bun run test:coverage` produces branch-coverage reports for core domain boundaries
+  under `coverage/`. Use uncovered behavior to investigate meaningful risks, not
+  to create shape-only tests or score-padding submissions.
+- `bun run quality:simulate -- PREPARATION EVIDENCE PROPOSAL OUTPUT` recalculates
+  a saved quality proposal against its exact source and budget. It creates a new
+  output file and never authorizes payments or trusts imported output amounts.
+- Edit shared contributor helpers in the manifest-selected root-published skill,
+  then run `bun run skills:sync`. Other project copies are derived, checked by
+  `bun run skills:check`, and committed so each immutable archive remains
+  self-contained. Project-specific instructions remain in each canonical skill.
+
+Browser evidence is retained separately under `test-results/preview` and
+`test-results/pages`, with matching `playwright-report/` subdirectories. CI keeps
+successful screenshots and results as well as failure diagnostics. Tests use
+finite per-case budgets; pure domain tests run in Node, while shared publication
+fixtures remain serial. `bun run verify` remains the complete local source gate;
+run `bun run test:e2e` separately for the full browser matrix.

@@ -262,8 +262,12 @@ describe("slop.cash deployment contract", () => {
     expect(playwrightConfiguration).toContain(
       'process.env.SLOP_E2E_SERVER ?? "pages"',
     );
-    expect(playwrightConfiguration).toContain("vite preview");
-    expect(playwrightConfiguration).toContain("wrangler pages dev dist");
+    expect(playwrightConfiguration).toContain(
+      "node node_modules/vite/bin/vite.js preview",
+    );
+    expect(playwrightConfiguration).toContain(
+      "node_modules/wrangler/bin/wrangler.js pages dev dist",
+    );
     for (const project of [
       "wide-desktop-chromium",
       "desktop-chromium",

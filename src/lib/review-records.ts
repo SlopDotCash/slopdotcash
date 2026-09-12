@@ -19,7 +19,7 @@ export interface ReviewRecord {
   model: string;
   client: string;
   runId: string;
-  traceSha256: string;
+  traceSha256: string | null;
   recommendation: "accept" | "partial" | "reject" | "hold";
   reproduced: boolean;
   securityRisk: "none" | "suspected" | "confirmed";
@@ -307,7 +307,12 @@ export function assertReviewRecord(value: unknown): ReviewRecord {
     model: typeof value.model === "string" ? value.model : "",
     client: typeof value.client === "string" ? value.client : "",
     runId: typeof value.runId === "string" ? value.runId : "",
-    traceSha256: typeof value.traceSha256 === "string" ? value.traceSha256 : "",
+    traceSha256:
+      value.traceSha256 === null
+        ? null
+        : typeof value.traceSha256 === "string"
+          ? value.traceSha256
+          : "",
     recommendation: value.recommendation as ReviewRecord["recommendation"],
     reproduced: value.reproduced,
     securityRisk: value.securityRisk as ReviewRecord["securityRisk"],
@@ -376,7 +381,8 @@ export function assertReviewRecordReceiptJoin(
   if (
     record.projectId !== receipt.projectId ||
     (record.runId !== "" && record.runId !== receipt.runId) ||
-    (record.traceSha256 !== "" &&
+    (record.traceSha256 !== null &&
+      record.traceSha256 !== "" &&
       record.traceSha256 !== receipt.traceUpload?.sha256) ||
     (record.provider !== "" && record.provider !== receipt.provider) ||
     (record.model !== "" && record.model !== receipt.model) ||

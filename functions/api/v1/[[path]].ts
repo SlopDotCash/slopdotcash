@@ -20,7 +20,6 @@ type PagesContext = {
 };
 
 export const MAX_IDENTITY_RESPONSE_BYTES = 16 * 1024;
-export const MAX_PRIVATE_INTAKE_RESPONSE_BYTES = 16 * 1024;
 type PrivateIntakeStatus =
   | { status: "verified"; enabled: boolean; verifiedAt: string }
   | { status: "rate_limited"; resetAt: string }

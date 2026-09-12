@@ -750,7 +750,7 @@ describe("authenticated skill installer lifecycle", () => {
     );
     expect(behind.status).not.toBe(0);
     expect(behind.stderr).toContain("behind or divergent");
-  }, 0);
+  }, 120_000);
 
   it("transitions a labeled candidate to its merged result without reviving it on rollback", () => {
     const root = freshRoot("candidate-merge");

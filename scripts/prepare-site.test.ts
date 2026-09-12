@@ -26,7 +26,9 @@ import { createInstallCommand } from "../src/lib/install-command";
 import { PROJECTS } from "../src/lib/projects.mjs";
 import { createInstallAuthorityFixture } from "../tests/install-authority-fixture";
 
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const fixtureRoot = mkdtempSync(join(tmpdir(), "slop-site-contract-"));
+const packageRoot = join(fixtureRoot, "repository");
 const repositoryRoot = packageRoot;
 const rootPublishedProject = PROJECTS.find(
   (project) => project.skill.publishAtRoot,
@@ -271,6 +273,52 @@ function runInstall(command: string, root: string) {
 }
 
 beforeAll(() => {
+  // Package a private checkout so generated output and hostile source fixtures
+  // cannot corrupt another suite or the developer's public build.
+  execFileSync("git", [
+    "clone",
+    "--quiet",
+    "--shared",
+    sourceRoot,
+    packageRoot,
+  ]);
+  const tracked = execFileSync("git", ["ls-files", "-z"], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+  })
+    .split("\0")
+    .filter(Boolean);
+  for (const path of tracked) {
+    const source = join(sourceRoot, path);
+    const target = join(packageRoot, path);
+    if (!existsSync(source)) {
+      rmSync(target, { force: true });
+      continue;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(source, target);
+  }
+  execFileSync("git", ["add", "-A"], { cwd: packageRoot });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "--allow-empty",
+      "--quiet",
+      "-m",
+      "Isolated current source",
+    ],
+    { cwd: packageRoot },
+  );
+  symlinkSync(
+    join(sourceRoot, "node_modules"),
+    join(packageRoot, "node_modules"),
+    "junction",
+  );
   execFileSync("node", [join(packageRoot, "scripts", "prepare-site.mjs")], {
     cwd: repositoryRoot,
     stdio: "inherit",
@@ -365,6 +413,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  rmSync(fixtureRoot, { force: true, recursive: true });
   if (authorityRoot) {
     rmSync(authorityRoot, { force: true, recursive: true });
   }
@@ -495,7 +544,7 @@ describe("contribution skill package", () => {
       stdio: "inherit",
     });
     expect(readFileSync(archivePath)).toEqual(firstArchive);
-  }, 0);
+  }, 120_000);
 
   it("contains every canonical dependency, no extra source, and bound provenance", () => {
     const archive = inspectArchive();

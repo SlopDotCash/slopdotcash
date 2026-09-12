@@ -143,6 +143,7 @@ jobs:
             node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA" "$PROJECT_POLICY_HEAD_SHA"
           fi
           bun run projects:check
+          bun run skills:check
           bun run evaluations:check
           for skill in skills/*; do
             test -d "$skill"
@@ -204,7 +205,9 @@ jobs:
         run: bun run cycles:verify
 
       - name: Check types
-        run: bun run typecheck
+        run: |
+          bun run typecheck
+          bun run check:unused
 
       - name: Check formatting and lint
         run: |
@@ -212,7 +215,9 @@ jobs:
           bun run lint:check
 
       - name: Run unit tests
-        run: bun run test
+        run: |
+          bun run test:evidence
+          bun run test
 
       - name: Build production site
         run: bun run build
@@ -244,7 +249,7 @@ jobs:
           retention-days: 7
 
       - name: Upload browser diagnostics
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: slop-browser-diagnostics-${{ github.run_id }}

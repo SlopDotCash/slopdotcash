@@ -34,7 +34,7 @@
     "rewards:plan-settlement": "bun scripts/prepare-settlement-plan.ts",
     "rewards:verify-settlement": "bun scripts/verify-settlement.ts",
     "audit:dependencies": "bun audit",
-    "verify": "bun run brand:check && bun run projects:check && bun run evaluations:check && bun run funding:check && bun run quality:check && bun run cycles:check && bun run protocol:check && bun run audit:dependencies && bun run typecheck && bun run format:check && bun run lint:check && bun run test && bun run build",
+    "verify": "bun run brand:check && bun run projects:check && bun run skills:check && bun run evaluations:check && bun run funding:check && bun run quality:check && bun run cycles:check && bun run protocol:check && bun run audit:dependencies && bun run test:evidence && bun run check:unused && bun run typecheck && bun run format:check && bun run lint:check && bun run test && bun run build",
     "typecheck": "tsc -b",
     "test": "vitest run && bun test --timeout 30000 --max-concurrency 1 ./skill-tests",
     "test:e2e": "node scripts/run-e2e.mjs",
@@ -44,7 +44,13 @@
     "lint:check": "bun x @biomejs/biome check .",
     "format": "bun x @biomejs/biome format --write .",
     "format:check": "bun x @biomejs/biome format .",
-    "clean": "node scripts/rm-path-recursive.mjs dist"
+    "clean": "node scripts/rm-path-recursive.mjs dist",
+    "test:evidence": "node scripts/check-pr-evidence.mjs --self-test",
+    "check:unused": "tsc -p tsconfig.app.json --noUnusedLocals --noUnusedParameters",
+    "quality:simulate": "bun scripts/simulate-contribution-quality.ts",
+    "skills:sync": "node scripts/sync-skill-scripts.mjs",
+    "skills:check": "node scripts/sync-skill-scripts.mjs --check",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@fontsource/poppins": "^5.2.7",
@@ -54,9 +60,9 @@
     "react-dom": "19.2.7"
   },
   "devDependencies": {
-    "@noble/curves": "2.4.0",
     "@axe-core/playwright": "^4.11.1",
     "@biomejs/biome": "2.5.6",
+    "@noble/curves": "2.4.0",
     "@playwright/test": "^1.61.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -66,6 +72,7 @@
     "@types/react-dom": "^19",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@vitejs/plugin-react": "^6.0.0",
+    "@vitest/coverage-v8": "4.1.11",
     "bun-types": "1.3.14",
     "graphql": "^16.13.2",
     "jsdom": "^29.0.0",

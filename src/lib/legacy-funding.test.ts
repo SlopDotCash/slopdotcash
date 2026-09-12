@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
+import { syncCycleIndex } from "../../scripts/sync-cycle-index";
 import { assertCycleIndex } from "./cycle-index";
 import { assertRewardAllocationManifest } from "./rewards";
 
@@ -27,9 +28,7 @@ describe("immutable historical funding basis", () => {
     expect(proposal.capMinor).toBe("10000000000");
     expect(proposal.fundingBasis).toBeUndefined();
     expect(() => assertRewardAllocationManifest(proposal)).not.toThrow();
-    const index = JSON.parse(
-      await readFile("public/data/cycles/index.json", "utf8"),
-    );
+    const index = await syncCycleIndex({ checkOnly: true });
     expect(() => assertCycleIndex(index)).not.toThrow();
     expect(await readFile(path)).toEqual(bytes);
   });

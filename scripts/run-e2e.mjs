@@ -27,6 +27,8 @@ function run(command, args, env = childEnvironment()) {
     cwd: packageRoot,
     env,
     stdio: "inherit",
+    timeout: 25 * 60_000,
+    killSignal: "SIGKILL",
   });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
