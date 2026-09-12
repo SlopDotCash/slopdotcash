@@ -863,6 +863,33 @@ describe("score v2 work units", () => {
       scoreThirds: 3,
       evidenceBonusBasisPoints: 1_500,
     });
+    const untraced = structuredClone(postUsageBonusInput);
+    const untracedSource = untraced.mergedPullRequests[0].comments.find(
+      (comment) => comment.id === source.id,
+    );
+    if (!untracedSource) throw new Error("Missing review source fixture");
+    untracedSource.body = untracedSource.body
+      .replace(/,"trace_upload":\{[^}]+\}/u, "")
+      .replace(/"traceSha256":"[a-f0-9]+"/u, '"traceSha256":null');
+    const withoutTrace = createLeaderboardSnapshot({
+      ...untraced,
+      verifyRunReceipt: (value) => value as ProjectRunReceipt,
+    });
+    expect(
+      withoutTrace.ledger.find(
+        (event) => event.id === `${pr.id}:automated-review:${source.id}`,
+      ),
+    ).toMatchObject({
+      scoreThirds: 3,
+      evidenceBonusBasisPoints: 0,
+      reason:
+        "Automated standard review without private trace; maintainer scoring remains authoritative.",
+    });
+    expect(
+      accepted.ledger.find(
+        (event) => event.id === `${pr.id}:automated-review:${source.id}`,
+      )?.reason,
+    ).toContain("with finalized private trace");
     const outsideAuthorDetailCap = createLeaderboardSnapshot({
       ...postUsageBonusInput,
       detailEligibleMergedPullRequestIds: [],
@@ -4399,8 +4426,8 @@ describe("work queue claims and prioritization", () => {
         (opportunity) => opportunity.kind === "near-material-test",
       ),
     ).toMatchObject({
-      potentialPoints: 4,
-      hint: expect.stringMatching(/^Add recognized test coverage/),
+      potentialPoints: null,
+      hint: expect.stringMatching(/^Test the behavior changed/),
       actor: { id: author.id },
     });
     expect(
@@ -4408,9 +4435,9 @@ describe("work queue claims and prioritization", () => {
         (opportunity) => opportunity.kind === "expand-review",
       ),
     ).toMatchObject({
-      potentialPoints: 3,
+      potentialPoints: null,
       actor: { id: reviewer.id },
-      hint: expect.stringMatching(/^Add at least 20 characters/),
+      hint: expect.stringMatching(/^Explain a concrete correctness finding/),
     });
     expect(
       snapshot.opportunities.some((row) => /fail|reject|drop/i.test(row.hint)),

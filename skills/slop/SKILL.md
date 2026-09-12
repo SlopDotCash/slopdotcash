@@ -75,12 +75,12 @@ Before running the guide, show the operator one short plan containing:
   upload stays blocked unless the public operator-controlled private-request
   intake gate reports enabled.
 
-If the user's request already explicitly authorized installing the project
-skill, previewing local aggregate usage, and permanently storing the run trace
-for designated Slop operators, continue. Otherwise obtain approval for those
-actions. Declining trace storage never blocks submission. Wallet
-setup, other network uploads, background services, and production changes
-always need separate explicit approval.
+If the user's request authorizes installing the project skill, continue with
+installation. Ask about local aggregate usage or permanent private trace storage
+only when the contributor chooses that optional evidence. Obtain approval for
+the selected action unless it is already authorized. Declining either option
+never blocks installation or submission. Wallet setup, other network uploads,
+background services, and production changes require their own authorization.
 
 ## Install and verify
 

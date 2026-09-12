@@ -17,7 +17,7 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 
 const test = base.extend<{ browserDiagnostics: undefined }>({
   browserDiagnostics: [
-    async ({ baseURL, page }, use) => {
+    async ({ baseURL, page }, use, testInfo) => {
       const failures: string[] = [];
       const origin = new URL(baseURL ?? "http://127.0.0.1:4466").origin;
       page.on("console", (message) => {
@@ -40,6 +40,14 @@ const test = base.extend<{ browserDiagnostics: undefined }>({
         }
       });
       await use(undefined);
+      await testInfo.attach("browser-diagnostics", {
+        body: JSON.stringify({
+          sourceRevision: testInfo.config.metadata.sourceRevision,
+          url: page.url(),
+          failures,
+        }),
+        contentType: "application/json",
+      });
       expect(
         failures,
         "browser console, request, and response failures",

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 /**
  * Drives desktop and mobile browser verification against the built site.
  */
@@ -16,12 +17,20 @@ if (!new Set(["pages", "preview"]).has(localServer)) {
 
 const localServerCommand =
   localServer === "preview"
-    ? "bun --bun vite preview --host 127.0.0.1 --port 4466 --strictPort"
+    ? "node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4466 --strictPort"
     : "bunx wrangler pages dev dist --ip 127.0.0.1 --port 4466 --log-level warn --show-interactive-dev-session=false";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 0,
+  metadata: {
+    sourceRevision: execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim(),
+    server: localServer,
+  },
+  timeout: 120_000,
+  globalTimeout: 20 * 60_000,
+  outputDir: `test-results/${localServer}`,
   expect: { timeout: 10_000 },
   fullyParallel: true,
   // Wrangler's Pages proxy can terminate while serving concurrent browser
@@ -32,12 +41,19 @@ export default defineConfig({
   // intermittent console, network, accessibility, or rendering failure must
   // fail the exact run instead of being converted into a flaky green result.
   retries: 0,
-  reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
+  reporter: [
+    [
+      "html",
+      { open: "never", outputFolder: `playwright-report/${localServer}` },
+    ],
+    ["json", { outputFile: `test-results/${localServer}/results.json` }],
+    ["list"],
+  ],
   use: {
     baseURL: externalBaseUrl ?? "http://127.0.0.1:4466",
     contextOptions: { reducedMotion: "reduce" },
     trace: "retain-on-failure",
-    screenshot: "only-on-failure",
+    screenshot: "on",
     video: "retain-on-failure",
   },
   webServer: externalBaseUrl
@@ -51,6 +67,8 @@ export default defineConfig({
         reuseExistingServer:
           process.env.SLOP_E2E_FORCE_FRESH_SERVER !== "1" && !process.env.CI,
         timeout: 120_000,
+        stdout: "pipe",
+        stderr: "pipe",
       },
   projects: [
     {

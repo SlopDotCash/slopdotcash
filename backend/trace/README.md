@@ -1,6 +1,6 @@
 # Private trace backend
 
-This directory is the private, incremental backend boundary for mandatory run
+This directory is the private, incremental backend boundary for optional run
 traces. Git remains the public authority for projects, scoring, cycles, and
 settlement. D1 records private joins and metadata only. Trace bodies live in a
 dedicated private R2 bucket and are never returned from a contributor or
@@ -12,12 +12,13 @@ This backend stores the selected file byte-for-byte and does not redact or scan
 it. Backend integrity checks enforce the declared bytes; they do not replace
 the contributor's required pre-upload inspection.
 
-Trace upload and production activation require GitHub's public private
-vulnerability reporting status to return exactly `enabled: true`. The deploy
-workflow verifies GitHub directly, while the client reads only the bounded
-server-authoritative Slop preflight. Both checks fail closed; an advisory URL
-alone is not evidence of availability, and a public issue is never a private
-intake.
+Optional trace upload requires a fresh authenticated observation that GitHub's
+private vulnerability reporting is enabled. The hourly health workflow renews
+that observation independently of website publication. The client reads the
+bounded server-authoritative preflight; stale or unavailable status blocks trace
+upload only. Ordinary GitHub submission and website deployment remain available.
+An advisory URL alone is not evidence of availability, and a public issue is
+never a private intake.
 
 ## Storage contract
 

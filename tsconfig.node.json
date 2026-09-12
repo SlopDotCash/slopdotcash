@@ -36,13 +36,11 @@
     "src/lib/squads-funding.ts",
     "src/lib/squads-execution.ts",
     "src/lib/squads-execution-verifier.ts",
-    "src/lib/squads-batch-message.ts",
     "src/lib/squads-batch-handoff.ts",
     "src/lib/leaderboard.ts",
     "src/lib/model-identity.ts",
     "src/lib/install-command.ts",
     "src/lib/project-view.ts",
-    "src/lib/private-intake-attestation.ts",
     "src/lib/reward-cycle.ts",
     "src/lib/reward-finalization.ts",
     "src/lib/rewards.ts",
@@ -51,11 +49,11 @@
     "src/lib/run-receipts.ts",
     "src/lib/settlement-plan.ts",
     "src/lib/payment-reservations.ts",
-    "src/lib/browser-json.ts",
     "src/lib/solana-settlement.ts",
     "src/lib/wallets.ts",
     "tests/fixtures.ts",
     "tests/squads-execution-context.ts",
-    "tests/install-authority-fixture.ts"
+    "tests/install-authority-fixture.ts",
+    "src/lib/leaderboard-types.ts"
   ]
 }

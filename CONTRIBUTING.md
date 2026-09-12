@@ -7,7 +7,8 @@ safe under hostile input.
 ## Before you start
 
 1. Read `README.md` and `AGENTS.md`.
-2. Open or claim a GitHub issue for non-trivial work.
+2. Check existing issues and pull requests for overlapping work. Link the relevant
+   issue when one exists; ordinary contributions do not require a reservation.
 3. Fetch the latest `origin/develop` and create a scoped branch from it.
 4. Re-read live GitHub before acting; issue assignment, review, and project
    state may have changed.
@@ -47,8 +48,9 @@ The contributor skill must:
 - inspect live GitHub before selecting work;
 - respect the target repository’s instructions and contribution policy;
 - allow any provider, model, and client with exact disclosure;
-- produce tests, evidence, and a signed attribution receipt;
-- upload only the contributor-reviewed minimized private trace through the
+- test the result and disclose the exact provider, model, and client;
+- offer signed receipts and private traces as optional evidence, never as a
+  submission prerequisite; upload only contributor-reviewed traces through the
   authenticated write-only path;
 - never claim an issue, publish a placeholder PR, handle keys, or move money.
 
