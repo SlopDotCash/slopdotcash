@@ -105,5 +105,56 @@ test("quality review groups duplicate accepted work and carries an exact source-
         document.documentElement.clientWidth + 1,
     ),
   ).toBe(true);
+  await page.reload();
+  await panel.locator("summary").click();
+  await panel
+    .getByRole("button", { name: "Load cycle evidence", exact: true })
+    .click();
+  await expect(panel).toContainText("2 of 7061 source events reviewed");
+  await panel.getByLabel("Import saved quality decisions").setInputFiles({
+    name: "matching-evidence-decisions.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(proposal)),
+  });
+  await expect(panel.getByRole("status")).toContainText(
+    "Saved decisions imported and amounts recalculated",
+  );
+  await expect(panel).toContainText("2 of 7061 source events reviewed");
+
+  // Historical recovery can change the reviewed payload without changing the
+  // predecessor snapshot/census labels. Never replay decisions across that change.
+  await page.route(
+    "**/data/contribution-quality/eliza-2026-08.json",
+    async (route) => {
+      const response = await route.fetch();
+      const updated = await response.json();
+      updated.events[0].flags.push("recovered review context");
+      await route.fulfill({ response, json: updated });
+    },
+  );
+  await page.reload();
+  await panel.locator("summary").click();
+  await panel
+    .getByRole("button", { name: "Load cycle evidence", exact: true })
+    .click();
+  await expect(panel.getByRole("status")).toContainText(
+    "Invalid saved quality decisions",
+  );
+  await panel
+    .getByRole("button", { name: "Clear saved quality draft", exact: true })
+    .click();
+  await panel
+    .getByRole("button", { name: "Load cycle evidence", exact: true })
+    .click();
+  await expect(panel).toContainText("0 of 7061 source events reviewed");
+  await panel.getByLabel("Import saved quality decisions").setInputFiles({
+    name: "previous-evidence-decisions.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(proposal)),
+  });
+  await expect(panel.getByRole("status")).toContainText(
+    "Decision file does not match this exact cycle, source and budget",
+  );
+  await expect(panel).toContainText("0 of 7061 source events reviewed");
   expect(errors).toEqual([]);
 });

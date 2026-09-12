@@ -13,7 +13,7 @@ import {
   createFundingReview,
 } from "../src/lib/funding-review-data";
 
-it("recalculates a bound proposal and rejects forged sources and output replacement", () => {
+it("recalculates a bound proposal and rejects forged sources and output replacement", async () => {
   const root = mkdtempSync(join(tmpdir(), "slop-quality-cli-"));
   try {
     const preparationPath = resolve("funding/preparations/eliza-2026-08.json");
@@ -33,7 +33,7 @@ it("recalculates a bound proposal and rejects forged sources and output replacem
       projectId: preparation.projectId,
       cycleId: preparation.cycleId,
       sourceSnapshotSha256: preparation.sourceSnapshotSha256,
-      sourceQualityBinding: qualityEvidenceBinding(evidence),
+      sourceQualityBinding: await qualityEvidenceBinding(evidence),
       capMinor,
       paymentAuthorized: false,
       decisions: [],
@@ -42,15 +42,15 @@ it("recalculates a bound proposal and rejects forged sources and output replacem
     const proposalPath = join(root, "proposal.json");
     const outputPath = join(root, "output.json");
     writeFileSync(proposalPath, JSON.stringify(proposal));
-    const run = () =>
+    const run = (source = evidencePath, output = outputPath) =>
       spawnSync(
         "bun",
         [
           "scripts/simulate-contribution-quality.ts",
           preparationPath,
-          evidencePath,
+          source,
           proposalPath,
-          outputPath,
+          output,
         ],
         {
           encoding: "utf8",
@@ -78,6 +78,14 @@ it("recalculates a bound proposal and rejects forged sources and output replacem
       ]),
     );
     expect(run().status).not.toBe(0);
+    const changed = structuredClone(evidence);
+    changed.events[0].flags.push("recovered review context");
+    const changedPath = join(root, "changed-evidence.json");
+    const staleOutput = join(root, "stale-output.json");
+    writeFileSync(changedPath, JSON.stringify(changed));
+    const stale = run(changedPath, staleOutput);
+    expect(stale.status, stale.stderr).not.toBe(0);
+    expect(stale.stderr).toContain("Proposal does not match the exact source");
     writeFileSync(
       proposalPath,
       JSON.stringify({ ...proposal, sourceSnapshotSha256: "f".repeat(64) }),

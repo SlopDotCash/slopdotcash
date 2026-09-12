@@ -400,6 +400,15 @@ export async function verifyQualityEventIds(
   }
 }
 
-export function qualityEvidenceBinding(evidence: QualityEvidence): string {
-  return `${evidence.sourceSnapshotSha256}:${evidence.closureCensus.sourceSha256}:${evidence.closureCensus.discussionSourceSha256 ?? "none"}`;
+/** Bind decisions to the complete reviewed payload, not only its source labels. */
+export async function qualityEvidenceBinding(
+  evidence: QualityEvidence,
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(evidence)),
+  );
+  return `quality-evidence-v2:${Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
 }

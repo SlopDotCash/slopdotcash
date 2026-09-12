@@ -23,7 +23,12 @@ export function ContributionQualityReview({
   capMinor: string;
   onApply: (adjustments: ReviewAdjustment[]) => void;
 }) {
-  const [evidence, setEvidence] = useState<QualityEvidence | null>(null);
+  const [loaded, setLoaded] = useState<{
+    evidence: QualityEvidence;
+    binding: string;
+  } | null>(null);
+  const evidence = loaded?.evidence ?? null;
+  const binding = loaded?.binding ?? null;
   const [decisions, setDecisions] = useState<QualityDecision[]>([]);
   const [burdens, setBurdens] = useState<QualityBurdenDecision[]>([]);
   const [deduction, setDeduction] = useState("0");
@@ -47,7 +52,7 @@ export function ContributionQualityReview({
         JSON.stringify({
           decisions,
           burdens,
-          binding: qualityEvidenceBinding(evidence),
+          binding,
         }),
       );
     } catch {
@@ -55,7 +60,7 @@ export function ContributionQualityReview({
         "Quality decisions could not be saved in this browser. Download them before leaving.",
       );
     }
-  }, [draftKey, evidence, decisions, burdens]);
+  }, [draftKey, evidence, binding, decisions, burdens]);
   const actors = useMemo(
     () =>
       new Map(
@@ -156,13 +161,14 @@ export function ContributionQualityReview({
       }
       const validated = assertQualityEvidence(value, preparation);
       await verifyQualityEventIds(validated, preparation);
+      const validatedBinding = await qualityEvidenceBinding(validated);
       let restoredDecisions: QualityDecision[] = [],
         restoredBurdens: QualityBurdenDecision[] = [];
       const stored = localStorage.getItem(draftKey);
       if (stored) {
         const restored = JSON.parse(stored);
         if (
-          restored.binding !== qualityEvidenceBinding(validated) ||
+          restored.binding !== validatedBinding ||
           !Array.isArray(restored.decisions) ||
           !Array.isArray(restored.burdens)
         )
@@ -178,7 +184,7 @@ export function ContributionQualityReview({
         restoredDecisions = restored.decisions;
         restoredBurdens = restored.burdens;
       }
-      setEvidence(validated);
+      setLoaded({ evidence: validated, binding: validatedBinding });
       setDecisions(restoredDecisions);
       setBurdens(restoredBurdens);
       setSelected([]);
@@ -290,9 +296,7 @@ export function ContributionQualityReview({
               projectId: preparation.projectId,
               cycleId: preparation.cycleId,
               sourceSnapshotSha256: preparation.sourceSnapshotSha256,
-              sourceQualityBinding: evidence
-                ? qualityEvidenceBinding(evidence)
-                : null,
+              sourceQualityBinding: binding,
               capMinor,
               decisions,
               burdens,
@@ -349,7 +353,7 @@ export function ContributionQualityReview({
         type="button"
         onClick={() => {
           localStorage.removeItem(draftKey);
-          setEvidence(null);
+          setLoaded(null);
           setDecisions([]);
           setBurdens([]);
           setSelected([]);
@@ -384,8 +388,7 @@ export function ContributionQualityReview({
                     value.cycleId !== preparation.cycleId ||
                     value.sourceSnapshotSha256 !==
                       preparation.sourceSnapshotSha256 ||
-                    value.sourceQualityBinding !==
-                      qualityEvidenceBinding(evidence) ||
+                    value.sourceQualityBinding !== binding ||
                     value.capMinor !== capMinor ||
                     value.paymentAuthorized !== false ||
                     !Array.isArray(value.decisions) ||

@@ -35,7 +35,7 @@ if (
   proposal.projectId !== preparation.projectId ||
   proposal.cycleId !== preparation.cycleId ||
   proposal.capMinor !== review.capMinor ||
-  proposal.sourceQualityBinding !== qualityEvidenceBinding(evidence) ||
+  proposal.sourceQualityBinding !== (await qualityEvidenceBinding(evidence)) ||
   proposal.paymentAuthorized !== false ||
   !Array.isArray(proposal.decisions) ||
   !Array.isArray(proposal.burdens)
