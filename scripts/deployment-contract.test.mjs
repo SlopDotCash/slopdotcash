@@ -333,7 +333,7 @@ describe("slop.cash deployment contract", () => {
     expect(deployJob).toContain("group: slop-production");
     expect(deployJob).toContain("cancel-in-progress: false");
     expect(deployJob).toContain(
-      "name: ${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}",
+      `name: \${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}`,
     );
     expect(workflow).not.toContain("environment: eliza-army-production");
   });

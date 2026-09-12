@@ -32,7 +32,7 @@ describe("independent release and intake paths", () => {
     expect(jobs.deploy.if).not.toContain("needs.approve");
     expect(jobs.deploy.concurrency.group).toBe("slop-production");
     expect(jobs.deploy.environment.name).toBe(
-      "${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}",
+      `\${{ github.event_name == 'schedule' && 'slop-data-refresh' || 'eliza-army-production' }}`,
     );
     const publication = jobs.deploy.steps.find(
       (step) => step.id === "pages-deploy",
