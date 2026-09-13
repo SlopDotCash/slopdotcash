@@ -3597,7 +3597,12 @@ function SponsorsPage() {
           only when a committed amount is backed by an active instrument with
           verifier evidence, and allocation never exceeds that amount.
         </p>
-        <div className="plain-table-wrap">
+        <div
+          className="plain-table-wrap"
+          role="region"
+          aria-label="Project funding pools"
+          tabIndex={0}
+        >
           <table className="plain-table sponsor-pools-table">
             <thead>
               <tr>
