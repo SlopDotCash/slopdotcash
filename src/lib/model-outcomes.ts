@@ -23,16 +23,6 @@ const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   "moonshot-ai": "moonshotai",
 };
 
-const PROVIDER_PREFIXES = [
-  "openai/",
-  "anthropic/",
-  "xai/",
-  "google/",
-  "zai/",
-  "z-ai/",
-  "z.ai/",
-];
-
 export interface ModelIdentityKey {
   provider: string;
   model: string;
@@ -51,9 +41,17 @@ export function modelIdentityKey(
   const rawProvider = provider.trim().toLowerCase();
   const normalizedProvider = PROVIDER_ALIASES[rawProvider] ?? rawProvider;
   let normalizedModel = model.trim().toLowerCase();
-  for (const prefix of [`${normalizedProvider}/`, ...PROVIDER_PREFIXES]) {
+  const prefixes = [
+    normalizedProvider,
+    ...Object.keys(PROVIDER_ALIASES).filter(
+      (alias) => PROVIDER_ALIASES[alias] === normalizedProvider,
+    ),
+  ];
+  for (const providerPrefix of prefixes) {
+    const prefix = `${providerPrefix}/`;
     if (normalizedModel.startsWith(prefix)) {
       normalizedModel = normalizedModel.slice(prefix.length);
+      break;
     }
   }
   return {
@@ -212,6 +210,7 @@ export function summarizeModelOutcomes(
   const byArtifact = new Map<string, ModelAttribution[]>();
   const models = new Map<string, ModelBucket>();
   const clients = new Map<string, ClientBucket>();
+  const countedRuns = new Set<string>();
   const declaringContributors = new Set<string>();
   const signedContributors = new Set<string>();
   const declaredIdentifiers = new Set<string>();
@@ -238,13 +237,15 @@ export function summarizeModelOutcomes(
       bucket.signedDeclarations += 1;
       if (actorId) signedContributors.add(actorId);
       const client = attributionClient(attribution);
-      if (client) {
+      const runKey = `${attribution.run.devicePublicKey}:${attribution.run.runId}`;
+      if (client && !countedRuns.has(runKey)) {
+        countedRuns.add(runKey);
         const clientBucket = getOrCreate(clients, client, newClientBucket);
         clientBucket.signedRuns += 1;
         if (actorId) clientBucket.contributors.add(actorId);
         increment(clientBucket.models, identity.key);
         const usage = attribution.run.usage;
-        if (usage.confidence === "exact" && usage.outputTokens > 0) {
+        if (usage.confidence === "exact") {
           clientBucket.outputTokens.push(usage.outputTokens);
         }
       }

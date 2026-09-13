@@ -3605,8 +3605,8 @@ function ModelsPage({ state, retry }: { state: DataState; retry: () => void }) {
           carry a model declaration by the person who did the work. This page
           counts those declarations next to the outcomes they were made on.
           Model identity is self-reported, adds no points, and is never checked
-          against the provider. A signed receipt is the harder evidence; a
-          declaration in the text is the broader picture.
+          against the provider. A signed receipt binds a device to its
+          declaration; neither form verifies which model produced the work.
         </p>
         <DataNotice retry={retry} state={state} />
       </section>
@@ -3620,13 +3620,13 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
   const count = new Intl.NumberFormat("en-US");
   const percent = (part: number, whole: number) =>
     `${whole > 0 ? Math.round((100 * part) / whole) : 0}%`;
-  const points = (value: number) => count.format(Math.round(value));
+  const points = (value: number) => count.format(value);
   const modelRows = summary.models
     .filter((row) => row.mergedPullRequests > 0 || row.acceptedReviews > 0)
     .slice(0, 30);
   const concentrated = modelRows.filter(
     (row) =>
-      row.mergedPullRequests >= 40 && (row.topContributorShare ?? 0) >= 0.5,
+      row.mergedPullRequests >= 40 && (row.topContributorShare ?? 0) > 0.5,
   );
   if (totals.declarations === 0) {
     return <EmptyState text="No model declarations in this snapshot." />;
@@ -3684,7 +3684,7 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                 <th scope="col">Signed PRs</th>
                 <th scope="col">PR points</th>
                 <th scope="col">Accepted reviews</th>
-                <th scope="col">Contributors</th>
+                <th scope="col">Declaring contributors</th>
                 <th scope="col">Top contributor share</th>
               </tr>
             </thead>
@@ -3706,7 +3706,7 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                   <td>{count.format(row.contributors)}</td>
                   <td
                     className={
-                      (row.topContributorShare ?? 0) >= 0.5
+                      (row.topContributorShare ?? 0) > 0.5
                         ? "model-share-high"
                         : undefined
                     }
@@ -3785,8 +3785,8 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
           <li>
             This is not a benchmark. Contributors choose their own tasks, repos
             and models. A model with many merges is a model that busy
-            contributors happened to use on work they chose, scored by
-            maintainers who did not know which model wrote it.
+            contributors declared on work they chose. Reviews are not blinded to
+            those declarations.
           </li>
           <li>
             Model is confounded with person.{" "}

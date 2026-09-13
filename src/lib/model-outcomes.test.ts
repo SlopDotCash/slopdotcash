@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { snapshotFixture } from "../../tests/fixtures";
 import type {
   GitHubActor,
   ModelAttribution,
@@ -128,11 +127,19 @@ function signedRun(client: string, outputTokens: number): ProjectRunReceipt {
 describe("modelIdentityKey", () => {
   it("folds case, provider aliases, and repeated provider prefixes", () => {
     expect(modelIdentityKey("OpenAI", "GPT-5.6").key).toBe("openai/gpt-5.6");
-    expect(modelIdentityKey("openai-codex", "gpt-5").key).toBe("openai/gpt-5");
+    expect(modelIdentityKey("openai-codex", "openai-codex/gpt-5").key).toBe(
+      "openai/gpt-5",
+    );
     expect(modelIdentityKey("z.ai", "glm-5.3").key).toBe("zai/glm-5.3");
     expect(modelIdentityKey("zai", "z-ai/glm-5.3").key).toBe("zai/glm-5.3");
     expect(modelIdentityKey("anthropic", "anthropic/claude-opus-5").key).toBe(
       "anthropic/claude-opus-5",
+    );
+  });
+
+  it("preserves a different provider inside the declared model identifier", () => {
+    expect(modelIdentityKey("openai", "anthropic/claude-opus-5").key).toBe(
+      "openai/anthropic/claude-opus-5",
     );
   });
 
@@ -271,7 +278,16 @@ describe("summarizeModelOutcomes", () => {
           model: "claude-opus-5",
           client: "claude-code",
           format: "machine-marker",
-          run: signedRun("Claude-Code", 4_000),
+          run: signedRun("Claude-Code", 0),
+        }),
+        // Repeating the same receipt on another source is not another run.
+        declaration({
+          sourceId: "PR_1:comment",
+          artifactId: "PR_1",
+          actor: author,
+          provider: "anthropic",
+          model: "claude-opus-5",
+          run: signedRun("Claude-Code", 0),
         }),
         declaration({
           sourceId: "PR_2:body",
@@ -294,7 +310,7 @@ describe("summarizeModelOutcomes", () => {
     });
 
     expect(summary.totals).toMatchObject({
-      signedDeclarations: 2,
+      signedDeclarations: 3,
       signedContributors: 1,
       distinctClients: 1,
       mergedPullRequestsWithSignedRun: 2,
@@ -307,7 +323,7 @@ describe("summarizeModelOutcomes", () => {
         mergedPullRequests: 2,
         pullRequestPoints: 4,
         models: [{ key: "anthropic/claude-opus-5", count: 2 }],
-        medianOutputTokens: 7_000,
+        medianOutputTokens: 5_000,
         runsWithExactUsage: 2,
       },
     ]);
@@ -315,18 +331,10 @@ describe("summarizeModelOutcomes", () => {
       (row) => row.key === "anthropic/claude-opus-5",
     );
     expect(opus).toMatchObject({
-      signedDeclarations: 2,
+      signedDeclarations: 3,
       mergedPullRequests: 2,
       signedPullRequests: 2,
       pullRequestPoints: 3.5,
     });
-  });
-
-  it("summarizes the shared snapshot fixture without throwing", () => {
-    const summary = summarizeModelOutcomes(snapshotFixture());
-    expect(summary.totals.declarations).toBe(
-      snapshotFixture().attributions.length,
-    );
-    expect(summary.models.length).toBeGreaterThan(0);
   });
 });

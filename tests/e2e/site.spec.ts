@@ -1099,6 +1099,7 @@ test("reflows at 320 CSS pixels and with independently enlarged text", async ({
   ]) {
     await page.setViewportSize({ width: scenario.width, height: 1000 });
     for (const path of [
+      "/models",
       "/",
       "/projects/eliza",
       "/projects/new",
@@ -1156,6 +1157,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
   page,
 }) => {
   for (const path of [
+    "/models",
     "/",
     ...PROJECTS.map((project) => `/projects/${project.id}`),
     "/projects/eliza/funding",
@@ -1191,4 +1193,40 @@ test("keeps primary routes accessible and inside the viewport", async ({
     );
     expect(overflow, `${path} horizontal page overflow`).toBeLessThanOrEqual(1);
   }
+});
+
+test("opens the models page directly and through keyboard navigation", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/models", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Which models merge. By the receipts.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Which models merge. By the receipts.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await testInfo.attach("models-page", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
+  const addProject = page
+    .locator("footer")
+    .getByRole("link", { name: "Add a project", exact: true });
+  await addProject.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/projects\/new$/);
+  await page.goBack({ waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Which models merge. By the receipts.",
+      exact: true,
+    }),
+  ).toBeVisible();
 });
