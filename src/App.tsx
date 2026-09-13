@@ -3515,8 +3515,9 @@ function SponsorsPage() {
         <p>
           A sponsor sets a monthly cap for a repository, and only work the
           maintainers accept can draw on it. Slop computes the split, publishes
-          every state, and stops there. The money stays in an instrument you
-          control until you sign each transfer yourself.
+          every state, and prepares unsigned payment plans. Funds remain in the
+          reviewed third-party instrument, governed by its own transfer rules.
+          Slop holds no signing keys.
         </p>
       </section>
       <ol className="mechanism-flow" aria-label="What funding a pool buys">
@@ -3525,50 +3526,54 @@ function SponsorsPage() {
           <p>
             A reviewed manifest change sets the monthly cap and the reward
             start. Until a verified on-chain commitment backs it, the pool shows
-            as unfunded with a target, never as a balance. Contributors then
-            point any agent at the repository, and nothing scores until a
-            maintainer merges it or ratifies a review.
+            as unfunded with a target, never as a balance. Contributors then use
+            any agent to contribute. Accepted merges, eligible reviews, and
+            separately reviewed awards follow the published scoring policy.
           </p>
         </li>
         <li>
           <strong>02 · The month freezes</strong>
           <p>
-            At 00:11 UTC on the first, the cycle becomes an immutable proposal
-            under the cap. Fourteen days of public review follow. Every row
-            names its source events, its integer weights, and the scoring rule
-            version, so anyone can recompute it.
+            The monthly workflow prepares a proposal under the cap. Publication
+            depends on complete source data and successful validation. Fourteen
+            days of public review follow. Every row names its source events, its
+            integer weights, and the scoring rule version, so anyone can
+            recompute it.
           </p>
         </li>
         <li>
           <strong>03 · You decide and sign</strong>
           <p>
-            Approve, hold, exclude, reduce, or increase within the cap, each
-            with a public reason. Then sign the USDC transfers from your own
-            wallet. Slop marks the cycle paid only when finalized on-chain
-            evidence reconciles every approved intent and the fee.
+            Project owners review proposed awards within the cap and record
+            changes with a public reason. Authorized signers execute the
+            reviewed transfer plan outside Slop. Slop marks the cycle paid only
+            when finalized on-chain evidence reconciles every approved intent
+            and the fee.
           </p>
         </li>
       </ol>
       <section className="worked-example sponsor-controls">
         <div>
-          <h2>What you decide.</h2>
+          <h2>Funding and review decisions</h2>
           <ul>
             <li>The monthly cap, with exact-cycle overrides.</li>
             <li>
-              Approve, hold, exclude, reduce, or increase any proposed row
-              within the cap, with a public reason. Amount changes restart the
-              14-day review.
+              Project owners may adjust proposed awards within the cap, with a
+              public reason. Amount changes restart the 14-day review.
             </li>
             <li>Whether to add a named review budget as a second cash line.</li>
-            <li>When to sign. Nothing moves until you broadcast it.</li>
+            <li>
+              Authorized signers approve transfers under the instrument rules.
+            </li>
           </ul>
         </div>
         <div>
           <h2>What you cannot.</h2>
           <ul>
             <li>
-              Assign tasks, reserve work, or pick recipients before the freeze.
-              Score comes from merges and ratified reviews only.
+              Turn a donation into control of the repository. Maintainers manage
+              work and acceptance on GitHub; sponsorship alone grants no
+              maintainer or payout approval authority.
             </li>
             <li>
               Edit history. Corrections append; past cycle records are never
@@ -3723,8 +3728,8 @@ function SponsorsPage() {
             else.
           </p>
           <p>
-            For an external prize share, the fee is 10% of an award actually
-            received, and the prize sponsor controls eligibility and payment.
+            External prize shares use the terms published for that project. The
+            prize sponsor controls eligibility and payment.
           </p>
         </div>
         <dl className="equation-card">
@@ -3803,7 +3808,9 @@ function SponsorsPage() {
           <p>
             New repository: draft the manifest and agent brief at Add a project,
             then open the proposal on GitHub. New projects begin paused, and
-            payments stay disabled until a verified commitment exists.
+            payments stay disabled until funding and signer-accessibility
+            requirements are satisfied. A verified balance alone does not enable
+            payments.
           </p>
           <p>
             Existing project: the steward publishes a receiving address or a
