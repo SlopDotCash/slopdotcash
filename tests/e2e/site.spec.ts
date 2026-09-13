@@ -1118,7 +1118,7 @@ test("reflows at 320 CSS pixels and with independently enlarged text", async ({
       "/sponsors",
       "/verification",
       "/",
-      "/projects/eliza",
+      ...PROJECTS.map((project) => `/projects/${project.id}`),
       "/projects/new",
       "/projects/eliza/funding",
     ]) {
@@ -1172,7 +1172,9 @@ test("reflows at 320 CSS pixels and with independently enlarged text", async ({
 
 test("keeps primary routes accessible and inside the viewport", async ({
   page,
+  request,
 }) => {
+  const snapshot = await loadSnapshot(request);
   for (const path of [
     "/models",
     "/sponsors",
@@ -1202,6 +1204,22 @@ test("keeps primary routes accessible and inside the viewport", async ({
           /On-chain balance does not establish signer capability/u,
         ),
       ).toBeVisible();
+    }
+    const project = PROJECTS.find(
+      (candidate) => path === `/projects/${candidate.id}`,
+    );
+    if (
+      project?.repositories.some(
+        (repository) =>
+          !snapshot.repositories.some(
+            (collected) => collected.id === repository.id,
+          ),
+      )
+    ) {
+      await expect(
+        page.getByText("Activity for this project has not been collected yet."),
+      ).toBeVisible();
+      await expect(page.getByText(/Live totals unavailable/u)).toHaveCount(0);
     }
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])

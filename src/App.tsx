@@ -1820,6 +1820,17 @@ function ProjectPage({
           displayCycleId={view?.cycle.id ?? null}
           cycles={state.status === "ready" ? state.cycleIndex.cycles : null}
         />
+        {state.status === "ready" &&
+        project.repositories.some(
+          (repository) =>
+            !state.snapshot.repositories.some(
+              (collected) => collected.id === repository.id,
+            ),
+        ) ? (
+          <p className="data-notice" role="status">
+            Activity for this project has not been collected yet.
+          </p>
+        ) : null}
         <ProjectFunding project={project} />
         <ProjectPaymentHistory project={project} state={state} />
         {view && state.status === "ready" ? (

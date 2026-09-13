@@ -112,18 +112,13 @@ export function snapshotFixture(
       fetchedAt: generatedAt,
       cutoffAt: windowTo,
       repositoryId: "R_fixture",
-      repositories: [
-        { id: "elizaOS/eliza", repositoryId: "R_fixture" },
-        { id: "elizaOS/asi", repositoryId: "R_fixture_asi" },
-        {
-          id: "heirlabs/element-sdk",
-          repositoryId: "R_fixture_element_sdk",
-        },
-        {
-          id: "elizaOS/proximityprize",
-          repositoryId: "R_fixture_proximityprize",
-        },
-      ],
+      repositories: TARGET_REPOSITORIES.map((repository) => ({
+        id: repository.id,
+        repositoryId:
+          repository.role === "primary"
+            ? "R_fixture"
+            : `R_fixture_${repository.name.replaceAll("-", "_")}`,
+      })),
       requestCount: 7,
       searchSliceCount: 3,
       rateLimit: {
