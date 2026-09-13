@@ -1214,6 +1214,10 @@ test("keeps primary routes accessible and inside the viewport", async ({
       ).toBeVisible();
       await expect(page.getByText(/after two unfunded cycles/u)).toHaveCount(0);
       await expect(page.getByLabel("Manual install command")).toHaveCount(0);
+      await test.info().attach(`${project.id}-paused-project`, {
+        body: await page.screenshot({ fullPage: true }),
+        contentType: "image/png",
+      });
     }
     if (
       project?.repositories.some(
