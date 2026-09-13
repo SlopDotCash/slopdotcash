@@ -828,6 +828,15 @@ describe("project routes", () => {
       screen.queryByText(/Live totals unavailable/u),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/No accepted work/u)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Project paused" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/after two unfunded cycles/u),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Manual install command"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders malformed percent-encoded paths as not found", async () => {
