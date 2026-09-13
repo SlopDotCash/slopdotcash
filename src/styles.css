@@ -1547,7 +1547,7 @@ small {
   font-family: inherit;
   font-size: 13px;
   line-height: 1.55;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   word-break: normal;
   white-space: normal;
 }
