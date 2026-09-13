@@ -15,7 +15,9 @@ type Env = {
   GITHUB_APP_CLIENT_SECRET: string;
   IDENTITY_STATE_KEY: string;
   IDENTITY_ASSERTION_KEY: string;
-  // Fine-grained GitHub token with no permissions. It only gives the hourly
+  // Fine-grained GitHub token whose only permission is read-only repository
+  // Administration on this repository, which GitHub requires from any signed-in
+  // caller of the private-vulnerability-reporting status. It gives the hourly
   // intake renewal its own 5,000/h GitHub budget instead of the 60/h anonymous
   // budget shared by every tenant behind a Cloudflare egress address.
   GITHUB_INTAKE_STATUS_TOKEN?: string;
@@ -311,7 +313,7 @@ async function resolveGithubIdentity(
  * an unreachable, rate-limited, or malformed response leaves the previous
  * observation in place so that it expires on its own schedule.
  *
- * The request carries the optional zero-permission token so that GitHub
+ * The request carries the optional read-only token so that GitHub
  * counts it against the token's own budget; Cloudflare egress addresses are
  * shared, and their anonymous 60/h budget is regularly exhausted by other
  * tenants. A token GitHub refuses is reported and the request is repeated

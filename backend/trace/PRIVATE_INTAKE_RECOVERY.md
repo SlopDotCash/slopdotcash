@@ -9,8 +9,9 @@ hourly cron trigger (`renewPrivateIntakeStatus` in `workers/identity/index.ts`).
 It reads GitHub's public private-vulnerability-reporting status and writes
 through the Worker's own `IDENTITY_DB` binding, so renewal needs no website
 deployment and no GitHub-held Cloudflare credential. The read presents the
-Worker secret `GITHUB_INTAKE_STATUS_TOKEN`, a fine-grained token with no
-permissions, only so that GitHub bills the request to that token's 5,000 per
+Worker secret `GITHUB_INTAKE_STATUS_TOKEN`, a fine-grained token whose only
+permission is read-only repository Administration on this repository (what
+GitHub requires from a signed-in caller of that status), so that GitHub bills the request to that token's 5,000 per
 hour budget rather than the anonymous 60 per hour budget of a Cloudflare egress
 address shared with other tenants; the anonymous budget was exhausted often
 enough to skip renewals for hours at a time. A refused token is logged and the

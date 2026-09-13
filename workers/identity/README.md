@@ -154,8 +154,13 @@ bunx wrangler deploy --config workers/identity/wrangler.toml
 32-byte base64url values.
 
 `GITHUB_INTAKE_STATUS_TOKEN` is a fine-grained GitHub personal access token
-with public repository access and **no permissions**. Its only job is to give
-the hourly intake renewal its own 5,000 requests per hour GitHub budget:
+with the operator organization as resource owner, access to this repository
+only, and the single repository permission **Administration: read-only**. GitHub
+answers the private-vulnerability-reporting status to anonymous callers and to
+repository admins, and refuses every other signed-in caller with 403, so a
+token without that permission is rejected and the Worker falls back to the
+anonymous budget. The token's job is to give the hourly intake renewal its own
+5,000 requests per hour GitHub budget:
 Cloudflare Workers share egress addresses across tenants, and the anonymous
 60 requests per hour budget of an address is regularly exhausted by others,
 which made the anonymous renewal skip at random. Use a token owned by the

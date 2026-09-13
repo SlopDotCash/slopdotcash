@@ -174,7 +174,7 @@ describe("private intake renewal", () => {
     },
   );
 
-  it("sends the zero-permission token so GitHub bills the renewal's own budget", async () => {
+  it("sends the read-only token so GitHub bills the renewal's own budget", async () => {
     const { db, writes } = database();
     const fetchImpl = github(JSON.stringify({ enabled: true }));
     await expect(
