@@ -280,6 +280,7 @@ export async function prepareSourceCorrection(input: {
       ).toString(),
     };
   });
+  const sourceQualityBinding = await qualityEvidenceBinding(evidence);
   const previews = input.proposals.map((value) => {
     check(
       value && typeof value === "object" && !Array.isArray(value),
@@ -292,7 +293,7 @@ export async function prepareSourceCorrection(input: {
         proposal.projectId === preparation.projectId &&
         proposal.cycleId === preparation.cycleId &&
         proposal.sourceSnapshotSha256 === preparation.sourceSnapshotSha256 &&
-        proposal.sourceQualityBinding === qualityEvidenceBinding(evidence) &&
+        proposal.sourceQualityBinding === sourceQualityBinding &&
         proposal.capMinor === review.capMinor &&
         proposal.paymentAuthorized === false &&
         Array.isArray(proposal.burdens),

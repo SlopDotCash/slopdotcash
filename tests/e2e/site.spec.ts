@@ -1099,6 +1099,8 @@ test("reflows at 320 CSS pixels and with independently enlarged text", async ({
   ]) {
     await page.setViewportSize({ width: scenario.width, height: 1000 });
     for (const path of [
+      "/models",
+      "/sponsors",
       "/",
       "/projects/eliza",
       "/projects/new",
@@ -1156,6 +1158,8 @@ test("keeps primary routes accessible and inside the viewport", async ({
   page,
 }) => {
   for (const path of [
+    "/models",
+    "/sponsors",
     "/",
     ...PROJECTS.map((project) => `/projects/${project.id}`),
     "/projects/eliza/funding",
@@ -1191,4 +1195,108 @@ test("keeps primary routes accessible and inside the viewport", async ({
     );
     expect(overflow, `${path} horizontal page overflow`).toBeLessThanOrEqual(1);
   }
+});
+
+test("opens the models page directly and through keyboard navigation", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/models", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Which models merge. By the receipts.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Which models merge. By the receipts.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  const tableRegion = page.getByRole("region", {
+    name: "Accepted outcomes by model",
+    exact: true,
+  });
+  await tableRegion.focus();
+  await expect(tableRegion).toBeFocused();
+  if (
+    await tableRegion.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    )
+  ) {
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
+      .toBeGreaterThan(0);
+  }
+  await testInfo.attach("models-page", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
+  const addProject = page
+    .locator("footer")
+    .getByRole("link", { name: "Add a project", exact: true });
+  await addProject.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/projects\/new$/);
+  await page.goBack({ waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Which models merge. By the receipts.",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
+test("opens the sponsors page directly and through keyboard navigation", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/sponsors", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Fund the merges. Keep the keys.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Fund the merges. Keep the keys.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  const tableRegion = page.getByRole("region", {
+    name: "Project funding pools",
+    exact: true,
+  });
+  await tableRegion.focus();
+  await expect(tableRegion).toBeFocused();
+  if (
+    await tableRegion.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    )
+  ) {
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
+      .toBeGreaterThan(0);
+  }
+  await testInfo.attach("sponsors-page", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
+  const addProject = page
+    .locator("footer")
+    .getByRole("link", { name: "Add a project", exact: true });
+  await addProject.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/projects\/new$/);
+  await page.goBack({ waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", {
+      name: "Fund the merges. Keep the keys.",
+      exact: true,
+    }),
+  ).toBeVisible();
 });

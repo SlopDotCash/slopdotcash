@@ -69,6 +69,8 @@ describe("Cloudflare Pages redirect contract", () => {
     ...PROJECTS.map((project) => `/projects/${project.id}/funding/`),
     "/contributors/octocat",
     "/cycles/eliza/2026-07",
+    "/models",
+    "/sponsors",
   ];
 
   it.each(spaDeepLinks)("rewrites %s to the app shell", (pathname) => {

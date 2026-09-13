@@ -39,7 +39,12 @@ const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 50,
+    });
 });
 function approvedAllocation() {
   return assertRewardAllocationManifest({

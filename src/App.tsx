@@ -67,6 +67,10 @@ import {
   type ScoreOpportunity,
 } from "./lib/leaderboard";
 import {
+  type ModelOutcomeSummary,
+  summarizeModelOutcomes,
+} from "./lib/model-outcomes";
+import {
   createProjectView,
   type ProjectContributor,
   type ProjectView,
@@ -136,6 +140,8 @@ interface Route {
     | "profile"
     | "project"
     | "receipts"
+    | "models"
+    | "sponsors"
     | "cycle-archive"
     | "unknown";
   projectId?: string;
@@ -158,6 +164,12 @@ function internalRoute(pathname: string): Route {
   }
   if (segments.length === 1 && segments[0] === "receipts") {
     return { kind: "receipts" };
+  }
+  if (segments.length === 1 && segments[0] === "models") {
+    return { kind: "models" };
+  }
+  if (segments.length === 1 && segments[0] === "sponsors") {
+    return { kind: "sponsors" };
   }
   if (segments.length === 1 && segments[0] === "cycles") {
     return { kind: "cycle-archive" };
@@ -370,8 +382,14 @@ function Header({ isHome }: { isHome: boolean }) {
           <Link href="/receipts" onNavigate={closeMenu}>
             Receipts
           </Link>
+          <Link href="/models" onNavigate={closeMenu}>
+            Models
+          </Link>
           <Link href="/cycles" onNavigate={closeMenu}>
             Cycles
+          </Link>
+          <Link href="/sponsors" onNavigate={closeMenu}>
+            Sponsors
           </Link>
           <Link className="nav-cta" href="/projects/new" onNavigate={closeMenu}>
             Add a project
@@ -397,7 +415,9 @@ function Footer() {
           <Link href="/#projects">Projects</Link>
           <Link href="/how-it-works">How scoring works</Link>
           <Link href="/receipts">Receipts</Link>
+          <Link href="/models">Models</Link>
           <Link href="/cycles">Cycle archive</Link>
+          <Link href="/sponsors">Fund a pool</Link>
           <Link href="/projects/new">Add a project</Link>
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
@@ -3462,13 +3482,383 @@ function HowItWorksPage() {
             <Link href="/receipts">Public receipts</Link>
           </li>
           <li>
+            <Link href="/models">Models and harnesses</Link>
+          </li>
+          <li>
             <Link href="/cycles">Cycle archive</Link>
           </li>
           <li>
             <Link href="/#leaderboard">Live leaderboard</Link>
           </li>
           <li>
+            <Link href="/sponsors">Fund a pool</Link>
+          </li>
+          <li>
             <Link href="/projects/new">Add your project</Link>
+          </li>
+        </ul>
+      </section>
+    </main>
+  );
+}
+
+function activeFundingAddressCount(
+  addresses: ProjectDefinition["funding"]["addresses"],
+  now: number,
+): number {
+  return addresses.filter(
+    (route) =>
+      Date.parse(route.effectiveAt) <= now &&
+      (route.replacedAt === null || now < Date.parse(route.replacedAt)),
+  ).length;
+}
+
+function sponsorPoolLabel(reward: ProjectDefinition["reward"]): string {
+  if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
+    return `external prize share · ${reward.externalOpportunity.name}`;
+  }
+  return monthlyPoolLabel(reward);
+}
+
+function SponsorsPage() {
+  const protocolRoot = `${SOURCE_REPOSITORY}/blob/develop/protocol`;
+  const now = Date.now();
+  return (
+    <main className="shell evidence-page">
+      <section className="evidence-page-hero">
+        <h1>Fund the merges. Keep the keys.</h1>
+        <p>
+          A sponsor sets a monthly cap for a repository, and only work the
+          maintainers accept can draw on it. Slop computes the split, publishes
+          every state, and prepares unsigned payment plans. Funds remain in the
+          reviewed third-party instrument, governed by its own transfer rules.
+          Slop holds no signing keys.
+        </p>
+      </section>
+      <ol className="mechanism-flow" aria-label="What funding a pool buys">
+        <li>
+          <strong>01 · Publish the cap</strong>
+          <p>
+            A reviewed manifest change sets the monthly cap and the reward
+            start. Until a verified on-chain commitment backs it, the pool shows
+            as unfunded with a target, never as a balance. Contributors then use
+            any agent to contribute. Accepted merges, eligible reviews, and
+            separately reviewed awards follow the published scoring policy.
+          </p>
+        </li>
+        <li>
+          <strong>02 · The month freezes</strong>
+          <p>
+            The monthly workflow prepares a proposal under the cap. Publication
+            depends on complete source data and successful validation. Fourteen
+            days of public review follow. Every row names its source events, its
+            integer weights, and the scoring rule version, so anyone can
+            recompute it.
+          </p>
+        </li>
+        <li>
+          <strong>03 · You decide and sign</strong>
+          <p>
+            Project owners review proposed awards within the cap and record
+            changes with a public reason. Authorized signers execute the
+            reviewed transfer plan outside Slop. Slop marks the cycle paid only
+            when finalized on-chain evidence reconciles every approved intent
+            and the fee.
+          </p>
+        </li>
+      </ol>
+      <section className="worked-example sponsor-controls">
+        <div>
+          <h2>Funding and review decisions</h2>
+          <ul>
+            <li>The monthly cap, with exact-cycle overrides.</li>
+            <li>
+              Project owners may adjust proposed awards within the cap, with a
+              public reason. Amount changes restart the 14-day review.
+            </li>
+            <li>Whether to add a named review budget as a second cash line.</li>
+            <li>
+              Authorized signers approve transfers under the instrument rules.
+            </li>
+          </ul>
+        </div>
+        <div>
+          <h2>What you cannot.</h2>
+          <ul>
+            <li>
+              Turn a donation into control of the repository. Maintainers manage
+              work and acceptance on GitHub; sponsorship alone grants no
+              maintainer or payout approval authority.
+            </li>
+            <li>
+              Edit history. Corrections append; past cycle records are never
+              rewritten.
+            </li>
+            <li>
+              Route money through Slop. There is no platform wallet, treasury,
+              or escrow to send to.
+            </li>
+            <li>
+              Pay a related party without a separate approval on the public
+              record.
+            </li>
+          </ul>
+        </div>
+      </section>
+      <section className="custody-proof sponsor-pools">
+        <h2>Every pool, in its current state.</h2>
+        <p>
+          Read from the reviewed manifests. A cap is a target. A pool is funded
+          only when a committed amount is backed by an active instrument with
+          verifier evidence, and allocation never exceeds that amount.
+        </p>
+        <section
+          className="plain-table-wrap"
+          aria-label="Project funding pools"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+          tabIndex={0}
+        >
+          <table className="plain-table sponsor-pools-table">
+            <thead>
+              <tr>
+                <th scope="col">Project</th>
+                <th scope="col">Pool</th>
+                <th scope="col">Payments</th>
+                <th scope="col">Review line</th>
+                <th scope="col">Receiving addresses</th>
+              </tr>
+            </thead>
+            <tbody>
+              {PROJECTS.map((project) => {
+                const activeAddresses = activeFundingAddressCount(
+                  project.funding.addresses,
+                  now,
+                );
+                return (
+                  <tr key={project.id}>
+                    <th scope="row">
+                      <Link href={`/projects/${project.id}`}>
+                        {project.name}
+                      </Link>
+                    </th>
+                    <td>{sponsorPoolLabel(project.reward)}</td>
+                    <td>{project.reward.paymentMode}</td>
+                    <td>
+                      {project.reward.reviewBudget
+                        ? reviewBudgetLabel(project.reward.reviewBudget)
+                        : "none"}
+                    </td>
+                    <td>
+                      {activeAddresses === 0
+                        ? "none published"
+                        : `${activeAddresses} active`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      </section>
+      <section className="custody-proof money-states">
+        <h2>Your money has exact states.</h2>
+        <dl>
+          <div>
+            <dt>Pledged</dt>
+            <dd>
+              A public target with no money behind it. Contributors see
+              projections at the cap and the word unfunded next to them.
+            </dd>
+          </div>
+          <div>
+            <dt>Committed</dt>
+            <dd>
+              A positive amount backed by an active reviewed instrument and
+              deterministic verifier evidence. Allocation never exceeds it.
+            </dd>
+          </div>
+          <div>
+            <dt>Under review</dt>
+            <dd>A frozen monthly proposal in its 14-day public window.</dd>
+          </div>
+          <div>
+            <dt>Approved</dt>
+            <dd>
+              Immutable payout intents after you sign off, with a public reason
+              attached to every change you made.
+            </dd>
+          </div>
+          <div>
+            <dt>Scheduled</dt>
+            <dd>An unsigned transfer plan exists. No money has moved.</dd>
+          </div>
+          <div>
+            <dt>Paid</dt>
+            <dd>
+              Finalized on-chain evidence reconciles the exact transfers and the
+              fee.
+            </dd>
+          </div>
+          <div>
+            <dt>Unclaimed, held, excluded</dt>
+            <dd>
+              Visible unresolved states with public reasons. A missing wallet
+              stays unclaimed. Rows below $2 accrue to the next cycle.
+            </dd>
+          </div>
+        </dl>
+        <p>
+          Unused committed funds roll over without raising the cap. A wallet
+          registered after a proposal is generated applies to the next cycle and
+          never touches the current one.
+        </p>
+      </section>
+      <section className="custody-proof">
+        <h2>Commit through an instrument you control.</h2>
+        <ul>
+          <li>
+            A Squads v4 multisig vault on Solana, or a Sablier Lockup v4 stream
+            on Base or Ethereum. Both are reviewed, immutable, third-party
+            programs. Slop holds no key, admin, or fee position in either.
+          </li>
+          <li>
+            Direct gifts go straight from your wallet to the steward&apos;s
+            published address and are recorded append-only under funding
+            records, self-reported until a verifier confirms them on-chain.
+          </li>
+          <li>
+            Neither is escrow and nothing is guaranteed. A commitment is a
+            balance claim; whether its signers can act is not something this
+            protocol can attest to yet, so public surfaces say so.
+          </li>
+          <li>
+            GitHub identity never proves wallet control. A receiving address
+            appears on this site only through a reviewed manifest change.
+          </li>
+        </ul>
+      </section>
+      <section className="worked-example sponsor-fee">
+        <div>
+          <h2>The fee is a separate transfer.</h2>
+          <p>
+            Slop&apos;s fee is 1% of approved principal on a monthly pool. You
+            send it as its own transfer when you settle the cycle. Slop never
+            deducts, sweeps, or nets it against a contributor&apos;s row, and a
+            cycle does not read paid until the fee reconciles with everything
+            else.
+          </p>
+          <p>
+            External prize shares use the terms published for that project. The
+            prize sponsor controls eligibility and payment.
+          </p>
+        </div>
+        <dl className="equation-card">
+          <div>
+            <dt>Approved principal</dt>
+            <dd>$5,000</dd>
+          </div>
+          <div>
+            <dt>Contributor transfers</dt>
+            <dd>$5,000</dd>
+          </div>
+          <div>
+            <dt>Slop fee, sent separately</dt>
+            <dd>$50</dd>
+          </div>
+          <div>
+            <dt>Deducted from contributors</dt>
+            <dd>$0</dd>
+          </div>
+        </dl>
+      </section>
+      <section className="custody-proof sponsor-note">
+        <h2>Optional: pay for review as its own line.</h2>
+        <p>
+          Accepted review already scores from the shared pool. A named review
+          budget is a second monthly cash line that pays accepted review work on
+          top of that unchanged treatment, with its own cap, its own commitment,
+          and separate public arithmetic. It becomes operative only after its
+          own funding is committed, and it cannot be added in the same change
+          that lowers the contributor cap.
+        </p>
+        <p>
+          <ExternalLinkAnchor href={`${protocolRoot}/review-budget-v1.md`}>
+            Additive review budget v1
+          </ExternalLinkAnchor>
+        </p>
+      </section>
+      <section className="custody-proof mechanism-sources">
+        <h2>See who shows up before you commit.</h2>
+        <ul>
+          <li>
+            <Link href="/#leaderboard">Live leaderboard</Link>
+          </li>
+          <li>
+            <Link href="/receipts">Public receipts</Link>
+          </li>
+          <li>
+            <Link href="/cycles">Cycle archive</Link>
+          </li>
+          <li>
+            <ExternalLinkAnchor
+              href={`${SOURCE_REPOSITORY}/blob/develop/funding/README.md`}
+            >
+              Funding records
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <ExternalLinkAnchor
+              href={`${protocolRoot}/funding-record-pr-verification.md`}
+            >
+              Funding record verification
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <ExternalLinkAnchor
+              href={`${protocolRoot}/squads-execution-tracking.md`}
+            >
+              Squads execution tracking
+            </ExternalLinkAnchor>
+          </li>
+        </ul>
+      </section>
+      <section className="worked-example sponsor-start">
+        <div>
+          <h2>Start with a pull request.</h2>
+          <p>
+            New repository: draft the manifest and agent brief at Add a project,
+            then open the proposal on GitHub. New projects begin paused, and
+            payments stay disabled until funding and signer-accessibility
+            requirements are satisfied. A verified balance alone does not enable
+            payments.
+          </p>
+          <p>
+            Existing project: the steward publishes a receiving address or a
+            commitment instrument through a reviewed manifest change. There is
+            no form and no admin panel. Every address on this site renders from
+            the reviewed manifest or not at all.
+          </p>
+        </div>
+        <ul>
+          <li>
+            <Link href="/projects/new">Add a project</Link>
+          </li>
+          <li>
+            <ExternalLinkAnchor
+              href={`${SOURCE_REPOSITORY}/tree/develop/projects`}
+            >
+              Reviewed manifests
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <ExternalLinkAnchor href={SOCIAL_TELEGRAM}>
+              Ask on Telegram
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
+              Open an issue on GitHub
+            </ExternalLinkAnchor>
           </li>
         </ul>
       </section>
@@ -3578,6 +3968,241 @@ function ReceiptsPage({
   );
 }
 
+function ModelsPage({ state, retry }: { state: DataState; retry: () => void }) {
+  const summary =
+    state.status === "ready" ? summarizeModelOutcomes(state.snapshot) : null;
+  return (
+    <main className="shell evidence-page">
+      <section className="evidence-page-hero">
+        <h1>Which models merge. By the receipts.</h1>
+        <p>
+          Every merged pull request and accepted review on the leaderboard can
+          carry a model declaration by the person who did the work. This page
+          counts those declarations next to the outcomes they were made on.
+          Model identity is self-reported, adds no points, and is never checked
+          against the provider. A signed receipt binds a device to its
+          declaration; neither form verifies which model produced the work.
+        </p>
+        <DataNotice retry={retry} state={state} />
+      </section>
+      {summary ? <ModelOutcomes summary={summary} /> : null}
+    </main>
+  );
+}
+
+function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
+  const { totals } = summary;
+  const count = new Intl.NumberFormat("en-US");
+  const percent = (part: number, whole: number) =>
+    `${whole > 0 ? Math.round((100 * part) / whole) : 0}%`;
+  const points = (value: number) => count.format(value);
+  const modelRows = summary.models
+    .filter((row) => row.mergedPullRequests > 0 || row.acceptedReviews > 0)
+    .slice(0, 30);
+  const concentrated = modelRows.filter(
+    (row) =>
+      row.mergedPullRequests >= 40 && (row.topContributorShare ?? 0) > 0.5,
+  );
+  if (totals.declarations === 0) {
+    return <EmptyState text="No model declarations in this snapshot." />;
+  }
+  return (
+    <>
+      <div className="money-summary model-outcomes-summary">
+        <span>
+          <strong>
+            {percent(
+              totals.mergedPullRequestsWithModel,
+              totals.mergedPullRequests,
+            )}
+          </strong>{" "}
+          of merged pull requests name a model (
+          {count.format(totals.mergedPullRequestsWithModel)} of{" "}
+          {count.format(totals.mergedPullRequests)})
+        </span>
+        <span>
+          <strong>
+            {count.format(totals.mergedPullRequestsWithSignedRun)}
+          </strong>{" "}
+          of those carry a signed receipt
+        </span>
+        <span>
+          <strong>
+            {percent(totals.acceptedReviewsWithModel, totals.acceptedReviews)}
+          </strong>{" "}
+          of accepted reviews name a model
+        </span>
+        <span>
+          <strong>{count.format(totals.declarations)}</strong> declarations by{" "}
+          {count.format(totals.declaringContributors)} contributors,{" "}
+          {count.format(totals.signedDeclarations)} signed across{" "}
+          {count.format(totals.distinctClients)} harnesses
+        </span>
+      </div>
+
+      <section className="model-outcomes-section">
+        <h2>Accepted outcomes by model</h2>
+        <p>
+          A pull request counts for a model when its author declared that model
+          on the pull request; a review counts when the reviewer declared it on
+          the review. Declarations by anyone else never count. Top contributor
+          share is the part of a model&apos;s outcomes that comes from its
+          single busiest contributor. Above 50% the model mostly measures one
+          person, and the row says so.
+        </p>
+        <section
+          className="plain-table-wrap"
+          aria-label="Accepted outcomes by model"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+          tabIndex={0}
+        >
+          <table className="plain-table model-outcomes-table">
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                <th scope="col">Merged PRs</th>
+                <th scope="col">Signed PRs</th>
+                <th scope="col">PR points</th>
+                <th scope="col">Accepted reviews</th>
+                <th scope="col">Declaring contributors</th>
+                <th scope="col">Top contributor share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {modelRows.map((row) => (
+                <tr key={row.key}>
+                  <th className="model-identity" scope="row">
+                    <span>{row.provider}/</span>
+                    {row.model}
+                  </th>
+                  <td>{count.format(row.mergedPullRequests)}</td>
+                  <td>
+                    {row.signedPullRequests > 0
+                      ? count.format(row.signedPullRequests)
+                      : "none"}
+                  </td>
+                  <td>{points(row.pullRequestPoints)}</td>
+                  <td>{count.format(row.acceptedReviews)}</td>
+                  <td>{count.format(row.contributors)}</td>
+                  <td
+                    className={
+                      (row.topContributorShare ?? 0) > 0.5
+                        ? "model-share-high"
+                        : undefined
+                    }
+                  >
+                    {row.topContributorShare === null
+                      ? "n/a"
+                      : percent(row.topContributorShare, 1)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+        <p className="model-outcomes-note">
+          {count.format(totals.distinctDeclaredIdentifiers)} distinct declared
+          strings fold to {count.format(totals.distinctModels)} models by case
+          and a short provider alias list. Some rows are still one model under
+          two names. The table shows models with at least one accepted outcome,
+          up to 30.
+        </p>
+      </section>
+
+      <section className="model-outcomes-section">
+        <h2>Harnesses, from signed receipts only</h2>
+        <p>
+          The client is known only when a run receipt exists, so this table
+          covers signed runs. Output tokens come from receipts that report exact
+          usage.
+        </p>
+        {summary.clients.length === 0 ? (
+          <EmptyState text="No signed receipts in this snapshot." />
+        ) : (
+          <section
+            className="plain-table-wrap"
+            aria-label="Harness outcomes"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+            tabIndex={0}
+          >
+            <table className="plain-table model-outcomes-table">
+              <thead>
+                <tr>
+                  <th scope="col">Harness</th>
+                  <th scope="col">Signed runs</th>
+                  <th scope="col">Contributors</th>
+                  <th scope="col">Models on those runs</th>
+                  <th scope="col">Merged PRs</th>
+                  <th scope="col">Median output tokens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.clients.map((row) => (
+                  <tr key={row.client}>
+                    <th className="model-identity" scope="row">
+                      {row.client}
+                    </th>
+                    <td>{count.format(row.signedRuns)}</td>
+                    <td>{count.format(row.contributors)}</td>
+                    <td className="model-identity-list">
+                      {row.models
+                        .slice(0, 3)
+                        .map((entry) => `${entry.key} (${entry.count})`)
+                        .join(", ")}
+                    </td>
+                    <td>{count.format(row.mergedPullRequests)}</td>
+                    <td>
+                      {row.medianOutputTokens === null
+                        ? "not reported"
+                        : `${count.format(row.medianOutputTokens)} (${row.runsWithExactUsage} runs)`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
+      </section>
+
+      <section className="model-outcomes-section">
+        <h2>Read before quoting</h2>
+        <ul className="model-outcomes-notes">
+          <li>
+            This is not a benchmark. Contributors choose their own tasks, repos
+            and models. A model with many merges is a model that busy
+            contributors declared on work they chose. Reviews are not blinded to
+            those declarations.
+          </li>
+          <li>
+            Model is confounded with person.{" "}
+            {concentrated.length > 0
+              ? `Of the models with 40 or more merged PRs, ${concentrated
+                  .map(
+                    (row) =>
+                      `${row.key} (${percent(row.topContributorShare ?? 0, 1)})`,
+                  )
+                  .join(
+                    ", ",
+                  )} take over half of their outcomes from one contributor.`
+              : "No model with 40 or more merged PRs takes over half of its outcomes from one contributor in this snapshot."}
+          </li>
+          <li>
+            Neither a declaration nor a receipt is verified against the model
+            provider. A receipt proves that a device claimed a model at a time;
+            it does not prove the API served that model.
+          </li>
+          <li>
+            The leaderboard is a rolling window and regenerates on a schedule,
+            so every figure moves. Nothing here describes money. PR points are
+            the scoring input; what any pool pays is decided in a separate
+            public review.
+          </li>
+        </ul>
+      </section>
+    </>
+  );
+}
+
 function CycleArchivePage({
   state,
   retry,
@@ -3671,6 +4296,7 @@ export function App() {
   const route = useRoute();
   const needsSnapshot = ![
     "how-it-works",
+    "sponsors",
     "new-project",
     "wallet",
     "unknown",
@@ -3681,8 +4307,11 @@ export function App() {
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
+  else if (route.kind === "sponsors") content = <SponsorsPage />;
   else if (route.kind === "receipts")
     content = <ReceiptsPage retry={retry} state={state} />;
+  else if (route.kind === "models")
+    content = <ModelsPage retry={retry} state={state} />;
   else if (route.kind === "cycle-archive")
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
