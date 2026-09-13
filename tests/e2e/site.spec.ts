@@ -1208,6 +1208,13 @@ test("keeps primary routes accessible and inside the viewport", async ({
     const project = PROJECTS.find(
       (candidate) => path === `/projects/${candidate.id}`,
     );
+    if (project?.status === "paused") {
+      await expect(
+        page.getByRole("heading", { name: "Project paused" }),
+      ).toBeVisible();
+      await expect(page.getByText(/after two unfunded cycles/u)).toHaveCount(0);
+      await expect(page.getByLabel("Manual install command")).toHaveCount(0);
+    }
     if (
       project?.repositories.some(
         (repository) =>

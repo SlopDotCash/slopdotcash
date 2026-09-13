@@ -67,6 +67,7 @@ export function projectPromotionEligible(
   cycles: readonly PromotionCycle[] | null,
   displayCycleId: string | null,
 ): boolean {
+  if (project.status !== "active") return false;
   if (project.reward.kind !== "monthly-pool") return true;
   if (cycles === null || displayCycleId === null) return false;
   if (
