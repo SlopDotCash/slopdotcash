@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "1",
+  "id": "monna-agent-permission-diff",
+  "slug": "monna-agent-permission-diff",
+  "name": "MONNA Agent Permission Diff",
+  "eyebrow": "Public repository",
+  "headline": "Make agent configuration changes easier to review",
+  "description": "Offline, value-redacted comparison of declared agent and MCP permissions. Improve parser coverage, regression evidence and accessible reports without executing configured tools.",
+  "listingTier": "community",
+  "status": "paused",
+  "steward": {
+    "displayName": "Eman Alshazly",
+    "kind": "individual",
+    "github": {
+      "actorId": "6705196",
+      "nodeId": "MDQ6VXNlcjY3MDUxOTY=",
+      "login": "emanalshazly",
+      "type": "User",
+      "profileUrl": "https://github.com/emanalshazly"
+    },
+    "website": null
+  },
+  "authority": {
+    "state": "unverified",
+    "reason": "missing-repository-proof",
+    "role": "project-steward",
+    "repositoryId": "1359676365",
+    "repositoryNodeId": "R_kgDOUQsDzQ",
+    "proof": null
+  },
+  "terms": {
+    "revision": "2026-09-13.1",
+    "effectiveAt": "2026-09-13T00:00:00.000Z",
+    "receiptPolicy": {
+      "state": "pending-authority-activation",
+      "activatedAt": null,
+      "bindings": []
+    },
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "copyright": {
+      "model": "unknown",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "verified",
+      "spdx": "MIT",
+      "url": "https://github.com/emanalshazly/monna-agent-permission-diff/blob/b87c11ab9b2fb52eec96f36167744223abe36500/LICENSE",
+      "commitSha": "b87c11ab9b2fb52eec96f36167744223abe36500",
+      "fileSha256": "bedc8cd3db313c6fad7c55a7a7ef816ea77d4123e49bfac33363a73442a4a46c"
+    },
+    "inbound": {
+      "mode": "unknown",
+      "termsUrl": null,
+      "commitSha": null,
+      "fileSha256": null,
+      "version": null,
+      "acceptance": null
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
+  "repositories": [
+    {
+      "id": "emanalshazly/monna-agent-permission-diff",
+      "displayName": "emanalshazly/monna-agent-permission-diff",
+      "githubUrl": "https://github.com/emanalshazly/monna-agent-permission-diff",
+      "description": "Offline, value-redacted comparison of declared agent and MCP permissions. Improve parser coverage, regression evidence and accessible reports without executing configured tools.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-monna-agent-permission-diff",
+    "publishAtRoot": false,
+    "sourcePath": "skills/contribute-to-monna-agent-permission-diff",
+    "publicPath": "/projects/monna-agent-permission-diff/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-monna-agent-permission-diff-contributions",
+    "sourcePath": "skills/review-monna-agent-permission-diff-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-09-13T00:00:00.000Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "0",
+    "monthlyCapDisplay": "$0",
+    "committedMinor": "0",
+    "paymentMode": "disabled",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+    "recordsPath": "funding/monna-agent-permission-diff",
+    "addresses": []
+  },
+  "modelPolicy": {
+    "mode": "open-declared",
+    "disclosureRequired": true
+  },
+  "links": {
+    "creator": "https://github.com/emanalshazly",
+    "repository": "https://github.com/emanalshazly/monna-agent-permission-diff",
+    "issues": "https://github.com/emanalshazly/monna-agent-permission-diff/issues"
+  }
+}
