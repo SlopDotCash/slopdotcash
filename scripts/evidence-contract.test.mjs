@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import {
   assertCommittedBuildManifest,
   assertDnsAddresses,
@@ -24,12 +25,7 @@ function liveLedger(overrides = {}) {
   return {
     schemaVersion: "6",
     repository: "elizaOS/eliza",
-    repositories: [
-      { id: "elizaOS/eliza" },
-      { id: "elizaOS/asi" },
-      { id: "heirlabs/element-sdk" },
-      { id: "elizaOS/proximityprize" },
-    ],
+    repositories: TARGET_REPOSITORIES.map(({ id }) => ({ id })),
     generatedAt: "2026-07-30T19:58:00.000Z",
     stale: false,
     source: {
