@@ -84,6 +84,29 @@ describe("funding-backed allocation and promotion", () => {
     },
   );
 
+  it("never promotes paused projects when collection or funding becomes available", () => {
+    for (const id of [
+      "monna-agent-permission-diff",
+      "monna-visual-strategy-canvas",
+    ]) {
+      const proposal = findProject(id);
+      if (!proposal) throw new Error(`Missing proposal ${id}`);
+      expect(projectPromotionEligible(proposal, [], "2026-09")).toBe(false);
+    }
+    expect(
+      projectPromotionEligible({ ...project, status: "paused" }, [], "2026-10"),
+    ).toBe(false);
+    const externalPrize = findProject("delta-star");
+    if (!externalPrize) throw new Error("Missing external prize fixture");
+    expect(
+      projectPromotionEligible(
+        { ...externalPrize, status: "paused" },
+        [],
+        "2026-10",
+      ),
+    ).toBe(false);
+  });
+
   it("allows a trial, pauses only after two adjacent unfunded cycles, and resumes when funded", () => {
     expect(projectPromotionEligible(project, null, "2026-10")).toBe(false);
     expect(projectPromotionEligible(project, [], null)).toBe(false);

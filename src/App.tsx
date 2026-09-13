@@ -1115,15 +1115,25 @@ export function ProjectParticipation({
   cycles: readonly PromotionCycle[] | null;
   displayCycleId: string | null;
 }) {
+  if (project.status === "paused") {
+    return (
+      <section className="section" id="start">
+        <h2>Project paused</h2>
+        <p>Activation requires a reviewed manifest change on GitHub.</p>
+      </section>
+    );
+  }
   if (projectPromotionEligible(project, cycles, displayCycleId))
     return <InstallPanel project={project} />;
   return (
     <section className="section" id="start">
       <h2>Contribution record remains open</h2>
       <p>
-        {cycles
-          ? "Skill promotion is paused after two unfunded cycles. Accepted work and scores continue to be recorded; committed funding is required to resume promotion."
-          : "Funding history must load before skill promotion is available."}
+        {cycles === null
+          ? "Funding history must load before skill promotion is available."
+          : displayCycleId === null
+            ? "Contribution data for this project is not available yet."
+            : "Skill promotion is paused after two unfunded cycles. Accepted work and scores continue to be recorded; committed funding is required to resume promotion."}
       </p>
     </section>
   );
@@ -2062,7 +2072,11 @@ function ProjectPage({
               <aside className="reward-card">
                 <span>FUNDING PROMOTION PAUSED</span>
                 <strong>$0</strong>
-                <p>Accepted work and cycle history remain available.</p>
+                <p>
+                  {project.status === "paused"
+                    ? "Project activation requires a reviewed manifest change on GitHub."
+                    : "Accepted work and cycle history remain available."}
+                </p>
               </aside>
             )}
           </div>
@@ -2074,6 +2088,17 @@ function ProjectPage({
           displayCycleId={view?.cycle.id ?? null}
           cycles={state.status === "ready" ? state.cycleIndex.cycles : null}
         />
+        {state.status === "ready" &&
+        project.repositories.some(
+          (repository) =>
+            !state.snapshot.repositories.some(
+              (collected) => collected.id === repository.id,
+            ),
+        ) ? (
+          <p className="data-notice" role="status">
+            Activity for this project has not been collected yet.
+          </p>
+        ) : null}
         <ProjectFunding project={project} />
         <ProjectPaymentHistory project={project} state={state} />
         {view && state.status === "ready" ? (

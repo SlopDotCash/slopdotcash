@@ -7,7 +7,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
-  assertPublishableLeaderboardSnapshot,
+  assertLeaderboardSnapshot,
   LEADERBOARD_SCHEMA_VERSION,
   type LeaderboardEntry,
   type LeaderboardSnapshot,
@@ -44,27 +44,18 @@ function array(value: unknown, field: string): unknown[] {
   return value;
 }
 
-function currentPublishedRepositories(): Array<Record<string, unknown>> {
-  return TARGET_REPOSITORIES.map(
-    ({ aliases: _aliases, expectedNodeId: _expectedNodeId, ...repository }) =>
-      repository,
-  );
-}
-
 function rebindTransferredRepositoryPresentation(
   candidate: JsonRecord,
 ): JsonRecord {
   const repositories = array(candidate.repositories, "snapshot.repositories");
-  if (repositories.length !== TARGET_REPOSITORIES.length) {
-    throw new TypeError(
-      "snapshot.repositories does not match the target repository inventory",
-    );
-  }
   let changed = false;
-  repositories.forEach((value, index) => {
+  const reboundRepositories = repositories.map((value, index) => {
     const path = `snapshot.repositories[${index}]`;
     const deployed = record(value, path);
-    const current = TARGET_REPOSITORIES[index];
+    const current = TARGET_REPOSITORIES.find(
+      (repository) => repository.id === deployed.id,
+    );
+    if (!current) throw new TypeError(`${path}.id is not registered`);
     if (
       Object.keys(deployed).length !== PUBLISHED_REPOSITORY_KEYS.length ||
       PUBLISHED_REPOSITORY_KEYS.some((key) => !Object.hasOwn(deployed, key))
@@ -97,9 +88,15 @@ function rebindTransferredRepositoryPresentation(
     changed ||= PUBLISHED_REPOSITORY_KEYS.some(
       (key) => deployed[key] !== current[key],
     );
+    const {
+      aliases: _aliases,
+      expectedNodeId: _expectedNodeId,
+      ...published
+    } = current;
+    return published;
   });
   return changed
-    ? { ...candidate, repositories: currentPublishedRepositories() }
+    ? { ...candidate, repositories: reboundRepositories }
     : candidate;
 }
 
@@ -314,11 +311,18 @@ function retainCausalAttributions(
 }
 
 export function preparePullRequestLedger(value: unknown): LeaderboardSnapshot {
+  const input = record(value, "snapshot");
+  if (
+    typeof input.generatedAt !== "string" ||
+    Date.parse(input.generatedAt) > Date.now() + 5 * 60 * 1000
+  ) {
+    throw new TypeError("snapshot.generatedAt cannot be in the future");
+  }
   const candidate = rebindTransferredRepositoryPresentation(
     record(value, "snapshot"),
   );
   if (candidate.schemaVersion === LEADERBOARD_SCHEMA_VERSION) {
-    assertPublishableLeaderboardSnapshot(candidate);
+    assertLeaderboardSnapshot(candidate);
     return candidate as unknown as LeaderboardSnapshot;
   }
   if (candidate.schemaVersion !== "5") {
@@ -350,7 +354,7 @@ export function preparePullRequestLedger(value: unknown): LeaderboardSnapshot {
     ledger,
     attributions,
   };
-  assertPublishableLeaderboardSnapshot(snapshot);
+  assertLeaderboardSnapshot(snapshot);
   return snapshot as unknown as LeaderboardSnapshot;
 }
 
