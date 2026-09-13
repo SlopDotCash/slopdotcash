@@ -3421,3 +3421,51 @@ small {
   display: block;
   margin-top: 4px;
 }
+
+.sponsor-controls ul,
+.sponsor-start ul {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.sponsor-controls li,
+.sponsor-start li {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.sponsor-start a {
+  border-bottom: 1px solid var(--ink);
+  font-weight: 700;
+}
+
+.sponsor-pools > p,
+.sponsor-note > p {
+  max-width: 70ch;
+  margin: 0 0 24px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.sponsor-note > p:last-child {
+  margin-bottom: 0;
+}
+
+.sponsor-note a {
+  border-bottom: 1px solid var(--ink);
+  font-weight: 700;
+}
+
+.sponsor-pools-table th[scope="row"] {
+  font-weight: 700;
+}
+
+.sponsor-pools-table td {
+  color: var(--muted);
+}
+
+.sponsor-fee p + p {
+  margin-top: 14px;
+}

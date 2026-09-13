@@ -1353,6 +1353,7 @@ describe("public proof routes", () => {
   it.each([
     ["/how-it-works", "Accepted work in. Auditable allocations out."],
     ["/receipts", "Signed runs, without the private trace."],
+    ["/sponsors", "Fund the merges. Keep the keys."],
     ["/cycles", "Every pool gets a dated public record."],
   ])("renders %s as a branded route", async (path, heading) => {
     route(path);
@@ -1363,6 +1364,36 @@ describe("public proof routes", () => {
       await screen.findByRole("heading", { name: heading }),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Slop home" })).toBeVisible();
+  });
+});
+
+describe("sponsors page", () => {
+  it("lists every reviewed pool from the manifests without printing pledged caps as balances", async () => {
+    route("/sponsors");
+    render(<App />);
+
+    const table = await screen.findByRole("table");
+    for (const project of PROJECTS) {
+      const row = within(table).getByRole("row", {
+        name: new RegExp(`^${project.name}\\b`, "u"),
+      });
+      if (project.reward.kind === "external-prize-share") {
+        expect(row).toHaveTextContent("external prize share");
+      } else if (project.reward.fundingState !== "committed") {
+        expect(row).toHaveTextContent(
+          `unfunded, target ${project.reward.monthlyCapDisplay}`,
+        );
+        expect(row).not.toHaveTextContent("committed");
+      }
+      expect(row).toHaveTextContent(project.reward.paymentMode);
+      expect(row).toHaveTextContent(
+        project.funding.addresses.length === 0 ? "none published" : "active",
+      );
+    }
+    expect(screen.getByText(/escrow to send to/u)).toBeInTheDocument();
+    for (const link of screen.getAllByRole("link", { name: "Add a project" })) {
+      expect(link).toHaveAttribute("href", "/projects/new");
+    }
   });
 });
 
