@@ -1214,6 +1214,22 @@ test("opens the models page directly and through keyboard navigation", async ({
       exact: true,
     }),
   ).toBeVisible();
+  const tableRegion = page.getByRole("region", {
+    name: "Accepted outcomes by model",
+    exact: true,
+  });
+  await tableRegion.focus();
+  await expect(tableRegion).toBeFocused();
+  if (
+    await tableRegion.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    )
+  ) {
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
+      .toBeGreaterThan(0);
+  }
   await testInfo.attach("models-page", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
@@ -1250,6 +1266,22 @@ test("opens the sponsors page directly and through keyboard navigation", async (
       exact: true,
     }),
   ).toBeVisible();
+  const tableRegion = page.getByRole("region", {
+    name: "Project funding pools",
+    exact: true,
+  });
+  await tableRegion.focus();
+  await expect(tableRegion).toBeFocused();
+  if (
+    await tableRegion.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    )
+  ) {
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
+      .toBeGreaterThan(0);
+  }
   await testInfo.attach("sponsors-page", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",

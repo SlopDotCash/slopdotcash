@@ -3612,7 +3612,12 @@ function SponsorsPage() {
           only when a committed amount is backed by an active instrument with
           verifier evidence, and allocation never exceeds that amount.
         </p>
-        <div className="plain-table-wrap">
+        <div
+          className="plain-table-wrap"
+          role="region"
+          aria-label="Project funding pools"
+          tabIndex={0}
+        >
           <table className="plain-table sponsor-pools-table">
             <thead>
               <tr>
@@ -4045,7 +4050,12 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
           single busiest contributor. Above 50% the model mostly measures one
           person, and the row says so.
         </p>
-        <div className="plain-table-wrap">
+        <div
+          className="plain-table-wrap"
+          role="region"
+          aria-label="Accepted outcomes by model"
+          tabIndex={0}
+        >
           <table className="plain-table model-outcomes-table">
             <thead>
               <tr>
@@ -4109,7 +4119,12 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
         {summary.clients.length === 0 ? (
           <EmptyState text="No signed receipts in this snapshot." />
         ) : (
-          <div className="plain-table-wrap">
+          <div
+            className="plain-table-wrap"
+            role="region"
+            aria-label="Harness outcomes"
+            tabIndex={0}
+          >
             <table className="plain-table model-outcomes-table">
               <thead>
                 <tr>
