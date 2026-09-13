@@ -15,6 +15,10 @@ type Env = {
   GITHUB_APP_CLIENT_SECRET: string;
   IDENTITY_STATE_KEY: string;
   IDENTITY_ASSERTION_KEY: string;
+  // Fine-grained GitHub token with no permissions. It only gives the hourly
+  // intake renewal its own 5,000/h GitHub budget instead of the 60/h anonymous
+  // budget shared by every tenant behind a Cloudflare egress address.
+  GITHUB_INTAKE_STATUS_TOKEN?: string;
 };
 
 export const MAX_GITHUB_RESPONSE_BYTES = 64 * 1024;
@@ -23,9 +27,71 @@ export const PRIVATE_INTAKE_STATUS_URL =
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+export type PrivateIntakeSkipReason =
+  | "unreachable"
+  | "rate-limited"
+  | "unauthorized"
+  | "rejected"
+  | "malformed";
+
 export type PrivateIntakeRenewal =
-  | { status: "renewed"; enabled: boolean; verifiedAt: string }
-  | { status: "skipped" };
+  | {
+      status: "renewed";
+      enabled: boolean;
+      verifiedAt: string;
+      tokenRejected: boolean;
+    }
+  | {
+      status: "skipped";
+      reason: PrivateIntakeSkipReason;
+      httpStatus?: number;
+      tokenRejected: boolean;
+    };
+
+// GitHub token shapes are opaque; this only rejects values that cannot be a
+// token so that a blank or corrupted secret is reported instead of sent.
+const GITHUB_TOKEN_SHAPE = /^[A-Za-z0-9_]{16,512}$/u;
+
+async function fetchPrivateIntakeStatus(
+  fetchImpl: FetchLike,
+  token?: string,
+): Promise<Response | null> {
+  const headers: Record<string, string> = {
+    accept: "application/vnd.github+json",
+    "user-agent": "slop-identity",
+    "x-github-api-version": "2022-11-28",
+  };
+  if (token !== undefined) headers.authorization = `Bearer ${token}`;
+  try {
+    return await fetchImpl(PRIVATE_INTAKE_STATUS_URL, {
+      method: "GET",
+      // Workers support manual redirect handling; a 3xx is never followed and
+      // is rejected below because it is not a successful response.
+      redirect: "manual",
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return null;
+  }
+}
+
+function isRateLimited(response: Response): boolean {
+  if (response.status === 429) return true;
+  return (
+    response.status === 403 &&
+    (response.headers.get("x-ratelimit-remaining") === "0" ||
+      response.headers.get("retry-after") !== null)
+  );
+}
+
+function classifyRejection(response: Response): PrivateIntakeSkipReason {
+  if (isRateLimited(response)) return "rate-limited";
+  if (response.status === 401 || response.status === 403) {
+    return "unauthorized";
+  }
+  return "rejected";
+}
 
 export async function readBoundedGithubJson(
   response: Response,
@@ -244,36 +310,55 @@ async function resolveGithubIdentity(
  * D1 binding. GitHub's answer is the only thing that changes the observation;
  * an unreachable, rate-limited, or malformed response leaves the previous
  * observation in place so that it expires on its own schedule.
+ *
+ * The request carries the optional zero-permission token so that GitHub
+ * counts it against the token's own budget; Cloudflare egress addresses are
+ * shared, and their anonymous 60/h budget is regularly exhausted by other
+ * tenants. A token GitHub refuses is reported and the request is repeated
+ * anonymously once, so a revoked or expired token degrades to the anonymous
+ * budget instead of stopping renewal.
  */
 export async function renewPrivateIntakeStatus(options: {
   db: Pick<D1Database, "prepare">;
   fetchImpl?: FetchLike;
   now?: () => Date;
+  token?: string;
 }): Promise<PrivateIntakeRenewal> {
-  const { db, fetchImpl = fetch, now = () => new Date() } = options;
-  let response: Response;
-  try {
-    response = await fetchImpl(PRIVATE_INTAKE_STATUS_URL, {
-      method: "GET",
-      // Workers support manual redirect handling; a 3xx is never followed and
-      // is rejected below because it is not a successful response.
-      redirect: "manual",
-      headers: {
-        accept: "application/vnd.github+json",
-        "user-agent": "slop-identity",
-        "x-github-api-version": "2022-11-28",
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch {
-    return { status: "skipped" };
+  const { db, fetchImpl = fetch, now = () => new Date(), token } = options;
+  let tokenRejected = false;
+  let response: Response | null;
+  if (token === undefined) {
+    response = await fetchPrivateIntakeStatus(fetchImpl);
+  } else if (!GITHUB_TOKEN_SHAPE.test(token)) {
+    tokenRejected = true;
+    response = await fetchPrivateIntakeStatus(fetchImpl);
+  } else {
+    response = await fetchPrivateIntakeStatus(fetchImpl, token);
+    if (
+      response !== null &&
+      !response.ok &&
+      classifyRejection(response) === "unauthorized"
+    ) {
+      tokenRejected = true;
+      response = await fetchPrivateIntakeStatus(fetchImpl);
+    }
   }
-  if (!response.ok) return { status: "skipped" };
+  if (response === null) {
+    return { status: "skipped", reason: "unreachable", tokenRejected };
+  }
+  if (!response.ok) {
+    return {
+      status: "skipped",
+      reason: classifyRejection(response),
+      httpStatus: response.status,
+      tokenRejected,
+    };
+  }
   let value: unknown;
   try {
     value = await readBoundedGithubJson(response);
   } catch {
-    return { status: "skipped" };
+    return { status: "skipped", reason: "malformed", tokenRejected };
   }
   if (
     typeof value !== "object" ||
@@ -281,7 +366,7 @@ export async function renewPrivateIntakeStatus(options: {
     Array.isArray(value) ||
     typeof (value as { enabled?: unknown }).enabled !== "boolean"
   ) {
-    return { status: "skipped" };
+    return { status: "skipped", reason: "malformed", tokenRejected };
   }
   const enabled = (value as { enabled: boolean }).enabled;
   const verifiedAt = now().toISOString();
@@ -291,7 +376,7 @@ export async function renewPrivateIntakeStatus(options: {
     )
     .bind(enabled ? 1 : 0, verifiedAt)
     .run();
-  return { status: "renewed", enabled, verifiedAt };
+  return { status: "renewed", enabled, verifiedAt, tokenRejected };
 }
 
 async function deleteExpiredIdentityState(
@@ -308,19 +393,22 @@ async function deleteExpiredIdentityState(
 }
 
 export async function runScheduledMaintenance(
-  env: Pick<Env, "IDENTITY_DB">,
+  env: Pick<Env, "IDENTITY_DB" | "GITHUB_INTAKE_STATUS_TOKEN">,
   now: Date,
   fetchImpl: FetchLike = fetch,
 ): Promise<void> {
   // Cleanup and intake renewal are independent; one failing must not stop
-  // the other. Each failure is logged as a fixed string (error-policy:J2) and
-  // the invocation is still reported as failed so Cloudflare metrics show it.
+  // the other. Each failure is logged as a fixed string (error-policy:J2),
+  // extended only by the bounded skip reason and HTTP status so that Workers
+  // Logs say why GitHub was not accepted, and the invocation is still
+  // reported as failed so Cloudflare metrics show it. The token never appears.
   const [cleanup, renewal] = await Promise.allSettled([
     deleteExpiredIdentityState(env, now),
     renewPrivateIntakeStatus({
       db: env.IDENTITY_DB,
       fetchImpl,
       now: () => now,
+      token: env.GITHUB_INTAKE_STATUS_TOKEN,
     }),
   ]);
   if (cleanup.status === "rejected") {
@@ -328,8 +416,18 @@ export async function runScheduledMaintenance(
   }
   if (renewal.status === "rejected") {
     console.error("slop private intake renewal failed");
-  } else if (renewal.value.status === "skipped") {
-    console.error("slop private intake renewal skipped");
+  } else {
+    if (renewal.value.tokenRejected) {
+      console.error("slop private intake token rejected");
+    }
+    if (renewal.value.status === "skipped") {
+      const { reason, httpStatus } = renewal.value;
+      console.error(
+        `slop private intake renewal skipped: ${reason}${
+          httpStatus === undefined ? "" : ` ${httpStatus}`
+        }`,
+      );
+    }
   }
   if (cleanup.status === "rejected" || renewal.status === "rejected") {
     throw new Error("slop identity scheduled maintenance failed");

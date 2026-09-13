@@ -146,13 +146,30 @@ node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("b
   | bunx wrangler secret put IDENTITY_STATE_KEY --config workers/identity/wrangler.toml
 node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))' \
   | bunx wrangler secret put IDENTITY_ASSERTION_KEY --config workers/identity/wrangler.toml
+bunx wrangler secret put GITHUB_INTAKE_STATUS_TOKEN --config workers/identity/wrangler.toml
 bunx wrangler deploy --config workers/identity/wrangler.toml
 ```
 
 `IDENTITY_STATE_KEY` and `IDENTITY_ASSERTION_KEY` are independent random
-32-byte base64url values. Bind the Worker to the Pages trace API as
-`SLOP_IDENTITY`. Keep `workers_dev = false`; only the custom OAuth domain and
-service binding should invoke it.
+32-byte base64url values.
+
+`GITHUB_INTAKE_STATUS_TOKEN` is a fine-grained GitHub personal access token
+with public repository access and **no permissions**. Its only job is to give
+the hourly intake renewal its own 5,000 requests per hour GitHub budget:
+Cloudflare Workers share egress addresses across tenants, and the anonymous
+60 requests per hour budget of an address is regularly exhausted by others,
+which made the anonymous renewal skip at random. Use a token owned by the
+operator organization or a maintainer, never a contributor token. The Worker
+sends it only to `api.github.com` for the private-vulnerability-reporting
+status. A token GitHub refuses is logged as `slop private intake token
+rejected` and the request is repeated anonymously once, so rotation lapses
+degrade to the anonymous budget instead of stopping renewal. The protected
+release lists this secret in its exact Worker secret inventory, so set it
+before the first release that expects it.
+
+Bind the Worker to the Pages trace API as `SLOP_IDENTITY`. Keep
+`workers_dev = false`; only the custom OAuth domain and service binding should
+invoke it.
 
 The final `wrangler deploy` above is a one-time provisioning operation because
 it creates the custom domain and cron trigger. Normal production releases use
@@ -165,9 +182,13 @@ The same hourly trigger also renews the optional private intake observation
 (`private_intake_status` in the shared D1 database) from GitHub's public
 private-vulnerability-reporting status. Cleanup and renewal run independently;
 either failing is logged as a fixed string and fails the invocation without
-stopping the other. Renewal needs no GitHub or Cloudflare credential and never
-refreshes the observation on an unreachable, rate-limited, or malformed
-answer. See `backend/trace/PRIVATE_INTAKE_RECOVERY.md`.
+stopping the other. Renewal needs no Cloudflare credential and no GitHub
+permission; it presents `GITHUB_INTAKE_STATUS_TOKEN` purely for rate-limit
+accounting and never refreshes the observation on an unreachable,
+rate-limited, or malformed answer. A skipped renewal is logged as
+`slop private intake renewal skipped: <reason> [status]` where the reason is
+one of `unreachable`, `rate-limited`, `unauthorized`, `rejected`, or
+`malformed`. See `backend/trace/PRIVATE_INTAKE_RECOVERY.md`.
 
 The protected release verifies the live cleanup schedule against this Worker's
 canonical configuration before code/database deployment and after version activation.
