@@ -3675,7 +3675,12 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
           single busiest contributor. Above 50% the model mostly measures one
           person, and the row says so.
         </p>
-        <div className="plain-table-wrap">
+        <div
+          className="plain-table-wrap"
+          role="region"
+          aria-label="Accepted outcomes by model"
+          tabIndex={0}
+        >
           <table className="plain-table model-outcomes-table">
             <thead>
               <tr>
@@ -3739,7 +3744,12 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
         {summary.clients.length === 0 ? (
           <EmptyState text="No signed receipts in this snapshot." />
         ) : (
-          <div className="plain-table-wrap">
+          <div
+            className="plain-table-wrap"
+            role="region"
+            aria-label="Harness outcomes"
+            tabIndex={0}
+          >
             <table className="plain-table model-outcomes-table">
               <thead>
                 <tr>
