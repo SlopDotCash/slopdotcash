@@ -1,5 +1,8 @@
 /** Proves the generated project registry is deterministic and browser-safe. */
 
+import { readdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { renderProjectRegistry } from "./sync-project-registry.mjs";
 
@@ -20,6 +23,18 @@ describe("project registry generator", () => {
     expect(rendered).not.toMatch(/from ["'][^"']+\.json["']/u);
     expect(
       generated.RAW_PROJECT_DEFINITIONS.map((project) => project.id),
-    ).toEqual(["asi", "delta-star", "eliza", "heir-elements-sdk"]);
+    ).toEqual(
+      (
+        await readdir(
+          resolve(dirname(fileURLToPath(import.meta.url)), "../projects"),
+          {
+            withFileTypes: true,
+          },
+        )
+      )
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort(),
+    );
   });
 });
