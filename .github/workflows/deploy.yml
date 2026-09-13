@@ -493,6 +493,7 @@ jobs:
           const expected = [
             "GITHUB_APP_CLIENT_ID",
             "GITHUB_APP_CLIENT_SECRET",
+            "GITHUB_INTAKE_STATUS_TOKEN",
             "IDENTITY_ASSERTION_KEY",
             "IDENTITY_STATE_KEY",
           ];
