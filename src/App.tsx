@@ -3675,10 +3675,10 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
           single busiest contributor. Above 50% the model mostly measures one
           person, and the row says so.
         </p>
-        <div
+        <section
           className="plain-table-wrap"
-          role="region"
           aria-label="Accepted outcomes by model"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
           tabIndex={0}
         >
           <table className="plain-table model-outcomes-table">
@@ -3724,7 +3724,7 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </section>
         <p className="model-outcomes-note">
           {count.format(totals.distinctDeclaredIdentifiers)} distinct declared
           strings fold to {count.format(totals.distinctModels)} models by case
@@ -3744,10 +3744,10 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
         {summary.clients.length === 0 ? (
           <EmptyState text="No signed receipts in this snapshot." />
         ) : (
-          <div
+          <section
             className="plain-table-wrap"
-            role="region"
             aria-label="Harness outcomes"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
             tabIndex={0}
           >
             <table className="plain-table model-outcomes-table">
@@ -3785,7 +3785,7 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </section>
         )}
       </section>
 
