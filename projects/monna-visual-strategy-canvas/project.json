@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "1",
+  "id": "monna-visual-strategy-canvas",
+  "slug": "monna-visual-strategy-canvas",
+  "name": "Visual Strategy Canvas",
+  "eyebrow": "Public repository",
+  "headline": "Turn a business brief into an editable visual canvas",
+  "description": "Turn a business brief into an editable strategy canvas and export it. Improve accessible editing, schema validation and deterministic export tests. Live model generation needs an independently configured provider.",
+  "listingTier": "community",
+  "status": "paused",
+  "steward": {
+    "displayName": "Eman Alshazly",
+    "kind": "individual",
+    "github": {
+      "actorId": "6705196",
+      "nodeId": "MDQ6VXNlcjY3MDUxOTY=",
+      "login": "emanalshazly",
+      "type": "User",
+      "profileUrl": "https://github.com/emanalshazly"
+    },
+    "website": null
+  },
+  "authority": {
+    "state": "unverified",
+    "reason": "missing-repository-proof",
+    "role": "project-steward",
+    "repositoryId": "1367980137",
+    "repositoryNodeId": "R_kgDOUYm4aQ",
+    "proof": null
+  },
+  "terms": {
+    "revision": "2026-09-13.1",
+    "effectiveAt": "2026-09-13T00:00:00.000Z",
+    "receiptPolicy": {
+      "state": "pending-authority-activation",
+      "activatedAt": null,
+      "bindings": []
+    },
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "copyright": {
+      "model": "unknown",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "verified",
+      "spdx": "MIT",
+      "url": "https://github.com/emanalshazly/monna-visual-strategy-canvas/blob/68806a5a5baded4dcacaaba59a4ab8d692331cb0/LICENSE",
+      "commitSha": "68806a5a5baded4dcacaaba59a4ab8d692331cb0",
+      "fileSha256": "0a5d97e55cefcbdd06d31f343bcc36c7c7e14deaea6ee9ca8029ee596b27a79f"
+    },
+    "inbound": {
+      "mode": "unknown",
+      "termsUrl": null,
+      "commitSha": null,
+      "fileSha256": null,
+      "version": null,
+      "acceptance": null
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
+  "repositories": [
+    {
+      "id": "emanalshazly/monna-visual-strategy-canvas",
+      "displayName": "emanalshazly/monna-visual-strategy-canvas",
+      "githubUrl": "https://github.com/emanalshazly/monna-visual-strategy-canvas",
+      "description": "Turn a business brief into an editable strategy canvas and export it. Improve accessible editing, schema validation and deterministic export tests. Live model generation needs an independently configured provider.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-monna-visual-strategy-canvas",
+    "publishAtRoot": false,
+    "sourcePath": "skills/contribute-to-monna-visual-strategy-canvas",
+    "publicPath": "/projects/monna-visual-strategy-canvas/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-monna-visual-strategy-canvas-contributions",
+    "sourcePath": "skills/review-monna-visual-strategy-canvas-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-09-13T00:00:00.000Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "0",
+    "monthlyCapDisplay": "$0",
+    "committedMinor": "0",
+    "paymentMode": "disabled",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+    "recordsPath": "funding/monna-visual-strategy-canvas",
+    "addresses": []
+  },
+  "modelPolicy": {
+    "mode": "open-declared",
+    "disclosureRequired": true
+  },
+  "links": {
+    "creator": "https://github.com/emanalshazly",
+    "repository": "https://github.com/emanalshazly/monna-visual-strategy-canvas",
+    "issues": "https://github.com/emanalshazly/monna-visual-strategy-canvas/issues"
+  }
+}
