@@ -1266,6 +1266,9 @@ test("opens the sponsors page directly and through keyboard navigation", async (
       exact: true,
     }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Who builds on Slop.", exact: true }),
+  ).toBeVisible();
   const tableRegion = page.getByRole("region", {
     name: "Project funding pools",
     exact: true,

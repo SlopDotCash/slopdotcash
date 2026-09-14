@@ -91,6 +91,7 @@ import {
   type PublicSignerReport,
   publicSignerStatus,
 } from "./lib/signer-capability";
+import { summarizeWhoBuilds } from "./lib/who-builds";
 
 const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 
@@ -3520,7 +3521,96 @@ function sponsorPoolLabel(reward: ProjectDefinition["reward"]): string {
   return monthlyPoolLabel(reward);
 }
 
-function SponsorsPage() {
+const WHO_BUILDS_SNAPSHOT_URL = "https://who-builds-on-slop.vercel.app";
+
+function WhoBuildsOnSlop({
+  state,
+  retry,
+}: {
+  state: DataState;
+  retry: () => void;
+}) {
+  const count = new Intl.NumberFormat("en-US");
+  const percent = (part: number, whole: number) => {
+    if (whole <= 0 || part <= 0) return "0%";
+    const rounded = Math.round((100 * part) / whole);
+    return rounded === 0 ? "under 1%" : `${rounded}%`;
+  };
+  const describe = (description: string | null) =>
+    description
+      ? `, ${description.charAt(0).toLowerCase()}${description.slice(1).replace(/\.$/u, "")}`
+      : "";
+  const footprint =
+    state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
+  const models =
+    state.status === "ready" ? summarizeModelOutcomes(state.snapshot) : null;
+  return (
+    <section
+      aria-labelledby="who-builds-heading"
+      className="model-outcomes-section who-builds"
+    >
+      <h2 id="who-builds-heading">Who builds on Slop.</h2>
+      <p>
+        Two facts the leaderboard publishes about itself over its current
+        window, then one dated cross-reference against the rest of GitHub. None
+        of them adds points and none of them is a promise about who will show up
+        for your pool.
+      </p>
+      <DataNotice retry={retry} state={state} />
+      {footprint && models && footprint.scoredEvents > 0 ? (
+        <div className="money-summary model-outcomes-summary">
+          {footprint.repositories.map((row) => (
+            <span key={row.repositoryId}>
+              <strong>{percent(row.events, footprint.scoredEvents)}</strong> of
+              scored events are on {row.displayName}
+              {describe(row.description)}
+            </span>
+          ))}
+          <span>
+            <strong>
+              {percent(
+                models.totals.mergedPullRequestsWithModel,
+                models.totals.mergedPullRequests,
+              )}
+            </strong>{" "}
+            of merged pull requests name the model that did the work (
+            {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
+            {count.format(models.totals.mergedPullRequests)})
+          </span>
+          <span>
+            <strong>{count.format(footprint.contributors)}</strong> contributors
+            scored in the last {footprint.windowDays} days
+          </span>
+        </div>
+      ) : null}
+      <p>
+        Outside Slop: on 8 September 2026 the 119 contributors then on this
+        leaderboard were cross-referenced against every merged pull request each
+        had landed elsewhere on GitHub since 1 January 2026, plus their own
+        public repositories. AI agents or LLM tooling was the primary focus for
+        74% of the 86 with classifiable public work (64 people, 54% of all 119),
+        and 50 of the 119 (42%) had merged at least one pull request into an
+        outside AI repository this year. Public GitHub data only, one
+        keyword-assigned category per repository, two mass pull-request accounts
+        excluded. The snapshot shows both denominators and the method, and it is
+        not recomputed by this site.
+      </p>
+      <p>
+        <ExternalLinkAnchor href={WHO_BUILDS_SNAPSHOT_URL}>
+          Who builds on Slop, 8 Sep 2026 snapshot
+        </ExternalLinkAnchor>
+      </p>
+    </section>
+  );
+}
+
+function SponsorsPage({
+  state,
+  retry,
+}: {
+  state: DataState;
+  retry: () => void;
+}) {
   const protocolRoot = `${SOURCE_REPOSITORY}/blob/develop/protocol`;
   const now = Date.now();
   return (
@@ -3787,6 +3877,7 @@ function SponsorsPage() {
           </ExternalLinkAnchor>
         </p>
       </section>
+      <WhoBuildsOnSlop retry={retry} state={state} />
       <section className="custody-proof mechanism-sources">
         <h2>See who shows up before you commit.</h2>
         <ul>
@@ -4296,7 +4387,6 @@ export function App() {
   const route = useRoute();
   const needsSnapshot = ![
     "how-it-works",
-    "sponsors",
     "new-project",
     "wallet",
     "unknown",
@@ -4307,7 +4397,8 @@ export function App() {
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
-  else if (route.kind === "sponsors") content = <SponsorsPage />;
+  else if (route.kind === "sponsors")
+    content = <SponsorsPage retry={retry} state={state} />;
   else if (route.kind === "receipts")
     content = <ReceiptsPage retry={retry} state={state} />;
   else if (route.kind === "models")
