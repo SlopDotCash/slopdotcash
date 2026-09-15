@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { externalSourceId } from "./external-sources";
 import {
   assertLeaderboardSnapshot,
   assertPublishableLeaderboardSnapshot,
@@ -2174,6 +2175,58 @@ describe("scoring and limits", () => {
         (event) => event.category === "evaluated-contribution",
       ),
     ).toHaveLength(3);
+  });
+
+  it("publishes an external evaluated contribution without GitHub artifact matching", () => {
+    const post = "https://x.com/partialauthor/status/1830000000000000000";
+    const external: ScoreEvent = {
+      ...evaluatedContribution(0),
+      id: "award_partial_author_thread",
+      source: {
+        id: externalSourceId(post),
+        kind: "external",
+        number: 0,
+        platform: "x",
+        title: "Thread: migrating an eliza plugin to the v2 runtime",
+        url: post,
+        evidence: {
+          archiveUrl: `https://web.archive.org/web/20260722090000/${post}`,
+          contentSha256: "c".repeat(64),
+          capturedAt: "2026-07-22T09:00:00.000Z",
+        },
+      },
+    };
+
+    const snapshot = createLeaderboardSnapshot(
+      input({ evaluatedContributions: [external, evaluatedContribution(1)] }),
+    );
+    expect(snapshot.ledger).toContainEqual(
+      expect.objectContaining({
+        id: external.id,
+        source: expect.objectContaining({ kind: "external", number: 0 }),
+      }),
+    );
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+
+    const githubUnderExternal = structuredClone(snapshot);
+    const published = githubUnderExternal.ledger.find(
+      (event) => event.id === external.id,
+    );
+    if (!published) throw new Error("expected the external award");
+    published.source.url = "https://github.com/elizaOS/eliza/pull/80";
+    expect(() => assertLeaderboardSnapshot(githubUnderExternal)).toThrow(
+      /canonical public x URL/u,
+    );
+
+    const smuggledEvidence = structuredClone(snapshot);
+    const ordinary = smuggledEvidence.ledger.find(
+      (event) => event.source.kind !== "external",
+    );
+    if (!ordinary) throw new Error("expected an ordinary ledger event");
+    ordinary.source.platform = "web";
+    expect(() => assertLeaderboardSnapshot(smuggledEvidence)).toThrow(
+      /reserved for external sources/u,
+    );
   });
 
   it("joins an evaluated issue comment to its signed finalized run", () => {

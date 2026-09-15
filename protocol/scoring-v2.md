@@ -62,6 +62,17 @@ The `slop-review` proposal records effort, complexity, impact, review load,
 split risk, confidence, exact provider/model/client, receipt, and finalized
 private trace. Maintainers remain the sole scoring authority.
 
+## External evaluated contributions
+
+A project that sets `reward.externalEvaluations.enabled` may recognize useful
+work outside its repository, such as a public explainer, a support answer, a
+tutorial, or a video, through the same one-file evaluated-contribution award.
+The award carries the canonical public URL, a deterministic URL-bound source
+id, and archive evidence captured before review. It scores 1–8 points from the
+shared pool under the existing newest-three cap, never carries a receipt or
+evidence bonus, and never cites reach metrics. Absent opt-in, such awards fail
+closed. See [`evaluations/README.md`](../evaluations/README.md).
+
 ## Evidence bonuses
 
 A valid signed receipt with an outcome-matched finalized private trace adds a

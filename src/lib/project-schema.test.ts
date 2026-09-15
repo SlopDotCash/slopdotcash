@@ -255,6 +255,35 @@ describe("project proposal schema", () => {
     );
   });
 
+  it("validates the optional external evaluations opt-in", () => {
+    const optedIn = structuredClone(eliza) as unknown as {
+      reward: Record<string, unknown>;
+    };
+    optedIn.reward.externalEvaluations = { enabled: true };
+    expect(
+      assertProjectDefinition(optedIn).reward.externalEvaluations?.enabled,
+    ).toBe(true);
+    expect(
+      assertProjectDefinition(structuredClone(eliza)).reward
+        .externalEvaluations,
+    ).toBeUndefined();
+
+    const stringFlag = structuredClone(optedIn);
+    stringFlag.reward.externalEvaluations = { enabled: "yes" };
+    expect(() => assertProjectDefinition(stringFlag)).toThrow(
+      /enabled must be a boolean/u,
+    );
+
+    const smuggled = structuredClone(optedIn);
+    smuggled.reward.externalEvaluations = {
+      enabled: true,
+      monthlyPointCap: 40,
+    };
+    expect(() => assertProjectDefinition(smuggled)).toThrow(
+      /unexpected or missing fields/u,
+    );
+  });
+
   it("rejects repository and skill collisions across project folders", () => {
     const copy = structuredClone(deltaStar);
     copy.status = "paused";

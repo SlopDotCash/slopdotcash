@@ -1,6 +1,10 @@
 /** Public snapshot contracts. Historical records retain their original semantics. */
 
 import type {
+  ExternalSourceEvidence,
+  ExternalSourcePlatform,
+} from "./external-sources";
+import type {
   LEADERBOARD_REPOSITORY,
   LEADERBOARD_SCHEMA_VERSION,
   REVIEW_EXCLUSION_REASONS,
@@ -274,10 +278,15 @@ export interface ScoreEvent {
   repository: RepositoryId;
   source: {
     id: string;
-    kind: "comment" | "issue" | "pull-request" | "review";
+    kind: "comment" | "external" | "issue" | "pull-request" | "review";
+    /** Zero for external sources, which have no GitHub number. */
     number: number;
     title: string;
     url: string;
+    /** Present only when kind is external. */
+    platform?: ExternalSourcePlatform;
+    /** Present only when kind is external. */
+    evidence?: ExternalSourceEvidence;
   };
   reason: string;
   continuity?: {
