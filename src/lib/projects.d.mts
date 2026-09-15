@@ -22,6 +22,10 @@ export interface ProjectFundingPolicy {
   readonly commitments?: readonly FundingCommitmentInstrument[];
 }
 
+export interface ProjectExternalEvaluationsPolicy {
+  readonly enabled: boolean;
+}
+
 export interface ProjectReviewBudgetPolicy {
   readonly effectiveAt: string;
   readonly monthlyCapMinor: string;
@@ -51,6 +55,12 @@ export interface ProjectRewardPolicy {
   readonly unusedFunds: "not-applicable" | "rollover-without-cap-increase";
   readonly fundingState: "committed" | "external-opportunity" | "pledged";
   readonly reviewBudget?: ProjectReviewBudgetPolicy;
+  /**
+   * Opt-in for maintainer-awarded contributions that live outside GitHub
+   * (posts, support answers, tutorials, videos). Absent means such awards are
+   * rejected, which is the default for every project.
+   */
+  readonly externalEvaluations?: ProjectExternalEvaluationsPolicy;
   readonly externalOpportunity?: {
     readonly name: string;
     readonly advertisedAmountDisplay: string;

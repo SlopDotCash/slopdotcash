@@ -93,6 +93,81 @@ Example (do not copy placeholder identities into a real award):
 }
 ```
 
+## Contributions outside GitHub
+
+A project may opt in to awards for useful work that never touches its
+repository: a public explainer thread, a support answer that closed a recurring
+question, a tutorial, or a video. The opt-in is one reward field in the
+project manifest, and it is absent by default:
+
+```json
+"externalEvaluations": { "enabled": true }
+```
+
+External awards use the same one-file pull request, the same 1–8 point range,
+the same reviewing-maintainer decision, the same newest-three cap per
+contributor and project, and the same canonical-source deduplication. Nothing
+about merge-based or review-based scoring changes. What differs is the source:
+
+- `source.kind` is `external` and `source.platform` is one of `x`, `discord`,
+  `youtube`, or `web`. The URL must be the canonical public address for that
+  platform, with no query string or fragment. GitHub URLs are rejected here and
+  must use the ordinary GitHub source kinds instead.
+- `source.id` is `external-` followed by the lowercase SHA-256 of the exact
+  URL, so the same URL can never be awarded twice under a different id.
+- `source.evidence` is required: a `web.archive.org` capture of the exact URL
+  (or an `archive.ph` snapshot), the lowercase SHA-256 of the captured content,
+  and the capture time, which must fall between `occurredAt` and
+  `review.reviewedAt`. The award stays auditable if the post is later deleted.
+- There is no `source.number`, no run receipt, and no evidence bonus. An
+  external source cannot carry a signed receipt because nothing was run
+  against the repository.
+
+Reach is not a reason. Likes, views, reposts, and follower counts are not
+evidence of usefulness and are never cited in an award. The maintainer states
+the concrete outcome: the question it answered, the migration it unblocked,
+the guide that now links it. Coordinated posting, reposted documentation, and
+promotional content receive no credit.
+
+Example (do not copy placeholder identities into a real award):
+
+```json
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_contributor_runtime_thread",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "GITHUB_GRAPHQL_NODE_ID",
+    "login": "contributor",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/123?v=4",
+    "url": "https://github.com/contributor",
+    "kind": "User"
+  },
+  "occurredAt": "2026-09-01T10:00:00.000Z",
+  "points": 2,
+  "source": {
+    "id": "external-<sha256 of the url>",
+    "kind": "external",
+    "platform": "x",
+    "title": "Thread: migrating an eliza plugin to the v2 runtime",
+    "url": "https://x.com/contributor/status/1830000000000000000",
+    "evidence": {
+      "archiveUrl": "https://web.archive.org/web/20260902120000/https://x.com/contributor/status/1830000000000000000",
+      "contentSha256": "<sha256 of the captured content>",
+      "capturedAt": "2026-09-02T12:00:00.000Z"
+    }
+  },
+  "reason": "The thread documented the exact runtime migration steps three issue reporters had been missing; the plugin guide now links it.",
+  "review": {
+    "reviewer": "maintainer",
+    "reviewedAt": "2026-09-03T10:00:00.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/99"
+  }
+}
+```
+
 Never publish vulnerability details, secrets, raw private trajectories, or
 wallet credentials in an award. Use the target repository's private security
 reporting path for sensitive findings.

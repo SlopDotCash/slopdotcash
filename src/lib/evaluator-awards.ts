@@ -8,6 +8,13 @@ import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import {
+  assertExternalSourceEvidence,
+  assertExternalSourcePlatform,
+  assertExternalSourceUrl,
+  EXTERNAL_SOURCE_NUMBER,
+  externalSourceId,
+} from "./external-sources";
+import {
   canonicalActorAvatarUrl,
   type GitHubActor,
   type ScoreEvent,
@@ -246,22 +253,33 @@ export function assertEvaluatorAwardManifest(
     );
   }
   const source = record(manifest.source, "evaluator award.source");
+  const external = source.kind === "external";
   exactKeys(
     source,
-    ["id", "kind", "number", "title", "url"],
+    external
+      ? ["evidence", "id", "kind", "platform", "title", "url"]
+      : ["id", "kind", "number", "title", "url"],
     "evaluator award.source",
   );
   if (
-    !["comment", "issue", "pull-request", "review"].includes(
+    !["comment", "external", "issue", "pull-request", "review"].includes(
       String(source.kind),
     )
   ) {
     throw new TypeError("evaluator award.source.kind is invalid");
   }
-  if (!Number.isSafeInteger(source.number) || Number(source.number) <= 0) {
+  if (external && project.reward.externalEvaluations?.enabled !== true) {
+    throw new TypeError(
+      `project ${projectId} has not opted in to external evaluated contributions`,
+    );
+  }
+  if (
+    !external &&
+    (!Number.isSafeInteger(source.number) || Number(source.number) <= 0)
+  ) {
     throw new TypeError("evaluator award.source.number must be positive");
   }
-  const number = Number(source.number);
+  const number = external ? EXTERNAL_SOURCE_NUMBER : Number(source.number);
   const sourceKind = source.kind as ScoreEvent["source"]["kind"];
   const pathKind =
     sourceKind === "issue" || sourceKind === "comment" ? "issues" : "pull";
@@ -269,23 +287,57 @@ export function assertEvaluatorAwardManifest(
     registeredRepository.id,
     ...(registeredRepository.aliases ?? []),
   ];
-  const sourceUrl = githubUrl(
-    source.url,
-    "evaluator award.source.url",
-    repositoryIdentities.map(
-      (repositoryIdentity) => `/${repositoryIdentity}/${pathKind}/${number}`,
-    ),
-    sourceKind === "review"
-      ? /^#(?:pullrequestreview-|discussion_r)\d+$/iu
-      : sourceKind === "comment"
-        ? /^#issuecomment-\d+$/iu
-        : undefined,
-  );
+  const platform = external
+    ? assertExternalSourcePlatform(
+        source.platform,
+        "evaluator award.source.platform",
+      )
+    : undefined;
+  const sourceUrl = platform
+    ? assertExternalSourceUrl(
+        source.url,
+        platform,
+        "evaluator award.source.url",
+      )
+    : githubUrl(
+        source.url,
+        "evaluator award.source.url",
+        repositoryIdentities.map(
+          (repositoryIdentity) =>
+            `/${repositoryIdentity}/${pathKind}/${number}`,
+        ),
+        sourceKind === "review"
+          ? /^#(?:pullrequestreview-|discussion_r)\d+$/iu
+          : sourceKind === "comment"
+            ? /^#issuecomment-\d+$/iu
+            : undefined,
+      );
+  if (external && source.id !== externalSourceId(sourceUrl)) {
+    throw new TypeError(
+      "evaluator award.source.id must be the sha256 digest of its external URL",
+    );
+  }
+  const evidence = external
+    ? assertExternalSourceEvidence(
+        source.evidence,
+        sourceUrl,
+        "evaluator award.source.evidence",
+      )
+    : undefined;
   const occurredAt = iso(manifest.occurredAt, "evaluator award.occurredAt");
   const approval = review(manifest.review, "evaluator award.review");
   if (Date.parse(approval.reviewedAt) < Date.parse(occurredAt)) {
     throw new RangeError(
       "evaluator award review cannot precede the contribution",
+    );
+  }
+  if (
+    evidence &&
+    (Date.parse(evidence.capturedAt) < Date.parse(occurredAt) ||
+      Date.parse(evidence.capturedAt) > Date.parse(approval.reviewedAt))
+  ) {
+    throw new RangeError(
+      "evaluator award evidence must be captured between the contribution and its review",
     );
   }
   if (
@@ -315,6 +367,8 @@ export function assertEvaluatorAwardManifest(
       number,
       title: text(source.title, "evaluator award.source.title", { max: 512 }),
       url: sourceUrl,
+      ...(platform ? { platform } : {}),
+      ...(evidence ? { evidence } : {}),
     },
     reason: text(manifest.reason, "evaluator award.reason", {
       min: 40,
