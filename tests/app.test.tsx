@@ -1371,6 +1371,7 @@ describe("public proof routes", () => {
 describe("sponsors page", () => {
   it("lists every reviewed pool from the manifests without printing pledged caps as balances", async () => {
     route("/sponsors");
+    mockSnapshot();
     render(<App />);
 
     const table = await screen.findByRole("table");
@@ -1395,6 +1396,58 @@ describe("sponsors page", () => {
     for (const link of screen.getAllByRole("link", { name: "Add a project" })) {
       expect(link).toHaveAttribute("href", "/projects/new");
     }
+  });
+
+  it("shows where scored work lands from the snapshot and dates the outside cross-reference", async () => {
+    route("/sponsors");
+    mockSnapshot();
+    render(<App />);
+
+    const section = (
+      await screen.findByRole("heading", { name: "Who builds on Slop." })
+    ).closest("section");
+    expect(section).not.toBeNull();
+    const scope = within(section as HTMLElement);
+    const elizaShare = await scope.findByText("86%");
+    expect(elizaShare.closest("span")).toHaveTextContent(
+      "86% of scored events are on elizaOS/eliza, core elizaOS agent framework and runtime",
+    );
+    expect(scope.getByText("14%").closest("span")).toHaveTextContent(
+      /of scored events are on SlopDotCash\/proximityprize, machine-checked/u,
+    );
+    expect(
+      scope.getByText(/contributors scored in the last 35 days/u),
+    ).toBeInTheDocument();
+    expect(scope.getByText(/8 September 2026/u)).toBeInTheDocument();
+    expect(scope.getByText(/frozen to the leaderboard/u)).toBeInTheDocument();
+    expect(scope.getByText(/74% of the 86/u)).toBeInTheDocument();
+    expect(
+      scope.getByText(/the site does not recompute it/u),
+    ).toBeInTheDocument();
+    const snapshotLink = scope.getByRole("link", {
+      name: "Snapshot JSON, 2026-09-08",
+    });
+    expect(snapshotLink).toHaveAttribute(
+      "href",
+      "https://github.com/SlopDotCash/slopdotcash/blob/develop/data/who-builds/2026-09-08/snapshot.json",
+    );
+    expect(snapshotLink).toHaveAttribute("rel", "noreferrer");
+    expect(scope.getByText(/^sha256 540df0156b3b$/u)).toHaveAttribute(
+      "title",
+      "sha256 540df0156b3b7ac5ba8e283d795ef93bcd4642cff889953b4af8a97af2eb4c47",
+    );
+    expect(
+      scope.getByRole("link", { name: "Method and caveats" }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/SlopDotCash/slopdotcash/blob/develop/data/who-builds/2026-09-08/METHOD.md",
+    );
+    const link = scope.getByRole("link", { name: "Rendered view" });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://who-builds-on-slop.vercel.app",
+    );
+    expect(link).toHaveAttribute("rel", "noreferrer");
   });
 });
 

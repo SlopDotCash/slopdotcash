@@ -91,6 +91,10 @@ import {
   type PublicSignerReport,
   publicSignerStatus,
 } from "./lib/signer-capability";
+import {
+  summarizeWhoBuilds,
+  WHO_BUILDS_CROSS_REFERENCE,
+} from "./lib/who-builds";
 
 const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 
@@ -3520,7 +3524,121 @@ function sponsorPoolLabel(reward: ProjectDefinition["reward"]): string {
   return monthlyPoolLabel(reward);
 }
 
-function SponsorsPage() {
+function WhoBuildsOnSlop({
+  state,
+  retry,
+}: {
+  state: DataState;
+  retry: () => void;
+}) {
+  const count = new Intl.NumberFormat("en-US");
+  const percentOfRatio = (ratio: number) => {
+    if (ratio <= 0) return "0%";
+    const rounded = Math.round(100 * ratio);
+    return rounded === 0 ? "under 1%" : `${rounded}%`;
+  };
+  const percent = (part: number, whole: number) =>
+    whole <= 0 ? "0%" : percentOfRatio(part / whole);
+  const pin = WHO_BUILDS_CROSS_REFERENCE;
+  const pinnedFile = (path: string) =>
+    `${SOURCE_REPOSITORY}/blob/develop/${path}`;
+  const describe = (description: string | null) =>
+    description
+      ? `, ${description.charAt(0).toLowerCase()}${description.slice(1).replace(/\.$/u, "")}`
+      : "";
+  const footprint =
+    state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
+  const models =
+    state.status === "ready" ? summarizeModelOutcomes(state.snapshot) : null;
+  return (
+    <section
+      aria-labelledby="who-builds-heading"
+      className="model-outcomes-section who-builds"
+    >
+      <h2 id="who-builds-heading">Who builds on Slop.</h2>
+      <p>
+        Two facts the leaderboard publishes about itself over its current
+        window, then one dated cross-reference against the rest of GitHub. None
+        of them adds points and none of them is a promise about who will show up
+        for your pool.
+      </p>
+      <DataNotice retry={retry} state={state} />
+      {footprint && models && footprint.scoredEvents > 0 ? (
+        <div className="money-summary model-outcomes-summary">
+          {footprint.repositories.map((row) => (
+            <span key={row.repositoryId}>
+              <strong>{percentOfRatio(row.share)}</strong> of scored events are
+              on {row.displayName}
+              {describe(row.description)}
+            </span>
+          ))}
+          <span>
+            <strong>
+              {percent(
+                models.totals.mergedPullRequestsWithModel,
+                models.totals.mergedPullRequests,
+              )}
+            </strong>{" "}
+            of merged pull requests name the model that did the work (
+            {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
+            {count.format(models.totals.mergedPullRequests)})
+          </span>
+          <span>
+            <strong>{count.format(footprint.contributors)}</strong> contributors
+            scored in the last {footprint.windowDays} days
+          </span>
+        </div>
+      ) : null}
+      <p>
+        Outside Slop: a separate, dated cross-reference. The contributor count
+        above moves with every refresh; the figures in this paragraph are frozen
+        to the leaderboard as it stood on {pin.dateLabel}, when it held{" "}
+        {count.format(pin.contributors)} contributors. Those{" "}
+        {count.format(pin.contributors)} were cross-referenced against every
+        merged pull request each had landed elsewhere on GitHub since 1 January
+        2026, plus their own public repositories. AI agents or LLM tooling was
+        the primary focus for {percent(pin.aiPrimary, pin.classifiable)} of the{" "}
+        {count.format(pin.classifiable)} with classifiable public work (
+        {count.format(pin.aiPrimary)} people,{" "}
+        {percent(pin.aiPrimary, pin.contributors)} of all{" "}
+        {count.format(pin.contributors)}), and{" "}
+        {count.format(pin.aiExternalPullRequest)} of the{" "}
+        {count.format(pin.contributors)} (
+        {percent(pin.aiExternalPullRequest, pin.contributors)}) had merged at
+        least one pull request into an outside AI repository this year. Public
+        GitHub data only, one keyword-assigned category per repository,{" "}
+        {pin.excludedMassAccounts === 2 ? "two" : pin.excludedMassAccounts} mass
+        pull-request accounts excluded. The snapshot behind these figures is
+        committed to this repository and pinned by hash; the site does not
+        recompute it.
+      </p>
+      <p className="who-builds-sources">
+        <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
+          Snapshot JSON, {pin.date}
+        </ExternalLinkAnchor>{" "}
+        <code title={`sha256 ${pin.snapshotSha256}`}>
+          sha256 {pin.snapshotSha256.slice(0, 12)}
+        </code>
+        {" · "}
+        <ExternalLinkAnchor href={pinnedFile(pin.methodPath)}>
+          Method and caveats
+        </ExternalLinkAnchor>
+        {" · "}
+        <ExternalLinkAnchor href={pin.renderedUrl}>
+          Rendered view
+        </ExternalLinkAnchor>
+      </p>
+    </section>
+  );
+}
+
+function SponsorsPage({
+  state,
+  retry,
+}: {
+  state: DataState;
+  retry: () => void;
+}) {
   const protocolRoot = `${SOURCE_REPOSITORY}/blob/develop/protocol`;
   const now = Date.now();
   return (
@@ -3787,6 +3905,7 @@ function SponsorsPage() {
           </ExternalLinkAnchor>
         </p>
       </section>
+      <WhoBuildsOnSlop retry={retry} state={state} />
       <section className="custody-proof mechanism-sources">
         <h2>See who shows up before you commit.</h2>
         <ul>
@@ -4296,7 +4415,6 @@ export function App() {
   const route = useRoute();
   const needsSnapshot = ![
     "how-it-works",
-    "sponsors",
     "new-project",
     "wallet",
     "unknown",
@@ -4307,7 +4425,8 @@ export function App() {
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
-  else if (route.kind === "sponsors") content = <SponsorsPage />;
+  else if (route.kind === "sponsors")
+    content = <SponsorsPage retry={retry} state={state} />;
   else if (route.kind === "receipts")
     content = <ReceiptsPage retry={retry} state={state} />;
   else if (route.kind === "models")
