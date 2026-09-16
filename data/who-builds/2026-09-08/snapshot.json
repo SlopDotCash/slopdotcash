@@ -1,0 +1,459 @@
+{
+ "generatedAt": "2026-09-08",
+ "leaderboardGeneratedAt": "2026-09-06T19:02:58.135Z",
+ "window": {
+  "days": 35,
+  "from": "2026-08-02T18:51:40.000Z",
+  "to": "2026-09-06T18:51:40.000Z"
+ },
+ "ruleVersion": "slop-score-v2",
+ "contributors": 119,
+ "noFootprint": 10,
+ "unclassifiable": 33,
+ "externalRepos": 1029,
+ "externalReposExMass": 629,
+ "externalPrsExMass": 4956,
+ "contributorsWithExternal": 67,
+ "aiRepoMedianStars": 9,
+ "aiRepoShareUnder10": 0.511,
+ "slopFacts": {
+  "elizaShareOfEvents": 0.82,
+  "asiShareOfEvents": 0.18,
+  "eligibleSources": 9401,
+  "validReceiptSources": 4829,
+  "receiptShare": 0.51,
+  "providers": {
+   "OpenAI": 0.46,
+   "xAI": 0.21,
+   "Anthropic": 0.21,
+   "OpenCode": 0.06
+  },
+  "providersAsOf": "2026-09-06"
+ },
+ "cohorts": [
+  {
+   "name": "All 119 on the leaderboard",
+   "size": 119,
+   "classifiable": 86,
+   "aiPrimary": 64,
+   "aiExternalPr": 50
+  },
+  {
+   "name": "Active (score above zero)",
+   "size": 90,
+   "classifiable": 61,
+   "aiPrimary": 43,
+   "aiExternalPr": 36
+  },
+  {
+   "name": "Top 50",
+   "size": 50,
+   "classifiable": 36,
+   "aiPrimary": 28,
+   "aiExternalPr": 22
+  },
+  {
+   "name": "Top 20",
+   "size": 20,
+   "classifiable": 16,
+   "aiPrimary": 13,
+   "aiExternalPr": 11
+  }
+ ],
+ "focus": [
+  {
+   "area": "AI agents and LLM tooling",
+   "repos": 307,
+   "prs": 3021,
+   "contributors": 52,
+   "primaryContributors": 64
+  },
+  {
+   "area": "Crypto and web3",
+   "repos": 89,
+   "prs": 621,
+   "contributors": 28,
+   "primaryContributors": 10
+  },
+  {
+   "area": "Dev tooling and infra",
+   "repos": 66,
+   "prs": 265,
+   "contributors": 29,
+   "primaryContributors": 4
+  },
+  {
+   "area": "Finance and trading",
+   "repos": 30,
+   "prs": 352,
+   "contributors": 12,
+   "primaryContributors": 1
+  },
+  {
+   "area": "Security, privacy, cryptography",
+   "repos": 16,
+   "prs": 146,
+   "contributors": 23,
+   "primaryContributors": 2
+  },
+  {
+   "area": "Games, social, media",
+   "repos": 15,
+   "prs": 379,
+   "contributors": 15,
+   "primaryContributors": 4
+  },
+  {
+   "area": "Data and research",
+   "repos": 11,
+   "prs": 14,
+   "contributors": 8,
+   "primaryContributors": 1
+  },
+  {
+   "area": "Unclassified (no description or topics)",
+   "repos": 95,
+   "prs": 158,
+   "contributors": 30,
+   "primaryContributors": 0
+  }
+ ],
+ "topAi": [
+  {
+   "repo": "Steward-Fi/steward",
+   "prs": 363,
+   "contributors": 5,
+   "stars": 95,
+   "desc": "Agent wallet infrastructure \u2014 encrypted keys, policy enforcement, credential proxy, auth platform. Self-hostable, multi-tenant, open source."
+  },
+  {
+   "repo": "rndrntwrk/milaidy",
+   "prs": 267,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "terminally online"
+  },
+  {
+   "repo": "BabylonSocial/babylon",
+   "prs": 166,
+   "contributors": 3,
+   "stars": 73,
+   "desc": ""
+  },
+  {
+   "repo": "Illuminfti/kizuki",
+   "prs": 138,
+   "contributors": 1,
+   "stars": 1,
+   "desc": "Your life, queryable as CLI + MCP. Local-first capture-to-canon world model. Pre-alpha."
+  },
+  {
+   "repo": "milady-ai/milady",
+   "prs": 112,
+   "contributors": 8,
+   "stars": 357,
+   "desc": "terminally online"
+  },
+  {
+   "repo": "Uuriko/demigod-ops",
+   "prs": 84,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "Demigod: trusted, human-reviewed matches for real SF startup hires. Role Mission kernel and public-safe site sources. DIE is internal."
+  },
+  {
+   "repo": "Uuriko/dasha-lobby",
+   "prs": 84,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "Live getdasha.com Cloudflare Worker (lobby/compute). Mirror of Grok Bot ship-src deploys."
+  },
+  {
+   "repo": "levy-street/world-of-claudecraft",
+   "prs": 77,
+   "contributors": 2,
+   "stars": 2248,
+   "desc": ""
+  },
+  {
+   "repo": "twzrd-sol/twzrd-trust",
+   "prs": 70,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "TWZRD buyer-side x402 trust packages: x402 trust gate, elizaOS trust plugin, and the agent-intel client. Vet a counterparty before you pay."
+  },
+  {
+   "repo": "JasonColapietro/suede-creator-skills",
+   "prs": 67,
+   "contributors": 1,
+   "stars": 134,
+   "desc": "74 open-source Agent Skills for Claude Code and Codex: AI SEO, AEO and GEO, code review with an A-F ship grade, CI gates, AI evals, design systems, conversion copy, Instagram growth, iOS and Android app shipping, creator rights, and consumer refund recovery."
+  },
+  {
+   "repo": "elizaOS/os",
+   "prs": 64,
+   "contributors": 2,
+   "stars": 16,
+   "desc": "Agentic operating system built on elizaOS, Android Open Source and Debian Linux"
+  },
+  {
+   "repo": "JasonColapietro/sing",
+   "prs": 64,
+   "contributors": 1,
+   "stars": 0,
+   "desc": ""
+  }
+ ],
+ "recognizable": [
+  {
+   "repo": "openclaw/openclaw",
+   "stars": 389229,
+   "prs": 7,
+   "contributors": 2
+  },
+  {
+   "repo": "huggingface/transformers",
+   "stars": 165002,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "langflow-ai/langflow",
+   "stars": 154470,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "Shubhamsaboo/awesome-llm-apps",
+   "stars": 136679,
+   "prs": 2,
+   "contributors": 1
+  },
+  {
+   "repo": "openai/whisper",
+   "stars": 108757,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "punkpeye/awesome-mcp-servers",
+   "stars": 94640,
+   "prs": 7,
+   "contributors": 5
+  },
+  {
+   "repo": "odysseus-dev/odysseus",
+   "stars": 87016,
+   "prs": 51,
+   "contributors": 2
+  },
+  {
+   "repo": "ggml-org/whisper.cpp",
+   "stars": 53538,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "jamiepine/voicebox",
+   "stars": 52668,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "abhigyanpatwari/GitNexus",
+   "stars": 47151,
+   "prs": 2,
+   "contributors": 1
+  },
+  {
+   "repo": "agno-agi/agno",
+   "stars": 42103,
+   "prs": 6,
+   "contributors": 2
+  },
+  {
+   "repo": "VoltAgent/awesome-agent-skills",
+   "stars": 33940,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "THU-MAIC/OpenMAIC",
+   "stars": 33512,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "zeroclaw-labs/zeroclaw",
+   "stars": 32746,
+   "prs": 4,
+   "contributors": 1
+  },
+  {
+   "repo": "Fincept-Corporation/FinceptTerminal",
+   "stars": 31228,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "davila7/claude-code-templates",
+   "stars": 30574,
+   "prs": 2,
+   "contributors": 1
+  },
+  {
+   "repo": "garrytan/gbrain",
+   "stars": 29729,
+   "prs": 3,
+   "contributors": 1
+  },
+  {
+   "repo": "QwenLM/qwen-code",
+   "stars": 27713,
+   "prs": 2,
+   "contributors": 1
+  },
+  {
+   "repo": "enescingoz/awesome-n8n-templates",
+   "stars": 25224,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "HKUDS/AI-Trader",
+   "stars": 22218,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "alibaba/open-code-review",
+   "stars": 22101,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "AI4Finance-Foundation/FinGPT",
+   "stars": 21225,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "steipete/CodexBar",
+   "stars": 21112,
+   "prs": 6,
+   "contributors": 1
+  },
+  {
+   "repo": "lightgbm-org/LightGBM",
+   "stars": 18753,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "apache/doris",
+   "stars": 15868,
+   "prs": 2,
+   "contributors": 1
+  },
+  {
+   "repo": "yc-software/qm",
+   "stars": 14727,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "google/sentencepiece",
+   "stars": 12066,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "NangoHQ/nango",
+   "stars": 11777,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "OpenByteInc/QuantDinger",
+   "stars": 11425,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "wandb/wandb",
+   "stars": 11247,
+   "prs": 1,
+   "contributors": 1
+  }
+ ],
+ "topOther": [
+  {
+   "repo": "waifufun/waifu.fun",
+   "prs": 201,
+   "area": "Games, social, media",
+   "stars": 17,
+   "desc": "waifu.fun"
+  },
+  {
+   "repo": "adanos-software/free-ticker-database",
+   "prs": 186,
+   "area": "Finance and trading",
+   "stars": 25,
+   "desc": "Free global stock & ETF ticker reference database - 60k+ tickers, 80+ exchanges, 80+ countries"
+  },
+  {
+   "repo": "jaxernst/lasso-rpc",
+   "prs": 123,
+   "area": "Crypto and web3",
+   "stars": 14,
+   "desc": "Fault-tolerant Ethereum JSON-RPC proxy with intelligent, low-latency, and configurable routing. Lasso makes your blockchain apps faster and more reliable."
+  },
+  {
+   "repo": "MarcoWorms/idlerift.com",
+   "prs": 91,
+   "area": "Games, social, media",
+   "stars": 0,
+   "desc": "A complete idle MMORPG inside Telegram."
+  },
+  {
+   "repo": "andreolf/neobankbeat",
+   "prs": 76,
+   "area": "Crypto and web3",
+   "stars": 7,
+   "desc": "who watches the neobanks? open-source directory of 357 verified-active neobanks \u2014 traditional, hybrid crypto & web3-native \u2014 compared on custody, cards, yield, stablecoins & regulation"
+  },
+  {
+   "repo": "krutftw/bitcoin09",
+   "prs": 72,
+   "area": "Crypto and web3",
+   "stars": 5,
+   "desc": "Discontinued proof-of-work experiment. Source and releases retained as a historical archive."
+  },
+  {
+   "repo": "lalalune/ArkLib",
+   "prs": 63,
+   "area": "Security, privacy, cryptography",
+   "stars": 11,
+   "desc": "Formally Verified Arguments of Knowledge in Lean"
+  },
+  {
+   "repo": "twzrd-sol/attention-oracle-program",
+   "prs": 46,
+   "area": "Crypto and web3",
+   "stars": 0,
+   "desc": "Source for TWZRD's on-chain programs: the immutable Attention Oracle (vault deposits, Merkle claims, Token-2022 fee harvesting) and the upgradeable wzrd-rails program on Solana mainnet. Includes audit report and self-verification steps."
+  }
+ ],
+ "massAccounts": [
+  {
+   "login": "latent-9",
+   "prs": 188,
+   "repos": 172
+  },
+  {
+   "login": "octo-patch",
+   "prs": 802,
+   "repos": 243
+  }
+ ]
+}

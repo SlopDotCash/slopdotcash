@@ -15,7 +15,8 @@
       "!**/node_modules",
       "!**/public",
       "!assets",
-      "!cycles"
+      "!cycles",
+      "!data/who-builds"
     ]
   },
   "formatter": {

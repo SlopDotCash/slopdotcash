@@ -103,3 +103,46 @@ describe("summarizeWhoBuilds", () => {
     expect(summary.repositories).toEqual([]);
   });
 });
+
+describe("who builds cross-reference pin", () => {
+  it("quotes only figures present in the committed, hash-pinned snapshot", async () => {
+    const { createHash } = await import("node:crypto");
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { WHO_BUILDS_CROSS_REFERENCE: pin } = await import("./who-builds");
+    const root = resolve(import.meta.dirname, "..", "..");
+    const bytes = readFileSync(resolve(root, pin.snapshotPath));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      pin.snapshotSha256,
+    );
+    expect(readFileSync(resolve(root, pin.methodPath), "utf8")).toContain(
+      pin.snapshotSha256,
+    );
+    const snapshot = JSON.parse(bytes.toString("utf8")) as {
+      generatedAt: string;
+      contributors: number;
+      massAccounts: unknown[];
+      cohorts: {
+        size: number;
+        classifiable: number;
+        aiPrimary: number;
+        aiExternalPr: number;
+      }[];
+    };
+    expect(snapshot.generatedAt).toBe(pin.date);
+    expect(snapshot.contributors).toBe(pin.contributors);
+    expect(snapshot.massAccounts).toHaveLength(pin.excludedMassAccounts);
+    const all = snapshot.cohorts[0];
+    expect(all).toMatchObject({
+      size: pin.contributors,
+      classifiable: pin.classifiable,
+      aiPrimary: pin.aiPrimary,
+      aiExternalPr: pin.aiExternalPullRequest,
+    });
+    expect(Math.round((100 * pin.aiPrimary) / pin.classifiable)).toBe(74);
+    expect(Math.round((100 * pin.aiPrimary) / pin.contributors)).toBe(54);
+    expect(
+      Math.round((100 * pin.aiExternalPullRequest) / pin.contributors),
+    ).toBe(42);
+  });
+});

@@ -1419,11 +1419,30 @@ describe("sponsors page", () => {
       scope.getByText(/contributors scored in the last 35 days/u),
     ).toBeInTheDocument();
     expect(scope.getByText(/8 September 2026/u)).toBeInTheDocument();
+    expect(scope.getByText(/frozen to the leaderboard/u)).toBeInTheDocument();
     expect(scope.getByText(/74% of the 86/u)).toBeInTheDocument();
-    expect(scope.getByText(/not recomputed by this site/u)).toBeInTheDocument();
-    const link = scope.getByRole("link", {
-      name: "Who builds on Slop, 8 Sep 2026 snapshot",
+    expect(
+      scope.getByText(/the site does not recompute it/u),
+    ).toBeInTheDocument();
+    const snapshotLink = scope.getByRole("link", {
+      name: "Snapshot JSON, 2026-09-08",
     });
+    expect(snapshotLink).toHaveAttribute(
+      "href",
+      "https://github.com/SlopDotCash/slopdotcash/blob/develop/data/who-builds/2026-09-08/snapshot.json",
+    );
+    expect(snapshotLink).toHaveAttribute("rel", "noreferrer");
+    expect(scope.getByText(/^sha256 540df0156b3b$/u)).toHaveAttribute(
+      "title",
+      "sha256 540df0156b3b7ac5ba8e283d795ef93bcd4642cff889953b4af8a97af2eb4c47",
+    );
+    expect(
+      scope.getByRole("link", { name: "Method and caveats" }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/SlopDotCash/slopdotcash/blob/develop/data/who-builds/2026-09-08/METHOD.md",
+    );
+    const link = scope.getByRole("link", { name: "Rendered view" });
     expect(link).toHaveAttribute(
       "href",
       "https://who-builds-on-slop.vercel.app",
