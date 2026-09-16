@@ -106,19 +106,40 @@ project manifest, and it is absent by default:
 
 External awards use the same one-file pull request, the same 1–8 point range,
 the same reviewing-maintainer decision, the same newest-three cap per
-contributor and project, and the same canonical-source deduplication. Nothing
+contributor and project, and stricter deduplication (one award per piece of
+work, not per URL string). Nothing
 about merge-based or review-based scoring changes. What differs is the source:
 
 - `source.kind` is `external` and `source.platform` is one of `x`, `discord`,
-  `youtube`, or `web`. The URL must be the canonical public address for that
-  platform, with no query string or fragment. GitHub URLs are rejected here and
-  must use the ordinary GitHub source kinds instead.
+  `youtube`, or `web`. Each platform accepts exactly one URL form and the
+  validator names it when it rejects anything else, so rewrite share links,
+  short links, mobile links and mirrors by hand before filing:
+  `https://x.com/<handle>/status/<id>` (not twitter.com),
+  `https://discord.com/channels/<guild>/<channel>/<message>`,
+  `https://www.youtube.com/watch?v=<video id>` (not youtu.be or m.youtube.com),
+  or for `web` a plain https address with a path on any other host. No
+  fragments anywhere; no query string except the YouTube `v` parameter and
+  whatever a `web` address needs to identify the page.
+- `web` refuses every GitHub host and subdomain (github.com, gist.github.com,
+  raw.githubusercontent.com, *.github.io) because GitHub work must use the
+  ordinary GitHub source kinds, and refuses X, Discord and YouTube hosts and
+  their known mirrors (fxtwitter, vxtwitter, nitter, xcancel, youtu.be and so
+  on) because those platforms have a dedicated kind.
 - `source.id` is `external-` followed by the lowercase SHA-256 of the exact
-  URL, so the same URL can never be awarded twice under a different id.
+  URL. Duplicate protection does not stop at the id: two awards on the same
+  repository are rejected together when they name the same piece of work (the
+  same X status id under any handle, the same video id, the same Discord
+  message) or when their evidence carries the same `contentSha256`, whatever
+  the URL says. A mirror host that is not on the list therefore still cannot
+  earn the same work twice.
 - `source.evidence` is required: a `web.archive.org` capture of the exact URL
   (or an `archive.ph` snapshot), the lowercase SHA-256 of the captured content,
   and the capture time, which must fall between `occurredAt` and
   `review.reviewedAt`. The award stays auditable if the post is later deleted.
+  A Wayback capture is checked against the source URL by the validator. An
+  `archive.ph` snapshot id is opaque and cannot be, so a reviewer must open it
+  and confirm it shows the source before merging; prefer Wayback when the
+  platform allows a capture.
 - There is no `source.number`, no run receipt, and no evidence bonus. An
   external source cannot carry a signed receipt because nothing was run
   against the repository.

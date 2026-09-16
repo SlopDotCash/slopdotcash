@@ -67,8 +67,10 @@ private trace. Maintainers remain the sole scoring authority.
 A project that sets `reward.externalEvaluations.enabled` may recognize useful
 work outside its repository, such as a public explainer, a support answer, a
 tutorial, or a video, through the same one-file evaluated-contribution award.
-The award carries the canonical public URL, a deterministic URL-bound source
-id, and archive evidence captured before review. It scores 1–8 points from the
+The award carries the one canonical public URL form for its platform, a
+deterministic URL-bound source id, and archive evidence captured before review;
+awards that name the same piece of work or archive the same content are
+rejected together. It scores 1–8 points from the
 shared pool under the existing newest-three cap, never carries a receipt or
 evidence bonus, and never cites reach metrics. Absent opt-in, such awards fail
 closed. See [`evaluations/README.md`](../evaluations/README.md).

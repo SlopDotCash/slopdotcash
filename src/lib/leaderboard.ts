@@ -4,6 +4,7 @@ import {
   assertExternalSourceUrl,
   EXTERNAL_SOURCE_NUMBER,
   externalSourceId,
+  externalWorkKey,
 } from "./external-sources";
 import type {
   AttributionAssessment,
@@ -2768,6 +2769,8 @@ export function createLeaderboardSnapshot(
   }
 
   const evaluatedSourceKeys = new Set<string>();
+  const evaluatedExternalWorkKeys = new Set<string>();
+  const evaluatedExternalContentKeys = new Set<string>();
   const evaluatedReviewReservations = new Set<string>();
   const evaluatedTextSources = new Map<string, GitHubTextSource>();
   const evaluatedArtifactKeys = new Set<string>();
@@ -2833,6 +2836,28 @@ export function createLeaderboardSnapshot(
       );
     }
     evaluatedSourceKeys.add(sourceKey);
+    if (event.source.kind === "external") {
+      if (!event.source.platform || !event.source.evidence) {
+        throw new TypeError(
+          `Evaluated contribution ${event.id} is missing its external platform or evidence`,
+        );
+      }
+      const workKey = `${event.repository}\0${externalWorkKey(
+        event.source.url,
+        event.source.platform,
+      )}`;
+      const contentKey = `${event.repository}\0${event.source.evidence.contentSha256}`;
+      if (
+        evaluatedExternalWorkKeys.has(workKey) ||
+        evaluatedExternalContentKeys.has(contentKey)
+      ) {
+        throw new TypeError(
+          `Evaluated contribution ${event.id} repeats external work already awarded on ${event.repository}`,
+        );
+      }
+      evaluatedExternalWorkKeys.add(workKey);
+      evaluatedExternalContentKeys.add(contentKey);
+    }
     const source = evaluatedTextSources.get(event.source.id);
     if (event.source.kind === "comment" || event.source.kind === "review") {
       if (

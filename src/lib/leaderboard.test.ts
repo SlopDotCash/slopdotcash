@@ -2229,6 +2229,87 @@ describe("scoring and limits", () => {
     );
   });
 
+  it("rejects external awards that repeat one piece of work or one archived content", () => {
+    const post = "https://x.com/partialauthor/status/1830000000000000000";
+    const sameStatusOtherHandle =
+      "https://x.com/PartialAuthor_/status/1830000000000000000";
+    const externalEvent = (
+      id: string,
+      url: string,
+      platform: "web" | "x",
+      contentSha256: string,
+    ): ScoreEvent => ({
+      ...evaluatedContribution(0),
+      id,
+      source: {
+        id: externalSourceId(url),
+        kind: "external",
+        number: 0,
+        platform,
+        title: `Thread ${id}`,
+        url,
+        evidence: {
+          archiveUrl: `https://web.archive.org/web/20260722090000/${url}`,
+          contentSha256,
+          capturedAt: "2026-07-22T09:00:00.000Z",
+        },
+      },
+    });
+
+    expect(() =>
+      createLeaderboardSnapshot(
+        input({
+          evaluatedContributions: [
+            externalEvent("award_thread", post, "x", "c".repeat(64)),
+            externalEvent(
+              "award_thread_again",
+              sameStatusOtherHandle,
+              "x",
+              "d".repeat(64),
+            ),
+          ],
+        }),
+      ),
+    ).toThrow(/repeats external work already awarded/u);
+
+    expect(() =>
+      createLeaderboardSnapshot(
+        input({
+          evaluatedContributions: [
+            externalEvent(
+              "award_article",
+              "https://blog.example.org/eliza-runtime-migration",
+              "web",
+              "e".repeat(64),
+            ),
+            externalEvent(
+              "award_mirror",
+              "https://mirror.example.net/eliza-runtime-migration",
+              "web",
+              "e".repeat(64),
+            ),
+          ],
+        }),
+      ),
+    ).toThrow(/repeats external work already awarded/u);
+
+    expect(() =>
+      createLeaderboardSnapshot(
+        input({
+          evaluatedContributions: [
+            externalEvent("award_thread", post, "x", "c".repeat(64)),
+            externalEvent(
+              "award_article",
+              "https://blog.example.org/eliza-runtime-migration",
+              "web",
+              "e".repeat(64),
+            ),
+          ],
+        }),
+      ),
+    ).not.toThrow();
+  });
+
   it("joins an evaluated issue comment to its signed finalized run", () => {
     const contributor = actor("campaign-author");
     const source: GitHubTextSource = {

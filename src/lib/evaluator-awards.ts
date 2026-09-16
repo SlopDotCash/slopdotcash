@@ -13,6 +13,7 @@ import {
   assertExternalSourceUrl,
   EXTERNAL_SOURCE_NUMBER,
   externalSourceId,
+  externalWorkKey,
 } from "./external-sources";
 import {
   canonicalActorAvatarUrl,
@@ -378,7 +379,12 @@ export function assertEvaluatorAwardManifest(
   };
 }
 
-/** Loads every bounded award file and rejects duplicate ids or source credit. */
+/**
+ * Loads every bounded award file and rejects duplicate ids or source credit.
+ * An external source is duplicate credit when it repeats a source id, names
+ * the same piece of work under a differently written URL, or archives the
+ * same content as another external award on the repository.
+ */
 export function loadEvaluatorAwardEvents(
   root = resolve(process.cwd(), "evaluations"),
 ): EvaluatorAwardEvent[] {
@@ -416,6 +422,8 @@ export function loadEvaluatorAwardEvents(
   }
   const ids = new Set<string>();
   const sources = new Set<string>();
+  const externalWork = new Set<string>();
+  const externalContent = new Set<string>();
   return paths.map((path) => {
     const stats = lstatSync(path);
     if (stats.size <= 0 || stats.size > MAX_EVALUATOR_AWARD_FILE_BYTES) {
@@ -444,6 +452,20 @@ export function loadEvaluatorAwardEvents(
     const sourceKey = `${manifest.repository}\0${manifest.source.id}`;
     if (ids.has(manifest.id) || sources.has(sourceKey)) {
       throw new TypeError("evaluator award ids and sources must be unique");
+    }
+    if (manifest.source.platform && manifest.source.evidence) {
+      const workKey = `${manifest.repository}\0${externalWorkKey(
+        manifest.source.url,
+        manifest.source.platform,
+      )}`;
+      const contentKey = `${manifest.repository}\0${manifest.source.evidence.contentSha256}`;
+      if (externalWork.has(workKey) || externalContent.has(contentKey)) {
+        throw new TypeError(
+          `${relative(root, path)} repeats external work already awarded on ${manifest.repository}`,
+        );
+      }
+      externalWork.add(workKey);
+      externalContent.add(contentKey);
     }
     ids.add(manifest.id);
     sources.add(sourceKey);

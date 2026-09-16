@@ -5,6 +5,13 @@
  * project has opted in and a maintainer merged the award. The rules here are
  * shared by the award validator and the public snapshot validator so a source
  * that passes review cannot later fail publication, or the reverse.
+ *
+ * The unit that is paid for is a piece of work, not a URL string. Each
+ * platform therefore has exactly one accepted URL form, every accepted URL
+ * maps to a work key that ignores presentation details (the handle in an X
+ * URL, the short or long YouTube form), and awards are also deduplicated on
+ * the archived content hash so a mirror host that is not listed here still
+ * cannot earn the same work twice.
  */
 
 import { createHash } from "node:crypto";
@@ -28,23 +35,64 @@ export interface ExternalSourceEvidence {
 /** External sources have no GitHub number; the ledger stores zero. */
 export const EXTERNAL_SOURCE_NUMBER = 0;
 
-const RESERVED_HOSTS = new Set([
+/** The one accepted URL shape per platform, quoted in rejection messages. */
+export const EXTERNAL_SOURCE_CANONICAL_FORMS: Record<
+  ExternalSourcePlatform,
+  string
+> = {
+  x: "https://x.com/<handle>/status/<id>",
+  discord: "https://discord.com/channels/<guild>/<channel>/<message>",
+  youtube: "https://www.youtube.com/watch?v=<video id>",
+  web: "https://<host>/<path> on a host that is not GitHub, X, Discord, YouTube or a mirror of them",
+};
+
+/**
+ * Hosts, with every subdomain, that the `web` kind refuses. GitHub-hosted
+ * work must use the ordinary GitHub source kinds, and the platforms with a
+ * dedicated kind must use it so their canonical form applies. Known
+ * front-end mirrors are listed so the same post cannot re-enter as `web`;
+ * the list cannot be exhaustive, which is why content hashes are also
+ * deduplicated.
+ */
+const RESERVED_HOST_SUFFIXES = [
   "github.com",
-  "www.github.com",
+  "githubusercontent.com",
+  "github.io",
+  "githubassets.com",
   "x.com",
-  "www.x.com",
   "twitter.com",
-  "www.twitter.com",
-  "mobile.twitter.com",
+  "twimg.com",
+  "t.co",
+  "fxtwitter.com",
+  "fixupx.com",
+  "vxtwitter.com",
+  "fixvx.com",
+  "twittpr.com",
+  "nitter.net",
+  "nitter.cz",
+  "nitter.privacydev.net",
+  "nitter.poast.org",
+  "xcancel.com",
+  "twstalker.com",
+  "threadreaderapp.com",
   "discord.com",
-  "www.discord.com",
   "discordapp.com",
-  "www.discordapp.com",
+  "discord.gg",
+  "discord.new",
   "youtube.com",
-  "www.youtube.com",
-  "m.youtube.com",
   "youtu.be",
-]);
+  "youtube-nocookie.com",
+  "yewtu.be",
+  "invidious.io",
+  "piped.video",
+] as const;
+
+export function isReservedExternalHost(host: string): boolean {
+  const lower = host.toLowerCase();
+  return RESERVED_HOST_SUFFIXES.some(
+    (suffix) => lower === suffix || lower.endsWith(`.${suffix}`),
+  );
+}
 
 function parseSecureUrl(value: unknown, field: string): URL {
   if (typeof value !== "string" || value.length < 1 || value.length > 512) {
@@ -69,9 +117,59 @@ function parseSecureUrl(value: unknown, field: string): URL {
   return parsed;
 }
 
+const X_STATUS_PATH = /^\/[A-Za-z0-9_]{1,15}\/status\/([1-9]\d{0,24})$/u;
+const DISCORD_MESSAGE_PATH =
+  /^\/channels\/([1-9]\d{0,24})\/([1-9]\d{0,24})\/([1-9]\d{0,24})$/u;
+const YOUTUBE_WATCH_SEARCH = /^\?v=([A-Za-z0-9_-]{11})$/u;
+
 /**
- * Rejects any external URL that is not the canonical public address for its
- * platform. GitHub URLs must use the ordinary GitHub source kinds instead.
+ * Resolves a parsed URL to its platform work key, or null when the URL is not
+ * the canonical public address for that platform. The key names the piece of
+ * work rather than the string: an X status id, a Discord message id, a
+ * YouTube video id, or the exact web address.
+ */
+function resolveWorkKey(
+  parsed: URL,
+  platform: ExternalSourcePlatform,
+): string | null {
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname;
+  switch (platform) {
+    case "x": {
+      const match = host === "x.com" ? X_STATUS_PATH.exec(path) : null;
+      return match && !parsed.search ? `x\0status\0${match[1]}` : null;
+    }
+    case "discord": {
+      const match =
+        host === "discord.com" ? DISCORD_MESSAGE_PATH.exec(path) : null;
+      return match && !parsed.search
+        ? `discord\0message\0${match[1]}/${match[2]}/${match[3]}`
+        : null;
+    }
+    case "youtube": {
+      const match =
+        host === "www.youtube.com" && path === "/watch"
+          ? YOUTUBE_WATCH_SEARCH.exec(parsed.search)
+          : null;
+      return match ? `youtube\0video\0${match[1]}` : null;
+    }
+    case "web":
+      return !isReservedExternalHost(host) &&
+        host.includes(".") &&
+        path.length > 1
+        ? `web\0${parsed.toString()}`
+        : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Rejects any external URL that is not the one canonical public address for
+ * its platform. The rejection names the accepted form so a maintainer can
+ * rewrite a share link, short link, mobile link or mirror link by hand; the
+ * validator never rewrites it silently, because the stored URL is what the
+ * archive evidence and the source id are bound to.
  */
 export function assertExternalSourceUrl(
   value: unknown,
@@ -79,50 +177,39 @@ export function assertExternalSourceUrl(
   field: string,
 ): string {
   const parsed = parseSecureUrl(value, field);
-  const host = parsed.hostname.toLowerCase();
-  const path = parsed.pathname;
-  let canonical: boolean;
-  switch (platform) {
-    case "x":
-      canonical =
-        (host === "x.com" || host === "twitter.com") &&
-        /^\/[A-Za-z0-9_]{1,15}\/status\/[1-9]\d{0,24}$/u.test(path) &&
-        !parsed.search;
-      break;
-    case "discord":
-      canonical =
-        host === "discord.com" &&
-        /^\/channels\/[1-9]\d{0,24}\/[1-9]\d{0,24}\/[1-9]\d{0,24}$/u.test(
-          path,
-        ) &&
-        !parsed.search;
-      break;
-    case "youtube":
-      canonical =
-        (host === "youtu.be" &&
-          /^\/[A-Za-z0-9_-]{11}$/u.test(path) &&
-          !parsed.search) ||
-        (host === "www.youtube.com" &&
-          path === "/watch" &&
-          /^\?v=[A-Za-z0-9_-]{11}$/u.test(parsed.search));
-      break;
-    case "web":
-      canonical =
-        !RESERVED_HOSTS.has(host) &&
-        host.includes(".") &&
-        !parsed.search &&
-        path.length > 1;
-      break;
-    default:
-      canonical = false;
-  }
-  if (!canonical || parsed.toString() !== value) {
-    throw new TypeError(`${field} is not a canonical public ${platform} URL`);
+  if (
+    resolveWorkKey(parsed, platform) === null ||
+    parsed.toString() !== value
+  ) {
+    throw new TypeError(
+      `${field} is not a canonical public ${platform} URL; use ${EXTERNAL_SOURCE_CANONICAL_FORMS[platform]}`,
+    );
   }
   return value;
 }
 
-/** The only accepted public archive origins for external evidence. */
+/**
+ * The piece of work an accepted URL points at, independent of how the URL
+ * was written. Two awards with the same work key credit the same work and
+ * must be rejected together, even though their source ids differ.
+ */
+export function externalWorkKey(
+  sourceUrl: string,
+  platform: ExternalSourcePlatform,
+): string {
+  const key = resolveWorkKey(parseSecureUrl(sourceUrl, "sourceUrl"), platform);
+  if (key === null) {
+    throw new TypeError(`sourceUrl is not a canonical public ${platform} URL`);
+  }
+  return key;
+}
+
+/**
+ * The only accepted public archive origins for external evidence. A Wayback
+ * capture is bound to the exact source URL. An archive.ph snapshot id is
+ * opaque and carries no target, so it cannot be bound here; reviewers must
+ * open it and confirm it shows the source before merging.
+ */
 export function assertExternalArchiveUrl(
   value: unknown,
   sourceUrl: string,
