@@ -1,6 +1,6 @@
 /** Types for the project-owned target-repository registry. */
 
-import type { ProjectId } from "./projects.mjs";
+import type { ProjectDefinition, ProjectId } from "./projects.mjs";
 
 export type RepositoryId = string;
 
@@ -17,6 +17,10 @@ export interface TargetRepository {
   readonly projectId: ProjectId;
   readonly role: "primary" | "member";
 }
+
+export declare function collectTargetRepositories(
+  projects: readonly ProjectDefinition[],
+): TargetRepository[];
 
 export declare const TARGET_REPOSITORIES: readonly TargetRepository[];
 
