@@ -3607,9 +3607,10 @@ function WhoBuildsOnSlop({
         {percent(pin.aiExternalPullRequest, pin.contributors)}) had merged at
         least one pull request into an outside AI repository this year. Public
         GitHub data only, one keyword-assigned category per repository,{" "}
-        {pin.excludedMassAccounts} mass pull-request accounts excluded. The
-        snapshot behind these figures is committed to this repository and pinned
-        by hash; the site does not recompute it.
+        {pin.excludedMassAccounts === 2 ? "two" : pin.excludedMassAccounts} mass
+        pull-request accounts excluded. The snapshot behind these figures is
+        committed to this repository and pinned by hash; the site does not
+        recompute it.
       </p>
       <p className="who-builds-sources">
         <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
@@ -3617,10 +3618,12 @@ function WhoBuildsOnSlop({
         </ExternalLinkAnchor>{" "}
         <code title={`sha256 ${pin.snapshotSha256}`}>
           sha256 {pin.snapshotSha256.slice(0, 12)}
-        </code>{" "}
+        </code>
+        {" · "}
         <ExternalLinkAnchor href={pinnedFile(pin.methodPath)}>
           Method and caveats
-        </ExternalLinkAnchor>{" "}
+        </ExternalLinkAnchor>
+        {" · "}
         <ExternalLinkAnchor href={pin.renderedUrl}>
           Rendered view
         </ExternalLinkAnchor>
