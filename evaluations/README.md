@@ -93,6 +93,102 @@ Example (do not copy placeholder identities into a real award):
 }
 ```
 
+## Contributions outside GitHub
+
+A project may opt in to awards for useful work that never touches its
+repository: a public explainer thread, a support answer that closed a recurring
+question, a tutorial, or a video. The opt-in is one reward field in the
+project manifest, and it is absent by default:
+
+```json
+"externalEvaluations": { "enabled": true }
+```
+
+External awards use the same one-file pull request, the same 1–8 point range,
+the same reviewing-maintainer decision, the same newest-three cap per
+contributor and project, and stricter deduplication (one award per piece of
+work, not per URL string). Nothing
+about merge-based or review-based scoring changes. What differs is the source:
+
+- `source.kind` is `external` and `source.platform` is one of `x`, `discord`,
+  `youtube`, or `web`. Each platform accepts exactly one URL form and the
+  validator names it when it rejects anything else, so rewrite share links,
+  short links, mobile links and mirrors by hand before filing:
+  `https://x.com/<handle>/status/<id>` (not twitter.com),
+  `https://discord.com/channels/<guild>/<channel>/<message>`,
+  `https://www.youtube.com/watch?v=<video id>` (not youtu.be or m.youtube.com),
+  or for `web` a plain https address with a path on any other host. No
+  fragments anywhere; no query string except the YouTube `v` parameter and
+  whatever a `web` address needs to identify the page.
+- `web` refuses every GitHub host and subdomain (github.com, gist.github.com,
+  raw.githubusercontent.com, *.github.io) because GitHub work must use the
+  ordinary GitHub source kinds, and refuses X, Discord and YouTube hosts and
+  their known mirrors (fxtwitter, vxtwitter, nitter, xcancel, youtu.be and so
+  on) because those platforms have a dedicated kind.
+- `source.id` is `external-` followed by the lowercase SHA-256 of the exact
+  URL. Duplicate protection does not stop at the id: two awards on the same
+  repository are rejected together when they name the same piece of work (the
+  same X status id under any handle, the same video id, the same Discord
+  message) or when their evidence carries the same `contentSha256`, whatever
+  the URL says. A mirror host that is not on the list therefore still cannot
+  earn the same work twice.
+- `source.evidence` is required: a `web.archive.org` capture of the exact URL
+  (or an `archive.ph` snapshot), the lowercase SHA-256 of the captured content,
+  and the capture time, which must fall between `occurredAt` and
+  `review.reviewedAt`. The award stays auditable if the post is later deleted.
+  A Wayback capture is checked against the source URL by the validator. An
+  `archive.ph` snapshot id is opaque and cannot be, so a reviewer must open it
+  and confirm it shows the source before merging; prefer Wayback when the
+  platform allows a capture.
+- There is no `source.number`, no run receipt, and no evidence bonus. An
+  external source cannot carry a signed receipt because nothing was run
+  against the repository.
+
+Reach is not a reason. Likes, views, reposts, and follower counts are not
+evidence of usefulness and are never cited in an award. The maintainer states
+the concrete outcome: the question it answered, the migration it unblocked,
+the guide that now links it. Coordinated posting, reposted documentation, and
+promotional content receive no credit.
+
+Example (do not copy placeholder identities into a real award):
+
+```json
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_contributor_runtime_thread",
+  "projectId": "eliza",
+  "repository": "elizaOS/eliza",
+  "actor": {
+    "id": "GITHUB_GRAPHQL_NODE_ID",
+    "login": "contributor",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/123?v=4",
+    "url": "https://github.com/contributor",
+    "kind": "User"
+  },
+  "occurredAt": "2026-09-01T10:00:00.000Z",
+  "points": 2,
+  "source": {
+    "id": "external-<sha256 of the url>",
+    "kind": "external",
+    "platform": "x",
+    "title": "Thread: migrating an eliza plugin to the v2 runtime",
+    "url": "https://x.com/contributor/status/1830000000000000000",
+    "evidence": {
+      "archiveUrl": "https://web.archive.org/web/20260902120000/https://x.com/contributor/status/1830000000000000000",
+      "contentSha256": "<sha256 of the captured content>",
+      "capturedAt": "2026-09-02T12:00:00.000Z"
+    }
+  },
+  "reason": "The thread documented the exact runtime migration steps three issue reporters had been missing; the plugin guide now links it.",
+  "review": {
+    "reviewer": "maintainer",
+    "reviewedAt": "2026-09-03T10:00:00.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/99"
+  }
+}
+```
+
 Never publish vulnerability details, secrets, raw private trajectories, or
 wallet credentials in an award. Use the target repository's private security
 reporting path for sensitive findings.

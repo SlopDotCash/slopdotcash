@@ -27,6 +27,7 @@
     "src/lib/bitcoin-funding.ts",
     "src/lib/cycle-index.ts",
     "src/lib/evaluator-awards.ts",
+    "src/lib/external-sources.ts",
     "src/lib/evm-funding.ts",
     "src/lib/funding.ts",
     "src/lib/funding-review-submission.ts",

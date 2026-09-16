@@ -1,3 +1,11 @@
+import {
+  assertExternalSourceEvidence,
+  assertExternalSourcePlatform,
+  assertExternalSourceUrl,
+  EXTERNAL_SOURCE_NUMBER,
+  externalSourceId,
+  externalWorkKey,
+} from "./external-sources";
 import type {
   AttributionAssessment,
   AttributionAssessmentOptions,
@@ -2761,6 +2769,8 @@ export function createLeaderboardSnapshot(
   }
 
   const evaluatedSourceKeys = new Set<string>();
+  const evaluatedExternalWorkKeys = new Set<string>();
+  const evaluatedExternalContentKeys = new Set<string>();
   const evaluatedReviewReservations = new Set<string>();
   const evaluatedTextSources = new Map<string, GitHubTextSource>();
   const evaluatedArtifactKeys = new Set<string>();
@@ -2826,6 +2836,28 @@ export function createLeaderboardSnapshot(
       );
     }
     evaluatedSourceKeys.add(sourceKey);
+    if (event.source.kind === "external") {
+      if (!event.source.platform || !event.source.evidence) {
+        throw new TypeError(
+          `Evaluated contribution ${event.id} is missing its external platform or evidence`,
+        );
+      }
+      const workKey = `${event.repository}\0${externalWorkKey(
+        event.source.url,
+        event.source.platform,
+      )}`;
+      const contentKey = `${event.repository}\0${event.source.evidence.contentSha256}`;
+      if (
+        evaluatedExternalWorkKeys.has(workKey) ||
+        evaluatedExternalContentKeys.has(contentKey)
+      ) {
+        throw new TypeError(
+          `Evaluated contribution ${event.id} repeats external work already awarded on ${event.repository}`,
+        );
+      }
+      evaluatedExternalWorkKeys.add(workKey);
+      evaluatedExternalContentKeys.add(contentKey);
+    }
     const source = evaluatedTextSources.get(event.source.id);
     if (event.source.kind === "comment" || event.source.kind === "review") {
       if (
@@ -4531,18 +4563,51 @@ function assertLedgerValue(
   assertString(source.id, `${path}.source.id`);
   assertEnum(
     source.kind,
-    ["comment", "issue", "pull-request", "review"],
+    ["comment", "external", "issue", "pull-request", "review"],
     `${path}.source.kind`,
   );
-  assertPositiveInteger(source.number, `${path}.source.number`);
   assertString(source.title, `${path}.source.title`);
-  assertRepositoryUrl(
-    source.url,
-    `${path}.source.url`,
-    source.kind,
-    source.number,
-    event.repository as RepositoryId,
-  );
+  if (source.kind === "external") {
+    if (event.category !== "evaluated-contribution") {
+      throw new Error(
+        `${path}.source external sources are reserved for evaluated contributions`,
+      );
+    }
+    if (source.number !== EXTERNAL_SOURCE_NUMBER) {
+      throw new Error(`${path}.source.number must be 0 for external sources`);
+    }
+    const platform = assertExternalSourcePlatform(
+      source.platform,
+      `${path}.source.platform`,
+    );
+    const url = assertExternalSourceUrl(
+      source.url,
+      platform,
+      `${path}.source.url`,
+    );
+    if (source.id !== externalSourceId(url)) {
+      throw new Error(`${path}.source.id does not match its external URL`);
+    }
+    assertExternalSourceEvidence(
+      source.evidence,
+      url,
+      `${path}.source.evidence`,
+    );
+  } else {
+    if ("platform" in source || "evidence" in source) {
+      throw new Error(
+        `${path}.source platform and evidence are reserved for external sources`,
+      );
+    }
+    assertPositiveInteger(source.number, `${path}.source.number`);
+    assertRepositoryUrl(
+      source.url,
+      `${path}.source.url`,
+      source.kind,
+      source.number,
+      event.repository as RepositoryId,
+    );
+  }
   if (event.category !== "evaluated-contribution") {
     if ("evaluation" in event) {
       throw new Error(

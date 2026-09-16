@@ -766,6 +766,14 @@ function validateSkill(
   return skill;
 }
 
+function validateExternalEvaluations(value, field) {
+  const policy = record(value, field);
+  exactKeys(policy, ["enabled"], field);
+  if (typeof policy.enabled !== "boolean") {
+    throw new TypeError(`${field}.enabled must be a boolean`);
+  }
+}
+
 function validateReviewBudget(value, field, poolPaymentMode) {
   const budget = record(value, field);
   exactKeys(
@@ -822,6 +830,7 @@ function validateReward(
   const hasExternal = Object.hasOwn(reward, "externalOpportunity");
   const hasReviewBudget = Object.hasOwn(reward, "reviewBudget");
   const hasCycleCaps = Object.hasOwn(reward, "cycleCaps");
+  const hasExternalEvaluations = Object.hasOwn(reward, "externalEvaluations");
   exactKeys(
     reward,
     [
@@ -830,6 +839,7 @@ function validateReward(
       "currency",
       "cycle",
       ...(hasExternal ? ["externalOpportunity"] : []),
+      ...(hasExternalEvaluations ? ["externalEvaluations"] : []),
       ...(hasCycleCaps ? ["cycleCaps"] : []),
       "feeBasisPoints",
       "fundingState",
@@ -843,6 +853,12 @@ function validateReward(
     ],
     field,
   );
+  if (hasExternalEvaluations) {
+    validateExternalEvaluations(
+      reward.externalEvaluations,
+      `${field}.externalEvaluations`,
+    );
+  }
   const monthlyCapMinor = minor(
     reward.monthlyCapMinor,
     `${field}.monthlyCapMinor`,

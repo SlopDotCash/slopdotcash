@@ -8,6 +8,14 @@ import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import {
+  assertExternalSourceEvidence,
+  assertExternalSourcePlatform,
+  assertExternalSourceUrl,
+  EXTERNAL_SOURCE_NUMBER,
+  externalSourceId,
+  externalWorkKey,
+} from "./external-sources";
+import {
   canonicalActorAvatarUrl,
   type GitHubActor,
   type ScoreEvent,
@@ -246,22 +254,33 @@ export function assertEvaluatorAwardManifest(
     );
   }
   const source = record(manifest.source, "evaluator award.source");
+  const external = source.kind === "external";
   exactKeys(
     source,
-    ["id", "kind", "number", "title", "url"],
+    external
+      ? ["evidence", "id", "kind", "platform", "title", "url"]
+      : ["id", "kind", "number", "title", "url"],
     "evaluator award.source",
   );
   if (
-    !["comment", "issue", "pull-request", "review"].includes(
+    !["comment", "external", "issue", "pull-request", "review"].includes(
       String(source.kind),
     )
   ) {
     throw new TypeError("evaluator award.source.kind is invalid");
   }
-  if (!Number.isSafeInteger(source.number) || Number(source.number) <= 0) {
+  if (external && project.reward.externalEvaluations?.enabled !== true) {
+    throw new TypeError(
+      `project ${projectId} has not opted in to external evaluated contributions`,
+    );
+  }
+  if (
+    !external &&
+    (!Number.isSafeInteger(source.number) || Number(source.number) <= 0)
+  ) {
     throw new TypeError("evaluator award.source.number must be positive");
   }
-  const number = Number(source.number);
+  const number = external ? EXTERNAL_SOURCE_NUMBER : Number(source.number);
   const sourceKind = source.kind as ScoreEvent["source"]["kind"];
   const pathKind =
     sourceKind === "issue" || sourceKind === "comment" ? "issues" : "pull";
@@ -269,23 +288,57 @@ export function assertEvaluatorAwardManifest(
     registeredRepository.id,
     ...(registeredRepository.aliases ?? []),
   ];
-  const sourceUrl = githubUrl(
-    source.url,
-    "evaluator award.source.url",
-    repositoryIdentities.map(
-      (repositoryIdentity) => `/${repositoryIdentity}/${pathKind}/${number}`,
-    ),
-    sourceKind === "review"
-      ? /^#(?:pullrequestreview-|discussion_r)\d+$/iu
-      : sourceKind === "comment"
-        ? /^#issuecomment-\d+$/iu
-        : undefined,
-  );
+  const platform = external
+    ? assertExternalSourcePlatform(
+        source.platform,
+        "evaluator award.source.platform",
+      )
+    : undefined;
+  const sourceUrl = platform
+    ? assertExternalSourceUrl(
+        source.url,
+        platform,
+        "evaluator award.source.url",
+      )
+    : githubUrl(
+        source.url,
+        "evaluator award.source.url",
+        repositoryIdentities.map(
+          (repositoryIdentity) =>
+            `/${repositoryIdentity}/${pathKind}/${number}`,
+        ),
+        sourceKind === "review"
+          ? /^#(?:pullrequestreview-|discussion_r)\d+$/iu
+          : sourceKind === "comment"
+            ? /^#issuecomment-\d+$/iu
+            : undefined,
+      );
+  if (external && source.id !== externalSourceId(sourceUrl)) {
+    throw new TypeError(
+      "evaluator award.source.id must be the sha256 digest of its external URL",
+    );
+  }
+  const evidence = external
+    ? assertExternalSourceEvidence(
+        source.evidence,
+        sourceUrl,
+        "evaluator award.source.evidence",
+      )
+    : undefined;
   const occurredAt = iso(manifest.occurredAt, "evaluator award.occurredAt");
   const approval = review(manifest.review, "evaluator award.review");
   if (Date.parse(approval.reviewedAt) < Date.parse(occurredAt)) {
     throw new RangeError(
       "evaluator award review cannot precede the contribution",
+    );
+  }
+  if (
+    evidence &&
+    (Date.parse(evidence.capturedAt) < Date.parse(occurredAt) ||
+      Date.parse(evidence.capturedAt) > Date.parse(approval.reviewedAt))
+  ) {
+    throw new RangeError(
+      "evaluator award evidence must be captured between the contribution and its review",
     );
   }
   if (
@@ -315,6 +368,8 @@ export function assertEvaluatorAwardManifest(
       number,
       title: text(source.title, "evaluator award.source.title", { max: 512 }),
       url: sourceUrl,
+      ...(platform ? { platform } : {}),
+      ...(evidence ? { evidence } : {}),
     },
     reason: text(manifest.reason, "evaluator award.reason", {
       min: 40,
@@ -324,7 +379,12 @@ export function assertEvaluatorAwardManifest(
   };
 }
 
-/** Loads every bounded award file and rejects duplicate ids or source credit. */
+/**
+ * Loads every bounded award file and rejects duplicate ids or source credit.
+ * An external source is duplicate credit when it repeats a source id, names
+ * the same piece of work under a differently written URL, or archives the
+ * same content as another external award on the repository.
+ */
 export function loadEvaluatorAwardEvents(
   root = resolve(process.cwd(), "evaluations"),
 ): EvaluatorAwardEvent[] {
@@ -362,6 +422,8 @@ export function loadEvaluatorAwardEvents(
   }
   const ids = new Set<string>();
   const sources = new Set<string>();
+  const externalWork = new Set<string>();
+  const externalContent = new Set<string>();
   return paths.map((path) => {
     const stats = lstatSync(path);
     if (stats.size <= 0 || stats.size > MAX_EVALUATOR_AWARD_FILE_BYTES) {
@@ -390,6 +452,20 @@ export function loadEvaluatorAwardEvents(
     const sourceKey = `${manifest.repository}\0${manifest.source.id}`;
     if (ids.has(manifest.id) || sources.has(sourceKey)) {
       throw new TypeError("evaluator award ids and sources must be unique");
+    }
+    if (manifest.source.platform && manifest.source.evidence) {
+      const workKey = `${manifest.repository}\0${externalWorkKey(
+        manifest.source.url,
+        manifest.source.platform,
+      )}`;
+      const contentKey = `${manifest.repository}\0${manifest.source.evidence.contentSha256}`;
+      if (externalWork.has(workKey) || externalContent.has(contentKey)) {
+        throw new TypeError(
+          `${relative(root, path)} repeats external work already awarded on ${manifest.repository}`,
+        );
+      }
+      externalWork.add(workKey);
+      externalContent.add(contentKey);
     }
     ids.add(manifest.id);
     sources.add(sourceKey);
