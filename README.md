@@ -79,7 +79,9 @@ The pull request must establish:
 - a clearly labeled monthly pool or external opportunity;
 - focused tests for validation, installation, and failure paths.
 
-New projects begin paused. Public contribution access may open independently
+New projects begin paused. A paused project is registered and listed, but none
+of its repositories is collected, so nothing on them reaches the ledger or the
+leaderboard. Public contribution access may open independently
 when missing authority and terms remain explicit, receipts stay pending, and
 payments stay disabled. Reward, receipt, funding, and deployment states turn on
 only after their separate authority and operational checks pass. For the full

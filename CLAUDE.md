@@ -77,7 +77,9 @@ skills/contribute-to-<project-id>/
 skills/review-<project-id>-contributions/
 ```
 
-New projects begin paused. Public contribution access may open independently
+New projects begin paused. A paused project is registered and listed, but none
+of its repositories is collected, so nothing on them reaches the ledger or the
+leaderboard. Public contribution access may open independently
 when missing authority and terms remain explicit, receipts stay pending, and
 payments stay disabled. Verify immutable repository and actor IDs, repository
 license facts, GitHub stewardship, integration branch, reward policy, and
