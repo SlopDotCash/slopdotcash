@@ -94,6 +94,8 @@ import {
 import {
   summarizeWhoBuilds,
   WHO_BUILDS_CROSS_REFERENCE,
+  WHO_BUILDS_SNAPSHOT,
+  whoBuildsDateLabel,
 } from "./lib/who-builds";
 
 const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
@@ -3532,6 +3534,10 @@ function WhoBuildsOnSlop({
   retry: () => void;
 }) {
   const count = new Intl.NumberFormat("en-US");
+  const compact = new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 0,
+  });
   const percentOfRatio = (ratio: number) => {
     if (ratio <= 0) return "0%";
     const rounded = Math.round(100 * ratio);
@@ -3540,12 +3546,20 @@ function WhoBuildsOnSlop({
   const percent = (part: number, whole: number) =>
     whole <= 0 ? "0%" : percentOfRatio(part / whole);
   const pin = WHO_BUILDS_CROSS_REFERENCE;
+  const outside = WHO_BUILDS_SNAPSHOT;
+  const all = outside.cohorts[0];
+  const focusAreas = outside.focus.filter(
+    (area) => area.primaryContributors > 0,
+  );
+  const knownRepositories = outside.recognizable.slice(0, 10);
+  const busiestRepositories = outside.topAi.slice(0, 6);
+  const dateLabel = whoBuildsDateLabel(outside.generatedAt);
   const pinnedFile = (path: string) =>
     `${SOURCE_REPOSITORY}/blob/develop/${path}`;
-  const describe = (description: string | null) =>
-    description
-      ? `, ${description.charAt(0).toLowerCase()}${description.slice(1).replace(/\.$/u, "")}`
-      : "";
+  const repositoryUrl = (repo: string) => `https://github.com/${repo}`;
+  const describeRepository = (description: string) =>
+    description.replace(/\s*[\u2013\u2014]\s*/gu, ", ").trim() ||
+    "No description published.";
   const footprint =
     state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
   const models =
@@ -3557,62 +3571,186 @@ function WhoBuildsOnSlop({
     >
       <h2 id="who-builds-heading">Who builds on Slop.</h2>
       <p>
-        Two facts the leaderboard publishes about itself over its current
-        window, then one dated cross-reference against the rest of GitHub. None
-        of them adds points and none of them is a promise about who will show up
-        for your pool.
+        Most of the people on the leaderboard spend the rest of their year
+        building AI agents and LLM tooling, largely in small repositories, and
+        some of them have merged into the best-known projects in the field. This
+        is what the {count.format(all.size)} contributors on the leaderboard as
+        of {dateLabel} did across the rest of GitHub in 2026. None of it adds
+        points, and none of it is a promise about who will show up for your
+        pool.
       </p>
+      <div className="money-summary model-outcomes-summary">
+        <span>
+          <strong>{percent(all.aiPrimary, all.classifiable)}</strong> build AI
+          agents or LLM tooling as their primary focus (
+          {count.format(all.aiPrimary)} of the {count.format(all.classifiable)}{" "}
+          with classifiable public work)
+        </span>
+        <span>
+          <strong>{percent(all.aiExternalPr, all.size)}</strong> merged into an
+          outside AI repository this year ({count.format(all.aiExternalPr)} of{" "}
+          {count.format(all.size)})
+        </span>
+        <span>
+          <strong>{count.format(outside.externalPrsExMass)}</strong> merged pull
+          requests across {count.format(outside.externalReposExMass)} outside
+          repositories since 1 January 2026
+        </span>
+        <span>
+          <strong>{count.format(outside.aiRepoMedianStars)}</strong> stars is
+          the median outside AI repository they work in;{" "}
+          {percentOfRatio(outside.aiRepoShareUnder10)} have fewer than ten
+        </span>
+      </div>
+      <div className="who-builds-grid">
+        <section
+          className="who-builds-block"
+          aria-labelledby="who-builds-focus-heading"
+        >
+          <h3 id="who-builds-focus-heading">What they build elsewhere</h3>
+          <div className="plain-table-wrap">
+            <table className="plain-table who-builds-table">
+              <thead>
+                <tr>
+                  <th scope="col">Primary focus</th>
+                  <th scope="col" className="who-builds-number">
+                    People
+                  </th>
+                  <th scope="col" className="who-builds-number">
+                    Repos
+                  </th>
+                  <th scope="col" className="who-builds-number">
+                    Merged PRs
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {focusAreas.map((area) => (
+                  <tr key={area.area}>
+                    <th scope="row">{area.area}</th>
+                    <td className="who-builds-number">
+                      {count.format(area.primaryContributors)}
+                    </td>
+                    <td className="who-builds-number">
+                      {count.format(area.repos)}
+                    </td>
+                    <td className="who-builds-number">
+                      {count.format(area.prs)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section
+          className="who-builds-block"
+          aria-labelledby="who-builds-known-heading"
+        >
+          <h3 id="who-builds-known-heading">
+            Well-known repositories they merged into this year
+          </h3>
+          <div className="plain-table-wrap">
+            <table className="plain-table who-builds-table">
+              <thead>
+                <tr>
+                  <th scope="col">Repository</th>
+                  <th scope="col" className="who-builds-number">
+                    Stars
+                  </th>
+                  <th scope="col" className="who-builds-number">
+                    Merged PRs
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {knownRepositories.map((row) => (
+                  <tr key={row.repo}>
+                    <th scope="row">
+                      <ExternalLinkAnchor href={repositoryUrl(row.repo)}>
+                        {row.repo}
+                      </ExternalLinkAnchor>
+                    </th>
+                    <td className="who-builds-number">
+                      {compact.format(row.stars)}
+                    </td>
+                    <td className="who-builds-number">
+                      {count.format(row.prs)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <section
+        className="who-builds-block"
+        aria-labelledby="who-builds-busiest-heading"
+      >
+        <h3 id="who-builds-busiest-heading">
+          Outside AI repositories they ship to most
+        </h3>
+        <div className="plain-table-wrap">
+          <table className="plain-table who-builds-table">
+            <thead>
+              <tr>
+                <th scope="col">Repository</th>
+                <th scope="col">What it is</th>
+                <th scope="col" className="who-builds-number">
+                  Merged PRs
+                </th>
+                <th scope="col" className="who-builds-number">
+                  Stars
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {busiestRepositories.map((row) => (
+                <tr key={row.repo}>
+                  <th scope="row">
+                    <ExternalLinkAnchor href={repositoryUrl(row.repo)}>
+                      {row.repo}
+                    </ExternalLinkAnchor>
+                  </th>
+                  <td className="who-builds-description">
+                    {describeRepository(row.desc)}
+                  </td>
+                  <td className="who-builds-number">{count.format(row.prs)}</td>
+                  <td className="who-builds-number">
+                    {compact.format(row.stars)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
       <DataNotice retry={retry} state={state} />
       {footprint && models && footprint.scoredEvents > 0 ? (
-        <div className="money-summary model-outcomes-summary">
-          {footprint.repositories.map((row) => (
-            <span key={row.repositoryId}>
-              <strong>{percentOfRatio(row.share)}</strong> of scored events are
-              on {row.displayName}
-              {describe(row.description)}
-            </span>
-          ))}
-          <span>
-            <strong>
-              {percent(
-                models.totals.mergedPullRequestsWithModel,
-                models.totals.mergedPullRequests,
-              )}
-            </strong>{" "}
-            of merged pull requests name the model that did the work (
-            {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
-            {count.format(models.totals.mergedPullRequests)})
-          </span>
-          <span>
-            <strong>{count.format(footprint.contributors)}</strong> contributors
-            scored in the last {footprint.windowDays} days
-          </span>
-        </div>
+        <p className="model-outcomes-note">
+          Inside Slop, live: {count.format(footprint.contributors)} contributors
+          scored in the last {footprint.windowDays} days, and{" "}
+          {percent(
+            models.totals.mergedPullRequestsWithModel,
+            models.totals.mergedPullRequests,
+          )}{" "}
+          of merged pull requests name the model that did the work (
+          {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
+          {count.format(models.totals.mergedPullRequests)}). Those two figures
+          move with every refresh; everything above is frozen to the dated
+          snapshot.
+        </p>
       ) : null}
-      <p>
-        Outside Slop: a separate, dated cross-reference. The contributor count
-        above moves with every refresh; the figures in this paragraph are frozen
-        to the leaderboard as it stood on {pin.dateLabel}, when it held{" "}
-        {count.format(pin.contributors)} contributors. Those{" "}
-        {count.format(pin.contributors)} were cross-referenced against every
-        merged pull request each had landed elsewhere on GitHub since 1 January
-        2026, plus their own public repositories. AI agents or LLM tooling was
-        the primary focus for {percent(pin.aiPrimary, pin.classifiable)} of the{" "}
-        {count.format(pin.classifiable)} with classifiable public work (
-        {count.format(pin.aiPrimary)} people,{" "}
-        {percent(pin.aiPrimary, pin.contributors)} of all{" "}
-        {count.format(pin.contributors)}), and{" "}
-        {count.format(pin.aiExternalPullRequest)} of the{" "}
-        {count.format(pin.contributors)} (
-        {percent(pin.aiExternalPullRequest, pin.contributors)}) had merged at
-        least one pull request into an outside AI repository this year. Public
-        GitHub data only, one keyword-assigned category per repository,{" "}
-        {pin.excludedMassAccounts === 2 ? "two" : pin.excludedMassAccounts} mass
-        pull-request accounts excluded. The snapshot behind these figures is
-        committed to this repository and pinned by hash; the site does not
-        recompute it.
-      </p>
       <p className="who-builds-sources">
+        Public GitHub data only: merged pull requests since 1 January 2026
+        outside the Slop projects plus each contributor&apos;s own public
+        repositories, one keyword-assigned focus per repository,{" "}
+        {outside.massAccounts.length === 2
+          ? "two"
+          : count.format(outside.massAccounts.length)}{" "}
+        mass pull-request accounts excluded. The snapshot is committed to this
+        repository and pinned by hash.{" "}
         <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
           Snapshot JSON, {pin.date}
         </ExternalLinkAnchor>{" "}
@@ -3653,6 +3791,7 @@ function SponsorsPage({
           Slop holds no signing keys.
         </p>
       </section>
+      <WhoBuildsOnSlop retry={retry} state={state} />
       <ol className="mechanism-flow" aria-label="What funding a pool buys">
         <li>
           <strong>01 · Publish the cap</strong>
@@ -3687,7 +3826,7 @@ function SponsorsPage({
       </ol>
       <section className="worked-example sponsor-controls">
         <div>
-          <h2>Funding and review decisions</h2>
+          <h2>What you decide.</h2>
           <ul>
             <li>The monthly cap, with exact-cycle overrides.</li>
             <li>
@@ -3701,7 +3840,7 @@ function SponsorsPage({
           </ul>
         </div>
         <div>
-          <h2>What you cannot.</h2>
+          <h2>What funding does not buy.</h2>
           <ul>
             <li>
               Turn a donation into control of the repository. Maintainers manage
@@ -3905,9 +4044,8 @@ function SponsorsPage({
           </ExternalLinkAnchor>
         </p>
       </section>
-      <WhoBuildsOnSlop retry={retry} state={state} />
       <section className="custody-proof mechanism-sources">
-        <h2>See who shows up before you commit.</h2>
+        <h2>Verify before you commit.</h2>
         <ul>
           <li>
             <Link href="/#leaderboard">Live leaderboard</Link>

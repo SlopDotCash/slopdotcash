@@ -1374,7 +1374,9 @@ describe("sponsors page", () => {
     mockSnapshot();
     render(<App />);
 
-    const table = await screen.findByRole("table");
+    const table = within(
+      await screen.findByRole("region", { name: "Project funding pools" }),
+    ).getByRole("table");
     for (const project of PROJECTS) {
       const row = within(table).getByRole("row", {
         name: new RegExp(`^${project.name}\\b`, "u"),
@@ -1398,31 +1400,87 @@ describe("sponsors page", () => {
     }
   });
 
-  it("shows where scored work lands from the snapshot and dates the outside cross-reference", async () => {
+  it("leads with the pinned outside-GitHub cross-reference and keeps the live figures separate", async () => {
     route("/sponsors");
     mockSnapshot();
     render(<App />);
 
-    const section = (
-      await screen.findByRole("heading", { name: "Who builds on Slop." })
-    ).closest("section");
+    const heading = await screen.findByRole("heading", {
+      name: "Who builds on Slop.",
+    });
+    const section = heading.closest("section");
     expect(section).not.toBeNull();
     const scope = within(section as HTMLElement);
-    const elizaShare = await scope.findByText("86%");
-    expect(elizaShare.closest("span")).toHaveTextContent(
-      "86% of scored events are on elizaOS/eliza, core elizaOS agent framework and runtime",
+    const main = screen.getByRole("main");
+    const headings = within(main).getAllByRole("heading", { level: 2 });
+    expect(headings[0]).toBe(heading);
+    expect(screen.queryByText(/What you cannot/u)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "What funding does not buy." }),
+    ).toBeInTheDocument();
+
+    expect(scope.getByText(/119 contributors/u)).toBeInTheDocument();
+    expect(scope.getByText(/8 September 2026/u)).toBeInTheDocument();
+    expect(scope.getByText("74%").closest("span")).toHaveTextContent(
+      "74% build AI agents or LLM tooling as their primary focus (64 of the 86 with classifiable public work)",
     );
-    expect(scope.getByText("14%").closest("span")).toHaveTextContent(
-      /of scored events are on SlopDotCash\/proximityprize, machine-checked/u,
+    expect(scope.getByText("42%").closest("span")).toHaveTextContent(
+      "42% merged into an outside AI repository this year (50 of 119)",
     );
+    expect(scope.getByText("4,956").closest("span")).toHaveTextContent(
+      "4,956 merged pull requests across 629 outside repositories since 1 January 2026",
+    );
+    expect(scope.getByText("9").closest("span")).toHaveTextContent(
+      "9 stars is the median outside AI repository they work in; 51% have fewer than ten",
+    );
+
+    const focus = within(
+      scope.getByRole("region", { name: "What they build elsewhere" }),
+    ).getByRole("table");
+    const aiRow = within(focus).getByRole("row", {
+      name: /^AI agents and LLM tooling\b/u,
+    });
+    expect(aiRow).toHaveTextContent("64");
+    expect(aiRow).toHaveTextContent("307");
+    expect(aiRow).toHaveTextContent("3,021");
+    expect(
+      within(focus).queryByRole("row", { name: /Unclassified/u }),
+    ).not.toBeInTheDocument();
+
+    const known = within(
+      scope.getByRole("region", {
+        name: "Well-known repositories they merged into this year",
+      }),
+    ).getByRole("table");
+    const openclaw = within(known).getByRole("link", {
+      name: "openclaw/openclaw",
+    });
+    expect(openclaw).toHaveAttribute(
+      "href",
+      "https://github.com/openclaw/openclaw",
+    );
+    expect(openclaw).toHaveAttribute("rel", "noreferrer");
+    expect(openclaw.closest("tr")).toHaveTextContent("389K");
+    expect(within(known).getAllByRole("row")).toHaveLength(11);
+
+    const busiest = within(
+      scope.getByRole("region", {
+        name: "Outside AI repositories they ship to most",
+      }),
+    ).getByRole("table");
+    expect(
+      within(busiest).getByRole("link", { name: "Steward-Fi/steward" }),
+    ).toHaveAttribute("href", "https://github.com/Steward-Fi/steward");
+    expect(within(busiest).getAllByRole("row")).toHaveLength(7);
+
     expect(
       scope.getByText(/contributors scored in the last 35 days/u),
-    ).toBeInTheDocument();
-    expect(scope.getByText(/8 September 2026/u)).toBeInTheDocument();
-    expect(scope.getByText(/frozen to the leaderboard/u)).toBeInTheDocument();
-    expect(scope.getByText(/74% of the 86/u)).toBeInTheDocument();
+    ).toHaveTextContent(/^Inside Slop, live:/u);
     expect(
-      scope.getByText(/the site does not recompute it/u),
+      scope.queryByText(/of scored events are on/u),
+    ).not.toBeInTheDocument();
+    expect(
+      scope.getByText(/two mass pull-request accounts excluded/u),
     ).toBeInTheDocument();
     const snapshotLink = scope.getByRole("link", {
       name: "Snapshot JSON, 2026-09-08",

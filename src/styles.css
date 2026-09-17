@@ -3535,3 +3535,70 @@ small {
 .sponsor-fee p + p {
   margin-top: 14px;
 }
+
+.who-builds h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.who-builds-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+}
+
+.who-builds-block {
+  margin-bottom: 32px;
+}
+
+.who-builds-table {
+  min-width: 0;
+}
+
+.who-builds-table th[scope="row"] {
+  font-weight: 700;
+}
+
+.who-builds-number {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.who-builds-description {
+  color: var(--muted);
+  max-width: 52ch;
+}
+
+.who-builds-sources {
+  max-width: 76ch;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.who-builds-sources code {
+  font-family: var(--brand-font-data);
+}
+
+@media (max-width: 900px) {
+  .who-builds-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
+.who-builds .model-outcomes-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 40px;
+  margin-bottom: 36px;
+}
+
+@media (max-width: 680px) {
+  .who-builds .model-outcomes-summary {
+    grid-template-columns: 1fr;
+  }
+}
