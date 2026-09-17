@@ -1,0 +1,450 @@
+{
+ "generatedAt": "2026-09-17",
+ "leaderboardGeneratedAt": "2026-09-17T21:00:31.710Z",
+ "window": {
+  "days": 35,
+  "from": "2026-08-13T20:45:57.000Z",
+  "to": "2026-09-17T20:45:57.000Z"
+ },
+ "ruleVersion": "slop-score-v2",
+ "contributors": 84,
+ "noFootprint": 10,
+ "unclassifiable": 28,
+ "externalRepos": 451,
+ "externalReposExMass": 451,
+ "externalPrsExMass": 3770,
+ "contributorsWithExternal": 47,
+ "aiRepoMedianStars": 12,
+ "aiRepoShareUnder10": 0.481,
+ "slopFacts": {
+  "elizaShareOfEvents": 0.81,
+  "asiShareOfEvents": 0.19,
+  "eligibleSources": 8681,
+  "validReceiptSources": 3947,
+  "receiptShare": 0.45,
+  "providers": {
+   "OpenAI": 0.43,
+   "xAI": 0.24,
+   "Anthropic": 0.19,
+   "OpenCode": 0.07,
+   "Google": 0.02,
+   "deepseek": 0.01
+  },
+  "providersAsOf": "2026-09-17"
+ },
+ "cohorts": [
+  {
+   "name": "All 84 on the leaderboard",
+   "size": 84,
+   "classifiable": 56,
+   "aiPrimary": 43,
+   "aiExternalPr": 32
+  },
+  {
+   "name": "Active (score above zero)",
+   "size": 65,
+   "classifiable": 40,
+   "aiPrimary": 30,
+   "aiExternalPr": 22
+  },
+  {
+   "name": "Top 50",
+   "size": 50,
+   "classifiable": 35,
+   "aiPrimary": 25,
+   "aiExternalPr": 19
+  },
+  {
+   "name": "Top 20",
+   "size": 20,
+   "classifiable": 16,
+   "aiPrimary": 14,
+   "aiExternalPr": 12
+  }
+ ],
+ "focus": [
+  {
+   "area": "AI agents and LLM tooling",
+   "repos": 231,
+   "prs": 2671,
+   "contributors": 36,
+   "primaryContributors": 43
+  },
+  {
+   "area": "Dev tooling and infra",
+   "repos": 48,
+   "prs": 221,
+   "contributors": 18,
+   "primaryContributors": 2
+  },
+  {
+   "area": "Crypto and web3",
+   "repos": 41,
+   "prs": 234,
+   "contributors": 16,
+   "primaryContributors": 6
+  },
+  {
+   "area": "Security, privacy, cryptography",
+   "repos": 14,
+   "prs": 127,
+   "contributors": 20,
+   "primaryContributors": 2
+  },
+  {
+   "area": "Games, social, media",
+   "repos": 13,
+   "prs": 278,
+   "contributors": 11,
+   "primaryContributors": 2
+  },
+  {
+   "area": "Finance and trading",
+   "repos": 12,
+   "prs": 98,
+   "contributors": 9,
+   "primaryContributors": 1
+  },
+  {
+   "area": "Data and research",
+   "repos": 4,
+   "prs": 6,
+   "contributors": 3,
+   "primaryContributors": 0
+  },
+  {
+   "area": "Unclassified (no description or topics)",
+   "repos": 88,
+   "prs": 135,
+   "contributors": 20,
+   "primaryContributors": 0
+  }
+ ],
+ "topAi": [
+  {
+   "repo": "Steward-Fi/steward",
+   "prs": 343,
+   "contributors": 5,
+   "stars": 95,
+   "desc": "Agent wallet infrastructure \u2014 encrypted keys, policy enforcement, credential proxy, auth platform. Self-hostable, multi-tenant, open source."
+  },
+  {
+   "repo": "Uuriko/project-room",
+   "prs": 280,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "A shared room for people and AI agents \u2014 one conversation, invitations, and accountable work."
+  },
+  {
+   "repo": "rndrntwrk/milaidy",
+   "prs": 265,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "terminally online"
+  },
+  {
+   "repo": "BabylonSocial/babylon",
+   "prs": 166,
+   "contributors": 3,
+   "stars": 73,
+   "desc": ""
+  },
+  {
+   "repo": "twzrd-sol/twzrd-trust",
+   "prs": 105,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "TWZRD buyer-side x402 trust packages: x402 trust gate, elizaOS trust plugin, and the agent-intel client. Vet a counterparty before you pay."
+  },
+  {
+   "repo": "milady-ai/milady",
+   "prs": 78,
+   "contributors": 6,
+   "stars": 357,
+   "desc": "terminally online"
+  },
+  {
+   "repo": "Svector-anu/svectors-lab",
+   "prs": 74,
+   "contributors": 1,
+   "stars": 2,
+   "desc": "The most autonomous agent framework. No approval loops. No babysitting. Configure once, forget forever."
+  },
+  {
+   "repo": "elizaOS/os",
+   "prs": 64,
+   "contributors": 2,
+   "stars": 18,
+   "desc": "Agentic operating system built on elizaOS, Android Open Source and Debian Linux"
+  },
+  {
+   "repo": "twzrd-sol/witness",
+   "prs": 61,
+   "contributors": 1,
+   "stars": 0,
+   "desc": ""
+  },
+  {
+   "repo": "SYMBaiEX/usagemax",
+   "prs": 60,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "Open-source AI usage observability for model, agent, and token telemetry."
+  },
+  {
+   "repo": "kenjohnscreates/agent-economy",
+   "prs": 59,
+   "contributors": 1,
+   "stars": 0,
+   "desc": "Gamified agent economy platform with DeFi modules. ETH Global 2026 Online Hackathon."
+  },
+  {
+   "repo": "wbaxterh/TB-Backend",
+   "prs": 55,
+   "contributors": 1,
+   "stars": 1,
+   "desc": "Backend for Trick App"
+  }
+ ],
+ "recognizable": [
+  {
+   "repo": "public-apis/public-apis",
+   "stars": 481206,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "openclaw/openclaw",
+   "stars": 389987,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "huggingface/transformers",
+   "stars": 166253,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "openai/whisper",
+   "stars": 109291,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "punkpeye/awesome-mcp-servers",
+   "stars": 95164,
+   "prs": 2,
+   "contributors": 2
+  },
+  {
+   "repo": "astral-sh/uv",
+   "stars": 89928,
+   "prs": 2,
+   "contributors": 1
+  },
+  {
+   "repo": "odysseus-dev/odysseus",
+   "stars": 87350,
+   "prs": 51,
+   "contributors": 2
+  },
+  {
+   "repo": "ghostty-org/ghostty",
+   "stars": 61234,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "jamiepine/voicebox",
+   "stars": 54806,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "ggml-org/whisper.cpp",
+   "stars": 53731,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "abhigyanpatwari/GitNexus",
+   "stars": 47405,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "tinyhumansai/openhuman",
+   "stars": 39840,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "THU-MAIC/OpenMAIC",
+   "stars": 37603,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "alibaba/open-code-review",
+   "stars": 34557,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "VoltAgent/awesome-agent-skills",
+   "stars": 34517,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "jdx/mise",
+   "stars": 34045,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "zeroclaw-labs/zeroclaw",
+   "stars": 32822,
+   "prs": 2,
+   "contributors": 1
+  },
+  {
+   "repo": "can1357/oh-my-pi",
+   "stars": 31616,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "davila7/claude-code-templates",
+   "stars": 30769,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "garrytan/gbrain",
+   "stars": 30057,
+   "prs": 3,
+   "contributors": 1
+  },
+  {
+   "repo": "wilsonfreitas/awesome-quant",
+   "stars": 29641,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "lissy93/dashy",
+   "stars": 26495,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "enescingoz/awesome-n8n-templates",
+   "stars": 25420,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "steipete/CodexBar",
+   "stars": 21568,
+   "prs": 6,
+   "contributors": 1
+  },
+  {
+   "repo": "bokeh/bokeh",
+   "stars": 20453,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "lightgbm-org/LightGBM",
+   "stars": 18772,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "apache/doris",
+   "stars": 15948,
+   "prs": 2,
+   "contributors": 1
+  },
+  {
+   "repo": "yc-software/qm",
+   "stars": 15135,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "python-pillow/Pillow",
+   "stars": 13819,
+   "prs": 1,
+   "contributors": 1
+  },
+  {
+   "repo": "NangoHQ/nango",
+   "stars": 12207,
+   "prs": 1,
+   "contributors": 1
+  }
+ ],
+ "topOther": [
+  {
+   "repo": "waifufun/waifu.fun",
+   "prs": 201,
+   "area": "Games, social, media",
+   "stars": 17,
+   "desc": "waifu.fun"
+  },
+  {
+   "repo": "andreolf/neobankbeat",
+   "prs": 80,
+   "area": "Crypto and web3",
+   "stars": 7,
+   "desc": "who watches the neobanks? open-source directory of 357 verified-active neobanks \u2014 traditional, hybrid crypto & web3-native \u2014 compared on custody, cards, yield, stablecoins & regulation"
+  },
+  {
+   "repo": "wbaxterh/TrickBookWebsite",
+   "prs": 74,
+   "area": "Dev tooling and infra",
+   "stars": 1,
+   "desc": "TB site in NextJS"
+  },
+  {
+   "repo": "lalalune/ArkLib",
+   "prs": 63,
+   "area": "Security, privacy, cryptography",
+   "stars": 11,
+   "desc": "Formally Verified Arguments of Knowledge in Lean"
+  },
+  {
+   "repo": "JasonColapietro/suede-guitar-hub",
+   "prs": 33,
+   "area": "Games, social, media",
+   "stars": 0,
+   "desc": ""
+  },
+  {
+   "repo": "NubsCarson/tessera",
+   "prs": 26,
+   "area": "Security, privacy, cryptography",
+   "stars": 11,
+   "desc": "Anonymous rate-limited credentials (IETF ARC) for censorship-resistant, un-blockable network access \u2014 let Tor/anonymous traffic carry a cryptographic proof of good standing instead of relying on IP reputation."
+  },
+  {
+   "repo": "nishimweprince/trading-algos",
+   "prs": 24,
+   "area": "Finance and trading",
+   "stars": 0,
+   "desc": "A monorepo containing various trading algorithms"
+  },
+  {
+   "repo": "rndrntwrk/outreachr",
+   "prs": 23,
+   "area": "Finance and trading",
+   "stars": 0,
+   "desc": "Local-first, open-source investor fundraising CRM for founders"
+  }
+ ],
+ "massAccounts": []
+}

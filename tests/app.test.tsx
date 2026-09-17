@@ -1430,6 +1430,11 @@ describe("sponsors page", () => {
     const main = screen.getByRole("main");
     const headings = within(main).getAllByRole("heading", { level: 2 });
     expect(headings[0]).toBe(heading);
+    const stats = within(
+      (section as HTMLElement).querySelector(
+        ".model-outcomes-summary",
+      ) as HTMLElement,
+    );
     expect(screen.queryByText(/What you cannot/u)).not.toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "What funding does not buy." }),
@@ -1444,22 +1449,22 @@ describe("sponsors page", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      scope.getByText(percent(all.aiPrimary, all.classifiable)).closest("span"),
+      stats.getByText(percent(all.aiPrimary, all.classifiable)).closest("span"),
     ).toHaveTextContent(
       `${percent(all.aiPrimary, all.classifiable)} build AI agents or LLM tooling as their primary focus (${count.format(all.aiPrimary)} of the ${count.format(all.classifiable)} with classifiable public work)`,
     );
     expect(
-      scope.getByText(percent(all.aiExternalPr, all.size)).closest("span"),
+      stats.getByText(percent(all.aiExternalPr, all.size)).closest("span"),
     ).toHaveTextContent(
       `${percent(all.aiExternalPr, all.size)} merged into an outside AI repository this year (${count.format(all.aiExternalPr)} of ${count.format(all.size)})`,
     );
     expect(
-      scope.getByText(count.format(outside.externalPrsExMass)).closest("span"),
+      stats.getByText(count.format(outside.externalPrsExMass)).closest("span"),
     ).toHaveTextContent(
       `${count.format(outside.externalPrsExMass)} merged pull requests across ${count.format(outside.externalReposExMass)} outside repositories since 1 January 2026`,
     );
     expect(
-      scope.getByText(count.format(outside.aiRepoMedianStars)).closest("span"),
+      stats.getByText(count.format(outside.aiRepoMedianStars)).closest("span"),
     ).toHaveTextContent(
       `${count.format(outside.aiRepoMedianStars)} stars is the median outside AI repository they work in; ${Math.round(100 * outside.aiRepoShareUnder10)}% have fewer than ten`,
     );
@@ -1509,9 +1514,15 @@ describe("sponsors page", () => {
     expect(
       scope.queryByText(/of scored events are on/u),
     ).not.toBeInTheDocument();
-    expect(
-      scope.getByText(/mass pull-request accounts excluded/u),
-    ).toBeInTheDocument();
+    if (outside.massAccounts.length === 0) {
+      expect(
+        scope.queryByText(/mass pull-request account/u),
+      ).not.toBeInTheDocument();
+    } else {
+      expect(
+        scope.getByText(/mass pull-request accounts? excluded/u),
+      ).toBeInTheDocument();
+    }
     const snapshotLink = scope.getByRole("link", {
       name: `Snapshot JSON, ${pin.date}`,
     });

@@ -18,7 +18,7 @@
  * snapshot.json and METHOD.md, then point the import and the hash below at
  * it. A unit test hashes the committed file and fails if the two disagree.
  */
-import snapshotJson from "../../data/who-builds/2026-09-08/snapshot.json";
+import snapshotJson from "../../data/who-builds/2026-09-17/snapshot.json";
 import type { LeaderboardSnapshot } from "./leaderboard-types";
 import { findProjectByRepositoryId } from "./projects.mjs";
 
@@ -103,7 +103,7 @@ export const WHO_BUILDS_CROSS_REFERENCE = {
   methodPath: `data/who-builds/${WHO_BUILDS_SNAPSHOT.generatedAt}/METHOD.md`,
   /** Lowercase SHA-256 of the committed snapshot file. */
   snapshotSha256:
-    "540df0156b3b7ac5ba8e283d795ef93bcd4642cff889953b4af8a97af2eb4c47",
+    "edc05b350e371c50e0b5f72d01c92ea626ed03e23474febd5ddaf0f85c7df306",
   /** Rendered view of the same snapshot, outside this repository. */
   renderedUrl: "https://who-builds-on-slop.vercel.app",
 } as const;

@@ -3556,6 +3556,13 @@ function WhoBuildsOnSlop({
   const pinnedFile = (path: string) =>
     `${SOURCE_REPOSITORY}/blob/develop/${path}`;
   const repositoryUrl = (repo: string) => `https://github.com/${repo}`;
+  const massCount = outside.massAccounts.length;
+  const massNote =
+    massCount === 0
+      ? ""
+      : massCount === 1
+        ? ", one mass pull-request account excluded"
+        : `, ${massCount === 2 ? "two" : count.format(massCount)} mass pull-request accounts excluded`;
   const footprint =
     state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
   const models =
@@ -3699,12 +3706,8 @@ function WhoBuildsOnSlop({
       <p className="who-builds-sources">
         Public GitHub data only: merged pull requests since 1 January 2026
         outside the Slop projects plus each contributor&apos;s own public
-        repositories, one keyword-assigned focus per repository,{" "}
-        {outside.massAccounts.length === 2
-          ? "two"
-          : count.format(outside.massAccounts.length)}{" "}
-        mass pull-request accounts excluded. The snapshot is committed to this
-        repository and pinned by hash.{" "}
+        repositories, one keyword-assigned focus per repository{massNote}. The
+        snapshot is committed to this repository and pinned by hash.{" "}
         <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
           Snapshot JSON, {pin.date}
         </ExternalLinkAnchor>{" "}
