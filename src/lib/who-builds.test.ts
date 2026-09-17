@@ -125,7 +125,13 @@ describe("who builds cross-reference pin", () => {
     expect(JSON.parse(bytes.toString("utf8"))).toEqual(snapshot);
     expect(pin.snapshotPath).toContain(`/${snapshot.generatedAt}/`);
     expect(snapshot.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
-    expect(whoBuildsDateLabel(snapshot.generatedAt)).toBe("8 September 2026");
+    expect(whoBuildsDateLabel(snapshot.generatedAt)).toMatch(
+      new RegExp(
+        `^\\d{1,2} [A-Z][a-z]+ ${snapshot.generatedAt.slice(0, 4)}$`,
+        "u",
+      ),
+    );
+    expect(whoBuildsDateLabel("2026-09-08")).toBe("8 September 2026");
     const all = snapshot.cohorts[0];
     expect(all.size).toBe(snapshot.contributors);
     expect(all.classifiable).toBeLessThanOrEqual(all.size);

@@ -3566,11 +3566,6 @@ small {
   font-variant-numeric: tabular-nums;
 }
 
-.who-builds-description {
-  color: var(--muted);
-  max-width: 52ch;
-}
-
 .who-builds-sources {
   max-width: 76ch;
   margin: 16px 0 0;

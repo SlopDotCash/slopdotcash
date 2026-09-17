@@ -35,6 +35,11 @@ import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { createProjectView } from "../src/lib/project-view";
 import { PROJECTS } from "../src/lib/projects.mjs";
+import {
+  WHO_BUILDS_CROSS_REFERENCE,
+  WHO_BUILDS_SNAPSHOT,
+  whoBuildsDateLabel,
+} from "../src/lib/who-builds";
 import { cycleIndexFixture, snapshotFixture } from "./fixtures";
 
 function route(path: string): void {
@@ -1405,6 +1410,17 @@ describe("sponsors page", () => {
     mockSnapshot();
     render(<App />);
 
+    const count = new Intl.NumberFormat("en-US");
+    const compact = new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: 0,
+    });
+    const percent = (part: number, whole: number) =>
+      `${Math.round((100 * part) / whole)}%`;
+    const outside = WHO_BUILDS_SNAPSHOT;
+    const pin = WHO_BUILDS_CROSS_REFERENCE;
+    const all = outside.cohorts[0];
+
     const heading = await screen.findByRole("heading", {
       name: "Who builds on Slop.",
     });
@@ -1419,30 +1435,45 @@ describe("sponsors page", () => {
       screen.getByRole("heading", { name: "What funding does not buy." }),
     ).toBeInTheDocument();
 
-    expect(scope.getByText(/119 contributors/u)).toBeInTheDocument();
-    expect(scope.getByText(/8 September 2026/u)).toBeInTheDocument();
-    expect(scope.getByText("74%").closest("span")).toHaveTextContent(
-      "74% build AI agents or LLM tooling as their primary focus (64 of the 86 with classifiable public work)",
+    expect(
+      scope.getByText(
+        new RegExp(
+          `${count.format(all.size)} contributors on the leaderboard as of ${whoBuildsDateLabel(outside.generatedAt)}`,
+          "u",
+        ),
+      ),
+    ).toBeInTheDocument();
+    expect(
+      scope.getByText(percent(all.aiPrimary, all.classifiable)).closest("span"),
+    ).toHaveTextContent(
+      `${percent(all.aiPrimary, all.classifiable)} build AI agents or LLM tooling as their primary focus (${count.format(all.aiPrimary)} of the ${count.format(all.classifiable)} with classifiable public work)`,
     );
-    expect(scope.getByText("42%").closest("span")).toHaveTextContent(
-      "42% merged into an outside AI repository this year (50 of 119)",
+    expect(
+      scope.getByText(percent(all.aiExternalPr, all.size)).closest("span"),
+    ).toHaveTextContent(
+      `${percent(all.aiExternalPr, all.size)} merged into an outside AI repository this year (${count.format(all.aiExternalPr)} of ${count.format(all.size)})`,
     );
-    expect(scope.getByText("4,956").closest("span")).toHaveTextContent(
-      "4,956 merged pull requests across 629 outside repositories since 1 January 2026",
+    expect(
+      scope.getByText(count.format(outside.externalPrsExMass)).closest("span"),
+    ).toHaveTextContent(
+      `${count.format(outside.externalPrsExMass)} merged pull requests across ${count.format(outside.externalReposExMass)} outside repositories since 1 January 2026`,
     );
-    expect(scope.getByText("9").closest("span")).toHaveTextContent(
-      "9 stars is the median outside AI repository they work in; 51% have fewer than ten",
+    expect(
+      scope.getByText(count.format(outside.aiRepoMedianStars)).closest("span"),
+    ).toHaveTextContent(
+      `${count.format(outside.aiRepoMedianStars)} stars is the median outside AI repository they work in; ${Math.round(100 * outside.aiRepoShareUnder10)}% have fewer than ten`,
     );
 
     const focus = within(
       scope.getByRole("region", { name: "What they build elsewhere" }),
     ).getByRole("table");
+    const aiArea = outside.focus[0];
     const aiRow = within(focus).getByRole("row", {
-      name: /^AI agents and LLM tooling\b/u,
+      name: new RegExp(`^${aiArea.area}\\b`, "u"),
     });
-    expect(aiRow).toHaveTextContent("64");
-    expect(aiRow).toHaveTextContent("307");
-    expect(aiRow).toHaveTextContent("3,021");
+    expect(aiRow).toHaveTextContent(count.format(aiArea.primaryContributors));
+    expect(aiRow).toHaveTextContent(count.format(aiArea.repos));
+    expect(aiRow).toHaveTextContent(count.format(aiArea.prs));
     expect(
       within(focus).queryByRole("row", { name: /Unclassified/u }),
     ).not.toBeInTheDocument();
@@ -1452,26 +1483,25 @@ describe("sponsors page", () => {
         name: "Well-known repositories they merged into this year",
       }),
     ).getByRole("table");
-    const openclaw = within(known).getByRole("link", {
-      name: "openclaw/openclaw",
-    });
-    expect(openclaw).toHaveAttribute(
+    const first = outside.recognizable[0];
+    const firstLink = within(known).getByRole("link", { name: first.repo });
+    expect(firstLink).toHaveAttribute(
       "href",
-      "https://github.com/openclaw/openclaw",
+      `https://github.com/${first.repo}`,
     );
-    expect(openclaw).toHaveAttribute("rel", "noreferrer");
-    expect(openclaw.closest("tr")).toHaveTextContent("389K");
-    expect(within(known).getAllByRole("row")).toHaveLength(11);
-
-    const busiest = within(
-      scope.getByRole("region", {
+    expect(firstLink).toHaveAttribute("rel", "noreferrer");
+    expect(firstLink.closest("tr")).toHaveTextContent(
+      compact.format(first.stars),
+    );
+    expect(within(known).getAllByRole("row")).toHaveLength(
+      Math.min(10, outside.recognizable.length) + 1,
+    );
+    expect(
+      scope.queryByRole("region", {
         name: "Outside AI repositories they ship to most",
       }),
-    ).getByRole("table");
-    expect(
-      within(busiest).getByRole("link", { name: "Steward-Fi/steward" }),
-    ).toHaveAttribute("href", "https://github.com/Steward-Fi/steward");
-    expect(within(busiest).getAllByRole("row")).toHaveLength(7);
+    ).not.toBeInTheDocument();
+    expect(scope.getAllByRole("table")).toHaveLength(2);
 
     expect(
       scope.getByText(/contributors scored in the last 35 days/u),
@@ -1480,31 +1510,27 @@ describe("sponsors page", () => {
       scope.queryByText(/of scored events are on/u),
     ).not.toBeInTheDocument();
     expect(
-      scope.getByText(/two mass pull-request accounts excluded/u),
+      scope.getByText(/mass pull-request accounts excluded/u),
     ).toBeInTheDocument();
     const snapshotLink = scope.getByRole("link", {
-      name: "Snapshot JSON, 2026-09-08",
+      name: `Snapshot JSON, ${pin.date}`,
     });
     expect(snapshotLink).toHaveAttribute(
       "href",
-      "https://github.com/SlopDotCash/slopdotcash/blob/develop/data/who-builds/2026-09-08/snapshot.json",
+      `https://github.com/SlopDotCash/slopdotcash/blob/develop/${pin.snapshotPath}`,
     );
     expect(snapshotLink).toHaveAttribute("rel", "noreferrer");
-    expect(scope.getByText(/^sha256 540df0156b3b$/u)).toHaveAttribute(
-      "title",
-      "sha256 540df0156b3b7ac5ba8e283d795ef93bcd4642cff889953b4af8a97af2eb4c47",
-    );
+    expect(
+      scope.getByText(`sha256 ${pin.snapshotSha256.slice(0, 12)}`),
+    ).toHaveAttribute("title", `sha256 ${pin.snapshotSha256}`);
     expect(
       scope.getByRole("link", { name: "Method and caveats" }),
     ).toHaveAttribute(
       "href",
-      "https://github.com/SlopDotCash/slopdotcash/blob/develop/data/who-builds/2026-09-08/METHOD.md",
+      `https://github.com/SlopDotCash/slopdotcash/blob/develop/${pin.methodPath}`,
     );
     const link = scope.getByRole("link", { name: "Rendered view" });
-    expect(link).toHaveAttribute(
-      "href",
-      "https://who-builds-on-slop.vercel.app",
-    );
+    expect(link).toHaveAttribute("href", pin.renderedUrl);
     expect(link).toHaveAttribute("rel", "noreferrer");
   });
 });

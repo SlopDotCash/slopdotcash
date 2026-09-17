@@ -3552,14 +3552,10 @@ function WhoBuildsOnSlop({
     (area) => area.primaryContributors > 0,
   );
   const knownRepositories = outside.recognizable.slice(0, 10);
-  const busiestRepositories = outside.topAi.slice(0, 6);
   const dateLabel = whoBuildsDateLabel(outside.generatedAt);
   const pinnedFile = (path: string) =>
     `${SOURCE_REPOSITORY}/blob/develop/${path}`;
   const repositoryUrl = (repo: string) => `https://github.com/${repo}`;
-  const describeRepository = (description: string) =>
-    description.replace(/\s*[\u2013\u2014]\s*/gu, ", ").trim() ||
-    "No description published.";
   const footprint =
     state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
   const models =
@@ -3684,48 +3680,6 @@ function WhoBuildsOnSlop({
           </div>
         </section>
       </div>
-      <section
-        className="who-builds-block"
-        aria-labelledby="who-builds-busiest-heading"
-      >
-        <h3 id="who-builds-busiest-heading">
-          Outside AI repositories they ship to most
-        </h3>
-        <div className="plain-table-wrap">
-          <table className="plain-table who-builds-table">
-            <thead>
-              <tr>
-                <th scope="col">Repository</th>
-                <th scope="col">What it is</th>
-                <th scope="col" className="who-builds-number">
-                  Merged PRs
-                </th>
-                <th scope="col" className="who-builds-number">
-                  Stars
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {busiestRepositories.map((row) => (
-                <tr key={row.repo}>
-                  <th scope="row">
-                    <ExternalLinkAnchor href={repositoryUrl(row.repo)}>
-                      {row.repo}
-                    </ExternalLinkAnchor>
-                  </th>
-                  <td className="who-builds-description">
-                    {describeRepository(row.desc)}
-                  </td>
-                  <td className="who-builds-number">{count.format(row.prs)}</td>
-                  <td className="who-builds-number">
-                    {compact.format(row.stars)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
       <DataNotice retry={retry} state={state} />
       {footprint && models && footprint.scoredEvents > 0 ? (
         <p className="model-outcomes-note">
