@@ -105,11 +105,15 @@ describe("summarizeWhoBuilds", () => {
 });
 
 describe("who builds cross-reference pin", () => {
-  it("quotes only figures present in the committed, hash-pinned snapshot", async () => {
+  it("renders from the committed, hash-pinned snapshot", async () => {
     const { createHash } = await import("node:crypto");
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const { WHO_BUILDS_CROSS_REFERENCE: pin } = await import("./who-builds");
+    const {
+      WHO_BUILDS_CROSS_REFERENCE: pin,
+      WHO_BUILDS_SNAPSHOT: snapshot,
+      whoBuildsDateLabel,
+    } = await import("./who-builds");
     const root = resolve(import.meta.dirname, "..", "..");
     const bytes = readFileSync(resolve(root, pin.snapshotPath));
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
@@ -118,31 +122,25 @@ describe("who builds cross-reference pin", () => {
     expect(readFileSync(resolve(root, pin.methodPath), "utf8")).toContain(
       pin.snapshotSha256,
     );
-    const snapshot = JSON.parse(bytes.toString("utf8")) as {
-      generatedAt: string;
-      contributors: number;
-      massAccounts: unknown[];
-      cohorts: {
-        size: number;
-        classifiable: number;
-        aiPrimary: number;
-        aiExternalPr: number;
-      }[];
-    };
-    expect(snapshot.generatedAt).toBe(pin.date);
-    expect(snapshot.contributors).toBe(pin.contributors);
-    expect(snapshot.massAccounts).toHaveLength(pin.excludedMassAccounts);
+    expect(JSON.parse(bytes.toString("utf8"))).toEqual(snapshot);
+    expect(pin.snapshotPath).toContain(`/${snapshot.generatedAt}/`);
+    expect(snapshot.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    expect(whoBuildsDateLabel(snapshot.generatedAt)).toMatch(
+      new RegExp(
+        `^\\d{1,2} [A-Z][a-z]+ ${snapshot.generatedAt.slice(0, 4)}$`,
+        "u",
+      ),
+    );
+    expect(whoBuildsDateLabel("2026-09-08")).toBe("8 September 2026");
     const all = snapshot.cohorts[0];
-    expect(all).toMatchObject({
-      size: pin.contributors,
-      classifiable: pin.classifiable,
-      aiPrimary: pin.aiPrimary,
-      aiExternalPr: pin.aiExternalPullRequest,
-    });
-    expect(Math.round((100 * pin.aiPrimary) / pin.classifiable)).toBe(74);
-    expect(Math.round((100 * pin.aiPrimary) / pin.contributors)).toBe(54);
-    expect(
-      Math.round((100 * pin.aiExternalPullRequest) / pin.contributors),
-    ).toBe(42);
+    expect(all.size).toBe(snapshot.contributors);
+    expect(all.classifiable).toBeLessThanOrEqual(all.size);
+    expect(all.aiPrimary).toBeLessThanOrEqual(all.classifiable);
+    expect(all.aiExternalPr).toBeLessThanOrEqual(all.size);
+    expect(snapshot.focus.some((area) => area.primaryContributors > 0)).toBe(
+      true,
+    );
+    expect(snapshot.recognizable.length).toBeGreaterThan(0);
+    expect(snapshot.topAi.length).toBeGreaterThan(0);
   });
 });

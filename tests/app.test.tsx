@@ -35,6 +35,11 @@ import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { createProjectView } from "../src/lib/project-view";
 import { PROJECTS } from "../src/lib/projects.mjs";
+import {
+  WHO_BUILDS_CROSS_REFERENCE,
+  WHO_BUILDS_SNAPSHOT,
+  whoBuildsDateLabel,
+} from "../src/lib/who-builds";
 import { cycleIndexFixture, snapshotFixture } from "./fixtures";
 
 function route(path: string): void {
@@ -1374,7 +1379,9 @@ describe("sponsors page", () => {
     mockSnapshot();
     render(<App />);
 
-    const table = await screen.findByRole("table");
+    const table = within(
+      await screen.findByRole("region", { name: "Project funding pools" }),
+    ).getByRole("table");
     for (const project of PROJECTS) {
       const row = within(table).getByRole("row", {
         name: new RegExp(`^${project.name}\\b`, "u"),
@@ -1398,55 +1405,143 @@ describe("sponsors page", () => {
     }
   });
 
-  it("shows where scored work lands from the snapshot and dates the outside cross-reference", async () => {
+  it("leads with the pinned outside-GitHub cross-reference and keeps the live figures separate", async () => {
     route("/sponsors");
     mockSnapshot();
     render(<App />);
 
-    const section = (
-      await screen.findByRole("heading", { name: "Who builds on Slop." })
-    ).closest("section");
+    const count = new Intl.NumberFormat("en-US");
+    const compact = new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: 0,
+    });
+    const percent = (part: number, whole: number) =>
+      `${Math.round((100 * part) / whole)}%`;
+    const outside = WHO_BUILDS_SNAPSHOT;
+    const pin = WHO_BUILDS_CROSS_REFERENCE;
+    const all = outside.cohorts[0];
+
+    const heading = await screen.findByRole("heading", {
+      name: "Who builds on Slop.",
+    });
+    const section = heading.closest("section");
     expect(section).not.toBeNull();
     const scope = within(section as HTMLElement);
-    const elizaShare = await scope.findByText("86%");
-    expect(elizaShare.closest("span")).toHaveTextContent(
-      "86% of scored events are on elizaOS/eliza, core elizaOS agent framework and runtime",
+    const main = screen.getByRole("main");
+    const headings = within(main).getAllByRole("heading", { level: 2 });
+    expect(headings[0]).toBe(heading);
+    const stats = within(
+      (section as HTMLElement).querySelector(
+        ".model-outcomes-summary",
+      ) as HTMLElement,
     );
-    expect(scope.getByText("14%").closest("span")).toHaveTextContent(
-      /of scored events are on SlopDotCash\/proximityprize, machine-checked/u,
+    expect(screen.queryByText(/What you cannot/u)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "What funding does not buy." }),
+    ).toBeInTheDocument();
+
+    expect(
+      scope.getByText(
+        new RegExp(
+          `${count.format(all.size)} contributors on the leaderboard as of ${whoBuildsDateLabel(outside.generatedAt)}`,
+          "u",
+        ),
+      ),
+    ).toBeInTheDocument();
+    expect(
+      stats.getByText(percent(all.aiPrimary, all.classifiable)).closest("span"),
+    ).toHaveTextContent(
+      `${percent(all.aiPrimary, all.classifiable)} build AI agents or LLM tooling as their primary focus (${count.format(all.aiPrimary)} of the ${count.format(all.classifiable)} with classifiable public work)`,
     );
+    expect(
+      stats.getByText(percent(all.aiExternalPr, all.size)).closest("span"),
+    ).toHaveTextContent(
+      `${percent(all.aiExternalPr, all.size)} merged into an outside AI repository this year (${count.format(all.aiExternalPr)} of ${count.format(all.size)})`,
+    );
+    expect(
+      stats.getByText(count.format(outside.externalPrsExMass)).closest("span"),
+    ).toHaveTextContent(
+      `${count.format(outside.externalPrsExMass)} merged pull requests across ${count.format(outside.externalReposExMass)} outside repositories since 1 January 2026`,
+    );
+    expect(
+      stats.getByText(count.format(outside.aiRepoMedianStars)).closest("span"),
+    ).toHaveTextContent(
+      `${count.format(outside.aiRepoMedianStars)} stars is the median outside AI repository they work in; ${Math.round(100 * outside.aiRepoShareUnder10)}% have fewer than ten`,
+    );
+
+    const focus = within(
+      scope.getByRole("region", { name: "What they build elsewhere" }),
+    ).getByRole("table");
+    const aiArea = outside.focus[0];
+    const aiRow = within(focus).getByRole("row", {
+      name: new RegExp(`^${aiArea.area}\\b`, "u"),
+    });
+    expect(aiRow).toHaveTextContent(count.format(aiArea.primaryContributors));
+    expect(aiRow).toHaveTextContent(count.format(aiArea.repos));
+    expect(aiRow).toHaveTextContent(count.format(aiArea.prs));
+    expect(
+      within(focus).queryByRole("row", { name: /Unclassified/u }),
+    ).not.toBeInTheDocument();
+
+    const known = within(
+      scope.getByRole("region", {
+        name: "Well-known repositories they merged into this year",
+      }),
+    ).getByRole("table");
+    const first = outside.recognizable[0];
+    const firstLink = within(known).getByRole("link", { name: first.repo });
+    expect(firstLink).toHaveAttribute(
+      "href",
+      `https://github.com/${first.repo}`,
+    );
+    expect(firstLink).toHaveAttribute("rel", "noreferrer");
+    expect(firstLink.closest("tr")).toHaveTextContent(
+      compact.format(first.stars),
+    );
+    expect(within(known).getAllByRole("row")).toHaveLength(
+      Math.min(10, outside.recognizable.length) + 1,
+    );
+    expect(
+      scope.queryByRole("region", {
+        name: "Outside AI repositories they ship to most",
+      }),
+    ).not.toBeInTheDocument();
+    expect(scope.getAllByRole("table")).toHaveLength(2);
+
     expect(
       scope.getByText(/contributors scored in the last 35 days/u),
-    ).toBeInTheDocument();
-    expect(scope.getByText(/8 September 2026/u)).toBeInTheDocument();
-    expect(scope.getByText(/frozen to the leaderboard/u)).toBeInTheDocument();
-    expect(scope.getByText(/74% of the 86/u)).toBeInTheDocument();
+    ).toHaveTextContent(/^Inside Slop, live:/u);
     expect(
-      scope.getByText(/the site does not recompute it/u),
-    ).toBeInTheDocument();
+      scope.queryByText(/of scored events are on/u),
+    ).not.toBeInTheDocument();
+    if (outside.massAccounts.length === 0) {
+      expect(
+        scope.queryByText(/mass pull-request account/u),
+      ).not.toBeInTheDocument();
+    } else {
+      expect(
+        scope.getByText(/mass pull-request accounts? excluded/u),
+      ).toBeInTheDocument();
+    }
     const snapshotLink = scope.getByRole("link", {
-      name: "Snapshot JSON, 2026-09-08",
+      name: `Snapshot JSON, ${pin.date}`,
     });
     expect(snapshotLink).toHaveAttribute(
       "href",
-      "https://github.com/SlopDotCash/slopdotcash/blob/develop/data/who-builds/2026-09-08/snapshot.json",
+      `https://github.com/SlopDotCash/slopdotcash/blob/develop/${pin.snapshotPath}`,
     );
     expect(snapshotLink).toHaveAttribute("rel", "noreferrer");
-    expect(scope.getByText(/^sha256 540df0156b3b$/u)).toHaveAttribute(
-      "title",
-      "sha256 540df0156b3b7ac5ba8e283d795ef93bcd4642cff889953b4af8a97af2eb4c47",
-    );
+    expect(
+      scope.getByText(`sha256 ${pin.snapshotSha256.slice(0, 12)}`),
+    ).toHaveAttribute("title", `sha256 ${pin.snapshotSha256}`);
     expect(
       scope.getByRole("link", { name: "Method and caveats" }),
     ).toHaveAttribute(
       "href",
-      "https://github.com/SlopDotCash/slopdotcash/blob/develop/data/who-builds/2026-09-08/METHOD.md",
+      `https://github.com/SlopDotCash/slopdotcash/blob/develop/${pin.methodPath}`,
     );
     const link = scope.getByRole("link", { name: "Rendered view" });
-    expect(link).toHaveAttribute(
-      "href",
-      "https://who-builds-on-slop.vercel.app",
-    );
+    expect(link).toHaveAttribute("href", pin.renderedUrl);
     expect(link).toHaveAttribute("rel", "noreferrer");
   });
 });
