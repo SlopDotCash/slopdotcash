@@ -14,7 +14,7 @@
  * cannot earn the same work twice.
  */
 
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./sha256";
 
 export const EXTERNAL_SOURCE_PLATFORMS = [
   "discord",
@@ -234,7 +234,7 @@ export function assertExternalArchiveUrl(
 
 /** Deterministic source id so the same URL can never be awarded twice. */
 export function externalSourceId(sourceUrl: string): string {
-  return `external-${createHash("sha256").update(sourceUrl).digest("hex")}`;
+  return `external-${sha256Hex(sourceUrl)}`;
 }
 
 export function assertExternalSourcePlatform(
