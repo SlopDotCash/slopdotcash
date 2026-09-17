@@ -41,6 +41,7 @@ import {
   SCORE_CAPS,
   SCORE_RULE_VERSION,
   type ScoreEvent,
+  TARGET_REPOSITORIES,
   type VerifiedEvidenceArtifact,
 } from "./leaderboard";
 import { type ProjectRunReceipt, serializeRunMarker } from "./run-receipts";
@@ -366,12 +367,10 @@ function input(overrides: Partial<LeaderboardInput> = {}): LeaderboardInput {
       fetchedAt: NOW,
       cutoffAt: NOW,
       repositoryId: "REPO_1",
-      repositories: [
-        { id: "elizaOS/eliza", repositoryId: "REPO_1" },
-        { id: "elizaOS/asi", repositoryId: "REPO_3" },
-        { id: "heirlabs/element-sdk", repositoryId: "REPO_4" },
-        { id: "elizaOS/proximityprize", repositoryId: "REPO_2" },
-      ],
+      repositories: TARGET_REPOSITORIES.map((repository, index) => ({
+        id: repository.id,
+        repositoryId: `REPO_${index + 1}`,
+      })),
       requestCount: 12,
       searchSliceCount: 30,
       rateLimit: {
@@ -3585,12 +3584,9 @@ describe("scoring and limits", () => {
       "elizaOS/proximityprize",
     );
     expect(snapshot.workQueue.pullRequests[0].repository).toBe("elizaOS/eliza");
-    expect(snapshot.repositories.map((repository) => repository.id)).toEqual([
-      "elizaOS/eliza",
-      "elizaOS/asi",
-      "heirlabs/element-sdk",
-      "elizaOS/proximityprize",
-    ]);
+    expect(snapshot.repositories.map((repository) => repository.id)).toEqual(
+      TARGET_REPOSITORIES.map((repository) => repository.id),
+    );
     expect(() =>
       createLeaderboardSnapshot(
         input({

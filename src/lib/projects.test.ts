@@ -10,12 +10,6 @@ import { findTargetRepository, TARGET_REPOSITORIES } from "./repositories.mjs";
 
 describe("project registry", () => {
   it("defines the launch projects with distinct reward semantics", () => {
-    expect(PROJECTS.map((project) => project.id)).toEqual([
-      "eliza",
-      "asi",
-      "heir-elements-sdk",
-      "delta-star",
-    ]);
     expect(findProject("eliza")?.reward).toMatchObject({
       kind: "monthly-pool",
       monthlyCapMinor: "5000000000",
@@ -46,12 +40,14 @@ describe("project registry", () => {
         repository.id,
         repository.projectId,
       ]),
-    ).toEqual([
-      ["elizaOS/eliza", "eliza"],
-      ["elizaOS/asi", "asi"],
-      ["heirlabs/element-sdk", "heir-elements-sdk"],
-      ["elizaOS/proximityprize", "delta-star"],
-    ]);
+    ).toEqual(
+      PROJECTS.flatMap((project) =>
+        project.repositories.map((repository) => [repository.id, project.id]),
+      ),
+    );
+    expect(
+      new Set(TARGET_REPOSITORIES.map((repository) => repository.id)).size,
+    ).toBe(TARGET_REPOSITORIES.length);
     expect(findProjectByRepositoryId("ELIZAOS/ELIZA")?.id).toBe("eliza");
     expect(findProjectByRepositoryId("SlopDotCash/proximityprize")?.id).toBe(
       "delta-star",
@@ -73,6 +69,30 @@ describe("project registry", () => {
     });
     expect(findProjectByRepositoryId("unknown/repository")).toBeNull();
   });
+
+  it.each(["monna-agent-permission-diff", "monna-visual-strategy-canvas"])(
+    "keeps %s a paused, unfunded proposal",
+    (id) => {
+      expect(findProject(id)).toMatchObject({
+        status: "paused",
+        listingTier: "community",
+        authority: { state: "unverified", proof: null },
+        terms: {
+          receiptPolicy: {
+            state: "pending-authority-activation",
+            bindings: [],
+          },
+          copyright: { model: "unknown" },
+          inbound: { mode: "unknown" },
+        },
+        reward: {
+          monthlyCapMinor: "0",
+          committedMinor: "0",
+          paymentMode: "disabled",
+        },
+      });
+    },
+  );
 
   it("allows every model while requiring a concrete disclosure", () => {
     for (const project of PROJECTS) {

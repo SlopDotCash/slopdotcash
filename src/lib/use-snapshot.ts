@@ -75,8 +75,14 @@ export function useSnapshot(enabled: boolean): [DataState, () => void] {
         // show yet. Skipping it keeps one future-dated registry entry from
         // failing the whole page; every other contract violation still
         // surfaces as a data error rather than being silently swallowed.
-        const views = PROJECTS.filter((project) =>
-          projectCycleHasOpened(value, project.id),
+        const views = PROJECTS.filter(
+          (project) =>
+            projectCycleHasOpened(value, project.id) &&
+            project.repositories.every((repository) =>
+              value.repositories.some(
+                (collected) => collected.id === repository.id,
+              ),
+            ),
         ).map((project) => createProjectView(value, project.id));
         if (active) {
           setState({

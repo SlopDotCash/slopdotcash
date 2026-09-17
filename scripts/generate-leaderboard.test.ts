@@ -2141,7 +2141,7 @@ describe("current-head review selection", () => {
               ? "R_kgDOT23CXA"
               : repositoryName === "element-sdk"
                 ? "REPOSITORY_ELEMENT_SDK"
-                : "REPOSITORY_ELIZA";
+                : `REPOSITORY_${String(repositoryName).toUpperCase()}`;
         if (document.includes("query LeaderboardPreflight")) {
           return {
             repository: { id: repositoryNodeId, updatedAt },
@@ -2166,7 +2166,7 @@ describe("current-head review selection", () => {
         }
         if (document.includes("query LeaderboardOpenPullRequestReferences")) {
           openPullReferenceRequests += 1;
-          if (repositoryName === "proximityprize" || repositoryName === "asi") {
+          if (repositoryName !== "eliza" && repositoryName !== "element-sdk") {
             return {
               repository: {
                 id: repositoryNodeId,
@@ -2249,18 +2249,16 @@ describe("current-head review selection", () => {
     };
 
     const snapshot = await generateLeaderboardFromGitHub(client, { now });
-    expect(snapshot.source.repositories).toEqual([
-      { id: "elizaOS/eliza", repositoryId: "REPOSITORY_ELIZA" },
-      { id: "elizaOS/asi", repositoryId: "R_kgDOT23CXA" },
-      {
-        id: "heirlabs/element-sdk",
-        repositoryId: "REPOSITORY_ELEMENT_SDK",
-      },
-      {
-        id: "elizaOS/proximityprize",
-        repositoryId: "R_kgDOT48hJQ",
-      },
-    ]);
+    expect(snapshot.source.repositories).toEqual(
+      TARGET_REPOSITORIES.map((repository) => ({
+        id: repository.id,
+        repositoryId:
+          repository.expectedNodeId ??
+          (repository.name === "element-sdk"
+            ? "REPOSITORY_ELEMENT_SDK"
+            : `REPOSITORY_${repository.name.toUpperCase()}`),
+      })),
+    );
     expect(snapshot.repositories).toEqual(
       TARGET_REPOSITORIES.map(
         ({
@@ -2287,7 +2285,7 @@ describe("current-head review selection", () => {
     });
     expect(JSON.stringify(snapshot)).not.toContain("headRefOid");
     expect(JSON.stringify(snapshot)).not.toContain("commitId");
-    expect(openPullReferenceRequests).toBe(4);
+    expect(openPullReferenceRequests).toBe(TARGET_REPOSITORIES.length);
 
     paginatedHead = previousHead;
     await expect(
