@@ -3611,7 +3611,12 @@ function WhoBuildsOnSlop({
           aria-labelledby="who-builds-focus-heading"
         >
           <h3 id="who-builds-focus-heading">What they build elsewhere</h3>
-          <div className="plain-table-wrap">
+          <section
+            className="plain-table-wrap"
+            aria-label="Focus areas outside Slop"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+            tabIndex={0}
+          >
             <table className="plain-table who-builds-table">
               <thead>
                 <tr>
@@ -3644,7 +3649,7 @@ function WhoBuildsOnSlop({
                 ))}
               </tbody>
             </table>
-          </div>
+          </section>
         </section>
         <section
           className="who-builds-block"
@@ -3653,7 +3658,12 @@ function WhoBuildsOnSlop({
           <h3 id="who-builds-known-heading">
             Well-known repositories they merged into this year
           </h3>
-          <div className="plain-table-wrap">
+          <section
+            className="plain-table-wrap"
+            aria-label="Well-known repositories outside Slop"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+            tabIndex={0}
+          >
             <table className="plain-table who-builds-table">
               <thead>
                 <tr>
@@ -3684,7 +3694,7 @@ function WhoBuildsOnSlop({
                 ))}
               </tbody>
             </table>
-          </div>
+          </section>
         </section>
       </div>
       <DataNotice retry={retry} state={state} />

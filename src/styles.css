@@ -3549,7 +3549,13 @@ small {
 }
 
 .who-builds-block {
+  min-width: 0;
   margin-bottom: 32px;
+}
+
+.who-builds .money-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .who-builds-table {
