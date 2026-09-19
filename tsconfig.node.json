@@ -35,6 +35,7 @@
     "src/lib/signer-capability.ts",
     "src/lib/funding-commitment.ts",
     "src/lib/sablier-funding.ts",
+    "src/lib/wallet-possession.ts",
     "src/lib/squads-funding.ts",
     "src/lib/squads-execution.ts",
     "src/lib/squads-execution-verifier.ts",

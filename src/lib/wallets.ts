@@ -63,6 +63,18 @@ export function isSolanaAddress(value: unknown): value is string {
   return decoded !== null && decoded.length === 32;
 }
 
+/**
+ * Returns the exact 32 decoded bytes of a canonical Solana public key. Callers
+ * that verify a signature need the key itself, not its textual form.
+ */
+export function solanaAddressBytes(value: string): Uint8Array {
+  const decoded = isSolanaAddress(value) ? decodeBase58(value) : null;
+  if (decoded === null || decoded.length !== 32) {
+    throw new TypeError("Invalid Solana public address");
+  }
+  return decoded;
+}
+
 function withoutFencedCode(markdown: string): string[] {
   const retained: string[] = [];
   let fence: "```" | "~~~" | null = null;

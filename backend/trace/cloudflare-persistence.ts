@@ -10,6 +10,8 @@ import type {
   TraceRun,
   TraceUploadIntent,
   WalletClaim,
+  WalletPossessionAttestationRecord,
+  WalletPossessionChallengeRecord,
 } from "./contracts";
 import { sha256Hex } from "./validation";
 import {
@@ -106,6 +108,29 @@ type WalletClaimRow = {
   created_at: string;
 };
 
+type WalletPossessionChallengeRow = {
+  challenge_id: string;
+  claim_id: string;
+  github_user_id: string;
+  wallet_address: string;
+  issued_at: string;
+  expires_at: string;
+  consumed_at: string | null;
+  created_at: string;
+};
+
+type WalletPossessionAttestationRow = {
+  id: string;
+  claim_id: string;
+  challenge_id: string;
+  github_user_id: string;
+  wallet_address: string;
+  signature: string;
+  message_sha256: string;
+  attested_at: string;
+  created_at: string;
+};
+
 type UploadIntentRow = {
   token_hash: string;
   run_id: string;
@@ -178,6 +203,37 @@ function mapWalletClaim(row: WalletClaimRow): WalletClaim {
     observedAt: row.observed_at,
     recordSha256: row.record_sha256,
     supersedesClaimId: row.supersedes_claim_id,
+    createdAt: row.created_at,
+  };
+}
+
+function mapWalletPossessionChallenge(
+  row: WalletPossessionChallengeRow,
+): WalletPossessionChallengeRecord {
+  return {
+    challengeId: row.challenge_id,
+    claimId: row.claim_id,
+    githubId: row.github_user_id,
+    walletAddress: row.wallet_address,
+    issuedAt: row.issued_at,
+    expiresAt: row.expires_at,
+    consumedAt: row.consumed_at,
+    createdAt: row.created_at,
+  };
+}
+
+function mapWalletPossessionAttestation(
+  row: WalletPossessionAttestationRow,
+): WalletPossessionAttestationRecord {
+  return {
+    id: row.id,
+    claimId: row.claim_id,
+    challengeId: row.challenge_id,
+    githubId: row.github_user_id,
+    walletAddress: row.wallet_address,
+    signature: row.signature,
+    messageSha256: row.message_sha256,
+    attestedAt: row.attested_at,
     createdAt: row.created_at,
   };
 }
@@ -926,6 +982,112 @@ export class CloudflareTracePersistence implements TracePersistence {
       throw error;
     }
     return { status: "created", value: claim };
+  }
+
+  async createWalletPossessionChallenge(
+    record: WalletPossessionChallengeRecord,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO wallet_possession_challenges (
+            challenge_id, claim_id, github_user_id, wallet_address,
+            issued_at, expires_at, consumed_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+      )
+      .bind(
+        record.challengeId,
+        record.claimId,
+        record.githubId,
+        record.walletAddress,
+        record.issuedAt,
+        record.expiresAt,
+        record.createdAt,
+      )
+      .run();
+  }
+
+  /**
+   * Consumes a challenge exactly once. The guard is in the statement rather
+   * than a read followed by a write, so two concurrent submissions of the same
+   * signature cannot both succeed.
+   */
+  async consumeWalletPossessionChallenge(
+    challengeId: string,
+    consumedAt: string,
+  ): Promise<WalletPossessionChallengeRecord | null> {
+    const row = await this.db
+      .prepare(
+        `UPDATE wallet_possession_challenges
+           SET consumed_at = ?
+         WHERE challenge_id = ? AND consumed_at IS NULL
+         RETURNING *`,
+      )
+      .bind(consumedAt, challengeId)
+      .first<WalletPossessionChallengeRow>();
+    return row === null ? null : mapWalletPossessionChallenge(row);
+  }
+
+  async createWalletPossessionAttestation(
+    record: WalletPossessionAttestationRecord,
+    audit: AuditInput,
+  ): Promise<PersistenceResult<WalletPossessionAttestationRecord>> {
+    const existing = await this.getWalletPossessionAttestation(record.claimId);
+    if (existing !== null) return { status: "existing", value: existing };
+    const insert = this.db
+      .prepare(
+        `INSERT INTO wallet_possession_attestations (
+            id, claim_id, challenge_id, github_user_id, wallet_address,
+            signature, message_sha256, attested_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        record.id,
+        record.claimId,
+        record.challengeId,
+        record.githubId,
+        record.walletAddress,
+        record.signature,
+        record.messageSha256,
+        record.attestedAt,
+        record.createdAt,
+      );
+    const auditInsert = this.db
+      .prepare(
+        `INSERT INTO private_audit_events (
+            id, actor_github_id, action, target, request_id, created_at, details_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        audit.id,
+        audit.actorGithubId,
+        audit.action,
+        audit.target,
+        audit.requestId,
+        audit.createdAt,
+        JSON.stringify(audit.details),
+      );
+    try {
+      await this.db.batch([insert, auditInsert]);
+    } catch (error) {
+      const competing = await this.getWalletPossessionAttestation(
+        record.claimId,
+      );
+      if (competing !== null) return { status: "existing", value: competing };
+      throw error;
+    }
+    return { status: "created", value: record };
+  }
+
+  async getWalletPossessionAttestation(
+    claimId: string,
+  ): Promise<WalletPossessionAttestationRecord | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT * FROM wallet_possession_attestations WHERE claim_id = ?",
+      )
+      .bind(claimId)
+      .first<WalletPossessionAttestationRow>();
+    return row === null ? null : mapWalletPossessionAttestation(row);
   }
 
   async getWalletClaim(claimId: string): Promise<WalletClaim | null> {

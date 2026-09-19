@@ -1,3 +1,15 @@
+import {
+  assertWalletPossessionChallenge,
+  isSignableSolanaAddress,
+  verifyWalletPossession,
+  WALLET_POSSESSION_AUDIENCE,
+  WALLET_POSSESSION_KIND,
+  WALLET_POSSESSION_LIFETIME_MS,
+  WALLET_POSSESSION_SCHEMA_VERSION,
+  type WalletPossessionAttestation,
+  walletPossessionMessage,
+  walletPossessionState,
+} from "../../src/lib/wallet-possession";
 import { isSolanaAddress } from "../../src/lib/wallets";
 import { signApiToken, verifyApiToken } from "./auth";
 import {
@@ -9,6 +21,7 @@ import {
   type TracePersistence,
   type TraceUploadIntent,
   type WalletClaim,
+  type WalletPossessionAttestationRecord,
 } from "./contracts";
 import { readExecutionVerification } from "./execution-verification";
 import { readFundingVerification } from "./funding-verification";
@@ -226,6 +239,9 @@ function isPublicWalletRead(
       parts[0] === "wallet-claims" &&
       parts[1] === "actors" &&
       parts[3] === "current") ||
+      (parts.length === 3 &&
+        parts[0] === "wallet-claims" &&
+        parts[2] === "possession") ||
       (parts.length === 2 &&
         parts[0] === "wallet-claims" &&
         parts[1] !== "current"))
@@ -246,6 +262,25 @@ function publicWalletClaim(claim: WalletClaim): Record<string, unknown> {
     observedAt: claim.observedAt,
     recordDigest: claim.recordSha256,
     supersedesClaimId: claim.supersedesClaimId,
+  };
+}
+
+/**
+ * The published possession view. `unproven` is the honest pre-existing state
+ * for every destination registered before this existed and never holds,
+ * excludes, or reduces a position.
+ */
+function publicWalletPossession(
+  address: string,
+  attestation: WalletPossessionAttestationRecord | null,
+): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    state: walletPossessionState(address, attestation?.attestedAt ?? null),
+    attestedAt: attestation?.attestedAt ?? null,
+    challengeId: attestation?.challengeId ?? null,
+    messageDigest: attestation?.messageSha256 ?? null,
+    signature: attestation?.signature ?? null,
   };
 }
 
@@ -369,6 +404,203 @@ async function createContributorWalletClaim(
     result.status === "created" ? 201 : 200,
     publicWalletClaim(result.value),
   );
+}
+
+/**
+ * Issues a single-use challenge for the authenticated actor's own claim. The
+ * lifetime and every bound field come from server state, never from the
+ * request, so a caller cannot widen its replay window or bind another claim.
+ */
+async function createWalletPossessionChallenge(
+  actor: AuthenticatedActor,
+  claimId: string,
+  deps: TraceApiDependencies,
+): Promise<Response> {
+  assertWriter(actor);
+  if (!validIdentifier(claimId))
+    fail(400, "invalid_request", "Invalid claim id");
+  const claim = await deps.persistence.getWalletClaim(claimId);
+  if (claim === null || claim.githubId !== actor.githubId) {
+    fail(404, "not_found", "Wallet claim not found");
+  }
+  if (!isSignableSolanaAddress(claim.walletAddress)) {
+    fail(
+      409,
+      "address_not_signable",
+      "This destination is off the Ed25519 curve and cannot produce a signature",
+    );
+  }
+  const existing =
+    await deps.persistence.getWalletPossessionAttestation(claimId);
+  if (existing !== null) {
+    return json(200, publicWalletPossession(claim.walletAddress, existing));
+  }
+  const issued = deps.now();
+  const issuedAt = issued.toISOString();
+  const expiresAt = new Date(
+    issued.getTime() + WALLET_POSSESSION_LIFETIME_MS,
+  ).toISOString();
+  const challengeId = (
+    await sha256Hex(new TextEncoder().encode(deps.randomId()))
+  ).slice(0, 32);
+  const challenge = assertWalletPossessionChallenge({
+    kind: WALLET_POSSESSION_KIND,
+    schemaVersion: WALLET_POSSESSION_SCHEMA_VERSION,
+    audience: WALLET_POSSESSION_AUDIENCE,
+    challengeId,
+    claimId,
+    githubActorId: actor.githubId,
+    address: claim.walletAddress,
+    issuedAt,
+    expiresAt,
+  });
+  await deps.persistence.createWalletPossessionChallenge({
+    challengeId,
+    claimId,
+    githubId: actor.githubId,
+    walletAddress: claim.walletAddress,
+    issuedAt,
+    expiresAt,
+    consumedAt: null,
+    createdAt: issuedAt,
+  });
+  return json(201, {
+    schemaVersion: 1,
+    challenge,
+    message: walletPossessionMessage(challenge),
+  });
+}
+
+/**
+ * Records one attestation. Verification compares every bound field against
+ * stored state, and the challenge is consumed atomically before the signature
+ * is trusted, so a replayed submission cannot be recorded twice.
+ */
+async function createWalletPossessionAttestation(
+  request: Request,
+  actor: AuthenticatedActor,
+  claimId: string,
+  deps: TraceApiDependencies,
+): Promise<Response> {
+  assertWriter(actor);
+  if (!validIdentifier(claimId))
+    fail(400, "invalid_request", "Invalid claim id");
+  const claim = await deps.persistence.getWalletClaim(claimId);
+  if (claim === null || claim.githubId !== actor.githubId) {
+    fail(404, "not_found", "Wallet claim not found");
+  }
+  const existing =
+    await deps.persistence.getWalletPossessionAttestation(claimId);
+  if (existing !== null) {
+    return json(200, publicWalletPossession(claim.walletAddress, existing));
+  }
+  const body = await readJsonObject(request);
+  const submitted = body.challenge;
+  if (
+    typeof submitted !== "object" ||
+    submitted === null ||
+    Array.isArray(submitted) ||
+    !validIdentifier(
+      typeof (submitted as Record<string, unknown>).challengeId === "string"
+        ? ((submitted as Record<string, unknown>).challengeId as string)
+        : "",
+    )
+  ) {
+    fail(400, "invalid_request", "Invalid possession challenge");
+  }
+  const challengeId = (submitted as Record<string, unknown>)
+    .challengeId as string;
+  const attestedAt = deps.now().toISOString();
+  const stored = await deps.persistence.consumeWalletPossessionChallenge(
+    challengeId,
+    attestedAt,
+  );
+  if (
+    stored === null ||
+    stored.claimId !== claimId ||
+    stored.githubId !== actor.githubId ||
+    stored.walletAddress !== claim.walletAddress
+  ) {
+    fail(
+      409,
+      "possession_challenge_unavailable",
+      "Possession challenge is unknown, already used, or bound elsewhere",
+    );
+  }
+  let attestation: WalletPossessionAttestation;
+  try {
+    attestation = verifyWalletPossession({
+      challenge: submitted,
+      signature: body.signature,
+      claimId,
+      githubActorId: actor.githubId,
+      address: claim.walletAddress,
+      now: deps.now().getTime(),
+    });
+  } catch (error) {
+    fail(
+      400,
+      "invalid_possession_proof",
+      error instanceof Error ? error.message : "Invalid possession proof",
+    );
+  }
+  const record: WalletPossessionAttestationRecord = {
+    id: deps.randomId(),
+    claimId,
+    challengeId,
+    githubId: actor.githubId,
+    walletAddress: claim.walletAddress,
+    signature: attestation.signature,
+    messageSha256: await sha256Hex(
+      new TextEncoder().encode(walletPossessionMessage(attestation.challenge)),
+    ),
+    attestedAt,
+    createdAt: attestedAt,
+  };
+  const result = await deps.persistence.createWalletPossessionAttestation(
+    record,
+    {
+      id: deps.randomId(),
+      actorGithubId: actor.githubId,
+      action: "wallet_possession.attested",
+      target: `wallet-claim:${claimId}`,
+      requestId: deps.randomId(),
+      createdAt: attestedAt,
+      details: {
+        challengeId,
+        messageDigest: record.messageSha256,
+      },
+    },
+  );
+  if (result.status === "conflict") {
+    fail(
+      409,
+      "possession_challenge_unavailable",
+      "Possession attestation changed; reload the claim before submitting",
+    );
+  }
+  return json(
+    result.status === "created" ? 201 : 200,
+    publicWalletPossession(claim.walletAddress, result.value),
+  );
+}
+
+async function readPublicWalletPossession(
+  deps: TraceApiDependencies,
+  claimId: string,
+): Promise<Response> {
+  if (!validIdentifier(claimId))
+    fail(400, "invalid_request", "Invalid claim id");
+  const claim = await deps.persistence.getWalletClaim(claimId);
+  if (claim === null) fail(404, "not_found", "Wallet claim not found");
+  const attestation =
+    await deps.persistence.getWalletPossessionAttestation(claimId);
+  const response = json(
+    200,
+    publicWalletPossession(claim.walletAddress, attestation),
+  );
+  response.headers.set("cache-control", "public, max-age=60, must-revalidate");
+  return response;
 }
 
 async function createFallbackWalletClaim(
@@ -962,6 +1194,23 @@ function matchAuthenticatedRoute(
   ) {
     return (actor) => createContributorWalletClaim(request, actor, deps);
   }
+  if (
+    request.method === "POST" &&
+    parts.length === 3 &&
+    parts[0] === "wallet-claims" &&
+    parts[2] === "possession-challenge"
+  ) {
+    return (actor) => createWalletPossessionChallenge(actor, parts[1], deps);
+  }
+  if (
+    request.method === "POST" &&
+    parts.length === 3 &&
+    parts[0] === "wallet-claims" &&
+    parts[2] === "possession"
+  ) {
+    return (actor) =>
+      createWalletPossessionAttestation(request, actor, parts[1], deps);
+  }
   if (request.method === "POST" && parts.length === 1 && parts[0] === "runs") {
     return (actor) => createRun(request, actor, deps);
   }
@@ -1023,6 +1272,7 @@ function browserRouteHeaders(
     method === "GET" &&
     ((parts[0] === "wallet-claims" &&
       (parts.length === 2 ||
+        (parts.length === 3 && parts[2] === "possession") ||
         (parts.length === 4 &&
           parts[1] === "actors" &&
           parts[3] === "current"))) ||
@@ -1039,6 +1289,13 @@ function browserRouteHeaders(
   )
     return ["x-slop-identity-assertion", "content-type"];
   if (method === "POST" && parts.length === 1 && parts[0] === "wallet-claims")
+    return ["authorization", "content-type"];
+  if (
+    method === "POST" &&
+    parts.length === 3 &&
+    parts[0] === "wallet-claims" &&
+    (parts[2] === "possession" || parts[2] === "possession-challenge")
+  )
     return ["authorization", "content-type"];
   return null;
 }
@@ -1146,6 +1403,17 @@ async function handleTraceApiInternal(
       return publicBrowserResponse(
         request,
         await readCurrentWalletClaim(deps, parts[2]),
+      );
+    }
+    if (
+      request.method === "GET" &&
+      parts.length === 3 &&
+      parts[0] === "wallet-claims" &&
+      parts[2] === "possession"
+    ) {
+      return publicBrowserResponse(
+        request,
+        await readPublicWalletPossession(deps, parts[1]),
       );
     }
     if (

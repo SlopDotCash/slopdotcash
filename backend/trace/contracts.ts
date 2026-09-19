@@ -140,6 +140,38 @@ export type WalletClaim = {
   createdAt: string;
 };
 
+/**
+ * A single-use nonce binding one wallet claim to a possession challenge.
+ * Consumable state, not a permanent record.
+ */
+export type WalletPossessionChallengeRecord = {
+  challengeId: string;
+  claimId: string;
+  githubId: string;
+  walletAddress: string;
+  issuedAt: string;
+  expiresAt: string;
+  consumedAt: string | null;
+  createdAt: string;
+};
+
+/**
+ * Permanent evidence that the claimed destination key signed its challenge.
+ * Proves possession at signing time only. It carries no payment authority and
+ * its absence never holds, excludes, or reduces a contributor's position.
+ */
+export type WalletPossessionAttestationRecord = {
+  id: string;
+  claimId: string;
+  challengeId: string;
+  githubId: string;
+  walletAddress: string;
+  signature: string;
+  messageSha256: string;
+  attestedAt: string;
+  createdAt: string;
+};
+
 export type PersistenceResult<T> =
   | { status: "created"; value: T }
   | { status: "existing"; value: T }
@@ -187,5 +219,20 @@ export interface TracePersistence {
     audit: AuditInput,
   ): Promise<PersistenceResult<WalletClaim>>;
   getWalletClaim(claimId: string): Promise<WalletClaim | null>;
+  createWalletPossessionChallenge(
+    record: WalletPossessionChallengeRecord,
+  ): Promise<void>;
+  /** Atomically consumes an unconsumed, unexpired challenge exactly once. */
+  consumeWalletPossessionChallenge(
+    challengeId: string,
+    consumedAt: string,
+  ): Promise<WalletPossessionChallengeRecord | null>;
+  createWalletPossessionAttestation(
+    record: WalletPossessionAttestationRecord,
+    audit: AuditInput,
+  ): Promise<PersistenceResult<WalletPossessionAttestationRecord>>;
+  getWalletPossessionAttestation(
+    claimId: string,
+  ): Promise<WalletPossessionAttestationRecord | null>;
   getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null>;
 }
