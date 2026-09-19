@@ -1101,6 +1101,7 @@ test("reflows at 320 CSS pixels and with independently enlarged text", async ({
     for (const path of [
       "/models",
       "/sponsors",
+      "/verification",
       "/",
       "/projects/eliza",
       "/projects/new",
@@ -1160,6 +1161,7 @@ test("keeps primary routes accessible and inside the viewport", async ({
   for (const path of [
     "/models",
     "/sponsors",
+    "/verification",
     "/",
     ...PROJECTS.map((project) => `/projects/${project.id}`),
     "/projects/eliza/funding",
@@ -1302,4 +1304,54 @@ test("opens the sponsors page directly and through keyboard navigation", async (
       exact: true,
     }),
   ).toBeVisible();
+});
+
+test("derives Solana addresses on the settlement verification page", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/verification", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { exact: true, name: "Settlement verification" }),
+  ).toBeVisible();
+  // No cycle has ever reached an approved allocation, so the honest state is an
+  // empty ledger rather than a fabricated binding.
+  await expect(
+    page.getByText("No execution has been bound yet.", { exact: false }),
+  ).toBeVisible();
+
+  // A real August 2026 recipient. Its canonical USDC associated token account
+  // is fixed by the Solana address derivation, so the value below is checkable
+  // against any explorer and pins the in-repo derivation to mainnet reality.
+  await page
+    .getByLabel("Solana address", { exact: true })
+    .fill("8UeRuQdqVCVwxERmajGkLon92Y8Ax3oJbDZQPGENzJkf");
+  await page.getByRole("button", { name: "Derive addresses" }).click();
+  await expect(
+    page.getByText("FqfuZQ5KKqRA6V2MQcRwgwVtSR8Jsfe2cU8UuPbsr3d", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("4wxQ2tM9SWqDnds9LvZ7yL32TSPP41iwkedKZZdQJBbH", {
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  await page.getByLabel("Solana address", { exact: true }).fill("not-a-key");
+  await page.getByRole("button", { name: "Derive addresses" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Enter a valid Solana public address",
+  );
+
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await testInfo.attach("settlement-verification", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
 });
