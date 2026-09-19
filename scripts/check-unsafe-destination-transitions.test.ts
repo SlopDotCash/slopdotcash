@@ -322,7 +322,10 @@ describe("trusted unsafe destination Git transitions", () => {
           }
           if (kind === "report-removal") row.unsafeDestinationReports = [];
           if (kind === "report-substitution") {
-            if (!row.unsafeDestinationReports?.[0] || !row.hold)
+            if (
+              !row.unsafeDestinationReports?.[0] ||
+              row.hold?.kind !== "unsafe-destination"
+            )
               throw new Error("missing fixture");
             row.unsafeDestinationReports[0].sourceCommit = "d".repeat(40);
             row.hold.sourceCommit = "d".repeat(40);

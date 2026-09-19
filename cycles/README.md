@@ -91,6 +91,31 @@ cap. Shared-pool approvals may total at most cap plus carry. An additive review
 line publishes its own `reviewBudgetCapMinor`, the smaller of its committed
 amount and cap; shared-pool carry never increases that separate limit.
 
+### Review lapse
+
+A creator may approve, hold, exclude, reduce, or increase any row during the
+14-day public review, and every change carries a public reason. Doing nothing
+was the one option with no recorded outcome. Because every writer of row state
+refuses once `review.endsAt` passes, while finalization refuses while any row is
+still `proposed`, a single undecided row used to leave its cycle in `proposed`
+permanently and block that project's next close.
+
+`rewards:lapse` closes that gap. After `review.endsAt`, it records
+`review.lapsedAt` and moves every still-undecided row to `held` with
+`hold.kind: "review-lapsed"` and a public reason naming the closed window. The
+transition is mechanical and one-directional. It never approves an amount,
+never chooses a destination, never signs or broadcasts, and refuses outright on
+a cycle where any amount was already approved, which belongs on the ordinary
+finalization path instead.
+
+A lapse is an absent decision, not a decision against the contributor, so a
+lapsed row keeps its frozen wallet and suggestion and carries forward into the
+next cycle exactly like an unclaimed one. Creator inaction therefore cannot
+extinguish a contributor's position, and it cannot jam the project's next close
+either. Once written, the trusted transition gate holds the lapsed row at its
+original wallet, amount, and zero approval, so a lapse cannot be quietly
+rewritten or reversed.
+
 ### Unsafe destination reports
 
 A contributor may report the exact Slop wallet claim on an open proposal as

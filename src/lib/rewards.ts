@@ -29,6 +29,17 @@ export type AllocationState =
   | "proposed"
   | "unclaimed";
 
+/**
+ * Why a row is held. `unsafe-destination` is a reviewed wallet-safety hold.
+ * `review-lapsed` records that the public review window closed with no creator
+ * decision on the row, so the row was never decided rather than declined.
+ */
+export type HoldKind = "review-lapsed" | "unsafe-destination";
+
+export type AllocationHold =
+  | { kind: "review-lapsed"; lapsedAt: string }
+  | { kind: "unsafe-destination"; sourceCommit: string };
+
 export interface ProfileReadmeWalletProof {
   address: string;
   chain: "solana";
@@ -89,7 +100,7 @@ export interface RewardAllocation {
   state: AllocationState;
   wallet: WalletProof | null;
   unsafeDestinationReports?: UnsafeDestinationReport[];
-  hold?: { kind: "unsafe-destination"; sourceCommit: string };
+  hold?: AllocationHold;
   evidenceEventIds: string[];
   adjustmentReason: string | null;
   relatedParty: boolean;
@@ -121,6 +132,7 @@ export interface RewardAllocationManifest {
     days: typeof REVIEW_WINDOW_DAYS;
     lastMaterialChangeAt: string;
     endsAt: string;
+    lapsedAt?: string;
   };
   currency: "USDC";
   chain: "solana";
@@ -866,30 +878,47 @@ function assertAllocation(value: unknown, index: number): RewardAllocation {
   let hold: RewardAllocation["hold"];
   if ("hold" in allocation) {
     const rawHold = record(allocation.hold, `${path}.hold`);
-    exactKeys(rawHold, ["kind", "sourceCommit"], `${path}.hold`);
-    const report = unsafeDestinationReports?.find(
-      (candidate) => candidate.sourceCommit === rawHold.sourceCommit,
-    );
-    if (
-      rawHold.kind !== "unsafe-destination" ||
-      state !== "held" ||
-      !report ||
-      !wallet ||
-      !sameWalletObservation(wallet, report.wallet) ||
-      report.suggestedMinor !== suggestedMinor ||
-      report.carryMinor !==
-        (lines?.sharedPool.suggestedMinor ?? accruedMinor ?? suggestedMinor) ||
-      !adjustmentReason
-    ) {
-      throw new TypeError(
-        `${path} unsafe-destination hold requires its original wallet, report, and maintainer reason`,
+    if (rawHold.kind === "review-lapsed") {
+      exactKeys(rawHold, ["kind", "lapsedAt"], `${path}.hold`);
+      // A lapse records an absent decision, so the row keeps the wallet and the
+      // suggestion it was frozen with and stays eligible to carry forward.
+      if (state !== "held" || !wallet || !adjustmentReason) {
+        throw new TypeError(
+          `${path} review-lapsed hold requires its original wallet and a public reason`,
+        );
+      }
+      hold = {
+        kind: "review-lapsed",
+        lapsedAt: iso(rawHold.lapsedAt, `${path}.hold.lapsedAt`),
+      };
+    } else {
+      exactKeys(rawHold, ["kind", "sourceCommit"], `${path}.hold`);
+      const report = unsafeDestinationReports?.find(
+        (candidate) => candidate.sourceCommit === rawHold.sourceCommit,
       );
+      if (
+        rawHold.kind !== "unsafe-destination" ||
+        state !== "held" ||
+        !report ||
+        !wallet ||
+        !sameWalletObservation(wallet, report.wallet) ||
+        report.suggestedMinor !== suggestedMinor ||
+        report.carryMinor !==
+          (lines?.sharedPool.suggestedMinor ??
+            accruedMinor ??
+            suggestedMinor) ||
+        !adjustmentReason
+      ) {
+        throw new TypeError(
+          `${path} unsafe-destination hold requires its original wallet, report, and maintainer reason`,
+        );
+      }
+      hold = { kind: "unsafe-destination", sourceCommit: report.sourceCommit };
     }
-    hold = { kind: "unsafe-destination", sourceCommit: report.sourceCommit };
   }
   if (
     wallet &&
-    !hold &&
+    hold?.kind !== "unsafe-destination" &&
     unsafeDestinationReports?.some(
       (report) => !isSafeSuccessorWallet(wallet, report),
     )
@@ -1056,9 +1085,12 @@ export function assertRewardAllocationManifest(
     );
   }
   const review = record(manifest.review, "allocation manifest.review");
+  const hasLapsedAt = "lapsedAt" in review;
   exactKeys(
     review,
-    ["days", "endsAt", "lastMaterialChangeAt"],
+    hasLapsedAt
+      ? ["days", "endsAt", "lapsedAt", "lastMaterialChangeAt"]
+      : ["days", "endsAt", "lastMaterialChangeAt"],
     "allocation manifest.review",
   );
   if (review.days !== REVIEW_WINDOW_DAYS) {
@@ -1069,6 +1101,12 @@ export function assertRewardAllocationManifest(
     "allocation manifest.review.lastMaterialChangeAt",
   );
   const endsAt = iso(review.endsAt, "allocation manifest.review.endsAt");
+  const lapsedAt = hasLapsedAt
+    ? iso(review.lapsedAt, "allocation manifest.review.lapsedAt")
+    : undefined;
+  if (lapsedAt && Date.parse(lapsedAt) < Date.parse(endsAt)) {
+    throw new TypeError("allocation lapsed before its review ended");
+  }
   if (Date.parse(lastMaterialChangeAt) < Date.parse(generatedAt)) {
     throw new TypeError("allocation material-change time predates generation");
   }
@@ -1122,6 +1160,21 @@ export function assertRewardAllocationManifest(
     allocations.map((allocation) => allocation.actor.id),
     "allocation actor ids",
   );
+  // A lapse resolves every undecided row at once, so a lapsed cycle can never
+  // keep a proposed row and a lapsed row must carry the cycle's own timestamp.
+  if (lapsedAt) {
+    if (allocations.some((allocation) => allocation.state === "proposed")) {
+      throw new TypeError("lapsed allocation retains a proposed payment");
+    }
+  }
+  for (const allocation of allocations) {
+    if (allocation.hold?.kind !== "review-lapsed") continue;
+    if (allocation.hold.lapsedAt !== lapsedAt) {
+      throw new TypeError(
+        "review-lapsed hold does not match the cycle lapse time",
+      );
+    }
+  }
   for (const allocation of allocations) {
     for (const report of allocation.unsafeDestinationReports ?? []) {
       if (
@@ -1328,6 +1381,7 @@ export function assertRewardAllocationManifest(
       days: REVIEW_WINDOW_DAYS,
       lastMaterialChangeAt,
       endsAt,
+      ...(lapsedAt === undefined ? {} : { lapsedAt }),
     },
     currency: "USDC",
     chain: "solana",

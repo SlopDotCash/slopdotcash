@@ -31,6 +31,7 @@
     "rewards:propose": "bun scripts/prepare-reward-cycle.ts",
     "rewards:close-month": "bun scripts/prepare-monthly-rewards.ts",
     "rewards:approve": "bun scripts/finalize-reward-cycle.ts",
+    "rewards:lapse": "bun scripts/lapse-reward-cycle.ts",
     "rewards:plan-settlement": "bun scripts/prepare-settlement-plan.ts",
     "rewards:verify-settlement": "bun scripts/verify-settlement.ts",
     "audit:dependencies": "bun audit",

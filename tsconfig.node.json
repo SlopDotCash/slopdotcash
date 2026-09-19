@@ -26,6 +26,7 @@
     "scripts/**/*.ts",
     "src/lib/bitcoin-funding.ts",
     "src/lib/cycle-index.ts",
+    "src/lib/review-lapse.ts",
     "src/lib/evaluator-awards.ts",
     "src/lib/external-sources.ts",
     "src/lib/sha256.ts",
