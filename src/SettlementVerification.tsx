@@ -13,7 +13,11 @@ import {
   squadsExecutionAddress,
   squadsUsdcAta,
 } from "./lib/squads-execution-verifier";
-import { SQUADS_V4_PROGRAM_ID } from "./lib/squads-funding";
+import {
+  deriveSquadsVaultAddress,
+  deriveVaultUsdcTokenAccount,
+  SQUADS_V4_PROGRAM_ID,
+} from "./lib/squads-funding";
 import { isSolanaAddress } from "./lib/wallets";
 
 type Derivation =
@@ -21,6 +25,13 @@ type Derivation =
   | { status: "invalid"; reason: string }
   | { status: "deriving" }
   | { status: "derived"; ata: string; proposal: string; bump: number }
+  | { status: "failed"; reason: string };
+
+type Vault =
+  | { status: "idle" }
+  | { status: "invalid"; reason: string }
+  | { status: "deriving" }
+  | { status: "derived"; vault: string; tokenAccount: string }
   | { status: "failed"; reason: string };
 
 type Bindings =
@@ -115,9 +126,14 @@ export function SettlementVerification() {
   const headingId = useId();
   const addressId = useId();
   const indexId = useId();
+  const multisigId = useId();
+  const vaultIndexId = useId();
   const [address, setAddress] = useState("");
   const [transactionIndex, setTransactionIndex] = useState("1");
   const [derivation, setDerivation] = useState<Derivation>({ status: "idle" });
+  const [multisig, setMultisig] = useState("");
+  const [vaultIndex, setVaultIndex] = useState("0");
+  const [vault, setVault] = useState<Vault>({ status: "idle" });
   const bindings = useBindings();
 
   const derive = () => {
@@ -155,6 +171,42 @@ export function SettlementVerification() {
           error instanceof Error
             ? error.message
             : "This address could not be derived.",
+      });
+    });
+  };
+
+  const deriveVault = () => {
+    const candidate = multisig.trim();
+    const index = Number(vaultIndex.trim());
+    if (!isSolanaAddress(candidate)) {
+      setVault({
+        status: "invalid",
+        reason: "Enter a valid Squads multisig address (32-byte base58).",
+      });
+      return;
+    }
+    if (!Number.isInteger(index) || index < 0 || index > 255) {
+      setVault({
+        status: "invalid",
+        reason: "Enter a vault index from 0 through 255.",
+      });
+      return;
+    }
+    setVault({ status: "deriving" });
+    void (async () => {
+      const derived = await deriveSquadsVaultAddress(candidate, index);
+      setVault({
+        status: "derived",
+        vault: derived,
+        tokenAccount: await deriveVaultUsdcTokenAccount(derived),
+      });
+    })().catch((error: unknown) => {
+      setVault({
+        status: "failed",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "This vault could not be derived.",
       });
     });
   };
@@ -271,6 +323,69 @@ export function SettlementVerification() {
             <p>
               A derived address existing on chain does not mean it belongs to a
               reviewed Slop cycle. Derivation is arithmetic, not authorization.
+            </p>
+          </div>
+        )}
+
+        <h2>Check a vault before you commit</h2>
+        <p>
+          If you are considering funding a pool, this is the exact account Slop
+          would watch. Enter the Squads v4 multisig you control and the vault
+          index, and the same derivation the commitment verifier uses will
+          return the vault address and its canonical USDC token account. You can
+          confirm both against your own Squads interface before declaring
+          anything, and Slop never needs a key, a signer seat, or an admin role
+          on that vault to read it.
+        </p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            deriveVault();
+          }}
+        >
+          <label htmlFor={multisigId}>Squads v4 multisig</label>
+          <input
+            autoComplete="off"
+            id={multisigId}
+            maxLength={44}
+            name="vault-multisig"
+            onChange={(event) => setMultisig(event.target.value)}
+            required
+            spellCheck={false}
+            value={multisig}
+          />
+          <label htmlFor={vaultIndexId}>Vault index</label>
+          <input
+            autoComplete="off"
+            id={vaultIndexId}
+            inputMode="numeric"
+            maxLength={3}
+            name="vault-index"
+            onChange={(event) => setVaultIndex(event.target.value)}
+            required
+            spellCheck={false}
+            value={vaultIndex}
+          />
+          <button className="button primary-button" type="submit">
+            Derive vault accounts
+          </button>
+        </form>
+
+        {vault.status === "invalid" && <p role="alert">{vault.reason}</p>}
+        {vault.status === "deriving" && <p role="status">Deriving vault…</p>}
+        {vault.status === "failed" && (
+          <p role="alert">Vault derivation failed: {vault.reason}</p>
+        )}
+        {vault.status === "derived" && (
+          <div className="funding-routes">
+            <Address label="Vault address" value={vault.vault} />
+            <Address label="Vault USDC account" value={vault.tokenAccount} />
+            <p>
+              A committed pool additionally requires a reviewed instrument in
+              the project manifest and deterministic verifier evidence. No
+              project declares one today, so nothing on Slop is currently
+              reporting a verified commitment. Deriving these accounts commits
+              nothing and is not an escrow, a guarantee, or an approval.
             </p>
           </div>
         )}
