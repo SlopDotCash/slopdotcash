@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "1",
+  "id": "darling-arm64",
+  "slug": "darling-arm64",
+  "name": "Darling arm64",
+  "eyebrow": "Public repository",
+  "headline": "Make Money Running macOS Apps On arm64 Linux",
+  "description": "Advance arm64 (aarch64) Darling, the macOS translation layer. Raise a real macOS application one verified tier up the ladder, fix a defect upstream in darlinghq, or falsify a recorded finding. Every accepted outcome ships a control, an A/B/A where it claims a fix, and a harness someone else can rerun.",
+  "listingTier": "community",
+  "status": "active",
+  "steward": {
+    "displayName": "xchemtina",
+    "kind": "individual",
+    "github": {
+      "actorId": "135698468",
+      "nodeId": "U_kgDOCBaYJA",
+      "login": "xchemtina",
+      "type": "User",
+      "profileUrl": "https://github.com/xchemtina"
+    },
+    "website": null
+  },
+  "authority": {
+    "state": "unverified",
+    "reason": "missing-repository-proof",
+    "role": "project-steward",
+    "repositoryId": "1357775207",
+    "repositoryNodeId": "R_kgDOUO4BZw",
+    "proof": null
+  },
+  "terms": {
+    "revision": "2026-09-04.1",
+    "effectiveAt": "2026-09-04T00:00:00.000Z",
+    "receiptPolicy": {
+      "state": "pending-authority-activation",
+      "activatedAt": null,
+      "bindings": []
+    },
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "copyright": {
+      "model": "contributor-retained",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "verified",
+      "spdx": "GPL-3.0-or-later",
+      "url": "https://github.com/xchemtina/darling-arm64/blob/5e096f466928cce4a1f68a93f2acb92308a1ab00/LICENSE",
+      "commitSha": "5e096f466928cce4a1f68a93f2acb92308a1ab00",
+      "fileSha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    "inbound": {
+      "mode": "license",
+      "termsUrl": "https://github.com/xchemtina/darling-arm64/blob/5e096f466928cce4a1f68a93f2acb92308a1ab00/CONTRIBUTING.md",
+      "commitSha": "5e096f466928cce4a1f68a93f2acb92308a1ab00",
+      "fileSha256": "1e321620d2ee559cdc34267ef5f6238fc1821ad78948aff2cf3de73e110d9119",
+      "version": "2026-09-04.1",
+      "acceptance": "Pull-request contributions are licensed under the repository GPL-3.0-or-later licence. Contributors retain copyright; no assignment and no CLA."
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
+  "repositories": [
+    {
+      "id": "xchemtina/darling-arm64",
+      "displayName": "xchemtina/darling-arm64",
+      "githubUrl": "https://github.com/xchemtina/darling-arm64",
+      "description": "Differential-testing harnesses, the evidence record with retractions kept in place, documented traps, and the reproduction path for arm64 Darling. Fixes proven here are sent upstream to darlinghq.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-darling-arm64",
+    "publishAtRoot": false,
+    "sourcePath": "skills/contribute-to-darling-arm64",
+    "publicPath": "/projects/darling-arm64/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-darling-arm64-contributions",
+    "sourcePath": "skills/review-darling-arm64-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-09-04T00:00:00.000Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "500000000",
+    "monthlyCapDisplay": "$500",
+    "committedMinor": "0",
+    "paymentMode": "disabled",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+    "recordsPath": "funding/darling-arm64",
+    "addresses": []
+  },
+  "modelPolicy": {
+    "mode": "open-declared",
+    "disclosureRequired": true
+  },
+  "links": {
+    "creator": "https://github.com/xchemtina",
+    "repository": "https://github.com/xchemtina/darling-arm64",
+    "issues": "https://github.com/xchemtina/darling-arm64/issues"
+  }
+}

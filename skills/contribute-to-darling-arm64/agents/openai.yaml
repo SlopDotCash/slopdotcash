@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contribute to Darling arm64"
+  short_description: "Clear the queue, then raise a verified arm64 tier"
+  default_prompt: "Use $contribute-to-darling-arm64 to confirm the aarch64 host gate first, review and reproduce every open PR second, finish valid open issues third, then pursue only a measured tier advance, an upstream defect fix, a falsified finding, or an explained flake mechanism—always with a control and an A/B/A, never x86_64 work or a refactor."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Darling arm64 Contributions"
+  short_description: "Check controls, A/B/A, and architecture honesty"
+  default_prompt: "Use $review-darling-arm64-contributions to verify the claimed architecture, demand a named control and an A/B/A for any claimed fix, reproduce the harness where the host allows, and reject any tier claim resting on a description rather than a rerun."
