@@ -5,10 +5,12 @@ import {
   assertEvmCanonicalBlock,
   EVM_FUNDING_CHAIN_IDS,
   EVM_FUNDING_VERIFIER_VERSIONS,
+  type EvmCanonicalBlock,
   type EvmFundingNetwork,
   evmQuantity,
   isEvmFundingNetwork,
   isEvmTransactionHash,
+  type VerifiedEvmTransaction,
 } from "../src/lib/evm-funding";
 import { isFundingAddress } from "../src/lib/funding-address.mjs";
 import { assertFundingBlockTime } from "./funding-block-time";
@@ -32,7 +34,7 @@ const EVIDENCE_HOSTS = {
 } as const;
 export const MAX_EVM_RPC_BYTES = 8 * 1024 * 1024;
 
-type FetchLike = (url: URL, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (url: URL, init?: RequestInit) => Promise<Response>;
 
 const CLI_ARGUMENTS = new Set([
   "--network",
@@ -157,16 +159,17 @@ async function rpcCall(
   return body.result;
 }
 
-async function verifyWithAuthority(
-  input: {
-    amountMinor: string;
-    network: EvmFundingNetwork;
-    recipient: string;
-    transactionHash: string;
-  },
+/**
+ * Reads one confirmed receipt from a single fixed authority together with the
+ * finalized head, the canonical block at the receipt height, and its inclusion
+ * time. The authority must first prove it serves the expected mainnet.
+ */
+export async function fetchEvmReceiptContext(
+  input: { network: EvmFundingNetwork; transactionHash: string },
   authority: string,
   authorityIndex: number,
   fetchImpl: FetchLike,
+  requestLabel: string,
 ) {
   const rpc = new URL(authority);
   let requestIndex = 0;
@@ -176,7 +179,7 @@ async function verifyWithAuthority(
       fetchImpl,
       method,
       params,
-      `slop-funding:${input.network}:${authorityIndex}:${requestIndex++}:${method}`,
+      `${requestLabel}:${input.network}:${authorityIndex}:${requestIndex++}:${method}`,
     );
   const chainId = evmQuantity(
     await request("eth_chainId", []),
@@ -219,19 +222,76 @@ async function verifyWithAuthority(
       ),
     ),
   );
-  const verified = assertConfirmedUsdcFundingTransfer(
+  return {
+    authority: rpc.toString(),
+    blockTime,
+    finalizedBlock,
     receipt,
+    receiptBlock,
+  };
+}
+
+export interface EvmAuthorityVerification {
+  authority: string;
+  finalizedBlock: EvmCanonicalBlock;
+  verified: VerifiedEvmTransaction & { blockTime: number };
+}
+
+/** Keeps the largest group of authorities that agree on canonical inclusion. */
+export function requireEvmRpcQuorum(
+  settled: readonly PromiseSettledResult<EvmAuthorityVerification>[],
+): EvmAuthorityVerification[] {
+  const groups = new Map<string, EvmAuthorityVerification[]>();
+  for (const result of settled) {
+    if (result.status !== "fulfilled") continue;
+    const { verified } = result.value;
+    const key = `${verified.transactionHash}:${verified.blockNumber}:${verified.blockHash}:${verified.blockTime}`;
+    const group = groups.get(key) ?? [];
+    group.push(result.value);
+    groups.set(key, group);
+  }
+  const results = [...groups.values()].sort(
+    (left, right) => right.length - left.length,
+  )[0];
+  if (!results || results.length < EVM_FUNDING_RPC_QUORUM) {
+    throw new TypeError(
+      "EVM RPC authorities did not reach canonical transaction quorum",
+    );
+  }
+  return results;
+}
+
+async function verifyWithAuthority(
+  input: {
+    amountMinor: string;
+    network: EvmFundingNetwork;
+    recipient: string;
+    transactionHash: string;
+  },
+  authority: string,
+  authorityIndex: number,
+  fetchImpl: FetchLike,
+): Promise<EvmAuthorityVerification> {
+  const context = await fetchEvmReceiptContext(
+    input,
+    authority,
+    authorityIndex,
+    fetchImpl,
+    "slop-funding",
+  );
+  const verified = assertConfirmedUsdcFundingTransfer(
+    context.receipt,
     input.network,
     input.transactionHash,
     input.recipient,
     input.amountMinor,
-    finalizedBlock,
-    receiptBlock,
+    context.finalizedBlock,
+    context.receiptBlock,
   );
   return {
-    authority: rpc.toString(),
-    finalizedBlock,
-    verified: { ...verified, blockTime },
+    authority: context.authority,
+    finalizedBlock: context.finalizedBlock,
+    verified: { ...verified, blockTime: context.blockTime },
   };
 }
 
@@ -260,27 +320,8 @@ export async function verifyFundingEvm(input: {
       verifyWithAuthority(input, authority, index, fetchImpl),
     ),
   );
-  const groups = new Map<
-    string,
-    Array<Awaited<ReturnType<typeof verifyWithAuthority>>>
-  >();
-  for (const result of settled) {
-    if (result.status !== "fulfilled") continue;
-    const { verified } = result.value;
-    const key = `${verified.transactionHash}:${verified.blockNumber}:${verified.blockHash}:${verified.blockTime}`;
-    const group = groups.get(key) ?? [];
-    group.push(result.value);
-    groups.set(key, group);
-  }
-  const results = [...groups.values()].sort(
-    (left, right) => right.length - left.length,
-  )[0];
-  const first = results?.[0];
-  if (!first || !results || results.length < EVM_FUNDING_RPC_QUORUM) {
-    throw new TypeError(
-      "EVM RPC authorities did not reach canonical transaction quorum",
-    );
-  }
+  const results = requireEvmRpcQuorum(settled);
+  const first = results[0];
   const confirmations = Math.min(
     ...results.map(({ verified }) => verified.confirmations),
   );
