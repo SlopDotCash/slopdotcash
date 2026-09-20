@@ -30,6 +30,7 @@
     "src/lib/external-sources.ts",
     "src/lib/sha256.ts",
     "src/lib/evm-funding.ts",
+    "src/lib/evm-settlement.ts",
     "src/lib/funding.ts",
     "src/lib/funding-review-submission.ts",
     "src/lib/signer-capability.ts",

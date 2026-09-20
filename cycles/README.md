@@ -217,3 +217,26 @@ funding transition. Historical allocations predating the funding-basis schema
 retain their existing validation; this does not migrate or rewrite records.
 Source binding does not prove current backing, signing capability, transaction
 retirement, or safe carry, and does not enable payments.
+
+### Read-only Base payout check
+
+The cycle lifecycle above settles on Solana only. A separate read-only tool
+reconciles one confirmed Base mainnet USDC transaction against a declared
+source and a closed list of recipients:
+
+```bash
+bun run settlement:verify-evm -- --network base --transaction <0x-hash> \
+  --source <0x-source-address> \
+  --transfers <0x-recipient:amount-minor[,0x-recipient:amount-minor...]>
+```
+
+It queries the same three fixed Base RPC authorities as the funding verifier,
+requires two to agree on canonical inclusion under the 12-confirmation policy,
+and then requires the exact source debit, the exact credit to every listed
+recipient, and no other nonzero USDC delta. It reads Transfer deltas, not the
+transaction sender, so a single transfer, a relayed transfer, and a
+smart-account batch all reconcile the same way. Addresses are lowercase
+canonical hex and amounts are integer USDC micro-units.
+
+This check writes nothing. It does not create a plan, accept Base wallets,
+produce `settlement.json`, or move any cycle to `paid`.

@@ -102,29 +102,21 @@ function transferValue(value: unknown, field: string): bigint {
   return BigInt(value);
 }
 
-/** Validates one confirmed direct-funding credit without trusting its sender. */
-export function assertConfirmedUsdcFundingTransfer(
+export type EvmUsdcReceiptSubject = "funding" | "settlement";
+
+/**
+ * Reconciles every canonical USDC Transfer in one successful receipt into net
+ * per-address deltas after binding the receipt to its canonical block and the
+ * network finality policy. Callers decide which deltas are acceptable.
+ */
+export function assertConfirmedUsdcDeltas(
   receiptValue: unknown,
   network: EvmFundingNetwork,
   expectedTransactionHash: string,
-  recipient: string,
-  amountMinor: string,
   finalizedBlock: EvmCanonicalBlock,
   receiptBlock: EvmCanonicalBlock,
-): VerifiedEvmTransaction {
-  if (!isEvmFundingNetwork(network)) {
-    throw new TypeError("funding network must be base or ethereum");
-  }
-  if (
-    !isEvmTransactionHash(expectedTransactionHash) ||
-    typeof recipient !== "string" ||
-    !/^0x[0-9a-f]{40}$/u.test(recipient) ||
-    recipient === ZERO_EVM_ADDRESS ||
-    amountMinor.length > 40 ||
-    !/^[1-9]\d*$/u.test(amountMinor)
-  ) {
-    throw new TypeError("funding transfer expectation is invalid");
-  }
+  subject: EvmUsdcReceiptSubject,
+): { deltas: Map<string, bigint>; verified: VerifiedEvmTransaction } {
   if (
     finalizedBlock.number < 0n ||
     finalizedBlock.number > BigInt(Number.MAX_SAFE_INTEGER) ||
@@ -141,7 +133,7 @@ export function assertConfirmedUsdcFundingTransfer(
   }
   if (receipt.transactionHash !== expectedTransactionHash) {
     throw new TypeError(
-      "EVM receipt transaction hash does not match the funding record",
+      `EVM receipt transaction hash does not match the ${subject} record`,
     );
   }
   const blockNumber = evmQuantity(receipt.blockNumber, "receipt.blockNumber");
@@ -199,20 +191,65 @@ export function assertConfirmedUsdcFundingTransfer(
         blockNumber
     ) {
       throw new TypeError(
-        `receipt.logs[${index}] is not bound to the funding transaction block`,
+        `receipt.logs[${index}] is not bound to the ${subject} transaction block`,
       );
     }
     const from = topicAddress(log.topics[1], `receipt.logs[${index}].from`);
     const to = topicAddress(log.topics[2], `receipt.logs[${index}].to`);
     if (from === ZERO_EVM_ADDRESS || to === ZERO_EVM_ADDRESS) {
       throw new TypeError(
-        "EVM funding transaction mints or burns USDC instead of transferring",
+        `EVM ${subject} transaction mints or burns USDC instead of transferring`,
       );
     }
     const value = transferValue(log.data, `receipt.logs[${index}].data`);
     deltas.set(to, (deltas.get(to) ?? 0n) + value);
     deltas.set(from, (deltas.get(from) ?? 0n) - value);
   });
+  if (confirmations > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new TypeError("EVM confirmation count is not a safe integer");
+  }
+  return {
+    deltas,
+    verified: {
+      transactionHash: expectedTransactionHash,
+      blockHash,
+      blockNumber: Number(blockNumber),
+      confirmations: Number(confirmations),
+    },
+  };
+}
+
+/** Validates one confirmed direct-funding credit without trusting its sender. */
+export function assertConfirmedUsdcFundingTransfer(
+  receiptValue: unknown,
+  network: EvmFundingNetwork,
+  expectedTransactionHash: string,
+  recipient: string,
+  amountMinor: string,
+  finalizedBlock: EvmCanonicalBlock,
+  receiptBlock: EvmCanonicalBlock,
+): VerifiedEvmTransaction {
+  if (!isEvmFundingNetwork(network)) {
+    throw new TypeError("funding network must be base or ethereum");
+  }
+  if (
+    !isEvmTransactionHash(expectedTransactionHash) ||
+    typeof recipient !== "string" ||
+    !/^0x[0-9a-f]{40}$/u.test(recipient) ||
+    recipient === ZERO_EVM_ADDRESS ||
+    amountMinor.length > 40 ||
+    !/^[1-9]\d*$/u.test(amountMinor)
+  ) {
+    throw new TypeError("funding transfer expectation is invalid");
+  }
+  const { deltas, verified } = assertConfirmedUsdcDeltas(
+    receiptValue,
+    network,
+    expectedTransactionHash,
+    finalizedBlock,
+    receiptBlock,
+    "funding",
+  );
   const expected = BigInt(amountMinor);
   if (deltas.get(recipient) !== expected) {
     throw new TypeError(
@@ -233,13 +270,5 @@ export function assertConfirmedUsdcFundingTransfer(
   if (netDelta !== 0n) {
     throw new TypeError("EVM funding transaction USDC deltas do not balance");
   }
-  if (confirmations > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new TypeError("EVM confirmation count is not a safe integer");
-  }
-  return {
-    transactionHash: expectedTransactionHash,
-    blockHash,
-    blockNumber: Number(blockNumber),
-    confirmations: Number(confirmations),
-  };
+  return verified;
 }
