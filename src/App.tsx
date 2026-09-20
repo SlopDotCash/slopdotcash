@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { readBoundedJson } from "./lib/browser-json";
+import { SettlementVerification } from "./SettlementVerification";
 import { WalletRegistration } from "./WalletRegistration";
 
 export { readBoundedJson } from "./lib/browser-json";
@@ -148,6 +149,7 @@ interface Route {
     | "receipts"
     | "models"
     | "sponsors"
+    | "verification"
     | "cycle-archive"
     | "unknown";
   projectId?: string;
@@ -176,6 +178,9 @@ function internalRoute(pathname: string): Route {
   }
   if (segments.length === 1 && segments[0] === "sponsors") {
     return { kind: "sponsors" };
+  }
+  if (segments.length === 1 && segments[0] === "verification") {
+    return { kind: "verification" };
   }
   if (segments.length === 1 && segments[0] === "cycles") {
     return { kind: "cycle-archive" };
@@ -393,6 +398,9 @@ function Header({ isHome }: { isHome: boolean }) {
           </Link>
           <Link href="/cycles" onNavigate={closeMenu}>
             Cycles
+          </Link>
+          <Link href="/verification" onNavigate={closeMenu}>
+            Verification
           </Link>
           <Link href="/sponsors" onNavigate={closeMenu}>
             Sponsors
@@ -3497,6 +3505,7 @@ function HowItWorksPage() {
             <Link href="/#leaderboard">Live leaderboard</Link>
           </li>
           <li>
+            <Link href="/verification">Settlement verification</Link>
             <Link href="/sponsors">Fund a pool</Link>
           </li>
           <li>
@@ -4523,6 +4532,7 @@ export function App() {
     "new-project",
     "wallet",
     "unknown",
+    "verification",
     "cycle-archive",
   ].includes(route.kind);
   const [state, retry] = useSnapshot(needsSnapshot);
@@ -4536,6 +4546,7 @@ export function App() {
     content = <ReceiptsPage retry={retry} state={state} />;
   else if (route.kind === "models")
     content = <ModelsPage retry={retry} state={state} />;
+  else if (route.kind === "verification") content = <SettlementVerification />;
   else if (route.kind === "cycle-archive")
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
