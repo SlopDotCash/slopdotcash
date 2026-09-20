@@ -21,7 +21,7 @@ import {
 export const EVM_COMMITMENT_RPC_AUTHORITIES = Object.freeze({
   base: [
     "https://mainnet.base.org",
-    "https://base-rpc.publicnode.com",
+    "https://base.gateway.tenderly.co",
     "https://base.drpc.org",
   ],
   ethereum: [

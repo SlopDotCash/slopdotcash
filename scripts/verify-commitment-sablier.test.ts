@@ -21,7 +21,7 @@ const BLOCK_HASH = `0x${"ee".repeat(32)}`;
 
 const BASE_HOSTS = [
   "mainnet.base.org",
-  "base-rpc.publicnode.com",
+  "base.gateway.tenderly.co",
   "base.drpc.org",
 ] as const;
 const ETHEREUM_HOSTS = [
@@ -285,7 +285,7 @@ describe("Sablier commitment verifier", () => {
     for (const call of calls) {
       const fixture = {
         "mainnet.base.org": "0x65",
-        "base-rpc.publicnode.com": "0x66",
+        "base.gateway.tenderly.co": "0x66",
         "base.drpc.org": "0x67",
       }[call.host];
       expect(call.blockTag).toBe(fixture);

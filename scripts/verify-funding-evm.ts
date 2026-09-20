@@ -18,7 +18,7 @@ import { assertFundingBlockTime } from "./funding-block-time";
 export const EVM_FUNDING_RPC_AUTHORITIES = {
   base: [
     "https://mainnet.base.org",
-    "https://base-rpc.publicnode.com",
+    "https://base.gateway.tenderly.co",
     "https://base.drpc.org",
   ],
   ethereum: [
