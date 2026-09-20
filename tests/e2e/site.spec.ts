@@ -1337,6 +1337,19 @@ test("derives Solana addresses on the settlement verification page", async ({
     }),
   ).toBeVisible();
 
+  // The same multisig and vault the reviewed commitment verifier pins in
+  // scripts/verify-commitment-squads.test.ts, so the browser derivation and the
+  // backend verifier are held to one vector.
+  await page
+    .getByLabel("Squads v4 multisig", { exact: true })
+    .fill("xmWqhNJwNL4z4BcDo1Yh7BbStLU7omVafZNmg91y2Vg");
+  await page.getByRole("button", { name: "Derive vault accounts" }).click();
+  await expect(
+    page.getByText("FTK6ckiPWbe1jAiRtcPCz9sCrvCV6Y6hAJhAU5b9S3nv", {
+      exact: true,
+    }),
+  ).toBeVisible();
+
   await page.getByLabel("Solana address", { exact: true }).fill("not-a-key");
   await page.getByRole("button", { name: "Derive addresses" }).click();
   await expect(page.getByRole("alert")).toContainText(
