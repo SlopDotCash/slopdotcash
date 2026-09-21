@@ -43,8 +43,18 @@ export async function loadPublishedPoints(
       cursor === 0 &&
       [404, 503].includes(response.status) &&
       ["points_not_published", "not_found"].includes(String(value.error))
-    )
+    ) {
+      const existing = await fetch("https://slop.cash/data/points.json", {
+        signal: AbortSignal.timeout(30000),
+        cache: "no-store",
+      });
+      await existing.body?.cancel();
+      if (existing.status !== 404)
+        throw new Error(
+          "Refusing bootstrap: published points may already exist",
+        );
       return null;
+    }
     if (!response.ok)
       throw new Error(
         `Points history returned ${response.status}; refusing to discard history`,
