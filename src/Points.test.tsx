@@ -14,6 +14,7 @@ import {
   emptyPointsJournal,
   type PointsIndex,
 } from "./lib/points";
+import { TARGET_REPOSITORIES } from "./lib/repositories.mjs";
 import { sha256Hex } from "./lib/sha256";
 import { PointsPage, PointsProvider, ProfilePoints } from "./Points";
 
@@ -21,7 +22,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
-function fixture(corrupt = false) {
+function fixture(corrupt = false, renamed = false) {
   const now = new Date().toISOString();
   const original = snapshotFixture().ledger[0];
   const a = awardForScore({ ...original, occurredAt: now });
@@ -64,6 +65,32 @@ function fixture(corrupt = false) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/data/points.json") return Response.json(index);
+    if (url === "/data/profiles.json" && renamed)
+      return Response.json({
+        schemaVersion: "1",
+        startedAt: now,
+        generatedAt: now,
+        repositories: TARGET_REPOSITORIES.map((r, i) => ({
+          repository: r.id,
+          count: i === 0 ? 1 : 0,
+          excluded: 0,
+        })),
+        people: [
+          {
+            id: a.actor.id,
+            login: "renamed-contributor",
+            avatarUrl: "https://avatars.githubusercontent.com/u/1",
+            repositories: [
+              {
+                repository: TARGET_REPOSITORIES[0].id,
+                merged: 1,
+                open: 0,
+                closed: 0,
+              },
+            ],
+          },
+        ],
+      });
     const i = index.shards.findIndex((s) => s.path === url);
     if (i >= 0)
       return new Response(corrupt ? "[]\n" : parts[i], {
@@ -74,6 +101,22 @@ function fixture(corrupt = false) {
   return j;
 }
 describe("points product", () => {
+  it("preserves historical points when the GitHub username changes", async () => {
+    fixture(false, true);
+    render(
+      <PointsProvider>
+        <ProfilePoints login="renamed-contributor" showIdentity />
+      </PointsProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText("30", { selector: ".points-total" }),
+      ).toBeVisible(),
+    );
+    expect(
+      screen.getByRole("heading", { name: "renamed-contributor" }),
+    ).toBeVisible();
+  });
   it("shows tied contribution ranks, preserves rank through search, and explains current meaning", async () => {
     fixture();
     render(

@@ -279,10 +279,11 @@ export function ProfilePoints({
         )
       : [];
   const identity = own ?? joined;
+  const resolvedActorId = identity?.actor.id ?? recorded?.id;
   const m =
     state.status === "ready"
-      ? identity
-        ? state.members.find((m) => m.actor.id === identity.actor.id)
+      ? resolvedActorId
+        ? state.members.find((m) => m.actor.id === resolvedActorId)
         : named.length === 1
           ? named[0]
           : undefined
