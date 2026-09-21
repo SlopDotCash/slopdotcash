@@ -179,7 +179,7 @@ export async function handleX(
       const result = await deps.db.batch([
         deps.db
           .prepare(
-            "INSERT INTO points_x_claims(x_id,actor_id,claimed_at) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM points_sessions WHERE token_hash=? AND actor_id=? AND expires_at>?) ON CONFLICT(x_id) DO NOTHING",
+            "INSERT INTO points_x_claims(x_id,actor_id,claimed_at) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM points_sessions WHERE token_hash=? AND actor_id=? AND expires_at>?) AND EXISTS(SELECT 1 FROM points_x_flows WHERE state_hash=? AND status='processing') ON CONFLICT(x_id) DO NOTHING",
           )
           .bind(
             id,
@@ -188,15 +188,23 @@ export async function handleX(
             flow.session_hash,
             flow.actor_id,
             verifiedAt,
+            hash,
           ),
         deps.db
           .prepare(
-            "INSERT INTO points_x_awards(actor_id,x_id,awarded_at,points) SELECT actor_id,x_id,?,10 FROM points_x_claims WHERE x_id=? AND actor_id=? AND EXISTS(SELECT 1 FROM points_sessions WHERE token_hash=? AND expires_at>?) ON CONFLICT(actor_id) DO NOTHING",
+            "INSERT INTO points_x_awards(actor_id,x_id,awarded_at,points) SELECT actor_id,x_id,?,10 FROM points_x_claims WHERE x_id=? AND actor_id=? AND EXISTS(SELECT 1 FROM points_sessions WHERE token_hash=? AND expires_at>?) AND EXISTS(SELECT 1 FROM points_x_flows WHERE state_hash=? AND status='processing') ON CONFLICT(actor_id) DO NOTHING",
           )
-          .bind(verifiedAt, id, flow.actor_id, flow.session_hash, verifiedAt),
+          .bind(
+            verifiedAt,
+            id,
+            flow.actor_id,
+            flow.session_hash,
+            verifiedAt,
+            hash,
+          ),
         deps.db
           .prepare(
-            "INSERT INTO points_x_links(actor_id,x_id,username,verified_at,public) SELECT actor_id,x_id,?,?,? FROM points_x_claims WHERE x_id=? AND actor_id=? AND EXISTS(SELECT 1 FROM points_sessions WHERE token_hash=? AND expires_at>?) ON CONFLICT(actor_id) DO UPDATE SET x_id=excluded.x_id,username=excluded.username,verified_at=excluded.verified_at,public=excluded.public",
+            "INSERT INTO points_x_links(actor_id,x_id,username,verified_at,public) SELECT actor_id,x_id,?,?,? FROM points_x_claims WHERE x_id=? AND actor_id=? AND EXISTS(SELECT 1 FROM points_sessions WHERE token_hash=? AND expires_at>?) AND EXISTS(SELECT 1 FROM points_x_flows WHERE state_hash=? AND status='processing') ON CONFLICT(actor_id) DO UPDATE SET x_id=excluded.x_id,username=excluded.username,verified_at=excluded.verified_at,public=excluded.public",
           )
           .bind(
             username,
@@ -206,6 +214,7 @@ export async function handleX(
             flow.actor_id,
             flow.session_hash,
             verifiedAt,
+            hash,
           ),
       ]);
       if (result.some((r) => !r.success) || result[2].meta?.changes !== 1)

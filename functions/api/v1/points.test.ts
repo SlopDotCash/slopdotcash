@@ -247,6 +247,7 @@ describe("verified X connections", () => {
     const { deps, sqlite } = setup();
     let xUser = { id: "123456789", username: "slop_member" };
     let challenge = "";
+    let duringIdentity: (() => Promise<void>) | undefined;
     const xFetch = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -263,7 +264,10 @@ describe("verified X connections", () => {
             token_type: "bearer",
           });
         }
-        if (url.endsWith("/me")) return Response.json({ data: xUser });
+        if (url.endsWith("/me")) {
+          await duringIdentity?.();
+          return Response.json({ data: xUser });
+        }
         if (url.endsWith("/revoke")) return Response.json({ revoked: true });
         throw new Error("unexpected provider URL");
       },
@@ -306,6 +310,21 @@ describe("verified X connections", () => {
         new Request(flow.callback, { headers: { cookie } }),
         linked,
       );
+    const cancelledDuringProvider = await start();
+    duringIdentity = async () => {
+      await handlePointsApi(post("x/disconnect", {}, sessionCookie), linked);
+    };
+    expect(
+      (await callback(cancelledDuringProvider)).headers.get("location"),
+    ).toContain("failed");
+    expect(
+      sqlite.prepare("SELECT COUNT(*) n FROM points_x_links").get(),
+    ).toMatchObject({ n: 0 });
+    expect(
+      sqlite.prepare("SELECT COUNT(*) n FROM points_x_awards").get(),
+    ).toMatchObject({ n: 0 });
+    duringIdentity = undefined;
+    xFetch.mockClear();
     const first = await start();
     expect(
       (
