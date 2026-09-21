@@ -668,6 +668,66 @@ test("renders contributor and cycle records from validated public data", async (
   }
 });
 
+test("keeps a frozen-month contributor reachable after the rolling window moves on", async ({
+  page,
+  request,
+}) => {
+  const snapshot = await loadSnapshot(request);
+  const cycles = await loadCycles(request);
+  const response = await request.get("/data/funding-reviews.json");
+  expect(response.ok()).toBe(true);
+  const reviews = (await response.json()) as {
+    reviews: Array<{
+      projectId: string;
+      cycleId: string;
+      contributors: Array<{ actor: { id: string; login: string } }>;
+    }>;
+  };
+  const known = new Set(
+    [
+      ...snapshot.leaders.map((leader) => leader.actor.login),
+      ...snapshot.opportunities.map((opportunity) => opportunity.actor.login),
+      ...cycles.cycles.flatMap((cycle) =>
+        cycle.contributors.map((entry) => entry.actor.login),
+      ),
+    ].map((login) => login.toLowerCase()),
+  );
+  const frozenOnly = reviews.reviews
+    .filter(
+      (review) =>
+        !cycles.cycles.some(
+          (cycle) =>
+            cycle.projectId === review.projectId &&
+            cycle.cycleId === review.cycleId,
+        ),
+    )
+    .flatMap((review) => review.contributors)
+    .find((entry) => !known.has(entry.actor.login.toLowerCase()));
+  test.skip(!frozenOnly, "every frozen-month contributor is still in window");
+  if (!frozenOnly) return;
+
+  await page.route(
+    "https://api.slop.cash/api/v1/wallet-claims/actors/*/current",
+    (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "not_found" }),
+      }),
+  );
+  await page.goto(
+    `/contributors/${encodeURIComponent(frozenOnly.actor.login)}`,
+    { waitUntil: "networkidle" },
+  );
+  await expect(
+    page.getByRole("heading", { name: frozenOnly.actor.login }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Frozen months" }),
+  ).toBeVisible();
+  await expect(page.getByText("Contributor not found")).toHaveCount(0);
+});
+
 test("makes the public project draft boundary unmistakable", async ({
   page,
 }) => {

@@ -8,6 +8,7 @@ export {
 } from "./lib/project-proposal";
 
 import { type CycleIndexState, useCycleIndex } from "./lib/use-cycle-index";
+import { useFundingReviews } from "./lib/use-funding-reviews";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 /**
  * Renders the GitHub-native Slop network across discovery, project,
@@ -2184,6 +2185,7 @@ function ProfilePage({
   retry: () => void;
 }) {
   const funding = useFundingIndex();
+  const [fundingReviews] = useFundingReviews(true);
   const currentWallet = useCurrentWallet(state, login);
   if (state.status !== "ready")
     return (
@@ -2224,15 +2226,49 @@ function ProfilePage({
   );
   const globalLeader =
     globalRank === -1 ? undefined : globalLeaders[globalRank];
+  // A frozen month with no cycle directory still records the contributor.
+  const preparations =
+    fundingReviews.status === "ready"
+      ? fundingReviews.index.reviews
+          .filter(
+            (review) =>
+              !state.cycleIndex.cycles.some(
+                (cycle) =>
+                  cycle.projectId === review.projectId &&
+                  cycle.cycleId === review.cycleId,
+              ),
+          )
+          .flatMap((review) =>
+            review.contributors
+              .filter(
+                (contributor) =>
+                  contributor.actor.login.toLowerCase() === login.toLowerCase(),
+              )
+              .map((contributor) => ({ contributor, review })),
+          )
+          .sort(
+            (left, right) =>
+              right.review.cycleId.localeCompare(left.review.cycleId) ||
+              left.review.projectId.localeCompare(right.review.projectId),
+          )
+      : [];
   if (
     matches.length === 0 &&
     history.length === 0 &&
     !globalLeader &&
-    loginOpportunities.length === 0
+    loginOpportunities.length === 0 &&
+    preparations.length === 0
   ) {
+    if (fundingReviews.status === "loading")
+      return (
+        <main className="shell route-main" aria-busy="true">
+          <p className="data-notice">Checking frozen months…</p>
+        </main>
+      );
     return <NotFound title="Contributor not found" />;
   }
-  const historicalActor = history[0]?.contributor.actor;
+  const historicalActor =
+    history[0]?.contributor.actor ?? preparations[0]?.contributor.actor;
   const opportunityActor = loginOpportunities[0]?.opportunity.actor;
   const actor: GitHubActor = globalLeader?.actor ??
     matches[0]?.leader.actor ??
@@ -2261,7 +2297,15 @@ function ProfilePage({
         left.opportunity.id.localeCompare(right.opportunity.id),
     )
     .slice(0, PROFILE_OPPORTUNITY_LIMIT);
-  const score = globalLeader?.score ?? 0;
+  // Outside the rolling window the frozen months are the only scored record.
+  const score =
+    globalLeader?.score ??
+    formatThirds(
+      preparations.reduce(
+        (total, { contributor }) => total + Number(contributor.scoreThirds),
+        0,
+      ),
+    );
   const acceptedOutcomes = matches.reduce(
     (total, match) => total + match.leader.acceptedOutcomeCount,
     0,
@@ -2412,6 +2456,59 @@ function ProfilePage({
                 <ChevronRight aria-hidden="true" />
               </Link>
             ))}
+          </div>
+        </section>
+      ) : null}
+      {preparations.length > 0 ? (
+        <section className="section profile-section">
+          <div className="profile-section-heading">
+            <h2>Frozen months</h2>
+            <span>scored, not approved</span>
+          </div>
+          <div className="profile-projects">
+            {preparations.map(({ contributor, review }) => {
+              const project = findProject(review.projectId);
+              return (
+                <Link
+                  href={`/projects/${project?.slug ?? review.projectId}/funding`}
+                  key={`${review.projectId}:${review.cycleId}`}
+                >
+                  <span>
+                    <strong>{project?.name ?? review.projectId}</strong>
+                    <small>{review.cycleId} · preparation</small>
+                  </span>
+                  <span>
+                    <strong title={`Exact score ${contributor.scoreThirds}/3`}>
+                      {formatThirds(Number(contributor.scoreThirds))} score
+                    </strong>
+                    <small>
+                      {contributor.eventCount} scored event
+                      {contributor.eventCount === 1 ? "" : "s"}
+                    </small>
+                  </span>
+                  <span>
+                    <strong>
+                      {contributor.simulatedMinor === null
+                        ? "External prize share"
+                        : formatMicroUsdc(contributor.simulatedMinor)}
+                    </strong>
+                    <small>
+                      {contributor.wallet
+                        ? "simulated · wallet on file at freeze"
+                        : "simulated · unclaimed, no wallet at freeze"}
+                    </small>
+                  </span>
+                  <ChevronRight aria-hidden="true" />
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      ) : fundingReviews.status === "error" ? (
+        <section className="section profile-section">
+          <div className="data-notice data-error" role="alert">
+            <CircleAlert aria-hidden="true" size={18} /> Frozen month records
+            unavailable: {fundingReviews.message}
           </div>
         </section>
       ) : null}
