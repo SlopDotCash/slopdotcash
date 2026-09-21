@@ -158,6 +158,7 @@ describe("Cloudflare trace object persistence", () => {
       githubId: "42",
       githubLogin: "octocat",
       walletAddress: "11111111111111111111111111111111",
+      chain: "solana",
       source: "d1_registry",
       issueRepository: null,
       issueNumber: null,

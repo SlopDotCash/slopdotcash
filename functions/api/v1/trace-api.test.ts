@@ -315,7 +315,7 @@ class MemoryPersistence implements TracePersistence {
     );
     if (existing !== undefined) return { status: "existing", value: existing };
     const actorClaims = [...this.claims.values()].filter(
-      (item) => item.githubId === claim.githubId,
+      (item) => item.githubId === claim.githubId && item.chain === claim.chain,
     );
     if (
       (claim.supersedesClaimId === null &&
@@ -374,9 +374,12 @@ class MemoryPersistence implements TracePersistence {
     return this.possessionAttestations.get(claimId) ?? null;
   }
 
-  async getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null> {
+  async getCurrentWalletClaim(
+    githubId: string,
+    chain: WalletClaim["chain"],
+  ): Promise<WalletClaim | null> {
     const claims = [...this.claims.values()].filter(
-      (claim) => claim.githubId === githubId,
+      (claim) => claim.githubId === githubId && claim.chain === chain,
     );
     return (
       claims.find(
@@ -1769,6 +1772,117 @@ describe("private trace API", () => {
     expect(await stale.json()).toMatchObject({ error: "stale_wallet_claim" });
   });
 
+  it("keeps a Base wallet lineage separate from the Solana lineage", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const post = (body: Record<string, unknown>) =>
+      handleTraceApi(
+        request("wallet-claims", "POST", contributor, JSON.stringify(body), {
+          "content-type": "application/json",
+        }),
+        deps,
+      );
+    const solana = await post({ address: "11111111111111111111111111111111" });
+    expect(solana.status).toBe(201);
+    const solanaClaim = (await solana.json()) as {
+      chain: string;
+      claimId: string;
+    };
+    expect(solanaClaim.chain).toBe("solana");
+
+    const baseAddress = "0x1111111111111111111111111111111111111111";
+    const base = await post({ address: baseAddress, chain: "base" });
+    expect(base.status).toBe(201);
+    const baseClaim = (await base.json()) as {
+      chain: string;
+      claimId: string;
+      supersedesClaimId: string | null;
+    };
+    expect(baseClaim).toMatchObject({ chain: "base", supersedesClaimId: null });
+
+    const current = (chain?: string) =>
+      handleTraceApi(
+        new Request(
+          `https://api.slop.cash/api/v1/wallet-claims/actors/42/current${chain === undefined ? "" : `?chain=${chain}`}`,
+        ),
+        deps,
+      );
+    expect((await (await current()).json()).claimId).toBe(solanaClaim.claimId);
+    expect((await (await current("solana")).json()).claimId).toBe(
+      solanaClaim.claimId,
+    );
+    expect((await (await current("base")).json()).claimId).toBe(
+      baseClaim.claimId,
+    );
+    expect((await current("ethereum")).status).toBe(400);
+
+    const crossChain = await post({
+      address: "0x2222222222222222222222222222222222222222",
+      chain: "base",
+      supersedesClaimId: solanaClaim.claimId,
+    });
+    expect(crossChain.status).toBe(409);
+    expect((await (await current()).json()).claimId).toBe(solanaClaim.claimId);
+
+    for (const body of [
+      { address: "11111111111111111111111111111111", chain: "base" },
+      { address: baseAddress },
+      { address: `0x${"A".repeat(40)}`, chain: "base" },
+      { address: baseAddress, chain: "ethereum" },
+    ]) {
+      expect((await post(body)).status).toBe(400);
+    }
+  });
+
+  it("keeps the Solana record digest byte-identical to the pre-Base layout", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const response = await handleTraceApi(
+      request(
+        "wallet-claims",
+        "POST",
+        contributor,
+        JSON.stringify({ address: "11111111111111111111111111111111" }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    const claim = (await response.json()) as {
+      observedAt: string;
+      recordDigest: string;
+      sourceBodySha256: string;
+    };
+    const digest = async (value: unknown) =>
+      Buffer.from(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(JSON.stringify(value)),
+        ),
+      ).toString("hex");
+    expect(claim.sourceBodySha256).toBe(
+      await digest({
+        schemaVersion: 1,
+        githubActorId: "42",
+        address: "11111111111111111111111111111111",
+        supersedesClaimId: null,
+      }),
+    );
+    expect(claim.recordDigest).toBe(
+      await digest({
+        schemaVersion: 1,
+        githubActorId: "42",
+        githubLogin: "octocat",
+        address: "11111111111111111111111111111111",
+        source: "d1_registry",
+        issueRepository: null,
+        issueNumber: null,
+        sourceBodySha256: claim.sourceBodySha256,
+        observedAt: claim.observedAt,
+        supersedesClaimId: null,
+      }),
+    );
+  });
+
   it("refreshes an unchanged wallet claim after a GitHub login rename", async () => {
     const deps = dependencies();
     const originalActor = await token("42", "old-login", ["contributor"]);
@@ -1837,7 +1951,7 @@ describe("private trace API", () => {
       deps,
     );
     expect(failed.status).toBe(500);
-    expect(await store.getCurrentWalletClaim("42")).toBeNull();
+    expect(await store.getCurrentWalletClaim("42", "solana")).toBeNull();
     expect(store.audits).toEqual([]);
   });
 

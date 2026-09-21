@@ -1,3 +1,4 @@
+import type { WalletChain } from "../../src/lib/wallets";
 import type { VerificationAdmissionInput } from "./verification-admission";
 export const TRACE_CONTENT_TYPES = [
   "text/plain",
@@ -130,6 +131,7 @@ export type WalletClaim = {
   githubId: string;
   githubLogin: string;
   walletAddress: string;
+  chain: WalletChain;
   source: "github_issue" | "profile_readme" | "d1_registry";
   issueRepository: string | null;
   issueNumber: number | null;
@@ -234,5 +236,9 @@ export interface TracePersistence {
   getWalletPossessionAttestation(
     claimId: string,
   ): Promise<WalletPossessionAttestationRecord | null>;
-  getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null>;
+  /** Returns the tip of the actor's claim lineage on one chain. */
+  getCurrentWalletClaim(
+    githubId: string,
+    chain: WalletChain,
+  ): Promise<WalletClaim | null>;
 }

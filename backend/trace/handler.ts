@@ -10,7 +10,12 @@ import {
   walletPossessionMessage,
   walletPossessionState,
 } from "../../src/lib/wallet-possession";
-import { isSolanaAddress } from "../../src/lib/wallets";
+import {
+  isSolanaAddress,
+  isWalletAddress,
+  isWalletChain,
+  type WalletChain,
+} from "../../src/lib/wallets";
 import { signApiToken, verifyApiToken } from "./auth";
 import {
   type ApiRole,
@@ -255,6 +260,7 @@ function publicWalletClaim(claim: WalletClaim): Record<string, unknown> {
     githubActorId: claim.githubId,
     githubLogin: claim.githubLogin,
     address: claim.walletAddress,
+    chain: claim.chain,
     source: claim.source,
     issueRepository: claim.issueRepository,
     issueNumber: claim.issueNumber,
@@ -297,13 +303,30 @@ async function readPublicWalletClaim(
   return response;
 }
 
+/**
+ * Reads the requested claim chain. Solana is the default so every reader that
+ * predates Base claims keeps resolving the same lineage it always did.
+ */
+function requestedWalletChain(request: Request): WalletChain {
+  const values = new URL(request.url).searchParams.getAll("chain");
+  if (values.length === 0) return "solana";
+  if (values.length !== 1 || !isWalletChain(values[0])) {
+    fail(400, "invalid_request", "Invalid wallet chain");
+  }
+  return values[0];
+}
+
 async function readCurrentWalletClaim(
+  request: Request,
   deps: TraceApiDependencies,
   githubId: string,
 ): Promise<Response> {
   if (!/^\d+$/u.test(githubId))
     fail(400, "invalid_request", "Invalid GitHub actor id");
-  const claim = await deps.persistence.getCurrentWalletClaim(githubId);
+  const claim = await deps.persistence.getCurrentWalletClaim(
+    githubId,
+    requestedWalletChain(request),
+  );
   if (claim === null) fail(404, "not_found", "Wallet claim not found");
   const response = json(200, publicWalletClaim(claim));
   response.headers.set("cache-control", "public, max-age=60, must-revalidate");
@@ -317,16 +340,33 @@ async function createContributorWalletClaim(
 ): Promise<Response> {
   assertWriter(actor);
   const body = await readJsonObject(request);
-  const walletAddress = body.address;
-  if (!isSolanaAddress(walletAddress)) {
-    fail(400, "invalid_request", "Invalid Solana address");
+  const chain = body.chain ?? "solana";
+  if (!isWalletChain(chain)) {
+    fail(400, "invalid_request", "Invalid wallet chain");
   }
+  const walletAddress = body.address;
+  if (
+    typeof walletAddress !== "string" ||
+    !isWalletAddress(chain, walletAddress)
+  ) {
+    fail(
+      400,
+      "invalid_request",
+      chain === "base" ? "Invalid Base address" : "Invalid Solana address",
+    );
+  }
+  // Solana records keep their original byte layout so every digest issued
+  // before Base claims existed still recomputes. Only Base records name a chain.
+  const chainField = chain === "solana" ? {} : { chain };
   const requestedPredecessor = optionalString(
     body,
     "supersedesClaimId",
     validIdentifier,
   );
-  const current = await deps.persistence.getCurrentWalletClaim(actor.githubId);
+  const current = await deps.persistence.getCurrentWalletClaim(
+    actor.githubId,
+    chain,
+  );
   if (
     (current === null && requestedPredecessor !== null) ||
     (current !== null && requestedPredecessor !== current.id)
@@ -349,6 +389,7 @@ async function createContributorWalletClaim(
     schemaVersion: 1,
     githubActorId: actor.githubId,
     address: walletAddress,
+    ...chainField,
     supersedesClaimId: requestedPredecessor,
   });
   const sourceBodySha256 = await sha256Hex(
@@ -359,6 +400,7 @@ async function createContributorWalletClaim(
     githubActorId: actor.githubId,
     githubLogin: actor.githubLogin,
     address: walletAddress,
+    ...chainField,
     source: "d1_registry",
     issueRepository: null,
     issueNumber: null,
@@ -371,6 +413,7 @@ async function createContributorWalletClaim(
     githubId: actor.githubId,
     githubLogin: actor.githubLogin,
     walletAddress,
+    chain,
     source: "d1_registry",
     issueRepository: null,
     issueNumber: null,
@@ -422,6 +465,13 @@ async function createWalletPossessionChallenge(
   const claim = await deps.persistence.getWalletClaim(claimId);
   if (claim === null || claim.githubId !== actor.githubId) {
     fail(404, "not_found", "Wallet claim not found");
+  }
+  if (claim.chain !== "solana") {
+    fail(
+      409,
+      "unsupported_chain",
+      "Wallet possession proofs currently support Solana only",
+    );
   }
   if (!isSignableSolanaAddress(claim.walletAddress)) {
     fail(
@@ -488,6 +538,13 @@ async function createWalletPossessionAttestation(
   const claim = await deps.persistence.getWalletClaim(claimId);
   if (claim === null || claim.githubId !== actor.githubId) {
     fail(404, "not_found", "Wallet claim not found");
+  }
+  if (claim.chain !== "solana") {
+    fail(
+      409,
+      "unsupported_chain",
+      "Wallet possession proofs currently support Solana only",
+    );
   }
   const existing =
     await deps.persistence.getWalletPossessionAttestation(claimId);
@@ -593,6 +650,13 @@ async function readPublicWalletPossession(
     fail(400, "invalid_request", "Invalid claim id");
   const claim = await deps.persistence.getWalletClaim(claimId);
   if (claim === null) fail(404, "not_found", "Wallet claim not found");
+  if (claim.chain !== "solana") {
+    fail(
+      409,
+      "unsupported_chain",
+      "Wallet possession proofs currently support Solana only",
+    );
+  }
   const attestation =
     await deps.persistence.getWalletPossessionAttestation(claimId);
   const response = json(
@@ -683,6 +747,8 @@ async function createFallbackWalletClaim(
     githubId,
     githubLogin,
     walletAddress,
+    // Operator recovery and historical issue migration predate Base claims.
+    chain: "solana",
     source,
     issueRepository,
     issueNumber,
@@ -1182,6 +1248,7 @@ function matchAuthenticatedRoute(
     return async (actor) => {
       const current = await deps.persistence.getCurrentWalletClaim(
         actor.githubId,
+        requestedWalletChain(request),
       );
       if (current === null) fail(404, "not_found", "Wallet claim not found");
       return json(200, publicWalletClaim(current));
@@ -1402,7 +1469,7 @@ async function handleTraceApiInternal(
     ) {
       return publicBrowserResponse(
         request,
-        await readCurrentWalletClaim(deps, parts[2]),
+        await readCurrentWalletClaim(request, deps, parts[2]),
       );
     }
     if (

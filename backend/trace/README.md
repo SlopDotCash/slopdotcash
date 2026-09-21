@@ -103,6 +103,15 @@ reward preparation. Wallet records are append-only; changes must name the exact
 current predecessor, unique lineage indexes reject forks, and SQLite triggers
 reject updates and deletes.
 
+A contributor holds one lineage per chain. `POST` accepts an optional `chain`
+of `solana` (the default) or `base`, and both `current` reads accept
+`?chain=`. A Base address is its lowercase `0x` form only. A successor must
+stay on its predecessor's chain, so a Base claim can never retire a Solana
+address. Solana records keep their original digest layout; only Base records
+name a chain in the digested bytes. Registering a Base wallet does not make a
+row payable on Base: settlement plans remain Solana-only until a project can
+declare a settlement network.
+
 The operator endpoint remains only for bounded migration of historical GitHub
 issue/profile observations and disaster recovery. No endpoint exposes a trace,
 OAuth capability, assertion, bearer token, or credential.
