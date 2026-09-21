@@ -1,14 +1,15 @@
 /** Reconciles a published funding preparation against observed settled
- * transfers. Preparations record what each contributor is owed and the chain
- * records what moved; nothing connected the two, so a payout made outside the
- * settlement pipeline could silently omit a recipient. Reads settled history
- * only and confers no approval or payment authority. */
+ * transfers. Preparations record what each contributor is projected to
+ * receive and the chain records what moved; nothing connected the two, so a
+ * payout made outside the settlement pipeline could silently omit a recipient.
+ * Reads settled history only and confers no approval or payment authority. */
 
 import {
   assertFundingPreparation,
   createFundingReview,
   type FundingPreparation,
 } from "./funding-review-data";
+import { MINIMUM_TRANSFER_MINOR } from "./rewards";
 
 /** Per-recipient outcome of comparing entitlement against observed transfers. */
 export type FundingPayoutStatus =
@@ -16,8 +17,13 @@ export type FundingPayoutStatus =
   | "exact"
   /** Observed a non-zero amount that is not the entitled amount. */
   | "mismatch"
-  /** A wallet is on record and nothing was observed for it. */
+  /** A wallet is on record, the entitlement clears the transfer minimum, and
+   * nothing was observed for it. */
   | "unpaid"
+  /** A wallet is on record and the entitlement is below the transfer minimum,
+   * so a settlement that sends nothing is complying with the floor rather than
+   * skipping the row. */
+  | "withheld"
   /** No wallet on record, so the preparation itself cannot direct a payment. */
   | "unpayable";
 
@@ -41,13 +47,31 @@ export interface FundingPayoutReconciliation {
     observedMinor: string;
     /** Entitlement of rows that carry a wallet, so the payable subtotal. */
     payableEntitledMinor: string;
-    /** Entitlement of payable rows that observed nothing. */
+    /** Entitlement of payable rows above the floor that observed nothing. */
     unpaidMinor: string;
+    /** Entitlement of payable rows correctly withheld under the floor. */
+    withheldMinor: string;
   };
   /** Observed addresses that no contributor in the preparation claims. */
   unexpectedAddresses: string[];
-  /** True only when every payable row is exact and nothing is unexpected. */
+  /** True only when every payable row is exact or withheld under the floor,
+   * and nothing is unexpected. */
   reconciles: boolean;
+}
+
+/** The floor the platform will not send below, taken from the rewards module
+ * so the two cannot drift apart. */
+const MINIMUM_TRANSFER = BigInt(MINIMUM_TRANSFER_MINOR);
+
+/** A zero observation is only an omission above the floor. Below it, sending
+ * nothing is what the settlement is supposed to do. */
+function resolveStatus(
+  entitled: bigint,
+  observed: bigint,
+): FundingPayoutStatus {
+  if (observed === entitled) return "exact";
+  if (observed !== 0n) return "mismatch";
+  return entitled < MINIMUM_TRANSFER ? "withheld" : "unpaid";
 }
 
 function assertMinor(value: string, field: string): bigint {
@@ -80,6 +104,7 @@ export function reconcileFundingPayout(
   let observed = 0n;
   let payableEntitled = 0n;
   let unpaid = 0n;
+  let withheld = 0n;
 
   const rows = review.contributors.map((row) => {
     const entitledMinor = assertMinor(
@@ -105,19 +130,16 @@ export function reconcileFundingPayout(
       `${row.actor.login}.observed`,
     );
     observed += observedMinor;
-    if (observedMinor === 0n) unpaid += entitledMinor;
+    const status = resolveStatus(entitledMinor, observedMinor);
+    if (status === "unpaid") unpaid += entitledMinor;
+    if (status === "withheld") withheld += entitledMinor;
     return {
       actor: { id: row.actor.id, login: row.actor.login },
       address,
       entitledMinor: entitledMinor.toString(),
       observedMinor: observedMinor.toString(),
       deltaMinor: (observedMinor - entitledMinor).toString(),
-      status:
-        observedMinor === entitledMinor
-          ? ("exact" as const)
-          : observedMinor === 0n
-            ? ("unpaid" as const)
-            : ("mismatch" as const),
+      status,
     };
   });
 
@@ -135,10 +157,16 @@ export function reconcileFundingPayout(
       observedMinor: observed.toString(),
       payableEntitledMinor: payableEntitled.toString(),
       unpaidMinor: unpaid.toString(),
+      withheldMinor: withheld.toString(),
     },
     unexpectedAddresses,
     reconciles:
       unexpectedAddresses.length === 0 &&
-      rows.every((row) => row.status === "exact" || row.status === "unpayable"),
+      rows.every(
+        (row) =>
+          row.status === "exact" ||
+          row.status === "unpayable" ||
+          row.status === "withheld",
+      ),
   };
 }
