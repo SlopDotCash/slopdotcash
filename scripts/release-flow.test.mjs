@@ -85,7 +85,7 @@ describe("independent release and intake paths", () => {
       rmSync(trace);
       execFileSync("bash", ["-eu", "-c", command], { cwd: root, env });
       expect(readFileSync(trace, "utf8").trim()).toBe(
-        "new-head:run leaderboard:generate",
+        "new-head:run leaderboard:generate\nnew-head:run profiles:generate",
       );
     } finally {
       rmSync(root, { recursive: true, force: true });

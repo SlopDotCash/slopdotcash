@@ -2219,7 +2219,7 @@ function ProfilePage({
   if (state.status !== "ready")
     return (
       <main className="shell route-main">
-        <ProfilePoints login={login} showIdentity />
+        <ProfilePoints login={login} showIdentity={state.status !== "loading"} />
         <DataNotice state={state} retry={retry} />
       </main>
     );
