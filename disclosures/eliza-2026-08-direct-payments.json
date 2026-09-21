@@ -1,0 +1,1537 @@
+{
+  "schemaVersion": "1",
+  "kind": "direct-payment-disclosure",
+  "projectId": "eliza",
+  "contributionMonth": "2026-08",
+  "status": "sent-outside-verified-flow",
+  "authorization": {
+    "proposal": null,
+    "review": null,
+    "approval": null,
+    "cycleArtifacts": null,
+    "projectPaymentMode": "disabled",
+    "committedMinor": "0",
+    "note": "No proposal, no 14-day review, no creator approval and no cycle directory exist for this month. These transfers were signed and broadcast directly. This file records what happened; it authorizes nothing and creates no claim."
+  },
+  "network": "solana-mainnet",
+  "asset": "USDC",
+  "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "senderDisclosure": "The sending wallet is not asserted here. The creator has not been asked to publish it, and this record does not need it: every signature below is published and resolves to the sender on any Solana explorer. Add the address as a `sender` field if and when the creator asks for it.",
+  "commitment": "finalized",
+  "observedAt": "2026-09-13T13:00:00Z",
+  "preparation": {
+    "path": "funding/preparations/eliza-2026-08.json",
+    "commit": "77316d4deb58ce7caa6795ba00dceaceca3b7c5e",
+    "sha256": "95483c7dc7f7078fe867f05f78bab02e3813af8900d8d1197c49356c56cee75d",
+    "totalWeight": "120540000",
+    "contributors": 108
+  },
+  "reconstructedBasis": {
+    "capMinor": "10000000000",
+    "denominatorWeight": "120750000",
+    "rounding": "half-up",
+    "formula": "round_half_up(capMinor * effectiveWeight / denominatorWeight)",
+    "note": "Published preparation total 120540000 plus the 210000 of weight restored by #434. Numerators and denominator were both adjusted, so the pool stays inside the published cap.",
+    "allocatedMinor": "9999999989",
+    "overCapMinor": "-11",
+    "exactRows": 50,
+    "observedRows": 53,
+    "unexplainedRows": [
+      {
+        "login": "Uuriko",
+        "deltaMinor": "1"
+      },
+      {
+        "login": "Finberg-Laurelin-CEO",
+        "deltaMinor": "1"
+      },
+      {
+        "login": "sailorpepe",
+        "deltaMinor": "1"
+      }
+    ]
+  },
+  "totals": {
+    "rows": 108,
+    "observedTransfers": 53,
+    "observedAmountMinor": "4219710147",
+    "allocatedMinor": "9999999989",
+    "unmatchedObservedTransfers": 0,
+    "platformFeeTransfer": null,
+    "byState": {
+      "held-below-minimum": {
+        "rows": 22,
+        "amountMinor": "22484468"
+      },
+      "paid-direct": {
+        "rows": 53,
+        "amountMinor": "4219710147"
+      },
+      "unclaimed": {
+        "rows": 33,
+        "amountMinor": "5757805377"
+      }
+    }
+  },
+  "rows": [
+    {
+      "actorId": "MDQ6VXNlcjE4NjMzMjY0",
+      "login": "lalalune",
+      "publishedWeight": "38450000",
+      "effectiveWeight": "38450000",
+      "entitlementMinor": "3184265010",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjMyNDM3ODg0",
+      "login": "ss251",
+      "publishedWeight": "17000500",
+      "effectiveWeight": "17000500",
+      "entitlementMinor": "1407908903",
+      "wallet": "8UeRuQdqVCVwxERmajGkLon92Y8Ax3oJbDZQPGENzJkf",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "XJGEmhbY3sWFtLoHSXXPhnWohFcDcgRDbo7f1fiTerd1HPwDYH3JuYCDSL2j8XbCfzrCL7hnJrKgFBu47bMf2GE",
+        "slot": 446210805,
+        "blockTime": "2026-09-11T17:12:54Z",
+        "recipient": "8UeRuQdqVCVwxERmajGkLon92Y8Ax3oJbDZQPGENzJkf",
+        "amountMinor": "1407908903"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjE2Mzg1OTE4",
+      "login": "standujar",
+      "publishedWeight": "8010000",
+      "effectiveWeight": "8010000",
+      "entitlementMinor": "663354037",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOC3QpCA",
+      "login": "NubsCarson",
+      "publishedWeight": "7110000",
+      "effectiveWeight": "7110000",
+      "entitlementMinor": "588819876",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOEuYLFw",
+      "login": "MLuber-bot",
+      "publishedWeight": "5430000",
+      "effectiveWeight": "5430000",
+      "entitlementMinor": "449689441",
+      "wallet": "AESTQvWniWxvr3sY9mPQPVEnv8eufVG3Zfy8SuzDa9kR",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "62UiFyJdUJRHgQpp9EYXX1yq4qayGQP6uQddPcBkHse4bNGuBJTDU9YPxB6zj9xMMVRKQeo2jRpmB21dX1mW9K9c",
+        "slot": 446210855,
+        "blockTime": "2026-09-11T17:13:10Z",
+        "recipient": "AESTQvWniWxvr3sY9mPQPVEnv8eufVG3Zfy8SuzDa9kR",
+        "amountMinor": "449689441"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOBj2A8Q",
+      "login": "HomunculusLabs",
+      "publishedWeight": "3700000",
+      "effectiveWeight": "3700000",
+      "entitlementMinor": "306418219",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOEOd4mA",
+      "login": "hermesagent270-commits",
+      "publishedWeight": "3618000",
+      "effectiveWeight": "3618000",
+      "entitlementMinor": "299627329",
+      "wallet": "73SUereGr4EAuQxftTAUn4EBdQggdyjXQhv8rYeB6GCH",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4x1BdCZ6dpJtt84pBLVWenGGJ5Ry1V9F8Aq3GAhq34a81fVShfWTiT2zC5xoLchDT45ioRgn9ok767Jp4vipGfvD",
+        "slot": 446210909,
+        "blockTime": "2026-09-11T17:13:27Z",
+        "recipient": "73SUereGr4EAuQxftTAUn4EBdQggdyjXQhv8rYeB6GCH",
+        "amountMinor": "299627329"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOEYwrvA",
+      "login": "ngngocnhan1997-hub",
+      "publishedWeight": "2954500",
+      "effectiveWeight": "2954500",
+      "entitlementMinor": "244679089",
+      "wallet": "8VXbZi3RMj2QcTmGF4cmBvojWy7ZYWo8uKYvRo2Zhum8",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2kGJNa6b6oZodCo3x7HmsAvHRRbxSV6skdEErqz5BVmZzHGstDKTc4m6RbX2fxQmBy48v5vT5CY5MMnEvNUfsVrh",
+        "slot": 446210962,
+        "blockTime": "2026-09-11T17:13:44Z",
+        "recipient": "8VXbZi3RMj2QcTmGF4cmBvojWy7ZYWo8uKYvRo2Zhum8",
+        "amountMinor": "244679089"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjU2MDY5Mjgw",
+      "login": "krutftw",
+      "publishedWeight": "2550000",
+      "effectiveWeight": "2550000",
+      "entitlementMinor": "211180124",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDODBAqOQ",
+      "login": "OutstandingRetard",
+      "publishedWeight": "2320000",
+      "effectiveWeight": "2320000",
+      "entitlementMinor": "192132505",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjgyMDUzMjQy",
+      "login": "wtfsayo",
+      "publishedWeight": "2070000",
+      "effectiveWeight": "2070000",
+      "entitlementMinor": "171428571",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOEsGgnQ",
+      "login": "lww0134-ctrl",
+      "publishedWeight": "1860000",
+      "effectiveWeight": "1860000",
+      "entitlementMinor": "154037267",
+      "wallet": "8DLxX1HerhzkjmDhT2Q7ktVfgntNjpHD14swJ1PQuNHw",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2XGRBCxB3iP8ZTV9Livj3hRHJpUujeDwJKCY85vQpypYhbMaxrYQbdKn5oyg3kR4gdeReTsStFAALzSrW4oVLmAG",
+        "slot": 446211014,
+        "blockTime": "2026-09-11T17:14:00Z",
+        "recipient": "8DLxX1HerhzkjmDhT2Q7ktVfgntNjpHD14swJ1PQuNHw",
+        "amountMinor": "154037267"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOD2nrjw",
+      "login": "agent-cortex",
+      "publishedWeight": "1780000",
+      "effectiveWeight": "1780000",
+      "entitlementMinor": "147412008",
+      "wallet": "ZtdooyCSVFtdbz5Y4msPuanVyZYV2zaHCJnjZgyVU96",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3jmkWUgr8TzDpH9xWozBF59L46zdcaYrKPRojsnijAkfCEuJnYpDukYedQnSJUhPmeJ7Jbu7rztef5kYj6JETTGt",
+        "slot": 446211067,
+        "blockTime": "2026-09-11T17:14:17Z",
+        "recipient": "ZtdooyCSVFtdbz5Y4msPuanVyZYV2zaHCJnjZgyVU96",
+        "amountMinor": "147412008"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOBYutFg",
+      "login": "deepanshu-yd",
+      "publishedWeight": "1454500",
+      "effectiveWeight": "1454500",
+      "entitlementMinor": "120455487",
+      "wallet": "2eFE3feeepWZ43zPtPMuKSc7ZCRzndeogjwkU7nW7H1p",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "5TcZmisQav3Aar7xMBFEdHBu7BZkpr41Q9m6j9c2QVeqJk2gYNZqvJrhGbTFkZzrRLCNWsZETRZVzWvj9bbQEnGW",
+        "slot": 446211120,
+        "blockTime": "2026-09-11T17:14:34Z",
+        "recipient": "2eFE3feeepWZ43zPtPMuKSc7ZCRzndeogjwkU7nW7H1p",
+        "amountMinor": "120455487"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOD5fOPQ",
+      "login": "startrack3r",
+      "publishedWeight": "1450000",
+      "effectiveWeight": "1450000",
+      "entitlementMinor": "120082816",
+      "wallet": "2H7EzHUeJHGoQUkYfBwdRnJvw7Xj19rdrGgzCaMESSJz",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2gGPwNpqjmNBKx4oR993RZrV2H7r1wU1b8NsSUvSZAsPiDi5T8AG73TrGHunUZL5vm9E3g8d9JvK72r13UJ1Mayr",
+        "slot": 446211173,
+        "blockTime": "2026-09-11T17:14:50Z",
+        "recipient": "2H7EzHUeJHGoQUkYfBwdRnJvw7Xj19rdrGgzCaMESSJz",
+        "amountMinor": "120082816"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCZkWfQ",
+      "login": "Svector-anu",
+      "publishedWeight": "1430000",
+      "effectiveWeight": "1430000",
+      "entitlementMinor": "118426501",
+      "wallet": "Ex6ePz4UvsdCnYKptbm7tuPg4YBExiqHNxU6ARibg1Wy",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4oYM6kSrbXKqPe5ZMTePkRgnt8AvrDcshaSrZoPSNuqF24Fx3x8NtDHMzPapJFrxNUqoisnAfknZWwzA8avDY6NP",
+        "slot": 446211225,
+        "blockTime": "2026-09-11T17:15:06Z",
+        "recipient": "Ex6ePz4UvsdCnYKptbm7tuPg4YBExiqHNxU6ARibg1Wy",
+        "amountMinor": "118426501"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCZYLFA",
+      "login": "sharkwon",
+      "publishedWeight": "1340000",
+      "effectiveWeight": "1340000",
+      "entitlementMinor": "110973085",
+      "wallet": "EwihoFKv3YkWYuo912NdfApNaAnuzdNWMKPGQFxR8HdF",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3mXduFJoNzfR79RqzdaMWACVSryFfuSEEm6SdHnFZY5dkx91KMp61EBhYtGAPKvHDnHB2WA9iz5L26wNAaAHsJGE",
+        "slot": 446211275,
+        "blockTime": "2026-09-11T17:15:23Z",
+        "recipient": "EwihoFKv3YkWYuo912NdfApNaAnuzdNWMKPGQFxR8HdF",
+        "amountMinor": "110973085"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjM4OTkxMjQz",
+      "login": "Neutize",
+      "publishedWeight": "969000",
+      "effectiveWeight": "969000",
+      "entitlementMinor": "80248447",
+      "wallet": "Grr65RJmr2ahDRRQenbeBwxQ8gqDRYKpqcLCrzd9ADE3",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3prWkT4bxvNPHkE6cm9ZTs3c8v5V9iBLTSY3QXSHM5QyesEQutgu2AWgUf6Wf2n7ZnkC5Ye5RDzrioJpN3qkE7RD",
+        "slot": 446211326,
+        "blockTime": "2026-09-11T17:15:40Z",
+        "recipient": "Grr65RJmr2ahDRRQenbeBwxQ8gqDRYKpqcLCrzd9ADE3",
+        "amountMinor": "80248447"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjMwMDUxMzU2",
+      "login": "attentionhead",
+      "publishedWeight": "932000",
+      "effectiveWeight": "932000",
+      "entitlementMinor": "77184265",
+      "wallet": "CHNu8dYtU6YfCh8aH9Mmx12VRcPoDvcMKQa6CJ7Mq8xD",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "37WVhXcQfmKL7Awdp2qVw5Bs1eHSsTJhJh6SKkZhCgLRm4ZFtULVXPsN7sVkU3PnWC4mCai2X5aVKiz2qqEahYdU",
+        "slot": 446211379,
+        "blockTime": "2026-09-11T17:15:56Z",
+        "recipient": "CHNu8dYtU6YfCh8aH9Mmx12VRcPoDvcMKQa6CJ7Mq8xD",
+        "amountMinor": "77184265"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCzOt4w",
+      "login": "GG100-eng",
+      "publishedWeight": "901000",
+      "effectiveWeight": "961000",
+      "entitlementMinor": "79585921",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null,
+      "weightAdjustment": {
+        "minor": "60000",
+        "reason": "Two reviews restored by #434 after this preparation was frozen (#405)."
+      }
+    },
+    {
+      "actorId": "MDQ6VXNlcjgwMzEwNDk=",
+      "login": "Uuriko",
+      "publishedWeight": "900000",
+      "effectiveWeight": "900000",
+      "entitlementMinor": "74534161",
+      "wallet": "4t6Bp7Eb4sh926Xzvrj95yXMXn6mV18HhyVFDVb2FBHY",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3igBhLfkUPUkBiDr7BDtB2q4mJLJZodYnvu86BbQCnXLd94HoTDwpoNFqcjjhiQp8ZL83EnWzHb3TmuADZerGJzy",
+        "slot": 446211432,
+        "blockTime": "2026-09-11T17:16:12Z",
+        "recipient": "4t6Bp7Eb4sh926Xzvrj95yXMXn6mV18HhyVFDVb2FBHY",
+        "amountMinor": "74534162"
+      },
+      "deltaMinor": "1"
+    },
+    {
+      "actorId": "U_kgDOD2CbUA",
+      "login": "0xSolace",
+      "publishedWeight": "870000",
+      "effectiveWeight": "870000",
+      "entitlementMinor": "72049689",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCF9y2A",
+      "login": "nothingxnowhere",
+      "publishedWeight": "860000",
+      "effectiveWeight": "860000",
+      "entitlementMinor": "71221532",
+      "wallet": "J3HwVEQkZqjqztGnQW6VwXKx79ingmXHBL1E4ibDRnmt",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "dVZBu9FMumY1A7R9J52EBPF9oZmJSHHBniM7iCeAntZAnQA7ZvGwtdsZwaCueYhYbL8xfnVUxFi34JD333c8Mvv",
+        "slot": 446211484,
+        "blockTime": "2026-09-11T17:16:29Z",
+        "recipient": "J3HwVEQkZqjqztGnQW6VwXKx79ingmXHBL1E4ibDRnmt",
+        "amountMinor": "71221532"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjkyMTE0Ng==",
+      "login": "w1kke",
+      "publishedWeight": "630000",
+      "effectiveWeight": "630000",
+      "entitlementMinor": "52173913",
+      "wallet": "9ihN9VKxVApCVrdK5LuejAcqhJZ2TcKMUASB3UGkcQhU",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "41PLqvvfGMiJabizcG2gK21iFfwys5gPF1T7EL9L834FzQxGuc4FJQLEBg4FxZDTHcZLv8ZjfkBDYfdZgLMWkWCn",
+        "slot": 446211538,
+        "blockTime": "2026-09-11T17:16:46Z",
+        "recipient": "9ihN9VKxVApCVrdK5LuejAcqhJZ2TcKMUASB3UGkcQhU",
+        "amountMinor": "52173913"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjQwNDk2NzM=",
+      "login": "Ansonhkg",
+      "publishedWeight": "610000",
+      "effectiveWeight": "610000",
+      "entitlementMinor": "50517598",
+      "wallet": "6DvpyBDc6sj1TnsD72Y63d1FTbbMEc22WNo8VcyqXC4Q",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "RZWHiKeA78p9qWXbwBgu51rFqELCBzf1v9XTps5gZhiNdKQHQUvStwHUDwicLg6jgqw8QLCemdW6sPfGzahbMcQ",
+        "slot": 446211592,
+        "blockTime": "2026-09-11T17:17:03Z",
+        "recipient": "6DvpyBDc6sj1TnsD72Y63d1FTbbMEc22WNo8VcyqXC4Q",
+        "amountMinor": "50517598"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjE1MTc0NzY0",
+      "login": "andreolf",
+      "publishedWeight": "580000",
+      "effectiveWeight": "580000",
+      "entitlementMinor": "48033126",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjc4NjMyMzA=",
+      "login": "MarcoWorms",
+      "publishedWeight": "560000",
+      "effectiveWeight": "560000",
+      "entitlementMinor": "46376812",
+      "wallet": "6Sq2fnWJYxRgrgS8n2B1YMVm6sBXBxenZxoJyULezqLy",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "5MpvZseKxE2NK9mLsRtCHz83JjL6iP4MhhfMMm2Mbfdppx8UEt8MTTVLFoXhqGVY7SGmN9vvQT4dKLePveUGvcQH",
+        "slot": 446211644,
+        "blockTime": "2026-09-11T17:17:19Z",
+        "recipient": "6Sq2fnWJYxRgrgS8n2B1YMVm6sBXBxenZxoJyULezqLy",
+        "amountMinor": "46376812"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOB3nItg",
+      "login": "hkc2023",
+      "publishedWeight": "530000",
+      "effectiveWeight": "530000",
+      "entitlementMinor": "43892340",
+      "wallet": "Cp4kTpG5ZHdMD46tiCgNEegkc5eopn9RRBur2y1cBHUm",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3ddX7AdouarnFHcFQass8afgx7MsbWsV9bieJRzzwHEQu2sx936x4fcd4nywuYvDkasXnEnVWcGD7LwsV4w6LDCF",
+        "slot": 446211696,
+        "blockTime": "2026-09-11T17:17:36Z",
+        "recipient": "Cp4kTpG5ZHdMD46tiCgNEegkc5eopn9RRBur2y1cBHUm",
+        "amountMinor": "43892340"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCJdw7g",
+      "login": "kenjohnscreates",
+      "publishedWeight": "530000",
+      "effectiveWeight": "530000",
+      "entitlementMinor": "43892340",
+      "wallet": "2GH44MmRLnuVaYPPoGpZiWzmdzSAtoxA5hnU2xFUciDx",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3jDn2S3X7SSVZdEFezxL33D58kbjLApg6kCzwsLP9dRXrJ1wEM4QG5WcvH3Ko8r1wFJGmAJpSmjPCwjuaQJd9kGq",
+        "slot": 446211746,
+        "blockTime": "2026-09-11T17:17:52Z",
+        "recipient": "2GH44MmRLnuVaYPPoGpZiWzmdzSAtoxA5hnU2xFUciDx",
+        "amountMinor": "43892340"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCzScNQ",
+      "login": "mashingaan",
+      "publishedWeight": "516000",
+      "effectiveWeight": "666000",
+      "entitlementMinor": "55155280",
+      "wallet": "gcPnMacs1EWwZ3q8LJn2zFhVoTVNqvKLrwQyQKmfbMV",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4QMWDYWX4MBhUz9oWTPGhx6dihxQANUkFVszc6DdhVH6zj3zJhP3zQhFP6xCw4MmZfUSuM9pyvLG6yPVqYcfa1g8",
+        "slot": 446211798,
+        "blockTime": "2026-09-11T17:18:09Z",
+        "recipient": "gcPnMacs1EWwZ3q8LJn2zFhVoTVNqvKLrwQyQKmfbMV",
+        "amountMinor": "55155280"
+      },
+      "weightAdjustment": {
+        "minor": "150000",
+        "reason": "Five reviews restored by #434 after this preparation was frozen (#405)."
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOEtGEfg",
+      "login": "tokenmaxxor",
+      "publishedWeight": "502500",
+      "effectiveWeight": "502500",
+      "entitlementMinor": "41614907",
+      "wallet": "5h6LapuyAfbJaiczZa2fbvsiib2HVrTzZ1ZcQnU7jKHc",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4MSmQQfYRVSq7DRF7kTMEzEPuzUy1chgmcXP6Xn1f1FdgMLKwf2SDQJpLYqHrRRkJc47S6sRJuSD6FBVL7T4tgEu",
+        "slot": 446211851,
+        "blockTime": "2026-09-11T17:18:26Z",
+        "recipient": "5h6LapuyAfbJaiczZa2fbvsiib2HVrTzZ1ZcQnU7jKHc",
+        "amountMinor": "41614907"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjU2NTEyOTgx",
+      "login": "isfinne",
+      "publishedWeight": "490000",
+      "effectiveWeight": "490000",
+      "entitlementMinor": "40579710",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCEc2SA",
+      "login": "rama0x1",
+      "publishedWeight": "460000",
+      "effectiveWeight": "460000",
+      "entitlementMinor": "38095238",
+      "wallet": "B8bkEjD2igGRgtqmzjKXSUxgvQkATRkfKifh9HM11vdV",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "zPGEK76vP6GCA82K825pMGGmdeJVyswfTuQTdSWKuAV4qEvR4zN4NMQKeGsbk1d5uZ3WKdieEmzdrM9puM4urpk",
+        "slot": 446211903,
+        "blockTime": "2026-09-11T17:18:42Z",
+        "recipient": "B8bkEjD2igGRgtqmzjKXSUxgvQkATRkfKifh9HM11vdV",
+        "amountMinor": "38095238"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOBbwVsQ",
+      "login": "0xinBeta",
+      "publishedWeight": "450000",
+      "effectiveWeight": "450000",
+      "entitlementMinor": "37267081",
+      "wallet": "9QV8UHGKTy1SbKjHWkeSERvD2TxiWXfSwXQ89CVZDmct",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3pymjnELF5izeYZcmrhesdRCocReqMRef5Jur4eDx1unWCRjQ5YnpGGsZTY1aixTkbvfrarCHe92rUw76XgtSypB",
+        "slot": 446211952,
+        "blockTime": "2026-09-11T17:18:59Z",
+        "recipient": "9QV8UHGKTy1SbKjHWkeSERvD2TxiWXfSwXQ89CVZDmct",
+        "amountMinor": "37267081"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOC3LhVQ",
+      "login": "SYMBaiEX",
+      "publishedWeight": "440000",
+      "effectiveWeight": "440000",
+      "entitlementMinor": "36438923",
+      "wallet": "DkEjgLSHrMZagMkNtSekzF2335g8q7wMJq1VeZc5DR5n",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4PWk8yng4Zceff5fqWj5Yre5uxjX4D2gabs4tsADLQspc6RfW7CKxmdaynGUugK35JnTM5eEHbRGeutFmaojKPGX",
+        "slot": 446212006,
+        "blockTime": "2026-09-11T17:19:16Z",
+        "recipient": "DkEjgLSHrMZagMkNtSekzF2335g8q7wMJq1VeZc5DR5n",
+        "amountMinor": "36438923"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCYMVCA",
+      "login": "fid1699",
+      "publishedWeight": "384500",
+      "effectiveWeight": "384500",
+      "entitlementMinor": "31842650",
+      "wallet": "4h9sXJmFbEw4cSbJv5p5Dg7K4icTRC45sqyefZnrRiBr",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "vrTZXuxLkjanYCRobnthP2chFVYoZVdvJroGXtSnuYXgR4mhQDtnpuB2KRS7wxgofPYgHhYL3cSzxb7vS4V4hW1",
+        "slot": 446212055,
+        "blockTime": "2026-09-11T17:19:32Z",
+        "recipient": "4h9sXJmFbEw4cSbJv5p5Dg7K4icTRC45sqyefZnrRiBr",
+        "amountMinor": "31842650"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjYwODIxMTgy",
+      "login": "wakesync",
+      "publishedWeight": "380000",
+      "effectiveWeight": "380000",
+      "entitlementMinor": "31469979",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCe9uZg",
+      "login": "Zorba-the-buddhah",
+      "publishedWeight": "360000",
+      "effectiveWeight": "360000",
+      "entitlementMinor": "29813665",
+      "wallet": "54KHzKhnYfBQ1rsh9yBCVFK14eqTohwuJRXzUfPPWVyu",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4gMmszENXdBTHDRFsKEcPdpBEgFvE1znHgg1Ubw4rsmKC49NazeAGNdDFwKh4ZFM47UUrrPUDX6LXQG1dH8maLmU",
+        "slot": 446212107,
+        "blockTime": "2026-09-11T17:19:48Z",
+        "recipient": "54KHzKhnYfBQ1rsh9yBCVFK14eqTohwuJRXzUfPPWVyu",
+        "amountMinor": "29813665"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCdwEPw",
+      "login": "shabbydev",
+      "publishedWeight": "340000",
+      "effectiveWeight": "340000",
+      "entitlementMinor": "28157350",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOBsoVew",
+      "login": "0takuc0mrade",
+      "publishedWeight": "315000",
+      "effectiveWeight": "315000",
+      "entitlementMinor": "26086957",
+      "wallet": "5afDTAS9QMcQiigTQs4UWiCBJuU55pkqAb2ZJVs1WZjj",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "29K6Ktvp4HHVmCkLwgHHpoG6Fmy1muDqeYxCGmPp2UhrqoJvc1rgXRr1h6Sdjkyyt8hzUALGUoRCwBvaJmt7nDjK",
+        "slot": 446212159,
+        "blockTime": "2026-09-11T17:20:05Z",
+        "recipient": "5afDTAS9QMcQiigTQs4UWiCBJuU55pkqAb2ZJVs1WZjj",
+        "amountMinor": "26086957"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDODhBdCg",
+      "login": "Finberg-Laurelin-CEO",
+      "publishedWeight": "300000",
+      "effectiveWeight": "300000",
+      "entitlementMinor": "24844720",
+      "wallet": "6ap37TpuJHn4NofsFpPCDZhKBBLVP7aunMMPx1agE3iz",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "5SHww25ePz9M2zjz2Ym8xkY9FgWi9PgXr75rQzUCvy4RoiqjxSorjgsemsCaWQPka7VmiHbwqbiy52KkYcYp9Yq4",
+        "slot": 446212212,
+        "blockTime": "2026-09-11T17:20:22Z",
+        "recipient": "6ap37TpuJHn4NofsFpPCDZhKBBLVP7aunMMPx1agE3iz",
+        "amountMinor": "24844721"
+      },
+      "deltaMinor": "1"
+    },
+    {
+      "actorId": "MDQ6VXNlcjMyMjQzNzQ=",
+      "login": "greatcodeeer",
+      "publishedWeight": "270000",
+      "effectiveWeight": "270000",
+      "entitlementMinor": "22360248",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCYbLRw",
+      "login": "sailorpepe",
+      "publishedWeight": "270000",
+      "effectiveWeight": "270000",
+      "entitlementMinor": "22360248",
+      "wallet": "DuUuqo7n16Dziz1eNLRat4qeeSk59JHjkoC7GJutHDEn",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3V5Cr8Di6QwMbGeUZ57jmbvQq6qWwbCKwcEzdMsbGiPoCn8Eo7mTQv5qqu77Q58dbQ6xVRLaPFyE9EZ9pJvPr7rs",
+        "slot": 446212268,
+        "blockTime": "2026-09-11T17:20:39Z",
+        "recipient": "DuUuqo7n16Dziz1eNLRat4qeeSk59JHjkoC7GJutHDEn",
+        "amountMinor": "22360249"
+      },
+      "deltaMinor": "1"
+    },
+    {
+      "actorId": "U_kgDOCDpBpw",
+      "login": "qwertyIQ",
+      "publishedWeight": "260000",
+      "effectiveWeight": "260000",
+      "entitlementMinor": "21532091",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCsOcQg",
+      "login": "rndrntwrk",
+      "publishedWeight": "250000",
+      "effectiveWeight": "250000",
+      "entitlementMinor": "20703934",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOEx4mAw",
+      "login": "saltwire-dev",
+      "publishedWeight": "240000",
+      "effectiveWeight": "240000",
+      "entitlementMinor": "19875776",
+      "wallet": "5MB8owEYxbEEWQg3dRU6qA5EWFFuJYmbrQUCBbf6cSky",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4KajQacsk4nZ6dTztcd5efNTkbETMXx7yurR1pCRrtHCHvTCBENQp9sjkCXTVB24xtWbCvMg4uwKUGLv8WyyDP92",
+        "slot": 446212322,
+        "blockTime": "2026-09-11T17:20:55Z",
+        "recipient": "5MB8owEYxbEEWQg3dRU6qA5EWFFuJYmbrQUCBbf6cSky",
+        "amountMinor": "19875776"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOB1pcWQ",
+      "login": "fadhelcarlos",
+      "publishedWeight": "220000",
+      "effectiveWeight": "220000",
+      "entitlementMinor": "18219462",
+      "wallet": "Dgj6QnHeqykYGM9P1xCXxhaHH5JkJQnFy6i8argaLVzr",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4N2H6nXykKPhc4XJhd8eVXN2LS4t2mkaW3Zn2kpDCaC4Ljkh2Pwhfw5juAEgQzshatEw9g3g7c3dKHJgN5P2zeH2",
+        "slot": 446212376,
+        "blockTime": "2026-09-11T17:21:12Z",
+        "recipient": "Dgj6QnHeqykYGM9P1xCXxhaHH5JkJQnFy6i8argaLVzr",
+        "amountMinor": "18219462"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjE2Mzk1NDk2",
+      "login": "odilitime",
+      "publishedWeight": "210000",
+      "effectiveWeight": "210000",
+      "entitlementMinor": "17391304",
+      "wallet": "59W5HpZu1FFqEHj8Qvkwd9UXb62aQMCt32LD4uarrRsc",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2JvXdru8xLGfJPmwH61jKJHk4XLAn8k4iv7TFKy2BgTaVBhMkSqXFJutLcpg9GFDsyREVX9HjEFfVFFxjpSx5JdA",
+        "slot": 446212424,
+        "blockTime": "2026-09-11T17:21:29Z",
+        "recipient": "59W5HpZu1FFqEHj8Qvkwd9UXb62aQMCt32LD4uarrRsc",
+        "amountMinor": "17391304"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOB-kLQw",
+      "login": "FreeSolDev",
+      "publishedWeight": "180000",
+      "effectiveWeight": "180000",
+      "entitlementMinor": "14906832",
+      "wallet": "soAVqvYm8vceoycnVjnwYj74YRaWHMBYYSiz6hUFBCc",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "eb6p1yBG9r2GyTM4nHGSi3iZVY4fsiKazyzQto8TnZCQ9CWQY7hdbXp83EERcQfkjKuAsZrzaEJeRTtibLjFapL",
+        "slot": 446212476,
+        "blockTime": "2026-09-11T17:21:45Z",
+        "recipient": "soAVqvYm8vceoycnVjnwYj74YRaWHMBYYSiz6hUFBCc",
+        "amountMinor": "14906832"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjY3NTIxNzg=",
+      "login": "felirami",
+      "publishedWeight": "150000",
+      "effectiveWeight": "150000",
+      "entitlementMinor": "12422360",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOEJGOyQ",
+      "login": "273921751-cpu",
+      "publishedWeight": "120000",
+      "effectiveWeight": "120000",
+      "entitlementMinor": "9937888",
+      "wallet": "3ZHCWc9qWDbmsen9rgBfwuDcvacnpdqv6nA4ewbuGWfs",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3zVFnh7gkruvBuETU8TyP4uRTC9gLCjgvxm7rXBJAe1QcFoJvQdbeKcyM8fAjN8r7P2ya6H8ach2MSfGrZkcJhhT",
+        "slot": 446212525,
+        "blockTime": "2026-09-11T17:22:02Z",
+        "recipient": "3ZHCWc9qWDbmsen9rgBfwuDcvacnpdqv6nA4ewbuGWfs",
+        "amountMinor": "9937888"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjYxODYzNTA=",
+      "login": "martonp",
+      "publishedWeight": "120000",
+      "effectiveWeight": "120000",
+      "entitlementMinor": "9937888",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjUxMDcwNDI=",
+      "login": "yizhengzhou",
+      "publishedWeight": "101500",
+      "effectiveWeight": "101500",
+      "entitlementMinor": "8405797",
+      "wallet": "2RVtbntxT38W1BmoaqVB4P1JQc4H3scn2rvLZg87Uyeo",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4EtjhKeem2iu9RxCfJhMbpvhky49MmMQUiMBMDvF4EbbV1W3h6Wzz5DP5TvwdLQxuX4ruCRD3e3xi5XnCkCPbpME",
+        "slot": 446212575,
+        "blockTime": "2026-09-11T17:22:19Z",
+        "recipient": "2RVtbntxT38W1BmoaqVB4P1JQc4H3scn2rvLZg87Uyeo",
+        "amountMinor": "8405797"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjcyNDg4NjM4",
+      "login": "awesamarth",
+      "publishedWeight": "90000",
+      "effectiveWeight": "90000",
+      "entitlementMinor": "7453416",
+      "wallet": "E17ndFMnc8Zr5iEU4a1CKoV6ZZXpuLPxMUeMtYd8PHTT",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4yYdMunsxewFbE3gEs5cGjgztHtkiuFiaAccbXvanSxw1tWEFYA9tawqPkNtWw2t7jhxfHnMv7s7wurF2ZtSsP1u",
+        "slot": 446212627,
+        "blockTime": "2026-09-11T17:22:35Z",
+        "recipient": "E17ndFMnc8Zr5iEU4a1CKoV6ZZXpuLPxMUeMtYd8PHTT",
+        "amountMinor": "7453416"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCRkulQ",
+      "login": "Illuminfti",
+      "publishedWeight": "90000",
+      "effectiveWeight": "90000",
+      "entitlementMinor": "7453416",
+      "wallet": "ExQrSw68xRsUvYtM1jDvY6W7TAjAx6YJgUJcrhxLGMqj",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3EZZzFEqsydvN8oc7yVtoXVKa364aCEM3qiWtkGmg4xEpnBZ4cXtgQpNSVttPxTtF3B76uz3kXDCAMB1gKiGmAKz",
+        "slot": 446212680,
+        "blockTime": "2026-09-11T17:22:52Z",
+        "recipient": "ExQrSw68xRsUvYtM1jDvY6W7TAjAx6YJgUJcrhxLGMqj",
+        "amountMinor": "7453416"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOEocK1w",
+      "login": "leiws0822-stack",
+      "publishedWeight": "90000",
+      "effectiveWeight": "90000",
+      "entitlementMinor": "7453416",
+      "wallet": "FiDNZFCg3xoTKmANHhyEuW9YTNRFQenC5TWu9Nk6gdDK",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4bBF11UAK7Ecf91rjspTRKLB3BmuRqV83ectPurjqS8fEpbGvSNFBeRz4w7qWYpaiVAMgmm5E1sK8T79wQBr9Qim",
+        "slot": 446212726,
+        "blockTime": "2026-09-11T17:23:09Z",
+        "recipient": "FiDNZFCg3xoTKmANHhyEuW9YTNRFQenC5TWu9Nk6gdDK",
+        "amountMinor": "7453416"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjM0OTA0OTg3",
+      "login": "lets-order-some-fries",
+      "publishedWeight": "90000",
+      "effectiveWeight": "90000",
+      "entitlementMinor": "7453416",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjI5NjEzMTY0",
+      "login": "wbaxterh",
+      "publishedWeight": "90000",
+      "effectiveWeight": "90000",
+      "entitlementMinor": "7453416",
+      "wallet": "G4fZSp9tf6j1dFhrc6bVkLTszi6CuQPs5xCCFjXtLmaW",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4m8fjf4XEB2EqezAwfvwKAvR5BpbSg9y36XWKA32qvERf9GepBMHPawRxuB7HPjzmKDkoEV8xM6AHTEuhMs5yC6Q",
+        "slot": 446212779,
+        "blockTime": "2026-09-11T17:23:25Z",
+        "recipient": "G4fZSp9tf6j1dFhrc6bVkLTszi6CuQPs5xCCFjXtLmaW",
+        "amountMinor": "7453416"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjMzODQ3ODgw",
+      "login": "SashaMIT",
+      "publishedWeight": "70000",
+      "effectiveWeight": "70000",
+      "entitlementMinor": "5797101",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjE2OTA4NTA3",
+      "login": "mysteryjax",
+      "publishedWeight": "60000",
+      "effectiveWeight": "60000",
+      "entitlementMinor": "4968944",
+      "wallet": "7cLsUnjggJwH19dEAgNbvv8CDKRbQgcDS7cN5sAzh2ra",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3Uu1xTXTjak4et9noeSS8TMNwMYd413GKZCsYqxwEcL7qH9RJRpZfb9oRaw2E4P7sfCgiEgTXNXr8PNXE6ZDLx8z",
+        "slot": 446212828,
+        "blockTime": "2026-09-11T17:23:42Z",
+        "recipient": "7cLsUnjggJwH19dEAgNbvv8CDKRbQgcDS7cN5sAzh2ra",
+        "amountMinor": "4968944"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOB7HxnQ",
+      "login": "raynord22",
+      "publishedWeight": "60000",
+      "effectiveWeight": "60000",
+      "entitlementMinor": "4968944",
+      "wallet": "8sV1CXsVMiAtMFPF5NAEJuLFjwkuMYDbEtTsYnQbQeq4",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "7AessqGZXxqgXrYSVSiymw5AhDhjjYYEDfZ7TbqSm8egVmvv7SC1CfxdsJzz63R1fJEgjJVe9SoxrBbfYNFAmSE",
+        "slot": 446212878,
+        "blockTime": "2026-09-11T17:23:58Z",
+        "recipient": "8sV1CXsVMiAtMFPF5NAEJuLFjwkuMYDbEtTsYnQbQeq4",
+        "amountMinor": "4968944"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjM4ODc1MTI0",
+      "login": "aandreakis",
+      "publishedWeight": "50000",
+      "effectiveWeight": "50000",
+      "entitlementMinor": "4140787",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjExMDI4NDM=",
+      "login": "dannywalter",
+      "publishedWeight": "50000",
+      "effectiveWeight": "50000",
+      "entitlementMinor": "4140787",
+      "wallet": "Bm4h2oJbwB8F1XviTQCJFdfhPt1jdgJYPXu7d3pTfWdT",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2BFQfbX6h9GKu4CYB6W6SwCLYby4wkGRULpGTUQriXeMXdzfMa1TdxRv7wZvLV7NN7t7f9RbSLavs5d2KzAkU25n",
+        "slot": 446212927,
+        "blockTime": "2026-09-11T17:24:15Z",
+        "recipient": "Bm4h2oJbwB8F1XviTQCJFdfhPt1jdgJYPXu7d3pTfWdT",
+        "amountMinor": "4140787"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjc5MDE2Mjkw",
+      "login": "megabyte0x",
+      "publishedWeight": "50000",
+      "effectiveWeight": "50000",
+      "entitlementMinor": "4140787",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOBfwMKg",
+      "login": "0xcii",
+      "publishedWeight": "44500",
+      "effectiveWeight": "44500",
+      "entitlementMinor": "3685300",
+      "wallet": "BtCv9ZbDk95cowQhxB9ZRxqZDR38yBjdUsUDvEZXPZdt",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4WhugDqbMDXiga3yFkKe196S6XxsY8p8rzs4rXTbNaQJuqN3Ri8MkJxkvYxYCWVtx3fxZcypTbKfyu1jbvvk1hL4",
+        "slot": 446212979,
+        "blockTime": "2026-09-11T17:24:31Z",
+        "recipient": "BtCv9ZbDk95cowQhxB9ZRxqZDR38yBjdUsUDvEZXPZdt",
+        "amountMinor": "3685300"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjMxODE2MzUy",
+      "login": "nishimweprince",
+      "publishedWeight": "41500",
+      "effectiveWeight": "41500",
+      "entitlementMinor": "3436853",
+      "wallet": "2q1AF2QVG1kFLrogeVmJ8nYwFG7uFy5u29pdpTxoR1ey",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2RQsa6K3S3oNVqNzfzBjndV4E6ndHoKihUMDZ2LpXgvEimeoZquki73cvbZpXJdk8YdH6RyxoocZio3Sz4VktwJg",
+        "slot": 446213029,
+        "blockTime": "2026-09-11T17:24:48Z",
+        "recipient": "2q1AF2QVG1kFLrogeVmJ8nYwFG7uFy5u29pdpTxoR1ey",
+        "amountMinor": "3436853"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjY5NTc3MjI0",
+      "login": "akshatcoder-hash",
+      "publishedWeight": "40000",
+      "effectiveWeight": "40000",
+      "entitlementMinor": "3312629",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOD5AweA",
+      "login": "arcabotai",
+      "publishedWeight": "40000",
+      "effectiveWeight": "40000",
+      "entitlementMinor": "3312629",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOB1sUFQ",
+      "login": "Kayvan-Zahiri",
+      "publishedWeight": "40000",
+      "effectiveWeight": "40000",
+      "entitlementMinor": "3312629",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOEaXi_Q",
+      "login": "latent-9",
+      "publishedWeight": "40000",
+      "effectiveWeight": "40000",
+      "entitlementMinor": "3312629",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjg4MDg0NTkw",
+      "login": "m7mdd77",
+      "publishedWeight": "40000",
+      "effectiveWeight": "40000",
+      "entitlementMinor": "3312629",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCqljIw",
+      "login": "codebitx",
+      "publishedWeight": "34500",
+      "effectiveWeight": "34500",
+      "entitlementMinor": "2857143",
+      "wallet": "Ffnn6LG4HZAgr77aoLMtYAXWwY87ud6szF69w4CVwQqX",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "47F96dVRfzk6GrAg3JmxT8iGn7LwDEuNAETfKDM2CNSazub7hfpn38utdVdY7FpYexhoDDit4N2dvr8j9N3PSvk7",
+        "slot": 446213081,
+        "blockTime": "2026-09-11T17:25:04Z",
+        "recipient": "Ffnn6LG4HZAgr77aoLMtYAXWwY87ud6szF69w4CVwQqX",
+        "amountMinor": "2857143"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCeXcZg",
+      "login": "swissyai",
+      "publishedWeight": "34500",
+      "effectiveWeight": "34500",
+      "entitlementMinor": "2857143",
+      "wallet": "BVCrxJVHSYvRijYtQPBYAefG16AyQT1AnmE9vccTqBQR",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2b7spCpbjdcythM57efoypRSen5biQM2xfww4iuUgBPr7fov6kRg7DGzEJ6QWDddmexzxjbgRxzZMANqh1ooFX5N",
+        "slot": 446213131,
+        "blockTime": "2026-09-11T17:25:21Z",
+        "recipient": "BVCrxJVHSYvRijYtQPBYAefG16AyQT1AnmE9vccTqBQR",
+        "amountMinor": "2857143"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOBkL2_w",
+      "login": "techforky",
+      "publishedWeight": "34500",
+      "effectiveWeight": "34500",
+      "entitlementMinor": "2857143",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjEzOTg5MDIy",
+      "login": "alphaBenj",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjgxNDQyNDgz",
+      "login": "harshith8gowda",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjUxMTgzNjgz",
+      "login": "jaxernst",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjY2ODQwMTY1",
+      "login": "joonakauranen",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": "7UwU9Zkud4ejrHK5KhgggV9hUjWt5BhewUHHaDHachES",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2wD4MMn8EFakKGQks7neX3ixtoiLBKNjjCCQKfQncMtEZzLiPrFtdYx5CWRLTMMAv9h6R5jrfYy8e4SgEAj9WwQp",
+        "slot": 446213183,
+        "blockTime": "2026-09-11T17:25:38Z",
+        "recipient": "7UwU9Zkud4ejrHK5KhgggV9hUjWt5BhewUHHaDHachES",
+        "amountMinor": "2484472"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjEyNDcxNTI=",
+      "login": "leo-guinan",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOETTs5A",
+      "login": "LuciferMornigstar7",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": "7umegDzpbpcps7reUkk3FV6ywfUEJ4iQwEHoGTbMZ1yj",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "5BQD42745xnvRgewS4DYvXoZhceWEQb6encKBAc7yS9VLAktbytGY9LDN2c1yrq5NXCsGoBPQiHT26Z82ZDFMf3x",
+        "slot": 446213238,
+        "blockTime": "2026-09-11T17:25:54Z",
+        "recipient": "7umegDzpbpcps7reUkk3FV6ywfUEJ4iQwEHoGTbMZ1yj",
+        "amountMinor": "2484472"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjEzNTA5NjE3",
+      "login": "lumix5",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": "3YtL4RoEkfTKKHD8bjKXtLEC5rgoHMAFcnsancsxp1f4",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "362FKqwHSxecUVJbdAHngzx8FDS9tb2uko4A51aR5nULfpMcgkyBJqb5qF1bkSav5a7zPqLxmyDKYgvuzr5GYmbb",
+        "slot": 446213290,
+        "blockTime": "2026-09-11T17:26:11Z",
+        "recipient": "3YtL4RoEkfTKKHD8bjKXtLEC5rgoHMAFcnsancsxp1f4",
+        "amountMinor": "2484472"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjYzMDkyNQ==",
+      "login": "mejiasd3v",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": "8M1b9HzsPq9phEbqbr1KRXykqezrrPQsuKmrxnrFtPuG",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "4uxbH1DxQLaNp175Tnq7sAmGdnNHuYwxWdjYUA8gtKXdcvVKfKc7HBW1NTnvLVMVCXt67uvj4y5p3nX8RLaG96N8",
+        "slot": 446213340,
+        "blockTime": "2026-09-11T17:26:27Z",
+        "recipient": "8M1b9HzsPq9phEbqbr1KRXykqezrrPQsuKmrxnrFtPuG",
+        "amountMinor": "2484472"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOCjmdhQ",
+      "login": "mtcow",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": "AU7vapY4eyDrEjUZWzKKdBiivme7Fpzy9wPob4ASsWqC",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "2M2xAB1SB5Zz9WhJbyi8TSHmhHNqMdPuueKFSdaS5oXY5Z8iTJT4N5rfHnfNTpwVsDNbhV1jizBQzq3iezY7b8dE",
+        "slot": 446213393,
+        "blockTime": "2026-09-11T17:26:44Z",
+        "recipient": "AU7vapY4eyDrEjUZWzKKdBiivme7Fpzy9wPob4ASsWqC",
+        "amountMinor": "2484472"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "U_kgDOEGn_0Q",
+      "login": "RemilioNubilio",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": null,
+      "state": "unclaimed",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCtkWKw",
+      "login": "synapz-org",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": "2MFtJ4zFzjVohmrSXz8CQDY3aRiUeyM2Lh16crR7KXRM",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "5ZV6e26pThrbDfFKgSqjtwexwHxATNbPMbqycPMif5CrBMXuN2vzTyBgV4Z2t6Gr34ue9AqyQSwTZQhNmYPrPQHe",
+        "slot": 446213444,
+        "blockTime": "2026-09-11T17:27:00Z",
+        "recipient": "2MFtJ4zFzjVohmrSXz8CQDY3aRiUeyM2Lh16crR7KXRM",
+        "amountMinor": "2484472"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjkwNDA4MDE5",
+      "login": "tiequan12345",
+      "publishedWeight": "30000",
+      "effectiveWeight": "30000",
+      "entitlementMinor": "2484472",
+      "wallet": "2b4mrrH4uWSiKdeJPJ3RQrkawYpERGHtNYo1jLCnRuZ5",
+      "state": "paid-direct",
+      "observed": {
+        "signature": "3C1YTDZLeUfVQ6FVnw9jz2QVPW8ekewhEN7f7SRC5zwUoLiwMyweTS8wKRMT2YBcPkwj2h3VqKGfQgGutrgzconx",
+        "slot": 446213497,
+        "blockTime": "2026-09-11T17:27:17Z",
+        "recipient": "2b4mrrH4uWSiKdeJPJ3RQrkawYpERGHtNYo1jLCnRuZ5",
+        "amountMinor": "2484472"
+      },
+      "deltaMinor": "0"
+    },
+    {
+      "actorId": "MDQ6VXNlcjI5NDAzOTc2",
+      "login": "ADWilkinson",
+      "publishedWeight": "20000",
+      "effectiveWeight": "20000",
+      "entitlementMinor": "1656315",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOEAQedw",
+      "login": "gblinproject",
+      "publishedWeight": "20000",
+      "effectiveWeight": "20000",
+      "entitlementMinor": "1656315",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjU1MTM3Nzcw",
+      "login": "JasonColapietro",
+      "publishedWeight": "20000",
+      "effectiveWeight": "20000",
+      "entitlementMinor": "1656315",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOD1I2fA",
+      "login": "OxBenji",
+      "publishedWeight": "20000",
+      "effectiveWeight": "20000",
+      "entitlementMinor": "1656315",
+      "wallet": "38g9tzGvMstnc4Gqe38iYxSkq33ihfcKXMCCbZUArdBv",
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjQzMjc0OTYy",
+      "login": "ryan-foo",
+      "publishedWeight": "20000",
+      "effectiveWeight": "20000",
+      "entitlementMinor": "1656315",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjQ0ODQxNjY2",
+      "login": "michaelshapkin",
+      "publishedWeight": "11500",
+      "effectiveWeight": "11500",
+      "entitlementMinor": "952381",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjMzMjkyMTAw",
+      "login": "alexander-schneider",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDODmn68w",
+      "login": "babyblueviper1",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOBw5EJQ",
+      "login": "bensynapse",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOBbCN5Q",
+      "login": "Dark7978",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjg4Mzg2Mjcw",
+      "login": "fishwishes",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": "EJ59A3w6fq36czypk6zF9zRZakY6iXNwp9o5woh7jc5d",
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjkwNDM5MzI0",
+      "login": "FLAVIEN66",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": "GK9e6npEi7JT8Sn4BbCHvmYoJnai22uHSCXRdZU3AMCF",
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDODzxsiQ",
+      "login": "GTCC777",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjY1MTkyMTE=",
+      "login": "jerfletcher",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCrT3gw",
+      "login": "jotrujil03",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOBo3Juw",
+      "login": "lokixc84",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOD-kl7g",
+      "login": "octo-patch",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjY0NDg3ODQ4",
+      "login": "SamsonTobi",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDODwohqg",
+      "login": "Synxneuos",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "MDQ6VXNlcjMzMDQ3MTI5",
+      "login": "twzrd-sol",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOCfFTTA",
+      "login": "Vohlsyr",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    },
+    {
+      "actorId": "U_kgDOC-DBwg",
+      "login": "yablokolabs",
+      "publishedWeight": "10000",
+      "effectiveWeight": "10000",
+      "entitlementMinor": "828157",
+      "wallet": null,
+      "state": "held-below-minimum",
+      "observed": null
+    }
+  ]
+}

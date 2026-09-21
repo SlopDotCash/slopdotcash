@@ -42,8 +42,8 @@ Generated files under `public/brand/`, `public/downloads/`,
 `public/projects/`, `public/protocol/`, and `public/data/cycles/` are build
 outputs. Never edit them by hand.
 
-Operational guides under `backend/`, `cycles/`, `evaluations/`, `funding/`,
-`protocol/`, and `workers/` define subsystem contracts. Keep them focused and
+Operational guides under `backend/`, `cycles/`, `disclosures/`, `evaluations/`,
+`funding/`, `protocol/`, and `workers/` define subsystem contracts. Keep them focused and
 current.
 
 ## Repository map
@@ -54,6 +54,7 @@ skills/         canonical contributor and CI reviewer skills
 evaluations/    reviewed awards for otherwise-unscored useful work
 cycles/         append-only reward lifecycle records
 funding/        append-only direct-funding evidence
+disclosures/    payouts sent outside the verified settlement flow
 protocol/       public attribution and privacy contracts
 backend/        private trace storage boundary
 workers/        narrowly scoped Cloudflare services
