@@ -3612,6 +3612,7 @@ small {
   border-radius: 8px;
 }
 .points-panel h2 {
+  overflow-wrap: anywhere;
   margin-top: 0;
 }
 .points-panel p {
