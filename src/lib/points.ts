@@ -15,7 +15,7 @@ export interface PointAward {
   key: string;
   actor: Pick<GitHubActor, "id" | "login">;
   projectId: string;
-  category: ScoreEvent["category"];
+  category: ScoreEvent["category"] | "payout-received";
   amount: number;
   occurredAt: string;
   sourceId: string;
@@ -55,6 +55,7 @@ const categories = new Set([
   "evidence",
   "substantive-review",
   "evaluated-contribution",
+  "payout-received",
 ]);
 function iso(value: unknown): value is string {
   return (
@@ -128,9 +129,12 @@ export function assertPointsJournal(
       !iso(r.recordedAt) ||
       r.recordedAt > p.generatedAt ||
       !digestPattern.test(r.sourceDigest) ||
-      !["slop-score-v1", "slop-score-v2", "github-merged-history-v1"].includes(
-        r.sourceRule,
-      ) ||
+      ![
+        "slop-score-v1",
+        "slop-score-v2",
+        "github-merged-history-v1",
+        "verified-payout-v1",
+      ].includes(r.sourceRule) ||
       typeof a.provisional !== "boolean" ||
       typeof a.sourceId !== "string" ||
       a.sourceId.length > 256 ||
@@ -138,6 +142,20 @@ export function assertPointsJournal(
       a.workUnitId.length > 300
     )
       throw new Error("Invalid point award");
+    if (a.category === "payout-received") {
+      const cycle = a.sourceId.split(":")[1];
+      if (
+        r.sourceRule !== "verified-payout-v1" ||
+        ![0, 25].includes(a.amount) ||
+        a.provisional ||
+        !/^\d{4}-(0[1-9]|1[0-2])$/.test(cycle ?? "") ||
+        a.sourceId !== `payout:${cycle}:${a.actor.id}` ||
+        a.workUnitId !== a.sourceId ||
+        a.sourceUrl !== `https://slop.cash/cycles/${a.projectId}/${cycle}`
+      )
+        throw new Error("Invalid payout recognition");
+    } else if (r.sourceRule === "verified-payout-v1")
+      throw new Error("Payout rule requires payout evidence");
     const url = new URL(a.sourceUrl);
     if (
       url.protocol !== "https:" ||
@@ -275,6 +293,7 @@ export function applyPointsSnapshot(
     const a = previous.award;
     const project = findProject(a.projectId);
     if (
+      a.category !== "payout-received" &&
       a.amount &&
       !keys.has(a.key) &&
       a.occurredAt >= snapshot.window.from &&
@@ -374,7 +393,12 @@ export function pointMembers(
     );
     m.projects = new Set(m.awards.map((a) => a.projectId)).size;
     m.badges = [
-      "First accepted contribution",
+      ...(m.awards.some((a) => a.category !== "payout-received")
+        ? ["First accepted contribution"]
+        : []),
+      ...(m.awards.some((a) => a.category === "payout-received")
+        ? ["Verified payout"]
+        : []),
       ...(m.awards.some((a) => a.category === "substantive-review")
         ? ["First qualifying review"]
         : []),

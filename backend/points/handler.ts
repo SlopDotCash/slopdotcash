@@ -3,12 +3,15 @@ import { POINTS_RULE } from "../../src/lib/points";
 import { randomToken, sha256Hex } from "../../workers/identity/crypto";
 import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
 import type { D1Database } from "../trace/cloudflare-persistence";
+import { handleX, type XConfiguration } from "./x";
 
 export interface PointsDependencies {
   db: D1Database;
   rateLimitSecret: string;
   identity: { fetch(request: Request): Promise<Response> };
   now?: () => Date;
+  x?: XConfiguration;
+  xFetch?: (input: string, init: RequestInit) => Promise<Response>;
 }
 const origins = new Set([
   "https://slop.cash",
@@ -45,6 +48,7 @@ type Member = {
   joined_at: string;
   public: number;
   welcome: number;
+  social_points?: number;
 };
 function publicMember(m: Member) {
   return {
@@ -52,6 +56,7 @@ function publicMember(m: Member) {
     joinedAt: m.joined_at,
     public: m.public === 1,
     welcome: m.welcome,
+    socialPoints: m.social_points ?? 0,
   };
 }
 /** Dedicated points routes never construct the trace persistence adapter. */
@@ -91,6 +96,25 @@ export async function handlePointsApi(
         );
         return response;
       }
+    }
+    if (route.startsWith("/x/")) return handleX(request, deps, now);
+    if (route === "/people" && request.method === "GET") {
+      const after = url.searchParams.get("after") ?? "";
+      if (after && !/^[A-Za-z0-9_=-]{4,256}$/.test(after))
+        return json(400, { error: "invalid_cursor" });
+      const result = await deps.db
+        .prepare(
+          "SELECT json_group_array(json(item)) items FROM (SELECT json_object('actor',json_object('id',m.actor_id,'login',m.login),'welcome',m.welcome,'socialPoints',COALESCE(a.points,0),'x',CASE WHEN l.public=1 THEN json_object('id',l.x_id,'username',l.username,'verifiedAt',l.verified_at) ELSE NULL END) item FROM points_members m LEFT JOIN points_x_awards a ON a.actor_id=m.actor_id LEFT JOIN points_x_links l ON l.actor_id=m.actor_id WHERE m.public=1 AND m.actor_id>? ORDER BY m.actor_id LIMIT 26)",
+        )
+        .bind(after)
+        .first<{ items: string }>();
+      const items = JSON.parse(result?.items ?? "[]") as {
+        actor: { id: string };
+      }[];
+      return json(200, {
+        people: items.slice(0, 25),
+        next: items.length > 25 ? items[24].actor.id : null,
+      });
     }
     if (route === "/join" && request.method === "POST") {
       const value = (await readBoundedJson(
@@ -158,7 +182,9 @@ export async function handlePointsApi(
       if (results.some((r) => !r.success) || results[1].meta?.changes !== 1)
         throw new Error("Points transaction failed");
       const member = await deps.db
-        .prepare("SELECT * FROM points_members WHERE actor_id=?")
+        .prepare(
+          "SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id=m.actor_id),0) social_points FROM points_members m WHERE actor_id=?",
+        )
         .bind(node)
         .first<Member>();
       if (!member) throw new Error("Missing joined member");
@@ -173,7 +199,7 @@ export async function handlePointsApi(
       const hash = await sha256Hex(token);
       const member = await deps.db
         .prepare(
-          "SELECT m.* FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?",
+          "SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id=m.actor_id),0) social_points FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?",
         )
         .bind(hash, now)
         .first<Member>();
@@ -218,7 +244,7 @@ export async function handlePointsApi(
       // Login collisions fail closed; numeric actor identity remains canonical.
       const row = await deps.db
         .prepare(
-          "SELECT CASE WHEN COUNT(*)=1 THEN json_object('actor',json_object('id',actor_id,'login',login),'joinedAt',joined_at,'public',json('true'),'welcome',welcome) ELSE NULL END AS member FROM points_members WHERE lower(login)=lower(?) AND public=1",
+          "SELECT CASE WHEN COUNT(*)=1 THEN json_object('actor',json_object('id',actor_id,'login',login),'joinedAt',joined_at,'public',json('true'),'welcome',welcome,'socialPoints',COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id=points_members.actor_id),0)) ELSE NULL END AS member FROM points_members WHERE lower(login)=lower(?) AND public=1",
         )
         .bind(login)
         .first<{ member: string | null }>();

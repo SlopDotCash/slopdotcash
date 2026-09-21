@@ -3726,3 +3726,23 @@ small {
 .points-table td:first-child {
   white-space: nowrap;
 }
+
+.points-social-link {
+  display: inline-block;
+  margin: 0.4rem;
+}
+.points-people {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 1rem;
+}
+.points-people li {
+  border: 1px solid var(--line, #ccc);
+  border-radius: 6px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+}

@@ -262,5 +262,13 @@ export class D1IdentityPersistence implements IdentityPersistence {
       .prepare("DELETE FROM identity_assertions WHERE expires_at <= ?")
       .bind(now)
       .run();
+    await this.db
+      .prepare("DELETE FROM points_x_flows WHERE expires_at <= ?")
+      .bind(now)
+      .run();
+    await this.db
+      .prepare("DELETE FROM points_sessions WHERE expires_at <= ?")
+      .bind(now)
+      .run();
   }
 }

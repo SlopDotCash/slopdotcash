@@ -10,6 +10,8 @@ type Env = {
   SLOP_DB: D1Database;
   PRIVATE_TRACES: R2Bucket;
   TRACE_AUTH_SECRET: string;
+  X_CLIENT_ID?: string;
+  X_CLIENT_SECRET?: string;
   OPERATOR_GITHUB_IDS?: string;
   SLOP_IDENTITY: { fetch(request: Request): Promise<Response> };
   ASSETS?: { fetch(request: Request): Promise<Response> };
@@ -129,6 +131,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       db: context.env.SLOP_DB,
       rateLimitSecret: context.env.TRACE_AUTH_SECRET,
       identity: context.env.SLOP_IDENTITY,
+      x:
+        context.env.X_CLIENT_ID && context.env.X_CLIENT_SECRET
+          ? {
+              clientId: context.env.X_CLIENT_ID,
+              clientSecret: context.env.X_CLIENT_SECRET,
+            }
+          : undefined,
     });
   return handleTraceApi(context.request, {
     persistence: new CloudflareTracePersistence(

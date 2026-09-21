@@ -28,6 +28,7 @@ interface Membership {
   joinedAt: string;
   public: boolean;
   welcome: number;
+  socialPoints?: number;
 }
 type State =
   | { status: "loading" }
@@ -78,6 +79,7 @@ function member(value: unknown): Membership {
     typeof m.actor?.id !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(m.actor.login) ||
     m.welcome !== 5 ||
+    (m.socialPoints !== undefined && ![0, 10].includes(m.socialPoints)) ||
     typeof m.public !== "boolean" ||
     !Number.isFinite(Date.parse(m.joinedAt))
   )
@@ -94,6 +96,7 @@ export function PointsProvider({
   const [state, setState] = useState<State>({ status: "loading" });
   const [me, setMe] = useState<Membership | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retries and membership changes refresh public visibility.
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
@@ -163,7 +166,8 @@ export function PointsNav() {
   const total =
     state.status === "ready" && me
       ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0) +
-        me.welcome
+        me.welcome +
+        (me.socialPoints ?? 0)
       : null;
   return (
     <a href="/points">
@@ -273,13 +277,22 @@ export function ProfilePoints({ login }: { login: string }) {
       {state.status === "ready" && (m || identity) ? (
         <>
           <p className="points-total">
-            {((m?.total ?? 0) + (identity?.welcome ?? 0)).toLocaleString()}{" "}
+            {(
+              (m?.total ?? 0) +
+              (identity?.welcome ?? 0) +
+              (identity?.socialPoints ?? 0)
+            ).toLocaleString()}{" "}
             <span>pts</span>
           </p>
           <p>
-            {m?.monthly.toLocaleString() ?? "0"} contribution points this month
-            {identity ? " · 5 welcome points" : ""}
+            {m?.monthly.toLocaleString() ?? "0"} earned points this month
+            {identity
+              ? ` · 5 welcome points · ${identity.socialPoints ?? 0} X connection points`
+              : ""}
           </p>
+          {m || identity ? (
+            <PublicXLink actorId={(m?.actor ?? identity!.actor).id} />
+          ) : null}
           <p>{m?.badges.join(" · ") ?? "Welcome to Slop"}</p>
           <ul className="points-history">
             {m?.awards.slice(0, 20).map((a) => (
@@ -530,6 +543,8 @@ export function PointsPage() {
       <p>Record your participation and accepted contributions.</p>
       <p>{POINTS_NOTICE}</p>
       <JoinPoints />
+      <SocialConnections />
+      <CommunityPeople />
       <PointsStandings />
       <section className="points-panel">
         <h2>Ways to earn</h2>
@@ -540,8 +555,10 @@ export function PointsPage() {
         <p>
           Tiered contributions earn 10, 30, 90, 240, 450, or 750 points.
           Historical merges start at 10 points unless a verified score provides
-          a different amount. Welcome points do not affect contribution
-          standings.
+          a different amount. Each finalized project payout cycle earns its
+          recipient 25 points, regardless of amount or transaction count.
+          Welcome and X connection points appear on profiles and in the
+          community directory; they do not affect earned-point standings.
         </p>
         <p>
           Points persist across months. Corrections are recorded in the history.
@@ -623,7 +640,7 @@ export function PointsStandings({
           >
             <option value="month">This month (UTC)</option>
             <option value="lifetime">Recorded history</option>
-            <option value="new">New contributors · 30 days</option>
+            <option value="new">New earners · 30 days</option>
           </select>
         </label>
         {!projectId ? (
@@ -714,10 +731,375 @@ export function PointsStandings({
         </>
       ) : null}
       <p className="points-meta">
-        Contribution points only. Equal totals share a rank. Historical review
-        coverage follows verified records.
+        Contribution and verified payout points. Equal totals share a rank.
+        Historical review coverage follows verified records.
       </p>
       {compact ? <a href="/points">Explore all points</a> : null}
+    </section>
+  );
+}
+
+type XAccount = { id: string; username: string; verifiedAt: string };
+function xAccount(value: unknown): XAccount {
+  const x = value as XAccount;
+  if (
+    !x ||
+    !/^[0-9]{1,30}$/.test(x.id) ||
+    !/^[A-Za-z0-9_]{1,15}$/.test(x.username) ||
+    !Number.isFinite(Date.parse(x.verifiedAt))
+  )
+    throw new Error("Invalid X identity");
+  return x;
+}
+function XAccountLink({ account }: { account: XAccount }) {
+  return (
+    <a
+      href={`https://x.com/intent/user?user_id=${encodeURIComponent(account.id)}`}
+      target="_blank"
+      rel="noreferrer"
+      title={`Account connected ${account.verifiedAt.slice(0, 10)}`}
+    >
+      X · @{account.username}
+    </a>
+  );
+}
+export function PublicXLink({ actorId }: { actorId: string }) {
+  const [account, setAccount] = useState<XAccount | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setAccount(null);
+    setFailed(false);
+    if (!productOrigin()) return;
+    const c = new AbortController();
+    void requestJson(
+      `/api/v1/points/x/profile?actor=${encodeURIComponent(actorId)}`,
+      { signal: c.signal },
+    )
+      .then((v) => setAccount(v ? xAccount(v) : null))
+      .catch(() => {
+        if (!c.signal.aborted) setFailed(true);
+      });
+    return () => c.abort();
+  }, [actorId]);
+  return account ? (
+    <span className="points-social-link">
+      <XAccountLink account={account} />
+    </span>
+  ) : failed ? (
+    <small>X link unavailable</small>
+  ) : null;
+}
+function SocialConnections() {
+  const { me, setMe } = useContext(Context);
+  const [data, setData] = useState<{
+    configured: boolean;
+    account: (XAccount & { public: number }) | null;
+    award: { points: number; awardedAt: string } | null;
+  } | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [publish, setPublish] = useState(false);
+  const [version, setVersion] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version explicitly refreshes the server state after account mutations.
+  useEffect(() => {
+    setData(null);
+    setPublish(false);
+    if (!me || !productOrigin()) return;
+    const c = new AbortController();
+    void requestJson("/api/v1/points/x/me", { signal: c.signal })
+      .then((value) => {
+        const v = value as NonNullable<typeof data>;
+        if (
+          typeof v.configured !== "boolean" ||
+          (v.account && ![0, 1].includes(v.account.public)) ||
+          (v.award &&
+            (v.award.points !== 10 ||
+              !Number.isFinite(Date.parse(v.award.awardedAt))))
+        )
+          throw new Error("Invalid connection state");
+        if (v.account) xAccount(v.account);
+        setData(v);
+      })
+      .catch(() => {
+        if (!c.signal.aborted)
+          setMessage("X connection details are unavailable. Retry below.");
+      });
+    return () => c.abort();
+  }, [me, version]);
+  const outcome = new URLSearchParams(window.location.search).get("x");
+  async function action(path: string, body: unknown) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const value = await requestJson(`/api/v1/points/x/${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (path === "start") {
+        const url = new URL(
+          (value as { authorizationUrl: string }).authorizationUrl,
+        );
+        if (
+          url.origin !== "https://x.com" ||
+          url.pathname !== "/i/oauth2/authorize"
+        )
+          throw new Error("Invalid authorization");
+        window.location.assign(url.href);
+        return;
+      }
+      setVersion((v) => v + 1);
+      if (me) setMe({ ...me });
+      setMessage(
+        path === "disconnect"
+          ? "X disconnected. Your earned points are retained."
+          : "X visibility updated.",
+      );
+    } catch {
+      setMessage("Could not complete the X connection request. Please retry.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="points-panel" aria-label="Connect X">
+      <h2>Connect your X account</h2>
+      <p>
+        Sloperators, maintainers, reviewers, and supporters can all connect.
+        Earn 10 points once and help people find you.
+      </p>
+      {outcome === "connected" ? (
+        <p role="status">X connected. Your connection points are recorded.</p>
+      ) : outcome === "cancelled" ? (
+        <p role="status">X connection cancelled. No new points were awarded.</p>
+      ) : outcome === "failed" ? (
+        <p role="status">
+          X could not be connected. Try again; an X account already claimed by
+          another Slop member cannot be reused.
+        </p>
+      ) : null}
+      {!me ? (
+        <p>Join with GitHub above, then connect X.</p>
+      ) : !data ? (
+        <>
+          <p role="status">{message || "Loading connection details…"}</p>
+          <button type="button" onClick={() => setVersion((v) => v + 1)}>
+            Retry X details
+          </button>
+        </>
+      ) : (
+        <>
+          {data.award ? (
+            <p>
+              10 connection points · earned {data.award.awardedAt.slice(0, 10)}
+            </p>
+          ) : null}
+          {data.account ? (
+            <>
+              <p>
+                <XAccountLink account={data.account} />
+              </p>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={data.account.public === 1}
+                  disabled={busy}
+                  onChange={(e) =>
+                    void action("visibility", { public: e.target.checked })
+                  }
+                />
+                Show my X account with my public membership
+              </label>
+              {!me.public ? (
+                <p>
+                  Your membership is private. Publish it above to display your X
+                  link.
+                </p>
+              ) : null}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void action("disconnect", {})}
+              >
+                Disconnect X
+              </button>
+            </>
+          ) : null}
+          {data.configured ? (
+            <>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={publish}
+                  disabled={busy}
+                  onChange={(e) => setPublish(e.target.checked)}
+                />
+                Show this X connection with my public membership
+              </label>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void action("start", { public: publish })}
+              >
+                {busy
+                  ? "Connecting…"
+                  : data.account
+                    ? "Reconnect or change X account"
+                    : "Connect X · +10 points once"}
+              </button>
+            </>
+          ) : (
+            <p>X connections are not enabled yet.</p>
+          )}
+          <p>
+            Connecting verifies your account. Slop does not request posting or
+            messaging permissions. Reconnecting, changing handles, or
+            disconnecting does not create another award.
+          </p>
+          <p role="status">{message}</p>
+        </>
+      )}
+    </section>
+  );
+}
+type Person = {
+  actor: { id: string; login: string };
+  welcome: number;
+  socialPoints: number;
+  x: XAccount | null;
+};
+function CommunityPeople() {
+  const { state, me } = useContext(Context);
+  const [people, setPeople] = useState<Person[]>([]);
+  const [cursor, setCursor] = useState("");
+  const [prior, setPrior] = useState<string[]>([]);
+  const [next, setNext] = useState<string | null>(null);
+  const [status, setStatus] = useState("loading");
+  const [attempt, setAttempt] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retries and membership changes refresh public visibility.
+  useEffect(() => {
+    if (!productOrigin()) {
+      setStatus("preview");
+      return;
+    }
+    const c = new AbortController();
+    setStatus("loading");
+    void requestJson(
+      `/api/v1/points/people?after=${encodeURIComponent(cursor)}`,
+      { signal: c.signal },
+    )
+      .then((value) => {
+        const v = value as { people: Person[]; next: string | null };
+        if (
+          !Array.isArray(v.people) ||
+          v.people.length > 25 ||
+          (v.next !== null && !/^[A-Za-z0-9_=-]{4,256}$/.test(v.next))
+        )
+          throw new Error("Invalid community page");
+        for (const p of v.people) {
+          if (
+            !/^[A-Za-z0-9_=-]{4,256}$/.test(p.actor?.id) ||
+            !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(p.actor.login) ||
+            p.welcome !== 5 ||
+            ![0, 10].includes(p.socialPoints)
+          )
+            throw new Error("Invalid community member");
+          if (p.x) xAccount(p.x);
+        }
+        setPeople(v.people);
+        setNext(v.next);
+        setStatus("ready");
+      })
+      .catch(() => {
+        if (!c.signal.aborted) setStatus("error");
+      });
+    return () => c.abort();
+  }, [cursor, attempt, me]);
+  return (
+    <section
+      className="points-panel"
+      id="people"
+      aria-label="Community members"
+    >
+      <h2>Meet the community</h2>
+      <p>
+        Everyone who chooses a public membership can appear here, including
+        people still getting started.
+      </p>
+      {status === "preview" ? (
+        <a href="https://slop.cash/points#people">
+          View public members on slop.cash
+        </a>
+      ) : status === "loading" ? (
+        <p role="status">Loading members…</p>
+      ) : status === "error" ? (
+        <>
+          <p role="status">Community members are unavailable.</p>
+          <button type="button" onClick={() => setAttempt((v) => v + 1)}>
+            Retry members
+          </button>
+        </>
+      ) : (
+        <>
+          <ul className="points-people">
+            {people.map((p) => {
+              const earned =
+                state.status === "ready"
+                  ? (state.members.find((m) => m.actor.id === p.actor.id)
+                      ?.total ?? 0)
+                  : null;
+              const steward = PROJECTS.filter(
+                (project) =>
+                  project.authority.state === "verified" &&
+                  project.steward.github.nodeId === p.actor.id,
+              );
+              return (
+                <li key={p.actor.id}>
+                  <a
+                    href={`/contributors/${encodeURIComponent(p.actor.login)}`}
+                  >
+                    {p.actor.login}
+                  </a>
+                  <span>
+                    {earned === null
+                      ? `${p.welcome + p.socialPoints} participation pts · earned points unavailable`
+                      : `${(earned + p.welcome + p.socialPoints).toLocaleString()} pts`}
+                  </span>
+                  {steward.length ? (
+                    <small>
+                      Project steward · {steward.map((p) => p.name).join(", ")}
+                    </small>
+                  ) : null}
+                  {p.x ? <XAccountLink account={p.x} /> : null}
+                </li>
+              );
+            })}
+          </ul>
+          {!people.length ? <p>No public members on this page yet.</p> : null}
+          <div className="points-controls">
+            <button
+              type="button"
+              disabled={!prior.length}
+              onClick={() => {
+                setCursor(prior.at(-1) ?? "");
+                setPrior((p) => p.slice(0, -1));
+              }}
+            >
+              Previous members
+            </button>
+            <button
+              type="button"
+              disabled={!next}
+              onClick={() => {
+                setPrior((p) => [...p, cursor]);
+                setCursor(next ?? "");
+              }}
+            >
+              Next members
+            </button>
+          </div>
+        </>
+      )}
     </section>
   );
 }

@@ -11,6 +11,7 @@
   },
   "include": [
     "src/lib/points.ts",
+    "src/lib/payout-points.ts",
     "src/lib/squads-batch-message.ts",
     "src/lib/squads-execution-registry.generated.ts",
     "src/lib/squads-execution-registry.ts",

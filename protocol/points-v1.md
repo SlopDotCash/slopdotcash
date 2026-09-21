@@ -39,11 +39,11 @@ process; never put private security evidence in a public appeal.
 ## Display
 
 Recorded totals persist between months, subject to explicit corrections.
-Monthly contribution standings use UTC occurrence dates, exclude welcome points,
+Monthly earned-point standings use UTC occurrence dates, include verified payout points, and exclude welcome and X connection points,
 and give equal totals equal ranks. Newcomer standings use the first recorded
-accepted contribution within the last 30 days. Badges recognize the first
+earning event within the last 30 days. Badges recognize the first
 accepted contribution, first qualifying review, and work in three projects.
-They grant no additional points or benefits. There are no referral commissions,
+They grant no additional points or benefits. Verified finalized payouts also receive a recognition badge. There are no referral commissions,
 attendance rewards, multipliers, countdowns, purchase or transfer controls.
 
 Balances have timestamps and explicit coverage. Missing or invalid data is
@@ -103,3 +103,63 @@ projection through a reviewed develop release; never delete history or reissue
 welcome awards. Re-enable only after exact replay and reward-isolation tests.
 Measure first accepted outcomes, returning contributors, reviewer workload,
 source duplication, corrections, and publication delay, not points minted.
+
+
+## X connections and payout recognition
+
+The first verified X connection earns **10 points once per GitHub account**.
+The X numeric ID is reserved to its verified GitHub identity to prevent reuse
+across accounts. A member can reconnect or switch X accounts, but earns no extra
+points. Disconnecting removes the visible link while preserving award uniqueness.
+These are participation points, not accepted-work score or monthly earned rank.
+Public community cards include opted-in members even without accepted work.
+
+X uses OAuth 2.0 authorization code with S256 PKCE and a confidential client.
+The browser flow cookie is separate, HttpOnly/Secure/SameSite=Lax, expires after
+ten minutes, and is bound to the initiating GitHub web session. Callback state
+is single-use. The application verifies `/2/users/me`, stores only account ID,
+handle and verification time, and attempts to revoke the temporary provider
+token immediately; provider failure never causes a token to be persisted.
+No refresh token, posts, messages, follower lists, or provider token is retained.
+The required read scopes are `tweet.read users.read`; posting, follow actions,
+and messaging permissions are not requested. X handles are observed snapshots;
+reconnect to refresh a changed handle. X control does not confer GitHub project,
+organization, wallet, or payment authority.
+
+Membership and X visibility each require opt-in. Both must be public before an
+X link appears to others. Changing either preference hides the link. Signing
+out cancels session-bound linking; connecting does not publish any post or DM.
+
+Each recipient earns **25 points per project and finalized monthly payout
+cycle** with positive paid principal. Dollar size, fee size, separate reward
+lines, and transaction splitting never multiply this award. The immutable key
+contains project, cycle and GitHub actor ID, and the occurrence date is the
+verified settlement date. Proposed, approved, scheduled, held, unclaimed,
+partial, and external-prize projections do not earn payout points. Existing
+paid cycles are backfilled from complete validated lifecycle records; trusted
+online generation rechecks finalized chain evidence before publishing new
+awards. Receiving recognition never changes financial allocations or fees.
+A wallet address alone does not identify a GitHub payer, so no payer identity
+or organization-to-person relationship is invented.
+
+### Enabling X
+
+Create or use an X confidential Web App with OAuth 2.0. Register each intended
+callback exactly (no wildcard):
+
+- `https://slop.cash/api/v1/points/x/callback`
+- `https://slop.tech/api/v1/points/x/callback`
+- `https://eliza.army/api/v1/points/x/callback` (only if supporting the alias)
+
+Place `X_CLIENT_ID` and `X_CLIENT_SECRET` together in the protected GitHub
+production environment. The existing protected develop release installs them
+as encrypted Pages secrets and applies migration `0009_points_social.sql`.
+Unattended schedules do not provision credentials. With neither configured,
+the app reports that X connections are not enabled; partial configuration is
+rejected. Provider account/API access and a real callback must be verified at
+activation; tests with provider doubles are not live OAuth evidence.
+
+Primary references checked during implementation:
+[X authorization and PKCE](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code),
+[X token exchange and revocation](https://docs.x.com/fundamentals/authentication/oauth-2-0/user-access-token),
+[X endpoint scope mapping](https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping).

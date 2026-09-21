@@ -8,6 +8,7 @@ import {
   PointsProvider,
   PointsStandings,
   ProfilePoints,
+  PublicXLink,
 } from "./Points";
 
 export {
@@ -2046,6 +2047,11 @@ function ProjectPage({
                   ? "inbound terms unknown"
                   : `${project.terms.inbound.mode} inbound terms`}{" "}
                 · <a href={`/projects/${project.id}/terms.json`}>Terms</a>
+                {project.steward.github.type === "User" ? (
+                  <PublicXLink actorId={project.steward.github.nodeId} />
+                ) : null}
+                {" · "}
+                <a href="/points#people">Meet contributors and maintainers</a>
               </p>
               {project.terms.externalPrize ? (
                 <p className="project-policy-warning">

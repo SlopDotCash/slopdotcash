@@ -311,6 +311,8 @@ describe("scheduled maintenance", () => {
       expect(writes.map((write) => write.query)).toEqual([
         "DELETE FROM identity_oauth_flows WHERE expires_at <= ?",
         "DELETE FROM identity_assertions WHERE expires_at <= ?",
+        "DELETE FROM points_x_flows WHERE expires_at <= ?",
+        "DELETE FROM points_sessions WHERE expires_at <= ?",
         expect.stringContaining("identity_rate_limits"),
       ]);
       expect(error.mock.calls.map((call) => call[0])).toEqual([

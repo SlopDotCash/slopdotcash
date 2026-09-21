@@ -457,6 +457,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
+          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
         # wrangler.toml owns pages_build_output_dir. A positional directory
         # bypasses that deployment contract and must not be added here.
         run: |
@@ -507,6 +509,19 @@ jobs:
           }
           NODE
 
+          # Optional X credentials are installed only by this protected code release.
+          if [ -n "$X_CLIENT_ID" ] || [ -n "$X_CLIENT_SECRET" ]; then
+            x_secrets="$RUNNER_TEMP/slop-x-secrets.json"
+            node - "$x_secrets" <<'NODE'
+          const { writeFileSync } = require("node:fs");
+          const { X_CLIENT_ID, X_CLIENT_SECRET } = process.env;
+          if (!X_CLIENT_ID || !X_CLIENT_SECRET) throw new Error("X OAuth credentials must be configured together");
+          writeFileSync(process.argv[2], JSON.stringify({ X_CLIENT_ID, X_CLIENT_SECRET }), { mode: 0o600 });
+          NODE
+            ./node_modules/.bin/wrangler pages secret bulk "$x_secrets" --project-name eliza-computer
+            rm -f "$x_secrets"
+          fi
+
           pages_secrets="$RUNNER_TEMP/slop-pages-secrets.txt"
           ./node_modules/.bin/wrangler pages secret list \
             --project-name eliza-computer > "$pages_secrets"
@@ -520,7 +535,10 @@ jobs:
           const actual = [...contents.matchAll(/^\s*-\s+([A-Z][A-Z0-9_]*):\s+Value Encrypted\s*$/gmu)]
             .map((match) => match[1])
             .sort();
-          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+          const xKeys = actual.filter((name) => name === "X_CLIENT_ID" || name === "X_CLIENT_SECRET");
+          if (xKeys.length === 1) throw new TypeError("X OAuth credentials must be configured together");
+          const required = actual.filter((name) => !xKeys.includes(name));
+          if (JSON.stringify(required) !== JSON.stringify(expected)) {
             throw new TypeError("Pages secret inventory is incomplete or contains unexpected entries");
           }
           NODE

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { readBoundedJson, readBoundedText } from "../src/lib/browser-json";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
+import { payoutPointAwards } from "../src/lib/payout-points";
 import {
   appendPointAwards,
   applyPointsSnapshot,
@@ -15,6 +16,7 @@ import {
   type PointsJournal,
   pointMembers,
 } from "../src/lib/points";
+import { syncCycleIndex } from "./sync-cycle-index";
 
 function hash(s: string) {
   return createHash("sha256").update(s).digest("hex");
@@ -202,6 +204,18 @@ export async function generatePoints(
     if (!applied.has(digest))
       journal = applyPointsSnapshot(journal, snapshot, digest, now);
   }
+  const cycles = await syncCycleIndex({
+    checkOnly: true,
+    online: options.online,
+    generatedAt: now,
+  });
+  journal = appendPointAwards(
+    journal,
+    payoutPointAwards(cycles),
+    hash(JSON.stringify(cycles)),
+    "verified-payout-v1",
+    now,
+  );
   const evaluations = loadEvaluatorAwardEvents();
   const reviews = JSON.parse(
     await readFile("data/accepted-review-history.json", "utf8"),
