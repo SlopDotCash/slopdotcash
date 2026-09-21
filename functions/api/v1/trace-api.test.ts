@@ -1,3 +1,4 @@
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { describe, expect, it, vi } from "vitest";
 import { signApiToken, verifyApiToken } from "../../../backend/trace/auth";
 import type {
@@ -12,6 +13,8 @@ import type {
   TraceRun,
   TraceUploadIntent,
   WalletClaim,
+  WalletPossessionAttestationRecord,
+  WalletPossessionChallengeRecord,
 } from "../../../backend/trace/contracts";
 import {
   handleTraceApi,
@@ -43,6 +46,14 @@ class MemoryPersistence implements TracePersistence {
   readonly grants = new Map<string, CreateGrantInput & { consumed: boolean }>();
   readonly audits: AuditInput[] = [];
   readonly claims = new Map<string, WalletClaim>();
+  readonly possessionChallenges = new Map<
+    string,
+    WalletPossessionChallengeRecord
+  >();
+  readonly possessionAttestations = new Map<
+    string,
+    WalletPossessionAttestationRecord
+  >();
   failNextPut = false;
   failNextAudit = false;
 
@@ -327,6 +338,40 @@ class MemoryPersistence implements TracePersistence {
 
   async getWalletClaim(claimId: string): Promise<WalletClaim | null> {
     return this.claims.get(claimId) ?? null;
+  }
+
+  async createWalletPossessionChallenge(
+    record: WalletPossessionChallengeRecord,
+  ): Promise<void> {
+    this.possessionChallenges.set(record.challengeId, record);
+  }
+
+  async consumeWalletPossessionChallenge(
+    challengeId: string,
+    consumedAt: string,
+  ): Promise<WalletPossessionChallengeRecord | null> {
+    const record = this.possessionChallenges.get(challengeId);
+    if (record === undefined || record.consumedAt !== null) return null;
+    const consumed = { ...record, consumedAt };
+    this.possessionChallenges.set(challengeId, consumed);
+    return consumed;
+  }
+
+  async createWalletPossessionAttestation(
+    record: WalletPossessionAttestationRecord,
+    audit: AuditInput,
+  ): Promise<PersistenceResult<WalletPossessionAttestationRecord>> {
+    const existing = this.possessionAttestations.get(record.claimId);
+    if (existing !== undefined) return { status: "existing", value: existing };
+    this.possessionAttestations.set(record.claimId, record);
+    this.audits.push(audit);
+    return { status: "created", value: record };
+  }
+
+  async getWalletPossessionAttestation(
+    claimId: string,
+  ): Promise<WalletPossessionAttestationRecord | null> {
+    return this.possessionAttestations.get(claimId) ?? null;
   }
 
   async getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null> {
@@ -1835,6 +1880,261 @@ describe("private trace API", () => {
     expect(invalidRunId.status).toBe(400);
     expect(await invalidRunId.json()).toMatchObject({
       error: "invalid_request",
+    });
+  });
+});
+
+const BASE58_ALPHABET =
+  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function base58(bytes: Uint8Array): string {
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let index = 0; index < digits.length; index += 1) {
+      carry += digits[index] << 8;
+      digits[index] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  let leading = "";
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    leading += "1";
+  }
+  return (
+    leading +
+    digits
+      .reverse()
+      .map((digit) => BASE58_ALPHABET[digit])
+      .join("")
+  );
+}
+
+function base64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/** Disposable synthetic key material. No production key is created here. */
+function disposableSigner(seed: number) {
+  const privateKey = new Uint8Array(32).fill(seed);
+  return { privateKey, address: base58(ed25519.getPublicKey(privateKey)) };
+}
+
+async function registerClaim(
+  deps: TraceApiDependencies,
+  bearer: string,
+  address: string,
+): Promise<string> {
+  const created = await handleTraceApi(
+    request("wallet-claims", "POST", bearer, JSON.stringify({ address }), {
+      "content-type": "application/json",
+    }),
+    deps,
+  );
+  expect(created.status).toBe(201);
+  return ((await created.json()) as { claimId: string }).claimId;
+}
+
+async function issuedChallenge(
+  deps: TraceApiDependencies,
+  bearer: string,
+  claimId: string,
+) {
+  const response = await handleTraceApi(
+    request(`wallet-claims/${claimId}/possession-challenge`, "POST", bearer),
+    deps,
+  );
+  expect(response.status).toBe(201);
+  return (await response.json()) as {
+    challenge: Record<string, unknown>;
+    message: string;
+  };
+}
+
+function signed(privateKey: Uint8Array, message: string): string {
+  return base64(ed25519.sign(new TextEncoder().encode(message), privateKey));
+}
+
+describe("wallet destination possession", () => {
+  it("records a proof signed by the claimed destination key", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const signer = disposableSigner(7);
+    const claimId = await registerClaim(deps, contributor, signer.address);
+
+    const unproven = await handleTraceApi(
+      new Request(
+        `https://api.slop.cash/api/v1/wallet-claims/${claimId}/possession`,
+      ),
+      deps,
+    );
+    expect(unproven.status).toBe(200);
+    expect(await unproven.json()).toMatchObject({
+      state: "unproven",
+      attestedAt: null,
+    });
+
+    const { challenge, message } = await issuedChallenge(
+      deps,
+      contributor,
+      claimId,
+    );
+    const proved = await handleTraceApi(
+      request(
+        `wallet-claims/${claimId}/possession`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          challenge,
+          signature: signed(signer.privateKey, message),
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(proved.status).toBe(201);
+    expect(await proved.json()).toMatchObject({ state: "proven" });
+
+    const published = await handleTraceApi(
+      new Request(
+        `https://api.slop.cash/api/v1/wallet-claims/${claimId}/possession`,
+      ),
+      deps,
+    );
+    expect(await published.json()).toMatchObject({
+      state: "proven",
+      attestedAt: NOW.toISOString(),
+    });
+  });
+
+  it("refuses a proof signed by a key that is not the claimed destination", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const owner = disposableSigner(7);
+    const attacker = disposableSigner(9);
+    const claimId = await registerClaim(deps, contributor, owner.address);
+    const { challenge, message } = await issuedChallenge(
+      deps,
+      contributor,
+      claimId,
+    );
+    const response = await handleTraceApi(
+      request(
+        `wallet-claims/${claimId}/possession`,
+        "POST",
+        contributor,
+        JSON.stringify({
+          challenge,
+          signature: signed(attacker.privateKey, message),
+        }),
+        { "content-type": "application/json" },
+      ),
+      deps,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: "invalid_possession_proof",
+    });
+  });
+
+  it("consumes a challenge once, so a captured proof cannot be replayed", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    const signer = disposableSigner(7);
+    const claimId = await registerClaim(deps, contributor, signer.address);
+    const { challenge, message } = await issuedChallenge(
+      deps,
+      contributor,
+      claimId,
+    );
+    const signature = signed(signer.privateKey, message);
+    const body = JSON.stringify({ challenge, signature });
+    const first = await handleTraceApi(
+      request(
+        `wallet-claims/${claimId}/possession`,
+        "POST",
+        contributor,
+        body,
+        {
+          "content-type": "application/json",
+        },
+      ),
+      deps,
+    );
+    expect(first.status).toBe(201);
+    // The attestation already exists, so the replay reads it back rather than
+    // recording a second one.
+    const replay = await handleTraceApi(
+      request(
+        `wallet-claims/${claimId}/possession`,
+        "POST",
+        contributor,
+        body,
+        {
+          "content-type": "application/json",
+        },
+      ),
+      deps,
+    );
+    expect(replay.status).toBe(200);
+    const store = deps.persistence as unknown as MemoryPersistence;
+    expect(store.possessionAttestations.size).toBe(1);
+  });
+
+  it("refuses to issue a challenge for another contributor's claim", async () => {
+    const deps = dependencies();
+    const owner = await token("42", "octocat", ["contributor"]);
+    const stranger = await token("77", "hubot", ["contributor"]);
+    const claimId = await registerClaim(
+      deps,
+      owner,
+      disposableSigner(7).address,
+    );
+    const response = await handleTraceApi(
+      request(
+        `wallet-claims/${claimId}/possession-challenge`,
+        "POST",
+        stranger,
+      ),
+      deps,
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("reports an off-curve destination as unprovable instead of failing it", async () => {
+    const deps = dependencies();
+    const contributor = await token("42", "octocat", ["contributor"]);
+    // A canonical address that is not a point on the curve, the shape a program
+    // derived address or a Squads vault takes.
+    const offCurve = base58(new Uint8Array(32).fill(0xff));
+    const claimId = await registerClaim(deps, contributor, offCurve);
+    const published = await handleTraceApi(
+      new Request(
+        `https://api.slop.cash/api/v1/wallet-claims/${claimId}/possession`,
+      ),
+      deps,
+    );
+    expect(await published.json()).toMatchObject({
+      state: "not-provable-by-signature",
+    });
+    const challenge = await handleTraceApi(
+      request(
+        `wallet-claims/${claimId}/possession-challenge`,
+        "POST",
+        contributor,
+      ),
+      deps,
+    );
+    expect(challenge.status).toBe(409);
+    expect(await challenge.json()).toMatchObject({
+      error: "address_not_signable",
     });
   });
 });
