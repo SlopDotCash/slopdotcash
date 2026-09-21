@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { lapseRewardAllocation } from "../src/lib/review-lapse";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import { snapshotFixture } from "../tests/fixtures";
@@ -179,6 +180,50 @@ describe("prior cycle accrual", () => {
       projectId: "eliza",
     });
     expect([...held.accruedMinor]).toEqual([]);
+  });
+
+  it("carries a lapsed row forward and unblocks the next close", async () => {
+    const root = await mkdtemp(join(tmpdir(), "slop-prior-lapse-"));
+    const directory = join(root, "eliza", "2026-07");
+    await mkdir(directory, { recursive: true });
+    const proposal = julyProposal();
+    proposal.allocations[0].state = "proposed";
+    proposal.allocations[0].wallet = {
+      address: "11111111111111111111111111111111",
+      chain: "solana",
+      observedAt: "2026-08-02T00:00:00.000Z",
+      sourceCommit: "b".repeat(40),
+      sourceUrl: `https://github.com/finish-line/finish-line/blob/${"b".repeat(40)}/README.md`,
+    };
+    const path = join(directory, "proposal.json");
+    await writeFile(path, `${JSON.stringify(proposal)}\n`);
+
+    // A creator who never acts jams the project's next close indefinitely.
+    await expect(
+      loadPriorCycleAccrual({
+        asOf: "2026-09-02T00:00:00.000Z",
+        cycleId: "2026-08",
+        cyclesRoot: root,
+        projectId: "eliza",
+      }),
+    ).rejects.toThrow("has unresolved proposals");
+
+    const lapsed = lapseRewardAllocation(
+      proposal,
+      proposal.review.endsAt,
+      Date.parse("2026-09-02T00:00:00.000Z"),
+    );
+    await writeFile(path, `${JSON.stringify(lapsed)}\n`);
+
+    const result = await loadPriorCycleAccrual({
+      asOf: "2026-09-02T00:00:00.000Z",
+      cycleId: "2026-08",
+      cyclesRoot: root,
+      projectId: "eliza",
+    });
+    // The close proceeds and the contributor keeps the frozen position.
+    expect(result.accruedMinor.get("U_fixture")).toBe("10000000000");
+    expect(result.actorLogins.get("U_fixture")).toBe("finish-line");
   });
 
   it("refuses an unresolved prior review", async () => {

@@ -225,7 +225,8 @@ export async function loadUnsafeDestinationHistory(input: {
 /**
  * Carries only reviewed, unpaid accrual states. Approved payout intents remain
  * attached to their original cycle, while exclusions and ordinary manual holds never
- * become new payment proposals automatically.
+ * become new payment proposals automatically. Rows held by a review lapse do
+ * carry, because no creator decision was ever recorded against them.
  */
 export async function loadPriorCycleAccrual(input: {
   asOf: string;
@@ -320,10 +321,17 @@ export async function loadPriorCycleAccrual(input: {
   const accruedMinor = new Map<string, string>();
   const actorLogins = new Map<string, string>();
   for (const row of proposal.allocations) {
+    // A review lapse is an absent decision, not a decision against the
+    // contributor, so a lapsed row carries forward exactly like an unclaimed
+    // one. Creator inaction must not be able to extinguish a frozen suggestion.
     if (
       row.state !== "held-below-minimum" &&
       row.state !== "unclaimed" &&
-      !(row.state === "held" && row.hold?.kind === "unsafe-destination")
+      !(
+        row.state === "held" &&
+        (row.hold?.kind === "review-lapsed" ||
+          row.hold?.kind === "unsafe-destination")
+      )
     ) {
       continue;
     }
