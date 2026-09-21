@@ -179,18 +179,20 @@ export function ProfileActivity({
             ))}
           </div>
           <p className="points-meta">
-            All recorded PRs in Slop’s active repositories · checked{" "}
+            Slop repository history · updated{" "}
             {new Date(state.index.generatedAt).toLocaleString()}
             {Date.now() - Date.parse(state.index.generatedAt) > 8 * 3600000
               ? " · Stale: refresh pending"
               : ""}
-            . Statuses were observed between{" "}
-            {new Date(state.index.startedAt).toLocaleString()} and{" "}
-            {new Date(state.index.generatedAt).toLocaleString()}.
           </p>
           {p ? (
             <details>
               <summary>PR counts by repository</summary>
+              <p className="points-meta">
+                Statuses observed between{" "}
+                {new Date(state.index.startedAt).toLocaleString()} and{" "}
+                {new Date(state.index.generatedAt).toLocaleString()}.
+              </p>
               <ul>
                 {p.repositories.map((r) => (
                   <li key={r.repository}>
@@ -215,7 +217,7 @@ export function ProfileActivity({
               ? dollars(payments.reduce((n, r) => n + r.amount, 0n))
               : "Unavailable"}
           </strong>
-          <span>received through verified Slop settlements · USDC</span>
+          <span>verified payments received · USDC</span>
         </div>
         <div>
           <strong>
@@ -223,13 +225,12 @@ export function ProfileActivity({
               ? dollars(direct.reduce((n, r) => n + r.amount, 0n))
               : "Unavailable"}
           </strong>
-          <span>reported direct transfers · USDC</span>
+          <span>direct payments reported · USDC</span>
         </div>
       </div>
       <p className="points-meta">
-        Direct transfers are published payment disclosures outside Slop’s
-        settlement lifecycle. They are shown separately and are not added to
-        verified settlement totals. Points and estimates are not money received.
+        Direct payments come from published disclosures outside Slop’s verified
+        settlement process.
       </p>
       {payments?.length || direct.length ? (
         <details>
