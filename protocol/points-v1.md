@@ -163,3 +163,27 @@ Primary references checked during implementation:
 [X authorization and PKCE](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code),
 [X token exchange and revocation](https://docs.x.com/fundamentals/authentication/oauth-2-0/user-access-token),
 [X endpoint scope mapping](https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping).
+
+### Individual profiles
+
+Every recorded PR author has a discoverable `/contributors/<login>` profile,
+including authors with only open or closed unmerged PRs. Joined members and
+historical point recipients retain profiles independently of the current score
+window. Public membership and X visibility remain opt-in.
+
+`profiles:generate` walks the complete PR connection of each active manifest
+repository, deduplicates immutable PR IDs, and reconciles the total record count
+before publishing `public/data/profiles.json`. Deleted authors and non-user
+actors remain in source counts but are excluded from the human directory.
+Merged, open, and closed-without-merge are distinct counts. These are Slop
+repository totals, not claims about an account's entire GitHub history. Scan
+start/end times and stale data are displayed; failures do not become zeroes.
+Trusted releases refresh the census. The reviewed `data/profiles/seed.json`
+provides a dated development/PR bootstrap; it is not a live-data claim.
+
+Profiles use GitHub's public avatar with an initials fallback. GitHub and
+verified opt-in X links are shown without implying organization authority.
+Verified cycle receipts use immutable actor IDs and integer USDC micro-units.
+Direct-payment disclosures appear as a separate reported-transfer total with
+transaction links; they never become verified settlement records or inflate
+the verified receipt total. Estimates and points are not money received.

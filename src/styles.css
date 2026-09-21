@@ -3746,3 +3746,17 @@ small {
   gap: 0.5rem;
   overflow-wrap: anywhere;
 }
+
+.profile-activity {
+  overflow-wrap: anywhere;
+}
+.profile-activity details {
+  margin: 1rem 0;
+}
+.profile-activity li {
+  margin-block: 0.5rem;
+}
+.points-panel > label > input[type="search"] {
+  max-width: 100%;
+  min-height: 44px;
+}

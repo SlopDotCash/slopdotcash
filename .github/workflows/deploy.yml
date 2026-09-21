@@ -161,6 +161,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           bun run leaderboard:generate
+          bun run profiles:generate
           # An older approved source still serves its legacy intake format.
           # Renew it during the transition; new sources have no such builder.
           if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ -f scripts/prepare-private-intake-attestation.ts ]; then

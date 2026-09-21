@@ -8,8 +8,8 @@
     "build": "bun --bun vite build && node scripts/dist-manifest.mjs create dist",
     "preview": "bun --bun vite preview --port 4466",
     "prepare:site": "node scripts/prepare-site.mjs",
-    "predev": "bun run prepare:site && bun run points:generate",
-    "prebuild": "bun run prepare:site && bun scripts/generate-points.ts",
+    "predev": "bun run prepare:site && bun run points:generate && bun scripts/generate-profiles.ts",
+    "prebuild": "bun run prepare:site && bun scripts/generate-points.ts && bun scripts/generate-profiles.ts",
     "leaderboard:generate": "bun scripts/generate-leaderboard.ts",
     "brand:sync": "node scripts/sync-brand-tokens.mjs",
     "brand:check": "node scripts/sync-brand-tokens.mjs --check",
@@ -55,7 +55,8 @@
     "skills:check": "node scripts/sync-skill-scripts.mjs --check",
     "test:coverage": "vitest run --coverage",
     "points:generate": "bun scripts/generate-points.ts",
-    "points:backfill": "bun scripts/backfill-points.ts"
+    "points:backfill": "bun scripts/backfill-points.ts",
+    "profiles:generate": "bun scripts/generate-profiles.ts --live"
   },
   "dependencies": {
     "@fontsource/poppins": "^5.2.7",

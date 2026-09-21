@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { readBoundedJson, readBoundedText } from "./lib/browser-json";
+import type { CycleIndex } from "./lib/cycle-index";
 import {
   assemblePoints,
   POINTS_NOTICE,
@@ -17,6 +18,7 @@ import {
   pointMembers,
 } from "./lib/points";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
+import { ContributorDirectory, ProfileActivity, useProfiles } from "./Profiles";
 
 const productOrigin = () =>
   ["https://slop.cash", "https://slop.tech", "https://eliza.army"].includes(
@@ -223,8 +225,24 @@ export function PointsLabel({
     </a>
   );
 }
-export function ProfilePoints({ login }: { login: string }) {
+export function ProfilePoints({
+  login,
+  cycles,
+  showIdentity = false,
+}: {
+  login: string;
+  cycles?: CycleIndex;
+  showIdentity?: boolean;
+}) {
   const { state, me } = useContext(Context);
+  const census = useProfiles();
+  const censusMatches =
+    census.state.status === "ready"
+      ? census.state.index.people.filter(
+          (p) => p.login.toLowerCase() === login.toLowerCase(),
+        )
+      : [];
+  const recorded = censusMatches.length === 1 ? censusMatches[0] : undefined;
   const [joined, setJoined] = useState<Membership | null>(null);
   const [joinStatus, setJoinStatus] = useState("loading");
   useEffect(() => {
@@ -272,9 +290,16 @@ export function ProfilePoints({ login }: { login: string }) {
   const [copied, setCopied] = useState("");
   return (
     <section className="points-panel" aria-label="Slop Points">
+      <ProfileActivity
+        login={login}
+        actorId={(m?.actor ?? identity?.actor ?? recorded)?.id}
+        census={census}
+        cycles={cycles}
+        showIdentity={showIdentity}
+      />
       <h2>Slop Points</h2>
       <Notice />
-      {state.status === "ready" && (m || identity) ? (
+      {state.status === "ready" && (m || identity || recorded) ? (
         <>
           <p className="points-total">
             {(
@@ -290,8 +315,10 @@ export function ProfilePoints({ login }: { login: string }) {
               ? ` · 5 welcome points · ${identity.socialPoints ?? 0} X connection points`
               : ""}
           </p>
-          {m || identity ? (
-            <PublicXLink actorId={(m?.actor ?? identity!.actor).id} />
+          {m || identity || recorded ? (
+            <PublicXLink
+              actorId={(m?.actor ?? identity?.actor ?? recorded!).id}
+            />
           ) : null}
           <p>{m?.badges.join(" · ") ?? "Welcome to Slop"}</p>
           <ul className="points-history">
@@ -545,6 +572,7 @@ export function PointsPage() {
       <JoinPoints />
       <SocialConnections />
       <CommunityPeople />
+      <ContributorDirectory />
       <PointsStandings />
       <section className="points-panel">
         <h2>Ways to earn</h2>

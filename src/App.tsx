@@ -2219,8 +2219,7 @@ function ProfilePage({
   if (state.status !== "ready")
     return (
       <main className="shell route-main">
-        <p>Contributor: {login}</p>
-        <ProfilePoints login={login} />
+        <ProfilePoints login={login} showIdentity />
         <DataNotice state={state} retry={retry} />
       </main>
     );
@@ -2298,8 +2297,7 @@ function ProfilePage({
       );
     return (
       <main className="shell route-main">
-        <h1>{login}</h1>
-        <ProfilePoints login={login} />
+        <ProfilePoints login={login} cycles={state.cycleIndex} showIdentity />
       </main>
     );
   }
@@ -2393,7 +2391,7 @@ function ProfilePage({
           </div>
         </div>
       </section>
-      <ProfilePoints login={login} />
+      <ProfilePoints login={login} cycles={state.cycleIndex} />
       <div className="profile-totals">
         {globalRank >= 0 ? (
           <div>
