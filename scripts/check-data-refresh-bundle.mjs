@@ -7,6 +7,8 @@ import { pathToFileURL } from "node:url";
 const refreshPaths = new Set([
   "deployment-manifest.json",
   "data/leaderboard.json",
+  "data/points.json",
+  ...Array.from({ length: 16 }, (_, i) => `data/points/${i.toString(16)}.json`),
   "data/private-intake-attestation.json",
   "data/funding.json",
   "data/cycles/index.json",

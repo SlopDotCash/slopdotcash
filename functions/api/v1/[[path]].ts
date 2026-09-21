@@ -1,3 +1,4 @@
+import { handlePointsApi } from "../../../backend/points/handler";
 import {
   CloudflareTracePersistence,
   type D1Database,
@@ -123,6 +124,12 @@ async function verifyIdentityAssertion(
 }
 
 export async function onRequest(context: PagesContext): Promise<Response> {
+  if (new URL(context.request.url).pathname.startsWith("/api/v1/points/"))
+    return handlePointsApi(context.request, {
+      db: context.env.SLOP_DB,
+      rateLimitSecret: context.env.TRACE_AUTH_SECRET,
+      identity: context.env.SLOP_IDENTITY,
+    });
   return handleTraceApi(context.request, {
     persistence: new CloudflareTracePersistence(
       context.env.SLOP_DB,

@@ -31,3 +31,5 @@ public/llms.txt
 public/data/
 public/projects/
 public/protocol/
+
+.points-build/

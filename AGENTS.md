@@ -158,6 +158,14 @@ manifest. Never double-score a source already rewarded by the ordinary ledger.
 An LLM may recommend a hold or award but cannot autonomously ban, approve,
 exclude, or move money.
 
+## Participation points
+
+Slop Points are nonfinancial participation records governed by
+`protocol/points-v1.md`. The once-only welcome award is not accepted-work score.
+Never feed points into rewards or settlement. Preserve the append-only journal,
+source coverage, original contribution dates, and distinct recording dates.
+Generated points projections are build outputs; do not edit them by hand.
+
 ## Rewards, funding, and settlement
 
 Closed cycles live only at `cycles/<project>/<YYYY-MM>/` and bind exact source

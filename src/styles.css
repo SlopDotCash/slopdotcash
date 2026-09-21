@@ -3603,3 +3603,125 @@ small {
     grid-template-columns: 1fr;
   }
 }
+
+/* Points are a separate participation record, never a currency estimate. */
+.points-panel {
+  margin: 2rem 0;
+  padding: clamp(1rem, 3vw, 2rem);
+  border: 1px solid var(--line, #ccc);
+  border-radius: 8px;
+}
+.points-panel h2 {
+  margin-top: 0;
+}
+.points-panel p {
+  max-width: 72ch;
+}
+.points-meta {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.points-total {
+  font-size: clamp(2rem, 7vw, 4rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin: 1rem 0;
+}
+.points-total span {
+  font-size: 1rem;
+}
+.points-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: end;
+  margin: 1rem 0;
+}
+.points-controls label {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.points-controls input,
+.points-controls select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.5rem;
+  border: 1px solid #767676;
+  color: #161616;
+  background: #fff;
+  border-radius: 4px;
+}
+.points-panel button {
+  min-height: 44px;
+  padding: 0.6rem 1rem;
+  margin: 0.3rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.points-panel button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.points-panel label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+.points-panel input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.points-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.points-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.points-table th,
+.points-table td {
+  padding: 0.8rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid #ccc;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.points-table th:last-child,
+.points-table td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+.points-history {
+  padding-left: 1.25rem;
+}
+.points-history li {
+  margin: 0.8rem 0;
+  overflow-wrap: anywhere;
+}
+.points-history small {
+  display: block;
+}
+.points-label {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 520px) {
+  .points-controls label {
+    width: 100%;
+  }
+  .points-panel {
+    padding: 1rem;
+  }
+}
+
+.points-table th:first-child,
+.points-table td:first-child {
+  white-space: nowrap;
+}

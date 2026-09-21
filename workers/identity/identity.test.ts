@@ -68,6 +68,7 @@ class MemoryIdentityPersistence implements IdentityPersistence {
     githubActorId: string,
     githubLogin: string,
     completedAt: string,
+    githubNodeId?: string,
   ): Promise<boolean> {
     const flow = this.flows.get(flowId);
     if (flow?.status !== "callback_processing") return false;
@@ -77,6 +78,7 @@ class MemoryIdentityPersistence implements IdentityPersistence {
       githubActorId,
       githubLogin,
       callbackCompletedAt: completedAt,
+      ...(githubNodeId ? { githubNodeId } : {}),
     });
     return true;
   }
@@ -686,5 +688,53 @@ describe("identity browser CORS boundary", () => {
       );
       expect(response.headers.has("access-control-allow-origin")).toBe(false);
     }
+  });
+});
+
+describe("points identity isolation", () => {
+  it("binds browser polling and one-use assertions to the points audience", async () => {
+    const { deps } = dependencies();
+    deps.resolveGithubIdentity = async () => ({
+      githubActorId: "123456",
+      githubLogin: "octocat",
+      githubNodeId: "U_points",
+    });
+    const started = await handleIdentityRequest(
+      jsonRequest("identity.slop.cash", "/v1/oauth/start", {
+        audience: "slop-points-web",
+      }),
+      deps,
+    );
+    const flow = await started.json();
+    expect(started.status).toBe(201);
+    expect((await authorizeAndCallback(deps, flow)).callback.status).toBe(200);
+    const poll = (audience: string) =>
+      handleIdentityRequest(
+        jsonRequest("identity.slop.cash", "/v1/oauth/poll", {
+          flowId: flow.flowId,
+          pollCapability: flow.pollCapability,
+          audience,
+        }),
+        deps,
+      );
+    expect((await poll("private-trace-api")).status).toBe(410);
+    const result = await (await poll("slop-points-web")).json();
+    const consume = (audience: string) =>
+      handleIdentityRequest(
+        new Request("https://identity.internal/v1/assertions/consume", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${result.assertion}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ audience }),
+        }),
+        deps,
+      );
+    expect((await consume("private-trace-api")).status).toBe(401);
+    const identity = await consume("slop-points-web");
+    expect(identity.status).toBe(200);
+    expect((await identity.json()).githubNodeId).toBe("U_points");
+    expect((await consume("slop-points-web")).status).toBe(401);
   });
 });

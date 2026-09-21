@@ -211,6 +211,9 @@ jobs:
           bun run test
 
       - name: Build production site
+        env:
+          SLOP_POINTS_ONLINE: ${{ github.event_name != 'pull_request' && '1' || '0' }}
+          SLOP_POINTS_BOOTSTRAP: ${{ github.event_name != 'schedule' && '1' || '0' }}
         run: bun run build
 
       - name: Install Playwright Chromium
@@ -525,6 +528,10 @@ jobs:
           ./node_modules/.bin/wrangler d1 migrations apply slop-private \
             --remote \
             --config workers/identity/wrangler.toml
+          bun scripts/prepare-points-import.ts dist "$RUNNER_TEMP/points-import.sql"
+          ./node_modules/.bin/wrangler d1 execute slop-private \
+            --remote --config workers/identity/wrangler.toml \
+            --file "$RUNNER_TEMP/points-import.sql"
           node scripts/renew-private-intake.mjs || echo "::warning::Optional trace intake renewal failed; ordinary contribution remains available."
           schema_response="$RUNNER_TEMP/slop-private-schema.json"
           ./node_modules/.bin/wrangler d1 execute slop-private \

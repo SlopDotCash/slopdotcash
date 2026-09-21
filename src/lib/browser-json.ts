@@ -1,9 +1,9 @@
 /** Bounded public JSON transport shared by app views. */
-export async function readBoundedJson(
+export async function readBoundedText(
   response: Response,
   maxBytes: number,
   label: string,
-): Promise<unknown> {
+): Promise<string> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     if (!/^[0-9]+$/u.test(declaredLength)) {
@@ -45,6 +45,15 @@ export async function readBoundedJson(
     reader.releaseLock();
   }
 
+  return source;
+}
+
+export async function readBoundedJson(
+  response: Response,
+  maxBytes: number,
+  label: string,
+): Promise<unknown> {
+  const source = await readBoundedText(response, maxBytes, label);
   try {
     return JSON.parse(source) as unknown;
   } catch (error: unknown) {

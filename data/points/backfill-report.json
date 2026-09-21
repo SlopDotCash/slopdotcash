@@ -1,0 +1,46 @@
+{
+  "observedAt": "2026-09-21T18:20:07.791Z",
+  "contributors": 766,
+  "repositories": [
+    {
+      "repository": "elizaOS/eliza",
+      "repositoryNode": "R_kgDOMT5cIg",
+      "from": "2024-07-09T07:55:40Z",
+      "to": "2026-09-21T18:20:07.791Z",
+      "scannedMergedCount": 15843,
+      "awarded": 15091,
+      "digest": "67afe161bd167f300c9c0ec01cce436bed3812beac30e9f3859984f49ca19907",
+      "reviewCoverage": "Accepted ledger/evaluation sources only; historical unratified reviews are not inferred."
+    },
+    {
+      "repository": "elizaOS/asi",
+      "repositoryNode": "R_kgDOT23CXA",
+      "from": "2026-08-13T01:41:50Z",
+      "to": "2026-09-21T18:20:07.791Z",
+      "scannedMergedCount": 1091,
+      "awarded": 1091,
+      "digest": "07780a671800544b7def9cfa2c6bc63f0dce50113ff5920b3a1f30ef0015720c",
+      "reviewCoverage": "Accepted ledger/evaluation sources only; historical unratified reviews are not inferred."
+    },
+    {
+      "repository": "heirlabs/element-sdk",
+      "repositoryNode": "R_kgDOPGOTQg",
+      "from": "2025-07-03T12:57:00Z",
+      "to": "2026-09-21T18:20:07.791Z",
+      "scannedMergedCount": 3,
+      "awarded": 3,
+      "digest": "9a7e3de0110244d6ef38a5072b7860414f2e9221e5af121257281597a8438a78",
+      "reviewCoverage": "Accepted ledger/evaluation sources only; historical unratified reviews are not inferred."
+    },
+    {
+      "repository": "elizaOS/proximityprize",
+      "repositoryNode": "R_kgDOT48hJQ",
+      "from": "2026-08-15T04:10:12Z",
+      "to": "2026-09-21T18:20:07.791Z",
+      "scannedMergedCount": 98,
+      "awarded": 93,
+      "digest": "8a619201543b3e59fc4d1b130e1dea94e2b56960879926a974151e4fecb089c6",
+      "reviewCoverage": "Accepted ledger/evaluation sources only; historical unratified reviews are not inferred."
+    }
+  ]
+}

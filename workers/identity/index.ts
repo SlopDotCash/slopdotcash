@@ -238,7 +238,11 @@ async function resolveGithubIdentity(
   code: string,
   pkceVerifier: string,
   env: Env,
-): Promise<{ githubActorId: string; githubLogin: string } | null> {
+): Promise<{
+  githubActorId: string;
+  githubLogin: string;
+  githubNodeId?: string;
+} | null> {
   let accessToken = "";
   try {
     const tokenResponse = await fetch(
@@ -297,7 +301,17 @@ async function resolveGithubIdentity(
     ) {
       return null;
     }
-    return { githubActorId: String(id), githubLogin: login };
+    const nodeId = (user as { node_id?: unknown }).node_id;
+    const kind = (user as { type?: unknown }).type;
+    return {
+      githubActorId: String(id),
+      githubLogin: login,
+      ...(kind === "User" &&
+      typeof nodeId === "string" &&
+      /^[A-Za-z0-9_=-]{4,256}$/.test(nodeId)
+        ? { githubNodeId: nodeId }
+        : {}),
+    };
   } finally {
     accessToken = "";
   }

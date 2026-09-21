@@ -192,6 +192,10 @@ if (!existsSync(scoringContractPath)) {
   throw new TypeError("[Slop] score v2 contract is missing");
 }
 copyFileSync(scoringContractPath, join(publicProtocolRoot, "scoring-v2.md"));
+copyFileSync(
+  join(protocolRoot, "points-v1.md"),
+  join(publicProtocolRoot, "points-v1.md"),
+);
 const identityRecordPath = join(protocolRoot, "identity-v1.json");
 if (existsSync(identityRecordPath)) {
   readIdentityRecord(identityRecordPath);

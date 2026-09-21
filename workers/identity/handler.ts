@@ -1,10 +1,11 @@
 import {
   ASSERTION_TTL_SECONDS,
-  IDENTITY_AUDIENCE,
   IDENTITY_INTERNAL_HOST,
   IDENTITY_PUBLIC_ORIGIN,
   type IdentityPersistence,
+  isIdentityAudience,
   OAUTH_FLOW_TTL_SECONDS,
+  POINTS_AUDIENCE,
   POLL_AFTER_SECONDS,
 } from "./contracts";
 import {
@@ -26,7 +27,11 @@ export type IdentityWorkerDependencies = {
   resolveGithubIdentity: (
     code: string,
     pkceVerifier: string,
-  ) => Promise<{ githubActorId: string; githubLogin: string } | null>;
+  ) => Promise<{
+    githubActorId: string;
+    githubLogin: string;
+    githubNodeId?: string;
+  } | null>;
 };
 
 type ApiError = Error & { status?: number; code?: string };
@@ -143,7 +148,7 @@ async function startFlow(
   deps: IdentityWorkerDependencies,
 ): Promise<Response> {
   const body = await readJson(request);
-  if (body.audience !== IDENTITY_AUDIENCE || Object.keys(body).length !== 1) {
+  if (!isIdentityAudience(body.audience) || Object.keys(body).length !== 1) {
     fail(400, "invalid_request", "Invalid identity audience");
   }
   const flowId = `flow_${deps.randomToken(18)}`;
@@ -165,7 +170,7 @@ async function startFlow(
     pollCapabilityHash: await sha256Hex(pollCapability),
     encryptedPkceVerifier: encrypted.ciphertext,
     pkceIv: encrypted.iv,
-    audience: IDENTITY_AUDIENCE,
+    audience: body.audience,
     status: "pending",
     githubActorId: null,
     githubLogin: null,
@@ -271,7 +276,7 @@ async function oauthCallback(
     return html(
       410,
       "Sign-in expired",
-      "Start sign-in again from your terminal.",
+      "Start sign-in again from Slop or your terminal.",
     );
   }
   let verifier = "";
@@ -291,11 +296,18 @@ async function oauthCallback(
         "GitHub identity could not be verified.",
       );
     }
+    if (flow.audience === POINTS_AUDIENCE && !identity.githubNodeId)
+      return html(
+        502,
+        "Sign-in failed",
+        "GitHub account identity is incomplete.",
+      );
     const completed = await deps.persistence.completeCallback(
       flow.id,
       identity.githubActorId,
       identity.githubLogin,
       deps.now().toISOString(),
+      identity.githubNodeId,
     );
     if (!completed) {
       return html(
@@ -307,7 +319,7 @@ async function oauthCallback(
     const response = html(
       200,
       "Signed in",
-      "Return to your terminal. You may close this window.",
+      "Return to Slop or your terminal. You may close this window.",
     );
     clearStateCookie(response.headers);
     return response;
@@ -326,7 +338,7 @@ async function pollFlow(
   if (
     !validFlowId(flowId) ||
     !validCapability(pollCapability) ||
-    body.audience !== IDENTITY_AUDIENCE ||
+    !isIdentityAudience(body.audience) ||
     Object.keys(body).length !== 3
   ) {
     fail(400, "invalid_request", "Invalid poll request");
@@ -337,7 +349,7 @@ async function pollFlow(
     await sha256Hex(pollCapability),
     now.toISOString(),
   );
-  if (flow === null)
+  if (flow === null || flow.audience !== body.audience)
     fail(410, "flow_unavailable", "Identity flow is unavailable");
   if (flow.status === "pending" || flow.status === "callback_processing") {
     const response = json(202, {
@@ -365,7 +377,8 @@ async function pollFlow(
     tokenHash: await sha256Hex(assertion),
     githubActorId: flow.githubActorId,
     githubLogin: flow.githubLogin,
-    audience: IDENTITY_AUDIENCE,
+    audience: flow.audience,
+    ...(flow.githubNodeId ? { githubNodeId: flow.githubNodeId } : {}),
     createdAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),
     consumedAt: null,
@@ -406,12 +419,12 @@ async function consumeAssertion(
   if (match === null)
     fail(401, "unauthorized", "Identity assertion is invalid");
   const body = await readJson(request);
-  if (body.audience !== IDENTITY_AUDIENCE || Object.keys(body).length !== 1) {
+  if (!isIdentityAudience(body.audience) || Object.keys(body).length !== 1) {
     fail(400, "invalid_request", "Invalid assertion audience");
   }
   const assertion = await deps.persistence.consumeAssertion(
     await sha256Hex(match[1]),
-    IDENTITY_AUDIENCE,
+    body.audience,
     deps.now().toISOString(),
   );
   if (assertion === null) {
@@ -425,6 +438,7 @@ async function consumeAssertion(
     githubActorId: assertion.githubActorId,
     githubLogin: assertion.githubLogin,
     audience: assertion.audience,
+    ...(assertion.githubNodeId ? { githubNodeId: assertion.githubNodeId } : {}),
   });
 }
 
