@@ -17,7 +17,10 @@ test("points history is usable, accessible and independent of payments", async (
     )
       failures.push(`${r.status()} ${r.url()}`);
   });
-  await page.goto("/points");
+  const response = await page.goto("/points");
+  expect(response?.status()).toBe(200);
+  const reloaded = await page.reload();
+  expect(reloaded?.status()).toBe(200);
   await expect(
     page.getByRole("heading", { name: "Slop Points", exact: true }),
   ).toBeVisible();
