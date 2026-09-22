@@ -86,7 +86,22 @@ test("a contributor with only open and closed PRs has a searchable individual pr
     path: info.outputPath("individual-profile.png"),
     fullPage: true,
   });
-  await page.evaluate(() => (document.documentElement.style.zoom = "2"));
+  // Match the repository's 200% text-enlargement fixture without reducing
+  // a 320px viewport below the supported reflow width through CSS zoom.
+  await page.evaluate(() => {
+    const typography = [...document.querySelectorAll<HTMLElement>("body *")]
+      .filter((el) => el instanceof HTMLElement)
+      .map((el) => ({
+        el,
+        font: getComputedStyle(el).fontSize,
+        line: getComputedStyle(el).lineHeight,
+      }));
+    for (const { el, font, line } of typography) {
+      el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
+      if (line !== "normal")
+        el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
+    }
+  });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,
