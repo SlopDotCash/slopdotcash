@@ -662,7 +662,7 @@ test("renders contributor and cycle records from validated public data", async (
     await expect(
       page.getByRole("heading", { name: `Eliza · ${view.cycle.id}` }),
     ).toBeVisible();
-    await expect(page.getByText("Review")).toBeVisible();
+    await expect(page.getByText("Review", { exact: true })).toBeVisible();
     await expect(page.getByText("Cycle evidence.")).toHaveCount(0);
     await expect(page.getByText(/score events ·/u)).toHaveCount(0);
   }
