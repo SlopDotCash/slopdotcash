@@ -23,6 +23,12 @@ test("points history is usable, accessible and independent of payments", async (
   ).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible({ timeout: 30000 });
   await expect(page.getByText(/Points have no monetary value/)).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Contributor directory" })
+      .getByText(/^[\d,]+ contributors$/),
+  ).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
   await page.getByLabel("Period", { exact: true }).selectOption("lifetime");
   const first = page.getByRole("table").getByRole("row").nth(1);
   const login = await first.getByRole("link").innerText();
@@ -55,10 +61,27 @@ test("points history is usable, accessible and independent of payments", async (
     document.documentElement.style.zoom = "2";
   });
   expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
-    ),
-  ).toBe(true);
+    await page.evaluate(() => {
+      const overflow =
+        document.documentElement.scrollWidth > window.innerWidth + 1;
+      return {
+        overflow,
+        elements: !overflow
+          ? []
+          : [...document.querySelectorAll("main *")]
+              .filter(
+                (el) =>
+                  el.getBoundingClientRect().right > window.innerWidth + 1,
+              )
+              .map((el) => ({
+                tag: el.tagName,
+                class: el.className,
+                text: el.textContent?.slice(0, 80),
+                right: el.getBoundingClientRect().right,
+              })),
+      };
+    }),
+  ).toEqual({ overflow: false, elements: [] });
   await page.screenshot({
     path: info.outputPath("points-zoom.png"),
     fullPage: true,
