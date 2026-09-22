@@ -10,6 +10,8 @@
     "types": ["node", "bun-types"]
   },
   "include": [
+    "src/lib/points.ts",
+    "src/lib/payout-points.ts",
     "src/lib/squads-batch-message.ts",
     "src/lib/squads-execution-registry.generated.ts",
     "src/lib/squads-execution-registry.ts",
@@ -59,6 +61,7 @@
     "tests/fixtures.ts",
     "tests/squads-execution-context.ts",
     "tests/install-authority-fixture.ts",
-    "src/lib/leaderboard-types.ts"
+    "src/lib/leaderboard-types.ts",
+    "src/lib/profiles.ts"
   ]
 }

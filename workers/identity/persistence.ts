@@ -25,6 +25,7 @@ type FlowRow = {
   status: OAuthFlow["status"];
   github_actor_id: string | null;
   github_login: string | null;
+  github_node_id?: string | null;
   created_at: string;
   expires_at: string;
   callback_completed_at: string | null;
@@ -35,6 +36,7 @@ type AssertionRow = {
   token_hash: string;
   github_actor_id: string;
   github_login: string;
+  github_node_id?: string | null;
   audience: IdentityAssertion["audience"];
   created_at: string;
   expires_at: string;
@@ -52,6 +54,7 @@ function mapFlow(row: FlowRow): OAuthFlow {
     status: row.status,
     githubActorId: row.github_actor_id,
     githubLogin: row.github_login,
+    ...(row.github_node_id ? { githubNodeId: row.github_node_id } : {}),
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     callbackCompletedAt: row.callback_completed_at,
@@ -64,6 +67,7 @@ function mapAssertion(row: AssertionRow): IdentityAssertion {
     tokenHash: row.token_hash,
     githubActorId: row.github_actor_id,
     githubLogin: row.github_login,
+    ...(row.github_node_id ? { githubNodeId: row.github_node_id } : {}),
     audience: row.audience,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
@@ -145,15 +149,22 @@ export class D1IdentityPersistence implements IdentityPersistence {
     githubActorId: string,
     githubLogin: string,
     completedAt: string,
+    githubNodeId?: string,
   ): Promise<boolean> {
     const result = await this.db
       .prepare(
         `UPDATE identity_oauth_flows
          SET status = 'callback_complete', github_actor_id = ?, github_login = ?,
-             callback_completed_at = ?
+             callback_completed_at = ?, github_node_id = ?
          WHERE id = ? AND status = 'callback_processing'`,
       )
-      .bind(githubActorId, githubLogin, completedAt, flowId)
+      .bind(
+        githubActorId,
+        githubLogin,
+        completedAt,
+        githubNodeId ?? null,
+        flowId,
+      )
       .run();
     return (result.meta?.changes ?? 0) === 1;
   }
@@ -180,8 +191,8 @@ export class D1IdentityPersistence implements IdentityPersistence {
       .prepare(
         `INSERT INTO identity_assertions (
           token_hash, github_actor_id, github_login, audience, created_at,
-          expires_at, consumed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(token_hash) DO NOTHING`,
+          expires_at, consumed_at, github_node_id
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?) ON CONFLICT(token_hash) DO NOTHING`,
       )
       .bind(
         assertion.tokenHash,
@@ -190,6 +201,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
         assertion.audience,
         assertion.createdAt,
         assertion.expiresAt,
+        assertion.githubNodeId ?? null,
       )
       .run();
     if (!result.success) return null;
@@ -248,6 +260,14 @@ export class D1IdentityPersistence implements IdentityPersistence {
       .run();
     await this.db
       .prepare("DELETE FROM identity_assertions WHERE expires_at <= ?")
+      .bind(now)
+      .run();
+    await this.db
+      .prepare("DELETE FROM points_x_flows WHERE expires_at <= ?")
+      .bind(now)
+      .run();
+    await this.db
+      .prepare("DELETE FROM points_sessions WHERE expires_at <= ?")
       .bind(now)
       .run();
   }

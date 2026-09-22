@@ -242,6 +242,7 @@ describe("trusted unsafe destination Git transitions", () => {
       }
       snapshot.source.cutoffAt = snapshot.window.to;
       const snapshotBytes = JSON.stringify(snapshot);
+      repo.write("public/data/leaderboard.json", snapshotBytes);
       repo.held.sourceSnapshotSha256 = createHash("sha256")
         .update(snapshotBytes)
         .digest("hex");

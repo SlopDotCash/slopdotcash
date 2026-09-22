@@ -1,6 +1,13 @@
 export const IDENTITY_PUBLIC_ORIGIN = "https://identity.slop.cash";
 export const IDENTITY_INTERNAL_HOST = "identity.internal";
 export const IDENTITY_AUDIENCE = "private-trace-api";
+export const POINTS_AUDIENCE = "slop-points-web";
+export type IdentityAudience =
+  | typeof IDENTITY_AUDIENCE
+  | typeof POINTS_AUDIENCE;
+export function isIdentityAudience(value: unknown): value is IdentityAudience {
+  return value === IDENTITY_AUDIENCE || value === POINTS_AUDIENCE;
+}
 export const OAUTH_FLOW_TTL_SECONDS = 5 * 60;
 export const ASSERTION_TTL_SECONDS = 90;
 export const POLL_AFTER_SECONDS = 2;
@@ -17,10 +24,11 @@ export type OAuthFlow = {
   pollCapabilityHash: string;
   encryptedPkceVerifier: string | null;
   pkceIv: string | null;
-  audience: typeof IDENTITY_AUDIENCE;
+  audience: IdentityAudience;
   status: OAuthFlowStatus;
   githubActorId: string | null;
   githubLogin: string | null;
+  githubNodeId?: string | null;
   createdAt: string;
   expiresAt: string;
   callbackCompletedAt: string | null;
@@ -31,7 +39,8 @@ export type IdentityAssertion = {
   tokenHash: string;
   githubActorId: string;
   githubLogin: string;
-  audience: typeof IDENTITY_AUDIENCE;
+  githubNodeId?: string | null;
+  audience: IdentityAudience;
   createdAt: string;
   expiresAt: string;
   consumedAt: string | null;
@@ -50,6 +59,7 @@ export interface IdentityPersistence {
     githubActorId: string,
     githubLogin: string,
     completedAt: string,
+    githubNodeId?: string,
   ): Promise<boolean>;
   findPollableFlow(
     flowId: string,

@@ -1,6 +1,15 @@
 import { Link } from "./Link";
 import { copyText } from "./lib/copy-text";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import {
+  PointsLabel,
+  PointsNav,
+  PointsPage,
+  PointsProvider,
+  PointsStandings,
+  ProfilePoints,
+  PublicXLink,
+} from "./Points";
 
 export {
   rootPublishedTemplateProject,
@@ -152,7 +161,8 @@ interface Route {
     | "sponsors"
     | "verification"
     | "cycle-archive"
-    | "unknown";
+    | "unknown"
+    | "points";
   projectId?: string;
   cycleId?: string;
   login?: string;
@@ -166,6 +176,8 @@ function internalRoute(pathname: string): Route {
     return { kind: "unknown" };
   }
   if (segments.length === 0) return { kind: "home" };
+  if (segments.length === 1 && segments[0] === "points")
+    return { kind: "points" };
   if (segments.length === 1 && segments[0] === "wallet")
     return { kind: "wallet" };
   if (segments.length === 1 && segments[0] === "how-it-works") {
@@ -388,6 +400,7 @@ function Header({ isHome }: { isHome: boolean }) {
           <Link href="/#leaderboard" onNavigate={closeMenu}>
             Leaderboard
           </Link>
+          <PointsNav />
           <Link href="/how-it-works" onNavigate={closeMenu}>
             How it works
           </Link>
@@ -649,263 +662,270 @@ function GlobalLeaderboard({
       : `${selectedView.reward.advertisedAmountDisplay} external opportunity`
     : "Current reward cycle";
   return (
-    <section
-      className="section shell home-leaderboard-section"
-      id="leaderboard"
-    >
-      <div className="home-leaderboard-heading">
-        <h2 className="home-section-title">Leaderboard</h2>
-      </div>
-      <div
-        aria-label="Leaderboard timeframe"
-        className="leaderboard-mode-tabs"
-        role="tablist"
+    <>
+      <PointsStandings compact />
+      <section
+        className="section shell home-leaderboard-section"
+        id="leaderboard"
       >
-        <button
-          aria-controls="leaderboard-current-panel"
-          aria-selected={mode === "current"}
-          id="leaderboard-current-tab"
-          onClick={() => setMode("current")}
-          role="tab"
-          type="button"
-        >
-          This month
-        </button>
-        <button
-          aria-controls="leaderboard-record-panel"
-          aria-selected={mode === "record"}
-          id="leaderboard-record-tab"
-          onClick={() => setMode("record")}
-          role="tab"
-          type="button"
-        >
-          All-time record
-        </button>
-      </div>
-      <details className="leaderboard-methodology">
-        <summary>How it works</summary>
-        <p>
-          Accepted contributions earn points. Current rankings show today's
-          estimated shares at the published monthly cap, not approved payouts.
-          Funding-backed proposals use verified committed funds.
-        </p>
-      </details>
-      {mode === "current" ? (
+        <div className="home-leaderboard-heading">
+          <h2 className="home-section-title">Leaderboard</h2>
+        </div>
         <div
-          aria-labelledby="leaderboard-current-tab"
-          id="leaderboard-current-panel"
-          role="tabpanel"
+          aria-label="Leaderboard timeframe"
+          className="leaderboard-mode-tabs"
+          role="tablist"
         >
-          <div
-            aria-label="Current reward project"
-            className="leaderboard-project-tabs"
-            role="tablist"
+          <button
+            aria-controls="leaderboard-current-panel"
+            aria-selected={mode === "current"}
+            id="leaderboard-current-tab"
+            onClick={() => setMode("current")}
+            role="tab"
+            type="button"
           >
-            {views.map((view) => {
-              const rewardLabel =
-                view.reward.kind === "monthly-pool"
-                  ? monthlyPoolLabel(view.project.reward)
-                  : "External prize share";
-              return (
-                <button
-                  aria-controls="leaderboard-project-panel"
-                  aria-label={`${view.project.name}, ${rewardLabel}`}
-                  aria-selected={view.project.id === selectedView?.project.id}
-                  id={`leaderboard-project-${view.project.id}`}
-                  key={view.project.id}
-                  onClick={() => setSelectedProjectId(view.project.id)}
-                  role="tab"
-                  type="button"
-                >
-                  <strong>{view.project.name}</strong>
-                  <span>{rewardLabel}</span>
-                </button>
-              );
-            })}
-          </div>
-          {selectedView ? (
+            This month
+          </button>
+          <button
+            aria-controls="leaderboard-record-panel"
+            aria-selected={mode === "record"}
+            id="leaderboard-record-tab"
+            onClick={() => setMode("record")}
+            role="tab"
+            type="button"
+          >
+            All-time record
+          </button>
+        </div>
+        <details className="leaderboard-methodology">
+          <summary>How it works</summary>
+          <p>
+            Accepted contributions earn points. Current rankings show today's
+            estimated shares at the published monthly cap, not approved payouts.
+            Funding-backed proposals use verified committed funds.
+          </p>
+        </details>
+        {mode === "current" ? (
+          <div
+            aria-labelledby="leaderboard-current-tab"
+            id="leaderboard-current-panel"
+            role="tabpanel"
+          >
             <div
-              aria-labelledby={`leaderboard-project-${selectedView.project.id}`}
-              id="leaderboard-project-panel"
-              role="tabpanel"
+              aria-label="Current reward project"
+              className="leaderboard-project-tabs"
+              role="tablist"
             >
-              <div className="leaderboard-cycle-summary">
-                <div>
-                  <strong>
-                    {cycleMonth} · {selectedView.project.name}
-                  </strong>
-                  <span>{selectedRewardLabel}</span>
-                  {selectedView.project.reward.reviewBudget ? (
-                    <span>
-                      {reviewBudgetLabel(
-                        selectedView.project.reward.reviewBudget,
-                      )}
-                    </span>
+              {views.map((view) => {
+                const rewardLabel =
+                  view.reward.kind === "monthly-pool"
+                    ? monthlyPoolLabel(view.project.reward)
+                    : "External prize share";
+                return (
+                  <button
+                    aria-controls="leaderboard-project-panel"
+                    aria-label={`${view.project.name}, ${rewardLabel}`}
+                    aria-selected={view.project.id === selectedView?.project.id}
+                    id={`leaderboard-project-${view.project.id}`}
+                    key={view.project.id}
+                    onClick={() => setSelectedProjectId(view.project.id)}
+                    role="tab"
+                    type="button"
+                  >
+                    <strong>{view.project.name}</strong>
+                    <span>{rewardLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {selectedView ? (
+              <div
+                aria-labelledby={`leaderboard-project-${selectedView.project.id}`}
+                id="leaderboard-project-panel"
+                role="tabpanel"
+              >
+                <div className="leaderboard-cycle-summary">
+                  <div>
+                    <strong>
+                      {cycleMonth} · {selectedView.project.name}
+                    </strong>
+                    <span>{selectedRewardLabel}</span>
+                    {selectedView.project.reward.reviewBudget ? (
+                      <span>
+                        {reviewBudgetLabel(
+                          selectedView.project.reward.reviewBudget,
+                        )}
+                      </span>
+                    ) : null}
+                  </div>
+                  {selectedView.reward.kind === "monthly-pool" ? (
+                    <p>
+                      Simulated at {selectedRewardLabel}. Not an approved
+                      payout.
+                    </p>
+                  ) : null}
+                  {selectedView.reward.kind === "external-prize-share" ? (
+                    <p>Prize sponsor controls eligibility and payment.</p>
                   ) : null}
                 </div>
-                {selectedView.reward.kind === "monthly-pool" ? (
-                  <p>
-                    Simulated at {selectedRewardLabel}. Not an approved payout.
-                  </p>
-                ) : null}
-                {selectedView.reward.kind === "external-prize-share" ? (
-                  <p>Prize sponsor controls eligibility and payment.</p>
-                ) : null}
-              </div>
-              {selectedView.leaders.length === 0 ? (
-                <EmptyState text="No accepted outcomes in this project cycle yet." />
-              ) : (
-                <>
-                  <div className="leader-table global-leader-table">
-                    <table className="leader-grid global-leader-grid">
-                      <caption className="visually-hidden">
-                        {selectedView.project.name} {cycleMonth} reward
-                        leaderboard
-                      </caption>
-                      <thead>
-                        <tr className="leader-row leader-head global-leader-head">
-                          <th scope="col">Rank</th>
-                          <th scope="col">Contributor</th>
-                          <th scope="col">Accepted score</th>
-                          <th scope="col">Simulated share</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedView.leaders.map((leader) => (
-                          <tr
-                            className="leader-row global-leader-row"
-                            key={leader.actor.id}
-                          >
-                            <td className="rank-cell">#{leader.rank}</td>
-                            <td className="person-cell">
-                              <Link
-                                className="person-link"
-                                href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
-                              >
-                                <Avatar actor={leader.actor} />
-                                <span>
-                                  <strong>{leader.actor.login}</strong>
-                                  <small>
-                                    {leader.acceptedOutcomeCount} accepted event
-                                    {leader.acceptedOutcomeCount === 1
-                                      ? ""
-                                      : "s"}
-                                  </small>
-                                </span>
-                              </Link>
-                            </td>
-                            <td
-                              className="combined-score"
-                              data-label="Accepted score"
-                            >
-                              <strong
-                                title={`Exact score ${leader.scoreThirds}/3`}
-                              >
-                                {formatThirds(leader.scoreThirds)}
-                              </strong>
-                              <ReviewContribution
-                                reviewer={reviewers.get(leader.actor.id)}
-                              />
-                            </td>
-                            <td data-label="Simulated share">
-                              <strong>
-                                <RewardValue leader={leader} />
-                              </strong>
-                            </td>
+                {selectedView.leaders.length === 0 ? (
+                  <EmptyState text="No accepted outcomes in this project cycle yet." />
+                ) : (
+                  <>
+                    <div className="leader-table global-leader-table">
+                      <table className="leader-grid global-leader-grid">
+                        <caption className="visually-hidden">
+                          {selectedView.project.name} {cycleMonth} reward
+                          leaderboard
+                        </caption>
+                        <thead>
+                          <tr className="leader-row leader-head global-leader-head">
+                            <th scope="col">Rank</th>
+                            <th scope="col">Contributor</th>
+                            <th scope="col">Accepted score</th>
+                            <th scope="col">Simulated share</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <Link
-                    className="leaderboard-project-link"
-                    href={`/projects/${selectedView.project.slug}`}
-                  >
-                    View more
-                    <ArrowRight aria-hidden="true" />
-                  </Link>
-                </>
-              )}
-            </div>
-          ) : (
-            <EmptyState text="No current project cycle is published yet." />
-          )}
-        </div>
-      ) : (
-        <div
-          aria-labelledby="leaderboard-record-tab"
-          id="leaderboard-record-panel"
-          role="tabpanel"
-        >
-          <div className="leaderboard-record-summary">
-            <strong>Accepted-work record</strong>
-            <p>
-              Cumulative score across published cycles. This rank does not
-              determine any current monthly pool.
-            </p>
-          </div>
-          {leaders.length === 0 ? (
-            <EmptyState text="No accepted outcomes in the published record yet." />
-          ) : (
-            <div className="leader-table global-leader-table">
-              <table className="leader-grid global-leader-grid">
-                <caption className="visually-hidden">
-                  All-time accepted-work record
-                </caption>
-                <thead>
-                  <tr className="leader-row leader-head global-leader-head global-record-row">
-                    <th scope="col">Rank</th>
-                    <th scope="col">Contributor</th>
-                    <th scope="col">Accepted score</th>
-                    <th scope="col">Paid to date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leaders.map((leader, index) => (
-                    <tr
-                      className="leader-row global-leader-row global-record-row"
-                      key={leader.actor.id}
+                        </thead>
+                        <tbody>
+                          {selectedView.leaders.map((leader) => (
+                            <tr
+                              className="leader-row global-leader-row"
+                              key={leader.actor.id}
+                            >
+                              <td className="rank-cell">#{leader.rank}</td>
+                              <td className="person-cell">
+                                <Link
+                                  className="person-link"
+                                  href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
+                                >
+                                  <Avatar actor={leader.actor} />
+                                  <span>
+                                    <strong>{leader.actor.login}</strong>
+                                    <PointsLabel actorId={leader.actor.id} />
+                                    <small>
+                                      {leader.acceptedOutcomeCount} accepted
+                                      event
+                                      {leader.acceptedOutcomeCount === 1
+                                        ? ""
+                                        : "s"}
+                                    </small>
+                                  </span>
+                                </Link>
+                              </td>
+                              <td
+                                className="combined-score"
+                                data-label="Accepted score"
+                              >
+                                <strong
+                                  title={`Exact score ${leader.scoreThirds}/3`}
+                                >
+                                  {formatThirds(leader.scoreThirds)}
+                                </strong>
+                                <ReviewContribution
+                                  reviewer={reviewers.get(leader.actor.id)}
+                                />
+                              </td>
+                              <td data-label="Simulated share">
+                                <strong>
+                                  <RewardValue leader={leader} />
+                                </strong>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <Link
+                      className="leaderboard-project-link"
+                      href={`/projects/${selectedView.project.slug}`}
                     >
-                      <td className="rank-cell">#{index + 1}</td>
-                      <td className="person-cell">
-                        <Link
-                          className="person-link"
-                          href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
-                        >
-                          <Avatar actor={leader.actor} />
-                          <span>
-                            <strong>{leader.actor.login}</strong>
-                            <small>
-                              {leader.projects} project
-                              {leader.projects === 1 ? "" : "s"} ·{" "}
-                              {leader.cycles} scored cycle
-                              {leader.cycles === 1 ? "" : "s"}
-                            </small>
-                          </span>
-                        </Link>
-                      </td>
-                      <td
-                        className="combined-score"
-                        data-label="Accepted score"
-                      >
-                        <strong title={`Exact score ${leader.score}`}>
-                          {formatScore(leader.score)}
-                        </strong>
-                      </td>
-                      <td data-label="Paid to date">
-                        <strong>
-                          {formatMicroUsdc(leader.paidMinor.toString())}
-                        </strong>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      View more
+                      <ArrowRight aria-hidden="true" />
+                    </Link>
+                  </>
+                )}
+              </div>
+            ) : (
+              <EmptyState text="No current project cycle is published yet." />
+            )}
+          </div>
+        ) : (
+          <div
+            aria-labelledby="leaderboard-record-tab"
+            id="leaderboard-record-panel"
+            role="tabpanel"
+          >
+            <div className="leaderboard-record-summary">
+              <strong>Accepted-work record</strong>
+              <p>
+                Cumulative score across published cycles. This rank does not
+                determine any current monthly pool.
+              </p>
             </div>
-          )}
-        </div>
-      )}
-    </section>
+            {leaders.length === 0 ? (
+              <EmptyState text="No accepted outcomes in the published record yet." />
+            ) : (
+              <div className="leader-table global-leader-table">
+                <table className="leader-grid global-leader-grid">
+                  <caption className="visually-hidden">
+                    All-time accepted-work record
+                  </caption>
+                  <thead>
+                    <tr className="leader-row leader-head global-leader-head global-record-row">
+                      <th scope="col">Rank</th>
+                      <th scope="col">Contributor</th>
+                      <th scope="col">Accepted score</th>
+                      <th scope="col">Paid to date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leaders.map((leader, index) => (
+                      <tr
+                        className="leader-row global-leader-row global-record-row"
+                        key={leader.actor.id}
+                      >
+                        <td className="rank-cell">#{index + 1}</td>
+                        <td className="person-cell">
+                          <Link
+                            className="person-link"
+                            href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
+                          >
+                            <Avatar actor={leader.actor} />
+                            <span>
+                              <strong>{leader.actor.login}</strong>
+                              <PointsLabel actorId={leader.actor.id} />
+                              <small>
+                                {leader.projects} project
+                                {leader.projects === 1 ? "" : "s"} ·{" "}
+                                {leader.cycles} scored cycle
+                                {leader.cycles === 1 ? "" : "s"}
+                              </small>
+                            </span>
+                          </Link>
+                        </td>
+                        <td
+                          className="combined-score"
+                          data-label="Accepted score"
+                        >
+                          <strong title={`Exact score ${leader.score}`}>
+                            {formatScore(leader.score)}
+                          </strong>
+                        </td>
+                        <td data-label="Paid to date">
+                          <strong>
+                            {formatMicroUsdc(leader.paidMinor.toString())}
+                          </strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 
@@ -1259,83 +1279,87 @@ function ProjectLeaderboard({
     ]),
   );
   return (
-    <section className="section project-leader-section">
-      <div className="section-heading">
-        <h2>{formatCycleMonth(view.cycle.id)} leaderboard.</h2>
-        <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
-        {view.project.reward.reviewBudget ? (
-          <p>{reviewBudgetLabel(view.project.reward.reviewBudget)}</p>
-        ) : null}
-        {view.reward.kind === "monthly-pool" ? (
-          <p>
-            Shares simulate the {monthlyPoolLabel(view.project.reward)} cap. Not
-            approved payouts.
-          </p>
-        ) : null}
-      </div>
-      {view.leaders.length === 0 ? (
-        <EmptyState text="No accepted outcomes in this cycle yet." />
-      ) : (
-        <div className="leader-table">
-          <table className="leader-grid">
-            <caption className="visually-hidden">
-              {view.project.name} leaderboard
-            </caption>
-            <thead>
-              <tr className="leader-row project-leader-head">
-                <th scope="col">Rank</th>
-                <th scope="col">Contributor</th>
-                <th scope="col">Score</th>
-                <th scope="col">Simulated share</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.leaders.map((leader) => (
-                <tr
-                  className="leader-row project-leader-row"
-                  key={leader.actor.id}
-                >
-                  <td className="rank-cell">#{leader.rank}</td>
-                  <td className="person-cell">
-                    <Link
-                      className="person-link"
-                      href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
-                    >
-                      <Avatar actor={leader.actor} />
-                      <span>
-                        <strong>{leader.actor.login}</strong>
-                        <small>
-                          {leader.acceptedOutcomeCount} accepted events
-                        </small>
-                      </span>
-                    </Link>
-                  </td>
-                  <td>
-                    <strong title={`Exact score ${leader.scoreThirds}/3`}>
-                      {formatThirds(leader.scoreThirds)}
-                    </strong>
-                    <ReviewContribution
-                      reviewer={reviewers.get(leader.actor.id)}
-                    />
-                    {leader.computeBonusBasisPoints > 0 ? (
-                      <small>
-                        +{leader.computeBonusBasisPoints / 100}% receipt
-                        evidence
-                      </small>
-                    ) : null}
-                  </td>
-                  <td>
-                    <strong>
-                      <RewardValue leader={leader} />
-                    </strong>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <>
+      <PointsStandings projectId={view.project.id} compact />
+      <section className="section project-leader-section">
+        <div className="section-heading">
+          <h2>{formatCycleMonth(view.cycle.id)} leaderboard.</h2>
+          <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
+          {view.project.reward.reviewBudget ? (
+            <p>{reviewBudgetLabel(view.project.reward.reviewBudget)}</p>
+          ) : null}
+          {view.reward.kind === "monthly-pool" ? (
+            <p>
+              Shares simulate the {monthlyPoolLabel(view.project.reward)} cap.
+              Not approved payouts.
+            </p>
+          ) : null}
         </div>
-      )}
-    </section>
+        {view.leaders.length === 0 ? (
+          <EmptyState text="No accepted outcomes in this cycle yet." />
+        ) : (
+          <div className="leader-table">
+            <table className="leader-grid">
+              <caption className="visually-hidden">
+                {view.project.name} leaderboard
+              </caption>
+              <thead>
+                <tr className="leader-row project-leader-head">
+                  <th scope="col">Rank</th>
+                  <th scope="col">Contributor</th>
+                  <th scope="col">Score</th>
+                  <th scope="col">Simulated share</th>
+                </tr>
+              </thead>
+              <tbody>
+                {view.leaders.map((leader) => (
+                  <tr
+                    className="leader-row project-leader-row"
+                    key={leader.actor.id}
+                  >
+                    <td className="rank-cell">#{leader.rank}</td>
+                    <td className="person-cell">
+                      <Link
+                        className="person-link"
+                        href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
+                      >
+                        <Avatar actor={leader.actor} />
+                        <span>
+                          <strong>{leader.actor.login}</strong>
+                          <PointsLabel actorId={leader.actor.id} />
+                          <small>
+                            {leader.acceptedOutcomeCount} accepted events
+                          </small>
+                        </span>
+                      </Link>
+                    </td>
+                    <td>
+                      <strong title={`Exact score ${leader.scoreThirds}/3`}>
+                        {formatThirds(leader.scoreThirds)}
+                      </strong>
+                      <ReviewContribution
+                        reviewer={reviewers.get(leader.actor.id)}
+                      />
+                      {leader.computeBonusBasisPoints > 0 ? (
+                        <small>
+                          +{leader.computeBonusBasisPoints / 100}% receipt
+                          evidence
+                        </small>
+                      ) : null}
+                    </td>
+                    <td>
+                      <strong>
+                        <RewardValue leader={leader} />
+                      </strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 
@@ -2023,6 +2047,11 @@ function ProjectPage({
                   ? "inbound terms unknown"
                   : `${project.terms.inbound.mode} inbound terms`}{" "}
                 · <a href={`/projects/${project.id}/terms.json`}>Terms</a>
+                {project.steward.github.type === "User" ? (
+                  <PublicXLink actorId={project.steward.github.nodeId} />
+                ) : null}
+                {" · "}
+                <a href="/points#people">Meet contributors and maintainers</a>
               </p>
               {project.terms.externalPrize ? (
                 <p className="project-policy-warning">
@@ -2190,6 +2219,10 @@ function ProfilePage({
   if (state.status !== "ready")
     return (
       <main className="shell route-main">
+        <ProfilePoints
+          login={login}
+          showIdentity={state.status !== "loading"}
+        />
         <DataNotice state={state} retry={retry} />
       </main>
     );
@@ -2265,7 +2298,11 @@ function ProfilePage({
           <p className="data-notice">Checking frozen months…</p>
         </main>
       );
-    return <NotFound title="Contributor not found" />;
+    return (
+      <main className="shell route-main">
+        <ProfilePoints login={login} cycles={state.cycleIndex} showIdentity />
+      </main>
+    );
   }
   const historicalActor =
     history[0]?.contributor.actor ?? preparations[0]?.contributor.actor;
@@ -2357,6 +2394,7 @@ function ProfilePage({
           </div>
         </div>
       </section>
+      <ProfilePoints login={login} cycles={state.cycleIndex} />
       <div className="profile-totals">
         {globalRank >= 0 ? (
           <div>
@@ -4624,7 +4662,19 @@ function NotFound({ title = "Page not found" }: { title?: string }) {
 
 export function App() {
   const route = useRoute();
+  return (
+    <PointsProvider
+      enabled={["home", "project", "profile", "points"].includes(route.kind)}
+    >
+      <AppContent />
+    </PointsProvider>
+  );
+}
+
+function AppContent() {
+  const route = useRoute();
   const needsSnapshot = ![
+    "points",
     "how-it-works",
     "new-project",
     "wallet",
@@ -4636,6 +4686,7 @@ export function App() {
   const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
+  else if (route.kind === "points") content = <PointsPage />;
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
   else if (route.kind === "sponsors")
     content = <SponsorsPage retry={retry} state={state} />;

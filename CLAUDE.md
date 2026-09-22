@@ -42,8 +42,8 @@ Generated files under `public/brand/`, `public/downloads/`,
 `public/projects/`, `public/protocol/`, and `public/data/cycles/` are build
 outputs. Never edit them by hand.
 
-Operational guides under `backend/`, `cycles/`, `evaluations/`, `funding/`,
-`protocol/`, and `workers/` define subsystem contracts. Keep them focused and
+Operational guides under `backend/`, `cycles/`, `disclosures/`, `evaluations/`,
+`funding/`, `protocol/`, and `workers/` define subsystem contracts. Keep them focused and
 current.
 
 ## Repository map
@@ -54,6 +54,7 @@ skills/         canonical contributor and CI reviewer skills
 evaluations/    reviewed awards for otherwise-unscored useful work
 cycles/         append-only reward lifecycle records
 funding/        append-only direct-funding evidence
+disclosures/    payouts sent outside the verified settlement flow
 protocol/       public attribution and privacy contracts
 backend/        private trace storage boundary
 workers/        narrowly scoped Cloudflare services
@@ -156,6 +157,16 @@ Unusual useful work may score only through a strict reviewed `evaluations/`
 manifest. Never double-score a source already rewarded by the ordinary ledger.
 An LLM may recommend a hold or award but cannot autonomously ban, approve,
 exclude, or move money.
+
+## Participation points
+
+Slop Points are nonfinancial participation records governed by
+`protocol/points-v1.md`. Welcome and verified X-connection awards are not accepted-work score.
+Verified payout recognition is fixed per recipient/project/cycle, never per dollar
+or transfer. X control never confers GitHub, organization, or payment authority.
+Never feed points into rewards or settlement. Preserve the append-only journal,
+source coverage, original contribution dates, and distinct recording dates.
+Generated points projections are build outputs; do not edit them by hand.
 
 ## Rewards, funding, and settlement
 

@@ -16,7 +16,9 @@
       "!**/public",
       "!assets",
       "!cycles",
-      "!data/who-builds"
+      "!data/who-builds",
+      "!data/points/history.json",
+      "!data/profiles/seed.json"
     ]
   },
   "formatter": {

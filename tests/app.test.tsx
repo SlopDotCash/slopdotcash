@@ -1087,7 +1087,7 @@ describe("public records", () => {
     expect(
       await screen.findByRole("heading", { name: "finish-line" }),
     ).toBeInTheDocument();
-    const totals = document.querySelector(".profile-totals");
+    const totals = document.querySelector("main > .profile-totals");
     expect(totals).not.toBeNull();
     expect(totals).toHaveTextContent("34all-time score");
     expect(
