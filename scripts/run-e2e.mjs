@@ -17,6 +17,7 @@ const artifactContract =
   "serves byte-consistent install and read-only artifacts for every project";
 
 const pagesContracts = [
+  "points history is usable, accessible and independent of payments",
   artifactContract,
   "renders contributor and cycle records from validated public data",
   "serves wallet registration on direct navigation and reload",
