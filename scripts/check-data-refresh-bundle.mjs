@@ -9,6 +9,7 @@ const refreshPaths = new Set([
   "data/leaderboard.json",
   "data/points.json",
   ...Array.from({ length: 16 }, (_, i) => `data/points/${i.toString(16)}.json`),
+  "data/profiles.json",
   "data/private-intake-attestation.json",
   "data/funding.json",
   "data/cycles/index.json",
