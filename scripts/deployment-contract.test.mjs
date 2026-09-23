@@ -256,6 +256,15 @@ describe("slop.cash deployment contract", () => {
     expect(packageManifest.scripts["test:e2e"]).toBe(
       "node scripts/run-e2e.mjs",
     );
+    expect(qualityJob).toContain(
+      '- name: Run desktop and mobile browser tests\n        env:\n          SLOP_E2E_PREBUILT: "1"\n        run: bun run test:e2e',
+    );
+    expect(e2eRunner).toContain(
+      'if (process.env.SLOP_E2E_PREBUILT !== "1") run("bun", ["run", "build"]);',
+    );
+    expect(e2eRunner).toContain(
+      '["scripts/dist-manifest.mjs", "verify-local", "dist"]',
+    );
     expect(playwrightConfiguration).toContain(
       'process.env.SLOP_E2E_PREBUILT === "1"',
     );

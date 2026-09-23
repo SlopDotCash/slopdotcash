@@ -35,7 +35,9 @@ function run(command, args, env = childEnvironment()) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-run("bun", ["run", "build"]);
+// Releases must exercise the online build without regenerating its journal.
+if (process.env.SLOP_E2E_PREBUILT !== "1") run("bun", ["run", "build"]);
+run("node", ["scripts/dist-manifest.mjs", "verify-local", "dist"]);
 
 run(
   playwright,
