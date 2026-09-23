@@ -173,7 +173,7 @@ export function PointsNav() {
       : null;
   return (
     <a href="/points">
-      {total === null ? "Points" : `${total.toLocaleString()} pts`}
+      {total === null ? "Your profile" : `${total.toLocaleString()} pts`}
     </a>
   );
 }
@@ -606,9 +606,11 @@ export function PointsPage() {
 export function PointsStandings({
   projectId,
   compact = false,
+  title,
 }: {
   projectId?: string;
   compact?: boolean;
+  title?: string;
 }) {
   const { state } = useContext(Context);
   const [period, setPeriod] = useState("month");
@@ -653,8 +655,8 @@ export function PointsStandings({
     Math.max(0, Math.ceil(rows.length / pageSize) - 1),
   );
   return (
-    <section className="points-panel" aria-label="Points standings">
-      <h2>{compact ? "Contribution points" : "Points standings"}</h2>
+    <section className="points-panel" aria-label={title ?? "Points standings"}>
+      <h2>{title ?? (compact ? "Contribution points" : "Points standings")}</h2>
       <Notice />
       <div className="points-controls">
         <label>
@@ -763,7 +765,7 @@ export function PointsStandings({
         Contribution and verified payout points. Equal totals share a rank.
         Historical review coverage follows verified records.
       </p>
-      {compact ? <a href="/points">Explore all points</a> : null}
+      {compact ? <a href="/points">Your profile and ways to earn</a> : null}
     </section>
   );
 }

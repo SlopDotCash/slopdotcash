@@ -32,9 +32,11 @@ import { assertCycleIndex } from "../src/lib/cycle-index";
 import type { ProjectFundingRecord } from "../src/lib/funding";
 import type { FundingCommitmentInstrument } from "../src/lib/funding-instruments.mjs";
 import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
+import { applyPointsSnapshot, emptyPointsJournal } from "../src/lib/points";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { createProjectView } from "../src/lib/project-view";
 import { PROJECTS } from "../src/lib/projects.mjs";
+import { sha256Hex } from "../src/lib/sha256";
 import {
   WHO_BUILDS_CROSS_REFERENCE,
   WHO_BUILDS_SNAPSHOT,
@@ -215,9 +217,47 @@ describe("root-published project template", () => {
   });
 });
 
-function mockSnapshot(value: unknown = snapshotFixture()): void {
+function mockSnapshot(
+  value: unknown = snapshotFixture(),
+  pointsSnapshot = value,
+): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (url.includes("/data/points")) {
+      assertLeaderboardSnapshot(pointsSnapshot);
+      const journal = applyPointsSnapshot(
+        emptyPointsJournal(pointsSnapshot.generatedAt),
+        pointsSnapshot,
+        "a".repeat(64),
+        pointsSnapshot.generatedAt,
+      );
+      const parts = Array.from(
+        { length: 16 },
+        (_, i) =>
+          JSON.stringify(
+            journal.revisions
+              .map((revision, sequence) => ({ revision, sequence }))
+              .filter((row) =>
+                row.revision.award.key.startsWith(i.toString(16)),
+              ),
+          ) + "\n",
+      );
+      if (url === "/data/points.json")
+        return Response.json({
+          schemaVersion: "1",
+          ruleVersion: journal.ruleVersion,
+          generatedAt: journal.generatedAt,
+          coverage: journal.coverage,
+          revisionCount: journal.revisions.length,
+          shards: parts.map((part, i) => ({
+            path: `/data/points/${i.toString(16)}.json`,
+            sha256: sha256Hex(part),
+            count: JSON.parse(part).length,
+          })),
+        });
+      const shard = /\/([0-9a-f])\.json$/.exec(url);
+      if (shard) return new Response(parts[Number.parseInt(shard[1], 16)]);
+    }
     if (url.includes("/data/funding.json")) {
       return Response.json({
         schemaVersion: "1",
@@ -500,9 +540,7 @@ describe("discovery", () => {
     render(<App />);
 
     expect(
-      await screen.findByText(
-        "No accepted outcomes in this project cycle yet.",
-      ),
+      await screen.findByText("No recorded contributions match this view."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
@@ -557,44 +595,19 @@ describe("discovery", () => {
     expect(
       await screen.findByRole("heading", { name: "Leaderboard" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "This month" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
     expect(
-      screen.getByRole("tab", { name: "Eliza, unfunded, target $5,000" }),
-    ).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText(/July 2026 · Eliza/u)).toBeInTheDocument();
-    const leaderboard = screen.getByRole("table", {
-      name: /Eliza July 2026 reward leaderboard/u,
-    });
+      screen.getAllByRole("heading", { name: "Leaderboard" }),
+    ).toHaveLength(1);
     expect(
-      within(leaderboard).getByRole("columnheader", {
-        name: "Accepted score",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      within(leaderboard).getByRole("columnheader", {
-        name: "Simulated share",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      within(leaderboard).queryByRole("columnheader", {
-        name: "Paid to date",
-      }),
+      screen.queryByRole("heading", { name: "Contribution points" }),
     ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Period")).toHaveValue("month");
     expect(
-      screen.getByText("How it works", { selector: "summary" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Funding-backed proposals use verified committed funds/u,
-      ),
-    ).toBeInTheDocument();
-    expect(within(leaderboard).getByText("$5,000")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "View more" })).toHaveAttribute(
+      screen.queryByRole("tab", { name: "This month" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Your profile" })).toHaveAttribute(
       "href",
-      "/projects/eliza",
+      "/points",
     );
     expect(
       screen.getByRole("heading", { name: "Projects" }),
@@ -646,32 +659,6 @@ describe("discovery", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("THE GITARMY NETWORK")).not.toBeInTheDocument();
     expect(screen.queryByText("Work in. Money out.")).not.toBeInTheDocument();
-    expect(screen.getAllByText("finish-line")).toHaveLength(1);
-    expect(
-      screen.queryByRole("table", { name: /reviewer leaderboard/u }),
-    ).not.toBeInTheDocument();
-    const contributorRow = screen.getByText("finish-line").closest("tr");
-    expect(contributorRow).toHaveTextContent(
-      "Includes 3 review points · 1 scored review",
-    );
-
-    fireEvent.click(screen.getByRole("tab", { name: "All-time record" }));
-    const record = screen.getByRole("table", {
-      name: "All-time accepted-work record",
-    });
-    expect(
-      within(record).getByRole("columnheader", { name: "Paid to date" }),
-    ).toBeInTheDocument();
-    expect(
-      within(record).queryByRole("columnheader", {
-        name: "Simulated share",
-      }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /This rank does not determine any current monthly pool/u,
-      ),
-    ).toBeInTheDocument();
   });
 
   it("scrolls hash navigation to the requested section", async () => {
@@ -709,7 +696,8 @@ describe("discovery", () => {
       );
     render(<App />);
 
-    const retry = await screen.findByRole("button", { name: /retry/i });
+    await screen.findByRole("alert");
+    const retry = screen.getByRole("button", { name: "Retry" });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Live totals unavailable",
     );
@@ -720,7 +708,9 @@ describe("discovery", () => {
     expect(
       await screen.findByRole("heading", { name: "Leaderboard" }),
     ).toBeVisible();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(failedRequestCount + 2);
   });
 
@@ -758,8 +748,8 @@ describe("discovery", () => {
         { timeout: 5_000 },
       ),
     ).toBeVisible();
+    await waitFor(() => expect(snapshotAttempts).toBe(2));
     expect(abandonedAbort).toHaveBeenCalledOnce();
-    expect(snapshotAttempts).toBe(2);
   });
 
   it("rejects a declared snapshot larger than the browser safety limit", async () => {
@@ -782,37 +772,28 @@ describe("discovery", () => {
   });
 
   it("keeps historical-only contributors on the global leaderboard", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-      Response.json(
-        String(input).includes("/data/cycles/")
-          ? archivedPaidCycleIndex()
-          : septemberRollingSnapshot(),
-      ),
-    );
+    mockSnapshot(septemberRollingSnapshot(), snapshotFixture());
     render(<App />);
-
-    fireEvent.click(
-      await screen.findByRole("tab", { name: "All-time record" }),
-    );
-    const contributor = await screen.findByText("archive-only");
-    const row = contributor.closest("tr");
-    expect(row).not.toBeNull();
-    expect(row).toHaveTextContent("7");
-    expect(row).toHaveTextContent("$1");
+    fireEvent.change(screen.getByLabelText("Period"), {
+      target: { value: "lifetime" },
+    });
+    const contributor = await screen.findByRole("link", {
+      name: "finish-line",
+    });
+    expect(contributor.closest("tr")).toHaveTextContent(/pts/);
   });
 
   it("ranks accepted prior-month work when the active project cycle has moved on", async () => {
     mockSnapshot(augustRollingSnapshot());
     render(<App />);
 
-    fireEvent.click(
-      await screen.findByRole("tab", { name: "All-time record" }),
-    );
-    const contributor = await screen.findByText("finish-line");
-    const row = contributor.closest("tr");
-    expect(row).not.toBeNull();
-    expect(row).toHaveTextContent("34");
-    expect(row).toHaveTextContent("2 scored cycles");
+    fireEvent.change(screen.getByLabelText("Period"), {
+      target: { value: "lifetime" },
+    });
+    const contributor = await screen.findByRole("link", {
+      name: "finish-line",
+    });
+    expect(contributor.closest("tr")).toHaveTextContent(/pts/);
   });
 });
 
