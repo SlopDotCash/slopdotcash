@@ -232,6 +232,8 @@ jobs:
           done
 
       - name: Run desktop and mobile browser tests
+        env:
+          SLOP_E2E_PREBUILT: "1"
         run: bun run test:e2e
 
       - name: Upload Cloudflare Pages bundle
