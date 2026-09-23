@@ -762,6 +762,7 @@ p {
 
 .home-leaderboard-section {
   padding-block: 36px 96px;
+  scroll-margin-top: 64px;
 }
 
 .home-leaderboard-heading {
