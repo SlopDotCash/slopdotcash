@@ -82,6 +82,16 @@ describe("scheduled data-only bundle boundary", () => {
       "data/leaderboard.json",
     ]);
   });
+  it("accepts regenerated contributor profiles", async () => {
+    const [approved, candidate] = await fixture();
+    for (const root of [approved, candidate]) {
+      await writeFile(join(root, "data/profiles.json"), "original");
+    }
+    await writeFile(join(candidate, "data/profiles.json"), "fresh");
+    expect(await assertDataOnlyRefresh(approved, candidate)).toEqual([
+      "data/profiles.json",
+    ]);
+  });
   for (const file of ["index.html", "_headers"]) {
     it(`rejects changed ${file}`, async () => {
       const [approved, candidate] = await fixture();
