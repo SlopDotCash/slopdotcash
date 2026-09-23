@@ -121,16 +121,24 @@ export async function handleX(
       .first<Flow>();
     if (!flow) return finish("failed");
     let token: string | undefined;
+    let stage = "callback";
+    // Never log provider bodies, OAuth codes, tokens, cookies, or identities.
+    const fail = (status?: number) => {
+      console.warn("[Slop X] Connection failed", { stage, status });
+      return finish("failed");
+    };
     try {
       if (url.searchParams.has("error")) return finish("cancelled");
       const code = url.searchParams.get("code");
       if (!code || code.length > 2048) return finish("failed");
+      stage = "decrypt_verifier";
       const verifier = await decryptPkceVerifier(
         flow.verifier,
         flow.iv,
         `slop-x:${hash}`,
         await pkceChallenge(`slop-x-pkce:${deps.rateLimitSecret}`),
       );
+      stage = "token_exchange";
       const exchanged = await provider(deps, "/2/oauth2/token", {
         method: "POST",
         headers: {
@@ -144,7 +152,8 @@ export async function handleX(
           code_verifier: verifier,
         }).toString(),
       });
-      if (!exchanged.ok) return finish("failed");
+      if (!exchanged.ok) return fail(exchanged.status);
+      stage = "token_response";
       const tokens = (await readBoundedJson(
         exchanged,
         16384,
@@ -156,12 +165,14 @@ export async function handleX(
         !tokens.access_token ||
         String(tokens.token_type).toLowerCase() !== "bearer"
       )
-        return finish("failed");
+        return fail();
       token = tokens.access_token;
+      stage = "identity_request";
       const response = await provider(deps, "/2/users/me", {
         headers: { authorization: `Bearer ${token}` },
       });
-      if (!response.ok) return finish("failed");
+      if (!response.ok) return fail(response.status);
+      stage = "identity_response";
       const value = (await readBoundedJson(response, 16384, "X identity")) as {
         data?: { id?: unknown; username?: unknown };
       };
@@ -173,9 +184,10 @@ export async function handleX(
         typeof username !== "string" ||
         !/^[A-Za-z0-9_]{1,15}$/.test(username)
       )
-        return finish("failed");
+        return fail();
       // Session must still be valid after the provider roundtrip (signout cancels linking).
       const verifiedAt = (deps.now?.() ?? new Date()).toISOString();
+      stage = "record_connection";
       const result = await deps.db.batch([
         deps.db
           .prepare(
@@ -218,10 +230,10 @@ export async function handleX(
           ),
       ]);
       if (result.some((r) => !r.success) || result[2].meta?.changes !== 1)
-        return finish("failed");
+        return fail();
       return finish("connected");
     } catch {
-      return finish("failed");
+      return fail();
     } finally {
       await deps.db
         .prepare("DELETE FROM points_x_flows WHERE state_hash=?")
