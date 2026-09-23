@@ -3615,6 +3615,12 @@ small {
   overflow-wrap: anywhere;
   margin-top: 0;
 }
+.home-leaderboard-section > .points-panel {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
 .points-panel p {
   max-width: 72ch;
 }
