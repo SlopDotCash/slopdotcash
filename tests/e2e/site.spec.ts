@@ -174,19 +174,14 @@ test("shows signer loss and expired capability without payout availability", asy
   });
 });
 
-test("discovers both reward models and a score-ranked global ledger", async ({
+test("discovers projects and one points-ranked homepage leaderboard", async ({
   page,
   request,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload({ waitUntil: "networkidle" });
-  const snapshot = await loadSnapshot(request);
+  await loadSnapshot(request);
   await loadCycles(request);
-  await expect(
-    page.locator(
-      ".global-leader-grid .global-leader-row:not(.reviewer-leader-row)",
-    ),
-  ).toHaveCount(createProjectView(snapshot, "eliza").leaders.length);
 
   await expect(
     page.getByRole("heading", {
@@ -243,19 +238,6 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", { exact: true, name: "Delta Star" }),
   ).toBeVisible();
-  const scoreLineCounts = await page
-    .locator(".combined-score > strong")
-    .evaluateAll((scores) =>
-      scores.map((score) => {
-        const range = document.createRange();
-        range.selectNodeContents(score);
-        return new Set(
-          [...range.getClientRects()].map((rect) => Math.round(rect.top)),
-        ).size;
-      }),
-    );
-  expect(scoreLineCounts.length).toBeGreaterThan(0);
-  expect(scoreLineCounts.every((count) => count === 1)).toBe(true);
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
   await expect(elizaCard.getByText("Unfunded", { exact: true })).toHaveCount(0);
   await expect(elizaCard.getByText("$5k", { exact: true })).toBeVisible();
@@ -301,30 +283,41 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(
     page.getByRole("heading", { name: "Leaderboard" }),
   ).toBeVisible();
-  await expect(page.getByRole("tab", { name: "This month" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  const leaderboard = page.getByRole("region", {
+    name: "Leaderboard",
+    exact: true,
+  });
+  await expect(leaderboard.getByRole("table")).toBeVisible();
   await expect(
-    page.getByRole("tab", { name: "Eliza, unfunded, target $5,000" }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    page.getByRole("columnheader", { name: "Accepted score" }),
-  ).toBeAttached();
+    page.getByRole("heading", { name: "Contribution points", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("columnheader", { name: "Simulated share" }),
-  ).toBeAttached();
-  await page
-    .locator(".leaderboard-methodology")
-    .getByText("How it works")
-    .click();
-  await expect(
-    page.getByText(/Funding-backed proposals use verified committed funds/u),
-  ).toBeVisible();
-  await expect(page.getByRole("link", { name: "View more" })).toHaveAttribute(
-    "href",
-    "/projects/eliza",
+  ).toHaveCount(0);
+  await expect(leaderboard.getByLabel("Period", { exact: true })).toHaveValue(
+    "month",
   );
+  await leaderboard
+    .getByLabel("Period", { exact: true })
+    .selectOption("lifetime");
+  const pointValues = await leaderboard
+    .locator("tbody tr td:last-child")
+    .allTextContents();
+  const totals = pointValues.map((value) =>
+    Number(value.replace(/[^0-9]/g, "")),
+  );
+  expect(totals.length).toBeGreaterThan(0);
+  expect(totals).toEqual([...totals].sort((a, b) => b - a));
+  const firstLogin = await leaderboard
+    .getByRole("table")
+    .getByRole("link")
+    .first()
+    .innerText();
+  await leaderboard.getByLabel("Find a contributor").fill(firstLogin);
+  await expect(
+    leaderboard.getByRole("link", { name: firstLogin, exact: true }),
+  ).toBeVisible();
+  await leaderboard.getByLabel("Find a contributor").fill("");
   await expect(page.locator(".hero-mobile-action")).toHaveText(
     "SHIPPING OPEN SOURCE.",
   );
@@ -347,51 +340,11 @@ test("discovers both reward models and a score-ranked global ledger", async ({
   await expect(page.getByText("THE GITARMY NETWORK")).toHaveCount(0);
   await expect(page.getByText("Work in. Money out.")).toHaveCount(0);
 
-  const rows = page.locator("#leaderboard tbody .leader-row");
-  if (snapshot.leaders.length === 0) await expect(rows).toHaveCount(0);
-  else {
-    expect(await rows.count()).toBeGreaterThan(0);
-    const viewport = page.viewportSize();
-    if (viewport && viewport.width <= 680) {
-      const projection = rows.first().locator("td").nth(3);
-      await expect(projection).toBeVisible();
-      const projectionBounds = await projection.boundingBox();
-      expect(projectionBounds).not.toBeNull();
-      expect(projectionBounds?.x ?? -1).toBeGreaterThanOrEqual(0);
-      expect(
-        (projectionBounds?.x ?? 0) + (projectionBounds?.width ?? 0),
-      ).toBeLessThanOrEqual(viewport.width + 1);
-      expect(
-        await page
-          .locator("#leaderboard")
-          .evaluate(
-            (element) => element.scrollWidth <= element.clientWidth + 1,
-          ),
-      ).toBe(true);
-    }
-  }
-  const leaderboardBottomSpace = await page.evaluate(() => {
-    const panel = document.querySelector("#leaderboard-current-panel");
-    const footer = document.querySelector(".site-footer");
-    if (!panel || !footer) return null;
-    return Math.round(
-      footer.getBoundingClientRect().top - panel.getBoundingClientRect().bottom,
-    );
-  });
-  expect(leaderboardBottomSpace).not.toBeNull();
-  expect(leaderboardBottomSpace ?? 0).toBeGreaterThanOrEqual(
-    (page.viewportSize()?.width ?? 0) <= 680 ? 64 : 80,
-  );
-  await page.getByRole("tab", { name: "All-time record" }).click();
-  await expect(
-    page.getByRole("table", { name: "All-time accepted-work record" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("columnheader", { name: "Paid to date" }),
-  ).toBeAttached();
-  await expect(
-    page.getByRole("columnheader", { name: "Simulated share" }),
-  ).toHaveCount(0);
+  expect(
+    await page
+      .locator("#leaderboard")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+  ).toBe(true);
 });
 
 test("starts Eliza with one prompt and no separate payout form", async ({
