@@ -450,9 +450,22 @@ describe("verified X connections", () => {
       `https://slop.cash/api/v1/points/x/callback?code=test&state=${state}`,
       { headers: { cookie: first.headers.get("set-cookie")!.split(";")[0] } },
     );
-    expect(
-      (await handlePointsApi(callback.clone(), linked)).headers.get("location"),
-    ).toContain("failed");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(
+        (await handlePointsApi(callback.clone(), linked)).headers.get(
+          "location",
+        ),
+      ).toContain("failed");
+      expect(warning.mock.calls).toEqual([
+        [
+          "[Slop X] Connection failed",
+          { stage: "token_exchange", status: 403 },
+        ],
+      ]);
+    } finally {
+      warning.mockRestore();
+    }
     expect(
       sqlite.prepare("SELECT COUNT(*) n FROM points_x_awards").get(),
     ).toMatchObject({ n: 0 });
