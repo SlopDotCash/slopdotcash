@@ -134,7 +134,9 @@ test("social membership shows connection points, respects privacy and survives d
   await expect(accountButton).toBeFocused();
   await expect(accountPanel).toHaveCount(0);
   await accountButton.click();
-  await page.getByRole("heading", { name: "Slop Points", exact: true }).click();
+  // The dropdown overlays the page heading on narrow screens; use the
+  // uncovered header edge to exercise a real outside pointer interaction.
+  await header.click({ position: { x: 1, y: 1 } });
   await expect(accountPanel).toHaveCount(0);
   const social = page.getByRole("region", { name: "Connect X" });
   const community = page.getByRole("region", { name: "Community members" });
