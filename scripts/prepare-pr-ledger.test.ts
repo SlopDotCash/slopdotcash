@@ -52,8 +52,15 @@ describe("pull-request ledger schema bridge", () => {
 
   it("reads a prior inventory without inventing collection or allowing partial publication", () => {
     const historical = structuredClone(snapshotFixture());
-    historical.repositories = historical.repositories.slice(0, 4);
-    historical.source.repositories = historical.source.repositories.slice(0, 4);
+    // Remove an active repository with no fixture events. Paused proposals
+    // are already excluded from the complete collection inventory.
+    const uncollected = historical.repositories[2];
+    historical.repositories = historical.repositories.filter(
+      (repository) => repository.id !== uncollected.id,
+    );
+    historical.source.repositories = historical.source.repositories.filter(
+      (repository) => repository.id !== uncollected.id,
+    );
     expect(() =>
       createProjectView(historical, "monna-agent-permission-diff"),
     ).toThrow(/not collected activity/u);
@@ -79,7 +86,6 @@ describe("pull-request ledger schema bridge", () => {
       /registry order/u,
     );
     const omittedActivity = structuredClone(historical);
-    const uncollected = snapshotFixture().repositories[4];
     omittedActivity.workQueue.issues[0].repository = uncollected.id;
     omittedActivity.workQueue.issues[0].url = `${uncollected.githubUrl}/issues/1`;
     expect(() => assertLeaderboardSnapshot(omittedActivity)).toThrow(
