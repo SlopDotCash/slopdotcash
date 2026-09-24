@@ -219,6 +219,7 @@ describe("summarizeModelOutcomes", () => {
       pullRequestPoints: 3,
       acceptedReviews: 0,
       topContributorShare: 1,
+      topContributorOutcomes: 1,
     });
     expect(gpt.declaredAs).toEqual([
       { identifier: "openai/GPT-5.6", count: 1 },

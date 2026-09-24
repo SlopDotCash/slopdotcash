@@ -1345,6 +1345,26 @@ describe("public records", () => {
 });
 
 describe("public proof routes", () => {
+  it("includes verification under How it Works without another header option", async () => {
+    route("/how-it-works");
+    mockSnapshot();
+    render(<App />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Settlement verification",
+        level: 2,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(
+      within(screen.getByRole("banner")).queryByRole("link", {
+        name: "Verification",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Settlement verification" }),
+    ).toHaveAttribute("href", "/how-it-works#verification");
+  });
   it.each([
     ["/how-it-works", "Accepted work in. Auditable allocations out."],
     ["/receipts", "Signed runs, without the private trace."],
@@ -2505,7 +2525,14 @@ describe("independent public data routes", () => {
         .mockRejectedValue(new Error("data unavailable"));
       render(<App />);
       await act(async () => {});
-      expect(fetcher).not.toHaveBeenCalled();
+      if (path === "/how-it-works") {
+        expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+          "/data/squads-executions.json",
+        ]);
+        expect(
+          screen.getByRole("heading", { name: "Settlement verification" }),
+        ).toBeVisible();
+      } else expect(fetcher).not.toHaveBeenCalled();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );

@@ -75,6 +75,7 @@ export interface ModelOutcomeRow {
   reviewPoints: number;
   /** Share of this model's accepted outcomes from its busiest contributor. */
   topContributorShare: number | null;
+  topContributorOutcomes: number;
   declaredAs: Array<{ identifier: string; count: number }>;
 }
 
@@ -365,6 +366,7 @@ export function summarizeModelOutcomes(
         acceptedReviews: bucket.acceptedReviews,
         reviewPoints: bucket.reviewPoints,
         topContributorShare: outcomes > 0 ? top / outcomes : null,
+        topContributorOutcomes: top,
         declaredAs: sortedEntries(bucket.declaredAs).map(
           ([identifier, count]) => ({ identifier, count }),
         ),

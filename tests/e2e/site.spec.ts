@@ -1235,6 +1235,22 @@ test("opens the models page directly and through keyboard navigation", async ({
     name: "Accepted outcomes by model",
     exact: true,
   });
+  await expect(
+    tableRegion.getByRole("columnheader", {
+      name: "Share of all merged PRs",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    tableRegion.getByRole("columnheader", {
+      name: "Top contributor share",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  const firstModel = tableRegion.locator("tbody tr").first();
+  await expect(firstModel.locator("td").nth(6)).toHaveText(
+    /\d[\d,]* of \d[\d,]* outcomes/,
+  );
   await tableRegion.focus();
   await expect(tableRegion).toBeFocused();
   if (
@@ -1324,7 +1340,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
 test("derives Solana addresses on the settlement verification page", async ({
   page,
 }, testInfo) => {
-  await page.goto("/verification", { waitUntil: "networkidle" });
+  await page.goto("/how-it-works#verification", { waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", { exact: true, name: "Settlement verification" }),
   ).toBeVisible();
