@@ -98,6 +98,7 @@ type WalletClaimRow = {
   github_user_id: string;
   github_login: string;
   wallet_address: string;
+  chain: WalletClaim["chain"];
   source: WalletClaim["source"];
   issue_repository: string | null;
   issue_number: number | null;
@@ -196,6 +197,7 @@ function mapWalletClaim(row: WalletClaimRow): WalletClaim {
     githubId: row.github_user_id,
     githubLogin: row.github_login,
     walletAddress: row.wallet_address,
+    chain: row.chain,
     source: row.source,
     issueRepository: row.issue_repository,
     issueNumber: row.issue_number,
@@ -910,23 +912,28 @@ export class CloudflareTracePersistence implements TracePersistence {
       return { status: "existing", value: mapWalletClaim(byDigest) };
     if (claim.supersedesClaimId !== null) {
       const previous = await this.getWalletClaim(claim.supersedesClaimId);
-      if (previous === null || previous.githubId !== claim.githubId) {
+      if (
+        previous === null ||
+        previous.githubId !== claim.githubId ||
+        previous.chain !== claim.chain
+      ) {
         return { status: "conflict" };
       }
     }
     const claimInsert = this.db
       .prepare(
         `INSERT INTO wallet_claims (
-            id, github_user_id, github_login, wallet_address, source,
+            id, github_user_id, github_login, wallet_address, chain, source,
             issue_repository, issue_number, source_body_sha256, observed_at,
             record_sha256, supersedes_claim_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         claim.id,
         claim.githubId,
         claim.githubLogin,
         claim.walletAddress,
+        claim.chain,
         claim.source,
         claim.issueRepository,
         claim.issueNumber,
@@ -969,15 +976,20 @@ export class CloudflareTracePersistence implements TracePersistence {
         .first<WalletClaimRow>();
       if (raced !== null)
         return { status: "existing", value: mapWalletClaim(raced) };
-      const competing = await this.db
-        .prepare(
-          claim.supersedesClaimId === null
-            ? `SELECT id FROM wallet_claims
-               WHERE github_user_id = ? AND supersedes_claim_id IS NULL`
-            : "SELECT id FROM wallet_claims WHERE supersedes_claim_id = ?",
-        )
-        .bind(claim.supersedesClaimId ?? claim.githubId)
-        .first<{ id: string }>();
+      const competing = await (claim.supersedesClaimId === null
+        ? this.db
+            .prepare(
+              `SELECT id FROM wallet_claims
+               WHERE github_user_id = ? AND chain = ?
+                 AND supersedes_claim_id IS NULL`,
+            )
+            .bind(claim.githubId, claim.chain)
+        : this.db
+            .prepare(
+              "SELECT id FROM wallet_claims WHERE supersedes_claim_id = ?",
+            )
+            .bind(claim.supersedesClaimId)
+      ).first<{ id: string }>();
       if (competing !== null) return { status: "conflict" };
       throw error;
     }
@@ -1098,11 +1110,15 @@ export class CloudflareTracePersistence implements TracePersistence {
     return row === null ? null : mapWalletClaim(row);
   }
 
-  async getCurrentWalletClaim(githubId: string): Promise<WalletClaim | null> {
+  async getCurrentWalletClaim(
+    githubId: string,
+    chain: WalletClaim["chain"],
+  ): Promise<WalletClaim | null> {
     const row = await this.db
       .prepare(
         `SELECT claim.* FROM wallet_claims AS claim
          WHERE claim.github_user_id = ?
+           AND claim.chain = ?
            AND NOT EXISTS (
              SELECT 1 FROM wallet_claims AS successor
              WHERE successor.supersedes_claim_id = claim.id
@@ -1110,7 +1126,7 @@ export class CloudflareTracePersistence implements TracePersistence {
          ORDER BY claim.observed_at DESC, claim.created_at DESC
          LIMIT 1`,
       )
-      .bind(githubId)
+      .bind(githubId, chain)
       .first<WalletClaimRow>();
     return row === null ? null : mapWalletClaim(row);
   }
