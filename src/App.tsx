@@ -411,9 +411,6 @@ function Header({ isHome }: { isHome: boolean }) {
           <Link href="/models" onNavigate={closeMenu}>
             Models
           </Link>
-          <Link href="/verification" onNavigate={closeMenu}>
-            Verification
-          </Link>
           <Link href="/sponsors" onNavigate={closeMenu}>
             Sponsors
           </Link>
@@ -3192,7 +3189,12 @@ function HowItWorksPage() {
             decisions, and append-only public corrections.
           </p>
         </div>
-        <div className="plain-table-wrap score-tier-wrap">
+        <section
+          className="plain-table-wrap score-tier-wrap"
+          aria-label="Contribution score tiers"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+          tabIndex={0}
+        >
           <table className="plain-table score-tier-table">
             <caption>Contribution tiers</caption>
             <thead>
@@ -3235,7 +3237,7 @@ function HowItWorksPage() {
               </tr>
             </tbody>
           </table>
-        </div>
+        </section>
       </section>
       <section className="worked-example">
         <div>
@@ -3360,7 +3362,9 @@ function HowItWorksPage() {
             <Link href="/#leaderboard">Live leaderboard</Link>
           </li>
           <li>
-            <Link href="/verification">Settlement verification</Link>
+            <Link href="/how-it-works#verification">
+              Settlement verification
+            </Link>
             <Link href="/sponsors">Fund a pool</Link>
           </li>
           <li>
@@ -3368,6 +3372,7 @@ function HowItWorksPage() {
           </li>
         </ul>
       </section>
+      <SettlementVerification embedded />
     </main>
   );
 }
@@ -4133,10 +4138,11 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
         <p>
           A pull request counts for a model when its author declared that model
           on the pull request; a review counts when the reviewer declared it on
-          the review. Declarations by anyone else never count. Top contributor
-          share is the part of a model&apos;s outcomes that comes from its
-          single busiest contributor. Above 50% the model mostly measures one
-          person, and the row says so.
+          the review. Declarations by anyone else never count. PR share uses all
+          merged PRs in this snapshot, including those without a declared model.
+          A PR naming several models counts once for each, so shares overlap.
+          The busiest contributor column counts that person’s outcomes for this
+          model; it is not the model’s share of all work.
         </p>
         <section
           className="plain-table-wrap"
@@ -4149,11 +4155,12 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
               <tr>
                 <th scope="col">Model</th>
                 <th scope="col">Merged PRs</th>
+                <th scope="col">Share of all merged PRs</th>
                 <th scope="col">Signed PRs</th>
                 <th scope="col">PR points</th>
                 <th scope="col">Accepted reviews</th>
                 <th scope="col">Declaring contributors</th>
-                <th scope="col">Top contributor share</th>
+                <th scope="col">Outcomes from busiest contributor</th>
               </tr>
             </thead>
             <tbody>
@@ -4164,6 +4171,16 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                     {row.model}
                   </th>
                   <td>{count.format(row.mergedPullRequests)}</td>
+                  <td>
+                    {totals.mergedPullRequests === 0
+                      ? "n/a"
+                      : row.mergedPullRequests > 0 &&
+                          (100 * row.mergedPullRequests) /
+                            totals.mergedPullRequests <
+                            0.1
+                        ? "<0.1%"
+                        : `${((100 * row.mergedPullRequests) / totals.mergedPullRequests).toFixed(1)}%`}
+                  </td>
                   <td>
                     {row.signedPullRequests > 0
                       ? count.format(row.signedPullRequests)
@@ -4181,7 +4198,7 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                   >
                     {row.topContributorShare === null
                       ? "n/a"
-                      : percent(row.topContributorShare, 1)}
+                      : `${count.format(row.topContributorOutcomes)} of ${count.format(row.mergedPullRequests + row.acceptedReviews)} outcomes`}
                   </td>
                 </tr>
               ))}
