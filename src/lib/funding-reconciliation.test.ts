@@ -281,6 +281,26 @@ describe("reconcileFundingPayout controls", () => {
     expect(result.reconciles).toBe(false);
   });
 
+  it("rejects shared wallets instead of counting the same transfer twice", () => {
+    const candidate = structuredClone(preparation("asi"));
+    const wallets = candidate.contributors.filter((entry) => entry.wallet);
+    if (!wallets[0]?.wallet || !wallets[1]?.wallet)
+      throw new Error("Missing wallets");
+    wallets[1].wallet.address = wallets[0].wallet.address;
+    expect(() => reconcileFundingPayout(candidate, observed)).toThrow(
+      /duplicate preparation wallet/u,
+    );
+  });
+
+  it("rejects malformed observations at unclaimed addresses too", () => {
+    expect(() =>
+      reconcileFundingPayout(
+        preparation("asi"),
+        new Map([["unexpected", "-1"]]),
+      ),
+    ).toThrow(/minor-unit integer/u);
+  });
+
   it("rejects a malformed observed amount instead of coercing it", () => {
     expect(() =>
       reconcileFundingPayout(preparation("asi"), new Map([[prabhat, "3.5"]])),

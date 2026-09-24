@@ -99,6 +99,9 @@ export function reconcileFundingPayout(
   observedByAddress: ReadonlyMap<string, string>,
 ): FundingPayoutReconciliation {
   const review = createFundingReview(assertFundingPreparation(preparation));
+  for (const [address, amount] of observedByAddress) {
+    assertMinor(amount, `${address}.observed`);
+  }
   const claimed = new Set<string>();
   let entitled = 0n;
   let observed = 0n;
@@ -122,6 +125,11 @@ export function reconcileFundingPayout(
         deltaMinor: (-entitledMinor).toString(),
         status: "unpayable" as const,
       };
+    }
+    if (claimed.has(address)) {
+      throw new TypeError(
+        "Cannot reconcile duplicate preparation wallet address",
+      );
     }
     claimed.add(address);
     payableEntitled += entitledMinor;
