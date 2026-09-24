@@ -100,7 +100,6 @@ describe("Cloudflare Pages deployment manifest", () => {
     );
     expect(manifest.files.map((record) => record.path)).not.toContain(
       MANIFEST_FILENAME,
-      MAXIMUM_FILES,
     );
     expect(manifestBytes.toString("utf8")).toBe(
       `${JSON.stringify(manifest, null, 2)}\n`,
