@@ -1070,7 +1070,10 @@ describe("public records", () => {
     ).toBeInTheDocument();
     const totals = document.querySelector("main > .profile-totals");
     expect(totals).not.toBeNull();
-    expect(totals).toHaveTextContent("34all-time score");
+    expect(totals).toHaveTextContent(
+      /3435-day score to [A-Z][a-z]{2} \d{1,2}, \d{4}/u,
+    );
+    expect(totals).not.toHaveTextContent(/all-time/u);
     expect(
       screen.getByText("Harden the proximity manifest loader"),
     ).toBeVisible();
@@ -1103,8 +1106,14 @@ describe("public records", () => {
     ).toBeInTheDocument();
     expect(screen.queryAllByText(/2026-07 scoring ·/)).toHaveLength(0);
     expect(screen.getByText("Evidence guidance")).toBeInTheDocument();
-    expect(screen.getByText("all-time score")).toBeInTheDocument();
-    expect(screen.getByText("monthly estimate")).toBeInTheDocument();
+    expect(
+      screen.getByText("35-day score to Jul 30, 2026"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("July 2026 projected, unfunded"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/all-time/u)).not.toBeInTheDocument();
+    expect(screen.queryByText("monthly estimate")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Progress" }),
     ).not.toBeInTheDocument();

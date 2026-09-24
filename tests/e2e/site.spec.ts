@@ -572,9 +572,11 @@ test("renders contributor and cycle records from validated public data", async (
   await expect(
     page.locator(".profile-totals").getByText("paid", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("all-time score", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("monthly estimate", { exact: true }),
+    page.locator(".profile-totals").getByText(/^\d+-day score to /u),
+  ).toBeVisible();
+  await expect(
+    page.locator(".profile-totals").getByText(/^[A-Z][a-z]+ \d{4} projected/u),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Progress" })).toHaveCount(0);
   const acceptedRecordCount = snapshot.ledger.filter(
