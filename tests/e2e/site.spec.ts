@@ -227,7 +227,9 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
   ).toBeVisible();
   const community = page.locator("details.community-projects");
   await expect(community).not.toHaveAttribute("open", "");
-  await expect(community.locator("a.project-card")).toBeHidden();
+  for (const card of await community.locator("a.project-card").all()) {
+    await expect(card).toBeHidden();
+  }
   await community.locator("summary").focus();
   await page.keyboard.press("Enter");
   await expect(
