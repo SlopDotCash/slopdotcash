@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { MAXIMUM_BUNDLE_FILES } from "./dist-manifest.mjs";
 
 const refreshPaths = new Set([
   "deployment-manifest.json",
@@ -56,7 +57,7 @@ async function inventory(root) {
     } else if (stat.isFile()) {
       total += stat.size;
       if (
-        files.size >= 256 ||
+        files.size >= MAXIMUM_BUNDLE_FILES ||
         stat.size > 25 * 1024 * 1024 ||
         total > 128 * 1024 * 1024
       ) {
