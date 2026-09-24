@@ -1799,6 +1799,22 @@ describe("private trace API", () => {
       supersedesClaimId: string | null;
     };
     expect(baseClaim).toMatchObject({ chain: "base", supersedesClaimId: null });
+    for (const [suffix, method] of [
+      ["possession-challenge", "POST"],
+      ["possession", "POST"],
+      ["possession", "GET"],
+    ] as const) {
+      const proof = await handleTraceApi(
+        request(
+          `wallet-claims/${baseClaim.claimId}/${suffix}`,
+          method,
+          contributor,
+        ),
+        deps,
+      );
+      expect(proof.status).toBe(409);
+      expect(await proof.json()).toMatchObject({ error: "unsupported_chain" });
+    }
 
     const current = (chain?: string) =>
       handleTraceApi(
