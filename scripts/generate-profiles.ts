@@ -31,7 +31,10 @@ if (process.argv.includes("--live")) {
   const people = new Map<string, ProfileRecord>();
   for (const repo of TARGET_REPOSITORIES) {
     let cursor: string | null = null,
-      expected: number | undefined,
+      // Pages are ordered by creation time, so a PR opened during the crawl
+      // lands after the cursor and is still fetched. The count may grow; it
+      // may never shrink, and the final page must reconcile exactly.
+      reported: number | undefined,
       excluded = 0;
     const ids = new Set<string>();
     do {
@@ -87,11 +90,11 @@ if (process.argv.includes("--live")) {
       )
         throw Error("Profile repository identity changed");
       const page = value.data.repository.pullRequests;
-      expected ??= page.totalCount;
-      if (expected !== page.totalCount)
+      if (reported !== undefined && page.totalCount < reported)
         throw Error(
-          "PR inventory changed during census; retry without publishing partial counts",
+          "PR inventory shrank during census; retry without publishing partial counts",
         );
+      reported = page.totalCount;
       for (const pr of page.nodes) {
         if (
           !pr.id ||
@@ -130,7 +133,10 @@ if (process.argv.includes("--live")) {
         throw Error("Incomplete PR pagination");
       cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
     } while (cursor);
-    if (ids.size !== expected) throw Error("PR count reconciliation failed");
+    if (ids.size !== reported)
+      throw Error(
+        `PR count reconciliation failed: crawled ${ids.size}, repository reports ${reported}`,
+      );
     result.repositories.push({
       repository: repo.id,
       count: ids.size,

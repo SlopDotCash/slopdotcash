@@ -161,7 +161,18 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           bun run leaderboard:generate
-          bun run profiles:generate
+          # The census crawls every upstream PR and fails closed if the
+          # inventory shrinks mid-crawl. One retry covers a single race.
+          for attempt in 1 2; do
+            if bun run profiles:generate; then
+              break
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::Profile census failed twice; not publishing partial counts."
+              exit 1
+            fi
+            echo "::warning::Profile census did not reconcile; retrying once."
+          done
           # An older approved source still serves its legacy intake format.
           # Renew it during the transition; new sources have no such builder.
           if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ -f scripts/prepare-private-intake-attestation.ts ]; then
