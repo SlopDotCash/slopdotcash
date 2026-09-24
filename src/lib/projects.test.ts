@@ -95,6 +95,19 @@ describe("project registry", () => {
     },
   );
 
+  it("keeps Darling paused and outside the collection inventory", () => {
+    expect(findProject("darling-arm64")).toMatchObject({
+      status: "paused",
+      authority: { state: "unverified", proof: null },
+      reward: { committedMinor: "0", paymentMode: "disabled" },
+    });
+    expect(
+      TARGET_REPOSITORIES.some(
+        (repository) => repository.projectId === "darling-arm64",
+      ),
+    ).toBe(false);
+  });
+
   it("allows every model while requiring a concrete disclosure", () => {
     for (const project of PROJECTS) {
       expect(project.modelPolicy).toEqual({
