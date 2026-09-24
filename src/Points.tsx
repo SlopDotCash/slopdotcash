@@ -39,11 +39,13 @@ type State =
 const Context = createContext<{
   state: State;
   me: Membership | null;
+  session: "loading" | "ready" | "error";
   refresh: () => void;
   setMe: (m: Membership | null) => void;
 }>({
   state: { status: "loading" },
   me: null,
+  session: "loading",
   refresh: () => {},
   setMe: () => {},
 });
@@ -97,6 +99,9 @@ export function PointsProvider({
 }) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [me, setMe] = useState<Membership | null>(null);
+  const [session, setSession] = useState<"loading" | "ready" | "error">(
+    productOrigin() ? "loading" : "ready",
+  );
   const [attempt, setAttempt] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: retries and membership changes refresh public visibility.
   useEffect(() => {
@@ -118,22 +123,34 @@ export function PointsProvider({
               "Points are unavailable. Your recorded points have not been reset.",
           });
       });
+    return () => controller.abort();
+  }, [enabled]);
+  useEffect(() => {
+    const controller = new AbortController();
     if (productOrigin())
       void fetch("/api/v1/points/me", {
-        signal: controller.signal,
+        signal: AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(15000),
+        ]),
         cache: "no-store",
       })
         .then(async (r) => {
-          if (r.status === 401) return;
+          if (r.status === 401) {
+            setMe(null);
+            setSession("ready");
+            return;
+          }
           if (!r.ok) throw new Error("session unavailable");
           const m = await readBoundedJson(r, 16384, "points session");
           if (m) setMe(member(m));
+          setSession("ready");
         })
         .catch(() => {
-          /* Optional session failure never changes contribution balances. */
+          if (!controller.signal.aborted) setSession("error");
         });
     return () => controller.abort();
-  }, [enabled]);
+  }, []);
   useEffect(() => {
     if (!enabled || !attempt) return;
     const controller = new AbortController();
@@ -157,23 +174,38 @@ export function PointsProvider({
   }, [attempt, enabled]);
   return (
     <Context.Provider
-      value={{ state, me, setMe, refresh: () => setAttempt((a) => a + 1) }}
+      value={{
+        state,
+        me,
+        session,
+        setMe,
+        refresh: () => setAttempt((a) => a + 1),
+      }}
     >
       {children}
     </Context.Provider>
   );
 }
-export function PointsNav() {
-  const { state, me } = useContext(Context);
+export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
+  const { state, me, session } = useContext(Context);
   const total =
     state.status === "ready" && me
       ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0) +
         me.welcome +
         (me.socialPoints ?? 0)
       : null;
+  if (!me && session === "loading")
+    return <span role="status">Checking login…</span>;
   return (
-    <a href="/points">
-      {total === null ? "Your profile" : `${total.toLocaleString()} pts`}
+    <a
+      href={
+        me ? `/contributors/${encodeURIComponent(me.actor.login)}` : "/login"
+      }
+      onClick={onNavigate}
+    >
+      {me
+        ? `@${me.actor.login}${total === null ? "" : ` · ${total.toLocaleString()} pts`}`
+        : "Log in"}
     </a>
   );
 }
@@ -365,12 +397,21 @@ export function ProfilePoints({
         </p>
       ) : null}
       <p>{POINTS_NOTICE}</p>
+      {own ? (
+        <p>
+          <a href="/points">Manage account and social connections</a>
+        </p>
+      ) : null}
       <a href="/points">How to earn points</a>
     </section>
   );
 }
-function JoinPoints() {
-  const { me, setMe } = useContext(Context);
+function JoinPoints({
+  redirectToProfile = false,
+}: {
+  redirectToProfile?: boolean;
+}) {
+  const { me, setMe, session } = useContext(Context);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [authorization, setAuthorization] = useState<string | null>(null);
@@ -455,7 +496,12 @@ function JoinPoints() {
           }),
           signal: c.signal,
         });
-        setMe(member(joined));
+        const signedIn = member(joined);
+        setMe(signedIn);
+        if (redirectToProfile)
+          window.location.assign(
+            `/contributors/${encodeURIComponent(signedIn.actor.login)}`,
+          );
         setMessage("You’re signed in. Your welcome points are recorded.");
         return;
       }
@@ -485,14 +531,22 @@ function JoinPoints() {
   if (!productOrigin())
     return (
       <section className="points-panel">
-        <h2>Everyone starts somewhere</h2>
-        <p>Join with GitHub for 5 welcome points. No wallet needed.</p>
-        <a href="https://slop.cash/points">Join with GitHub on slop.cash</a>
+        <h2>Sign in to Slop</h2>
+        <p>
+          Sign in with your GitHub account. New members receive 5 welcome
+          points.
+        </p>
+        <a href="https://slop.cash/login">Continue with GitHub on slop.cash</a>
       </section>
     );
   return (
     <section className="points-panel">
-      <h2>{me ? `Welcome, ${me.actor.login}` : "Everyone starts somewhere"}</h2>
+      <h2>{me ? `Welcome, ${me.actor.login}` : "Sign in to Slop"}</h2>
+      {!me && session === "error" ? (
+        <p role="status">
+          We couldn’t check your session. Sign in with GitHub to try again.
+        </p>
+      ) : null}
       {me ? (
         <>
           <p>
@@ -525,8 +579,9 @@ function JoinPoints() {
       ) : (
         <>
           <p>
-            Join with GitHub for 5 welcome points. Your accepted contributions
-            are recorded even before you join. No wallet needed.
+            GitHub is the only way to sign in. New members receive 5 welcome
+            points. Your accepted contributions are recorded even before you
+            join. No wallet needed.
           </p>
           <label>
             <input
@@ -538,8 +593,12 @@ function JoinPoints() {
             Show my membership publicly. Accepted contributions are already
             public.
           </label>
-          <button type="button" disabled={busy} onClick={() => void start()}>
-            {busy ? "Waiting for GitHub…" : "Join with GitHub"}
+          <button
+            type="button"
+            disabled={busy || session === "loading"}
+            onClick={() => void start()}
+          >
+            {busy ? "Waiting for GitHub…" : "Continue with GitHub"}
           </button>
           {busy ? (
             <button
@@ -562,6 +621,18 @@ function JoinPoints() {
       )}
       <p role="status">{message}</p>
     </section>
+  );
+}
+export function LoginPage() {
+  return (
+    <main className="shell route-main points-page">
+      <h1>Log in</h1>
+      <p>
+        Use your GitHub account to access your profile and manage your
+        connections.
+      </p>
+      <JoinPoints redirectToProfile />
+    </main>
   );
 }
 export function PointsPage() {

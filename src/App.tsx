@@ -2,6 +2,7 @@ import { Link } from "./Link";
 import { copyText } from "./lib/copy-text";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import {
+  LoginPage,
   PointsLabel,
   PointsNav,
   PointsPage,
@@ -162,7 +163,8 @@ interface Route {
     | "verification"
     | "cycle-archive"
     | "unknown"
-    | "points";
+    | "points"
+    | "login";
   projectId?: string;
   cycleId?: string;
   login?: string;
@@ -176,6 +178,8 @@ function internalRoute(pathname: string): Route {
     return { kind: "unknown" };
   }
   if (segments.length === 0) return { kind: "home" };
+  if (segments.length === 1 && segments[0] === "login")
+    return { kind: "login" };
   if (segments.length === 1 && segments[0] === "points")
     return { kind: "points" };
   if (segments.length === 1 && segments[0] === "wallet")
@@ -400,18 +404,12 @@ function Header({ isHome }: { isHome: boolean }) {
           <Link href="/#leaderboard" onNavigate={closeMenu}>
             Leaderboard
           </Link>
-          <PointsNav />
+          <PointsNav onNavigate={closeMenu} />
           <Link href="/how-it-works" onNavigate={closeMenu}>
             How it works
           </Link>
-          <Link href="/receipts" onNavigate={closeMenu}>
-            Receipts
-          </Link>
           <Link href="/models" onNavigate={closeMenu}>
             Models
-          </Link>
-          <Link href="/cycles" onNavigate={closeMenu}>
-            Cycles
           </Link>
           <Link href="/verification" onNavigate={closeMenu}>
             Verification
@@ -4382,6 +4380,7 @@ function AppContent() {
   const route = useRoute();
   const needsSnapshot = ![
     "points",
+    "login",
     "how-it-works",
     "new-project",
     "wallet",
@@ -4394,6 +4393,7 @@ function AppContent() {
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
   else if (route.kind === "points") content = <PointsPage />;
+  else if (route.kind === "login") content = <LoginPage />;
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
   else if (route.kind === "sponsors")
     content = <SponsorsPage retry={retry} state={state} />;

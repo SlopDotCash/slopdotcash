@@ -83,7 +83,7 @@ test("social membership shows connection points, respects privacy and survives d
   });
   if (await navigationToggle.isVisible()) await navigationToggle.click();
   await expect(
-    page.getByRole("link", { name: "15 pts", exact: true }),
+    page.getByRole("link", { name: "@social-member · 15 pts", exact: true }),
   ).toBeVisible();
   const closeNavigation = page.getByRole("button", {
     name: "Close navigation",

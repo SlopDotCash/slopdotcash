@@ -605,9 +605,9 @@ describe("discovery", () => {
     expect(
       screen.queryByRole("tab", { name: "This month" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Your profile" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Log in" })).toHaveAttribute(
       "href",
-      "/points",
+      "/login",
     );
     expect(
       screen.getByRole("heading", { name: "Projects" }),
