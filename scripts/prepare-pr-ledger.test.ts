@@ -32,7 +32,10 @@ describe("pull-request ledger schema bridge", () => {
     expect(() => assertPublishableLeaderboardSnapshot(historical)).toThrow(
       /complete target repository registry/u,
     );
-    historical.repositories[1].id = "heirlabs/not-registered";
+    historical.repositories[1] = {
+      ...historical.repositories[1],
+      id: "heirlabs/not-registered",
+    };
     expect(() => assertLeaderboardSnapshot(historical)).toThrow(/registry/u);
   });
 
