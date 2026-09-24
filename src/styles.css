@@ -88,6 +88,7 @@ textarea:focus-visible {
 }
 
 .nav-links {
+  margin-left: auto;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2618,6 +2619,7 @@ small {
   }
 
   .menu-button {
+    margin-left: auto;
     width: 44px;
     height: 44px;
     display: inline-grid;
@@ -3777,4 +3779,59 @@ small {
     align-items: flex-start;
     gap: 1rem;
   }
+}
+
+.account-control {
+  position: relative;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.account-login {
+  padding: 12px 0 12px 8px;
+  font-weight: 600;
+}
+.account-avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--white);
+  cursor: pointer;
+}
+.account-avatar img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.account-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 10;
+  width: min(280px, calc(100vw - 28px));
+  max-height: 75vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--white);
+  box-shadow: 0 18px 40px rgba(23, 21, 16, 0.14);
+}
+.account-panel strong {
+  overflow-wrap: anywhere;
+}
+.account-panel p {
+  margin: 0;
+}
+.account-panel a,
+.account-panel button {
+  display: block;
+  padding: 10px 0;
+  text-align: left;
 }

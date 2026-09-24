@@ -27,9 +27,17 @@ it("restores GitHub identity without needing the points ledger and signs out", a
       <LoginPage />
     </PointsProvider>,
   );
-  expect(
-    await screen.findByRole("link", { name: "@contributor" }),
-  ).toHaveAttribute("href", "/contributors/contributor");
+  const account = await screen.findByRole("button", { name: "Your account" });
+  expect(screen.queryByText("@contributor")).not.toBeInTheDocument();
+  fireEvent.click(account);
+  expect(screen.getByText("@contributor")).toBeVisible();
+  expect(screen.getByRole("link", { name: "View profile" })).toHaveAttribute(
+    "href",
+    "/contributors/contributor",
+  );
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(account).toHaveAttribute("aria-expanded", "false");
+  expect(account).toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
   expect(await screen.findByRole("link", { name: "Log in" })).toHaveAttribute(
     "href",

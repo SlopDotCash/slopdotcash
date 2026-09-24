@@ -77,18 +77,67 @@ test("social membership shows connection points, respects privacy and survives d
       body: JSON.stringify(value),
     });
   });
+  await page.route(
+    "https://avatars.githubusercontent.com/**",
+    async (route) => {
+      await route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#4f4a41"/></svg>',
+      });
+    },
+  );
   await page.goto("https://slop.cash/points");
-  const navigationToggle = page.getByRole("button", {
+  const accountButton = page.getByRole("button", {
+    name: "Your account",
+    exact: true,
+  });
+  await expect(accountButton).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Your account details" }),
+  ).toHaveCount(0);
+  const header = page.getByRole("banner");
+  const accountBounds = await accountButton.boundingBox();
+  const brandBounds = await header
+    .getByRole("link", { name: "Slop home" })
+    .boundingBox();
+  expect(accountBounds!.x).toBeGreaterThan(brandBounds!.x + brandBounds!.width);
+  const navigationToggle = header.getByRole("button", {
     name: "Open navigation",
   });
-  if (await navigationToggle.isVisible()) await navigationToggle.click();
-  await expect(
-    page.getByRole("link", { name: "@social-member · 15 pts", exact: true }),
-  ).toBeVisible();
-  const closeNavigation = page.getByRole("button", {
-    name: "Close navigation",
+  const preceding = (await navigationToggle.isVisible())
+    ? navigationToggle
+    : header.getByRole("link", { name: "Add a project" });
+  const precedingBounds = await preceding.boundingBox();
+  expect(accountBounds!.x).toBeGreaterThanOrEqual(
+    precedingBounds!.x + precedingBounds!.width,
+  );
+  await accountButton.click();
+  const accountPanel = page.getByRole("region", {
+    name: "Your account details",
   });
-  if (await closeNavigation.isVisible()) await closeNavigation.click();
+  await expect(
+    accountPanel.getByText("@social-member", { exact: true }),
+  ).toBeVisible();
+  await expect(accountPanel.getByText("15 pts", { exact: true })).toBeVisible();
+  await expect(
+    accountPanel.getByRole("link", { name: "View profile" }),
+  ).toHaveAttribute("href", "/contributors/social-member");
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await page.screenshot({ path: info.outputPath("account-menu.png") });
+  await page.keyboard.press("Escape");
+  await expect(accountButton).toBeFocused();
+  await expect(accountPanel).toHaveCount(0);
+  await accountButton.click();
+  // The dropdown overlays the page heading on narrow screens; use the
+  // uncovered header edge to exercise a real outside pointer interaction.
+  await header.click({ position: { x: 1, y: 1 } });
+  await expect(accountPanel).toHaveCount(0);
   const social = page.getByRole("region", { name: "Connect X" });
   const community = page.getByRole("region", { name: "Community members" });
   await expect(

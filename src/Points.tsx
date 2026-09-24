@@ -3,6 +3,7 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -41,12 +42,14 @@ const Context = createContext<{
   me: Membership | null;
   session: "loading" | "ready" | "error";
   refresh: () => void;
+  requestPoints: () => void;
   setMe: (m: Membership | null) => void;
 }>({
   state: { status: "loading" },
   me: null,
   session: "loading",
   refresh: () => {},
+  requestPoints: () => {},
   setMe: () => {},
 });
 async function requestJson(url: string, init: RequestInit = {}) {
@@ -103,9 +106,11 @@ export function PointsProvider({
     productOrigin() ? "loading" : "ready",
   );
   const [attempt, setAttempt] = useState(0);
+  const [requested, setRequested] = useState(false);
+  const shouldLoad = enabled || requested;
   // biome-ignore lint/correctness/useExhaustiveDependencies: retries and membership changes refresh public visibility.
   useEffect(() => {
-    if (!enabled) return;
+    if (!shouldLoad) return;
     const controller = new AbortController();
     void loadPoints(controller.signal)
       .then((value) => {
@@ -124,7 +129,7 @@ export function PointsProvider({
           });
       });
     return () => controller.abort();
-  }, [enabled]);
+  }, [shouldLoad]);
   useEffect(() => {
     const controller = new AbortController();
     if (productOrigin())
@@ -152,7 +157,7 @@ export function PointsProvider({
     return () => controller.abort();
   }, []);
   useEffect(() => {
-    if (!enabled || !attempt) return;
+    if (!shouldLoad || !attempt) return;
     const controller = new AbortController();
     setState({ status: "loading" });
     void loadPoints(controller.signal)
@@ -171,7 +176,7 @@ export function PointsProvider({
           });
       });
     return () => controller.abort();
-  }, [attempt, enabled]);
+  }, [attempt, shouldLoad]);
   return (
     <Context.Provider
       value={{
@@ -180,6 +185,7 @@ export function PointsProvider({
         session,
         setMe,
         refresh: () => setAttempt((a) => a + 1),
+        requestPoints: () => setRequested(true),
       }}
     >
       {children}
@@ -187,28 +193,153 @@ export function PointsProvider({
   );
 }
 export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
-  const { state, me, session } = useContext(Context);
+  const { state, me, session, setMe, requestPoints, refresh } =
+    useContext(Context);
+  const [open, setOpen] = useState(false);
+  const [failedImage, setFailedImage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent | FocusEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeForEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    const close = () => setOpen(false);
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", closeForEscape);
+    window.addEventListener("focusin", outside);
+    window.addEventListener("popstate", close);
+    return () => {
+      window.removeEventListener("pointerdown", outside);
+      window.removeEventListener("keydown", closeForEscape);
+      window.removeEventListener("focusin", outside);
+      window.removeEventListener("popstate", close);
+    };
+  }, [open]);
   const total =
     state.status === "ready" && me
       ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0) +
         me.welcome +
         (me.socialPoints ?? 0)
       : null;
+  const navigate = () => {
+    setOpen(false);
+    onNavigate?.();
+  };
+  async function signout() {
+    setBusy(true);
+    setError("");
+    try {
+      await requestJson("/api/v1/points/signout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      setMe(null);
+      setOpen(false);
+    } catch {
+      setError("Could not sign out. Please retry.");
+    } finally {
+      setBusy(false);
+    }
+  }
   if (!me && session === "loading")
-    return <span role="status">Checking login…</span>;
+    return (
+      <span className="account-control" role="status">
+        Checking login…
+      </span>
+    );
+  if (!me)
+    return (
+      <a
+        className="account-control account-login"
+        href="/login"
+        onClick={navigate}
+      >
+        Log in
+      </a>
+    );
+  const avatar = `https://avatars.githubusercontent.com/${encodeURIComponent(me.actor.login)}?size=80`;
   return (
-    <a
-      href={
-        me ? `/contributors/${encodeURIComponent(me.actor.login)}` : "/login"
-      }
-      onClick={onNavigate}
-    >
-      {me
-        ? `@${me.actor.login}${total === null ? "" : ` · ${total.toLocaleString()} pts`}`
-        : "Log in"}
-    </a>
+    <div className="account-control" ref={root}>
+      <button
+        className="account-avatar"
+        type="button"
+        ref={trigger}
+        aria-label="Your account"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => {
+          if (!open) {
+            requestPoints();
+            onNavigate?.();
+          }
+          setOpen(!open);
+        }}
+      >
+        {failedImage === avatar ? (
+          <span aria-hidden="true">
+            {me.actor.login.slice(0, 2).toUpperCase()}
+          </span>
+        ) : (
+          <img
+            src={avatar}
+            alt=""
+            width={36}
+            height={36}
+            onError={() => setFailedImage(avatar)}
+          />
+        )}
+      </button>
+      {open ? (
+        <section
+          className="account-panel"
+          id={panelId}
+          aria-label="Your account details"
+        >
+          <strong>@{me.actor.login}</strong>
+          {total !== null ? (
+            <p>{total.toLocaleString()} pts</p>
+          ) : (
+            <p role="status">
+              {state.status === "error"
+                ? "Points unavailable"
+                : "Loading points…"}
+            </p>
+          )}
+          {state.status === "error" ? (
+            <button type="button" onClick={refresh}>
+              Retry points
+            </button>
+          ) : null}
+          <a
+            href={`/contributors/${encodeURIComponent(me.actor.login)}`}
+            onClick={navigate}
+          >
+            View profile
+          </a>
+          <a href="/points" onClick={navigate}>
+            Account settings
+          </a>
+          <button type="button" onClick={() => void signout()} disabled={busy}>
+            {busy ? "Signing out…" : "Sign out"}
+          </button>
+          {error ? <p role="alert">{error}</p> : null}
+        </section>
+      ) : null}
+    </div>
   );
 }
+
 function Notice() {
   const { state, refresh } = useContext(Context);
   if (state.status === "loading") return <p role="status">Loading points…</p>;
