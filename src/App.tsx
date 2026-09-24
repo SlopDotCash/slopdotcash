@@ -3189,7 +3189,12 @@ function HowItWorksPage() {
             decisions, and append-only public corrections.
           </p>
         </div>
-        <div className="plain-table-wrap score-tier-wrap">
+        <section
+          className="plain-table-wrap score-tier-wrap"
+          aria-label="Contribution score tiers"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+          tabIndex={0}
+        >
           <table className="plain-table score-tier-table">
             <caption>Contribution tiers</caption>
             <thead>
@@ -3232,7 +3237,7 @@ function HowItWorksPage() {
               </tr>
             </tbody>
           </table>
-        </div>
+        </section>
       </section>
       <section className="worked-example">
         <div>
