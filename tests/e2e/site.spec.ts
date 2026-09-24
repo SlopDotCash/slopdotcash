@@ -1100,20 +1100,16 @@ test("shows an explicit error for invalid data and retries", async ({
   expect(attempts).toBe(failedAttempts + 1);
 });
 
-test("reflows at 320 CSS pixels and with independently enlarged text", async ({
-  page,
-}, testInfo) => {
-  // The scenarios set their own viewport; do not repeat them for each device.
-  test.skip(testInfo.project.name !== "wide-desktop-chromium");
-  // WCAG 1.4.10: 320 CSS px is equivalent to 1280px at 400% browser zoom.
-  // Text enlargement is a deterministic typography fixture, not native browser
-  // zoom. The combined scenario is additional stress coverage, not a claim
-  // that the reflow criterion requires an effective viewport below 320 CSS px.
-  for (const scenario of [
-    { name: "320 CSS px reflow", width: 320, textScale: 1 },
-    { name: "200% text enlargement", width: 1280, textScale: 2 },
-    { name: "combined narrow enlarged-text stress", width: 320, textScale: 2 },
-  ]) {
+// 320 CSS px covers reflow; 200% text enlargement is a deterministic
+// typography fixture, not native browser zoom. The combined case is extra stress.
+for (const scenario of [
+  { name: "320 CSS px reflow", width: 320, textScale: 1 },
+  { name: "200% text enlargement", width: 1280, textScale: 2 },
+  { name: "combined narrow enlarged-text stress", width: 320, textScale: 2 },
+]) {
+  test(`reflows with ${scenario.name}`, async ({ page }, testInfo) => {
+    // Each scenario has its own timeout while retaining every registered route.
+    test.skip(testInfo.project.name !== "wide-desktop-chromium");
     await page.setViewportSize({ width: scenario.width, height: 1000 });
     for (const path of [
       "/models",
@@ -1169,8 +1165,8 @@ test("reflows at 320 CSS pixels and with independently enlarged text", async ({
         `${scenario.name} ${path} horizontal overflow`,
       ).toBeLessThanOrEqual(geometry.viewport);
     }
-  }
-});
+  });
+}
 
 test("keeps primary routes accessible and inside the viewport", async ({
   page,
