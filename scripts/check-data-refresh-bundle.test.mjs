@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MAXIMUM_BUNDLE_FILES } from "./dist-manifest.mjs";
 import { assertDataOnlyRefresh } from "./check-data-refresh-bundle.mjs";
+import { MAXIMUM_BUNDLE_FILES } from "./dist-manifest.mjs";
 
 const roots = [];
 afterEach(async () => {
