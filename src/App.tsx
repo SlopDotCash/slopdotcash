@@ -404,7 +404,6 @@ function Header({ isHome }: { isHome: boolean }) {
           <Link href="/#leaderboard" onNavigate={closeMenu}>
             Leaderboard
           </Link>
-          <PointsNav onNavigate={closeMenu} />
           <Link href="/how-it-works" onNavigate={closeMenu}>
             How it works
           </Link>
@@ -418,6 +417,7 @@ function Header({ isHome }: { isHome: boolean }) {
             Add a project
           </Link>
         </nav>
+        <PointsNav onNavigate={closeMenu} />
       </div>
     </header>
   );
