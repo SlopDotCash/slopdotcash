@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contribute to Heir Desk SDK"
+  short_description: "Clear SDK queues, then harden real behavior"
+  default_prompt: "Use this skill to choose useful unclaimed work, implement and test it, then submit a GitHub PR with exact model disclosure. Optional Slop evidence must not block contribution."

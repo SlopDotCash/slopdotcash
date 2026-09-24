@@ -4,10 +4,38 @@ import {
   assertPublishableLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
 import { createProjectView } from "../src/lib/project-view";
+import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
 import { snapshotFixture } from "../tests/fixtures";
 import { preparePullRequestLedger } from "./prepare-pr-ledger";
 
 describe("pull-request ledger schema bridge", () => {
+  it("reads retired repository history but refuses it as a current publication", () => {
+    const historical = structuredClone(snapshotFixture());
+    const registered = findRegisteredRepositoryById("heirlabs/element-sdk");
+    if (!registered) throw new Error("retired repository must stay registered");
+    const {
+      aliases: _aliases,
+      expectedNodeId: _expectedNodeId,
+      ...retired
+    } = registered;
+    // Replace another member with the retired member: equal counts cannot
+    // accidentally authorize publication of a stale repository inventory.
+    historical.repositories[1] = retired;
+    historical.source.repositories[1] = {
+      id: retired.id,
+      repositoryId: "R_kgDOPGOTQg",
+    };
+    const before = JSON.stringify(historical);
+    expect(() => assertLeaderboardSnapshot(historical)).not.toThrow();
+    expect(preparePullRequestLedger(historical)).toBe(historical);
+    expect(JSON.stringify(historical)).toBe(before);
+    expect(() => assertPublishableLeaderboardSnapshot(historical)).toThrow(
+      /complete target repository registry/u,
+    );
+    historical.repositories[1].id = "heirlabs/not-registered";
+    expect(() => assertLeaderboardSnapshot(historical)).toThrow(/registry/u);
+  });
+
   it("accepts an already-current public ledger unchanged", () => {
     const snapshot = snapshotFixture();
     expect(preparePullRequestLedger(snapshot)).toBe(snapshot);
@@ -54,7 +82,7 @@ describe("pull-request ledger schema bridge", () => {
     const historical = structuredClone(snapshotFixture());
     // Remove an active repository with no fixture events. Paused proposals
     // are already excluded from the complete collection inventory.
-    const uncollected = historical.repositories[2];
+    const uncollected = historical.repositories[1];
     historical.repositories = historical.repositories.filter(
       (repository) => repository.id !== uncollected.id,
     );
@@ -103,7 +131,9 @@ describe("pull-request ledger schema bridge", () => {
       displayName: "elizaOS/asi",
       githubUrl: "https://github.com/elizaOS/asi",
     });
-    expect(preparePullRequestLedger(historical).repositories).toHaveLength(4);
+    expect(preparePullRequestLedger(historical).repositories).toHaveLength(
+      historical.repositories.length,
+    );
     historical.repositories.reverse();
     expect(() => preparePullRequestLedger(historical)).toThrow(
       /registry order/u,
