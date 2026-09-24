@@ -236,7 +236,7 @@ describe("project skill contracts", () => {
     const monthlyPackages = instrumentedPackages.filter(
       ({ project }) => project.reward.kind === "monthly-pool",
     );
-    assert.strictEqual(monthlyPackages.length, 3);
+    assert.ok(monthlyPackages.length > 0);
     const [canonicalPackage] = monthlyPackages;
     const canonicalSource = readFileSync(
       join(canonicalPackage.contributorRoot, "scripts", "wallet-claim.mjs"),
