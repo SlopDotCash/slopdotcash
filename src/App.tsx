@@ -2048,6 +2048,10 @@ function ProfilePage({
         0,
       ),
     );
+  // The live score is a rolling window, never a full-history total.
+  const scoreLabel = globalLeader
+    ? `${state.snapshot.window.days}-day score to ${formatDate(state.snapshot.window.to)}`
+    : "score, frozen months";
   const acceptedOutcomes = matches.reduce(
     (total, match) => total + match.leader.acceptedOutcomeCount,
     0,
@@ -2056,6 +2060,17 @@ function ProfilePage({
     (total, match) => total + BigInt(match.leader.projectedMinor ?? "0"),
     0n,
   );
+  // Name the UTC cycle behind the projection and whether money backs it.
+  const cycleId = (matches[0]?.view ?? state.views[0])?.cycle.id;
+  const monthlyPools = (
+    matches.length > 0 ? matches.map(({ view }) => view) : state.views
+  ).filter((view) => view.project.reward.kind === "monthly-pool");
+  const projectedUnfunded =
+    monthlyPools.length > 0 &&
+    monthlyPools.every((view) => monthlyPoolUnfunded(view.project.reward));
+  const projectedLabel = `${
+    cycleId ? formatCycleMonth(cycleId) : "monthly"
+  } projected${projectedUnfunded ? ", unfunded" : ""}`;
   const paid = history.reduce(
     (total, { contributor }) => total + BigInt(contributor.paidMinor),
     0n,
@@ -2109,7 +2124,7 @@ function ProfilePage({
         ) : null}
         <div>
           <strong>{score}</strong>
-          <span>all-time score</span>
+          <span>{scoreLabel}</span>
         </div>
         <div>
           <strong>{formatCompact(acceptedOutcomes)}</strong>
@@ -2117,7 +2132,7 @@ function ProfilePage({
         </div>
         <div>
           <strong>{formatMicroUsdc(projected.toString())}</strong>
-          <span>monthly estimate</span>
+          <span>{projectedLabel}</span>
         </div>
         <div>
           <strong>{formatMicroUsdc(paid.toString())}</strong>
