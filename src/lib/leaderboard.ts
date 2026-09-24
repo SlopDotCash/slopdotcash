@@ -2809,7 +2809,11 @@ export function createLeaderboardSnapshot(
       left.id.localeCompare(right.id),
   );
   for (const [index, event] of evaluatedContributions.entries()) {
-    assertLedgerValue(event, `evaluatedContributions[${index}]`);
+    assertLedgerValue(
+      event,
+      `evaluatedContributions[${index}]`,
+      TARGET_REPOSITORIES.map((repository) => repository.id),
+    );
     if (event.category !== "evaluated-contribution") {
       throw new TypeError(
         `evaluatedContributions[${index}] must use the evaluated-contribution category`,
@@ -3240,7 +3244,11 @@ export function createLeaderboardSnapshot(
         left.id.localeCompare(right.id),
     )
     .entries()) {
-    assertLedgerValue(event, `retainedReviewEvents[${index}]`);
+    assertLedgerValue(
+      event,
+      `retainedReviewEvents[${index}]`,
+      TARGET_REPOSITORIES.map((repository) => repository.id),
+    );
     if (
       event.category !== "substantive-review" ||
       !isRecord(event.source) ||
@@ -3813,7 +3821,11 @@ function assertMethodologyValue(value: unknown, path: string): void {
   assertString(methodology.collectionPolicy, `${path}.collectionPolicy`);
 }
 
-function assertReviewExclusionValue(value: unknown, path: string): void {
+function assertReviewExclusionValue(
+  value: unknown,
+  path: string,
+  repositoryIds: readonly string[],
+): void {
   const exclusion = assertObject(value, path);
   const expectedKeys = [
     "id",
@@ -3844,11 +3856,7 @@ function assertReviewExclusionValue(value: unknown, path: string): void {
     throw new Error(`${path}.id must bind the pull request and review IDs`);
   }
   assertEnum(exclusion.reason, REVIEW_EXCLUSION_REASONS, `${path}.reason`);
-  assertEnum(
-    exclusion.repository,
-    TARGET_REPOSITORIES.map((repository) => repository.id),
-    `${path}.repository`,
-  );
+  assertEnum(exclusion.repository, repositoryIds, `${path}.repository`);
   assertRepositoryUrl(
     exclusion.url,
     `${path}.url`,
@@ -3858,7 +3866,11 @@ function assertReviewExclusionValue(value: unknown, path: string): void {
   );
 }
 
-function assertSourceValue(value: unknown, path: string): void {
+function assertSourceValue(
+  value: unknown,
+  path: string,
+  repositories: LeaderboardSnapshot["repositories"],
+): void {
   const source = assertObject(value, path);
   if (source.provider !== "github-graphql") {
     throw new Error(`${path}.provider must be github-graphql`);
@@ -3868,7 +3880,7 @@ function assertSourceValue(value: unknown, path: string): void {
   assertString(source.repositoryId, `${path}.repositoryId`);
   if (
     !Array.isArray(source.repositories) ||
-    source.repositories.length !== TARGET_REPOSITORIES.length
+    source.repositories.length !== repositories.length
   ) {
     throw new Error(
       `${path}.repositories must record a GraphQL node ID for every registry repository`,
@@ -3878,7 +3890,7 @@ function assertSourceValue(value: unknown, path: string): void {
   source.repositories.forEach((value, index) => {
     const entryPath = `${path}.repositories[${index}]`;
     const entry = assertObject(value, entryPath);
-    if (entry.id !== TARGET_REPOSITORIES[index].id) {
+    if (entry.id !== repositories[index].id) {
       throw new Error(
         `${entryPath}.id must follow the target repository registry order`,
       );
@@ -3891,7 +3903,7 @@ function assertSourceValue(value: unknown, path: string): void {
     }
     sourceRepositoryNodeIds.add(entry.repositoryId);
     if (
-      TARGET_REPOSITORIES[index].role === "primary" &&
+      repositories[index].role === "primary" &&
       entry.repositoryId !== source.repositoryId
     ) {
       throw new Error(
@@ -4183,6 +4195,7 @@ function assertWorkItemValue(
   value: unknown,
   path: string,
   expectedKind: WorkItem["kind"],
+  repositoryIds: readonly string[],
 ): asserts value is WorkItem {
   const item = assertObject(value, path);
   assertString(item.id, `${path}.id`);
@@ -4192,11 +4205,7 @@ function assertWorkItemValue(
   }
   assertPositiveInteger(item.number, `${path}.number`);
   assertString(item.title, `${path}.title`);
-  assertEnum(
-    item.repository,
-    TARGET_REPOSITORIES.map((repository) => repository.id),
-    `${path}.repository`,
-  );
+  assertEnum(item.repository, repositoryIds, `${path}.repository`);
   assertRepositoryUrl(
     item.url,
     `${path}.url`,
@@ -4457,6 +4466,7 @@ function assertWorkItemValue(
 function assertLedgerValue(
   value: unknown,
   path: string,
+  repositoryIds: readonly string[],
 ): asserts value is ScoreEvent {
   const event = assertObject(value, path);
   assertString(event.id, `${path}.id`);
@@ -4554,11 +4564,7 @@ function assertLedgerValue(
       throw new Error(`${path}.continuity decision URL is invalid`);
     }
   }
-  assertEnum(
-    event.repository,
-    TARGET_REPOSITORIES.map((repository) => repository.id),
-    `${path}.repository`,
-  );
+  assertEnum(event.repository, repositoryIds, `${path}.repository`);
   const source = assertObject(event.source, `${path}.source`);
   assertString(source.id, `${path}.source.id`);
   assertEnum(
@@ -4688,6 +4694,7 @@ function assertLedgerValue(
 function assertOpportunityValue(
   value: unknown,
   path: string,
+  repositoryIds: readonly string[],
 ): asserts value is ScoreOpportunity {
   const opportunity = assertObject(value, path);
   assertString(opportunity.id, `${path}.id`);
@@ -4766,11 +4773,7 @@ function assertOpportunityValue(
   ) {
     throw new Error(`${path}.hint must be an actionable next step`);
   }
-  assertEnum(
-    opportunity.repository,
-    TARGET_REPOSITORIES.map((repository) => repository.id),
-    `${path}.repository`,
-  );
+  assertEnum(opportunity.repository, repositoryIds, `${path}.repository`);
   const source = assertObject(opportunity.source, `${path}.source`);
   assertString(source.id, `${path}.source.id`);
   assertEnum(
@@ -4839,6 +4842,9 @@ function assertAttributionValue(
   }
 }
 
+/** Validate immutable historical data against its known, ordered inventory.
+ * Use assertPublishableLeaderboardSnapshot for every fresh publication.
+ */
 export function assertLeaderboardSnapshot(
   value: unknown,
 ): asserts value is LeaderboardSnapshot {
@@ -4853,16 +4859,31 @@ export function assertLeaderboardSnapshot(
   }
   if (
     !Array.isArray(snapshot.repositories) ||
-    snapshot.repositories.length !== TARGET_REPOSITORIES.length
+    snapshot.repositories.length === 0
   ) {
     throw new Error(
-      "snapshot.repositories must list the complete target repository registry",
+      "snapshot.repositories must list a nonempty target repository registry",
     );
   }
+  let previousRepositoryIndex = -1;
+  const repositoryIds: string[] = [];
   snapshot.repositories.forEach((value, index) => {
     const path = `snapshot.repositories[${index}]`;
     const published = assertObject(value, path);
-    const registered = TARGET_REPOSITORIES[index];
+    const registeredIndex = TARGET_REPOSITORIES.findIndex(
+      (repository) => repository.id === published.id,
+    );
+    if (
+      registeredIndex <= previousRepositoryIndex ||
+      (index === 0 && registeredIndex !== 0)
+    ) {
+      throw new Error(
+        `${path}.id must follow the target repository registry order and include the primary repository`,
+      );
+    }
+    previousRepositoryIndex = registeredIndex;
+    const registered = TARGET_REPOSITORIES[registeredIndex];
+    repositoryIds.push(registered.id);
     for (const key of [
       "id",
       "owner",
@@ -4953,7 +4974,7 @@ export function assertLeaderboardSnapshot(
     throw new Error("snapshot.ledger must be an array");
   }
   const validatedLedger = snapshot.ledger.map((event, index) => {
-    assertLedgerValue(event, `snapshot.ledger[${index}]`);
+    assertLedgerValue(event, `snapshot.ledger[${index}]`, repositoryIds);
     return event;
   });
   if (
@@ -4976,6 +4997,7 @@ export function assertLeaderboardSnapshot(
         assertReviewExclusionValue(
           exclusion,
           `snapshot.reviewExclusions[${index}]`,
+          repositoryIds,
         );
         return exclusion;
       },
@@ -5020,7 +5042,11 @@ export function assertLeaderboardSnapshot(
   }
   const validatedOpportunities = snapshot.opportunities.map(
     (opportunity, index) => {
-      assertOpportunityValue(opportunity, `snapshot.opportunities[${index}]`);
+      assertOpportunityValue(
+        opportunity,
+        `snapshot.opportunities[${index}]`,
+        repositoryIds,
+      );
       return opportunity;
     },
   );
@@ -5322,6 +5348,11 @@ export function assertLeaderboardSnapshot(
     }
   }
   for (const attribution of validatedAttributions) {
+    if (!repositoryIds.includes(repositoryIdFromUrl(attribution.sourceUrl))) {
+      throw new Error(
+        "snapshot attribution must reference a collected repository",
+      );
+    }
     const actorId = attribution.actor?.id;
     const hasCausalLedgerEvent =
       actorId !== undefined &&
@@ -5390,6 +5421,13 @@ export function assertLeaderboardSnapshot(
     const marker = assertObject(markerValue, markerPath);
     assertString(marker.sourceId, `${markerPath}.sourceId`);
     assertRepositoryUrl(marker.sourceUrl, `${markerPath}.sourceUrl`);
+    if (
+      !repositoryIds.includes(repositoryIdFromUrl(marker.sourceUrl as string))
+    ) {
+      throw new Error(
+        `${markerPath}.sourceUrl must reference a collected repository`,
+      );
+    }
     assertString(marker.reason, `${markerPath}.reason`);
   });
   const attributionCoverage = assertObject(
@@ -5427,7 +5465,12 @@ export function assertLeaderboardSnapshot(
     throw new Error("snapshot.workQueue queues must be arrays");
   }
   const validatedIssues = workQueue.issues.map((item, index) => {
-    assertWorkItemValue(item, `snapshot.workQueue.issues[${index}]`, "issue");
+    assertWorkItemValue(
+      item,
+      `snapshot.workQueue.issues[${index}]`,
+      "issue",
+      repositoryIds,
+    );
     return item;
   });
   const validatedPullRequests = workQueue.pullRequests.map((item, index) => {
@@ -5435,6 +5478,7 @@ export function assertLeaderboardSnapshot(
       item,
       `snapshot.workQueue.pullRequests[${index}]`,
       "pull-request",
+      repositoryIds,
     );
     return item;
   });
@@ -5493,7 +5537,11 @@ export function assertLeaderboardSnapshot(
       ...item.claim.actors,
     ]),
   ]);
-  assertSourceValue(snapshot.source, "snapshot.source");
+  assertSourceValue(
+    snapshot.source,
+    "snapshot.source",
+    snapshot.repositories as LeaderboardSnapshot["repositories"],
+  );
   const source = assertObject(snapshot.source, "snapshot.source");
   if (
     source.fetchedAt !== snapshot.generatedAt ||
@@ -5587,6 +5635,13 @@ export function assertPublishableLeaderboardSnapshot(
   now = Date.now(),
 ): asserts value is LeaderboardSnapshot {
   assertLeaderboardSnapshot(value);
+  // Archived and deployed snapshots retain their collected inventory. A new
+  // publication must collect every current active target; paused projects are not collected.
+  if (value.repositories.length !== TARGET_REPOSITORIES.length) {
+    throw new Error(
+      "snapshot.repositories must list the complete target repository registry for publication",
+    );
+  }
   if (!Number.isFinite(now)) {
     throw new Error("publication time must be finite");
   }

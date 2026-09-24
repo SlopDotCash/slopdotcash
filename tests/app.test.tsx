@@ -798,6 +798,33 @@ describe("discovery", () => {
 });
 
 describe("project routes", () => {
+  it("shows uncollected project activity explicitly while keeping historical projects available", async () => {
+    const historical = structuredClone(snapshotFixture());
+    historical.repositories = historical.repositories.slice(0, 4);
+    historical.source.repositories = historical.source.repositories.slice(0, 4);
+    route("/projects/monna-agent-permission-diff");
+    mockSnapshot(historical);
+    render(<App />);
+    expect(
+      await screen.findByText(
+        "Activity for this project has not been collected yet.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Live totals unavailable/u),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/No accepted work/u)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Project paused" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/after two unfunded cycles/u),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Manual install command"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders malformed percent-encoded paths as not found", async () => {
     route("/%");
     mockSnapshot();

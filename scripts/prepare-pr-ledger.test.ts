@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
+import {
+  assertLeaderboardSnapshot,
+  assertPublishableLeaderboardSnapshot,
+} from "../src/lib/leaderboard";
+import { createProjectView } from "../src/lib/project-view";
 import { snapshotFixture } from "../tests/fixtures";
 import { preparePullRequestLedger } from "./prepare-pr-ledger";
 
@@ -43,6 +47,70 @@ describe("pull-request ledger schema bridge", () => {
     asi.githubUrl = "https://github.com/attacker/asi";
     expect(() => preparePullRequestLedger(deployed)).toThrow(
       /not a registered/u,
+    );
+  });
+
+  it("reads a prior inventory without inventing collection or allowing partial publication", () => {
+    const historical = structuredClone(snapshotFixture());
+    // Remove an active repository with no fixture events. Paused proposals
+    // are already excluded from the complete collection inventory.
+    const uncollected = historical.repositories[2];
+    historical.repositories = historical.repositories.filter(
+      (repository) => repository.id !== uncollected.id,
+    );
+    historical.source.repositories = historical.source.repositories.filter(
+      (repository) => repository.id !== uncollected.id,
+    );
+    expect(() =>
+      createProjectView(historical, "monna-agent-permission-diff"),
+    ).toThrow(/not collected activity/u);
+    const originalBytes = JSON.stringify(historical);
+    expect(preparePullRequestLedger(historical)).toBe(historical);
+    expect(JSON.stringify(historical)).toBe(originalBytes);
+    expect(() => assertLeaderboardSnapshot(historical)).not.toThrow();
+    expect(() => assertPublishableLeaderboardSnapshot(historical)).toThrow(
+      /complete target repository registry/u,
+    );
+
+    const badScore = structuredClone(historical);
+    badScore.leaders[0].score += 1;
+    expect(() => assertLeaderboardSnapshot(badScore)).toThrow();
+    const missingSource = structuredClone(historical);
+    missingSource.source.repositories.pop();
+    expect(() => assertLeaderboardSnapshot(missingSource)).toThrow(
+      /GraphQL node ID/u,
+    );
+    const reordered = structuredClone(historical);
+    reordered.repositories.reverse();
+    expect(() => preparePullRequestLedger(reordered)).toThrow(
+      /registry order/u,
+    );
+    const omittedActivity = structuredClone(historical);
+    omittedActivity.workQueue.issues[0].repository = uncollected.id;
+    omittedActivity.workQueue.issues[0].url = `${uncollected.githubUrl}/issues/1`;
+    expect(() => assertLeaderboardSnapshot(omittedActivity)).toThrow(
+      /repository/u,
+    );
+  });
+
+  it("keeps a transferred historical inventory in source order and rejects unknown repositories", () => {
+    const historical = structuredClone(snapshotFixture());
+    historical.repositories = historical.repositories.slice(0, 4);
+    historical.source.repositories = historical.source.repositories.slice(0, 4);
+    Object.assign(historical.repositories[1], {
+      owner: "elizaOS",
+      name: "asi",
+      displayName: "elizaOS/asi",
+      githubUrl: "https://github.com/elizaOS/asi",
+    });
+    expect(preparePullRequestLedger(historical).repositories).toHaveLength(4);
+    historical.repositories.reverse();
+    expect(() => preparePullRequestLedger(historical)).toThrow(
+      /registry order/u,
+    );
+    Object.assign(historical.repositories[0], { id: "unknown/repository" });
+    expect(() => preparePullRequestLedger(historical)).toThrow(
+      /not registered/u,
     );
   });
 

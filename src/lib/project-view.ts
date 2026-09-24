@@ -533,6 +533,16 @@ export function createProjectView(
 ): ProjectView {
   const project = findProject(projectId);
   if (!project) throw new TypeError(`Unknown project: ${projectId}`);
+  if (
+    project.repositories.some(
+      (repository) =>
+        !snapshot.repositories.some(
+          (collected) => collected.id === repository.id,
+        ),
+    )
+  ) {
+    throw new TypeError(`Snapshot has not collected activity for ${projectId}`);
+  }
   const snapshotTo = Date.parse(snapshot.window.to);
   const { calendar, cycleId, from, to } = projectCycleWindow(
     snapshot,

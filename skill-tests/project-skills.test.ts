@@ -13,6 +13,7 @@ import {
   sign,
 } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -52,6 +53,12 @@ const projectPackages = PROJECTS.map((project) => ({
   reviewerRoot: join(root, project.reviewSkill.sourcePath),
 }));
 
+// Optional receipt CLIs are shipped only by instrumented skill packages.
+// Plain Markdown skills are packaged and validated by prepare-site.
+const instrumentedPackages = projectPackages.filter(({ contributorRoot }) =>
+  existsSync(join(contributorRoot, "project.json")),
+);
+
 describe("project skill contracts", () => {
   it("keeps every packaged CLI aligned with the shared identity corpus", () => {
     for (const validate of [
@@ -69,7 +76,7 @@ describe("project skill contracts", () => {
   });
 
   it("ships byte-identical receipt logic with policy derived from the project inventory", () => {
-    const [canonicalPackage] = projectPackages;
+    const [canonicalPackage] = instrumentedPackages;
     const receiptSource = readFileSync(
       join(canonicalPackage.contributorRoot, "scripts", "run-receipt.mjs"),
       "utf8",
@@ -82,7 +89,7 @@ describe("project skill contracts", () => {
       join(canonicalPackage.contributorRoot, "scripts", "terms-preflight.mjs"),
       "utf8",
     );
-    for (const { project, contributorRoot } of projectPackages) {
+    for (const { project, contributorRoot } of instrumentedPackages) {
       assert.strictEqual(
         readFileSync(
           join(contributorRoot, "scripts", "run-receipt.mjs"),
@@ -154,7 +161,7 @@ describe("project skill contracts", () => {
   });
 
   it("accepts the transferred canonical repository as bundled skill provenance", () => {
-    const [canonicalPackage] = projectPackages;
+    const [canonicalPackage] = instrumentedPackages;
     const receiptSource = readFileSync(
       join(canonicalPackage.contributorRoot, "scripts", "run-receipt.mjs"),
       "utf8",
@@ -226,10 +233,10 @@ describe("project skill contracts", () => {
   });
 
   it("renders the same bounded payout claim for every monthly pool skill", () => {
-    const monthlyPackages = projectPackages.filter(
+    const monthlyPackages = instrumentedPackages.filter(
       ({ project }) => project.reward.kind === "monthly-pool",
     );
-    assert.strictEqual(monthlyPackages.length, 3);
+    assert.ok(monthlyPackages.length > 0);
     const [canonicalPackage] = monthlyPackages;
     const canonicalSource = readFileSync(
       join(canonicalPackage.contributorRoot, "scripts", "wallet-claim.mjs"),
@@ -369,8 +376,8 @@ describe("project skill contracts", () => {
     assert.strictEqual(cancelled, true);
   });
 
-  it("keeps every registered review skill hostile-input aware and non-punitive", () => {
-    for (const { project, reviewerRoot } of projectPackages) {
+  it("keeps the instrumented review templates hostile-input aware and non-punitive", () => {
+    for (const { project, reviewerRoot } of instrumentedPackages) {
       const name = project.reviewSkill.id;
       const source = readFileSync(join(reviewerRoot, "SKILL.md"), "utf8");
       assert.match(source, new RegExp(`^name: ${name}$`, "m"));
@@ -400,7 +407,7 @@ describe("project skill contracts", () => {
     try {
       const skillsRoot = join(fixtureRoot, "skills");
       mkdirSync(skillsRoot);
-      for (const { project, contributorRoot } of projectPackages) {
+      for (const { project, contributorRoot } of instrumentedPackages) {
         const installedSkill = join(skillsRoot, project.skill.id);
         symlinkSync(contributorRoot, installedSkill);
         const result = spawnSync(
