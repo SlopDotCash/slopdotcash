@@ -7,7 +7,7 @@
   "headline": "Make Money Running macOS Apps On arm64 Linux",
   "description": "Advance arm64 (aarch64) Darling, the macOS translation layer. Raise a real macOS application one verified tier up the ladder, fix a defect upstream in darlinghq, or falsify a recorded finding. Every accepted outcome ships a control, an A/B/A where it claims a fix, and a harness someone else can rerun.",
   "listingTier": "community",
-  "status": "active",
+  "status": "paused",
   "steward": {
     "displayName": "xchemtina",
     "kind": "individual",
