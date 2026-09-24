@@ -15,7 +15,9 @@ export const MANIFEST_FILENAME = "deployment-manifest.json";
 
 const SCHEMA_VERSION = 1;
 const MAXIMUM_DIRECTORIES = 128;
-const MAXIMUM_FILES = 256;
+// Seven project skill packages and held-cycle artifacts exceed 256 files.
+// Keep the inventory bounded while allowing the expanded project registry.
+export const MAXIMUM_FILES = 512;
 // Cloudflare Pages accepts individual static assets up to 25 MiB. Keep the
 // local release gate aligned with that external boundary instead of imposing
 // a smaller product-specific cap on the complete public ledger.
@@ -35,6 +37,7 @@ const RESERVED_PATHS = new Set([
   "_routes.json",
   MANIFEST_FILENAME,
 ]);
+export const MAXIMUM_BUNDLE_FILES = MAXIMUM_FILES + RESERVED_PATHS.size;
 const digestPattern = /^[0-9a-f]{64}$/u;
 const verificationTokenPattern = /^[A-Za-z0-9._-]{1,128}$/u;
 

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { MAXIMUM_BUNDLE_FILES } from "./dist-manifest.mjs";
 import { assertDataOnlyRefresh } from "./check-data-refresh-bundle.mjs";
 
 const roots = [];
@@ -27,6 +28,24 @@ async function fixture() {
   return [join(root, "approved"), join(root, "candidate")];
 }
 describe("scheduled data-only bundle boundary", () => {
+  it("accepts the full deployment inventory and rejects one extra file", async () => {
+    const [approved, candidate] = await fixture();
+    for (const root of [approved, candidate]) {
+      await Promise.all(
+        Array.from({ length: MAXIMUM_BUNDLE_FILES - 4 }, (_, index) =>
+          writeFile(join(root, `project-artifact-${index}.txt`), "fixture"),
+        ),
+      );
+    }
+    await expect(assertDataOnlyRefresh(approved, candidate)).resolves.toEqual(
+      [],
+    );
+    await writeFile(join(candidate, "over-limit.txt"), "fixture");
+    await expect(assertDataOnlyRefresh(approved, candidate)).rejects.toThrow(
+      /inventory limits/u,
+    );
+  });
+
   for (const path of [
     "skill-manifest.json",
     "projects/example/skill-manifest.json",

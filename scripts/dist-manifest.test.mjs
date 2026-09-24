@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createDistManifest,
   MANIFEST_FILENAME,
+  MAXIMUM_FILES,
   verifyLocalBundle,
   verifyPublishedBundle,
 } from "./dist-manifest.mjs";
@@ -99,6 +100,7 @@ describe("Cloudflare Pages deployment manifest", () => {
     );
     expect(manifest.files.map((record) => record.path)).not.toContain(
       MANIFEST_FILENAME,
+      MAXIMUM_FILES,
     );
     expect(manifestBytes.toString("utf8")).toBe(
       `${JSON.stringify(manifest, null, 2)}\n`,
@@ -106,6 +108,20 @@ describe("Cloudflare Pages deployment manifest", () => {
     expect(manifest.files[0].sha256).toBe(
       sha256(await readFile(join(root, manifest.files[0].path))),
     );
+  });
+
+  it("allows expanded project packages but rejects an over-limit inventory", async () => {
+    const root = await fixture();
+    const initial = await createDistManifest(root);
+    await Promise.all(
+      Array.from({ length: MAXIMUM_FILES - initial.files.length }, (_, index) =>
+        writeFile(join(root, `project-artifact-${index}.txt`), "fixture"),
+      ),
+    );
+    expect((await createDistManifest(root)).files).toHaveLength(MAXIMUM_FILES);
+    await expect(verifyLocalBundle(root)).resolves.toBe(MAXIMUM_FILES);
+    await writeFile(join(root, "over-limit.txt"), "fixture");
+    await expect(createDistManifest(root)).rejects.toThrow(/file bound/u);
   });
 
   it("rejects symbolic links instead of publishing files outside the bundle", async () => {
