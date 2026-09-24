@@ -340,7 +340,7 @@ async function createContributorWalletClaim(
 ): Promise<Response> {
   assertWriter(actor);
   const body = await readJsonObject(request);
-  const chain = body.chain ?? "solana";
+  const chain = body.chain === undefined ? "solana" : body.chain;
   if (!isWalletChain(chain)) {
     fail(400, "invalid_request", "Invalid wallet chain");
   }

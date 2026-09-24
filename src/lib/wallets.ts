@@ -98,7 +98,10 @@ export function isBaseAddress(value: unknown): value is string {
 
 /** Validates an address against the rules of the chain it is claimed on. */
 export function isWalletAddress(chain: WalletChain, value: unknown): boolean {
-  return chain === "base" ? isBaseAddress(value) : isSolanaAddress(value);
+  return (
+    isWalletChain(chain) &&
+    (chain === "base" ? isBaseAddress(value) : isSolanaAddress(value))
+  );
 }
 
 function withoutFencedCode(markdown: string): string[] {

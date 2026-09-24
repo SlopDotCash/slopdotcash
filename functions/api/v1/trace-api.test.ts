@@ -1845,6 +1845,7 @@ describe("private trace API", () => {
       { address: baseAddress },
       { address: `0x${"A".repeat(40)}`, chain: "base" },
       { address: baseAddress, chain: "ethereum" },
+      { address: "11111111111111111111111111111111", chain: null },
     ]) {
       expect((await post(body)).status).toBe(400);
     }
