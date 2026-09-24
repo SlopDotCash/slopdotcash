@@ -5636,7 +5636,7 @@ export function assertPublishableLeaderboardSnapshot(
 ): asserts value is LeaderboardSnapshot {
   assertLeaderboardSnapshot(value);
   // Archived and deployed snapshots retain their collected inventory. A new
-  // publication must collect every current target, including paused projects.
+  // publication must collect every current active target; paused projects are not collected.
   if (value.repositories.length !== TARGET_REPOSITORIES.length) {
     throw new Error(
       "snapshot.repositories must list the complete target repository registry for publication",

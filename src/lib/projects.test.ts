@@ -41,8 +41,9 @@ describe("project registry", () => {
         repository.projectId,
       ]),
     ).toEqual(
-      PROJECTS.flatMap((project) =>
-        project.repositories.map((repository) => [repository.id, project.id]),
+      PROJECTS.filter((project) => project.status === "active").flatMap(
+        (project) =>
+          project.repositories.map((repository) => [repository.id, project.id]),
       ),
     );
     expect(
