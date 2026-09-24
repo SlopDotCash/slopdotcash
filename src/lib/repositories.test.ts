@@ -38,8 +38,14 @@ const PAUSED = project("monna", "paused", [
 ]);
 
 describe("collectTargetRepositories", () => {
-  it("is a no-op for the current registry, which is entirely active", () => {
-    expect(PROJECTS.every((entry) => entry.status === "active")).toBe(true);
+  it("collects only active projects from the current registry", () => {
+    expect(
+      TARGET_REPOSITORIES.every(
+        (repository) =>
+          PROJECTS.find((entry) => entry.id === repository.projectId)
+            ?.status === "active",
+      ),
+    ).toBe(true);
     expect(collectTargetRepositories(PROJECTS)).toEqual([
       ...TARGET_REPOSITORIES,
     ]);
