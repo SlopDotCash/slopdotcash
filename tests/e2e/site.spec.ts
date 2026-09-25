@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, test as base, expect } from "@playwright/test";
+import { projectPromotionEligible } from "../../src/lib/allocation-funding";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import {
   assertLeaderboardSnapshot,
@@ -180,8 +181,8 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload({ waitUntil: "networkidle" });
-  await loadSnapshot(request);
-  await loadCycles(request);
+  const snapshot = await loadSnapshot(request);
+  const cycles = await loadCycles(request);
 
   await expect(
     page.getByRole("heading", {
@@ -226,17 +227,42 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     page.getByRole("heading", { exact: true, name: "Featured" }),
   ).toBeVisible();
   const community = page.locator("details.community-projects");
-  await expect(community).not.toHaveAttribute("open", "");
-  for (const card of await community.locator("a.project-card").all()) {
-    await expect(card).toBeHidden();
+  const eligibleCommunity = PROJECTS.filter(
+    (project) =>
+      project.status === "active" &&
+      project.listingTier === "community" &&
+      snapshot.repositories.some(
+        (repository) => repository.projectId === project.id,
+      ) &&
+      projectPromotionEligible(
+        project,
+        cycles.cycles,
+        createProjectView(snapshot, project.id).cycle.id,
+      ),
+  );
+  if (eligibleCommunity.length === 0) {
+    await expect(community).toHaveCount(0);
+  } else {
+    await expect(community).not.toHaveAttribute("open", "");
+    await expect(community.locator("a.project-card")).toHaveCount(
+      eligibleCommunity.length,
+    );
+    for (const card of await community.locator("a.project-card").all())
+      await expect(card).toBeHidden();
+    await community.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    for (const project of eligibleCommunity)
+      await expect(
+        community.locator(`a.project-card[href="/projects/${project.id}"]`),
+      ).toBeVisible();
   }
-  await community.locator("summary").focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.locator(
-      'details.community-projects a.project-card[href="/projects/heir-elements-sdk"]',
-    ),
-  ).toBeVisible();
+  for (const project of PROJECTS.filter(
+    (project) => project.status === "paused",
+  )) {
+    await expect(
+      page.locator(`a.project-card[href="/projects/${project.id}"]`),
+    ).toHaveCount(0);
+  }
   await expect(
     page.getByRole("heading", { exact: true, name: "Delta Star" }),
   ).toBeVisible();

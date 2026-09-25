@@ -34,6 +34,27 @@ describe("project registry", () => {
     });
   });
 
+  it("migrates Heir without rewriting repository identity or activating proprietary code", () => {
+    expect(findProject("heir-elements-sdk")).toMatchObject({
+      status: "paused",
+      authority: { repositoryId: "1013158722" },
+      repositories: [{ id: "heirlabs/element-sdk" }],
+    });
+    expect(findProject("heir-desk-sdk")).toMatchObject({
+      status: "paused",
+      authority: { repositoryId: "1319094945", state: "unverified" },
+      repositories: [{ id: "heirlabs/elements-sdk" }],
+      terms: {
+        repositoryLicense: {
+          state: "verified",
+          spdx: "LicenseRef-Heir-Proprietary",
+        },
+        receiptPolicy: { state: "pending-authority-activation" },
+      },
+      reward: { committedMinor: "0", paymentMode: "disabled" },
+    });
+  });
+
   it("owns every target repository exactly once", () => {
     expect(
       TARGET_REPOSITORIES.map((repository) => [

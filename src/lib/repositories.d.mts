@@ -34,3 +34,12 @@ export declare function findTargetRepository(
 export declare function findTargetRepositoryById(
   id: string,
 ): TargetRepository | null;
+
+export declare const REGISTERED_REPOSITORIES: readonly TargetRepository[];
+export declare function findRegisteredRepository(
+  owner: string,
+  name: string,
+): TargetRepository | null;
+export declare function findRegisteredRepositoryById(
+  id: string,
+): TargetRepository | null;

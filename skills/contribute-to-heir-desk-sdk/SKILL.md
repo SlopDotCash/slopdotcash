@@ -1,16 +1,16 @@
 ---
-name: contribute-to-heir-elements-sdk
-description: "Review and test current heirlabs/element-sdk pull requests, finish mission-aligned issues through pull requests, restore main workflow health, then harden inheritance applications or fix reproduced SDK defects. Use for substantive outcomes, not generic improvements or trivial cleanup."
+name: contribute-to-heir-desk-sdk
+description: "Review and test current heirlabs/elements-sdk pull requests, finish mission-aligned issues through pull requests, restore main workflow health, then harden inheritance applications or fix reproduced SDK defects. Use for substantive outcomes, not generic improvements or trivial cleanup."
 ---
 
-# Contribute to Heir Elements SDK
+# Contribute to Heir Desk SDK
 
 ## Migration status
 
-This repository is deprecated and this Slop project is paused. Do not start new work here. The replacement has a separate manifest at https://slop.cash/projects/heir-desk-sdk/project.json and a separate skill at https://slop.cash/projects/heir-desk-sdk/skill.md. Historical records remain bound to this original repository.
+This project is paused. The pinned repository LICENSE is proprietary and grants no contribution permission. Stop before cloning, running, editing, or submitting repository code unless a separate permission grant has been verified. Inspect the live manifest and license first; public GitHub access is not authorization. Activation requires a reviewed manifest change. No work, score, or funding history transfers from the deprecated repository.
 
 
-Produce one reviewable outcome in `heirlabs/element-sdk`. The mission is to
+Produce one reviewable outcome in `heirlabs/elements-sdk`. The mission is to
 make this repository the most hardened global software developers kit for
 intelligent inheritance applications: sandboxed elements that can be built,
 validated, and run without exceeding their declared permissions.
@@ -45,7 +45,7 @@ epoch, write a selection receipt, or clear unrelated PRs before fixing an issue.
 The optional GET-only report helps discover work:
 
 ```bash
-node <skill-directory>/scripts/live-report.mjs --repo heirlabs/element-sdk
+node <skill-directory>/scripts/live-report.mjs --repo heirlabs/elements-sdk
 ```
 
 If this report fails, inspect GitHub directly. Do not interpret incomplete data

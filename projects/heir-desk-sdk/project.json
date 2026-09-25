@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1",
-  "id": "heir-elements-sdk",
-  "slug": "heir-elements-sdk",
-  "name": "Heir Elements SDK",
+  "id": "heir-desk-sdk",
+  "slug": "heir-desk-sdk",
+  "name": "Heir Desk SDK",
   "eyebrow": "Public repository",
-  "headline": "Make Money Creating Intelligent Inheritance Apps",
-  "description": "Deprecated repository. Historical activity and reward records remain here; the replacement is registered separately as Heir Desk SDK (heir-desk-sdk).",
+  "headline": "Review the Heir Desk SDK migration",
+  "description": "Replacement for the deprecated Heir Elements SDK. The Desk SDK currently has a proprietary license; contribution requires a separate permission grant from Heir Labs.",
   "listingTier": "community",
   "status": "paused",
   "steward": {
@@ -24,13 +24,13 @@
     "state": "unverified",
     "reason": "missing-repository-proof",
     "role": "project-steward",
-    "repositoryId": "1013158722",
-    "repositoryNodeId": "R_kgDOPGOTQg",
+    "repositoryId": "1319094945",
+    "repositoryNodeId": "R_kgDOTp_KoQ",
     "proof": null
   },
   "terms": {
-    "revision": "2026-08-16.1",
-    "effectiveAt": "2026-08-16T00:00:00.000Z",
+    "revision": "2026-09-24.1",
+    "effectiveAt": "2026-09-24T00:00:00.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
       "activatedAt": null,
@@ -46,11 +46,11 @@
       "governanceResolution": null
     },
     "repositoryLicense": {
-      "state": "unknown",
-      "spdx": null,
-      "url": null,
-      "commitSha": null,
-      "fileSha256": null
+      "state": "verified",
+      "spdx": "LicenseRef-Heir-Proprietary",
+      "url": "https://github.com/heirlabs/elements-sdk/blob/3596981eeede92f238e9861d134a957a11337c1a/LICENSE",
+      "commitSha": "3596981eeede92f238e9861d134a957a11337c1a",
+      "fileSha256": "9d6981bd65711c208c0f97ac0e5894165130671f86678147e2c6d88948c2c1b8"
     },
     "inbound": {
       "mode": "unknown",
@@ -65,28 +65,28 @@
   },
   "repositories": [
     {
-      "id": "heirlabs/element-sdk",
-      "displayName": "heirlabs/element-sdk",
-      "githubUrl": "https://github.com/heirlabs/element-sdk",
-      "description": "Public HEIR Elements SDK monorepo: sandboxed element runtime, validator, CLI, React bindings, and templates for intelligent inheritance apps.",
+      "id": "heirlabs/elements-sdk",
+      "displayName": "heirlabs/elements-sdk",
+      "githubUrl": "https://github.com/heirlabs/elements-sdk",
+      "description": "Protocol SDK for HEIR Desk Elements: sandboxed iframe apps, typed bridge, manifest v1, CSP, integrity, scanner, and emulator.",
       "integrationBranch": "main"
     }
   ],
   "skill": {
-    "id": "contribute-to-heir-elements-sdk",
+    "id": "contribute-to-heir-desk-sdk",
     "publishAtRoot": false,
-    "sourcePath": "skills/contribute-to-heir-elements-sdk",
-    "publicPath": "/projects/heir-elements-sdk/skill.md"
+    "sourcePath": "skills/contribute-to-heir-desk-sdk",
+    "publicPath": "/projects/heir-desk-sdk/skill.md"
   },
   "reviewSkill": {
-    "id": "review-heir-elements-sdk-contributions",
-    "sourcePath": "skills/review-heir-elements-sdk-contributions"
+    "id": "review-heir-desk-sdk-contributions",
+    "sourcePath": "skills/review-heir-desk-sdk-contributions"
   },
   "reward": {
     "kind": "monthly-pool",
     "currency": "USDC",
     "chain": "solana",
-    "rewardStartAt": "2026-08-16T01:15:28.387Z",
+    "rewardStartAt": "2026-09-24T00:00:00.000Z",
     "cycle": "calendar-month-utc",
     "monthlyCapMinor": "100000000",
     "monthlyCapDisplay": "$100",
@@ -99,7 +99,7 @@
   "funding": {
     "mode": "direct-noncustodial",
     "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
-    "recordsPath": "funding/heir-elements-sdk",
+    "recordsPath": "funding/heir-desk-sdk",
     "addresses": []
   },
   "modelPolicy": {
@@ -108,7 +108,7 @@
   },
   "links": {
     "creator": "https://github.com/awidearray",
-    "repository": "https://github.com/heirlabs/element-sdk",
-    "issues": "https://github.com/heirlabs/element-sdk/issues"
+    "repository": "https://github.com/heirlabs/elements-sdk",
+    "issues": "https://github.com/heirlabs/elements-sdk/issues"
   }
 }

@@ -97,9 +97,10 @@ import {
 } from "./model-identity";
 import { findProject } from "./projects.mjs";
 import {
-  findTargetRepository,
-  findTargetRepositoryById,
+  findRegisteredRepository,
+  findRegisteredRepositoryById,
   PRIMARY_REPOSITORY,
+  REGISTERED_REPOSITORIES,
   type RepositoryId,
   TARGET_REPOSITORIES,
 } from "./repositories.mjs";
@@ -460,7 +461,7 @@ export function repositoryIdFromUrl(url: string): RepositoryId {
         parsed.hash,
       )) &&
     segments.length >= 2
-      ? findTargetRepository(segments[0], segments[1])
+      ? findRegisteredRepository(segments[0], segments[1])
       : null;
   if (!repository) {
     throw new Error(`URL is outside the target repository registry: ${url}`);
@@ -1336,7 +1337,7 @@ function hasSubstantiveReviewBody(review: PullRequestReview): boolean {
 }
 
 function requiresExplicitPrizeAcceptance(repositoryId: string): boolean {
-  const repository = findTargetRepositoryById(repositoryId);
+  const repository = findRegisteredRepositoryById(repositoryId);
   const project = repository ? findProject(repository.projectId) : null;
   return project?.reward.kind === "external-prize-share";
 }
@@ -1487,7 +1488,7 @@ function addScore(
     return false;
   }
   const entry = actorEntry(entries, event.actor);
-  const projectId = TARGET_REPOSITORIES.find(
+  const projectId = REGISTERED_REPOSITORIES.find(
     (repository) => repository.id === event.repository,
   )?.projectId;
   if (!projectId) {
@@ -2579,7 +2580,7 @@ export function createLeaderboardSnapshot(
     { record: ScoreRatificationRecord; source: GitHubTextSource }
   >();
   for (const pullRequest of mergedPullRequests) {
-    const repository = findTargetRepositoryById(
+    const repository = findRegisteredRepositoryById(
       repositoryIdFromUrl(pullRequest.url),
     );
     if (!repository)
@@ -3589,7 +3590,9 @@ function assertRepositoryUrl(
   const match = parsed.pathname.match(
     /^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9][0-9]*)\/?$/,
   );
-  const repository = match ? findTargetRepository(match[1], match[2]) : null;
+  const repository = match
+    ? findRegisteredRepository(match[1], match[2])
+    : null;
   if (!match || !repository) {
     throw new Error(
       `${path} must identify an issue or pull request in a registry repository`,
@@ -4677,7 +4680,7 @@ function assertLedgerValue(
     );
   }
   assertString(evaluation.manifestPath, `${path}.evaluation.manifestPath`);
-  const projectId = findTargetRepositoryById(
+  const projectId = findRegisteredRepositoryById(
     event.repository as RepositoryId,
   )?.projectId;
   if (
@@ -4870,19 +4873,19 @@ export function assertLeaderboardSnapshot(
   snapshot.repositories.forEach((value, index) => {
     const path = `snapshot.repositories[${index}]`;
     const published = assertObject(value, path);
-    const registeredIndex = TARGET_REPOSITORIES.findIndex(
+    const registeredIndex = REGISTERED_REPOSITORIES.findIndex(
       (repository) => repository.id === published.id,
     );
     if (
       registeredIndex <= previousRepositoryIndex ||
-      (index === 0 && registeredIndex !== 0)
+      (index === 0 && published.id !== PRIMARY_REPOSITORY.id)
     ) {
       throw new Error(
         `${path}.id must follow the target repository registry order and include the primary repository`,
       );
     }
     previousRepositoryIndex = registeredIndex;
-    const registered = TARGET_REPOSITORIES[registeredIndex];
+    const registered = REGISTERED_REPOSITORIES[registeredIndex];
     repositoryIds.push(registered.id);
     for (const key of [
       "id",
@@ -5108,7 +5111,7 @@ export function assertLeaderboardSnapshot(
     }
   >();
   for (const event of validatedLedger) {
-    const repository = findTargetRepositoryById(event.repository);
+    const repository = findRegisteredRepositoryById(event.repository);
     if (!repository) {
       throw new Error(`snapshot.ledger event ${event.id} has no project`);
     }
@@ -5637,7 +5640,12 @@ export function assertPublishableLeaderboardSnapshot(
   assertLeaderboardSnapshot(value);
   // Archived and deployed snapshots retain their collected inventory. A new
   // publication must collect every current active target; paused projects are not collected.
-  if (value.repositories.length !== TARGET_REPOSITORIES.length) {
+  if (
+    value.repositories.length !== TARGET_REPOSITORIES.length ||
+    value.repositories.some(
+      (repository, index) => repository.id !== TARGET_REPOSITORIES[index]?.id,
+    )
+  ) {
     throw new Error(
       "snapshot.repositories must list the complete target repository registry for publication",
     );

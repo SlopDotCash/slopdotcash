@@ -5,6 +5,8 @@ import type { ProjectDefinition } from "./projects.mjs";
 import { PROJECTS } from "./projects.mjs";
 import {
   collectTargetRepositories,
+  findRegisteredRepositoryById,
+  findTargetRepositoryById,
   PRIMARY_REPOSITORY,
   TARGET_REPOSITORIES,
 } from "./repositories.mjs";
@@ -52,7 +54,6 @@ describe("collectTargetRepositories", () => {
     expect(TARGET_REPOSITORIES.map((repository) => repository.id)).toEqual([
       "elizaOS/eliza",
       "elizaOS/asi",
-      "heirlabs/element-sdk",
       "elizaOS/proximityprize",
     ]);
     expect(PRIMARY_REPOSITORY.id).toBe("elizaOS/eliza");
@@ -70,18 +71,22 @@ describe("collectTargetRepositories", () => {
     ).toBe(false);
   });
 
-  it("keeps an active project whose authority is unverified", () => {
-    // heir-elements-sdk is active with authority.state "unverified", legal
-    // under project-schema because its receipts are pending and its payments
-    // are disabled. Gating on authority rather than status would drop it.
-    const heir = PROJECTS.find((entry) => entry.id === "heir-elements-sdk");
-    expect(heir?.status).toBe("active");
-    expect(heir?.authority.state).toBe("unverified");
+  it("retains retired repository identity without collecting it", () => {
+    for (const id of ["heir-elements-sdk", "heir-desk-sdk"]) {
+      const heir = PROJECTS.find((entry) => entry.id === id);
+      expect(heir?.status).toBe("paused");
+      expect(heir?.authority.state).toBe("unverified");
+      expect(
+        TARGET_REPOSITORIES.some((repository) => repository.projectId === id),
+      ).toBe(false);
+    }
     expect(
-      TARGET_REPOSITORIES.some(
-        (repository) => repository.projectId === "heir-elements-sdk",
-      ),
-    ).toBe(true);
+      findRegisteredRepositoryById("heirlabs/element-sdk")?.projectId,
+    ).toBe("heir-elements-sdk");
+    expect(
+      findRegisteredRepositoryById("heirlabs/elements-sdk")?.projectId,
+    ).toBe("heir-desk-sdk");
+    expect(findTargetRepositoryById("heirlabs/element-sdk")).toBeNull();
   });
 
   it("promotes the next active project when the first one is paused", () => {

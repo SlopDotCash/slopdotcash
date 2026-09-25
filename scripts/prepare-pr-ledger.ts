@@ -15,8 +15,9 @@ import {
   SCORE_RULE_VERSION,
   SCORE_V2_EFFECTIVE_AT,
   type ScoreEvent,
-  TARGET_REPOSITORIES,
 } from "../src/lib/leaderboard";
+
+import { REGISTERED_REPOSITORIES } from "../src/lib/repositories.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -52,7 +53,7 @@ function rebindTransferredRepositoryPresentation(
   const reboundRepositories = repositories.map((value, index) => {
     const path = `snapshot.repositories[${index}]`;
     const deployed = record(value, path);
-    const current = TARGET_REPOSITORIES.find(
+    const current = REGISTERED_REPOSITORIES.find(
       (repository) => repository.id === deployed.id,
     );
     if (!current) throw new TypeError(`${path}.id is not registered`);
@@ -117,7 +118,7 @@ function eventThirds(event: ScoreEvent): number {
 }
 
 function v2WorkUnit(event: ScoreEvent): string {
-  const repository = TARGET_REPOSITORIES.find(
+  const repository = REGISTERED_REPOSITORIES.find(
     (candidate) => candidate.id === event.repository,
   );
   if (!repository)
