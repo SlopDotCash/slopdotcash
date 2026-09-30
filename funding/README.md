@@ -162,6 +162,76 @@ input—a release must credit an active manifest receiving route and a refund th
 funder's claimed wallet—and are never inferred. The verifier never signs,
 broadcasts, handles a key, or writes a record.
 
+The same verifier can also check the three-member project vault shape proposed
+in RFC #500. This is verifier support only. No manifest may declare a project
+vault, no project uses one, and every statement above about current
+instruments is unchanged. Replace the two member arguments in any mode with:
+
+```text
+  --creator-member <pubkey> --slop-member <pubkey> --independent-member <pubkey>
+```
+
+In this shape (`project-vault-squads-v1`) every mode proves the canonical
+vault PDA, the fixed Squads v4 program owner, the absent configuration
+authority, a threshold of 2, and exactly the three declared members with the
+exact permission masks 7 (creator), 2 (Slop, vote only), and 6 (independent
+signer, vote and execute). Any other mask, threshold, member count, or member
+fails closed. The observed time lock is published in seconds and is part of
+the quorum identity; the verifier does not decide what it should be. The
+verifier cannot prove who controls a key, that the third signer is
+independent, or where a future transfer will go.
+
+Two project vault rules are kept by the signers' agreement and not by the
+Squads program. A second read-only verifier (`project-vault-rules-v1`) checks
+them after the fact from finalized transaction history, with the same
+authorities and quorum. It cannot prevent a breach; it makes one visible.
+
+```bash
+bun run funding:verify-project-vault-rules -- --mode fallback-wait \
+  --multisig <multisig> --vault <vault> --vault-index <0..255> \
+  --creator-member <pubkey> --slop-member <pubkey> --independent-member <pubkey> \
+  --transaction-index <integer> --fallback-wait-seconds <integer>
+bun run funding:verify-project-vault-rules -- --mode spending-limits \
+  --multisig <multisig> --vault <vault> --vault-index <0..255> \
+  --creator-member <pubkey> --slop-member <pubkey> --independent-member <pubkey>
+```
+
+`fallback-wait` replays the votes on one payout. A proposal keeps only its
+latest status time, so the moment it was opened for votes and the moment of
+each vote are read from the transactions themselves, as Solana block times.
+When the two approvals that reached the threshold exclude the creator, every
+one of them must come at least the stated wait after the payout was opened
+for votes. A release the creator approved is reported and the wait is not
+applied. The wait is an input, not a constant.
+
+`spending-limits` reads the complete history of the multisig, back to the
+transaction that created it, and fails if a spending limit was ever created
+or used. A Squads spending limit lets one listed key move funds with no vote
+and no time lock. A limit that was proposed and never executed is reported
+and does not fail. History that does not reach the creation, or exceeds
+10,000 signatures, fails closed.
+
+Both modes exit nonzero with state `rule-not-met` when the rule was not kept.
+Both first require the current multisig to match the declared shape, so a
+payout voted on by a since-replaced member fails closed.
+
+A third mode checks the creator seat:
+
+```bash
+bun run funding:verify-project-vault-rules -- --mode creator-seat \
+  --multisig <multisig> --vault <vault> --vault-index <0..255> \
+  --creator-member <pubkey> --slop-member <pubkey> --independent-member <pubkey> \
+  --creator-multisig <pubkey> [--creator-vault-index <0..255>]
+```
+
+`creator-seat` proves that the creator member is the canonical vault of the
+declared creator multisig (index 0 unless given) and that the account at that
+address is a Squads v4 multisig. It reports that multisig's threshold, member
+count, time lock and whether a configuration authority is set, and judges
+none of them: how the creator protects its own seat is the creator's choice.
+A plain-key creator seat fails this mode; it is only wrong for a project that
+declared a multisig seat.
+
 For a Sablier Lockup v4 USDC stream on Base or Ethereum, the read-only
 verifier (`commitment-sablier-v2`) queries three fixed public RPC authorities,
 checks each authority's chain ID, pins every stream view call to that

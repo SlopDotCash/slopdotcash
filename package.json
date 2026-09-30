@@ -24,6 +24,7 @@
     "funding:verify-evm": "bun scripts/verify-funding-evm.ts",
     "funding:verify-bitcoin": "bun scripts/verify-funding-bitcoin.ts",
     "funding:verify-commitment-squads": "bun scripts/verify-commitment-squads.ts",
+    "funding:verify-project-vault-rules": "bun scripts/verify-project-vault-rules.ts",
     "funding:verify-commitment-sablier": "bun scripts/verify-commitment-sablier.ts",
     "settlement:verify-evm": "bun scripts/verify-settlement-evm.ts",
     "cycles:sync": "bun scripts/sync-cycle-index.ts",

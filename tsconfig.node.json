@@ -41,6 +41,7 @@
     "src/lib/sablier-funding.ts",
     "src/lib/wallet-possession.ts",
     "src/lib/squads-funding.ts",
+    "src/lib/squads-history.ts",
     "src/lib/squads-execution.ts",
     "src/lib/squads-execution-verifier.ts",
     "src/lib/squads-batch-handoff.ts",
