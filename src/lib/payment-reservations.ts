@@ -5,7 +5,10 @@
 import { assertFreshCyclePaymentPolicy } from "./funding-readiness";
 import { fundingReviewProposalSha256 } from "./funding-review-submission";
 import { assertRewardAllocationManifest } from "./rewards";
-import { createSettlementExecutionPlan } from "./settlement-plan";
+import {
+  createSettlementExecutionPlan,
+  PROJECT_VAULT_INSTRUMENT_PREFIX,
+} from "./settlement-plan";
 
 export const PAYMENT_RESERVATION_PATH = "funding/payment-reservations.json";
 export const PAYMENT_RESERVATION_CHECK = "Trusted payment reservation gate";
@@ -41,7 +44,7 @@ function assertReservation(value: unknown): PaymentReservation {
     typeof r.cycleId !== "string" ||
     !/^\d{4}-(0[1-9]|1[0-2])$/u.test(r.cycleId) ||
     typeof r.instrumentId !== "string" ||
-    !/^squads-v4-vault:solana:[1-9A-HJ-NP-Za-km-z]{32,44}:(0|[1-9][0-9]{0,2}):[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(
+    !/^squads-(?:v4|project)-vault:solana:[1-9A-HJ-NP-Za-km-z]{32,44}:(0|[1-9][0-9]{0,2}):[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(
       r.instrumentId,
     ) ||
     Number(r.instrumentId.split(":")[3]) > 255 ||
@@ -146,8 +149,15 @@ export async function draftPaymentReservation(
   if (
     allocation.projectId !== policy.projectId ||
     allocation.cycleId !== policy.cycleId ||
-    !allocation.fundingBasis?.instrumentId?.startsWith(
-      "squads-v4-vault:solana:",
+    !(
+      allocation.fundingBasis?.instrumentId?.startsWith(
+        "squads-v4-vault:solana:",
+      ) ||
+      // RFC #500 section 8: a project vault reservation binds contributor
+      // principal only; its plan reports a zero platform fee from the vault.
+      allocation.fundingBasis?.instrumentId?.startsWith(
+        PROJECT_VAULT_INSTRUMENT_PREFIX,
+      )
     ) ||
     allocation.fundingBasis.fundingState !== "committed" ||
     allocation.status !== "approved" ||

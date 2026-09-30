@@ -28,6 +28,11 @@ import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import {
+  assertProjectVaultWindup,
+  PROJECT_VAULT_WINDUP_FILE,
+  type ProjectVaultWindupRecord,
+} from "../src/lib/project-vault-windup";
 import { createProjectView } from "../src/lib/project-view";
 import { findProject, type ProjectId } from "../src/lib/projects.mjs";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
@@ -63,7 +68,12 @@ const ALLOWED_FILES = new Set([
   "settlement.json",
   "source-snapshot.json",
   "transactions.json",
+  PROJECT_VAULT_WINDUP_FILE,
 ]);
+const EXECUTION_LEDGER = resolve(
+  REPOSITORY_ROOT,
+  "funding/executions/ledger.json",
+);
 const REQUIRED_FILES = ["proposal.json", "source-snapshot.json"] as const;
 const MAX_CYCLES = 240;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
@@ -81,6 +91,7 @@ interface CycleBuild {
   allocation: RewardAllocationManifest | null;
   plan: SettlementExecutionPlan | null;
   settlement: RewardSettlementManifest | null;
+  windup: ProjectVaultWindupRecord | null;
 }
 
 function canonical(value: unknown): string {
@@ -353,12 +364,14 @@ async function buildCycle(
           allocation: null,
           executionPlan: null,
           settlement: null,
+          windup: null,
         },
       },
       files,
       allocation: null,
       plan: null,
       settlement: null,
+      windup: null,
     };
   }
 
@@ -432,18 +445,47 @@ async function buildCycle(
     );
   }
 
+  // RFC #500 section 10: a project vault creator returned the vault after
+  // binding the proposal. The record is validated against the frozen
+  // allocation, plan, and execution binding; it holds every approved row and
+  // excludes settlement evidence for good.
+  const windupFile = loaded.get(PROJECT_VAULT_WINDUP_FILE) ?? null;
+  let windup: ProjectVaultWindupRecord | null = null;
+  if (windupFile) {
+    if (!allocation || !allocationFile || !plan || !planFile) {
+      throw new TypeError("Windup has no approved allocation and plan");
+    }
+    if (settlementFile || loaded.has("transactions.json")) {
+      throw new TypeError(
+        "A wound-up cycle cannot carry settlement or transaction evidence",
+      );
+    }
+    const ledger = await jsonFile(EXECUTION_LEDGER);
+    windup = await assertProjectVaultWindup(windupFile.value, {
+      allocation: allocationFile.value,
+      allocationSha256: allocationFile.digest,
+      planBytes: planFile.bytes,
+      ledger: ledger.value,
+    });
+    if (windup.projectId !== projectId || windup.cycleId !== cycleId) {
+      throw new TypeError("Windup does not match its cycle path");
+    }
+  }
+
   const state =
     proposal.allocations.length === 0
       ? "closed-no-awards"
-      : settlement
-        ? settlement.status === "paid"
-          ? "paid"
-          : "settlement-planned"
-        : plan
-          ? "settlement-planned"
-          : allocation
-            ? "payment-ready"
-            : "review";
+      : windup
+        ? "wound-up"
+        : settlement
+          ? settlement.status === "paid"
+            ? "paid"
+            : "settlement-planned"
+          : plan
+            ? "settlement-planned"
+            : allocation
+              ? "payment-ready"
+              : "review";
   const allocationByIntent = new Map(
     allocation?.allocations.map((entry) => [entry.intentId, entry]) ?? [],
   );
@@ -522,7 +564,11 @@ async function buildCycle(
           score: entry.score,
           scoreThirds: exactScores.get(entry.actor.id) ?? 0,
           state:
-            paid?.state === "paid" ? "paid" : (approved?.state ?? entry.state),
+            paid?.state === "paid"
+              ? "paid"
+              : windup && approved?.state === "approved"
+                ? "held"
+                : (approved?.state ?? entry.state),
           suggestedMinor: entry.suggestedMinor,
           approvedMinor: approved?.approvedMinor ?? "0",
           paidMinor: paid?.paidMinor ?? "0",
@@ -565,12 +611,16 @@ async function buildCycle(
         settlement: settlementFile
           ? reference(projectId, cycleId, "settlement.json", settlementFile)
           : null,
+        windup: windupFile
+          ? reference(projectId, cycleId, PROJECT_VAULT_WINDUP_FILE, windupFile)
+          : null,
       },
     },
     files,
     allocation,
     plan,
     settlement,
+    windup,
   };
 }
 

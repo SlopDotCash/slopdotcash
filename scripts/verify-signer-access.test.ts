@@ -224,3 +224,146 @@ describe("independently authenticated signer access reports", () => {
     ).rejects.toThrow("unavailable");
   });
 });
+
+function projectVaultFixture(role: "creator" | "independent") {
+  const keys = generateKeyPairSync("ed25519");
+  const member = base58(
+    keys.publicKey.export({ format: "der", type: "spki" }).subarray(-32),
+  );
+  // The creator seat is the creator multisig's vault PDA, which cannot sign.
+  const creatorMember = "Stake11111111111111111111111111111111111111";
+  const instrument = {
+    kind: "squads-project-vault" as const,
+    network: "solana" as const,
+    asset: "USDC" as const,
+    multisig: "SysvarC1ock11111111111111111111111111111111",
+    vault: "Vote111111111111111111111111111111111111111",
+    vaultIndex: 0,
+    creatorActorId: "18633264",
+    creatorMember,
+    creatorMultisig: "Config1111111111111111111111111111111111111",
+    creatorVaultIndex: 0,
+    slopMember: "SysvarRent111111111111111111111111111111111",
+    independentMember:
+      role === "independent"
+        ? member
+        : "SysvarRecentB1ockHashes11111111111111111111",
+    independentGithub: {
+      actorId: "42",
+      nodeId: "U_fixture_42",
+      login: "independent-fixture",
+    },
+    timeLockSeconds: 72 * 60 * 60,
+    fallbackWaitSeconds: 14 * 24 * 60 * 60,
+    monthlyCommitment: {
+      cycleId: "2026-09",
+      amountMinor: "5000000",
+      accessibility: "unknown" as const,
+    },
+    effectiveAt: "2026-09-01T00:00:00.000Z",
+    deadline: "2026-10-01T00:00:00.000Z",
+    replacedAt: null,
+  };
+  const project = assertProjectDefinition({
+    ...structuredClone(eliza),
+    reward: {
+      ...eliza.reward,
+      fundingState: "committed",
+      committedMinor: "5000000",
+      paymentMode: "disabled",
+    },
+    funding: { ...eliza.funding, commitments: [instrument] },
+  });
+  const report: SignerAccessReport = {
+    kind: "slop-signer-access",
+    schemaVersion: "1",
+    projectId: project.id,
+    manifestRevision: "a".repeat(40),
+    cycleId: "2026-09",
+    instrumentId: squadsAccessInstrumentId(instrument),
+    actorId: role === "creator" ? "18633264" : "42",
+    role,
+    member,
+    capability: "can-sign",
+    reportedAt: "2026-09-05T20:00:00.000Z",
+    expiresAt: "2026-09-06T20:00:00.000Z",
+    reason:
+      role === "creator"
+        ? "I can propose from the creator multisig with this member key."
+        : "I can vote and execute with the reviewed member key.",
+    memberSignature: null,
+    sourceRepository: "example/evidence",
+    sourceCommit: "b".repeat(40),
+  };
+  report.memberSignature = sign(
+    null,
+    Buffer.from(signerCapabilityMessage(report)),
+    keys.privateKey,
+  ).toString("base64");
+  const commit = () => ({
+    oid: report.sourceCommit,
+    message: `${signerAccessCommitMessage(report)}\n`,
+    signature: {
+      isValid: true,
+      state: "VALID",
+      signer: {
+        databaseId: Number(report.actorId),
+        id: role === "independent" ? "U_fixture_42" : "U_creator",
+      },
+    },
+  });
+  const input = () => ({
+    report,
+    project,
+    manifestRevision: report.manifestRevision,
+    now: "2026-09-05T20:01:00.000Z",
+    readCommit: async () => commit(),
+  });
+  return { report, project, instrument, creatorMember, commit, input };
+}
+
+describe("project vault signer access reports (RFC #500)", () => {
+  it.each(["creator", "independent"] as const)(
+    "verifies the %s capability report against the reviewed project vault",
+    async (role) => {
+      const f = projectVaultFixture(role);
+      expect(await verifySignerAccess(f.input())).toEqual(f.report);
+      expect(f.report.instrumentId).toMatch(/^squads-project-vault:solana:/u);
+    },
+  );
+  it("signs a creator capability report with a creator-multisig key, never the seat", async () => {
+    const f = projectVaultFixture("creator");
+    f.report.member = f.creatorMember;
+    await expect(verifySignerAccess(f.input())).rejects.toThrow("authority");
+  });
+  it("names the seat on a creator loss report and needs no key", async () => {
+    const f = projectVaultFixture("creator");
+    f.report.capability = "lost-access";
+    f.report.memberSignature = null;
+    f.report.expiresAt = null;
+    f.report.member = f.creatorMember;
+    f.report.reason = "The creator multisig can no longer propose.";
+    expect(await verifySignerAccess(f.input())).toEqual(f.report);
+    f.report.member = "BPFLoaderUpgradeab1e11111111111111111111111";
+    await expect(verifySignerAccess(f.input())).rejects.toThrow("authority");
+  });
+  it("rejects 2-of-2 roles and a Slop role on a project vault", async () => {
+    const f = projectVaultFixture("independent");
+    for (const role of ["funder", "steward"] as const) {
+      await expect(
+        verifySignerAccess({ ...f.input(), report: { ...f.report, role } }),
+      ).rejects.toThrow("exact reviewed monthly Squads instrument");
+    }
+    expect(() =>
+      assertSignerAccessReport({ ...f.report, role: "slop" }),
+    ).toThrow("Invalid signer access report");
+  });
+  it("binds the independent signer to the reviewed node id", async () => {
+    const f = projectVaultFixture("independent");
+    const commit = f.commit();
+    commit.signature.signer.id = "U_other";
+    await expect(
+      verifySignerAccess({ ...f.input(), readCommit: async () => commit }),
+    ).rejects.toThrow("GitHub signature");
+  });
+});

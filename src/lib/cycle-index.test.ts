@@ -65,6 +65,7 @@ function entry(overrides: Partial<CycleIndexEntry> = {}): CycleIndexEntry {
       allocation: null,
       executionPlan: null,
       settlement: null,
+      windup: null,
     },
     ...overrides,
   };
@@ -449,6 +450,7 @@ describe("public cycle index", () => {
         allocation: null,
         executionPlan: null,
         settlement: null,
+        windup: null,
       },
     });
 
@@ -525,5 +527,67 @@ describe("public cycle index", () => {
     zeroApproved.reward.feeMinor = "0";
     zeroApproved.contributors[0].approvedMinor = "0";
     expect(() => assertCycleIndex(index([zeroApproved]))).not.toThrow();
+  });
+
+  it("publishes a project vault windup as a terminal held state with nothing paid", () => {
+    const files = {
+      ...entry().files,
+      allocation: {
+        sha256: DIGEST,
+        url: "/data/cycles/eliza/2026-07/allocation.json",
+      },
+      executionPlan: {
+        sha256: DIGEST,
+        url: "/data/cycles/eliza/2026-07/execution-plan.json",
+      },
+      windup: { sha256: DIGEST, url: "/data/cycles/eliza/2026-07/windup.json" },
+    };
+    const woundUp = entry({
+      state: "wound-up",
+      approvedAt: "2026-08-16T00:00:00.000Z",
+      reward: {
+        ...entry().reward,
+        approvedMinor: "10000000",
+        feeMinor: "100000",
+      },
+      contributors: [
+        {
+          ...entry().contributors[0],
+          state: "held",
+          approvedMinor: "10000000",
+        },
+      ],
+      files,
+    });
+    expect(() => assertCycleIndex(index([woundUp]))).not.toThrow();
+    // Nothing is paid, and an approved row cannot stay approved or become paid.
+    for (const broken of [
+      entry({ ...woundUp, reward: { ...woundUp.reward, paidMinor: "1" } }),
+      entry({
+        ...woundUp,
+        contributors: [{ ...woundUp.contributors[0], state: "approved" }],
+      }),
+      entry({
+        ...woundUp,
+        settledAt: "2026-08-17T00:00:00.000Z",
+        files: {
+          ...files,
+          settlement: {
+            sha256: DIGEST,
+            url: "/data/cycles/eliza/2026-07/settlement.json",
+          },
+        },
+      }),
+      entry({ ...woundUp, files: { ...files, windup: null } }),
+      entry({ ...woundUp, files: { ...files, executionPlan: null } }),
+      entry({
+        ...woundUp,
+        state: "settlement-planned",
+        contributors: [{ ...woundUp.contributors[0], state: "approved" }],
+      }),
+    ])
+      expect(() => assertCycleIndex(index([broken]))).toThrow(
+        /state|reconcile/u,
+      );
   });
 });

@@ -6,6 +6,7 @@ import {
   assertSettlementExecutionPlan,
   createSettlementExecutionPlan,
   createSolanaPayTransferRequest,
+  planCarriesPlatformFee,
   SOLANA_MAINNET_USDC_MINT,
 } from "./settlement-plan";
 
@@ -142,6 +143,61 @@ describe("settlement execution plans", () => {
       totalMinor: "1010000",
     });
     expect(assertSettlementExecutionPlan(plan, allocation)).toEqual(plan);
+  });
+
+  it("carries no fee transfer on a project vault (RFC #500 section 8)", () => {
+    const projectVault = `squads-project-vault:solana:${RECIPIENT}:0:${SOURCE}`;
+    const twoOfTwo = `squads-v4-vault:solana:${RECIPIENT}:0:${SOURCE}`;
+    expect(planCarriesPlatformFee(projectVault)).toBe(false);
+    expect(planCarriesPlatformFee(twoOfTwo)).toBe(true);
+    expect(planCarriesPlatformFee(undefined)).toBe(true);
+    expect(planCarriesPlatformFee(null)).toBe(true);
+
+    const allocation = fundedAllocation(projectVault);
+    const input = {
+      allocation,
+      allocationSha256: "c".repeat(64),
+      createdAt: "2026-08-15T00:01:00.000Z",
+      feeRecipient: FEE,
+      sourceOwner: SOURCE,
+    };
+    const plan = createSettlementExecutionPlan(input);
+    expect(plan.transfers.map((transfer) => transfer.kind)).toEqual([
+      "contributor",
+    ]);
+    expect(plan.totals).toEqual({
+      contributorMinor: "1000000",
+      platformFeeMinor: "0",
+      totalMinor: "1000000",
+    });
+    // The fee is still due; it is the allocation's, not the vault's.
+    expect(allocation.totals.feeMinor).toBe("10000");
+    expect(assertSettlementExecutionPlan(plan, allocation)).toEqual(plan);
+
+    // The same allocation on a 2-of-2 vault still ends with the fee transfer,
+    // and that plan cannot be read back against the project vault allocation.
+    const withFee = createSettlementExecutionPlan({
+      ...input,
+      allocation: fundedAllocation(twoOfTwo),
+    });
+    expect(withFee.transfers.map((transfer) => transfer.kind)).toEqual([
+      "contributor",
+      "platform-fee",
+    ]);
+    expect(() => assertSettlementExecutionPlan(withFee, allocation)).toThrow(
+      /differs from its approved allocation/u,
+    );
+    // Nor can a fee transfer be appended to a project vault plan by hand.
+    expect(() =>
+      assertSettlementExecutionPlan(
+        {
+          ...plan,
+          transfers: [...plan.transfers, withFee.transfers[1]],
+          totals: withFee.totals,
+        },
+        allocation,
+      ),
+    ).toThrow(/differs from its approved allocation/u);
   });
 
   it("creates exact Solana Pay requests without claiming payment", () => {

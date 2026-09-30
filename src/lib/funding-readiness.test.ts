@@ -8,6 +8,7 @@ import { fundingReviewProposalSha256 } from "./funding-review-submission";
 import { assertRewardAllocationManifest } from "./rewards";
 import { SOLANA_MAINNET_USDC_MINT } from "./settlement-plan";
 import {
+  deriveSquadsVaultAddress,
   deriveVaultUsdcTokenAccount,
   SPL_TOKEN_PROGRAM_ID,
   SQUADS_V4_PROGRAM_ID,
@@ -235,6 +236,7 @@ async function fixture() {
       cycleId: "2026-07",
       instrumentId,
       role,
+      member: role === "funder" ? FUNDER : RECIPIENT,
       capability: "can-sign",
       reportedAt: NOW,
       expiresAt: "2026-08-16T00:00:00.000Z",
@@ -584,5 +586,314 @@ describe("standalone fresh-cycle readiness candidate", () => {
         allowCarry: true,
       }),
     ).toThrow();
+  });
+});
+
+describe("project vault fresh-cycle readiness (RFC #500)", () => {
+  const CREATOR_MULTISIG = "Config1111111111111111111111111111111111111";
+  const SLOP = "Vote111111111111111111111111111111111111111";
+  const INDEPENDENT = "SysvarC1ock11111111111111111111111111111111";
+  const CREATOR_KEY = "BPFLoaderUpgradeab1e11111111111111111111111";
+  const OTHER_CREATOR_KEY = "ComputeBudget111111111111111111111111111111";
+  const TIME_LOCK = 72 * 60 * 60;
+  const projectVaultId = `squads-project-vault:solana:${MULTISIG}:0:${VAULT}`;
+
+  function squadsAccount(
+    members: readonly (readonly [string, number])[],
+    threshold: number,
+    timeLock: number,
+  ) {
+    // No config authority and no rent collector: members start at byte 100.
+    const bytes = new Uint8Array(132 + 33 * members.length);
+    bytes.set([224, 116, 121, 186, 68, 161, 79, 236]);
+    const view = new DataView(bytes.buffer);
+    view.setUint16(72, threshold, true);
+    view.setUint32(74, timeLock, true);
+    view.setUint32(96, members.length, true);
+    members.forEach(([key, permissions], index) => {
+      const offset = 100 + 33 * index;
+      bytes.set(publicKeyBytes(key), offset);
+      bytes[offset + 32] = permissions;
+    });
+    return {
+      executable: false,
+      owner: SQUADS_V4_PROGRAM_ID,
+      data: [btoa(String.fromCharCode(...bytes)), "base64"],
+    };
+  }
+
+  async function projectVaultFixture() {
+    const creatorMember = await deriveSquadsVaultAddress(CREATOR_MULTISIG, 0);
+    const instrument = {
+      kind: "squads-project-vault",
+      network: "solana",
+      asset: "USDC",
+      multisig: MULTISIG,
+      vault: VAULT,
+      vaultIndex: 0,
+      creatorActorId: "18633264",
+      creatorMember,
+      creatorMultisig: CREATOR_MULTISIG,
+      creatorVaultIndex: 0,
+      slopMember: SLOP,
+      independentMember: INDEPENDENT,
+      independentGithub: {
+        actorId: "42",
+        nodeId: "U_42",
+        login: "independent",
+      },
+      timeLockSeconds: TIME_LOCK,
+      fallbackWaitSeconds: 14 * 24 * 60 * 60,
+      monthlyCommitment: {
+        cycleId: "2026-07",
+        amountMinor: "10000000000",
+        accessibility: "unknown",
+      },
+      effectiveAt: "2026-07-01T00:00:00.000Z",
+      deadline: "2026-08-01T00:00:00.000Z",
+      replacedAt: null,
+    };
+    const vaultAccount = (
+      members: readonly (readonly [string, number])[] = [
+        [creatorMember, 7],
+        [SLOP, 2],
+        [INDEPENDENT, 6],
+      ],
+    ) => squadsAccount(members, 2, TIME_LOCK);
+    const creatorAccount = (
+      members: readonly (readonly [string, number])[] = [
+        [CREATOR_KEY, 7],
+        [OTHER_CREATOR_KEY, 7],
+      ],
+    ) => squadsAccount(members, 1, 0);
+    const allocation = approvedAllocation();
+    allocation.fundingBasis = {
+      cycleId: allocation.cycleId,
+      instrumentId: projectVaultId,
+      fundingState: "committed",
+      committedMinor: allocation.capMinor,
+      monthlyCapMinor: allocation.capMinor,
+    };
+    const allocationBytes = encode(allocation);
+    const evidence: FundingReadinessEvidence = {
+      policy: {
+        schemaVersion: "1",
+        kind: "fresh-cycle-payment-policy",
+        projectId: "eliza",
+        cycleId: "2026-07",
+        effectiveAt: "2026-07-31T22:00:00.000Z",
+        planningExpiresAt: "2026-09-01T00:00:00.000Z",
+        instrumentSha256: await fundingReviewProposalSha256(encode(instrument)),
+        feeRecipient: FUNDER,
+      },
+      reviewedAt: "2026-07-31T21:00:00.000Z",
+      reviewedCommit: COMMIT,
+      instrumentBytes: encode(instrument),
+      allocationSha256: await fundingReviewProposalSha256(allocationBytes),
+      observedAt: NOW,
+      // Contributor principal only: the fee is the creator's separate transfer.
+      accounts: {
+        context: { slot: 500 },
+        value: [vaultAccount(), tokenAccount("1000000"), creatorAccount()],
+      },
+      tokenAccount: await deriveVaultUsdcTokenAccount(VAULT),
+      cluster: "mainnet-beta",
+      commitment: "finalized",
+      fundedProposalHistory: [
+        {
+          projectId: allocation.projectId,
+          cycleId: allocation.cycleId,
+          instrumentId: projectVaultId,
+          firstPublishedAt: allocation.generatedAt,
+          generatedAt: allocation.generatedAt,
+          sourceSnapshotSha256: allocation.sourceSnapshotSha256,
+        },
+      ],
+      fundingRecords: [
+        {
+          schemaVersion: "1",
+          kind: "project-commitment",
+          recordId: "cmt_fixture_pv",
+          projectId: "eliza",
+          manifestRevision: COMMIT,
+          event: "deposit",
+          network: "solana",
+          asset: "USDC",
+          instrument: {
+            creatorMember,
+            independentMember: INDEPENDENT,
+            multisig: MULTISIG,
+            slopMember: SLOP,
+            vault: VAULT,
+            vaultIndex: 0,
+          },
+          transactionId: "4".repeat(88),
+          amountMinor: "1000000",
+          observedAt: NOW,
+          state: "verified-on-chain",
+          finality: { kind: "finalized" },
+          verifier: {
+            version: "project-vault-squads-v1",
+            checkedAt: NOW,
+            evidenceUrl: `https://solscan.io/tx/${"4".repeat(88)}`,
+            reason: null,
+          },
+          supersedes: null,
+        },
+      ],
+      signerReports: [
+        {
+          projectId: "eliza",
+          cycleId: "2026-07",
+          instrumentId: projectVaultId,
+          role: "creator",
+          member: CREATOR_KEY,
+          capability: "can-sign",
+          reportedAt: NOW,
+          expiresAt: "2026-08-16T00:00:00.000Z",
+          reason: "Creator multisig member can propose",
+          sourceRepository: "SlopDotCash/slopdotcash",
+          sourceCommit: COMMIT,
+        },
+        {
+          projectId: "eliza",
+          cycleId: "2026-07",
+          instrumentId: projectVaultId,
+          role: "independent",
+          member: INDEPENDENT,
+          capability: "can-sign",
+          reportedAt: NOW,
+          expiresAt: "2026-08-16T00:00:00.000Z",
+          reason: "Independent signer can vote and execute",
+          sourceRepository: "SlopDotCash/slopdotcash",
+          sourceCommit: "b".repeat(40),
+        },
+      ],
+      reservations: [],
+      reservationRevision: "c".repeat(64),
+    };
+    return {
+      evidence,
+      allocation,
+      creatorMember,
+      vaultAccount,
+      creatorAccount,
+      run: () =>
+        verifyFundingReadiness({
+          allocationBytes,
+          now: NOW,
+          loadTrustedEvidence: async () => evidence,
+        }),
+    };
+  }
+
+  it("is ready when the vault covers contributor principal only and both required signers are current", async () => {
+    const f = await projectVaultFixture();
+    expect(await f.run()).toMatchObject({
+      status: "ready",
+      reasons: [],
+      paymentAuthorized: false,
+      principalMinor: "1000000",
+      feeMinor: "10000",
+      requiredMinor: "1000000",
+      reservedMinor: "0",
+    });
+  });
+  it("proves the reviewed shape, time lock, and creator seat from one observation", async () => {
+    const f = await projectVaultFixture();
+    const accounts = f.evidence.accounts as { value: unknown[] };
+    accounts.value[0] = squadsAccount(
+      [
+        [f.creatorMember, 7],
+        [SLOP, 2],
+        [INDEPENDENT, 6],
+      ],
+      2,
+      0,
+    );
+    expect((await f.run()).reasons).toContain(
+      "On-chain time lock differs from the reviewed manifest",
+    );
+    accounts.value[0] = f.vaultAccount([
+      [f.creatorMember, 7],
+      [SLOP, 7],
+      [INDEPENDENT, 6],
+    ]);
+    expect((await f.run()).reasons.join()).toMatch(/creator 7, Slop 2/u);
+    accounts.value[0] = f.vaultAccount();
+    accounts.value.length = 2;
+    expect((await f.run()).reasons.join()).toMatch(
+      /multisig, its USDC account, and the creator multisig/u,
+    );
+  });
+  it("never releases a plan that pays a Slop address", async () => {
+    const f = await projectVaultFixture();
+    const wallet = f.allocation.allocations[0].wallet;
+    if (!wallet) throw new Error("fixture wallet");
+    const paying = (address: string) =>
+      verifyFundingReadiness({
+        allocationBytes: encode({
+          ...f.allocation,
+          allocations: [
+            { ...f.allocation.allocations[0], wallet: { ...wallet, address } },
+          ],
+        }),
+        now: NOW,
+        loadTrustedEvidence: async (digest) => ({
+          ...f.evidence,
+          allocationSha256: digest,
+        }),
+      });
+    for (const address of [SLOP, FUNDER]) {
+      expect((await paying(address)).reasons).toContain(
+        "Invalid payable destinations",
+      );
+    }
+  });
+  it("binds the creator report to an initiating key inside the creator multisig", async () => {
+    const f = await projectVaultFixture();
+    f.evidence.signerReports[0].member = f.creatorMember;
+    expect((await f.run()).reasons).toContain(
+      "Signer report member differs from the reviewed instrument",
+    );
+    f.evidence.signerReports[0].member = CREATOR_KEY;
+    (f.evidence.accounts as { value: unknown[] }).value[2] = f.creatorAccount([
+      [CREATOR_KEY, 6],
+      [OTHER_CREATOR_KEY, 7],
+    ]);
+    expect((await f.run()).reasons).toContain(
+      "Signer report member differs from the reviewed instrument",
+    );
+    (f.evidence.accounts as { value: unknown[] }).value[2] = f.creatorAccount([
+      [OTHER_CREATOR_KEY, 7],
+    ]);
+    expect((await f.run()).reasons).toContain(
+      "Signer report member differs from the reviewed instrument",
+    );
+  });
+  it("requires the creator and the independent signer, and gives Slop's key no role", async () => {
+    const f = await projectVaultFixture();
+    f.evidence.signerReports = [f.evidence.signerReports[0]];
+    expect((await f.run()).reasons).toContain(
+      "The creator and the independent signer must be current; loss or expiry blocks new plans",
+    );
+    f.evidence.signerReports = (
+      await projectVaultFixture()
+    ).evidence.signerReports;
+    f.evidence.signerReports[1] = {
+      ...f.evidence.signerReports[1],
+      role: "steward",
+      member: INDEPENDENT,
+    };
+    expect((await f.run()).reasons).toContain("Invalid public signer report");
+    f.evidence.signerReports[1] = {
+      ...f.evidence.signerReports[1],
+      role: "independent",
+      capability: "lost-access",
+      expiresAt: null,
+    };
+    expect((await f.run()).reasons).toContain(
+      "The creator and the independent signer must be current; loss or expiry blocks new plans",
+    );
   });
 });

@@ -8,7 +8,12 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertFreshCyclePaymentPolicy } from "../src/lib/fresh-cycle-policy.mjs";
 import { isSolanaTransactionId } from "../src/lib/funding-address.mjs";
+import {
+  assertProjectVaultApprovalBinding,
+  isProjectVaultInstrumentId,
+} from "../src/lib/project-vault-approval";
 import {
   assertProjectPaymentsEnabled,
   findProject,
@@ -18,7 +23,10 @@ import {
   assertRewardAllocationManifest,
   assertRewardSettlementManifest,
 } from "../src/lib/rewards";
-import { assertSettlementExecutionPlan } from "../src/lib/settlement-plan";
+import {
+  assertSettlementExecutionPlan,
+  planCarriesPlatformFee,
+} from "../src/lib/settlement-plan";
 import { verifyRewardSettlementOnchain } from "../src/lib/solana-settlement";
 import {
   DEFAULT_SOLANA_RPC_URL,
@@ -29,6 +37,10 @@ import { writeNewJsonFile } from "./write-new-file";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CYCLES_ROOT = resolve(REPOSITORY_ROOT, "cycles");
+const EXECUTION_LEDGER_PATH = resolve(
+  REPOSITORY_ROOT,
+  "funding/executions/ledger.json",
+);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 interface SettlementEvidence {
@@ -47,6 +59,8 @@ interface VerifyArguments {
   allocationPath: string;
   cycleId: string;
   evidencePath: string;
+  /** Canonical execution binding ledger; required only for a project vault. */
+  executionLedgerPath?: string;
   outputPath: string;
   planPath: string;
   projectId: ProjectId;
@@ -105,6 +119,7 @@ export function parseVerifySettlementArguments(
     allocationPath: resolve(directory, "allocation.json"),
     cycleId,
     evidencePath: resolve(directory, "transactions.json"),
+    executionLedgerPath: EXECUTION_LEDGER_PATH,
     outputPath: resolve(directory, "settlement.json"),
     planPath: resolve(directory, "execution-plan.json"),
     projectId,
@@ -206,6 +221,64 @@ async function readJson(
   }
 }
 
+/**
+ * The platform fee record for a settlement. A 2-of-2 vault pays it from the
+ * plan's fee transfer. A project vault carries no fee transfer (RFC #500
+ * section 8): the fee due is the allocation's, the recipient is the reviewed
+ * fresh-cycle policy's, and the evidence is the creator's separate transaction,
+ * which the on-chain verifier then proves did not move the vault's USDC.
+ */
+export function projectVaultPlatformFee(input: {
+  allocation: {
+    fundingBasis?: { instrumentId?: string | null };
+    totals: { feeMinor: string };
+  };
+  feeTransfer: { recipientOwner: string; amountMinor: string } | undefined;
+  platformFeeSignature: string | null;
+  policy: unknown;
+}): {
+  recipient: string | null;
+  dueMinor: string;
+  paidMinor: string;
+  signature: string | null;
+  state: "not-applicable" | "paid";
+} {
+  if (input.feeTransfer) {
+    return {
+      recipient: input.feeTransfer.recipientOwner,
+      dueMinor: input.feeTransfer.amountMinor,
+      paidMinor: input.feeTransfer.amountMinor,
+      signature: input.platformFeeSignature,
+      state: "paid",
+    };
+  }
+  const dueMinor = input.allocation.totals.feeMinor;
+  if (
+    planCarriesPlatformFee(input.allocation.fundingBasis?.instrumentId) ||
+    BigInt(dueMinor) === 0n
+  ) {
+    return {
+      recipient: null,
+      dueMinor: "0",
+      paidMinor: "0",
+      signature: null,
+      state: "not-applicable",
+    };
+  }
+  if (!input.platformFeeSignature) {
+    throw new TypeError(
+      "Project vault settlement requires the creator's separate fee transaction signature",
+    );
+  }
+  return {
+    recipient: assertFreshCyclePaymentPolicy(input.policy).feeRecipient,
+    dueMinor,
+    paidMinor: dueMinor,
+    signature: input.platformFeeSignature,
+    state: "paid",
+  };
+}
+
 export async function verifySettlement(
   arguments_: VerifyArguments,
   options: {
@@ -219,12 +292,20 @@ export async function verifySettlement(
     write?: (path: string, value: unknown) => Promise<void>;
   } = {},
 ) {
-  assertProjectPaymentsEnabled(arguments_.projectId, arguments_.cycleId);
+  const project = assertProjectPaymentsEnabled(
+    arguments_.projectId,
+    arguments_.cycleId,
+  );
   const cycle = await (options.validate ?? validateCycleTransition)(
     arguments_.projectId,
     arguments_.cycleId,
     { allowPendingTransactionEvidence: true },
   );
+  if (cycle.state === "wound-up") {
+    throw new TypeError(
+      "The creator wound up this project vault after binding the proposal; nothing can be recorded as paid",
+    );
+  }
   if (cycle.state !== "settlement-planned") {
     throw new TypeError(
       "Only a verified execution plan can enter settlement verification",
@@ -246,6 +327,18 @@ export async function verifySettlement(
   if (plan.allocationSha256 !== allocationSha256) {
     throw new TypeError("Settlement plan does not match allocation file bytes");
   }
+  // RFC #500 section 3: on a project vault, settlement can only reconcile a
+  // payout the creator bound on chain. An approved but unbound cycle is not
+  // approved for payment purposes and cannot be recorded as paid.
+  if (isProjectVaultInstrumentId(allocation.fundingBasis?.instrumentId)) {
+    const ledgerPath = arguments_.executionLedgerPath ?? EXECUTION_LEDGER_PATH;
+    const ledgerFile = await readJson(ledgerPath);
+    await assertProjectVaultApprovalBinding({
+      allocation: allocationFile.value,
+      planBytes: planFile.bytes,
+      ledger: ledgerFile.value,
+    });
+  }
   const evidence = parseEvidence(evidenceFile.value, arguments_.cycleId);
   if (!Number.isFinite(Date.parse(arguments_.settledAt))) {
     throw new TypeError("Settlement time is invalid");
@@ -257,6 +350,12 @@ export async function verifySettlement(
   const feeTransfer = plan.transfers.find(
     (transfer) => transfer.kind === "platform-fee",
   );
+  const platformFee = projectVaultPlatformFee({
+    allocation,
+    feeTransfer,
+    platformFeeSignature: evidence.platformFeeSignature,
+    policy: project.funding.freshCyclePaymentPolicy,
+  });
   const settlement = assertRewardSettlementManifest(
     {
       schemaVersion: "1",
@@ -294,21 +393,7 @@ export async function verifySettlement(
         ...attempt,
         state: "finalized",
       })),
-      platformFee: feeTransfer
-        ? {
-            recipient: feeTransfer.recipientOwner,
-            dueMinor: feeTransfer.amountMinor,
-            paidMinor: feeTransfer.amountMinor,
-            signature: evidence.platformFeeSignature,
-            state: "paid",
-          }
-        : {
-            recipient: null,
-            dueMinor: "0",
-            paidMinor: "0",
-            signature: null,
-            state: "not-applicable",
-          },
+      platformFee,
       totals: {
         approvedMinor: allocation.totals.approvedMinor,
         paidMinor: allocation.totals.approvedMinor,

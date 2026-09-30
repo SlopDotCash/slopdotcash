@@ -15,7 +15,8 @@ export type SettlementReminderLifecycle =
   | "paid"
   | "payment-ready"
   | "review"
-  | "settlement-planned";
+  | "settlement-planned"
+  | "wound-up";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
@@ -91,7 +92,8 @@ export function cycleSettlementReminder(input: {
     input.kind !== "monthly-pool" ||
     input.state === "closed-no-awards" ||
     input.state === "external-provisional" ||
-    input.state === "paid"
+    input.state === "paid" ||
+    input.state === "wound-up"
   ) {
     return null;
   }

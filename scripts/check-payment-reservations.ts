@@ -7,6 +7,7 @@ import {
   draftPaymentReservation,
   PAYMENT_RESERVATION_PATH,
 } from "../src/lib/payment-reservations";
+import { squadsInstrumentId } from "../src/lib/settlement-plan";
 import { verifyUnsafeDestinationHistoryAuthorities } from "./check-unsafe-destination-transitions";
 import {
   gitReservationBlob,
@@ -26,9 +27,11 @@ export function reviewedReservationPolicy(project: unknown) {
     p.funding?.freshCyclePaymentPolicy,
   );
   const instruments = assertFundingCommitments(p.funding.commitments ?? []);
+  // Either reviewed Squads shape: the 2-of-2 commitment vault or the 2-of-3
+  // project vault (RFC #500). A Sablier stream cannot back a fresh-cycle plan.
   const matches = instruments.filter(
     (v) =>
-      v.kind === "squads-v4-vault" &&
+      (v.kind === "squads-v4-vault" || v.kind === "squads-project-vault") &&
       v.replacedAt === null &&
       v.monthlyCommitment?.cycleId === policy.cycleId,
   );
@@ -42,7 +45,10 @@ export function reviewedReservationPolicy(project: unknown) {
       "Policy requires one exact Squads cycle without additive review budget",
     );
   const instrument = matches[0];
-  if (instrument.kind !== "squads-v4-vault")
+  if (
+    instrument.kind !== "squads-v4-vault" &&
+    instrument.kind !== "squads-project-vault"
+  )
     throw new TypeError("Wrong instrument kind");
   // Bind manifest object bytes in a deterministic existing validator order.
   const instrumentBytes = new TextEncoder().encode(JSON.stringify(instrument));
@@ -65,7 +71,7 @@ export function assertReservationInstrument(
     cycleId?: string;
     fundingBasis?: { instrumentId?: string; cycleId?: string };
   };
-  const identity = `squads-v4-vault:solana:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`;
+  const identity = squadsInstrumentId(instrument);
   if (
     row.instrumentId !== identity ||
     allocation.fundingBasis?.instrumentId !== identity ||
@@ -220,7 +226,7 @@ export async function checkPaymentReservationRecords(
         throw new TypeError(
           "Policy activation timestamp cannot claim future review",
         );
-      const instrumentId = `squads-v4-vault:solana:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`;
+      const instrumentId = squadsInstrumentId(instrument);
       if (
         prior.some(
           (r) =>

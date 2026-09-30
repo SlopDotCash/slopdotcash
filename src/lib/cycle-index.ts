@@ -61,7 +61,10 @@ export type CycleIndexState =
   | "paid"
   | "payment-ready"
   | "review"
-  | "settlement-planned";
+  | "settlement-planned"
+  /** A project vault creator returned the vault after binding the proposal;
+   * every approved row is held with no funded backing (RFC #500 s.10). */
+  | "wound-up";
 
 export interface CycleIndexEntry {
   projectId: string;
@@ -134,6 +137,7 @@ export interface CycleIndexEntry {
     allocation: CycleFileReference | null;
     executionPlan: CycleFileReference | null;
     settlement: CycleFileReference | null;
+    windup: CycleFileReference | null;
   };
 }
 
@@ -451,6 +455,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     "payment-ready",
     "review",
     "settlement-planned",
+    "wound-up",
   ];
   if (!states.includes(entry.state as CycleIndexState)) {
     throw new TypeError(`${field}.state is invalid`);
@@ -796,6 +801,10 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   ) {
     throw new TypeError(`${field}.reward differs from project policy`);
   }
+  // On a wound-up project vault cycle (RFC #500 s.10) a held row keeps its
+  // approved amount in the record with no funded backing; nothing is paid.
+  const heldWithApprovedAmount = (contributor: { state: string }) =>
+    entry.state === "wound-up" && contributor.state === "held";
   for (const contributor of contributors) {
     const approved = BigInt(contributor.approvedMinor);
     const paid = BigInt(contributor.paidMinor);
@@ -806,7 +815,8 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       (!(["approved", "paid"] as const).includes(
         contributor.state as "approved" | "paid",
       ) &&
-        (approved !== 0n || paid !== 0n))
+        ((approved !== 0n && !heldWithApprovedAmount(contributor)) ||
+          paid !== 0n))
     ) {
       throw new TypeError(
         `${field}.contributors contain contradictory payment state`,
@@ -817,7 +827,14 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   const files = record(entry.files, `${field}.files`);
   exact(
     files,
-    ["allocation", "executionPlan", "proposal", "settlement", "sourceSnapshot"],
+    [
+      "allocation",
+      "executionPlan",
+      "proposal",
+      "settlement",
+      "sourceSnapshot",
+      "windup",
+    ],
     `${field}.files`,
   );
   const normalizedFiles = {
@@ -845,6 +862,11 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       files.settlement,
       `${field}.files.settlement`,
       `${prefix}settlement.json`,
+    ),
+    windup: nullableFileReference(
+      files.windup,
+      `${field}.files.windup`,
+      `${prefix}windup.json`,
     ),
   };
   const state = entry.state as CycleIndexState;
@@ -880,7 +902,9 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     (normalizedFiles.executionPlan !== null ||
       normalizedFiles.settlement !== null);
   const approvalStateInvalid =
-    ["payment-ready", "settlement-planned", "paid"].includes(state) &&
+    ["payment-ready", "settlement-planned", "paid", "wound-up"].includes(
+      state,
+    ) &&
     (approvedAt === null ||
       reviewEndsAt === null ||
       Date.parse(approvedAt ?? "") < Date.parse(reviewEndsAt ?? ""));
@@ -896,6 +920,19 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
         (contributor) =>
           contributor.approvedMinor !== "0" && contributor.state !== "paid",
       ));
+  // A windup is terminal: the bound proposal cannot execute, nothing is paid,
+  // and every approved row is held. The record exists only in this state.
+  const windupStateInvalid =
+    (normalizedFiles.windup !== null) !== (state === "wound-up") ||
+    (state === "wound-up" &&
+      (normalizedFiles.settlement !== null ||
+        settledAt !== null ||
+        normalizedReward.paidMinor !== "0" ||
+        normalizedReward.approvedMinor === "0" ||
+        contributors.some(
+          (contributor) =>
+            contributor.approvedMinor !== "0" && contributor.state !== "held",
+        )));
   if (
     (isEmptyClose &&
       (contributors.length !== 0 ||
@@ -911,9 +948,11 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     (!isEmptyClose &&
       state !== "external-provisional" &&
       entry.kind !== "monthly-pool") ||
-    (["payment-ready", "settlement-planned", "paid"].includes(state) &&
+    (["payment-ready", "settlement-planned", "paid", "wound-up"].includes(
+      state,
+    ) &&
       !normalizedFiles.allocation) ||
-    (["settlement-planned", "paid"].includes(state) &&
+    (["settlement-planned", "paid", "wound-up"].includes(state) &&
       !normalizedFiles.executionPlan) ||
     (state === "paid" && !normalizedFiles.settlement) ||
     reviewStateInvalid ||
@@ -921,6 +960,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     approvalStateInvalid ||
     settlementStateInvalid ||
     paidStateInvalid ||
+    windupStateInvalid ||
     Date.parse(generatedAt) < Date.parse(contributionWindow.to) ||
     (isExternal &&
       (reviewEndsAt !== null || approvedAt !== null || settledAt !== null))

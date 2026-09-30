@@ -15,18 +15,25 @@ import {
 } from "./funding-commitment";
 import {
   assertFundingCommitments,
+  type SquadsProjectVaultInstrument,
   type SquadsV4VaultInstrument,
 } from "./funding-instruments.mjs";
 import { fundingReviewProposalSha256 } from "./funding-review-submission";
 import { assertRewardAllocationManifest } from "./rewards";
+import { planCarriesPlatformFee, squadsInstrumentId } from "./settlement-plan";
 import {
   assertPublicSignerReport,
+  currentSignerStatus,
   type PublicSignerReport,
   publicSignerStatus,
 } from "./signer-capability";
 import {
+  assertSquadsCreatorSeat,
+  assertSquadsProjectVaultUsdcState,
   assertSquadsVaultUsdcState,
   deriveVaultUsdcTokenAccount,
+  SQUADS_PERMISSION_INITIATE,
+  type VerifiedSquadsCreatorSeat,
 } from "./squads-funding";
 
 /** Optional reviewed contract in canonical project funding.
@@ -62,7 +69,8 @@ export interface FundingReadinessEvidence {
   instrumentBytes: Uint8Array;
   allocationSha256: string;
   observedAt: string;
-  /** Same finalized mainnet getMultipleAccounts response: multisig + USDC ATA. */
+  /** Same finalized mainnet getMultipleAccounts response: multisig + USDC ATA,
+   * plus the creator multisig as a third account on a project vault. */
   accounts: unknown;
   cluster: "mainnet-beta";
   commitment: "finalized";
@@ -196,10 +204,22 @@ export async function verifyFundingReadiness(input: {
         ),
       ),
     ]);
-    if (instrument.kind !== "squads-v4-vault")
-      throw new TypeError("Only reviewed Squads instruments are supported");
-    const vault: SquadsV4VaultInstrument = instrument;
-    const instrumentId = `squads-v4-vault:solana:${vault.multisig}:${vault.vaultIndex}:${vault.vault}`;
+    if (
+      instrument.kind !== "squads-v4-vault" &&
+      instrument.kind !== "squads-project-vault"
+    )
+      throw new TypeError(
+        "Only reviewed Squads instruments are supported for fresh-cycle release",
+      );
+    const vault: SquadsV4VaultInstrument | SquadsProjectVaultInstrument =
+      instrument;
+    const instrumentId = squadsInstrumentId(vault);
+    // RFC #500 section 8: only a 2-of-2 vault pays the platform fee from the
+    // vault. A project vault covers contributor principal only; its fee is a
+    // separate creator transfer reconciled at settlement, never reserved here.
+    const sourceFee = planCarriesPlatformFee(instrumentId) ? fee : 0n;
+    const coverage = sourceFee ? "principal plus fee" : "contributor principal";
+    result.requiredMinor = (principal + sourceFee).toString();
     const relevantFreezes = evidence.fundedProposalHistory.filter(
       (r) =>
         r.instrumentId === instrumentId ||
@@ -226,15 +246,25 @@ export async function verifyFundingReadiness(input: {
           "Existing monetary freeze cannot be reactivated or repriced by a later policy",
         );
     }
-    if (
+    if (vault.kind === "squads-v4-vault") {
+      if (
+        vault.replacedAt !== null ||
+        utc(vault.effectiveAt) > now ||
+        vault.monthlyCommitment?.cycleId !== allocation.cycleId ||
+        !vault.stewardGithub ||
+        vault.stewardGithub.actorId === vault.funderActorId
+      )
+        block(
+          "Instrument is inactive, expired, or lacks independent exact-cycle stewardship",
+        );
+    } else if (
       vault.replacedAt !== null ||
       utc(vault.effectiveAt) > now ||
-      vault.monthlyCommitment?.cycleId !== allocation.cycleId ||
-      !vault.stewardGithub ||
-      vault.stewardGithub.actorId === vault.funderActorId
+      vault.monthlyCommitment.cycleId !== allocation.cycleId ||
+      vault.independentGithub.actorId === vault.creatorActorId
     )
       block(
-        "Instrument is inactive, expired, or lacks independent exact-cycle stewardship",
+        "Project vault is inactive, expired, or lacks an independent exact-cycle signer",
       );
     if (
       allocation.fundingBasis?.instrumentId !== instrumentId ||
@@ -251,10 +281,21 @@ export async function verifyFundingReadiness(input: {
     )
       block("Approved intents do not reconcile principal");
     const { isSolanaAddress } = await import("./wallets");
+    // On a project vault nothing Slop votes on may pay a Slop address
+    // (protocol/project-vault-signing.md step 3).
+    const slopAddresses =
+      vault.kind === "squads-project-vault"
+        ? [vault.slopMember, policy.feeRecipient]
+        : [];
     if (
       !isSolanaAddress(policy.feeRecipient) ||
       policy.feeRecipient === vault.vault ||
-      intents.some((r) => !r.wallet || r.wallet.address === vault.vault)
+      intents.some(
+        (r) =>
+          !r.wallet ||
+          r.wallet.address === vault.vault ||
+          slopAddresses.includes(r.wallet.address),
+      )
     )
       block("Invalid payable destinations");
     if (
@@ -268,20 +309,68 @@ export async function verifyFundingReadiness(input: {
       evidence.tokenAccount !== (await deriveVaultUsdcTokenAccount(vault.vault))
     )
       throw new TypeError("Observation is not the canonical vault USDC ATA");
-    const state = await assertSquadsVaultUsdcState(
-      evidence.accounts,
-      vault.multisig,
-      vault.vault,
-      vault.vaultIndex,
-      evidence.tokenAccount,
-      vault.funderMember,
-      vault.stewardMember,
-    );
+    const observation = evidence.accounts as {
+      context: unknown;
+      value: unknown[];
+    };
+    let state: { balanceMinor: string };
+    let creatorSeat: VerifiedSquadsCreatorSeat | null = null;
+    if (vault.kind === "squads-v4-vault") {
+      state = await assertSquadsVaultUsdcState(
+        evidence.accounts,
+        vault.multisig,
+        vault.vault,
+        vault.vaultIndex,
+        evidence.tokenAccount,
+        vault.funderMember,
+        vault.stewardMember,
+      );
+      // Existing funding verifier requires voting. New execution readiness also
+      // requires proposer and executor capability across the reviewed members.
+      const raw = (observation.value as { data: string[] }[])[0].data[0];
+      const config = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+      if (
+        ((config[164] | config[197]) & 7) !== 7 ||
+        config.slice(74, 78).some((b) => b !== 0)
+      )
+        block(
+          "Execution requires proposer and executor roles across the voting members and zero timelock",
+        );
+    } else {
+      // RFC #500: the shape assertion proves masks 7/2/6, threshold 2, and no
+      // config authority. The observed time lock must be the reviewed one, and
+      // the creator seat must still be the creator's own multisig.
+      if (!Array.isArray(observation.value) || observation.value.length !== 3)
+        throw new TypeError(
+          "Project vault observation must contain the multisig, its USDC account, and the creator multisig",
+        );
+      const projectVault = await assertSquadsProjectVaultUsdcState(
+        { context: observation.context, value: observation.value.slice(0, 2) },
+        vault.multisig,
+        vault.vault,
+        vault.vaultIndex,
+        evidence.tokenAccount,
+        {
+          creatorMember: vault.creatorMember,
+          slopMember: vault.slopMember,
+          independentMember: vault.independentMember,
+        },
+      );
+      state = projectVault;
+      if (projectVault.timeLockSeconds !== vault.timeLockSeconds)
+        block("On-chain time lock differs from the reviewed manifest");
+      creatorSeat = await assertSquadsCreatorSeat(
+        observation.value[2],
+        vault.creatorMultisig,
+        vault.creatorMember,
+        vault.creatorVaultIndex,
+      );
+    }
     const tokenInfo = (
-      evidence.accounts as {
-        value: { data: { parsed: { info: Record<string, unknown> } } }[];
-      }
-    ).value[1].data.parsed.info;
+      observation.value as {
+        data: { parsed: { info: Record<string, unknown> } };
+      }[]
+    )[1].data.parsed.info;
     if (
       tokenInfo.state !== "initialized" ||
       tokenInfo.delegate != null ||
@@ -290,20 +379,8 @@ export async function verifyFundingReadiness(input: {
       block(
         "Vault USDC account is frozen, delegated, or has a close authority",
       );
-    // Existing funding verifier requires voting. New execution readiness also
-    // requires proposer and executor capability across the reviewed members.
-    const raw = (evidence.accounts as { value: { data: string[] }[] }).value[0]
-      .data[0];
-    const config = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
-    if (
-      ((config[164] | config[197]) & 7) !== 7 ||
-      config.slice(74, 78).some((b) => b !== 0)
-    )
-      block(
-        "Execution requires proposer and executor roles across the voting members and zero timelock",
-      );
-    if (money(state.balanceMinor) < principal + fee)
-      block("Finalized USDC balance does not cover principal plus fee");
+    if (money(state.balanceMinor) < principal + sourceFee)
+      block(`Finalized USDC balance does not cover ${coverage}`);
     const records = assertProjectCommitmentLedger(evidence.fundingRecords, [
       vault,
     ]);
@@ -316,8 +393,8 @@ export async function verifyFundingReadiness(input: {
       )
     )
       throw new TypeError("Funding ledger project or observation mismatch");
-    if (commitmentVerifiedNetMinor(records) < principal + fee)
-      block("Canonical verified funding does not cover principal plus fee");
+    if (commitmentVerifiedNetMinor(records) < principal + sourceFee)
+      block(`Canonical verified funding does not cover ${coverage}`);
     const reports = evidence.signerReports.map(assertPublicSignerReport);
     if (
       reports.some(
@@ -328,9 +405,17 @@ export async function verifyFundingReadiness(input: {
       )
     )
       throw new TypeError("Signer ledger identity mismatch");
-    if (publicSignerStatus(reports, now) !== "both-signers-current")
+    for (const report of reports) {
+      if (!signerReportBindsMember(vault, report, creatorSeat))
+        throw new TypeError(
+          "Signer report member differs from the reviewed instrument",
+        );
+    }
+    if (publicSignerStatus(reports, now) !== currentSignerStatus(instrumentId))
       block(
-        "Both authenticated signers must be current; loss or expiry blocks new plans",
+        vault.kind === "squads-v4-vault"
+          ? "Both authenticated signers must be current; loss or expiry blocks new plans"
+          : "The creator and the independent signer must be current; loss or expiry blocks new plans",
       );
     if (!SHA.test(evidence.reservationRevision))
       throw new TypeError("Missing complete reservation revision");
@@ -383,7 +468,7 @@ export async function verifyFundingReadiness(input: {
         own.state === "retired" ||
         own.instrumentId !== instrumentId ||
         own.principalMinor !== principal.toString() ||
-        own.feeMinor !== fee.toString() ||
+        own.feeMinor !== sourceFee.toString() ||
         JSON.stringify([...own.intentIds].sort()) !==
           JSON.stringify(intents.map((r) => r.intentId).sort()))
     )
@@ -415,4 +500,36 @@ export async function verifyFundingReadiness(input: {
     );
   }
   return result;
+}
+
+/**
+ * Binds each signer report to the member it may speak for. On the 2-of-2 each
+ * role is one reviewed key. On a project vault the independent signer is one
+ * reviewed key, and the creator seat is the creator multisig's vault PDA,
+ * which cannot sign: a creator capability report is therefore signed by a key
+ * that is a member of the creator multisig with the Initiate permission, and
+ * a creator loss report names the seat itself. Slop's vote-only key has no
+ * role here (see signer-capability.ts).
+ */
+function signerReportBindsMember(
+  vault: SquadsV4VaultInstrument | SquadsProjectVaultInstrument,
+  report: PublicSignerReport,
+  creatorSeat: VerifiedSquadsCreatorSeat | null,
+): boolean {
+  if (vault.kind === "squads-v4-vault") {
+    if (report.role === "funder") return report.member === vault.funderMember;
+    if (report.role === "steward") return report.member === vault.stewardMember;
+    return false;
+  }
+  if (report.role === "independent")
+    return report.member === vault.independentMember;
+  if (report.role !== "creator") return false;
+  if (report.capability === "lost-access")
+    return report.member === vault.creatorMember;
+  if (!creatorSeat || report.member === vault.creatorMember) return false;
+  return creatorSeat.members.some(
+    (member) =>
+      member.key === report.member &&
+      (member.permissions & SQUADS_PERMISSION_INITIATE) !== 0,
+  );
 }

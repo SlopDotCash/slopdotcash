@@ -60,6 +60,7 @@ function cycle(amount = "10000000"): CycleIndexEntry {
       allocation: ref("allocation"),
       executionPlan: ref("execution-plan"),
       settlement: ref("settlement"),
+      windup: null,
     },
   };
 }

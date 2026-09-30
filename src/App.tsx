@@ -1532,7 +1532,9 @@ export function SignerReports({
                   ? "Inaccessible"
                   : state === "both-signers-current"
                     ? "Both signers reported capability"
-                    : "Current capability unknown"}
+                    : state === "creator-and-independent-current"
+                      ? "Creator and independent signer reported capability"
+                      : "Current capability unknown"}
               </span>
             </h3>
             <p>Instrument: {group[0].instrumentId}</p>
@@ -3837,7 +3839,10 @@ function SponsorsPage({
           <li>
             A Squads v4 multisig vault on Solana, or a Sablier Lockup v4 stream
             on Base or Ethereum. Both are reviewed, immutable, third-party
-            programs. Slop holds no key, admin, or fee position in either.
+            programs. Slop holds no admin or fee position in either, and no key
+            in a 2-of-2 vault or a stream. An opt-in 2-of-3 project vault gives
+            Slop one vote-only key that cannot propose, execute, redirect, or
+            block a transfer.
           </li>
           <li>
             Direct gifts go straight from your wallet to the steward&apos;s

@@ -58,6 +58,7 @@ function archivedElizaCycle(
       allocation: null,
       executionPlan: null,
       settlement: null,
+      windup: null,
     },
   };
 }

@@ -91,6 +91,7 @@ async function fixture(batch = false) {
         url: "/execution-plan.json",
       },
       settlement: null,
+      windup: null,
     },
   };
   return { published, observation, cycle };

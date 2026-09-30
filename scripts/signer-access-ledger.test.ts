@@ -369,3 +369,173 @@ describe("complete authenticated signer history", () => {
     },
   );
 });
+
+async function projectVaultFixture() {
+  const root = await mkdtemp(join(tmpdir(), "slop-project-vault-ledger-"));
+  roots.push(root);
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  git("init", "-q");
+  git("config", "user.name", "Synthetic test");
+  git("config", "user.email", "fixture@example.invalid");
+  git("config", "commit.gpgsign", "false");
+  const seeds = {
+    creator: new Uint8Array(32).fill(3),
+    independent: new Uint8Array(32).fill(4),
+  };
+  const creatorKey = base58(ed25519.getPublicKey(seeds.creator));
+  const independentMember = base58(ed25519.getPublicKey(seeds.independent));
+  const creatorMember = "Stake11111111111111111111111111111111111111";
+  const multisig = "SysvarC1ock11111111111111111111111111111111";
+  const vault = "Vote111111111111111111111111111111111111111";
+  const instrument = {
+    kind: "squads-project-vault",
+    network: "solana",
+    asset: "USDC",
+    multisig,
+    vault,
+    vaultIndex: 0,
+    creatorActorId: "18633264",
+    creatorMember,
+    creatorMultisig: "Config1111111111111111111111111111111111111",
+    creatorVaultIndex: 0,
+    slopMember: "SysvarRent111111111111111111111111111111111",
+    independentMember,
+    independentGithub: {
+      actorId: "42",
+      nodeId: "U_fixture_42",
+      login: "independent-fixture",
+    },
+    timeLockSeconds: 72 * 60 * 60,
+    fallbackWaitSeconds: 14 * 24 * 60 * 60,
+    monthlyCommitment: {
+      cycleId: "2026-09",
+      amountMinor: "5000000",
+      accessibility: "unknown",
+    },
+    effectiveAt: "2026-09-01T00:00:00.000Z",
+    deadline: "2026-10-01T00:00:00.000Z",
+    replacedAt: null,
+  };
+  const write = async (path: string, bytes: string) => {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), bytes);
+  };
+  await write(
+    "projects/eliza/project.json",
+    JSON.stringify({
+      ...eliza,
+      reward: {
+        ...eliza.reward,
+        fundingState: "committed",
+        committedMinor: "5000000",
+        paymentMode: "disabled",
+      },
+      funding: { ...eliza.funding, commitments: [instrument] },
+    }),
+  );
+  const commit = () => {
+    git("add", "-A");
+    git("commit", "-qm", "fixture");
+    return git("rev-parse", "HEAD");
+  };
+  const baseSha = commit();
+  const identity = {
+    projectId: "eliza",
+    cycleId: "2026-09",
+    instrumentId: `squads-project-vault:solana:${multisig}:0:${vault}`,
+  };
+  const authenticated = new Map<string, SignerAccessReport>();
+  const add = async (value: SignerAccessReport) => {
+    authenticated.set(value.sourceCommit, structuredClone(value));
+    await write(signerReportPath(value), canonicalFundingDecisionBytes(value));
+  };
+  const positive = (
+    role: "creator" | "independent",
+    source: string,
+  ): SignerAccessReport => {
+    const value: SignerAccessReport = {
+      kind: "slop-signer-access",
+      schemaVersion: "1",
+      ...identity,
+      manifestRevision: baseSha,
+      actorId: role === "creator" ? "18633264" : "42",
+      role,
+      // The creator seat is a PDA; the creator attests with a multisig key.
+      member: role === "creator" ? creatorKey : independentMember,
+      capability: "can-sign",
+      reportedAt: "2026-09-05T20:00:00.000Z",
+      expiresAt: "2026-09-06T20:00:00.000Z",
+      reason: "Synthetic project vault capability.",
+      memberSignature: null,
+      sourceRepository: "example/evidence",
+      sourceCommit: source.repeat(40),
+    };
+    value.memberSignature = Buffer.from(
+      ed25519.sign(
+        new TextEncoder().encode(signerCapabilityMessage(value)),
+        seeds[role],
+      ),
+    ).toString("base64");
+    return value;
+  };
+  const readCommit = async (_repository: string, source: string) => {
+    const value = authenticated.get(source);
+    if (!value) throw new Error("missing synthetic signature authority");
+    return {
+      oid: value.sourceCommit,
+      message: signerAccessCommitMessage(value),
+      signature: {
+        isValid: true,
+        state: "VALID",
+        signer: {
+          databaseId: Number(value.actorId),
+          id: value.role === "independent" ? "U_fixture_42" : "U_creator",
+        },
+      },
+    };
+  };
+  const input = () => ({
+    root,
+    baseSha,
+    headSha: git("rev-parse", "HEAD"),
+    now: "2026-09-06T00:00:00.000Z",
+    readCommit,
+  });
+  return { identity, commit, add, input, positive };
+}
+
+describe("project vault signer history (RFC #500)", () => {
+  it("needs the creator and the independent signer current, and only them", async () => {
+    const f = await projectVaultFixture();
+    await f.add(f.positive("independent", "c"));
+    f.commit();
+    const one = await readSignerAccessLedger(f.input());
+    expect(signerCapabilityState(one, f.identity, f.input().now).state).toBe(
+      "unknown",
+    );
+    const allocation = {
+      ...f.identity,
+      fundingBasis: { instrumentId: f.identity.instrumentId },
+    };
+    expect(() =>
+      assertSignerCapabilityForSettlement(one, allocation, f.input().now),
+    ).toThrow("unknown");
+    await f.add(f.positive("creator", "d"));
+    f.commit();
+    const both = await readSignerAccessLedger(f.input());
+    expect(
+      signerCapabilityState(both, f.identity, "2026-09-06T19:59:59.999Z").state,
+    ).toBe("creator-and-independent-current");
+    expect(() =>
+      assertSignerCapabilityForSettlement(both, allocation, f.input().now),
+    ).not.toThrow();
+    expect(
+      signerCapabilityState(both, f.identity, "2026-09-06T20:00:00.000Z").state,
+    ).toBe("unknown");
+  });
+});
