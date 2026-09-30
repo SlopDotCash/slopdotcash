@@ -103,7 +103,9 @@ SDK. The SDK 2.1.4 dependency audit found affected bigint-buffer, stream-json an
 uuid transitive packages; no package or lockfile change was made.
 
 Supported messages contain exactly the plan's ordered legacy SPL USDC transfers,
-including its fee transfer. `Transfer` and `TransferChecked` require exact
+including its fee transfer on a 2-of-2 vault. A `squads-project-vault` plan
+carries no fee transfer (RFC #500 section 8; see `funding/README.md`), so its
+messages contain contributor transfers only. `Transfer` and `TransferChecked` require exact
 amounts, source vault authority and canonical source/destination ATAs; checked
 transfers additionally pin the USDC mint and six decimals in the instruction.
 Existing token accounts must be initialized legacy SPL accounts with the exact
@@ -151,7 +153,8 @@ project/cycle/plan/multisig/vault/index/proposal fields, `batchAccount` instead 
 ```
 
 Child indices start at one. Transfer indices start at zero and, concatenated,
-must equal every parent transfer index in order, including its fee exactly once.
+must equal every parent transfer index in order, including its fee exactly once
+when the plan carries one.
 There are at most five transfers per child and 40 children (200 transfers).
 Each message hash covers the complete stored VaultTransactionMessage Borsh bytes.
 Base-owned build/gate validation reconstructs those exact messages from the

@@ -370,6 +370,48 @@ describe("global canonical payment reservations", () => {
       }),
     ).rejects.toThrow(/moved/);
   });
+  it("reserves contributor principal only on a project vault (RFC #500 section 8)", async () => {
+    const allocation = approvedAllocation();
+    const instrumentId = `squads-project-vault:solana:${MULTISIG}:0:${VAULT}`;
+    allocation.fundingBasis = {
+      cycleId: allocation.cycleId,
+      fundingState: "committed",
+      instrumentId,
+      monthlyCapMinor: allocation.capMinor,
+      committedMinor: allocation.capMinor,
+    };
+    const policy = {
+      schemaVersion: "1",
+      kind: "fresh-cycle-payment-policy",
+      projectId: "eliza",
+      cycleId: "2026-07",
+      effectiveAt: "2026-07-31T00:00:00.000Z",
+      planningExpiresAt: "2026-09-01T00:00:00.000Z",
+      instrumentSha256: "d".repeat(64),
+      feeRecipient: FUNDER,
+    };
+    const allocationBytes = paymentRecordBytes(allocation);
+    const row = await draftPaymentReservation(allocationBytes, policy, STAMP);
+    expect(row.instrumentId).toBe(instrumentId);
+    expect(row.principalMinor).toBe("1000000");
+    expect(row.feeMinor).toBe("0");
+    expect(row.intentIds).toEqual(["pay_eliza_2026_07_u1"]);
+    const plan = JSON.parse(
+      new TextDecoder().decode(
+        await reservedPlanBytes(row, allocationBytes, policy),
+      ),
+    );
+    expect(plan.sourceOwner).toBe(VAULT);
+    expect(plan.transfers.map((t: { kind: string }) => t.kind)).toEqual([
+      "contributor",
+    ]);
+    expect(plan.totals).toEqual({
+      contributorMinor: "1000000",
+      platformFeeMinor: "0",
+      totalMinor: "1000000",
+    });
+  });
+
   it("rejects malformed or future reservation CLI inputs", () => {
     const args = [
       "--project",

@@ -130,6 +130,9 @@ project.
    checks fresh finalized quorum observations of configuration and token balance,
    and requires principal plus fee coverage. Both members vote; collectively they
    must also be able to propose and execute. Permissions 3/6 or 7/2 suffice.
+   On a `squads-project-vault` the plan carries no fee transfer and coverage is
+   principal only; the fee is the creator's separate transfer (RFC #500 s.8).
+   Project vault readiness itself is not yet supported by this mode.
    Local output creation is exclusive; identical bytes are an idempotent retry,
    conflicting bytes cannot be overwritten. No new intent is generated on retry.
 

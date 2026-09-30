@@ -19,6 +19,7 @@ import {
 } from "./funding-instruments.mjs";
 import { fundingReviewProposalSha256 } from "./funding-review-submission";
 import { assertRewardAllocationManifest } from "./rewards";
+import { planCarriesPlatformFee } from "./settlement-plan";
 import {
   assertPublicSignerReport,
   type PublicSignerReport,
@@ -197,9 +198,16 @@ export async function verifyFundingReadiness(input: {
       ),
     ]);
     if (instrument.kind !== "squads-v4-vault")
-      throw new TypeError("Only reviewed Squads instruments are supported");
+      throw new TypeError(
+        "Only the reviewed 2-of-2 Squads instrument is supported; three-member project vault readiness is a separate reviewed change",
+      );
     const vault: SquadsV4VaultInstrument = instrument;
     const instrumentId = `squads-v4-vault:solana:${vault.multisig}:${vault.vaultIndex}:${vault.vault}`;
+    // RFC #500 section 8: only a 2-of-2 vault pays the platform fee from the
+    // vault. A project vault covers contributor principal only; its fee is a
+    // separate creator transfer reconciled at settlement, never reserved here.
+    const sourceFee = planCarriesPlatformFee(instrumentId) ? fee : 0n;
+    result.requiredMinor = (principal + sourceFee).toString();
     const relevantFreezes = evidence.fundedProposalHistory.filter(
       (r) =>
         r.instrumentId === instrumentId ||
@@ -302,7 +310,7 @@ export async function verifyFundingReadiness(input: {
       block(
         "Execution requires proposer and executor roles across the voting members and zero timelock",
       );
-    if (money(state.balanceMinor) < principal + fee)
+    if (money(state.balanceMinor) < principal + sourceFee)
       block("Finalized USDC balance does not cover principal plus fee");
     const records = assertProjectCommitmentLedger(evidence.fundingRecords, [
       vault,
@@ -316,7 +324,7 @@ export async function verifyFundingReadiness(input: {
       )
     )
       throw new TypeError("Funding ledger project or observation mismatch");
-    if (commitmentVerifiedNetMinor(records) < principal + fee)
+    if (commitmentVerifiedNetMinor(records) < principal + sourceFee)
       block("Canonical verified funding does not cover principal plus fee");
     const reports = evidence.signerReports.map(assertPublicSignerReport);
     if (
@@ -383,7 +391,7 @@ export async function verifyFundingReadiness(input: {
         own.state === "retired" ||
         own.instrumentId !== instrumentId ||
         own.principalMinor !== principal.toString() ||
-        own.feeMinor !== fee.toString() ||
+        own.feeMinor !== sourceFee.toString() ||
         JSON.stringify([...own.intentIds].sort()) !==
           JSON.stringify(intents.map((r) => r.intentId).sort()))
     )
