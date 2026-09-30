@@ -130,6 +130,12 @@ project.
    checks fresh finalized quorum observations of configuration and token balance,
    and requires principal plus fee coverage. Both members vote; collectively they
    must also be able to propose and execute. Permissions 3/6 or 7/2 suffice.
+   On a `squads-project-vault` the plan carries no fee transfer and coverage is
+   principal only; the fee is the creator's separate transfer (RFC #500 s.8).
+   Its observation also carries the creator multisig, the shape must be masks
+   7/2/6 at threshold 2 with the manifest's time lock and no config authority,
+   and the current signers are the creator and the independent signer
+   (`funding/README.md`, "Signer capability on a project vault").
    Local output creation is exclusive; identical bytes are an idempotent retry,
    conflicting bytes cannot be overwritten. No new intent is generated on retry.
 

@@ -10,6 +10,8 @@ import {
 } from "../src/lib/funding-readiness";
 import { publicSignerReport } from "../src/lib/signer-capability";
 import {
+  assertSquadsCreatorSeat,
+  assertSquadsProjectVaultUsdcState,
   assertSquadsVaultUsdcState,
   deriveVaultUsdcTokenAccount,
 } from "../src/lib/squads-funding";
@@ -174,6 +176,46 @@ function canonical(value: unknown): string {
       .join(",")}}`;
   return JSON.stringify(value);
 }
+async function observedVaultState(
+  instrument: Loaded["instrument"],
+  accounts: unknown,
+  tokenAccount: string,
+) {
+  if (instrument.kind === "squads-v4-vault")
+    return assertSquadsVaultUsdcState(
+      accounts,
+      instrument.multisig,
+      instrument.vault,
+      instrument.vaultIndex,
+      tokenAccount,
+      instrument.funderMember,
+      instrument.stewardMember,
+    );
+  const observation = accounts as { context: unknown; value: unknown[] };
+  if (!Array.isArray(observation.value) || observation.value.length !== 3)
+    throw new TypeError(
+      "Project vault observation must contain the multisig, its USDC account, and the creator multisig",
+    );
+  const state = await assertSquadsProjectVaultUsdcState(
+    { context: observation.context, value: observation.value.slice(0, 2) },
+    instrument.multisig,
+    instrument.vault,
+    instrument.vaultIndex,
+    tokenAccount,
+    {
+      creatorMember: instrument.creatorMember,
+      slopMember: instrument.slopMember,
+      independentMember: instrument.independentMember,
+    },
+  );
+  await assertSquadsCreatorSeat(
+    observation.value[2],
+    instrument.creatorMultisig,
+    instrument.creatorMember,
+    instrument.creatorVaultIndex,
+  );
+  return state;
+}
 /** Fixed public RPCs; two independently validated finalized observations must
  * agree on configuration and balance. Fresh finalized slot rejects stale replay. */
 export async function observeSettlementVault(instrument: Loaded["instrument"]) {
@@ -210,18 +252,21 @@ export async function observeSettlementVault(instrument: Loaded["instrument"]) {
           throw new TypeError("Invalid finalized RPC envelope");
         return value.result;
       }
+      // A project vault observation also carries the creator multisig, so
+      // readiness can prove the creator seat and the attesting creator key
+      // from the same finalized slot.
+      const addresses =
+        instrument.kind === "squads-project-vault"
+          ? [instrument.multisig, tokenAccount, instrument.creatorMultisig]
+          : [instrument.multisig, tokenAccount];
       const accounts = await rpc("getMultipleAccounts", [
-        [instrument.multisig, tokenAccount],
+        addresses,
         { commitment: "finalized", encoding: "jsonParsed" },
       ]);
-      const state = await assertSquadsVaultUsdcState(
+      const state = await observedVaultState(
+        instrument,
         accounts,
-        instrument.multisig,
-        instrument.vault,
-        instrument.vaultIndex,
         tokenAccount,
-        instrument.funderMember,
-        instrument.stewardMember,
       );
       const latest = await rpc("getSlot", [{ commitment: "finalized" }]);
       if (

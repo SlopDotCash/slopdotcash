@@ -2,9 +2,17 @@
 import { execFileSync } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import type { SquadsV4VaultInstrument } from "../src/lib/funding-instruments.mjs";
+import type {
+  SquadsProjectVaultInstrument,
+  SquadsV4VaultInstrument,
+} from "../src/lib/funding-instruments.mjs";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
+import { squadsInstrumentId } from "../src/lib/settlement-plan";
+import {
+  requiredSignerRoles,
+  type SignerRole,
+} from "../src/lib/signer-capability";
 import { canonicalFundingDecisionBytes } from "./check-funding-record-pr";
 
 export interface SignerAccessReport {
@@ -15,7 +23,8 @@ export interface SignerAccessReport {
   cycleId: string;
   instrumentId: string;
   actorId: string;
-  role: "funder" | "steward";
+  /** funder/steward on the 2-of-2; creator/independent on a project vault. */
+  role: SignerRole;
   member: string;
   capability: "can-sign" | "lost-access";
   reportedAt: string;
@@ -65,10 +74,16 @@ function timestamp(value: unknown): number {
   return Date.parse(value);
 }
 
-export function squadsAccessInstrumentId(
-  instrument: SquadsV4VaultInstrument,
-): string {
-  return `squads-v4-vault:solana:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`;
+type SquadsInstrument = SquadsV4VaultInstrument | SquadsProjectVaultInstrument;
+const ROLES: readonly string[] = [
+  "funder",
+  "steward",
+  "creator",
+  "independent",
+];
+
+export function squadsAccessInstrumentId(instrument: SquadsInstrument): string {
+  return squadsInstrumentId(instrument);
 }
 
 export function assertSignerAccessReport(value: unknown): SignerAccessReport {
@@ -93,7 +108,8 @@ export function assertSignerAccessReport(value: unknown): SignerAccessReport {
     report.instrumentId.length > 200 ||
     typeof report.actorId !== "string" ||
     !/^[1-9]\d{0,19}$/u.test(report.actorId) ||
-    (report.role !== "funder" && report.role !== "steward") ||
+    typeof report.role !== "string" ||
+    !ROLES.includes(report.role) ||
     typeof report.member !== "string" ||
     !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(report.member) ||
     (report.capability !== "can-sign" && report.capability !== "lost-access") ||
@@ -189,6 +205,73 @@ export async function readSignerCommit(
   return envelope.data?.repository?.object;
 }
 
+/**
+ * Which GitHub actor and which member key each role speaks for. On the 2-of-2
+ * every role is one reviewed key. On a project vault (RFC #500) the
+ * independent signer is one reviewed key with a reviewed GitHub identity, and
+ * the creator seat is the vault PDA of the creator's own multisig, which
+ * cannot sign: a creator loss report names the seat, while a creator
+ * capability report is signed by a key the creator controls inside that
+ * multisig, so `member` is that key and readiness checks it against the
+ * creator multisig on chain. Slop's vote-only key never attests.
+ */
+function signerAuthority(
+  instrument: SquadsInstrument,
+  report: SignerAccessReport,
+): {
+  actorId: string;
+  nodeId: string | null;
+  member: string | null;
+  forbiddenMember: string | null;
+} | null {
+  if (instrument.kind === "squads-v4-vault") {
+    if (
+      !instrument.stewardGithub ||
+      instrument.funderActorId === instrument.stewardGithub.actorId
+    )
+      return null;
+    if (report.role === "funder")
+      return {
+        actorId: instrument.funderActorId,
+        nodeId: null,
+        member: instrument.funderMember,
+        forbiddenMember: null,
+      };
+    if (report.role === "steward")
+      return {
+        actorId: instrument.stewardGithub.actorId,
+        nodeId: instrument.stewardGithub.nodeId,
+        member: instrument.stewardMember,
+        forbiddenMember: null,
+      };
+    return null;
+  }
+  if (instrument.independentGithub.actorId === instrument.creatorActorId)
+    return null;
+  if (report.role === "independent")
+    return {
+      actorId: instrument.independentGithub.actorId,
+      nodeId: instrument.independentGithub.nodeId,
+      member: instrument.independentMember,
+      forbiddenMember: null,
+    };
+  if (report.role === "creator")
+    return report.capability === "lost-access"
+      ? {
+          actorId: instrument.creatorActorId,
+          nodeId: null,
+          member: instrument.creatorMember,
+          forbiddenMember: null,
+        }
+      : {
+          actorId: instrument.creatorActorId,
+          nodeId: null,
+          member: null,
+          forbiddenMember: instrument.creatorMember,
+        };
+  return null;
+}
+
 /** Caller supplies a reviewed immutable manifest, never a proposed head manifest. */
 export async function verifySignerAccess(input: {
   report: unknown;
@@ -208,31 +291,32 @@ export async function verifySignerAccess(input: {
       "Signer report does not bind the reviewed manifest or time",
     );
   const matches = (input.project.funding.commitments ?? []).filter(
-    (instrument): instrument is SquadsV4VaultInstrument =>
-      instrument.kind === "squads-v4-vault" &&
+    (instrument): instrument is SquadsInstrument =>
+      (instrument.kind === "squads-v4-vault" ||
+        instrument.kind === "squads-project-vault") &&
       squadsAccessInstrumentId(instrument) === report.instrumentId,
   );
   const instrument = matches[0];
   if (
     matches.length !== 1 ||
     !instrument.monthlyCommitment ||
-    !instrument.stewardGithub ||
     instrument.monthlyCommitment.cycleId !== report.cycleId ||
-    instrument.funderActorId === instrument.stewardGithub.actorId ||
-    timestamp(report.reportedAt) < timestamp(instrument.effectiveAt)
+    timestamp(report.reportedAt) < timestamp(instrument.effectiveAt) ||
+    !requiredSignerRoles(report.instrumentId).includes(report.role)
   )
     throw new TypeError(
       "Report requires the exact reviewed monthly Squads instrument",
     );
-  const actorId =
-    report.role === "funder"
-      ? instrument.funderActorId
-      : instrument.stewardGithub.actorId;
-  const member =
-    report.role === "funder"
-      ? instrument.funderMember
-      : instrument.stewardMember;
-  if (report.actorId !== actorId || report.member !== member)
+  const authority = signerAuthority(instrument, report);
+  if (!authority)
+    throw new TypeError(
+      "Report requires the exact reviewed monthly Squads instrument",
+    );
+  if (
+    report.actorId !== authority.actorId ||
+    (authority.member !== null && report.member !== authority.member) ||
+    (authority.member === null && report.member === authority.forbiddenMember)
+  )
     throw new TypeError(
       "Signer identity or member key differs from reviewed authority",
     );
@@ -248,9 +332,8 @@ export async function verifySignerAccess(input: {
     commit.oid !== report.sourceCommit ||
     signature.isValid !== true ||
     signature.state !== "VALID" ||
-    String(signer.databaseId) !== actorId ||
-    (report.role === "steward" &&
-      signer.id !== instrument.stewardGithub.nodeId) ||
+    String(signer.databaseId) !== authority.actorId ||
+    (authority.nodeId !== null && signer.id !== authority.nodeId) ||
     typeof commit.message !== "string" ||
     commit.message.replace(/\n$/u, "") !== signerAccessCommitMessage(report)
   )
@@ -262,7 +345,7 @@ export async function verifySignerAccess(input: {
     !ed25519.verify(
       Uint8Array.from(Buffer.from(report.memberSignature ?? "", "base64")),
       new TextEncoder().encode(signerCapabilityMessage(report)),
-      memberPublicKey(member),
+      memberPublicKey(report.member),
       { zip215: false },
     )
   )

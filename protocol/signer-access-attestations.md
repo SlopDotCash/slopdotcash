@@ -46,6 +46,29 @@ identity-point forgeries accepted by Node's native verifier. See the library's
 Production code imports verification only. Tests generate disposable synthetic
 keys; no production key or signer identity is created by this implementation.
 
+## Project vault roles (RFC #500)
+
+On a `squads-project-vault` the report roles are `creator` and `independent`,
+and the release loader requires both current. `funder` and `steward` are
+rejected on a project vault, and `creator` and `independent` are rejected on a
+2-of-2 vault. There is no Slop role: Slop's vote-only key is never necessary
+for a release and adds no capability to any other member, so it neither
+attests nor blocks, and its loss is a same-day public issue followed by a
+reviewed signer replacement (`protocol/project-vault-signing.md`).
+
+- `independent` binds `independentGithub.actorId` and its immutable node ID to
+  `independentMember`, exactly as `steward` binds the 2-of-2 steward.
+- `creator` binds `creatorActorId`. The creator seat is the vault PDA of the
+  creator's own multisig and cannot sign, so a `can-sign` report's `member` is
+  a key the creator controls inside the creator multisig, never the seat; the
+  Ed25519 proof is verified against that key here, and readiness verifies on
+  chain that the key is a member of the creator multisig with the Initiate
+  permission. A `lost-access` report names the seat and needs no key.
+
+The diagnostic reducer returns `creator-and-independent-current` for a
+project vault, which is no more an `accessible` or payable claim than
+`both-signers-current` is for the 2-of-2.
+
 ## Operator use
 
 The signer uses an external client to obtain the canonical message, optionally

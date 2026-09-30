@@ -114,16 +114,7 @@ export async function loadCanonicalPaymentReservation(
       report.instrumentId !== reservation.instrumentId
     )
       continue;
-    if (
-      report.member !==
-        (report.role === "funder"
-          ? instrument.funderMember
-          : instrument.stewardMember) ||
-      report.actorId !==
-        (report.role === "funder"
-          ? instrument.funderActorId
-          : instrument.stewardGithub?.actorId)
-    )
+    if (!signerReportMatchesInstrument(instrument, report))
       throw new TypeError(
         "Signer evidence differs from current exact reviewed members",
       );
@@ -161,4 +152,39 @@ export async function loadCanonicalPaymentReservation(
     signerLedger,
     fixedPlanBytes,
   };
+}
+
+/**
+ * Each accepted report must still speak for the current reviewed member. A
+ * creator capability report on a project vault names an attesting key inside
+ * the creator multisig rather than the seat; readiness checks that key against
+ * the creator multisig on chain, so here it must only differ from the seat.
+ */
+function signerReportMatchesInstrument(
+  instrument: ReturnType<typeof reviewedReservationPolicy>["instrument"],
+  report: { role: string; member: string; actorId: string; capability: string },
+): boolean {
+  if (instrument.kind === "squads-v4-vault") {
+    if (report.role === "funder")
+      return (
+        report.member === instrument.funderMember &&
+        report.actorId === instrument.funderActorId
+      );
+    if (report.role === "steward")
+      return (
+        report.member === instrument.stewardMember &&
+        report.actorId === instrument.stewardGithub?.actorId
+      );
+    return false;
+  }
+  if (report.role === "independent")
+    return (
+      report.member === instrument.independentMember &&
+      report.actorId === instrument.independentGithub.actorId
+    );
+  if (report.role !== "creator" || report.actorId !== instrument.creatorActorId)
+    return false;
+  return report.capability === "lost-access"
+    ? report.member === instrument.creatorMember
+    : report.member !== instrument.creatorMember;
 }

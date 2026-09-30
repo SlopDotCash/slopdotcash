@@ -262,10 +262,12 @@ export function SettlementVerification({
         <p>
           A verified instruction match is not approval, not available funding,
           and not permission to carry an amount forward. A matched plan is not a
-          paid one. Slop holds no key, signs nothing, and broadcasts nothing;
-          the creator signs and broadcasts externally, and settlement is
-          described as paid only once finalized on-chain deltas reconcile
-          exactly.
+          paid one. Slop signs and broadcasts no transfer; the creator signs and
+          broadcasts externally. On a 2-of-3 project vault Slop's vote-only key
+          can approve a bound proposal but cannot write or execute one, and an
+          approved cycle without a bound proposal is not approved for payment.
+          Settlement is described as paid only once finalized on-chain deltas
+          reconcile exactly.
         </p>
 
         <h2>Bound proposals today</h2>

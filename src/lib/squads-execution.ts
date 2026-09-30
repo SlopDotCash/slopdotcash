@@ -36,7 +36,8 @@ export interface SquadsBatchChildBinding {
   transactionAccount: string;
   /** SHA256 of the complete stored VaultTransactionMessage Borsh bytes. */
   messageSha256: string;
-  /** Zero-based positions in the immutable parent plan, fee included. */
+  /** Zero-based positions in the immutable parent plan, fee included when
+   * the plan carries one; a project vault plan never does (RFC #500 s.8). */
   transferIndexes: number[];
 }
 export interface SquadsBatchExecutionBinding
@@ -306,8 +307,12 @@ export async function validateSquadsExecutionContext(input: {
     binding.vault !== plan.sourceOwner
   )
     throw new TypeError("Plan bytes do not match execution binding");
-  const identity = `squads-v4-vault:solana:${binding.multisig}:${binding.vaultIndex}:${binding.vault}`;
+  // The frozen basis names the instrument kind; both Squads kinds bind the
+  // same multisig, index, and canonical vault. Any other kind fails here.
+  const kind = allocation.fundingBasis?.instrumentId?.split(":")[0];
+  const identity = `${kind}:solana:${binding.multisig}:${binding.vaultIndex}:${binding.vault}`;
   if (
+    (kind !== "squads-v4-vault" && kind !== "squads-project-vault") ||
     allocation.fundingBasis?.instrumentId !== identity ||
     allocation.fundingBasis.fundingState !== "committed" ||
     binding.vault !==

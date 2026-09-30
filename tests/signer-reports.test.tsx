@@ -10,6 +10,7 @@ const report: PublicSignerReport = {
   instrumentId:
     "squads-v4-vault:solana:11111111111111111111111111111111:0:Vote111111111111111111111111111111111111111",
   role: "funder",
+  member: "11111111111111111111111111111111",
   capability: "can-sign",
   reportedAt: "2026-09-05T20:00:00.000Z",
   expiresAt: "2026-09-06T20:00:00.000Z",

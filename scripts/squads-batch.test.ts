@@ -48,9 +48,21 @@ function key(index: number) {
   while (leading < bytes.length && bytes[leading] === 0) leading++;
   return "1".repeat(leading) + s;
 }
-async function fixture(contributors = 55) {
+async function fixture(
+  contributors = 55,
+  instrumentKind:
+    | "squads-v4-vault"
+    | "squads-project-vault" = "squads-v4-vault",
+) {
   const one = await executionContext();
   const allocation = JSON.parse(new TextDecoder().decode(one.allocationBytes));
+  if (instrumentKind === "squads-project-vault") {
+    allocation.fundingBasis.instrumentId =
+      allocation.fundingBasis.instrumentId.replace(
+        /^squads-v4-vault:/u,
+        "squads-project-vault:",
+      );
+  }
   allocation.allocations = Array.from({ length: contributors }, (_, i) => ({
     ...allocation.allocations[0],
     intentId: `pay_eliza_2026_07_b${i}`,
@@ -246,6 +258,23 @@ describe("bounded Squads Batch contract and external handoff", () => {
       }),
     ).toEqual(h);
   });
+  it("builds a project vault batch from contributor transfers only (RFC #500 section 8)", async () => {
+    const f = await fixture(7, "squads-project-vault");
+    expect(f.plan.transfers.map((t) => t.kind)).toEqual(
+      Array.from({ length: 7 }, () => "contributor"),
+    );
+    expect(f.plan.totals.platformFeeMinor).toBe("0");
+    expect(f.handoff.children.flatMap((c) => c.transfers)).toHaveLength(7);
+    expect(
+      f.handoff.binding.children.flatMap((c) => c.transferIndexes),
+    ).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    const rpc = await accounts(f);
+    expect(
+      (await verifySquadsExecution(f, { fetchImpl: rpc.fetchImpl }))
+        .instructionVerification,
+    ).toBe("verified");
+  }, 30000);
+
   it("retains the existing 200-transfer parent contract without omitted or new fee plans", async () => {
     const f = await fixture(199);
     expect(f.handoff.binding.children).toHaveLength(40);

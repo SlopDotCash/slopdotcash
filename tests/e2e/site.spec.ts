@@ -101,6 +101,7 @@ test("shows signer loss and expired capability without payout availability", asy
     instrumentId:
       "squads-v4-vault:solana:11111111111111111111111111111111:0:Vote111111111111111111111111111111111111111",
     role: "funder",
+    member: "11111111111111111111111111111111",
     capability: "lost-access",
     reportedAt,
     expiresAt: null,

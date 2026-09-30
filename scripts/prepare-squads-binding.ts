@@ -88,7 +88,7 @@ export async function prepareSquadsBinding(
   )
     throw new TypeError("Expected exact approved project/cycle artifacts");
   const instrument = allocation.fundingBasis?.instrumentId?.match(
-    /^squads-v4-vault:solana:([^:]+):([0-9]+):([^:]+)$/u,
+    /^(?:squads-v4-vault|squads-project-vault):solana:([^:]+):([0-9]+):([^:]+)$/u,
   );
   if (!instrument)
     throw new TypeError("Expected frozen Squads funding instrument");

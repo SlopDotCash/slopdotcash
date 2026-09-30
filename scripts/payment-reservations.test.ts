@@ -370,6 +370,48 @@ describe("global canonical payment reservations", () => {
       }),
     ).rejects.toThrow(/moved/);
   });
+  it("reserves contributor principal only on a project vault (RFC #500 section 8)", async () => {
+    const allocation = approvedAllocation();
+    const instrumentId = `squads-project-vault:solana:${MULTISIG}:0:${VAULT}`;
+    allocation.fundingBasis = {
+      cycleId: allocation.cycleId,
+      fundingState: "committed",
+      instrumentId,
+      monthlyCapMinor: allocation.capMinor,
+      committedMinor: allocation.capMinor,
+    };
+    const policy = {
+      schemaVersion: "1",
+      kind: "fresh-cycle-payment-policy",
+      projectId: "eliza",
+      cycleId: "2026-07",
+      effectiveAt: "2026-07-31T00:00:00.000Z",
+      planningExpiresAt: "2026-09-01T00:00:00.000Z",
+      instrumentSha256: "d".repeat(64),
+      feeRecipient: FUNDER,
+    };
+    const allocationBytes = paymentRecordBytes(allocation);
+    const row = await draftPaymentReservation(allocationBytes, policy, STAMP);
+    expect(row.instrumentId).toBe(instrumentId);
+    expect(row.principalMinor).toBe("1000000");
+    expect(row.feeMinor).toBe("0");
+    expect(row.intentIds).toEqual(["pay_eliza_2026_07_u1"]);
+    const plan = JSON.parse(
+      new TextDecoder().decode(
+        await reservedPlanBytes(row, allocationBytes, policy),
+      ),
+    );
+    expect(plan.sourceOwner).toBe(VAULT);
+    expect(plan.transfers.map((t: { kind: string }) => t.kind)).toEqual([
+      "contributor",
+    ]);
+    expect(plan.totals).toEqual({
+      contributorMinor: "1000000",
+      platformFeeMinor: "0",
+      totalMinor: "1000000",
+    });
+  });
+
   it("rejects malformed or future reservation CLI inputs", () => {
     const args = [
       "--project",
@@ -590,5 +632,118 @@ describe("global canonical payment reservations", () => {
         },
       }),
     ).toThrow();
+  });
+});
+
+describe("project vault reservations through the trusted gate (RFC #500)", () => {
+  async function projectVaultFixture() {
+    const instrument = assertFundingCommitments([
+      {
+        kind: "squads-project-vault",
+        network: "solana",
+        asset: "USDC",
+        multisig: MULTISIG,
+        vault: VAULT,
+        vaultIndex: 0,
+        creatorActorId: "18633264",
+        creatorMember: FUNDER,
+        creatorMultisig: "Config1111111111111111111111111111111111111",
+        creatorVaultIndex: 0,
+        slopMember: "Vote111111111111111111111111111111111111111",
+        independentMember: STEWARD,
+        independentGithub: {
+          actorId: "42",
+          nodeId: "U_42",
+          login: "independent",
+        },
+        timeLockSeconds: 72 * 60 * 60,
+        fallbackWaitSeconds: 14 * 24 * 60 * 60,
+        monthlyCommitment: {
+          cycleId: "2026-07",
+          amountMinor: "10000000000",
+          accessibility: "unknown",
+        },
+        effectiveAt: "2026-07-01T00:00:00.000Z",
+        deadline: "2026-08-01T00:00:00.000Z",
+        replacedAt: null,
+      },
+    ])[0];
+    const policy = {
+      schemaVersion: "1",
+      kind: "fresh-cycle-payment-policy",
+      projectId: "eliza",
+      cycleId: "2026-07",
+      effectiveAt: "2026-07-31T00:00:00.000Z",
+      planningExpiresAt: "2026-09-01T00:00:00.000Z",
+      instrumentSha256: await fundingReviewProposalSha256(
+        new TextEncoder().encode(JSON.stringify(instrument)),
+      ),
+      feeRecipient: "ComputeBudget111111111111111111111111111111",
+    };
+    const instrumentId = `squads-project-vault:solana:${MULTISIG}:0:${VAULT}`;
+    const allocation = approvedAllocation();
+    allocation.fundingBasis = {
+      cycleId: allocation.cycleId,
+      fundingState: "committed",
+      instrumentId,
+      monthlyCapMinor: allocation.capMinor,
+      committedMinor: allocation.capMinor,
+    };
+    const allocationBytes = paymentRecordBytes(allocation);
+    const row = await draftPaymentReservation(allocationBytes, policy, STAMP);
+    const project = {
+      ...eliza,
+      funding: {
+        ...eliza.funding,
+        commitments: [instrument],
+        freshCyclePaymentPolicy: policy,
+      },
+    };
+    const root = mkdtempSync(join(tmpdir(), "slop-project-vault-reservation-"));
+    roots.push(root);
+    reservationGit(root, ["init", "-b", "develop"]);
+    reservationGit(root, ["config", "user.name", "Reservation fixture"]);
+    reservationGit(root, ["config", "user.email", "fixture@example.invalid"]);
+    function write(path: string, bytes: Uint8Array) {
+      const file = join(root, path);
+      mkdirSync(join(file, ".."), { recursive: true });
+      writeFileSync(file, bytes);
+    }
+    function commit() {
+      reservationGit(root, ["add", "."]);
+      reservationGit(root, ["commit", "-m", "fixture"]);
+      return reservationGit(root, ["rev-parse", "HEAD"]).toString().trim();
+    }
+    write("projects/eliza/project.json", paymentRecordBytes(project));
+    write("cycles/eliza/2026-07/allocation.json", allocationBytes);
+    write(PAYMENT_RESERVATION_PATH, paymentRecordBytes([]));
+    const base = commit();
+    return { root, base, write, commit, row, policy, project, instrumentId };
+  }
+  it("binds the policy to the project vault and admits its principal-only reservation", async () => {
+    const f = await projectVaultFixture();
+    const reviewed = checker.reviewedReservationPolicy(f.project);
+    expect(reviewed.instrument.kind).toBe("squads-project-vault");
+    expect(f.row).toMatchObject({
+      instrumentId: f.instrumentId,
+      principalMinor: "1000000",
+      feeMinor: "0",
+    });
+    f.write(PAYMENT_RESERVATION_PATH, paymentRecordBytes([f.row]));
+    const head = f.commit();
+    expect(await checkPaymentReservations(f.root, f.base, head, STAMP)).toEqual(
+      { prior: 0, current: 1 },
+    );
+  });
+  it("still rejects a 2-of-2 reservation against a project vault policy", async () => {
+    const f = await projectVaultFixture();
+    const wrong = {
+      ...f.row,
+      instrumentId: `squads-v4-vault:solana:${MULTISIG}:0:${VAULT}`,
+    };
+    f.write(PAYMENT_RESERVATION_PATH, paymentRecordBytes([wrong]));
+    await expect(
+      checkPaymentReservations(f.root, f.base, f.commit(), STAMP),
+    ).rejects.toThrow(/exact reviewed instrument|canonical plan/u);
   });
 });
