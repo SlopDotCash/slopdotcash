@@ -10,6 +10,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isSolanaTransactionId } from "../src/lib/funding-address.mjs";
 import {
+  assertProjectVaultApprovalBinding,
+  isProjectVaultInstrumentId,
+} from "../src/lib/project-vault-approval";
+import {
   assertProjectPaymentsEnabled,
   findProject,
   type ProjectId,
@@ -29,6 +33,10 @@ import { writeNewJsonFile } from "./write-new-file";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CYCLES_ROOT = resolve(REPOSITORY_ROOT, "cycles");
+const EXECUTION_LEDGER_PATH = resolve(
+  REPOSITORY_ROOT,
+  "funding/executions/ledger.json",
+);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 interface SettlementEvidence {
@@ -47,6 +55,8 @@ interface VerifyArguments {
   allocationPath: string;
   cycleId: string;
   evidencePath: string;
+  /** Canonical execution binding ledger; required only for a project vault. */
+  executionLedgerPath?: string;
   outputPath: string;
   planPath: string;
   projectId: ProjectId;
@@ -105,6 +115,7 @@ export function parseVerifySettlementArguments(
     allocationPath: resolve(directory, "allocation.json"),
     cycleId,
     evidencePath: resolve(directory, "transactions.json"),
+    executionLedgerPath: EXECUTION_LEDGER_PATH,
     outputPath: resolve(directory, "settlement.json"),
     planPath: resolve(directory, "execution-plan.json"),
     projectId,
@@ -245,6 +256,18 @@ export async function verifySettlement(
   const plan = assertSettlementExecutionPlan(planFile.value, allocation);
   if (plan.allocationSha256 !== allocationSha256) {
     throw new TypeError("Settlement plan does not match allocation file bytes");
+  }
+  // RFC #500 section 3: on a project vault, settlement can only reconcile a
+  // payout the creator bound on chain. An approved but unbound cycle is not
+  // approved for payment purposes and cannot be recorded as paid.
+  if (isProjectVaultInstrumentId(allocation.fundingBasis?.instrumentId)) {
+    const ledgerPath = arguments_.executionLedgerPath ?? EXECUTION_LEDGER_PATH;
+    const ledgerFile = await readJson(ledgerPath);
+    await assertProjectVaultApprovalBinding({
+      allocation: allocationFile.value,
+      planBytes: planFile.bytes,
+      ledger: ledgerFile.value,
+    });
   }
   const evidence = parseEvidence(evidenceFile.value, arguments_.cycleId);
   if (!Number.isFinite(Date.parse(arguments_.settledAt))) {

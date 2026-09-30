@@ -132,7 +132,10 @@ export function createSettlementExecutionPlan(input: {
     // The allocation validator has already checked the complete identity syntax.
     // A caller-supplied wallet cannot substitute for the frozen funding source.
     const instrumentId = allocation.fundingBasis.instrumentId;
-    if (!instrumentId?.startsWith("squads-v4-vault:solana:")) {
+    if (
+      !instrumentId?.startsWith("squads-v4-vault:solana:") &&
+      !instrumentId?.startsWith("squads-project-vault:solana:")
+    ) {
       throw new TypeError(
         "Settlement requires a frozen Solana Squads funding instrument",
       );
