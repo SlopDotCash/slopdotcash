@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1",
+  "id": "modarresi1913/NurosOS",
+  "slug": "nurosos",
+  "name": "NurosOS",
+  "eyebrow": "Open-source project",
+  "headline": "Fund the open-source experimental substrate for synthetic cognitive development.",
+  "description": "A bio-inspired neuromorphic operating system and research substrate for developmental intelligence.",
+  "status": "paused",
+  "paymentsEnabled": false,
+  "repositories": [
+    {
+      "id": "modarresi1913/NurosOS",
+      "displayName": "NurosOS",
+      "githubUrl": "https://github.com/modarresi1913/NurosOS",
+      "description": "A bio-inspired neuromorphic operating system and research substrate for developmental intelligence."
+    }
+  ]
+}
