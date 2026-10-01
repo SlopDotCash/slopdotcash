@@ -6,8 +6,18 @@
   "eyebrow": "Open-source project",
   "headline": "Fund the open-source experimental substrate for synthetic cognitive development.",
   "description": "A bio-inspired neuromorphic operating system and research substrate for developmental intelligence.",
+  "listingTier": "community",
   "status": "paused",
+  "steward": {
+    "displayName": "Almodarresieh",
+    "kind": "individual",
+    "github": {
+      "actorId": "81695894",
+      "username": "modarresi1913"
+    }
+  },
   "paymentsEnabled": false,
+  "committed": 0,
   "repositories": [
     {
       "id": "modarresi1913/NurosOS",
