@@ -1,0 +1,120 @@
+{
+  "schemaVersion": "1",
+  "id": "canonry",
+  "slug": "canonry",
+  "name": "Canonry",
+  "eyebrow": "Open-source project",
+  "headline": "Win AI visibility autonomously",
+  "description": "Make Canonry the standard open-source way for a business, and the AI agent working for it, to see how AI answer engines (ChatGPT, Gemini, Claude, Perplexity) mention and cite its brand, and then to improve that. Canonry is self-hosted and agent-first. An agent can use the CLI, API, or MCP to measure AI visibility, find out why it changed, ship a site or content fix, and confirm the fix worked. A human never has to drive the dashboard.",
+  "listingTier": "community",
+  "status": "paused",
+  "steward": {
+    "displayName": "Arber X",
+    "kind": "individual",
+    "github": {
+      "actorId": "14798762",
+      "nodeId": "MDQ6VXNlcjE0Nzk4NzYy",
+      "login": "arberx",
+      "type": "User",
+      "profileUrl": "https://github.com/arberx"
+    },
+    "website": null
+  },
+  "authority": {
+    "state": "verified",
+    "reason": null,
+    "role": "project-steward",
+    "repositoryId": "1176392906",
+    "repositoryNodeId": "R_kgDORh5Uyg",
+    "proof": {
+      "commitSha": "e64f3b0d12d00d86f018a704bf91f9c7e07ddd3b",
+      "fileSha256": "5df3ed0fa45af4e28b397a701dea45cb764e2d0eb7cc2f972bf2d3537b1bf3ae",
+      "policyRevision": "2026-10-02.1",
+      "url": "https://github.com/Canonry/canonry/blob/e64f3b0d12d00d86f018a704bf91f9c7e07ddd3b/.github/slop-project.json",
+      "verifiedAt": "2026-10-02T15:16:38.000Z"
+    }
+  },
+  "terms": {
+    "revision": "2026-10-02.1",
+    "effectiveAt": "2026-10-02T00:00:00.000Z",
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "receiptPolicy": {
+      "state": "pending-authority-activation",
+      "activatedAt": null,
+      "bindings": []
+    },
+    "copyright": {
+      "model": "contributor-retained",
+      "claimedLegalHolder": null,
+      "notice": "Arber X and contributors",
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "verified",
+      "spdx": "MIT",
+      "url": "https://github.com/Canonry/canonry/blob/3a39895ae1a89ddce3f2583ebf229d5acc875ab4/LICENSE",
+      "commitSha": "3a39895ae1a89ddce3f2583ebf229d5acc875ab4",
+      "fileSha256": "d13f01aa82128e360ba4961532c210a9a401fa67ef88ef4a2bea8a41d0fc6724"
+    },
+    "inbound": {
+      "mode": "license",
+      "termsUrl": "https://github.com/Canonry/canonry/blob/3a39895ae1a89ddce3f2583ebf229d5acc875ab4/CONTRIBUTING.md",
+      "commitSha": "3a39895ae1a89ddce3f2583ebf229d5acc875ab4",
+      "fileSha256": "a309c5a6e122a9c705b06b8b0d81379317d962ff157bd8d8bd638233bbb75b48",
+      "version": "2026-10-02.1",
+      "acceptance": "Pull-request contributions are licensed under the repository MIT license."
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
+  "repositories": [
+    {
+      "id": "Canonry/canonry",
+      "displayName": "Canonry/canonry",
+      "githubUrl": "https://github.com/Canonry/canonry",
+      "description": "The Canonry monorepo: the CLI, the Fastify API, the MCP adapter, the Aero analyst agent, and the web dashboard, published to npm as @canonry/canonry. Improve answer-engine providers, integrations, metrics, and agent workflows while keeping the API, CLI, MCP, and dashboard in parity.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-canonry",
+    "publishAtRoot": false,
+    "sourcePath": "skills/contribute-to-canonry",
+    "publicPath": "/projects/canonry/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-canonry-contributions",
+    "sourcePath": "skills/review-canonry-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-10-02T00:00:00.000Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "0",
+    "monthlyCapDisplay": "$0",
+    "committedMinor": "0",
+    "paymentMode": "disabled",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+    "recordsPath": "funding/canonry",
+    "addresses": []
+  },
+  "modelPolicy": {
+    "mode": "open-declared",
+    "disclosureRequired": true
+  },
+  "links": {
+    "creator": "https://github.com/arberx",
+    "repository": "https://github.com/Canonry/canonry",
+    "issues": "https://github.com/Canonry/canonry/issues"
+  }
+}
