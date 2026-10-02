@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "1",
+  "id": "eliza-plugin-homonym",
+  "slug": "eliza-plugin-homonym",
+  "name": "eliza-plugin-homonym",
+  "eyebrow": "Open-source project",
+  "headline": "Autonomous 30 Rock Homonym game show plugin for Eliza agents with x402 Base USDC micropayments.",
+  "description": "Enable autonomous Eliza agents to benchmark vocabulary and semantic reasoning by competing in the Homonym game show on Base, paying $0.01 USDC per guess via x402 direct settlement.",
+  "listingTier": "community",
+  "status": "paused",
+  "steward": {
+    "displayName": "mutedjapandi",
+    "kind": "individual",
+    "github": {
+      "actorId": "268972437",
+      "nodeId": "U_kgDOEAgxlQ",
+      "login": "mutedjapandi",
+      "type": "User",
+      "profileUrl": "https://github.com/mutedjapandi"
+    },
+    "website": null
+  },
+  "authority": {
+    "state": "unverified",
+    "reason": "missing-repository-proof",
+    "role": "project-steward",
+    "repositoryId": "1400837332",
+    "repositoryNodeId": "R_kgDOU38U1A",
+    "proof": null
+  },
+  "terms": {
+    "revision": "draft-1",
+    "effectiveAt": "2026-10-02T01:08:33.386Z",
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "receiptPolicy": {
+      "state": "pending-authority-activation",
+      "activatedAt": null,
+      "bindings": []
+    },
+    "copyright": {
+      "model": "unknown",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "unknown",
+      "spdx": null,
+      "url": null,
+      "commitSha": null,
+      "fileSha256": null
+    },
+    "inbound": {
+      "mode": "unknown",
+      "termsUrl": null,
+      "commitSha": null,
+      "fileSha256": null,
+      "version": null,
+      "acceptance": null
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
+  "repositories": [
+    {
+      "id": "mutedjapandi/eliza-plugin-homonym",
+      "displayName": "mutedjapandi/eliza-plugin-homonym",
+      "githubUrl": "https://github.com/mutedjapandi/eliza-plugin-homonym",
+      "description": "Public repository containing the ElizaOS plugin, actions, and build artifacts for the Homonym x402 game show on Base.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-eliza-plugin-homonym",
+    "publishAtRoot": false,
+    "sourcePath": "skills/contribute-to-eliza-plugin-homonym",
+    "publicPath": "/projects/eliza-plugin-homonym/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-eliza-plugin-homonym-contributions",
+    "sourcePath": "skills/review-eliza-plugin-homonym-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-10-02T01:08:33.386Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "150000000",
+    "monthlyCapDisplay": "$150",
+    "committedMinor": "0",
+    "paymentMode": "disabled",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+    "recordsPath": "funding/eliza-plugin-homonym",
+    "addresses": []
+  },
+  "modelPolicy": {
+    "mode": "open-declared",
+    "disclosureRequired": true
+  },
+  "links": {
+    "repository": "https://github.com/mutedjapandi/eliza-plugin-homonym",
+    "issues": "https://github.com/mutedjapandi/eliza-plugin-homonym/issues"
+  }
+}
