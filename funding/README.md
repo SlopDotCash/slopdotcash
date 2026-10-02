@@ -162,6 +162,25 @@ input—a release must credit an active manifest receiving route and a refund th
 funder's claimed wallet—and are never inferred. The verifier never signs,
 broadcasts, handles a key, or writes a record.
 
+The same verifier can also check the three-member project vault shape proposed
+in RFC #500. This is verifier support only. No manifest may declare a project
+vault, no project uses one, and every statement above about current
+instruments is unchanged. Replace the two member arguments in any mode with:
+
+```text
+  --creator-member <pubkey> --slop-member <pubkey> --independent-member <pubkey>
+```
+
+In this shape (`project-vault-squads-v1`) every mode proves the canonical
+vault PDA, the fixed Squads v4 program owner, the absent configuration
+authority, a threshold of 2, and exactly the three declared members with the
+exact permission masks 7 (creator), 2 (Slop, vote only), and 6 (independent
+signer, vote and execute). Any other mask, threshold, member count, or member
+fails closed. The observed time lock is published in seconds and is part of
+the quorum identity; the verifier does not decide what it should be. The
+verifier cannot prove who controls a key, that the third signer is
+independent, or where a future transfer will go.
+
 For a Sablier Lockup v4 USDC stream on Base or Ethereum, the read-only
 verifier (`commitment-sablier-v2`) queries three fixed public RPC authorities,
 checks each authority's chain ID, pins every stream view call to that

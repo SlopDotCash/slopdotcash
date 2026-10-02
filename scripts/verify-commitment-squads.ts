@@ -1,8 +1,10 @@
 /**
  * Read-only Squads v4 commitment verifier for Solana mainnet USDC. It queries
  * three fixed public RPC authorities at finalized commitment, requires two to
- * agree on the exact result, and emits reviewed commitment evidence. It never
- * reads a key, signs, broadcasts, or writes a commitment record.
+ * agree on the exact result, and emits reviewed commitment evidence. It checks
+ * the 2-of-2 commitment shape or, when the three project vault members are
+ * given, the 2-of-3 project vault shape. It never reads a key, signs,
+ * broadcasts, or writes a commitment record.
  */
 
 import {
@@ -19,9 +21,16 @@ import {
   type VerifiedSolanaTransaction,
 } from "../src/lib/solana-settlement";
 import {
+  assertSquadsProjectVaultIdentity,
+  assertSquadsProjectVaultUsdcState,
   assertSquadsVaultIdentity,
   assertSquadsVaultUsdcState,
   COMMITMENT_SQUADS_VERIFIER_VERSION,
+  PROJECT_VAULT_PERMISSIONS,
+  PROJECT_VAULT_SQUADS_VERIFIER_VERSION,
+  type SquadsProjectVaultMembers,
+  type VerifiedSquadsProjectVaultIdentity,
+  type VerifiedSquadsProjectVaultState,
   type VerifiedSquadsVaultState,
 } from "../src/lib/squads-funding";
 
@@ -53,9 +62,24 @@ export interface CommitmentSquadsInput {
   vaultIndex: number;
 }
 
+export interface ProjectVaultSquadsInput extends SquadsProjectVaultMembers {
+  amountMinor?: string;
+  fetchImpl?: FetchLike;
+  mode: CommitmentVerificationMode;
+  recipient?: string;
+  signature?: string;
+  tokenAccount?: string;
+  multisig: string;
+  vault: string;
+  vaultIndex: number;
+}
+
 const CLI_ARGUMENTS = new Set([
   "--mode",
+  "--creator-member",
   "--funder-member",
+  "--independent-member",
+  "--slop-member",
   "--multisig",
   "--vault",
   "--vault-index",
@@ -66,7 +90,7 @@ const CLI_ARGUMENTS = new Set([
   "--amount-minor",
 ]);
 const CLI_USAGE =
-  "Usage: verify-commitment-squads.ts --mode state --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --token-account <token-account> | --mode deposit --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --signature <signature> --amount-minor <integer> | --mode <release|refund> --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --recipient <owner> --signature <signature> --amount-minor <integer>";
+  "Usage: verify-commitment-squads.ts --mode state --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --token-account <token-account> | --mode deposit --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --signature <signature> --amount-minor <integer> | --mode <release|refund> --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --recipient <owner> --signature <signature> --amount-minor <integer>. For a 2-of-3 project vault, replace --funder-member and --steward-member in any mode with --creator-member <pubkey> --slop-member <pubkey> --independent-member <pubkey>";
 
 export function parseCommitmentSquadsArguments(argv: readonly string[]) {
   const parsed = new Map<string, string>();
@@ -95,6 +119,9 @@ export function parseCommitmentSquadsArguments(argv: readonly string[]) {
     amountMinor: parsed.get("--amount-minor") ?? null,
     funderMember: parsed.get("--funder-member") ?? null,
     stewardMember: parsed.get("--steward-member") ?? null,
+    creatorMember: parsed.get("--creator-member") ?? null,
+    slopMember: parsed.get("--slop-member") ?? null,
+    independentMember: parsed.get("--independent-member") ?? null,
   };
 }
 
@@ -268,6 +295,28 @@ function finalizedAccountValue(resultValue: unknown): {
   return { slot: Number(observedSlot), value: result.value };
 }
 
+async function observeVaultState<State>(
+  multisig: string,
+  tokenAccount: string,
+  fetchImpl: FetchLike,
+  assertState: (result: unknown) => Promise<State>,
+  identity: (verified: State) => string,
+) {
+  const settled = await Promise.allSettled(
+    SOLANA_COMMITMENT_RPC_AUTHORITIES.map(async (authority, index) => {
+      const { rpc, request } = authorityRequest(authority, index, fetchImpl);
+      const verified = await assertState(
+        await request("getMultipleAccounts", [
+          [multisig, tokenAccount],
+          { commitment: "finalized", encoding: "jsonParsed" },
+        ]),
+      );
+      return { authority: rpc.toString(), verified };
+    }),
+  );
+  return quorumGroups<State>(settled, identity);
+}
+
 async function verifyVaultState(
   funderMember: string,
   multisig: string,
@@ -277,26 +326,20 @@ async function verifyVaultState(
   stewardMember: string,
   fetchImpl: FetchLike,
 ) {
-  const settled = await Promise.allSettled(
-    SOLANA_COMMITMENT_RPC_AUTHORITIES.map(async (authority, index) => {
-      const { rpc, request } = authorityRequest(authority, index, fetchImpl);
-      const verified = await assertSquadsVaultUsdcState(
-        await request("getMultipleAccounts", [
-          [multisig, tokenAccount],
-          { commitment: "finalized", encoding: "jsonParsed" },
-        ]),
+  const agreeing = await observeVaultState<VerifiedSquadsVaultState>(
+    multisig,
+    tokenAccount,
+    fetchImpl,
+    (result) =>
+      assertSquadsVaultUsdcState(
+        result,
         multisig,
         vault,
         vaultIndex,
         tokenAccount,
         funderMember,
         stewardMember,
-      );
-      return { authority: rpc.toString(), verified };
-    }),
-  );
-  const agreeing = quorumGroups<VerifiedSquadsVaultState>(
-    settled,
+      ),
     (verified) => verified.balanceMinor,
   );
   const checkedAt = new Date().toISOString();
@@ -324,19 +367,18 @@ async function verifyVaultState(
   };
 }
 
-async function verifyVaultTransaction(
+async function observeVaultTransaction<Identity>(
   mode: "deposit" | "refund" | "release",
   input: {
     amountMinor: string;
-    funderMember: string;
     multisig: string;
     recipient: string | null;
     signature: string;
-    stewardMember: string;
     vault: string;
-    vaultIndex: number;
   },
   fetchImpl: FetchLike,
+  assertIdentity: (account: unknown) => Promise<Identity>,
+  identityKey: (identity: Identity) => string,
 ) {
   const settled = await Promise.allSettled(
     SOLANA_COMMITMENT_RPC_AUTHORITIES.map(async (authority, index) => {
@@ -346,14 +388,7 @@ async function verifyVaultTransaction(
         { commitment: "finalized", encoding: "base64" },
       ]);
       const multisigEnvelope = finalizedAccountValue(multisigResult);
-      const identity = await assertSquadsVaultIdentity(
-        multisigEnvelope.value,
-        input.multisig,
-        input.vault,
-        input.vaultIndex,
-        input.funderMember,
-        input.stewardMember,
-      );
+      const identity = await assertIdentity(multisigEnvelope.value);
       const result = await request("getTransaction", [
         input.signature,
         {
@@ -384,13 +419,44 @@ async function verifyVaultTransaction(
       return { authority: rpc.toString(), verified: { identity, transaction } };
     }),
   );
-  const agreeing = quorumGroups<{
-    identity: Awaited<ReturnType<typeof assertSquadsVaultIdentity>>;
+  return quorumGroups<{
+    identity: Identity;
     transaction: VerifiedSolanaTransaction;
   }>(
     settled,
     (verified) =>
-      `${verified.identity.multisig}:${verified.identity.vaultIndex}:${verified.transaction.signature}:${verified.transaction.slot}:${verified.transaction.blockTime}`,
+      `${identityKey(verified.identity)}:${verified.transaction.signature}:${verified.transaction.slot}:${verified.transaction.blockTime}`,
+  );
+}
+
+async function verifyVaultTransaction(
+  mode: "deposit" | "refund" | "release",
+  input: {
+    amountMinor: string;
+    funderMember: string;
+    multisig: string;
+    recipient: string | null;
+    signature: string;
+    stewardMember: string;
+    vault: string;
+    vaultIndex: number;
+  },
+  fetchImpl: FetchLike,
+) {
+  const agreeing = await observeVaultTransaction(
+    mode,
+    input,
+    fetchImpl,
+    (account) =>
+      assertSquadsVaultIdentity(
+        account,
+        input.multisig,
+        input.vault,
+        input.vaultIndex,
+        input.funderMember,
+        input.stewardMember,
+      ),
+    (identity) => `${identity.multisig}:${identity.vaultIndex}`,
   );
   const checkedAt = new Date().toISOString();
   return {
@@ -409,6 +475,178 @@ async function verifyVaultTransaction(
       evidenceUrl: `https://solscan.io/tx/${input.signature}`,
       reason: null,
     },
+    chainEvidence: agreeing[0].verified.transaction,
+    authorities: agreeing.map(({ authority }) => ({ authority })),
+  };
+}
+
+function transactionFields(input: {
+  amountMinor?: string;
+  mode: CommitmentVerificationMode;
+  recipient?: string;
+  signature?: string;
+  tokenAccount?: string;
+  vault: string;
+}) {
+  if (
+    input.mode !== "deposit" &&
+    input.mode !== "release" &&
+    input.mode !== "refund"
+  ) {
+    throw new TypeError("mode is invalid");
+  }
+  if (
+    input.tokenAccount !== undefined ||
+    typeof input.signature !== "string" ||
+    !isSolanaTransactionId(input.signature) ||
+    typeof input.amountMinor !== "string" ||
+    input.amountMinor.length > 40 ||
+    !/^[1-9]\d*$/u.test(input.amountMinor)
+  ) {
+    throw new TypeError("signature or amount is invalid");
+  }
+  if (input.mode === "deposit") {
+    if (input.recipient !== undefined) {
+      throw new TypeError("deposit mode credits only the declared vault");
+    }
+  } else if (
+    !isFundingAddress("solana", input.recipient) ||
+    input.recipient === input.vault
+  ) {
+    throw new TypeError(
+      `${input.mode} mode requires an explicit recipient distinct from the vault`,
+    );
+  }
+  return {
+    amountMinor: input.amountMinor,
+    mode: input.mode,
+    recipient: input.recipient ?? null,
+    signature: input.signature,
+  };
+}
+
+function projectVaultEvidence(
+  identity: VerifiedSquadsProjectVaultIdentity,
+  checkedAt: string,
+  evidenceUrl: string,
+) {
+  return {
+    instrument: "squads-project-vault" as const,
+    creatorMember: identity.creatorMember,
+    slopMember: identity.slopMember,
+    independentMember: identity.independentMember,
+    multisig: identity.multisig,
+    vault: identity.vault,
+    vaultIndex: identity.vaultIndex,
+    threshold: identity.threshold,
+    permissions: PROJECT_VAULT_PERMISSIONS,
+    configAuthority: null,
+    timeLockSeconds: identity.timeLockSeconds,
+    verifier: {
+      version: PROJECT_VAULT_SQUADS_VERIFIER_VERSION,
+      checkedAt,
+      evidenceUrl,
+      reason: null,
+    },
+  };
+}
+
+/**
+ * Read-only evidence for the 2-of-3 project vault shape. The same quorum,
+ * modes, and transfer checks as the 2-of-2 commitment; only the reviewed
+ * multisig shape differs. A changed time lock splits the quorum.
+ */
+export async function verifyProjectVaultSquads(input: ProjectVaultSquadsInput) {
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const members = {
+    creatorMember: input.creatorMember,
+    slopMember: input.slopMember,
+    independentMember: input.independentMember,
+  };
+  if (
+    !isFundingAddress("solana", input.multisig) ||
+    !isFundingAddress("solana", input.vault) ||
+    !isFundingAddress("solana", input.creatorMember) ||
+    !isFundingAddress("solana", input.slopMember) ||
+    !isFundingAddress("solana", input.independentMember) ||
+    new Set(Object.values(members)).size !== 3 ||
+    !Number.isInteger(input.vaultIndex) ||
+    input.vaultIndex < 0 ||
+    input.vaultIndex > 255
+  ) {
+    throw new TypeError("multisig, vault, or vault index is invalid");
+  }
+  const { multisig, vault, vaultIndex } = input;
+  if (input.mode === "state") {
+    if (
+      input.signature !== undefined ||
+      input.recipient !== undefined ||
+      input.amountMinor !== undefined ||
+      !isFundingAddress("solana", input.tokenAccount)
+    ) {
+      throw new TypeError(
+        "state mode requires a vault token account and no transaction fields",
+      );
+    }
+    const tokenAccount = input.tokenAccount as string;
+    const agreeing = await observeVaultState<VerifiedSquadsProjectVaultState>(
+      multisig,
+      tokenAccount,
+      fetchImpl,
+      (result) =>
+        assertSquadsProjectVaultUsdcState(
+          result,
+          multisig,
+          vault,
+          vaultIndex,
+          tokenAccount,
+          members,
+        ),
+      (verified) => `${verified.balanceMinor}:${verified.timeLockSeconds}`,
+    );
+    return {
+      mode: "state" as const,
+      state: "verified-on-chain" as const,
+      ...projectVaultEvidence(
+        agreeing[0].verified,
+        new Date().toISOString(),
+        `https://solscan.io/account/${vault}`,
+      ),
+      tokenAccount,
+      balanceMinor: agreeing[0].verified.balanceMinor,
+      slot: Math.max(...agreeing.map(({ verified }) => verified.slot)),
+      authorities: agreeing.map(({ authority, verified }) => ({
+        authority,
+        slot: verified.slot,
+      })),
+    };
+  }
+  const transfer = transactionFields(input);
+  const agreeing = await observeVaultTransaction(
+    transfer.mode,
+    { ...transfer, multisig, vault },
+    fetchImpl,
+    (account) =>
+      assertSquadsProjectVaultIdentity(
+        account,
+        multisig,
+        vault,
+        vaultIndex,
+        members,
+      ),
+    (identity) =>
+      `${identity.multisig}:${identity.vaultIndex}:${identity.timeLockSeconds}`,
+  );
+  return {
+    mode: transfer.mode,
+    event: transfer.mode,
+    state: "verified-on-chain" as const,
+    ...projectVaultEvidence(
+      agreeing[0].verified.identity,
+      new Date().toISOString(),
+      `https://solscan.io/tx/${transfer.signature}`,
+    ),
+    finality: { kind: "finalized" as const },
     chainEvidence: agreeing[0].verified.transaction,
     authorities: agreeing.map(({ authority }) => ({ authority })),
   };
@@ -449,43 +687,15 @@ export async function verifyCommitmentSquads(input: CommitmentSquadsInput) {
       fetchImpl,
     );
   }
-  if (
-    input.mode !== "deposit" &&
-    input.mode !== "release" &&
-    input.mode !== "refund"
-  ) {
-    throw new TypeError("mode is invalid");
-  }
-  if (
-    input.tokenAccount !== undefined ||
-    typeof input.signature !== "string" ||
-    !isSolanaTransactionId(input.signature) ||
-    typeof input.amountMinor !== "string" ||
-    input.amountMinor.length > 40 ||
-    !/^[1-9]\d*$/u.test(input.amountMinor)
-  ) {
-    throw new TypeError("signature or amount is invalid");
-  }
-  if (input.mode === "deposit") {
-    if (input.recipient !== undefined) {
-      throw new TypeError("deposit mode credits only the declared vault");
-    }
-  } else if (
-    !isFundingAddress("solana", input.recipient) ||
-    input.recipient === input.vault
-  ) {
-    throw new TypeError(
-      `${input.mode} mode requires an explicit recipient distinct from the vault`,
-    );
-  }
+  const transfer = transactionFields(input);
   return verifyVaultTransaction(
-    input.mode,
+    transfer.mode,
     {
-      amountMinor: input.amountMinor,
+      amountMinor: transfer.amountMinor,
       funderMember: input.funderMember,
       multisig: input.multisig,
-      recipient: input.recipient ?? null,
-      signature: input.signature,
+      recipient: transfer.recipient,
+      signature: transfer.signature,
       stewardMember: input.stewardMember,
       vault: input.vault,
       vaultIndex: input.vaultIndex,
@@ -496,33 +706,51 @@ export async function verifyCommitmentSquads(input: CommitmentSquadsInput) {
 
 if (import.meta.main) {
   const parsed = parseCommitmentSquadsArguments(process.argv.slice(2));
+  const projectVault = Boolean(
+    parsed.creatorMember || parsed.slopMember || parsed.independentMember,
+  );
   if (
     !parsed.mode ||
-    !parsed.funderMember ||
     !parsed.multisig ||
-    !parsed.stewardMember ||
     !parsed.vault ||
     parsed.vaultIndex === null ||
+    (projectVault
+      ? !parsed.creatorMember ||
+        !parsed.slopMember ||
+        !parsed.independentMember ||
+        parsed.funderMember ||
+        parsed.stewardMember
+      : !parsed.funderMember || !parsed.stewardMember) ||
     (parsed.mode === "state"
       ? !parsed.tokenAccount
       : !parsed.signature || !parsed.amountMinor)
   ) {
     throw new TypeError(CLI_USAGE);
   }
+  const shared = {
+    mode: parsed.mode as CommitmentVerificationMode,
+    multisig: parsed.multisig,
+    vault: parsed.vault,
+    vaultIndex: Number(parsed.vaultIndex),
+    tokenAccount: parsed.tokenAccount ?? undefined,
+    signature: parsed.signature ?? undefined,
+    recipient: parsed.recipient ?? undefined,
+    amountMinor: parsed.amountMinor ?? undefined,
+  };
   process.stdout.write(
     `${JSON.stringify(
-      await verifyCommitmentSquads({
-        mode: parsed.mode as CommitmentVerificationMode,
-        funderMember: parsed.funderMember,
-        multisig: parsed.multisig,
-        vault: parsed.vault,
-        vaultIndex: Number(parsed.vaultIndex),
-        tokenAccount: parsed.tokenAccount ?? undefined,
-        signature: parsed.signature ?? undefined,
-        stewardMember: parsed.stewardMember,
-        recipient: parsed.recipient ?? undefined,
-        amountMinor: parsed.amountMinor ?? undefined,
-      }),
+      projectVault
+        ? await verifyProjectVaultSquads({
+            ...shared,
+            creatorMember: parsed.creatorMember as string,
+            slopMember: parsed.slopMember as string,
+            independentMember: parsed.independentMember as string,
+          })
+        : await verifyCommitmentSquads({
+            ...shared,
+            funderMember: parsed.funderMember as string,
+            stewardMember: parsed.stewardMember as string,
+          }),
       null,
       2,
     )}\n`,

@@ -1,5 +1,6 @@
-/** Read-only assertions binding a reviewed Squads v4 2-of-2 multisig, its
- * canonical vault PDA, and its Solana mainnet USDC token account. */
+/** Read-only assertions binding a reviewed Squads v4 multisig (the 2-of-2
+ * commitment shape or the 2-of-3 project vault shape), its canonical vault
+ * PDA, and its Solana mainnet USDC token account. */
 import { SOLANA_MAINNET_USDC_MINT, USDC_DECIMALS } from "./settlement-plan";
 import { isSolanaAddress } from "./wallets";
 
@@ -31,6 +32,28 @@ export interface VerifiedSquadsVaultIdentity {
   vaultIndex: number;
 }
 export interface VerifiedSquadsVaultState extends VerifiedSquadsVaultIdentity {
+  balanceMinor: string;
+  slot: number;
+  tokenAccount: string;
+}
+export const PROJECT_VAULT_SQUADS_VERIFIER_VERSION =
+  "project-vault-squads-v1" as const;
+export interface SquadsProjectVaultMembers {
+  creatorMember: string;
+  independentMember: string;
+  slopMember: string;
+}
+export interface VerifiedSquadsProjectVaultIdentity
+  extends SquadsProjectVaultMembers {
+  memberCount: 3;
+  multisig: string;
+  threshold: 2;
+  timeLockSeconds: number;
+  vault: string;
+  vaultIndex: number;
+}
+export interface VerifiedSquadsProjectVaultState
+  extends VerifiedSquadsProjectVaultIdentity {
   balanceMinor: string;
   slot: number;
   tokenAccount: string;
@@ -306,6 +329,127 @@ export async function assertSquadsVaultIdentity(
   };
 }
 
+/** Squads v4 permission masks: Initiate 1, Vote 2, Execute 4. */
+export const PROJECT_VAULT_PERMISSIONS = Object.freeze({
+  creator: 7,
+  slop: 2,
+  independent: 6,
+} as const);
+
+/**
+ * Validates the three-member project vault shape from RFC #500: threshold 2,
+ * no configuration authority, and the exact permission mask for each reviewed
+ * member. Only the creator may hold Initiate, so no other member can write a
+ * transfer or a signer change. The time lock is reported, never assumed.
+ */
+export async function assertSquadsProjectVaultIdentity(
+  accountValue: unknown,
+  multisig: string,
+  vault: string,
+  vaultIndex: number,
+  members: SquadsProjectVaultMembers,
+): Promise<VerifiedSquadsProjectVaultIdentity> {
+  const { creatorMember, slopMember, independentMember } = members;
+  if (
+    !isSolanaAddress(multisig) ||
+    !isSolanaAddress(vault) ||
+    !isSolanaAddress(creatorMember) ||
+    !isSolanaAddress(slopMember) ||
+    !isSolanaAddress(independentMember)
+  )
+    throw new TypeError(
+      "multisig, vault, or reviewed member is not a Solana public key",
+    );
+  if (
+    new Set([multisig, vault, creatorMember, slopMember, independentMember])
+      .size !== 5
+  )
+    throw new TypeError(
+      "multisig, vault, and reviewed members must be distinct",
+    );
+  if (vault !== (await deriveSquadsVaultAddress(multisig, vaultIndex)))
+    throw new TypeError(
+      "vault is not the canonical Squads PDA for this multisig and index",
+    );
+  if (accountValue === null || accountValue === undefined)
+    throw new TypeError(
+      "Squads multisig account is absent at finalized commitment",
+    );
+  const account = record(accountValue, "Squads multisig account");
+  if (account.owner !== SQUADS_V4_PROGRAM_ID || account.executable !== false)
+    throw new TypeError(
+      "multisig account is not owned by the Squads v4 program",
+    );
+  if (
+    !Array.isArray(account.data) ||
+    account.data.length !== 2 ||
+    account.data[1] !== "base64"
+  )
+    throw new TypeError("Squads multisig account data is not raw base64");
+  const bytes = decodeBase64(account.data[0]);
+  if (
+    bytes.length < 132 ||
+    !MULTISIG_DISCRIMINATOR.every((byte, index) => bytes[index] === byte)
+  )
+    throw new TypeError("account is not a Squads v4 multisig");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (!bytes.slice(40, 72).every((byte) => byte === 0))
+    throw new TypeError("project vault must have no config authority");
+  // The rent collector is a Borsh option: one tag byte, then a key only when
+  // set. The account keeps its full allocation, so an unset collector leaves
+  // 32 zero bytes after the last member.
+  const rentCollectorTag = bytes[94];
+  if (rentCollectorTag !== 0 && rentCollectorTag !== 1)
+    throw new TypeError("Squads multisig rent collector is not canonical");
+  const memberCountOffset = 96 + 32 * rentCollectorTag;
+  const threshold = view.getUint16(72, true);
+  const memberCount = view.getUint32(memberCountOffset, true);
+  const membersEnd = memberCountOffset + 4 + 33 * 3;
+  if (
+    threshold !== 2 ||
+    memberCount !== 3 ||
+    bytes.length !== 132 + 33 * 3 ||
+    !bytes.slice(membersEnd).every((byte) => byte === 0)
+  )
+    throw new TypeError("project vault must use an exact 2-of-3 multisig");
+  const observed = new Map<string, number>();
+  for (let index = 0; index < 3; index += 1) {
+    const offset = memberCountOffset + 4 + 33 * index;
+    observed.set(
+      encodeBase58(bytes.slice(offset, offset + 32)),
+      bytes[offset + 32],
+    );
+  }
+  if (
+    observed.size !== 3 ||
+    !observed.has(creatorMember) ||
+    !observed.has(slopMember) ||
+    !observed.has(independentMember)
+  )
+    throw new TypeError(
+      "project vault requires the exact three reviewed members",
+    );
+  if (
+    observed.get(creatorMember) !== PROJECT_VAULT_PERMISSIONS.creator ||
+    observed.get(slopMember) !== PROJECT_VAULT_PERMISSIONS.slop ||
+    observed.get(independentMember) !== PROJECT_VAULT_PERMISSIONS.independent
+  )
+    throw new TypeError(
+      "project vault permissions must be creator 7, Slop 2, independent signer 6",
+    );
+  return {
+    creatorMember,
+    independentMember,
+    memberCount: 3,
+    multisig,
+    slopMember,
+    threshold: 2,
+    timeLockSeconds: view.getUint32(74, true),
+    vault,
+    vaultIndex,
+  };
+}
+
 /** Validates one finalized getMultipleAccounts multisig/token observation. */
 export async function assertSquadsVaultUsdcState(
   resultValue: unknown,
@@ -316,6 +460,46 @@ export async function assertSquadsVaultUsdcState(
   funderMember: string,
   stewardMember: string,
 ): Promise<VerifiedSquadsVaultState> {
+  return assertVaultUsdcState(resultValue, vault, tokenAccount, (account) =>
+    assertSquadsVaultIdentity(
+      account,
+      multisig,
+      vault,
+      vaultIndex,
+      funderMember,
+      stewardMember,
+    ),
+  );
+}
+
+/** The same combined observation for the three-member project vault shape. */
+export async function assertSquadsProjectVaultUsdcState(
+  resultValue: unknown,
+  multisig: string,
+  vault: string,
+  vaultIndex: number,
+  tokenAccount: string,
+  members: SquadsProjectVaultMembers,
+): Promise<VerifiedSquadsProjectVaultState> {
+  return assertVaultUsdcState(resultValue, vault, tokenAccount, (account) =>
+    assertSquadsProjectVaultIdentity(
+      account,
+      multisig,
+      vault,
+      vaultIndex,
+      members,
+    ),
+  );
+}
+
+async function assertVaultUsdcState<Identity>(
+  resultValue: unknown,
+  vault: string,
+  tokenAccount: string,
+  assertIdentity: (account: unknown) => Promise<Identity>,
+): Promise<
+  Identity & { balanceMinor: string; slot: number; tokenAccount: string }
+> {
   if (!isSolanaAddress(tokenAccount) || tokenAccount === vault)
     throw new TypeError("vault token account is invalid");
   const result = record(resultValue, "Solana accounts response");
@@ -325,14 +509,7 @@ export async function assertSquadsVaultUsdcState(
     throw new TypeError(
       "Solana accounts response must contain multisig and token accounts",
     );
-  const identity = await assertSquadsVaultIdentity(
-    result.value[0],
-    multisig,
-    vault,
-    vaultIndex,
-    funderMember,
-    stewardMember,
-  );
+  const identity = await assertIdentity(result.value[0]);
   if (result.value[1] === null || result.value[1] === undefined)
     throw new TypeError(
       "vault USDC token account is absent at finalized commitment",
