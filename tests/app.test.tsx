@@ -803,8 +803,14 @@ describe("discovery", () => {
 describe("project routes", () => {
   it("shows uncollected project activity explicitly while keeping historical projects available", async () => {
     const historical = structuredClone(snapshotFixture());
-    historical.repositories = historical.repositories.slice(0, 4);
-    historical.source.repositories = historical.source.repositories.slice(0, 4);
+    historical.repositories = historical.repositories.filter(
+      (repository) =>
+        repository.id !== "emanalshazly/monna-agent-permission-diff",
+    );
+    historical.source.repositories = historical.source.repositories.filter(
+      (repository) =>
+        repository.id !== "emanalshazly/monna-agent-permission-diff",
+    );
     route("/projects/monna-agent-permission-diff");
     mockSnapshot(historical);
     render(<App />);
@@ -818,7 +824,7 @@ describe("project routes", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/No accepted work/u)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Project paused" }),
+      screen.getByRole("heading", { name: "Contribution record remains open" }),
     ).toBeVisible();
     expect(
       screen.queryByText(/after two unfunded cycles/u),

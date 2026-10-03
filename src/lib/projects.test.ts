@@ -93,10 +93,10 @@ describe("project registry", () => {
   });
 
   it.each(["monna-agent-permission-diff", "monna-visual-strategy-canvas"])(
-    "keeps %s a paused, unfunded proposal",
+    "collects %s without activating receipts or payments",
     (id) => {
       expect(findProject(id)).toMatchObject({
-        status: "paused",
+        status: "active",
         listingTier: "community",
         authority: { state: "unverified", proof: null },
         terms: {

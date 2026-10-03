@@ -55,6 +55,8 @@ describe("collectTargetRepositories", () => {
       "elizaOS/eliza",
       "elizaOS/asi",
       "elizaOS/proximityprize",
+      "emanalshazly/monna-agent-permission-diff",
+      "emanalshazly/monna-visual-strategy-canvas",
     ]);
     expect(PRIMARY_REPOSITORY.id).toBe("elizaOS/eliza");
     expect(PRIMARY_REPOSITORY.role).toBe("primary");

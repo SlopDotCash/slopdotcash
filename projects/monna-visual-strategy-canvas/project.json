@@ -7,7 +7,7 @@
   "headline": "Turn a business brief into an editable visual canvas",
   "description": "Turn a business brief into an editable strategy canvas and export it. Improve accessible editing, schema validation and deterministic export tests. Live model generation needs an independently configured provider.",
   "listingTier": "community",
-  "status": "paused",
+  "status": "active",
   "steward": {
     "displayName": "Eman Alshazly",
     "kind": "individual",

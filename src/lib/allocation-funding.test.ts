@@ -91,7 +91,13 @@ describe("funding-backed allocation and promotion", () => {
     ]) {
       const proposal = findProject(id);
       if (!proposal) throw new Error(`Missing proposal ${id}`);
-      expect(projectPromotionEligible(proposal, [], "2026-09")).toBe(false);
+      expect(
+        projectPromotionEligible(
+          { ...proposal, status: "paused" },
+          [],
+          "2026-09",
+        ),
+      ).toBe(false);
     }
     expect(
       projectPromotionEligible({ ...project, status: "paused" }, [], "2026-10"),

@@ -7,7 +7,7 @@
   "headline": "Make agent configuration changes easier to review",
   "description": "Offline, value-redacted comparison of declared agent and MCP permissions. Improve parser coverage, regression evidence and accessible reports without executing configured tools.",
   "listingTier": "community",
-  "status": "paused",
+  "status": "active",
   "steward": {
     "displayName": "Eman Alshazly",
     "kind": "individual",

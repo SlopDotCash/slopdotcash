@@ -83,9 +83,12 @@ describe("pull-request ledger schema bridge", () => {
 
   it("reads a prior inventory without inventing collection or allowing partial publication", () => {
     const historical = structuredClone(snapshotFixture());
-    // Remove an active repository with no fixture events. Paused proposals
-    // are already excluded from the complete collection inventory.
-    const uncollected = historical.repositories[1];
+    // Remove an active repository with no fixture events by identity.
+    const uncollected = historical.repositories.find(
+      (repository) =>
+        repository.id === "emanalshazly/monna-agent-permission-diff",
+    );
+    if (!uncollected) throw new Error("missing Permission Diff repository");
     historical.repositories = historical.repositories.filter(
       (repository) => repository.id !== uncollected.id,
     );
