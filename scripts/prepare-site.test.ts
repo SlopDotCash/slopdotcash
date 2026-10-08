@@ -696,6 +696,7 @@ describe("contribution skill package", () => {
         "--",
         "scripts/render-install-guide.mjs",
         "src/lib/install-command.ts",
+        "skills/contribute-to-eliza/scripts/skill-authority.mjs",
       ],
       { cwd: repositoryRoot, encoding: "utf8" },
     ).trim();
@@ -705,7 +706,11 @@ describe("contribution skill package", () => {
       repository: "SlopDotCash/slopdotcash",
       revision: rendererCommitted ? head : null,
       revisionStatus: rendererCommitted ? "committed" : "working-tree",
-      paths: ["scripts/render-install-guide.mjs", "src/lib/install-command.ts"],
+      paths: [
+        "scripts/render-install-guide.mjs",
+        "src/lib/install-command.ts",
+        "skills/contribute-to-eliza/scripts/skill-authority.mjs",
+      ],
     };
     expect(asRecord(manifest.guides, "skill manifest.guides")).toEqual({
       codex: {
@@ -888,6 +893,7 @@ describe("contribution skill package", () => {
           paths: [
             "scripts/render-install-guide.mjs",
             "src/lib/install-command.ts",
+            "skills/contribute-to-eliza/scripts/skill-authority.mjs",
           ],
         });
         const rendererRevisionStatus = renderer.revisionStatus;

@@ -1,0 +1,42 @@
+[
+  {
+    "projectId": "asi",
+    "cycleId": "2026-09",
+    "kind": "monthly-pool",
+    "reward": {
+      "fundingBasis": {
+        "cycleId": "2026-09",
+        "instrumentId": null,
+        "fundingState": "pledged",
+        "committedMinor": "0",
+        "monthlyCapMinor": "1000000000"
+      }
+    }
+  },
+  {
+    "projectId": "delta-star",
+    "cycleId": "2026-09",
+    "kind": "external-prize-share",
+    "reward": {}
+  },
+  {
+    "projectId": "eliza",
+    "cycleId": "2026-09",
+    "kind": "monthly-pool",
+    "reward": {
+      "fundingBasis": {
+        "cycleId": "2026-09",
+        "instrumentId": null,
+        "fundingState": "pledged",
+        "committedMinor": "0",
+        "monthlyCapMinor": "5000000000"
+      }
+    }
+  },
+  {
+    "projectId": "eliza",
+    "cycleId": "2026-07",
+    "kind": "monthly-pool",
+    "reward": {}
+  }
+]

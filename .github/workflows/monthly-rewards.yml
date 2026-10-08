@@ -117,7 +117,7 @@ jobs:
           CYCLE: ${{ steps.cycle.outputs.cycle }}
         run: |
           set -euo pipefail
-          if [ -z "$(git status --porcelain -- cycles)" ]; then
+          if [ -z "$(git status --porcelain -- cycles src/lib/project-promotion.generated.json)" ]; then
             echo "No new cycle artifacts for $CYCLE."
             exit 0
           fi
@@ -125,7 +125,7 @@ jobs:
           git config user.name "elizaOS rewards bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add -- cycles
+          git add -- cycles src/lib/project-promotion.generated.json
           git commit -m "chore: prepare ${CYCLE} reward review"
           git push --set-upstream origin "$branch"
           gh pr create \

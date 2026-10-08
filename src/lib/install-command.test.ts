@@ -559,10 +559,10 @@ describe("authenticated skill installer lifecycle", () => {
       join(staleRoot, "install"),
     );
     expect(rejected.status).not.toBe(0);
-    expect(rejected.stderr).toContain("has no successful approved release");
+    expect(rejected.stderr).toContain("bytes differ from current develop");
   });
 
-  it("installs approved published skills across unpublished changes and rejects explicit revocation", () => {
+  it("rejects changed ancestor skills even after a successful release and rejects revocation", () => {
     for (const revoked of [false, true]) {
       const root = freshRoot(`published-${revoked}`);
       const files = baseFiles("published");
@@ -599,12 +599,125 @@ describe("authenticated skill installer lifecycle", () => {
         expect(installed.status).not.toBe(0);
         expect(installed.stderr).toContain("explicitly revoked");
       } else {
-        expect(installed.status, installed.stderr).toBe(0);
-        expect(currentLink(join(root, "install"))).toBe(
-          `.contribute-to-eliza-versions/${revisionA}`,
-        );
+        expect(installed.status).not.toBe(0);
+        expect(installed.stderr).toContain("bytes differ from current develop");
+        expect(
+          existsSync(
+            join(root, "install", "codex", "skills", "contribute-to-eliza"),
+          ),
+        ).toBe(false);
       }
     }
+  });
+
+  it("revalidates an installed run and write gate without invalidating historical receipts", () => {
+    const root = freshRoot("installed-freshness");
+    const skillRoot = join(packageRoot, "skills", "contribute-to-eliza");
+    const files = baseFiles("installed-a");
+    for (const path of [
+      "project.json",
+      "scripts/run-receipt.mjs",
+      "scripts/skill-authority.mjs",
+    ])
+      files[path] = readFileSync(join(skillRoot, path));
+    const artifact = writeArtifact(root, revisionA, files);
+    const authority = configureAuthority(root, {
+      developHead: revisionA,
+      revisions: { [revisionA]: { files } },
+    });
+    const installRoot = join(root, "install");
+    const installed = run(command(artifact, authority), installRoot);
+    expect(installed.status, installed.stderr).toBe(0);
+    const entry = pathToFileURL(
+      join(versionPath(installRoot, revisionA), "scripts", "run-receipt.mjs"),
+    ).href;
+    const target = join(root, "target");
+    mkdirSync(target);
+    execFileSync("git", ["init", target], { stdio: "ignore" });
+    execFileSync("git", [
+      "-C",
+      target,
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/elizaOS/eliza.git",
+    ]);
+    const invoke = (args: string[]) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { main } from ${JSON.stringify(entry)}; await main(${JSON.stringify(args)}, { testSkillAuthority: ${JSON.stringify(authority)} });`,
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, XDG_CONFIG_HOME: join(root, "state") },
+          timeout: 20_000,
+        },
+      );
+    const identity = [
+      "--client",
+      "fixture",
+      "--provider",
+      "fixture",
+      "--model",
+      "fixture-model",
+      "--lane",
+      "fixture",
+      "--repo-root",
+      target,
+      "--json",
+    ];
+    const started = invoke(["start", ...identity]);
+    expect(started.status, started.stderr).toBe(0);
+    const runId = JSON.parse(started.stdout).runId;
+    expect(invoke(["authorize", "--json"]).status).toBe(0);
+
+    configureAuthority(root, {
+      developHead: revisionB,
+      comparisons: {
+        [`${revisionA}...${revisionB}`]: aheadComparison(revisionA, revisionB),
+      },
+      revisions: {
+        [revisionA]: { files, released: true },
+        [revisionB]: {
+          files: {
+            ...files,
+            "references/revision.txt": Buffer.from("changed policy"),
+          },
+        },
+      },
+    });
+    for (const args of [
+      ["start", ...identity],
+      ["authorize", "--json"],
+    ]) {
+      const stale = invoke(args);
+      expect(stale.status).not.toBe(0);
+      expect(stale.stderr).toContain("bytes differ from current develop");
+      expect(stale.stderr).toContain(revisionA);
+    }
+    const historical = invoke(["finish", ...identity, "--run", runId]);
+    expect(historical.status, historical.stderr).toBe(0);
+    expect(JSON.parse(historical.stdout).receipt.skillRevision).toContain(
+      revisionA,
+    );
+
+    configureAuthority(root, {
+      developHead: revisionB,
+      comparisons: {
+        [`${revisionA}...${revisionB}`]: aheadComparison(revisionA, revisionB),
+      },
+      revisions: { [revisionA]: { files }, [revisionB]: { files } },
+    });
+    expect(invoke(["authorize", "--json"]).status).toBe(0);
+    expect(currentLink(installRoot)).toBe(
+      `.contribute-to-eliza-versions/${revisionA}`,
+    );
+    unlinkSync(join(root, "authority", "api", "responses.json"));
+    const unavailable = invoke(["authorize", "--json"]);
+    expect(unavailable.status).not.toBe(0);
   });
 
   it("accepts only an exact open labeled same-repository non-draft PR head", () => {
@@ -994,7 +1107,7 @@ describe("authenticated skill installer lifecycle", () => {
       SLOP_SKILL_REVISION: revisionA,
     });
     expect(stale.status).not.toBe(0);
-    expect(stale.stderr).toContain("has no successful approved release");
+    expect(stale.stderr).toContain("bytes differ from current develop");
     expect(currentLink(installRoot)).toBe(
       `.contribute-to-eliza-versions/${revisionB}`,
     );

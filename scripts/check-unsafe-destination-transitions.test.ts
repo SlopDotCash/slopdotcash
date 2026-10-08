@@ -257,6 +257,8 @@ describe("trusted unsafe destination Git transitions", () => {
         .digest("hex");
       repo.write(PATH, JSON.stringify(repo.held));
       repo.write("cycles/eliza/2026-07/source-snapshot.json", snapshotBytes);
+      // This fixture changes the canonical cycle, so refresh its bundled history.
+      execFileSync("bun", ["run", "cycles:sync"], { cwd: repo.root });
       repo.git("add", ".");
       repo.git("commit", "-qm", "complete credential-free packaging fixture");
       const bin = join(repo.root, "test-bin");

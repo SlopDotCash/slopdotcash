@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "1",
+  "id": "nurosos",
+  "slug": "nurosos",
+  "name": "NurosOS",
+  "eyebrow": "Open-source project",
+  "headline": "Make developmental experiments reproducible.",
+  "description": "Build a benchmark-quality developmental experiment for NurosOS. Start from one computational genome, develop it in different worlds, measure how trajectories diverge, then prove that each history can be checkpointed, replayed, audited, and compared. Ship a tested PR with deterministic evidence\u2014not claims of consciousness.",
+  "listingTier": "community",
+  "status": "paused",
+  "steward": {
+    "displayName": "modarresi",
+    "kind": "individual",
+    "github": {
+      "actorId": "81695894",
+      "nodeId": "MDQ6VXNlcjgxNjk1ODk0",
+      "login": "modarresi1913",
+      "type": "User",
+      "profileUrl": "https://github.com/modarresi1913"
+    },
+    "website": null
+  },
+  "authority": {
+    "state": "unverified",
+    "reason": "missing-repository-proof",
+    "role": "project-steward",
+    "repositoryId": "1358416073",
+    "repositoryNodeId": "R_kgDOUPfIyQ",
+    "proof": null
+  },
+  "terms": {
+    "revision": "draft-1",
+    "effectiveAt": "2026-10-05T13:38:51.122Z",
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "receiptPolicy": {
+      "state": "pending-authority-activation",
+      "activatedAt": null,
+      "bindings": []
+    },
+    "copyright": {
+      "model": "contributor-retained",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "verified",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/modarresi1913/NurosOS/blob/538b1f1066c619de57e8ae400da9a5f854a144de/LICENSE",
+      "commitSha": "538b1f1066c619de57e8ae400da9a5f854a144de",
+      "fileSha256": "0da5aa7ac665aa9ae71da053ffcd73ee8665d9db6305a1d59783ce7607854654"
+    },
+    "inbound": {
+      "mode": "unknown",
+      "termsUrl": null,
+      "commitSha": null,
+      "fileSha256": null,
+      "version": null,
+      "acceptance": null
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
+  "repositories": [
+    {
+      "id": "modarresi1913/NurosOS",
+      "displayName": "modarresi1913/NurosOS",
+      "githubUrl": "https://github.com/modarresi1913/NurosOS",
+      "description": "Rust and Python research tools for developing, checkpointing, replaying, and comparing artificial organisms.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-nurosos",
+    "publishAtRoot": false,
+    "sourcePath": "skills/contribute-to-nurosos",
+    "publicPath": "/projects/nurosos/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-nurosos-contributions",
+    "sourcePath": "skills/review-nurosos-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-10-05T13:38:51.122Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "0",
+    "monthlyCapDisplay": "$0",
+    "committedMinor": "0",
+    "paymentMode": "disabled",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+    "recordsPath": "funding/nurosos",
+    "addresses": []
+  },
+  "modelPolicy": {
+    "mode": "open-declared",
+    "disclosureRequired": true
+  },
+  "links": {
+    "repository": "https://github.com/modarresi1913/NurosOS",
+    "issues": "https://github.com/modarresi1913/NurosOS/issues"
+  }
+}

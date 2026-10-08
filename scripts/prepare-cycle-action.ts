@@ -392,6 +392,15 @@ export async function prepareCycleAction(
       await writeFile(join(evidenceDirectory, name), bytes, { flag: "wx" });
       checksums.push(`${sha256(bytes)}  ${name}`);
     }
+    const modifiedFiles = proposing
+      ? ["src/lib/project-promotion.generated.json"]
+      : [];
+    for (const path of modifiedFiles) {
+      const bytes = await regularBytes(join(root, path));
+      const name = "project-promotion.generated.json";
+      await writeFile(join(evidenceDirectory, name), bytes, { flag: "wx" });
+      checksums.push(`${sha256(bytes)}  ${name}`);
+    }
     await writeFile(
       join(evidenceDirectory, "SHA256SUMS"),
       `${checksums.join("\n")}\n`,
@@ -405,6 +414,7 @@ export async function prepareCycleAction(
       newFiles: [...allowedNew]
         .sort()
         .map((name) => `cycles/${input.project}/${input.cycle}/${name}`),
+      modifiedFiles,
     };
     await writeFile(
       join(evidenceDirectory, "action.json"),

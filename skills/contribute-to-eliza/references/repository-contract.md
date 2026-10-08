@@ -126,10 +126,24 @@ gh api --method GET <endpoint>
 
 Run `scripts/live-report.mjs --repo elizaOS/eliza` from this skill for a
 paginated candidate and compliance report. The report is a heuristic filter,
-not authority. It performs GET-only GitHub calls and must not post claims,
+not authority. It makes read-only GitHub calls and must not post claims,
 comments, labels, reviews, or mutations.
 
+The report lists all open items before it reads activity. If listing metadata
+already excludes an item, the report can skip its activity and names that item
+in `audits.skipped`. This is not a completed compliance audit. Unknown review
+decisions on those PRs are `null`. Possible candidates still receive complete
+activity checks. A full scan remains the fallback when targeted reads cannot
+save requests or fit the existing command budget. Repeat the live publication
+check for the selected exact head before any GitHub write.
+
 ## Attribution and payout evidence
+
+Run `run-receipt.mjs authorize` immediately before each contribution-related GitHub
+write. `start` and the live report's `--recheck-pr` gate also require fresh GitHub
+authority. No authorization is cached. A network failure blocks these operations;
+local inspection and historical `status`/`finish` remain available. This checks
+installed skill authority, not permission to merge or write in the target repository.
 
 Generate ordinary attribution with `run-receipt.mjs disclose`. Signed run
 receipts, usage collection, and private traces are optional. If chosen, start

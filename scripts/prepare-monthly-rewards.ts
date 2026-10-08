@@ -83,7 +83,7 @@ const DEFAULT_DEPENDENCIES: MonthlyDependencies = {
   inspectPath: inspectRegularPath,
   prepare: prepareRewardCycle,
   projects: PROJECTS,
-  validateCycles: () => syncCycleIndex({ checkOnly: true }),
+  validateCycles: () => syncCycleIndex(),
 };
 
 export async function prepareMonthlyRewards(

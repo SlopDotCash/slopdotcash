@@ -150,6 +150,8 @@ export function pointsSql(journal: PointsJournal): string {
   );
   statements.push(
     `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) VALUES(${quote(digest)},${quote(journal.generatedAt)},${quote(JSON.stringify(journal.coverage))},${journal.revisions.length}) ON CONFLICT(digest) DO NOTHING;`,
+    // Replayed batches skip the AFTER INSERT trigger that normally clears staging.
+    `DELETE FROM points_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
   );
   return statements.join("\n") + "\n";
 }

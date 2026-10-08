@@ -67,6 +67,8 @@ export interface PullRequestReview {
   url: string;
   author: GitHubActor | null;
   inlineCommentCount: number;
+  /** Exact reviewed commit; older inputs may not retain this GitHub fact. */
+  commitId?: string | null;
 }
 
 export type ReviewExclusionReason = (typeof REVIEW_EXCLUSION_REASONS)[number];
@@ -104,7 +106,8 @@ export interface PullRequestRecord {
   author: GitHubActor | null;
   assignees: GitHubActor[];
   labels: GitHubLabel[];
-  files: PullRequestFile[];
+  /** Null is unavailable GitHub diff detail on an excluded open draft. */
+  files: PullRequestFile[] | null;
   comments: GitHubTextSource[];
   reviews: PullRequestReview[];
   closingIssueIds: string[];
@@ -165,6 +168,8 @@ export interface IssueRecord {
   assignees: GitHubActor[];
   labels: GitHubLabel[];
   comments: GitHubTextSource[];
+  /** GitHub timeline references; only an inventoried open PR can claim work. */
+  referencedPullRequestIds?: string[];
   closedByPullRequests: Array<{
     id: string;
     number: number;
@@ -289,6 +294,14 @@ export interface ScoreEvent {
     evidence?: ExternalSourceEvidence;
   };
   reason: string;
+  /** Audit only: qualifying decisions on distinct commits, starting at source. */
+  reviewHistory?: {
+    sourceId: string;
+    state: "APPROVED" | "CHANGES_REQUESTED";
+    commitId: string;
+    submittedAt: string;
+    url: string;
+  }[];
   continuity?: {
     sourceSnapshotSha256: string;
     decisionUrl: string;
@@ -380,7 +393,7 @@ export interface LeaderboardEntry {
 
 export interface WorkItemClaimStatus {
   status: "claimed" | "unclaimed";
-  source: "assignee" | "label" | "claim-comment" | "none";
+  source: "assignee" | "label" | "claim-comment" | "pull-request" | "none";
   kind: "implementation" | "review" | null;
   actors: GitHubActor[];
   claimedAt: string | null;

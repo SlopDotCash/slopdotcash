@@ -695,6 +695,32 @@ export async function syncCycleIndex(
     cycles: builds.map((build) => build.entry),
   };
   assertCycleIndex(index);
+  // Only committed funding history belongs in the application bundle. Exclude
+  // refresh timestamps, snapshots, and settlement records so data-only refreshes
+  // do not change JavaScript assets.
+  const promotionPath = join(
+    REPOSITORY_ROOT,
+    "src/lib/project-promotion.generated.json",
+  );
+  const promotionBytes = `${JSON.stringify(
+    index.cycles.map(({ projectId, cycleId, kind, reward }) => ({
+      projectId,
+      cycleId,
+      kind,
+      reward: { fundingBasis: reward.fundingBasis },
+    })),
+    null,
+    2,
+  )}\n`;
+  if (options.checkOnly) {
+    if ((await readFile(promotionPath, "utf8")) !== promotionBytes) {
+      throw new Error(
+        "Bundled project history is stale; run bun run cycles:sync",
+      );
+    }
+  } else {
+    await writeFile(promotionPath, promotionBytes);
+  }
   if (!options.checkOnly) {
     const temporaryRoot = `${PUBLIC_CYCLES_ROOT}.${process.pid}.${Date.now()}.tmp`;
     await rm(temporaryRoot, { force: true, recursive: true });

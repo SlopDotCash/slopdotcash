@@ -172,6 +172,9 @@ describe("points persistence and joining", () => {
     sqlite.exec(pointsSql(j));
     sqlite.exec(pointsSql(j));
     expect(
+      sqlite.prepare("SELECT COUNT(*) n FROM points_staging").get(),
+    ).toMatchObject({ n: 0 });
+    expect(
       sqlite.prepare("SELECT COUNT(*) n FROM points_revisions").get(),
     ).toMatchObject({ n: 1 });
     j = appendPointAwards(
@@ -221,7 +224,13 @@ describe("points persistence and joining", () => {
     );
     const replacement = pointsSql(corrected).trim().split("\n");
     sqlite.exec(replacement[0]);
-    expect(() => sqlite.exec(replacement.at(-1)!)).toThrow(/incomplete/);
+    expect(() =>
+      sqlite.exec(
+        replacement.find((statement) =>
+          statement.startsWith("INSERT INTO points_batches"),
+        )!,
+      ),
+    ).toThrow(/incomplete/);
     expect(
       sqlite.prepare("SELECT COUNT(*) n FROM points_revisions").get(),
     ).toMatchObject({ n: 0 });
@@ -236,6 +245,9 @@ describe("points persistence and joining", () => {
     );
     expect(() => retainPublishedHistory(corrected, fork)).toThrow(/diverged/);
     sqlite.exec(pointsSql(corrected));
+    expect(
+      sqlite.prepare("SELECT COUNT(*) n FROM points_staging").get(),
+    ).toMatchObject({ n: 1 });
     expect(
       sqlite.prepare("SELECT COUNT(*) n FROM points_revisions").get(),
     ).toMatchObject({ n: 2 });

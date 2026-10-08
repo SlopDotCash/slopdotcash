@@ -326,6 +326,7 @@ const sourceRevisionStatus = sourceMatchesCommit ? "committed" : "working-tree";
 const guideRendererPaths = [
   "scripts/render-install-guide.mjs",
   "src/lib/install-command.ts",
+  "skills/contribute-to-eliza/scripts/skill-authority.mjs",
 ];
 const rendererMatchesCommit = guideRendererPaths.every((path) => {
   try {

@@ -2083,6 +2083,7 @@ describe("current-head review selection", () => {
       reviewDecision: string,
       reviews: ReturnType<typeof review>[],
       hasNextReviewPage = false,
+      files: ReturnType<typeof emptyConnection> | null = emptyConnection(),
     ) => ({
       __typename: "PullRequest",
       id,
@@ -2116,7 +2117,7 @@ describe("current-head review selection", () => {
         },
         nodes: reviews,
       },
-      files: emptyConnection(),
+      files,
       closingIssuesReferences: emptyConnection(),
     });
     const details = new Map([
@@ -2124,6 +2125,16 @@ describe("current-head review selection", () => {
       [
         "PR_GHOST",
         pullRequest("PR_GHOST", 2, "REVIEW_REQUIRED", [ghostApproval]),
+      ],
+      [
+        "PR_DRAFT",
+        {
+          ...pullRequest("PR_DRAFT", 3, "REVIEW_REQUIRED", [], false, null),
+          isDraft: true,
+          additions: 0,
+          deletions: 0,
+          changedFiles: 0,
+        },
       ],
     ]);
     let requestCount = 0;
@@ -2178,7 +2189,7 @@ describe("current-head review selection", () => {
             repository: {
               id: repositoryNodeId,
               pullRequests: {
-                totalCount: 2,
+                totalCount: details.size,
                 pageInfo: { hasNextPage: false, endCursor: null },
                 nodes: [...details.values()].map((item) => ({
                   id: item.id,
@@ -2222,6 +2233,12 @@ describe("current-head review selection", () => {
               },
             },
           };
+        }
+        if (document.includes("query LeaderboardMoreFiles")) {
+          if (variables?.id !== "PR_DRAFT") {
+            throw new Error("unexpected paginated file owner");
+          }
+          return { node: { ...details.get("PR_DRAFT"), files: null } };
         }
         if (document.includes("query LeaderboardReviewInlineComments")) {
           const ids = variables?.ids;
@@ -2283,9 +2300,50 @@ describe("current-head review selection", () => {
       reviewDecision: "APPROVED",
       selection: { status: "excluded", reasons: ["already-approved"] },
     });
+    expect(snapshot.workQueue.pullRequests).toHaveLength(3);
+    expect(
+      snapshot.workQueue.pullRequests.find((item) => item.id === "PR_DRAFT"),
+    ).toMatchObject({
+      isDraft: true,
+      selection: { status: "excluded", reasons: ["draft"] },
+    });
+    expect(
+      snapshot.opportunities.some((item) => item.source.id === "PR_DRAFT"),
+    ).toBe(false);
     expect(JSON.stringify(snapshot)).not.toContain("headRefOid");
     expect(JSON.stringify(snapshot)).not.toContain("commitId");
     expect(openPullReferenceRequests).toBe(TARGET_REPOSITORIES.length);
+
+    const draft = details.get("PR_DRAFT");
+    if (!draft) throw new Error("Draft fixture is missing");
+    draft.isDraft = false;
+    await expect(
+      generateLeaderboardFromGitHub(client, { now }),
+    ).rejects.toThrow("files must be an object");
+    draft.isDraft = true;
+    draft.state = "MERGED";
+    await expect(
+      generateLeaderboardFromGitHub(client, { now }),
+    ).rejects.toThrow("files must be an object");
+    draft.state = "OPEN";
+
+    // GitHub also returns an initial oversized-diff page followed by null.
+    Object.assign(draft, {
+      files: {
+        totalCount: 2,
+        pageInfo: { hasNextPage: true, endCursor: "FILE_CURSOR" },
+        nodes: [{ path: "partial.ts", additions: 1, deletions: 0 }],
+      },
+    });
+    const paginatedDraft = await generateLeaderboardFromGitHub(client, { now });
+    expect(paginatedDraft.workQueue).toEqual(snapshot.workQueue);
+    expect(paginatedDraft.opportunities).toEqual(snapshot.opportunities);
+    expect(paginatedDraft.source.counts).toEqual(snapshot.source.counts);
+    draft.isDraft = false;
+    await expect(
+      generateLeaderboardFromGitHub(client, { now }),
+    ).rejects.toThrow("files must be an object");
+    draft.isDraft = true;
 
     paginatedHead = previousHead;
     await expect(

@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { verifyRunReceiptSignature } from "../../scripts/run-receipt-crypto";
 import { externalSourceId } from "./external-sources";
 import {
   assertLeaderboardSnapshot,
@@ -33,11 +34,13 @@ import {
   MATERIAL_TEST_ADDITIONS,
   MATERIAL_TEST_CHURN,
   type MergedPullRequestReviewRecord,
+  type ModelAttribution,
   mergedPullRequestPoints,
   type PullRequestRecord,
   parseEvidenceHeadOid,
   pullRequestTextSources,
   qualifiesResolvedIssue,
+  replayRetainedReviewAttribution,
   repositoryIdFromUrl,
   SCORE_CAPS,
   SCORE_RULE_VERSION,
@@ -2903,6 +2906,231 @@ describe("scoring and limits", () => {
     );
   });
 
+  it("replays the recovered issue 495 attributions through the production verifier", () => {
+    const history = JSON.parse(
+      readFileSync(resolve("data/accepted-review-history.json"), "utf8"),
+    ) as { events: ScoreEvent[]; attributions: ModelAttribution[] };
+    const sourceIds = [
+      "PRR_kwDOMT5cIs8AAAABKhZmaQ",
+      "PRR_kwDOMT5cIs8AAAABKivXtw",
+    ];
+    const events = history.events.filter((event) =>
+      sourceIds.includes(event.source.id),
+    );
+    const attributions = history.attributions.filter((attribution) =>
+      sourceIds.includes(attribution.sourceId),
+    );
+    expect(events).toHaveLength(2);
+    expect(attributions).toHaveLength(2);
+    // The manifest stores no bonus; it can only be derived by replay.
+    expect(events.every((event) => !event.evidenceBonusBasisPoints)).toBe(true);
+
+    const replayInput = (
+      overrides: Partial<LeaderboardInput>,
+    ): LeaderboardInput => {
+      const result = input(overrides);
+      result.generatedAt = "2026-09-03T12:00:00.000Z";
+      result.windowFrom = "2026-07-30T12:00:00.000Z";
+      result.windowTo = "2026-09-03T12:00:00.000Z";
+      result.verificationWindowFrom = result.windowFrom;
+      result.sourceUpdatedAt = result.generatedAt;
+      result.source.fetchedAt = result.generatedAt;
+      result.source.cutoffAt = result.windowTo;
+      result.source.verificationWindow.from = result.windowFrom;
+      result.source.verificationWindow.to = result.windowTo;
+      return result;
+    };
+    const restored = (snapshot: LeaderboardSnapshot) =>
+      snapshot.ledger.filter((event) => sourceIds.includes(event.source.id));
+
+    // Duplicated events and the unrelated retained attribution change nothing.
+    const replayed = createLeaderboardSnapshot(
+      replayInput({
+        retainedReviewEvents: [...events, ...events],
+        retainedReviewAttributions: history.attributions,
+        verifyRunReceipt: verifyRunReceiptSignature,
+      }),
+    );
+    expect(restored(replayed)).toHaveLength(2);
+    for (const event of restored(replayed)) {
+      expect(event).toMatchObject({
+        scoreThirds: 3,
+        evidenceBonusBasisPoints: 1_500,
+      });
+    }
+    expect(
+      replayed.attributions
+        .filter((attribution) => sourceIds.includes(attribution.sourceId))
+        .map((attribution) => attribution.run?.runId)
+        .sort(),
+    ).toEqual([
+      "run_01M0NNJ276YQDSXKPK1Z7QP286",
+      "run_01M0QCFQDBTMFHJHWB3YZPNAWV",
+    ]);
+
+    // Without a verifier nothing is trusted, and base credit still stands.
+    const unverified = createLeaderboardSnapshot(
+      replayInput({
+        retainedReviewEvents: events,
+        retainedReviewAttributions: attributions,
+      }),
+    );
+    expect(restored(unverified)).toHaveLength(2);
+    expect(
+      restored(unverified).every(
+        (event) => event.scoreThirds === 3 && !event.evidenceBonusBasisPoints,
+      ),
+    ).toBe(true);
+
+    // One altered byte fails the signature: base credit stays, bonus does not.
+    const [first, second] = attributions;
+    const tampered = {
+      ...first,
+      run: first.run && { ...first.run, completedAt: events[0].occurredAt },
+    } as ModelAttribution;
+    const partly = createLeaderboardSnapshot(
+      replayInput({
+        retainedReviewEvents: events,
+        retainedReviewAttributions: [tampered, second],
+        verifyRunReceipt: verifyRunReceiptSignature,
+      }),
+    );
+    expect(
+      restored(partly).map((event) => [
+        event.source.id,
+        event.scoreThirds,
+        event.evidenceBonusBasisPoints ?? 0,
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        [first.sourceId, 3, 0],
+        [second.sourceId, 3, 1_500],
+      ]),
+    );
+
+    expect(partly.invalidAttributionMarkers).toContainEqual({
+      sourceId: first.sourceId,
+      sourceUrl: first.sourceUrl,
+      reason: "invalid-attribution",
+    });
+    expect(partly.attributionCoverage.invalidSourceCount).toBe(1);
+    assertLeaderboardSnapshot(JSON.parse(JSON.stringify(partly)));
+
+    // Two candidates for one review are ambiguous, so neither is replayed.
+    const ambiguous = createLeaderboardSnapshot(
+      replayInput({
+        retainedReviewEvents: events,
+        retainedReviewAttributions: [first, first, second],
+        verifyRunReceipt: verifyRunReceiptSignature,
+      }),
+    );
+    expect(
+      restored(ambiguous).find((event) => event.source.id === first.sourceId)
+        ?.evidenceBonusBasisPoints,
+    ).toBeUndefined();
+
+    // A live parent pull request supersedes the retained record entirely.
+    const liveParent = pullRequest({
+      id: events[0].id.split(":")[0],
+      number: events[0].source.number,
+      mergedAt: "2026-08-25T00:00:00.000Z",
+    });
+    const live = createLeaderboardSnapshot({
+      ...replayInput({ mergedPullRequests: [liveParent] }),
+      retainedReviewEvents: events,
+      retainedReviewAttributions: attributions,
+      verifyRunReceipt: verifyRunReceiptSignature,
+    });
+    expect(live.ledger.some((event) => event.id === events[0].id)).toBe(false);
+    expect(
+      live.attributions.some(
+        (attribution) => attribution.sourceId === events[0].source.id,
+      ),
+    ).toBe(false);
+  });
+
+  it("names the first binding a retained attribution fails", () => {
+    const history = JSON.parse(
+      readFileSync(resolve("data/accepted-review-history.json"), "utf8"),
+    ) as { events: ScoreEvent[]; attributions: ModelAttribution[] };
+    const candidate = history.attributions.find(
+      (attribution) => attribution.sourceId === "PRR_kwDOMT5cIs8AAAABKhZmaQ",
+    );
+    const event = history.events.find(
+      (retained) => retained.source.id === candidate?.sourceId,
+    );
+    if (!candidate?.run?.traceUpload || !event) {
+      throw new Error("issue 495 continuity record is missing");
+    }
+    const replay = (
+      overrides: Partial<ModelAttribution> = {},
+      retained: ScoreEvent = event,
+      claims: string[] = [],
+      verify: (
+        receipt: unknown,
+      ) => ProjectRunReceipt = verifyRunReceiptSignature,
+    ) =>
+      replayRetainedReviewAttribution(
+        retained,
+        { ...candidate, ...overrides },
+        verify,
+        new Set(claims),
+      );
+    const trusting = (receipt: unknown) => receipt as ProjectRunReceipt;
+
+    expect(replay()).toMatchObject({
+      run: { runId: "run_01M0NNJ276YQDSXKPK1Z7QP286" },
+      claims: [
+        `client run:${candidate.run.runId}`,
+        `server run:${candidate.run.traceUpload.serverRunId}`,
+        `trace object:${candidate.run.traceUpload.objectId}`,
+      ],
+    });
+    expect(
+      replay({ run: { ...candidate.run, model: "gpt-5.6-other" } }),
+    ).toEqual({ rejection: "receipt-verification-failed" });
+    expect(replay({ run: null })).toEqual({
+      rejection: "receipt-verification-failed",
+    });
+    expect(replay({ format: "visible-declaration" })).toEqual({
+      rejection: "not-machine-marker",
+    });
+    expect(replay({ actor: actor("someone-else") })).toEqual({
+      rejection: "actor-mismatch",
+    });
+    expect(replay({ sourceId: "PRR_other" })).toEqual({
+      rejection: "source-mismatch",
+    });
+    expect(
+      replay({
+        sourceUrl: `${candidate.sourceUrl.split("#")[0]}#pullrequestreview-1`,
+      }),
+    ).toEqual({ rejection: "source-url-mismatch" });
+    expect(replay({ artifactId: "PR_other" })).toEqual({
+      rejection: "parent-pull-request-mismatch",
+    });
+    expect(
+      replay(
+        { run: { ...candidate.run, traceUpload: null } },
+        event,
+        [],
+        trusting,
+      ),
+    ).toEqual({ rejection: "trace-not-finalized" });
+    expect(replay({}, { ...event, repository: "elizaOS/asi" })).toEqual({
+      rejection: "repository-mismatch",
+    });
+    expect(
+      replay({ model: "gpt-5.6-other", identifier: "openai/gpt-5.6-other" }),
+    ).toEqual({ rejection: "declared-identity-mismatch" });
+    expect(
+      replay({}, { ...event, occurredAt: candidate.run.startedAt }),
+    ).toEqual({ rejection: "run-completed-after-review" });
+    expect(replay({}, event, [`client run:${candidate.run.runId}`])).toEqual({
+      rejection: "receipt-already-claimed",
+    });
+  });
+
   it("retains accepted formal review credit when GitHub deletes the parent pull request", () => {
     const reviewer = actor("retained-reviewer");
     const retained: ScoreEvent = {
@@ -3212,8 +3440,9 @@ describe("scoring and limits", () => {
       reviews: [
         {
           id: "REVIEW_1",
-          body: "The failure path is now covered and the assertion is specific.",
-          state: "APPROVED",
+          body: "The failure path still needs coverage and a specific assertion.",
+          state: "CHANGES_REQUESTED",
+          commitId: "a".repeat(40),
           submittedAt: "2026-07-10T11:00:00.000Z",
           url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-1",
           author: reviewer,
@@ -3221,10 +3450,21 @@ describe("scoring and limits", () => {
         },
         {
           id: "REVIEW_2",
-          body: "A second approval must not add another review award.",
+          body: "The corrected failure path now has the specific assertion requested.",
+          commitId: "b".repeat(40),
           state: "APPROVED",
           submittedAt: "2026-07-10T11:30:00.000Z",
           url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-2",
+          author: reviewer,
+          inlineCommentCount: 0,
+        },
+        {
+          id: "REVIEW_3",
+          body: "This repeated approval on the same commit adds no work unit.",
+          state: "APPROVED",
+          commitId: "b".repeat(40),
+          submittedAt: "2026-07-10T11:40:00.000Z",
+          url: "https://github.com/elizaOS/eliza/pull/1#pullrequestreview-3",
           author: reviewer,
           inlineCommentCount: 0,
         },
@@ -3278,6 +3518,43 @@ describe("scoring and limits", () => {
     });
     expect(reporterEntry?.score).toBe(4);
     expect(snapshot.ledger).toHaveLength(9);
+    const event = snapshot.ledger.find(
+      (row) => row.category === "substantive-review",
+    );
+    expect(event?.reviewHistory).toEqual(
+      pr.reviews.slice(0, 2).map((review) => ({
+        sourceId: review.id,
+        state: review.state,
+        commitId: review.commitId,
+        submittedAt: review.submittedAt,
+        url: review.url,
+      })),
+    );
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+    const duplicateHead = structuredClone(snapshot);
+    const history = duplicateHead.ledger.find(
+      (row) => row.category === "substantive-review",
+    )?.reviewHistory;
+    if (!history) throw new Error("Missing review history");
+    history[1].commitId = history[0].commitId;
+    expect(() => assertLeaderboardSnapshot(duplicateHead)).toThrow(
+      "repeats a source or reviewed commit",
+    );
+    const withoutLaterDecision = createLeaderboardSnapshot(
+      input({
+        mergedPullRequests: [{ ...pr, reviews: pr.reviews.slice(0, 1) }],
+        resolvedIssues: [resolved],
+        verifiedEvidence: verifiedPullRequestEvidence([pr]),
+      }),
+    );
+    const withoutHistory = structuredClone(snapshot);
+    for (const row of withoutHistory.ledger) delete row.reviewHistory;
+    expect(withoutHistory.ledger).toEqual(withoutLaterDecision.ledger);
+    expect(
+      withoutLaterDecision.ledger.find(
+        (row) => row.category === "substantive-review",
+      )?.reviewHistory,
+    ).toBeUndefined();
   });
 
   it("excludes bots, self-reviews, and reviews after merge", () => {
@@ -4341,6 +4618,59 @@ describe("work queue claims and prioritization", () => {
       claim: { status: "claimed" },
       selection: { status: "excluded", reasons: ["claimed"] },
     });
+
+    // The same outsider's open implementation is objective claim evidence.
+    // Drafts and requests for changes still represent work in progress.
+    for (const kind of ["closing", "reference", "both"]) {
+      for (const isDraft of [false, true]) {
+        const linked = createLeaderboardSnapshot(
+          input({
+            openIssues: [untrusted, trusted].map((record) => ({
+              ...record,
+              referencedPullRequestIds:
+                kind === "closing"
+                  ? []
+                  : ["PR_OUTSIDE_IMPLEMENTATION", "PR_CLOSED_OR_UNKNOWN"],
+            })),
+            openPullRequests: [
+              pullRequest({
+                id: "PR_OUTSIDE_IMPLEMENTATION",
+                number: 20,
+                mergedAt: null,
+                createdAt: "2026-07-01T12:00:00.000Z",
+                author: actor("outside-visitor"),
+                closingIssueIds:
+                  kind === "reference" ? [] : [untrusted.id, trusted.id],
+                isDraft,
+                reviewDecision: "CHANGES_REQUESTED",
+              }),
+            ],
+          }),
+        );
+        expect(linked.workQueue.issues).toHaveLength(2);
+        for (const item of linked.workQueue.issues) {
+          expect(item).toMatchObject({
+            claim: {
+              status: "claimed",
+              source: "pull-request",
+              kind: "implementation",
+              actors: [expect.objectContaining({ login: "outside-visitor" })],
+              claimedAt: null,
+            },
+            selection: { status: "excluded", reasons: ["claimed"] },
+          });
+        }
+        expect(() => assertLeaderboardSnapshot(linked)).not.toThrow();
+      }
+    }
+    const noOpenSource = createLeaderboardSnapshot(
+      input({
+        openIssues: [
+          { ...untrusted, referencedPullRequestIds: ["PR_CLOSED_OR_UNKNOWN"] },
+        ],
+      }),
+    );
+    expect(noOpenSource.workQueue.issues[0].claim.status).toBe("unclaimed");
   });
 
   it("recognizes claims collected after the scoring cutoff", () => {

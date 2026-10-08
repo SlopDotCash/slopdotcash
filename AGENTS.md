@@ -26,6 +26,79 @@ alias only.
 - Never publish secrets, prompts, responses, source files, credentials, session
   identifiers, private trajectories, or signing material.
 
+## MVP scope and phase gate
+
+The canonical product requirements are
+[Slop Product Requirements](docs/slop-product-requirements.md). The only current
+implementation scope is [Slop MVP Delivery Plan](docs/slop-mvp-plan.md).
+Read both before selecting work, proposing a change, reviewing a PR, or
+implementing a feature. Link the exact PRD requirement and MVP work-package ID
+in every implementation PR. Existing code, an open issue, a model suggestion,
+or a PRD entry marked Future does not approve implementation.
+
+Work must correct a demonstrated defect in the MVP, fulfill a missing approved
+MVP requirement, or prove a relevant improvement to that required behavior.
+Do not invent work from coverage gaps, preferences, or hypothetical failures.
+Reuse existing implementations and simplify the affected code. Explain the
+useful result and why the selected implementation is needed.
+
+A new requirement must first be discussed with humans and added to the PRD.
+Maintainers must approve its scope and phase, and update the MVP plan when it
+changes the current phase, before implementation starts. Unresolved choices
+in the PRD are decision gates, not authority for an agent to choose economic,
+security, or product policy. Keep proposals distinct from approved work.
+
+Do not start the rest of the PRD until maintainers explicitly confirm that the
+whole MVP is finished, verified, tested, and validated. The confirmation must
+be a reviewed completion record linked from the MVP plan. It must cover every
+MVP requirement and release gate with exact tested revisions, real end-to-end
+results, deployment/provider/chain evidence where applicable, and resolution
+of blocking defects. A merged PR, a local test pass, partial rollout, or an
+agent's statement cannot close the MVP. After that record is approved, humans
+select and approve the next PRD phase before agents implement it.
+
+## Human-responsible outside issues
+
+This rule covers Slop participation issues: issues in this repository, and
+issues on a target project or any other tracker that claim Slop participation
+or carry `Made via @slopdotcash`. Slop decides eligibility for its own score,
+review and listings; it does not govern unrelated activity on third-party
+trackers.
+
+Banned: unattended generation of issue text, bulk or batch issue creation,
+delegated submission (an agent, bot, script, API call, CLI, browser automation
+or prefilled issue URL opening or submitting the issue), and submitting a
+report the human has not read, verified and understood. A human clicking
+Submit on text they did not review does not satisfy this rule.
+
+Allowed under human control: reading existing issues, inspecting the PRD and
+MVP plan, investigating defects, outlining, explaining findings to the
+contributor, translation, grammar and spelling correction, accessibility
+tools, and checking sources. The human chooses the claims, verifies the
+evidence, settles the final text and submits it personally on the website.
+This restriction concerns issue authorship and creation; it does not prohibit
+authorized PR work or review of existing issues. Future private
+security-report automation requires its separately approved phase and is not
+an exception for public issues.
+
+Writing style, language fluency, model attribution on other work, or the use
+of editing or translation tools is not evidence of a breach. An adverse
+decision (hold, exclusion, restriction) needs objective evidence of a banned
+act, such as automation records, bulk patterns or delegated submission,
+states that evidence, and carries the appeal path in the eligibility policy.
+
+This rule applies to issues opened on or after 2026-10-15T00:00:00Z. Issues
+accepted before that date keep their state and credit.
+
+Before writing an issue, the contributor must review the PRD and MVP plan,
+check for existing work, and state the affected requirement, evidence, and
+expected result. An issue that proposes anything new must link the existing
+PRD requirement or the proposed PRD addition and its human discussion. Missing
+requirements must be added to the PRD and approved before implementation.
+An issue is never feature approval. Include the visible attribution line
+`Made via @slopdotcash` on Slop participation issues and PRs; humans add it to
+their own issue text. Branding is not permission for agents to create issues.
+
 ## Source of truth
 
 `projects/*/project.json` is the only project and repository inventory. Never
@@ -92,7 +165,12 @@ follow the target repository’s rules, test the result, prepare evidence, and
 emit the required attribution. It must not claim platform authority over an
 issue or create placeholder submissions.
 
-The reviewer skill is separate and advisory. It measures its own run, checks
+The current reviewer skill is separate and advisory. The PRD specifies optional
+Slopbot closure and security-vetting enforcement as gated MVP additions. A
+document merge alone does not enable those powers; implement and review the
+versioned protocols and explicit permissions first.
+
+It measures its own run, checks
 correctness, tests, security, evidence, duplication, abuse signals, scope, and
 usefulness, and places the machine review before the signed attribution footer.
 
@@ -296,6 +374,12 @@ bun run verify
 
 ## Definition of done
 
+Every PR must show a useful result and its PRD/MVP references. New features
+remain blocked by the scope and phase gate above. For documentation-only
+changes, validate links, instructions, scope consistency, and policy mirrors;
+explain why application acceptance does not apply to the prose itself. Keep
+required repository checks. Do not fabricate UI or deployment evidence.
+
 Rebase onto current `origin/develop`, install the lockfile, run `bun run
 verify`, and run real-browser E2E against the exact head. UI changes require
 desktop and mobile review, keyboard and 200% zoom checks, WCAG AA, working copy
@@ -303,7 +387,8 @@ feedback, raw Markdown and archive downloads, valid GitHub links, zero
 first-party request failures, and zero application console errors.
 
 Attach exact-head evidence to the issue or PR: screenshots, accessibility
-results, console/network logs, walkthrough, generated skill archive/checksum,
+results, console/network logs, uploaded UI walkthrough and evidence videos, detailed
+test steps and expected results, generated skill archive/checksum,
 live GitHub snapshot, deploy log, immutable deployment URL, deployed-byte
 comparison, DNS, TLS, redirects, and security headers. Use `N/A - <reason>`
 only when genuinely inapplicable. Captured evidence is not committed.

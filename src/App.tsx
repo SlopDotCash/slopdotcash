@@ -1,6 +1,7 @@
 import { Link, useInitialHashScroll } from "./Link";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { copyText } from "./lib/copy-text";
+import { homeProjects } from "./lib/home-projects";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import {
   LoginPage,
@@ -81,6 +82,7 @@ import {
 } from "./lib/leaderboard";
 import {
   type ModelOutcomeSummary,
+  modelIdentityKey,
   summarizeModelOutcomes,
 } from "./lib/model-outcomes";
 import {
@@ -127,16 +129,6 @@ const WALLET_CLAIM_TIMEOUT_MS = 12_000;
 const MAX_FUNDING_INDEX_BYTES = 8 * 1024 * 1024;
 const MAX_WALLET_CLAIM_BYTES = 16 * 1024;
 const PROFILE_EVENT_PREVIEW_LIMIT = 10;
-const HERO_ACTIONS = [
-  "SHIPPING OPEN SOURCE.",
-  "SECURING THE WEB.",
-  "HACKING THE PLANET.",
-  "BUILDING AGI.",
-] as const;
-const HERO_HOLD_MS = 2_400;
-const HERO_TYPE_MS = 55;
-const HERO_DELETE_MS = 30;
-const HERO_GAP_MS = 220;
 
 export function publicFooterDomain(
   hostname: string,
@@ -269,7 +261,7 @@ function formatScore(value: number): string {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
     minimumFractionDigits: 0,
-    useGrouping: false,
+    useGrouping: true,
   }).format(value);
 }
 
@@ -316,6 +308,9 @@ export function monthlyPoolLabel(
     : `${formatMicroUsdc(reward.committedMinor)} committed · accessibility unknown · target ${reward.monthlyCapDisplay}`;
 }
 
+/** A pledged pool never headlines its cap; the cap is small print only. */
+const UNFUNDED_POOL_HEADLINE = "Not funded yet";
+
 function formatPercent(partsPerMillion: number): string {
   return `${(partsPerMillion / 10_000).toFixed(2)}%`;
 }
@@ -348,7 +343,7 @@ function stale(snapshot: Pick<LeaderboardSnapshot, "generatedAt">): boolean {
   return Date.now() - Date.parse(snapshot.generatedAt) > 8 * 60 * 60 * 1_000;
 }
 
-function Header({ isHome }: { isHome: boolean }) {
+function Header() {
   const [open, setOpen] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -394,11 +389,6 @@ function Header({ isHome }: { isHome: boolean }) {
           className={open ? "nav-links nav-links-open" : "nav-links"}
           id="primary-navigation"
         >
-          {!isHome ? (
-            <Link href="/" onNavigate={closeMenu}>
-              Home
-            </Link>
-          ) : null}
           <Link href="/#projects" onNavigate={closeMenu}>
             Projects
           </Link>
@@ -437,12 +427,10 @@ function Footer() {
         </div>
         <div className="footer-links">
           <Link href="/#projects">Projects</Link>
-          <Link href="/how-it-works">How scoring works</Link>
+          <Link href="/how-it-works">How it works</Link>
           <Link href="/how-it-works#faq">FAQ</Link>
-          <Link href="/receipts">Receipts</Link>
           <Link href="/models">Models</Link>
-          <Link href="/cycles">Cycle archive</Link>
-          <Link href="/sponsors">Fund a pool</Link>
+          <Link href="/sponsors">Sponsors</Link>
           <Link href="/projects/new">Add a project</Link>
           <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
             GitHub
@@ -456,6 +444,12 @@ function Footer() {
           </ExternalLinkAnchor>
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
         </div>
+        <nav className="footer-links footer-records" aria-label="Records">
+          <span>Records</span>
+          <Link href="/receipts">Run receipts</Link>
+          <Link href="/cycles">Cycle archive</Link>
+          <Link href="/how-it-works#verification">Verification</Link>
+        </nav>
       </div>
     </footer>
   );
@@ -463,7 +457,11 @@ function Footer() {
 
 function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
   if (state.status === "loading") {
-    return null;
+    return (
+      <p className="data-notice" role="status">
+        Loading records…
+      </p>
+    );
   }
   if (state.status === "error") {
     return (
@@ -482,60 +480,6 @@ function DataNotice({ state, retry }: { state: DataState; retry: () => void }) {
       <span className="status-dot stale-dot" />
       Data may be outdated · updated {formatDate(state.snapshot.generatedAt)}
     </div>
-  );
-}
-
-function TypewriterHeroHeading() {
-  const [index, setIndex] = useState(0);
-  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
-  const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
-    "holding",
-  );
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const target = HERO_ACTIONS[index];
-    let delay = 1;
-    let advance: () => void;
-    if (phase === "holding") {
-      delay = HERO_HOLD_MS;
-      advance = () => setPhase("deleting");
-    } else if (phase === "deleting" && characters > 0) {
-      delay = HERO_DELETE_MS;
-      advance = () => setCharacters((value) => Math.max(0, value - 1));
-    } else if (phase === "deleting") {
-      delay = HERO_GAP_MS;
-      advance = () => {
-        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
-        setPhase("typing");
-      };
-    } else if (characters < target.length) {
-      delay = HERO_TYPE_MS;
-      advance = () => setCharacters((value) => value + 1);
-    } else {
-      advance = () => setPhase("holding");
-    }
-    const timer = window.setTimeout(advance, delay);
-    return () => window.clearTimeout(timer);
-  }, [characters, index, phase]);
-  const action = HERO_ACTIONS[index];
-  return (
-    <h1 aria-label="MAKE MONEY SHIPPING OPEN SOURCE.">
-      <span aria-hidden="true" className="hero-message">
-        <span>MAKE MONEY</span>
-        <span className="hero-switch">
-          {HERO_ACTIONS.map((candidate) => (
-            <span className="hero-switch-sizer" key={candidate}>
-              {candidate}
-            </span>
-          ))}
-          <span className="hero-typewriter">
-            {action.slice(0, characters)}
-            <span className="hero-typewriter-caret" />
-          </span>
-          <span className="hero-mobile-action">{action}</span>
-        </span>
-      </span>
-    </h1>
   );
 }
 
@@ -571,15 +515,25 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
       </div>
       <div className="project-card-content">
         <p className="project-summary">{project.description}</p>
-        <p className="project-bounty">
-          <strong>{amount}</strong>
-          {project.reward.kind === "monthly-pool" ? <span>/mo</span> : null}
-        </p>
-        {project.reward.kind === "monthly-pool" && !unfunded ? (
+        {unfunded ? (
+          <p className="project-bounty project-bounty-unfunded">
+            <strong>{UNFUNDED_POOL_HEADLINE}</strong>
+          </p>
+        ) : (
+          <p className="project-bounty">
+            <strong>{amount}</strong>
+            {project.reward.kind === "monthly-pool" ? <span>/mo</span> : null}
+          </p>
+        )}
+        {project.reward.kind === "monthly-pool" ? (
           <small className="project-money-state">
-            Committed balance · accessibility unknown · payments disabled
+            {unfunded
+              ? `Target ${amount}/mo`
+              : "Committed balance · accessibility unknown · payments disabled"}
           </small>
-        ) : null}
+        ) : (
+          <small className="project-money-state">External prize</small>
+        )}
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
             + {reviewBudgetLabel(project.reward.reviewBudget)}
@@ -640,15 +594,8 @@ function GlobalLeaderboard() {
   );
 }
 
-function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
-  const views = state.status === "ready" ? state.views : [];
-  const promotedProjects = PROJECTS.filter((project) =>
-    projectPromotionEligible(
-      project,
-      state.status === "ready" ? state.cycleIndex.cycles : null,
-      views.find((view) => view.project.id === project.id)?.cycle.id ?? null,
-    ),
-  );
+function HomePage() {
+  const promotedProjects = homeProjects();
   const featuredProjects = promotedProjects.filter(
     (project) => project.listingTier === "featured",
   );
@@ -658,18 +605,19 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
   return (
     <main>
       <section className="hero shell">
-        <DataNotice state={state} retry={retry} />
-
-        <TypewriterHeroHeading />
+        <h1 className="hero-message">
+          <span>MAKE MONEY</span>{" "}
+          <span className="hero-action">SHIPPING OPEN SOURCE.</span>
+        </h1>
         <p className="hero-copy">
-          Fund accepted work on GitHub. Slop calculates allocations from public
-          evidence; project owners sign payments directly.
+          Ship useful work with any agent. Maintainers review it on GitHub;
+          project owners approve rewards.
         </p>
         <div className="hero-actions">
           <Link className="button primary-button" href="/#projects">
             Explore projects <ArrowRight aria-hidden="true" />
           </Link>
-          <Link className="button secondary-button" href="/projects/new">
+          <Link className="button secondary-button" href="/sponsors">
             Fund a project
           </Link>
         </div>
@@ -700,34 +648,7 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
           </details>
         ) : null}
       </section>
-      <section className="section shell audience-section">
-        <div className="audience-grid">
-          <article>
-            <h3>Pay for accepted outcomes.</h3>
-            <p>
-              Commit a capped contributor pool and an optional additive review
-              budget.
-            </p>
-            <Link href="/projects/new">Fund a project</Link>
-          </article>
-          <article>
-            <h3>Keep GitHub in control.</h3>
-            <p>
-              Review work in the project repository while Slop publishes the
-              record.
-            </p>
-            <Link href="/how-it-works">See the mechanism</Link>
-          </article>
-          <article>
-            <h3>Ship with any agent.</h3>
-            <p>
-              Use the project skill, disclose the exact model, and land useful
-              work.
-            </p>
-            <Link href="/#projects">Explore projects</Link>
-          </article>
-        </div>
-      </section>
+      <GlobalLeaderboard />
       <section className="how-section" id="how-it-works">
         <div className="shell">
           <div className="home-section-heading inverse-heading">
@@ -755,17 +676,11 @@ function HomePage({ state, retry }: { state: DataState; retry: () => void }) {
               </p>
             </article>
           </div>
-          <div className="owner-callout">
-            <div>
-              <h3>Add your project.</h3>
-            </div>
-            <Link className="button inverse-button" href="/projects/new">
-              Get started <ArrowRight aria-hidden="true" />
-            </Link>
-          </div>
+          <Link className="how-details-link" href="/how-it-works">
+            How scores and rewards work <ArrowRight aria-hidden="true" />
+          </Link>
         </div>
       </section>
-      <GlobalLeaderboard />
     </main>
   );
 }
@@ -972,11 +887,37 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
   );
 }
 
-function RewardValue({ leader }: { leader: ProjectContributor }) {
-  return leader.simulatedMinor !== null ? (
-    formatMicroUsdc(leader.simulatedDisplayMinor ?? leader.simulatedMinor)
-  ) : (
-    <>{formatPercent(leader.projectedSharePartsPerMillion ?? 0)} share</>
+/** Dollars are simulated only against committed funds; otherwise a share. */
+function RewardValue({
+  leader,
+  view,
+}: {
+  leader: ProjectContributor;
+  view: ProjectView;
+}) {
+  if (leader.simulatedMinor === null) {
+    return (
+      <>{formatPercent(leader.projectedSharePartsPerMillion ?? 0)} share</>
+    );
+  }
+  if (!monthlyPoolUnfunded(view.project.reward)) {
+    return formatMicroUsdc(
+      leader.simulatedDisplayMinor ?? leader.simulatedMinor,
+    );
+  }
+  const totalWeight = view.leaders.reduce(
+    (total, entry) => total + entry.adjustedWeight,
+    0,
+  );
+  return (
+    <>
+      {formatPercent(
+        totalWeight > 0
+          ? Math.round((leader.adjustedWeight * 1_000_000) / totalWeight)
+          : 0,
+      )}{" "}
+      of score
+    </>
   );
 }
 
@@ -1005,7 +946,9 @@ function ProjectLeaderboard({
           ) : null}
           {view.reward.kind === "monthly-pool" ? (
             <p>
-              Shares simulate the {monthlyPoolLabel(view.project.reward)} cap.
+              {monthlyPoolUnfunded(view.project.reward)
+                ? `${UNFUNDED_POOL_HEADLINE}.`
+                : `Shares simulate the ${monthlyPoolLabel(view.project.reward)} cap.`}{" "}
               Not approved payouts.
             </p>
           ) : null}
@@ -1023,7 +966,12 @@ function ProjectLeaderboard({
                   <th scope="col">Rank</th>
                   <th scope="col">Contributor</th>
                   <th scope="col">Score</th>
-                  <th scope="col">Simulated share</th>
+                  <th scope="col">
+                    {view.reward.kind === "monthly-pool" &&
+                    monthlyPoolUnfunded(view.project.reward)
+                      ? "Share of score"
+                      : "Simulated share"}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1064,7 +1012,7 @@ function ProjectLeaderboard({
                     </td>
                     <td>
                       <strong>
-                        <RewardValue leader={leader} />
+                        <RewardValue leader={leader} view={view} />
                       </strong>
                     </td>
                   </tr>
@@ -1776,27 +1724,25 @@ function ProjectPage({
             </div>
             {promotionEligible ? (
               <aside className="reward-card">
-                <span>
-                  {project.reward.kind === "monthly-pool"
-                    ? "MONTHLY POOL"
-                    : "EXTERNAL OPPORTUNITY"}
-                </span>
                 <strong
                   className={
-                    project.reward.kind === "monthly-pool"
+                    project.reward.kind === "monthly-pool" &&
+                    !monthlyPoolUnfunded(project.reward)
                       ? "reward-amount-monthly"
                       : undefined
                   }
                 >
                   {project.reward.kind === "monthly-pool"
-                    ? `${monthlyPoolCapLabel(project.reward)} / mo`
+                    ? monthlyPoolUnfunded(project.reward)
+                      ? UNFUNDED_POOL_HEADLINE
+                      : `${monthlyPoolCapLabel(project.reward)} / mo`
                     : project.reward.externalOpportunity
                         ?.advertisedAmountDisplay}
                 </strong>
                 <p>
                   {project.reward.kind === "monthly-pool"
                     ? monthlyPoolUnfunded(project.reward)
-                      ? `Target ${project.reward.monthlyCapDisplay} per month. No funding is committed, so no payment is scheduled until the project commits funds.`
+                      ? `Target ${project.reward.monthlyCapDisplay} per month. No payments scheduled.`
                       : `${formatMicroUsdc(project.reward.committedMinor)} committed against a ${project.reward.monthlyCapDisplay} monthly target. Accessibility is unknown; no payment is enabled.`
                     : "10% of an award actually received is allocated to Slop Cash; the remaining 90% is shared among accepted contributors. The prize sponsor controls eligibility and payment."}
                 </p>
@@ -2065,18 +2011,16 @@ function ProfilePage({
     )
     .slice(0, PROFILE_OPPORTUNITY_LIMIT);
   // Outside the rolling window the frozen months are the only scored record.
-  const score =
-    globalLeader?.score ??
-    formatThirds(
-      preparations.reduce(
-        (total, { contributor }) => total + Number(contributor.scoreThirds),
-        0,
-      ),
-    );
-  // The live score is a rolling window, never a full-history total.
-  const scoreLabel = globalLeader
-    ? `${state.snapshot.window.days}-day score to ${formatDate(state.snapshot.window.to)}`
-    : "score, frozen months";
+  const score = globalLeader
+    ? formatScore(globalLeader.score)
+    : formatThirds(
+        preparations.reduce(
+          (total, { contributor }) => total + Number(contributor.scoreThirds),
+          0,
+        ),
+      );
+  // Closed cycles replace their overlapping ledger events in this cumulative score.
+  const scoreLabel = globalLeader ? "recorded score" : "score, frozen months";
   const acceptedOutcomes = matches.reduce(
     (total, match) => total + match.leader.acceptedOutcomeCount,
     0,
@@ -2148,7 +2092,9 @@ function ProfilePage({
           </div>
         ) : null}
         <div>
-          <strong>{score}</strong>
+          <strong title="Closed cycles and ledger events outside those cycles">
+            {score}
+          </strong>
           <span>{scoreLabel}</span>
         </div>
         <div>
@@ -2190,7 +2136,7 @@ function ProfilePage({
                       </small>
                     </span>
                     <span className="profile-project-stat">
-                      <RewardValue leader={leader} />
+                      <RewardValue leader={leader} view={view} />
                     </span>
                     <ChevronRight aria-hidden="true" />
                   </Link>
@@ -2619,7 +2565,11 @@ function CyclePage({
               : record?.kind === "external-prize-share" ||
                   view?.reward.kind === "external-prize-share"
                 ? "provisional shares assigned"
-                : "current cycle amount"}
+                : record
+                  ? record.reward.approvedMinor !== "0"
+                    ? "approved principal"
+                    : "suggested principal"
+                  : "projected principal"}
           </span>
         </div>
       </section>
@@ -3511,7 +3461,7 @@ function HowItWorksPage() {
             <Link href="/how-it-works#verification">
               Settlement verification
             </Link>
-            <Link href="/sponsors">Fund a pool</Link>
+            <Link href="/sponsors">Sponsors</Link>
           </li>
           <li>
             <Link href="/projects/new">Add your project</Link>
@@ -3764,92 +3714,18 @@ function SponsorsPage({
   return (
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
-        <h1>Fund the merges. Keep the keys.</h1>
+        <h1>Fund a project.</h1>
         <p>
-          A sponsor sets a monthly cap for a repository, and only work the
-          maintainers accept can draw on it. Slop computes the split, publishes
-          every state, and prepares unsigned payment plans. Funds remain in the
-          reviewed third-party instrument, governed by its own transfer rules.
-          Slop holds no signing keys.
+          Choose a project or add your repository. Maintainers accept the work;
+          authorized signers approve payments outside Slop. Funding does not
+          grant repository control or guarantee a payout.
         </p>
       </section>
-      <WhoBuildsOnSlop retry={retry} state={state} />
-      <ol className="mechanism-flow" aria-label="What funding a pool buys">
-        <li>
-          <strong>01 · Publish the cap</strong>
-          <p>
-            A reviewed manifest change sets the monthly cap and the reward
-            start. Until a verified on-chain commitment backs it, the pool shows
-            as unfunded with a target, never as a balance. Contributors then use
-            any agent to contribute. Accepted merges, eligible reviews, and
-            separately reviewed awards follow the published scoring policy.
-          </p>
-        </li>
-        <li>
-          <strong>02 · The month freezes</strong>
-          <p>
-            The monthly workflow prepares a proposal under the cap. Publication
-            depends on complete source data and successful validation. Fourteen
-            days of public review follow. Every row names its source events, its
-            integer weights, and the scoring rule version, so anyone can
-            recompute it.
-          </p>
-        </li>
-        <li>
-          <strong>03 · You decide and sign</strong>
-          <p>
-            Project owners review proposed awards within the cap and record
-            changes with a public reason. Authorized signers execute the
-            reviewed transfer plan outside Slop. Slop marks the cycle paid only
-            when finalized on-chain evidence reconciles every approved intent
-            and the fee.
-          </p>
-        </li>
-      </ol>
-      <section className="worked-example sponsor-controls">
-        <div>
-          <h2>What you decide.</h2>
-          <ul>
-            <li>The monthly cap, with exact-cycle overrides.</li>
-            <li>
-              Project owners may adjust proposed awards within the cap, with a
-              public reason. Amount changes restart the 14-day review.
-            </li>
-            <li>Whether to add a named review budget as a second cash line.</li>
-            <li>
-              Authorized signers approve transfers under the instrument rules.
-            </li>
-          </ul>
-        </div>
-        <div>
-          <h2>What funding does not buy.</h2>
-          <ul>
-            <li>
-              Turn a donation into control of the repository. Maintainers manage
-              work and acceptance on GitHub; sponsorship alone grants no
-              maintainer or payout approval authority.
-            </li>
-            <li>
-              Edit history. Corrections append; past cycle records are never
-              rewritten.
-            </li>
-            <li>
-              Route money through Slop. There is no platform wallet, treasury,
-              or escrow to send to.
-            </li>
-            <li>
-              Pay a related party without a separate approval on the public
-              record.
-            </li>
-          </ul>
-        </div>
-      </section>
       <section className="custody-proof sponsor-pools">
-        <h2>Every pool, in its current state.</h2>
+        <h2>Projects</h2>
         <p>
-          Read from the reviewed manifests. A cap is a target. A pool is funded
-          only when a committed amount is backed by an active instrument with
-          verifier evidence, and allocation never exceeds that amount.
+          Targets are not balances. Committed amounts need verified funding;
+          payment availability is separate.
         </p>
         <section
           className="plain-table-wrap"
@@ -3899,105 +3775,25 @@ function SponsorsPage({
           </table>
         </section>
       </section>
-      <section className="custody-proof money-states">
-        <h2>Your money has exact states.</h2>
-        <dl>
-          <div>
-            <dt>Pledged</dt>
-            <dd>
-              A public target with no money behind it. Contributors see
-              projections at the cap and the word unfunded next to them.
-            </dd>
-          </div>
-          <div>
-            <dt>Committed</dt>
-            <dd>
-              A positive amount backed by an active reviewed instrument and
-              deterministic verifier evidence. Allocation never exceeds it.
-            </dd>
-          </div>
-          <div>
-            <dt>Under review</dt>
-            <dd>A frozen monthly proposal in its 14-day public window.</dd>
-          </div>
-          <div>
-            <dt>Approved</dt>
-            <dd>
-              Immutable payout intents after you sign off, with a public reason
-              attached to every change you made.
-            </dd>
-          </div>
-          <div>
-            <dt>Scheduled</dt>
-            <dd>An unsigned transfer plan exists. No money has moved.</dd>
-          </div>
-          <div>
-            <dt>Paid</dt>
-            <dd>
-              Finalized on-chain evidence reconciles the exact transfers and the
-              fee.
-            </dd>
-          </div>
-          <div>
-            <dt>Unclaimed, held, excluded</dt>
-            <dd>
-              Visible unresolved states with public reasons. A missing wallet
-              stays unclaimed. Rows below $2 accrue to the next cycle.
-            </dd>
-          </div>
-        </dl>
-        <p>
-          Unused committed funds roll over without raising the cap. A wallet
-          registered after a proposal is generated applies to the next cycle and
-          never touches the current one.
-        </p>
-      </section>
-      <section className="custody-proof">
-        <h2>Commit through an instrument you control.</h2>
-        <ul>
-          <li>
-            A Squads v4 multisig vault on Solana, or a Sablier Lockup v4 stream
-            on Base or Ethereum. Both are reviewed, immutable, third-party
-            programs. Slop holds no key, admin, or fee position in either.
-          </li>
-          <li>
-            Direct gifts go straight from your wallet to the steward&apos;s
-            published address and are recorded append-only under funding
-            records, self-reported until a verifier confirms them on-chain.
-          </li>
-          <li>
-            Neither is escrow and nothing is guaranteed. A commitment is a
-            balance claim; whether its signers can act is not something this
-            protocol can attest to yet, so public surfaces say so.
-          </li>
-          <li>
-            GitHub identity never proves wallet control. A receiving address
-            appears on this site only through a reviewed manifest change.
-          </li>
-        </ul>
-      </section>
       <section className="worked-example sponsor-fee">
         <div>
-          <h2>The fee is a separate transfer.</h2>
+          <h2>Awards, fee and total.</h2>
           <p>
-            Slop&apos;s fee is 1% of approved principal on a monthly pool. You
-            send it as its own transfer when you settle the cycle. Slop never
-            deducts, sweeps, or nets it against a contributor&apos;s row, and a
-            cycle does not read paid until the fee reconciles with everything
-            else.
+            Monthly pools add a separate 1% fee to approved awards. Contributors
+            receive the full approved amount. Paid requires finalized evidence
+            for both the awards and fee.
           </p>
           <p>
             External prize shares use the terms published for that project. The
             prize sponsor controls eligibility and payment.
           </p>
         </div>
-        <dl className="equation-card">
+        <dl
+          className="equation-card"
+          aria-label="Example: $5,000 in approved awards"
+        >
           <div>
-            <dt>Approved principal</dt>
-            <dd>$5,000</dd>
-          </div>
-          <div>
-            <dt>Contributor transfers</dt>
+            <dt>Example approved awards</dt>
             <dd>$5,000</dd>
           </div>
           <div>
@@ -4005,27 +3801,223 @@ function SponsorsPage({
             <dd>$50</dd>
           </div>
           <div>
-            <dt>Deducted from contributors</dt>
-            <dd>$0</dd>
+            <dt>Total to send</dt>
+            <dd>$5,050</dd>
           </div>
         </dl>
       </section>
-      <section className="custody-proof sponsor-note">
-        <h2>Optional: pay for review as its own line.</h2>
-        <p>
-          Accepted review already scores from the shared pool. A named review
-          budget is a second monthly cash line that pays accepted review work on
-          top of that unchanged treatment, with its own cap, its own commitment,
-          and separate public arithmetic. It becomes operative only after its
-          own funding is committed, and it cannot be added in the same change
-          that lowers the contributor cap.
-        </p>
-        <p>
-          <ExternalLinkAnchor href={`${protocolRoot}/review-budget-v1.md`}>
-            Additive review budget v1
-          </ExternalLinkAnchor>
-        </p>
+      <section className="worked-example sponsor-start">
+        <div>
+          <h2>Start with a pull request.</h2>
+          <p>
+            Add a project to prepare a GitHub proposal. New projects start
+            paused. Existing stewards update receiving addresses and funding
+            instruments through a reviewed manifest change.
+          </p>
+        </div>
+        <ul>
+          <li>
+            <Link href="/projects/new">Add a project</Link>
+          </li>
+          <li>
+            <ExternalLinkAnchor
+              href={`${SOURCE_REPOSITORY}/tree/develop/projects`}
+            >
+              Reviewed manifests
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <a href={CONTACT_MAILTO}>Email {CONTACT_EMAIL}</a>
+          </li>
+          <li>
+            <ExternalLinkAnchor href={SOCIAL_TELEGRAM}>
+              Ask on Telegram
+            </ExternalLinkAnchor>
+          </li>
+          <li>
+            <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
+              Open an issue on GitHub
+            </ExternalLinkAnchor>
+          </li>
+        </ul>
       </section>
+      <details className="sponsor-details">
+        <summary>Funding rules and payment stages</summary>
+        <ol className="mechanism-flow" aria-label="What funding a pool buys">
+          <li>
+            <strong>01 · Publish the cap</strong>
+            <p>
+              A reviewed manifest change sets the monthly cap and the reward
+              start. Until a verified on-chain commitment backs it, the pool
+              shows as unfunded with a target, never as a balance. Contributors
+              then use any agent to contribute. Accepted merges, eligible
+              reviews, and separately reviewed awards follow the published
+              scoring policy.
+            </p>
+          </li>
+          <li>
+            <strong>02 · The month freezes</strong>
+            <p>
+              The monthly workflow prepares a proposal under the cap.
+              Publication depends on complete source data and successful
+              validation. Fourteen days of public review follow. Every row names
+              its source events, its integer weights, and the scoring rule
+              version, so anyone can recompute it.
+            </p>
+          </li>
+          <li>
+            <strong>03 · You decide and sign</strong>
+            <p>
+              Project owners review proposed awards within the cap and record
+              changes with a public reason. Authorized signers execute the
+              reviewed transfer plan outside Slop. Slop marks the cycle paid
+              only when finalized on-chain evidence reconciles every approved
+              intent and the fee.
+            </p>
+          </li>
+        </ol>
+        <section className="worked-example sponsor-controls">
+          <div>
+            <h2>What you decide.</h2>
+            <ul>
+              <li>The monthly cap, with exact-cycle overrides.</li>
+              <li>
+                Project owners may adjust proposed awards within the cap, with a
+                public reason. Amount changes restart the 14-day review.
+              </li>
+              <li>
+                Whether to add a named review budget as a second cash line.
+              </li>
+              <li>
+                Authorized signers approve transfers under the instrument rules.
+              </li>
+            </ul>
+          </div>
+          <div>
+            <h2>What funding does not buy.</h2>
+            <ul>
+              <li>
+                Turn a donation into control of the repository. Maintainers
+                manage work and acceptance on GitHub; sponsorship alone grants
+                no maintainer or payout approval authority.
+              </li>
+              <li>
+                Edit history. Corrections append; past cycle records are never
+                rewritten.
+              </li>
+              <li>
+                Route money through Slop. There is no platform wallet, treasury,
+                or escrow to send to.
+              </li>
+              <li>
+                Pay a related party without a separate approval on the public
+                record.
+              </li>
+            </ul>
+          </div>
+        </section>
+        <section className="custody-proof money-states">
+          <h2>Your money has exact states.</h2>
+          <dl>
+            <div>
+              <dt>Pledged</dt>
+              <dd>
+                A public target with no money behind it. Contributors see
+                projections at the cap and the word unfunded next to them.
+              </dd>
+            </div>
+            <div>
+              <dt>Committed</dt>
+              <dd>
+                A positive amount backed by an active reviewed instrument and
+                deterministic verifier evidence. Allocation never exceeds it.
+              </dd>
+            </div>
+            <div>
+              <dt>Under review</dt>
+              <dd>A frozen monthly proposal in its 14-day public window.</dd>
+            </div>
+            <div>
+              <dt>Approved</dt>
+              <dd>
+                Immutable payout intents after you sign off, with a public
+                reason attached to every change you made.
+              </dd>
+            </div>
+            <div>
+              <dt>Scheduled</dt>
+              <dd>An unsigned transfer plan exists. No money has moved.</dd>
+            </div>
+            <div>
+              <dt>Paid</dt>
+              <dd>
+                Finalized on-chain evidence reconciles the exact transfers and
+                the fee.
+              </dd>
+            </div>
+            <div>
+              <dt>Unclaimed, held, excluded</dt>
+              <dd>
+                Visible unresolved states with public reasons. A missing wallet
+                stays unclaimed. Rows below $2 accrue to the next cycle.
+              </dd>
+            </div>
+          </dl>
+          <p>
+            Unused committed funds roll over without raising the cap. A wallet
+            registered after a proposal is generated applies to the next cycle
+            and never touches the current one.
+          </p>
+        </section>
+        <section className="custody-proof">
+          <h2>Commit through an instrument you control.</h2>
+          <ul>
+            <li>
+              A Squads v4 multisig vault on Solana, or a Sablier Lockup v4
+              stream on Base or Ethereum. Both are reviewed, immutable,
+              third-party programs. Slop holds no key, admin, or fee position in
+              either.
+            </li>
+            <li>
+              Direct gifts go straight from your wallet to the steward&apos;s
+              published address and are recorded append-only under funding
+              records, self-reported until a verifier confirms them on-chain.
+            </li>
+            <li>
+              Neither is escrow and nothing is guaranteed. A commitment is a
+              balance claim; whether its signers can act is not something this
+              protocol can attest to yet, so public surfaces say so.
+            </li>
+            <li>
+              GitHub identity never proves wallet control. A receiving address
+              appears on this site only through a reviewed manifest change.
+            </li>
+          </ul>
+        </section>
+        <section className="custody-proof sponsor-note">
+          <h2>Optional: pay for review as its own line.</h2>
+          <p>
+            Accepted review already scores from the shared pool. A named review
+            budget is a second monthly cash line that pays accepted review work
+            on top of that unchanged treatment, with its own cap, its own
+            commitment, and separate public arithmetic. It becomes operative
+            only after its own funding is committed, and it cannot be added in
+            the same change that lowers the contributor cap.
+          </p>
+          <p>
+            <ExternalLinkAnchor href={`${protocolRoot}/review-budget-v1.md`}>
+              Additive review budget v1
+            </ExternalLinkAnchor>
+          </p>
+        </section>
+      </details>
+      <details className="sponsor-details">
+        <summary>
+          Audience report ·{" "}
+          {whoBuildsDateLabel(WHO_BUILDS_SNAPSHOT.generatedAt)}
+        </summary>
+        <WhoBuildsOnSlop retry={retry} state={state} />
+      </details>
       <section className="custody-proof mechanism-sources">
         <h2>Verify before you commit.</h2>
         <ul>
@@ -4061,49 +4053,6 @@ function SponsorsPage({
           </li>
         </ul>
       </section>
-      <section className="worked-example sponsor-start">
-        <div>
-          <h2>Start with a pull request.</h2>
-          <p>
-            New repository: draft the manifest and agent brief at Add a project,
-            then open the proposal on GitHub. New projects begin paused, and
-            payments stay disabled until funding and signer-accessibility
-            requirements are satisfied. A verified balance alone does not enable
-            payments.
-          </p>
-          <p>
-            Existing project: the steward publishes a receiving address or a
-            commitment instrument through a reviewed manifest change. There is
-            no form and no admin panel. Every address on this site renders from
-            the reviewed manifest or not at all.
-          </p>
-        </div>
-        <ul>
-          <li>
-            <Link href="/projects/new">Add a project</Link>
-          </li>
-          <li>
-            <ExternalLinkAnchor
-              href={`${SOURCE_REPOSITORY}/tree/develop/projects`}
-            >
-              Reviewed manifests
-            </ExternalLinkAnchor>
-          </li>
-          <li>
-            <a href={CONTACT_MAILTO}>Email {CONTACT_EMAIL}</a>
-          </li>
-          <li>
-            <ExternalLinkAnchor href={SOCIAL_TELEGRAM}>
-              Ask on Telegram
-            </ExternalLinkAnchor>
-          </li>
-          <li>
-            <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
-              Open an issue on GitHub
-            </ExternalLinkAnchor>
-          </li>
-        </ul>
-      </section>
     </main>
   );
 }
@@ -4115,6 +4064,10 @@ function ReceiptsPage({
   state: DataState;
   retry: () => void;
 }) {
+  const [query, setQuery] = useState(
+    () => new URLSearchParams(window.location.search).get("q") ?? "",
+  );
+  const search = query.trim().toLowerCase();
   const receipts =
     state.status === "ready"
       ? state.snapshot.attributions
@@ -4125,83 +4078,150 @@ function ReceiptsPage({
             ),
           )
       : [];
+  const matching = receipts.filter((entry) =>
+    [
+      entry.actor?.login,
+      entry.sourceUrl,
+      entry.run?.runId,
+      entry.run?.repositoryId,
+      entry.identifier,
+      modelIdentityKey(entry.provider, entry.model).key,
+      entry.client,
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(search),
+  );
   return (
-    <main className="shell evidence-page">
+    <main className="shell evidence-page receipt-page">
       <section className="evidence-page-hero">
-        <h1>Signed runs, without the private trace.</h1>
+        <h1>Run receipts</h1>
         <p>
-          Public receipts show identity and byte-continuity metadata. Raw
-          prompts, responses, source files, private trace bodies, and signing
-          material never appear here.
+          Device signatures attest byte continuity. Model and usage declarations
+          are self-reported; private traces stay private.
         </p>
         <DataNotice retry={retry} state={state} />
       </section>
-      {state.status === "ready" && receipts.length === 0 ? (
-        <EmptyState text="No publishable signed receipts in this snapshot." />
+      <label className="receipt-search">
+        Find a receipt
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Contributor, model, client or run ID"
+          disabled={state.status !== "ready"}
+        />
+      </label>
+      {state.status === "ready" ? (
+        <p className="receipt-count" role="status">
+          {matching.length} of {receipts.length} receipts
+        </p>
       ) : null}
-      <div className="receipt-grid">
-        {receipts.map((entry) => {
+      {state.status === "ready" && matching.length === 0 ? (
+        <EmptyState
+          text={
+            receipts.length === 0
+              ? "No publishable signed receipts in this snapshot."
+              : "No receipts match this search."
+          }
+        />
+      ) : null}
+      <div className="receipt-list">
+        {matching.map((entry) => {
           const run = entry.run;
           if (!run) return null;
+          const workLabel = new URL(entry.sourceUrl).pathname
+            .slice(1)
+            .replace(/\/(?:pull|issues)\//u, " #");
           return (
-            <article className="receipt-card" key={run.runId}>
-              <header>
-                <span
-                  className="verification-seal"
-                  aria-label="Device signature present"
-                  role="img"
-                >
-                  S
-                </span>
-                <div>
-                  <span>Verified receipt</span>
-                  <strong>{run.runId}</strong>
-                </div>
-              </header>
-              <dl>
-                <div>
-                  <dt>Project</dt>
-                  <dd>{run.projectId}</dd>
-                </div>
-                <div>
-                  <dt>Model</dt>
-                  <dd>
+            <article className="receipt-record" key={run.runId}>
+              <div className="receipt-links">
+                <strong>
+                  {entry.actor ? (
+                    <Link
+                      href={`/contributors/${encodeURIComponent(entry.actor.login)}`}
+                    >
+                      {entry.actor.login}
+                    </Link>
+                  ) : (
+                    "Unknown contributor"
+                  )}
+                </strong>
+                <ExternalLinkAnchor href={entry.sourceUrl}>
+                  {workLabel}
+                </ExternalLinkAnchor>
+              </div>
+              <details>
+                <summary>
+                  <span>
                     {run.provider}/{run.model}
-                  </dd>
+                  </span>
+                  <time dateTime={run.completedAt}>
+                    {formatDate(run.completedAt)}
+                  </time>
+                  <ChevronRight aria-hidden="true" />
+                </summary>
+                <div className="receipt-details">
+                  <dl>
+                    <div>
+                      <dt>Run ID</dt>
+                      <dd>
+                        <code>{run.runId}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Project</dt>
+                      <dd>{run.projectId}</dd>
+                    </div>
+                    <div>
+                      <dt>Client</dt>
+                      <dd>{run.client}</dd>
+                    </div>
+                    <div>
+                      <dt>Tokens</dt>
+                      <dd>
+                        {run.usage.confidence === "unavailable"
+                          ? "Unavailable"
+                          : new Intl.NumberFormat("en-US").format(
+                              run.usage.totalTokens,
+                            )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Usage evidence</dt>
+                      <dd>{run.usage.confidence}</dd>
+                    </div>
+                    <div>
+                      <dt>Skill revision</dt>
+                      <dd>
+                        <code>{run.skillRevision}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Skill digest</dt>
+                      <dd>
+                        <code>{run.skillSha256}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Device key</dt>
+                      <dd>
+                        <code>{run.deviceKeyId}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Private trace digest</dt>
+                      <dd>
+                        {run.traceUpload ? (
+                          <code>{run.traceUpload.sha256}</code>
+                        ) : (
+                          "Not available"
+                        )}
+                      </dd>
+                    </div>
+                  </dl>
                 </div>
-                <div>
-                  <dt>Client</dt>
-                  <dd>{run.client}</dd>
-                </div>
-                <div>
-                  <dt>Completed</dt>
-                  <dd>{formatDate(run.completedAt)}</dd>
-                </div>
-                <div>
-                  <dt>Tokens</dt>
-                  <dd>
-                    {new Intl.NumberFormat("en-US").format(
-                      run.usage.totalTokens,
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Device key</dt>
-                  <dd>
-                    <code>{run.deviceKeyId.slice(0, 16)}…</code>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Private trace</dt>
-                  <dd>
-                    {run.traceUpload ? (
-                      <code>{run.traceUpload.sha256.slice(0, 16)}…</code>
-                    ) : (
-                      "not available"
-                    )}
-                  </dd>
-                </div>
-              </dl>
+              </details>
             </article>
           );
         })}
@@ -4216,14 +4236,10 @@ function ModelsPage({ state, retry }: { state: DataState; retry: () => void }) {
   return (
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
-        <h1>Which models merge. By the receipts.</h1>
+        <h1>Models</h1>
         <p>
-          Every merged pull request and accepted review on the leaderboard can
-          carry a model declaration by the person who did the work. This page
-          counts those declarations next to the outcomes they were made on.
-          Model identity is self-reported, adds no points, and is never checked
-          against the provider. A signed receipt binds a device to its
-          declaration; neither form verifies which model produced the work.
+          Accepted work, grouped by self-reported model. Declarations and device
+          signatures do not verify the provider or change the score.
         </p>
         <DataNotice retry={retry} state={state} />
       </section>
@@ -4241,6 +4257,10 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
   const modelRows = summary.models
     .filter((row) => row.mergedPullRequests > 0 || row.acceptedReviews > 0)
     .slice(0, 30);
+  const largestMergedCount = Math.max(
+    1,
+    ...modelRows.map((row) => row.mergedPullRequests),
+  );
   const concentrated = modelRows.filter(
     (row) =>
       row.mergedPullRequests >= 40 && (row.topContributorShare ?? 0) > 0.5,
@@ -4294,42 +4314,27 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
       <section className="model-outcomes-section">
         <h2>Accepted outcomes by model</h2>
         <p>
-          A pull request counts for a model when its author declared that model
-          on the pull request; a review counts when the reviewer declared it on
-          the review. Declarations by anyone else never count. PR share uses all
-          merged PRs in this snapshot, including those without a declared model.
-          A PR naming several models counts once for each, so shares overlap.
-          The busiest contributor column counts that person’s outcomes for this
-          model; it is not the model’s share of all work.
+          Counts use declarations by the person who authored the work. Bars
+          compare merged PR counts. Shares include all merged PRs and can
+          overlap for multi-model work.
         </p>
-        <section
-          className="plain-table-wrap"
+        <ol
+          className="model-outcome-list"
           aria-label="Accepted outcomes by model"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-          tabIndex={0}
         >
-          <table className="plain-table model-outcomes-table">
-            <thead>
-              <tr>
-                <th scope="col">Model</th>
-                <th scope="col">Merged PRs</th>
-                <th scope="col">Share of all merged PRs</th>
-                <th scope="col">Signed PRs</th>
-                <th scope="col">PR points</th>
-                <th scope="col">Accepted reviews</th>
-                <th scope="col">Declaring contributors</th>
-                <th scope="col">Outcomes from busiest contributor</th>
-              </tr>
-            </thead>
-            <tbody>
-              {modelRows.map((row) => (
-                <tr key={row.key}>
-                  <th className="model-identity" scope="row">
-                    <span>{row.provider}/</span>
-                    {row.model}
-                  </th>
-                  <td>{count.format(row.mergedPullRequests)}</td>
-                  <td>
+          {modelRows.map((row) => (
+            <li key={row.key}>
+              <h3 className="model-identity">
+                <span>{row.provider}/</span>
+                {row.model}
+              </h3>
+              <div className="model-outcome-metrics">
+                <span>
+                  <strong>{count.format(row.mergedPullRequests)}</strong> merged
+                  PRs
+                </span>
+                <span>
+                  <strong>
                     {totals.mergedPullRequests === 0
                       ? "n/a"
                       : row.mergedPullRequests > 0 &&
@@ -4338,94 +4343,144 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                             0.1
                         ? "<0.1%"
                         : `${((100 * row.mergedPullRequests) / totals.mergedPullRequests).toFixed(1)}%`}
-                  </td>
-                  <td>
-                    {row.signedPullRequests > 0
-                      ? count.format(row.signedPullRequests)
-                      : "none"}
-                  </td>
-                  <td>{points(row.pullRequestPoints)}</td>
-                  <td>{count.format(row.acceptedReviews)}</td>
-                  <td>{count.format(row.contributors)}</td>
-                  <td
-                    className={
-                      (row.topContributorShare ?? 0) > 0.5
-                        ? "model-share-high"
-                        : undefined
-                    }
-                  >
-                    {row.topContributorShare === null
-                      ? "n/a"
-                      : `${count.format(row.topContributorOutcomes)} of ${count.format(row.mergedPullRequests + row.acceptedReviews)} outcomes`}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+                  </strong>{" "}
+                  of all merged PRs
+                </span>
+                <span>
+                  <strong>{count.format(row.acceptedReviews)}</strong> accepted
+                  reviews
+                </span>
+              </div>
+              <div className="model-outcome-bar" aria-hidden="true">
+                <span
+                  style={{
+                    width: `${(100 * row.mergedPullRequests) / largestMergedCount}%`,
+                  }}
+                />
+              </div>
+              <details className="model-outcome-details">
+                <summary>Evidence and diagnostics</summary>
+                <dl>
+                  <div>
+                    <dt>Signed PRs</dt>
+                    <dd>
+                      {row.signedPullRequests > 0 ? (
+                        <Link
+                          href={`/receipts?q=${encodeURIComponent(row.key)}`}
+                        >
+                          {count.format(row.signedPullRequests)}
+                        </Link>
+                      ) : (
+                        "none"
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>PR points</dt>
+                    <dd>{points(row.pullRequestPoints)}</dd>
+                  </div>
+                  <div>
+                    <dt>Declaring contributors</dt>
+                    <dd>{count.format(row.contributors)}</dd>
+                  </div>
+                  <div>
+                    <dt>Outcomes from busiest contributor</dt>
+                    <dd
+                      className={
+                        (row.topContributorShare ?? 0) > 0.5
+                          ? "model-share-high"
+                          : undefined
+                      }
+                    >
+                      {row.topContributorShare === null
+                        ? "n/a"
+                        : `${count.format(row.topContributorOutcomes)} of ${count.format(row.mergedPullRequests + row.acceptedReviews)} outcomes`}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Exact declarations</dt>
+                    <dd>
+                      <ul>
+                        {row.declaredAs.map((declaration) => (
+                          <li key={declaration.identifier}>
+                            <code>{declaration.identifier}</code> (
+                            {count.format(declaration.count)})
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                </dl>
+              </details>
+            </li>
+          ))}
+        </ol>
         <p className="model-outcomes-note">
           {count.format(totals.distinctDeclaredIdentifiers)} distinct declared
           strings fold to {count.format(totals.distinctModels)} models by case
           and a short provider alias list. Some rows are still one model under
-          two names. The table shows models with at least one accepted outcome,
-          up to 30.
+          two names. Bars compare merged PR counts. The list shows models with
+          at least one accepted outcome, up to 30.
         </p>
       </section>
 
-      <section className="model-outcomes-section">
-        <h2>Harnesses, from signed receipts only</h2>
+      <details className="model-outcomes-section model-clients">
+        <summary>Clients from signed receipts</summary>
         <p>
-          The client is known only when a run receipt exists, so this table
-          covers signed runs. Output tokens come from receipts that report exact
-          usage.
+          Client counts cover signed runs only. Output tokens use receipts with
+          exact usage.
         </p>
         {summary.clients.length === 0 ? (
           <EmptyState text="No signed receipts in this snapshot." />
         ) : (
-          <section
-            className="plain-table-wrap"
-            aria-label="Harness outcomes"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-            tabIndex={0}
-          >
-            <table className="plain-table model-outcomes-table">
-              <thead>
-                <tr>
-                  <th scope="col">Harness</th>
-                  <th scope="col">Signed runs</th>
-                  <th scope="col">Contributors</th>
-                  <th scope="col">Models on those runs</th>
-                  <th scope="col">Merged PRs</th>
-                  <th scope="col">Median output tokens</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.clients.map((row) => (
-                  <tr key={row.client}>
-                    <th className="model-identity" scope="row">
-                      {row.client}
-                    </th>
-                    <td>{count.format(row.signedRuns)}</td>
-                    <td>{count.format(row.contributors)}</td>
-                    <td className="model-identity-list">
-                      {row.models
-                        .slice(0, 3)
-                        .map((entry) => `${entry.key} (${entry.count})`)
-                        .join(", ")}
-                    </td>
-                    <td>{count.format(row.mergedPullRequests)}</td>
-                    <td>
-                      {row.medianOutputTokens === null
-                        ? "not reported"
-                        : `${count.format(row.medianOutputTokens)} (${row.runsWithExactUsage} runs)`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
+          <ul className="model-outcome-list" aria-label="Client outcomes">
+            {summary.clients.map((row) => (
+              <li key={row.client}>
+                <h3 className="model-identity">{row.client}</h3>
+                <div className="model-outcome-metrics">
+                  <span>
+                    <strong>{count.format(row.signedRuns)}</strong> signed runs
+                  </span>
+                  <span>
+                    <strong>{count.format(row.mergedPullRequests)}</strong>{" "}
+                    merged PRs
+                  </span>
+                  <span>
+                    <strong>{count.format(row.contributors)}</strong>{" "}
+                    contributors
+                  </span>
+                </div>
+                <details className="model-outcome-details">
+                  <summary>Models and usage</summary>
+                  <dl>
+                    <div>
+                      <dt>Declared models</dt>
+                      <dd>
+                        <ul>
+                          {row.models.map((model) => (
+                            <li key={model.key}>
+                              <code>{model.key}</code> (
+                              {count.format(model.count)})
+                            </li>
+                          ))}
+                        </ul>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Median output tokens</dt>
+                      <dd>
+                        {row.medianOutputTokens === null
+                          ? "not reported"
+                          : `${count.format(row.medianOutputTokens)} (${count.format(row.runsWithExactUsage)} runs)`}
+                      </dd>
+                    </div>
+                  </dl>
+                </details>
+              </li>
+            ))}
+          </ul>
         )}
-      </section>
+      </details>
 
       <section className="model-outcomes-section">
         <h2>Read before quoting</h2>
@@ -4570,6 +4625,7 @@ function AppContent() {
   const route = useRoute();
   useInitialHashScroll();
   const needsSnapshot = ![
+    "home",
     "points",
     "login",
     "how-it-works",
@@ -4582,7 +4638,7 @@ function AppContent() {
   const [state, retry] = useSnapshot(needsSnapshot);
   const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
-  if (route.kind === "home") content = <HomePage retry={retry} state={state} />;
+  if (route.kind === "home") content = <HomePage />;
   else if (route.kind === "points") content = <PointsPage />;
   else if (route.kind === "login") content = <LoginPage />;
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
@@ -4648,7 +4704,7 @@ function AppContent() {
   } else content = <NotFound />;
   return (
     <>
-      <Header isHome={route.kind === "home"} />
+      <Header />
       <Suspense
         fallback={
           <main className="shell route-main" role="status">

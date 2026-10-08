@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1",
+  "kind": "external-contribution-share",
+  "projectId": "delta-star",
+  "cycleId": "2026-09",
+  "status": "provisional",
+  "generatedAt": "2026-10-01T05:52:22.205Z",
+  "contributionWindow": {
+    "from": "2026-09-01T00:00:00.000Z",
+    "to": "2026-10-01T00:00:00.000Z"
+  },
+  "scoringRuleVersion": "slop-score-v2",
+  "sourceSnapshotSha256": "2b1bd80aef96961667aa5ac83af631807e07fa41dfe5450a741d3b0e11c0663f",
+  "platformSharePartsPerMillion": 100000,
+  "entries": []
+}

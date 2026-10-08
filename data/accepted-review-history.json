@@ -62,6 +62,130 @@
       },
       "format": "machine-marker",
       "status": "self-reported"
+    },
+    {
+      "id": "PRR_kwDOMT5cIs8AAAABKhZmaQ:machine-marker:0",
+      "sourceId": "PRR_kwDOMT5cIs8AAAABKhZmaQ",
+      "sourceUrl": "https://github.com/elizaOS/eliza/pull/24021#pullrequestreview-5001078377",
+      "artifactId": "PR_kwDOMT5cIs8AAAABAmbjtA",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "identifier": "openai/gpt-5.6-sol",
+      "client": "codex",
+      "skillRevision": "SlopDotCash/slopdotcash@2744eb9bd27513b5c5081b61cf5d17494a583061:skills/contribute-to-eliza",
+      "run": {
+        "schemaVersion": "2",
+        "runId": "run_01M0NNJ276YQDSXKPK1Z7QP286",
+        "projectId": "eliza",
+        "repositoryId": "elizaOS/eliza",
+        "startedAt": "2026-08-22T21:20:50.407Z",
+        "completedAt": "2026-08-22T21:21:36.462Z",
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "client": "codex",
+        "skillRevision": "SlopDotCash/slopdotcash@2744eb9bd27513b5c5081b61cf5d17494a583061:skills/contribute-to-eliza",
+        "skillSha256": "2113430280ffe23a076bfd6a215e2547964a82f5f01779584fc6f1e4892e8809",
+        "policyAcknowledgement": {
+          "policyRevision": "2026-08-18.1",
+          "licenseSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+          "inboundTermsSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+          "prizeRulesSha256": null,
+          "acknowledgedAt": "2026-08-22T21:20:51.963Z"
+        },
+        "usage": {
+          "source": "ccusage-session-v20",
+          "confidence": "unavailable",
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "totalTokens": 0,
+          "costMicroUsd": "0",
+          "sessionCount": 0
+        },
+        "trajectorySha256": "a5c3755abf105fa641571e873c552b6d69b97ea3f3913ae61c7b1c4a1d2c08c0",
+        "traceUpload": {
+          "authority": "https://api.slop.cash",
+          "serverRunId": "0faad8fc-bd48-4c64-85a7-dbe1096fbd1b",
+          "objectId": "sha256:a5c3755abf105fa641571e873c552b6d69b97ea3f3913ae61c7b1c4a1d2c08c0",
+          "sha256": "a5c3755abf105fa641571e873c552b6d69b97ea3f3913ae61c7b1c4a1d2c08c0"
+        },
+        "signatureAlgorithm": "ed25519",
+        "devicePublicKey": "MCowBQYDK2VwAyEAM-QnG1GIrFCQc80xfVVCicm6NwnOconuAnNxqQ3dJw0",
+        "deviceKeyId": "89e303b0db92a7b63fb55d5e6fbf1be4dc2eff6f41e4520fb74ee0b238899486",
+        "deviceSignature": "hVHLauiqaI2Wn7I_z8jfzb15miIs2zrYg1JiC6xyxxiHQWm_7vMQMoSxuV4Smg58yHMnlYi9ffi5KX-9uFg-Ag"
+      },
+      "format": "machine-marker",
+      "status": "self-reported"
+    },
+    {
+      "id": "PRR_kwDOMT5cIs8AAAABKivXtw:machine-marker:0",
+      "sourceId": "PRR_kwDOMT5cIs8AAAABKivXtw",
+      "sourceUrl": "https://github.com/elizaOS/eliza/pull/25848#pullrequestreview-5002483639",
+      "artifactId": "PR_kwDOMT5cIs8AAAABAs2pVA",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "identifier": "openai/gpt-5.6-sol",
+      "client": "codex",
+      "skillRevision": "SlopDotCash/slopdotcash@92d692518c3d832ac9b203076ef691a54e61a9fa:skills/contribute-to-eliza",
+      "run": {
+        "schemaVersion": "2",
+        "runId": "run_01M0QCFQDBTMFHJHWB3YZPNAWV",
+        "projectId": "eliza",
+        "repositoryId": "elizaOS/eliza",
+        "startedAt": "2026-08-23T13:20:45.484Z",
+        "completedAt": "2026-08-23T13:25:30.810Z",
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "client": "codex",
+        "skillRevision": "SlopDotCash/slopdotcash@92d692518c3d832ac9b203076ef691a54e61a9fa:skills/contribute-to-eliza",
+        "skillSha256": "97666aac5e8039955e335470436f46557ee59dcf48201fe39c429c078e373a0b",
+        "policyAcknowledgement": {
+          "policyRevision": "2026-08-18.1",
+          "licenseSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+          "inboundTermsSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+          "prizeRulesSha256": null,
+          "acknowledgedAt": "2026-08-23T13:20:46.969Z"
+        },
+        "usage": {
+          "source": "ccusage-session-v20",
+          "confidence": "unavailable",
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "totalTokens": 0,
+          "costMicroUsd": "0",
+          "sessionCount": 0
+        },
+        "trajectorySha256": "535031eb54a1d577790f7b02f5ef618c8c68022b30c20607600a686075d65501",
+        "traceUpload": {
+          "authority": "https://api.slop.cash",
+          "serverRunId": "ae7f3a9d-611f-4cde-a4dd-37094a6faac2",
+          "objectId": "sha256:535031eb54a1d577790f7b02f5ef618c8c68022b30c20607600a686075d65501",
+          "sha256": "535031eb54a1d577790f7b02f5ef618c8c68022b30c20607600a686075d65501"
+        },
+        "signatureAlgorithm": "ed25519",
+        "devicePublicKey": "MCowBQYDK2VwAyEAM-QnG1GIrFCQc80xfVVCicm6NwnOconuAnNxqQ3dJw0",
+        "deviceKeyId": "89e303b0db92a7b63fb55d5e6fbf1be4dc2eff6f41e4520fb74ee0b238899486",
+        "deviceSignature": "S81VfdCRAHCdgWqf2Tb87m_HHXuRhykAdOJAEVH4xr8QXxzk9O3xV3P6MZe7UkeXJHI7tkxmrPC-ttxqXa7oCw"
+      },
+      "format": "machine-marker",
+      "status": "self-reported"
     }
   ],
   "events": [

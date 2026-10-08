@@ -536,10 +536,13 @@ export function isRecognizedTestFile(path: string): boolean {
   );
 }
 
-export function materialTestStats(files: PullRequestFile[]): {
+export function materialTestStats(files: PullRequestFile[] | null): {
   additions: number;
   churn: number;
 } {
+  if (files === null) {
+    throw new Error("Cannot assess tests without pull request file detail");
+  }
   const testFiles = files.filter((file) => isRecognizedTestFile(file.path));
   const additions = testFiles.reduce(
     (total, file) => total + file.additions,
@@ -552,13 +555,17 @@ export function materialTestStats(files: PullRequestFile[]): {
   return { additions, churn };
 }
 
-export function hasMaterialTestChange(files: PullRequestFile[]): boolean {
+export function hasMaterialTestChange(
+  files: PullRequestFile[] | null,
+): boolean {
   const { additions, churn } = materialTestStats(files);
   return additions >= MATERIAL_TEST_ADDITIONS && churn >= MATERIAL_TEST_CHURN;
 }
 
 /** Open PRs with non-trivial test progress that still miss the published bar. */
-export function isNearMaterialTestChange(files: PullRequestFile[]): boolean {
+export function isNearMaterialTestChange(
+  files: PullRequestFile[] | null,
+): boolean {
   if (hasMaterialTestChange(files)) {
     return false;
   }
@@ -1918,6 +1925,7 @@ function isClaimLabel(
 function issueClaim(
   issue: IssueRecord,
   referenceTime: string,
+  linkedPullRequests: PullRequestRecord[],
 ): WorkItemClaimStatus {
   const assignees = issue.assignees.filter((actor) => !isBotActor(actor));
   if (assignees.length > 0) {
@@ -1926,6 +1934,19 @@ function issueClaim(
       source: "assignee",
       kind: "implementation",
       actors: assignees,
+      claimedAt: null,
+    };
+  }
+  if (linkedPullRequests.length > 0) {
+    return {
+      status: "claimed",
+      source: "pull-request",
+      kind: "implementation",
+      actors: dedupeByNodeId(
+        linkedPullRequests.flatMap((pullRequest) =>
+          pullRequest.author ? [pullRequest.author] : [],
+        ),
+      ).sort((left, right) => left.id.localeCompare(right.id)),
       claimedAt: null,
     };
   }
@@ -2109,6 +2130,7 @@ function workItemSelection(input: CandidateSelectionInput): WorkItemSelection {
 function issueWorkItem(
   issue: IssueRecord,
   referenceTime: string,
+  linkedPullRequests: PullRequestRecord[],
 ): {
   item: WorkItem;
   attribution: AttributionAssessment;
@@ -2116,7 +2138,7 @@ function issueWorkItem(
   const sources = issueTextSources(issue);
   const evidence = assessEvidence(sources);
   const attribution = assessModelAttribution(sources);
-  const claim = issueClaim(issue, referenceTime);
+  const claim = issueClaim(issue, referenceTime, linkedPullRequests);
   const labels = uniqueSorted(issue.labels.map((label) => label.name));
   const actionability = workItemActionability(issue.labels, false);
   return {
@@ -3012,6 +3034,7 @@ export function createLeaderboardSnapshot(
       }
     }
 
+    const reviewLedgerStart = ledger.length;
     const ratification = scoreRatifications.get(pullRequest.id);
     const awardedReviewers = new Set<string>();
     const hasEvaluatedReviewReservation = (actorId: string): boolean =>
@@ -3117,7 +3140,7 @@ export function createLeaderboardSnapshot(
           "Immutable maintainer score ratification for an accepted outcome.",
       });
     }
-    for (const review of dedupeByNodeId(pullRequest.reviews).sort(
+    const orderedReviews = dedupeByNodeId(pullRequest.reviews).sort(
       (left, right) => {
         if (left.submittedAt === right.submittedAt) {
           return left.id.localeCompare(right.id);
@@ -3130,7 +3153,8 @@ export function createLeaderboardSnapshot(
         }
         return left.submittedAt.localeCompare(right.submittedAt);
       },
-    )) {
+    );
+    for (const review of orderedReviews) {
       if (review.author && !isBotActor(review.author)) {
         actorEntry(entries, review.author).rawActivity.reviews += 1;
       }
@@ -3207,6 +3231,45 @@ export function createLeaderboardSnapshot(
       } else {
         excludeReview(pullRequest, review, "reviewer-cycle-cap");
       }
+    }
+    // Preserve the later verification without another award or evidence bonus.
+    // Missing reviewed commits cannot establish a change of head.
+    for (const event of ledger.slice(reviewLedgerStart)) {
+      if (
+        event.category !== "substantive-review" ||
+        event.source.kind !== "review"
+      )
+        continue;
+      const firstIndex = orderedReviews.findIndex(
+        (review) => review.id === event.source.id,
+      );
+      const first = orderedReviews[firstIndex];
+      if (
+        !first?.commitId ||
+        reviewExclusionReason(first, pullRequest) !== null
+      )
+        continue;
+      const heads = new Set<string>();
+      const history: NonNullable<ScoreEvent["reviewHistory"]> = [];
+      for (const review of orderedReviews.slice(firstIndex)) {
+        if (
+          review.author?.id !== event.actor.id ||
+          !review.commitId ||
+          !review.submittedAt ||
+          heads.has(review.commitId) ||
+          reviewExclusionReason(review, pullRequest) !== null
+        )
+          continue;
+        heads.add(review.commitId);
+        history.push({
+          sourceId: review.id,
+          state: review.state as "APPROVED" | "CHANGES_REQUESTED",
+          commitId: review.commitId,
+          submittedAt: review.submittedAt,
+          url: review.url,
+        });
+      }
+      if (history.length > 1) event.reviewHistory = history;
     }
   }
 
@@ -3313,8 +3376,31 @@ export function createLeaderboardSnapshot(
     }
   }
 
+  const issuePullRequests = new Map<string, PullRequestRecord[]>();
+  for (const pullRequest of openPullRequests) {
+    for (const issueId of pullRequest.closingIssueIds) {
+      const linked = issuePullRequests.get(issueId) ?? [];
+      linked.push(pullRequest);
+      issuePullRequests.set(issueId, linked);
+    }
+  }
+  const openPullRequestById = new Map(
+    openPullRequests.map((record) => [record.id, record]),
+  );
+  for (const issue of openIssues) {
+    const linked = issuePullRequests.get(issue.id) ?? [];
+    for (const id of issue.referencedPullRequestIds ?? []) {
+      const pullRequest = openPullRequestById.get(id);
+      if (pullRequest) linked.push(pullRequest);
+    }
+    issuePullRequests.set(issue.id, dedupeByNodeId(linked));
+  }
   const issueQueue = openIssues.map((record) =>
-    issueWorkItem(record, input.generatedAt),
+    issueWorkItem(
+      record,
+      input.generatedAt,
+      issuePullRequests.get(record.id) ?? [],
+    ),
   );
   const pullRequestQueue = openPullRequests.map((record) =>
     pullRequestWorkItem(
@@ -3352,53 +3438,42 @@ export function createLeaderboardSnapshot(
         : [],
     ),
   );
+  const retainedRejectedSources = new Set<string>();
   for (const event of ledger) {
     const candidate = retainedAttributionCandidates.get(event.id);
     if (!candidate || !input.verifyRunReceipt) continue;
-    try {
-      assertAttributionValue(candidate, `retained attribution ${candidate.id}`);
-      const verifiedRun = input.verifyRunReceipt(candidate.run);
-      const parentPullRequestId = event.id.split(":", 1)[0];
-      const claims = verifiedRun.traceUpload
-        ? [
-            `client run:${verifiedRun.runId}`,
-            `server run:${verifiedRun.traceUpload.serverRunId}`,
-            `trace object:${verifiedRun.traceUpload.objectId}`,
-          ]
-        : [];
-      if (
-        candidate.format !== "machine-marker" ||
-        candidate.actor?.id !== event.actor.id ||
-        candidate.sourceId !== event.source.id ||
-        candidate.sourceUrl !== event.source.url ||
-        candidate.artifactId !== parentPullRequestId ||
-        candidate.run === null ||
-        !verifiedRun.traceUpload ||
-        verifiedRun.repositoryId !== event.repository ||
-        verifiedRun.provider !== candidate.provider ||
-        verifiedRun.model !== candidate.model ||
-        verifiedRun.client !== candidate.client ||
-        verifiedRun.skillRevision !== candidate.skillRevision ||
-        Date.parse(verifiedRun.completedAt) > Date.parse(event.occurredAt) ||
-        claims.some((claim) => receiptClaims.has(claim))
-      ) {
-        continue;
-      }
-      for (const claim of claims) receiptClaims.add(claim);
-      event.evidenceBonusBasisPoints = 1_500;
-      attributions.push({ ...candidate, run: verifiedRun });
-    } catch {
-      // Historical attribution is optional. Invalid replay never removes the
-      // independently accepted base review credit.
+    const replay = replayRetainedReviewAttribution(
+      event,
+      candidate,
+      input.verifyRunReceipt,
+      receiptClaims,
+    );
+    // Historical attribution is optional. A rejected replay never removes the
+    // independently accepted base review credit.
+    if ("rejection" in replay) {
+      retainedRejectedSources.add(event.source.id);
+      overallAttribution.invalidMarkers.push({
+        sourceId: event.source.id,
+        sourceUrl: event.source.url,
+        reason: replay.rejection,
+      });
+      continue;
     }
+    for (const claim of replay.claims) receiptClaims.add(claim);
+    event.evidenceBonusBasisPoints = 1_500;
+    attributions.push({ ...candidate, run: replay.run });
   }
   const retainedValidSourceCount =
     attributions.length - overallAttribution.declarations.length;
   const eligibleSourceCount =
-    overallAttribution.coverage.eligibleSourceCount + retainedValidSourceCount;
+    overallAttribution.coverage.eligibleSourceCount +
+    retainedValidSourceCount +
+    retainedRejectedSources.size;
   const validSourceCount =
     overallAttribution.coverage.validSourceCount + retainedValidSourceCount;
-  const invalidSourceCount = overallAttribution.coverage.invalidSourceCount;
+  const invalidSourceCount = new Set(
+    overallAttribution.invalidMarkers.map((marker) => marker.sourceId),
+  ).size;
   const attributionCoverage: AttributionCoverage = {
     ...overallAttribution.coverage,
     status:
@@ -3413,6 +3488,8 @@ export function createLeaderboardSnapshot(
             : "missing",
     eligibleSourceCount,
     validSourceCount,
+    invalidSourceCount,
+    missingSourceCount: eligibleSourceCount - validSourceCount,
   };
   // A receipt can look valid when a review is assessed in isolation but be
   // rejected by the snapshot-wide replay guard because another scored source
@@ -4310,7 +4387,7 @@ function assertWorkItemValue(
   assertEnum(claim.status, ["claimed", "unclaimed"], `${path}.claim.status`);
   assertEnum(
     claim.source,
-    ["assignee", "label", "claim-comment", "none"],
+    ["assignee", "label", "claim-comment", "pull-request", "none"],
     `${path}.claim.source`,
   );
   if (claim.kind !== null) {
@@ -4339,6 +4416,7 @@ function assertWorkItemValue(
     (claim.status === "claimed" &&
       (claim.source === "none" || claim.kind !== expectedClaimKind)) ||
     (claim.source === "assignee" && claim.actors.length === 0) ||
+    (claim.source === "pull-request" && expectedKind !== "issue") ||
     (claim.source === "claim-comment" &&
       (claim.actors.length !== 1 || claim.claimedAt === null)) ||
     (claim.source !== "claim-comment" && claim.claimedAt !== null) ||
@@ -4601,6 +4679,66 @@ function assertLedgerValue(
     `${path}.source.kind`,
   );
   assertString(source.title, `${path}.source.title`);
+  if ("reviewHistory" in event) {
+    if (event.category !== "substantive-review" || source.kind !== "review")
+      throw new Error(
+        `${path}.reviewHistory is reserved for formal review awards`,
+      );
+    if (!Array.isArray(event.reviewHistory))
+      throw new Error(`${path}.reviewHistory must be an array`);
+    const history = event.reviewHistory;
+    if (history.length < 2)
+      throw new Error(`${path}.reviewHistory must include a later decision`);
+    const ids = new Set<string>();
+    const heads = new Set<string>();
+    let previousTime = "";
+    let previousId = "";
+    for (const [index, value] of history.entries()) {
+      const historyPath = `${path}.reviewHistory[${index}]`;
+      const decision = assertObject(value, historyPath);
+      if (
+        Object.keys(decision).sort().join("\0") !==
+        "commitId\0sourceId\0state\0submittedAt\0url"
+      )
+        throw new Error(`${historyPath} has unexpected or missing fields`);
+      assertString(decision.sourceId, `${historyPath}.sourceId`);
+      assertEnum(
+        decision.state,
+        ["APPROVED", "CHANGES_REQUESTED"],
+        `${historyPath}.state`,
+      );
+      assertString(decision.commitId, `${historyPath}.commitId`);
+      if (!/^[a-f0-9]{40}$/u.test(decision.commitId))
+        throw new Error(`${historyPath}.commitId must be an exact commit`);
+      assertIsoTimestamp(decision.submittedAt, `${historyPath}.submittedAt`);
+      assertRepositoryUrl(
+        decision.url,
+        `${historyPath}.url`,
+        "review",
+        Number(source.number),
+        event.repository as RepositoryId,
+      );
+      if (
+        index === 0 &&
+        (decision.sourceId !== source.id ||
+          decision.url !== source.url ||
+          decision.submittedAt !== event.occurredAt)
+      )
+        throw new Error(`${historyPath} must identify the awarded source`);
+      if (ids.has(decision.sourceId) || heads.has(decision.commitId))
+        throw new Error(`${historyPath} repeats a source or reviewed commit`);
+      if (
+        decision.submittedAt < previousTime ||
+        (decision.submittedAt === previousTime &&
+          decision.sourceId <= previousId)
+      )
+        throw new Error(`${historyPath} is not in deterministic review order`);
+      ids.add(decision.sourceId);
+      heads.add(decision.commitId);
+      previousTime = decision.submittedAt;
+      previousId = decision.sourceId;
+    }
+  }
   if (source.kind === "external") {
     if (event.category !== "evaluated-contribution") {
       throw new Error(
@@ -4827,6 +4965,84 @@ function assertOpportunityValue(
   if (kind !== "expand-review" && source.kind !== "pull-request") {
     throw new Error(`${path}.source.kind must be pull-request for ${kind}`);
   }
+}
+
+export type RetainedAttributionRejection =
+  | "invalid-attribution"
+  | "receipt-verification-failed"
+  | "not-machine-marker"
+  | "actor-mismatch"
+  | "source-mismatch"
+  | "source-url-mismatch"
+  | "parent-pull-request-mismatch"
+  | "trace-not-finalized"
+  | "repository-mismatch"
+  | "declared-identity-mismatch"
+  | "run-completed-after-review"
+  | "receipt-already-claimed";
+
+/**
+ * Replays one retained signed attribution against the accepted review it was
+ * published on. Nothing stored is trusted: the receipt is verified again and
+ * every binding must hold, or the first failed binding is named.
+ */
+export function replayRetainedReviewAttribution(
+  event: ScoreEvent,
+  candidate: ModelAttribution,
+  verifyRunReceipt: (receipt: unknown) => ProjectRunReceipt,
+  receiptClaims: ReadonlySet<string>,
+):
+  | { run: ProjectRunReceipt; claims: string[] }
+  | { rejection: RetainedAttributionRejection } {
+  try {
+    assertAttributionValue(candidate, `retained attribution ${candidate.id}`);
+  } catch {
+    // error-policy:J3 a malformed retained attribution is an explicit rejection.
+    return { rejection: "invalid-attribution" };
+  }
+  let run: ProjectRunReceipt;
+  try {
+    run = verifyRunReceipt(candidate.run);
+  } catch {
+    // error-policy:J3 an unverifiable receipt is an explicit rejection.
+    return { rejection: "receipt-verification-failed" };
+  }
+  const reject = (rejection: RetainedAttributionRejection) => ({ rejection });
+  if (candidate.format !== "machine-marker") {
+    return reject("not-machine-marker");
+  }
+  if (candidate.actor?.id !== event.actor.id) return reject("actor-mismatch");
+  if (candidate.sourceId !== event.source.id) return reject("source-mismatch");
+  if (candidate.sourceUrl !== event.source.url) {
+    return reject("source-url-mismatch");
+  }
+  if (candidate.artifactId !== event.id.split(":", 1)[0]) {
+    return reject("parent-pull-request-mismatch");
+  }
+  if (!run.traceUpload) return reject("trace-not-finalized");
+  if (run.repositoryId !== event.repository) {
+    return reject("repository-mismatch");
+  }
+  if (
+    run.provider !== candidate.provider ||
+    run.model !== candidate.model ||
+    run.client !== candidate.client ||
+    run.skillRevision !== candidate.skillRevision
+  ) {
+    return reject("declared-identity-mismatch");
+  }
+  if (Date.parse(run.completedAt) > Date.parse(event.occurredAt)) {
+    return reject("run-completed-after-review");
+  }
+  const claims = [
+    `client run:${run.runId}`,
+    `server run:${run.traceUpload.serverRunId}`,
+    `trace object:${run.traceUpload.objectId}`,
+  ];
+  if (claims.some((claim) => receiptClaims.has(claim))) {
+    return reject("receipt-already-claimed");
+  }
+  return { run, claims };
 }
 
 function assertAttributionValue(

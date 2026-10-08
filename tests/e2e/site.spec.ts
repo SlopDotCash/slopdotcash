@@ -7,8 +7,8 @@
 import { createHash } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, test as base, expect } from "@playwright/test";
-import { projectPromotionEligible } from "../../src/lib/allocation-funding";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
+import { homeProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
@@ -177,12 +177,9 @@ test("shows signer loss and expired capability without payout availability", asy
 
 test("discovers projects and one points-ranked homepage leaderboard", async ({
   page,
-  request,
 }) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.reload({ waitUntil: "networkidle" });
-  const snapshot = await loadSnapshot(request);
-  const cycles = await loadCycles(request);
 
   await expect(
     page.getByRole("heading", {
@@ -227,18 +224,8 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     page.getByRole("heading", { exact: true, name: "Featured" }),
   ).toBeVisible();
   const community = page.locator("details.community-projects");
-  const eligibleCommunity = PROJECTS.filter(
-    (project) =>
-      project.status === "active" &&
-      project.listingTier === "community" &&
-      snapshot.repositories.some(
-        (repository) => repository.projectId === project.id,
-      ) &&
-      projectPromotionEligible(
-        project,
-        cycles.cycles,
-        createProjectView(snapshot, project.id).cycle.id,
-      ),
+  const eligibleCommunity = homeProjects().filter(
+    (project) => project.listingTier === "community",
   );
   if (eligibleCommunity.length === 0) {
     await expect(community).toHaveCount(0);
@@ -267,8 +254,15 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     page.getByRole("heading", { exact: true, name: "Delta Star" }),
   ).toBeVisible();
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
-  await expect(elizaCard.getByText("Unfunded", { exact: true })).toHaveCount(0);
-  await expect(elizaCard.getByText("$5k", { exact: true })).toBeVisible();
+  await expect(
+    elizaCard.getByText("Not funded yet", { exact: true }),
+  ).toBeVisible();
+  await expect(elizaCard.getByText("$5k", { exact: true })).toHaveCount(0);
+  await expect(
+    elizaCard.getByText("Target $5k/mo", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(elizaCard.getByText("$5,000", { exact: true })).toHaveCount(0);
   await expect(
     elizaCard.getByText(/Build and verify the elizaOS framework/u),
@@ -346,10 +340,12 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     leaderboard.getByRole("link", { name: firstLogin, exact: true }),
   ).toBeVisible();
   await leaderboard.getByLabel("Find a contributor").fill("");
-  await expect(page.locator(".hero-mobile-action")).toHaveText(
+  await expect(page.locator(".hero-action")).toHaveText(
     "SHIPPING OPEN SOURCE.",
   );
-  await expect(page.locator(".hero-typewriter-caret")).toBeHidden();
+  await expect(
+    page.getByRole("link", { name: "Fund a project", exact: true }),
+  ).toHaveAttribute("href", "/sponsors");
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   if (await menuButton.isVisible()) await menuButton.click();
   await page.getByRole("link", { name: "Leaderboard" }).click();
@@ -382,15 +378,21 @@ test("starts Eliza with one prompt and no separate payout form", async ({
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
-  const homeLink = page.getByRole("link", { name: "Home", exact: true });
+  const homeLink = page.getByRole("link", { name: "Slop home", exact: true });
+  await expect(homeLink).toBeVisible();
+  await expect(homeLink).toHaveAttribute("href", "/");
+  const projectLink = page.locator("#primary-navigation").getByRole("link", {
+    name: "Projects",
+    exact: true,
+  });
   if (await page.getByRole("button", { name: "Open navigation" }).isVisible()) {
     await page.getByRole("button", { name: "Open navigation" }).click();
-    await expect(homeLink).toBeVisible();
-    await expect(homeLink).toHaveAttribute("href", "/");
+    await expect(projectLink).toBeVisible();
+    await expect(projectLink).toHaveAttribute("href", "/#projects");
     await page.getByRole("button", { name: "Close navigation" }).click();
   } else {
-    await expect(homeLink).toBeVisible();
-    await expect(homeLink).toHaveAttribute("href", "/");
+    await expect(projectLink).toBeVisible();
+    await expect(projectLink).toHaveAttribute("href", "/#projects");
   }
   await expect(
     page.getByRole("heading", { name: "Make money building agents." }),
@@ -410,16 +412,17 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   ).toHaveCount(0);
   await expect(page.getByText("1% platform fee · Solana")).toHaveCount(0);
   const rewardStyle = await page.locator(".reward-card").evaluate((card) => {
-    const amount = card.querySelector<HTMLElement>(".reward-amount-monthly");
+    const amount = card.querySelector<HTMLElement>(":scope > strong");
     const actions = card.querySelector<HTMLElement>(":scope > div");
     if (!amount || !actions) return null;
     return {
-      amountFontSize: Number.parseFloat(getComputedStyle(amount).fontSize),
+      amountText: amount.textContent,
       actionBorderTopWidth: getComputedStyle(actions).borderTopWidth,
     };
   });
   expect(rewardStyle).not.toBeNull();
-  expect(rewardStyle?.amountFontSize ?? 0).toBeGreaterThanOrEqual(48);
+  // Eliza is pledged, so the headline is the funding state, never the cap.
+  expect(rewardStyle?.amountText).toBe("Not funded yet");
   expect(rewardStyle?.actionBorderTopWidth).toBe("0px");
   const projectGaps = await page.evaluate(() => {
     const breadcrumb = document.querySelector(".breadcrumb");
@@ -517,26 +520,26 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   ).toHaveCount(0);
   await expect(page.getByText(/^Updated /u)).toBeVisible();
   await expect(page.getByText(/receipt-linked tokens/u)).toHaveCount(0);
-  const displayedProjectionCents = await page
+  const shareCells = await page
     .locator(".project-leader-row")
     .evaluateAll((rows) =>
-      rows.reduce((total, row) => {
-        const projection = row.querySelectorAll("td")[3]?.textContent ?? "";
-        return (
-          total + Math.round(Number(projection.replace(/[^0-9.-]/gu, "")) * 100)
-        );
-      }, 0),
+      rows.map((row) => row.querySelectorAll("td")[3]?.textContent ?? ""),
     );
   const view = createProjectView(await loadSnapshot(request), "eliza");
-  expect(displayedProjectionCents).toBe(
-    view.leaders.length
-      ? Number(BigInt(view.project.reward.monthlyCapMinor) / 10_000n)
-      : 0,
-  );
+  expect(shareCells).toHaveLength(view.leaders.length);
+  // No committed funds: every row is a share of the score, never dollars.
+  for (const cell of shareCells) {
+    expect(cell).toMatch(/^\d+\.\d{2}% of score$/u);
+  }
   expect(view.leaders.every((leader) => leader.projectedMinor === "0")).toBe(
     true,
   );
-  await expect(page.getByText(/Shares simulate the/u)).toBeVisible();
+  await expect(
+    page.getByRole("columnheader", { name: "Share of score" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Not funded yet\. Not approved payouts\./u),
+  ).toBeVisible();
   await expect(page.getByText("Live from GitHub")).toHaveCount(0);
   await expect(page.getByText("How credit survives review")).toHaveCount(0);
 });
@@ -548,7 +551,6 @@ test("never presents Delta Star's external prize as platform money", async ({
   await expect(
     page.getByRole("heading", { name: "Make money solving math." }),
   ).toBeVisible();
-  await expect(page.getByText("EXTERNAL OPPORTUNITY")).toBeVisible();
   await expect(
     page.getByText("No platform pool · no dollar projection"),
   ).toBeVisible();
@@ -601,7 +603,9 @@ test("renders contributor and cycle records from validated public data", async (
     page.locator(".profile-totals").getByText("paid", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.locator(".profile-totals").getByText(/^\d+-day score to /u),
+    page
+      .locator(".profile-totals")
+      .getByText("recorded score", { exact: true }),
   ).toBeVisible();
   await expect(
     page.locator(".profile-totals").getByText(/^[A-Z][a-z]+ \d{4} projected/u),
@@ -1104,7 +1108,7 @@ test("shows an explicit error for invalid data and retries", async ({
     }
     await route.fallback();
   });
-  await page.reload({ waitUntil: "networkidle" });
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
     "Live totals unavailable",
   );
@@ -1121,7 +1125,7 @@ test("shows an explicit error for invalid data and retries", async ({
   await page.getByRole("button", { name: /Retry/u }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(
-    page.getByRole("heading", { exact: true, name: "Leaderboard" }),
+    page.getByRole("heading", { name: /leaderboard\./u }),
   ).toBeVisible();
   expect(attempts).toBe(failedAttempts + 1);
 });
@@ -1194,13 +1198,89 @@ for (const scenario of [
   });
 }
 
+test("finds a receipt and opens its full evidence and GitHub contribution", async ({
+  page,
+  request,
+}) => {
+  const snapshot = await loadSnapshot(request);
+  const entry = snapshot.attributions.find((entry) => entry.run !== null);
+  await page.goto("/models", { waitUntil: "networkidle" });
+  const modelReceipts = page
+    .locator('.model-outcome-details a[href^="/receipts?q="]')
+    .first();
+  if (await modelReceipts.count()) {
+    await modelReceipts
+      .locator("xpath=ancestor::details")
+      .locator("summary")
+      .focus();
+    await page.keyboard.press("Enter");
+    await modelReceipts.click();
+    await expect(page).toHaveURL(/\/receipts\?q=/u);
+    await expect(
+      page.getByRole("searchbox", { name: "Find a receipt" }),
+    ).not.toHaveValue("");
+    expect(await page.locator(".receipt-record").count()).toBeGreaterThan(0);
+  } else {
+    await page.goto("/receipts", { waitUntil: "networkidle" });
+  }
+  await expect(
+    page.getByRole("heading", { name: "Run receipts", exact: true }),
+  ).toBeVisible();
+  if (!entry?.run) {
+    await expect(
+      page.getByText("No publishable signed receipts in this snapshot."),
+    ).toBeVisible();
+    return;
+  }
+  await page
+    .getByRole("searchbox", { name: "Find a receipt" })
+    .fill(entry.run.runId);
+  const record = page.locator(".receipt-record");
+  await expect(record).toHaveCount(1);
+  await record.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    record.getByText(entry.run.runId, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    record.getByText(entry.run.skillSha256, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    record.getByRole("link", {
+      name: new URL(entry.sourceUrl).pathname
+        .slice(1)
+        .replace(/\/(?:pull|issues)\//u, " #"),
+    }),
+  ).toHaveAttribute("href", entry.sourceUrl);
+  await expect(
+    record.getByRole("link", {
+      name: new URL(entry.sourceUrl).pathname
+        .slice(1)
+        .replace(/\/(?:pull|issues)\//u, " #"),
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("searchbox", { name: "Find a receipt" })
+    .fill("no-matching-receipt-000000");
+  await expect(page.getByText("No receipts match this search.")).toBeVisible();
+  await page.getByRole("searchbox", { name: "Find a receipt" }).fill("");
+  await expect(page.locator(".receipt-record")).toHaveCount(
+    snapshot.attributions.filter((entry) => entry.run !== null).length,
+  );
+});
+
 test("keeps primary routes accessible and inside the viewport", async ({
   page,
   request,
 }) => {
   const snapshot = await loadSnapshot(request);
+  const cycles = await loadCycles(request);
   for (const path of [
+    ...cycles.cycles
+      .slice(0, 1)
+      .map((cycle) => `/cycles/${cycle.projectId}/${cycle.cycleId}`),
     "/models",
+    "/receipts",
     "/sponsors",
     "/verification",
     "/",
@@ -1273,49 +1353,57 @@ test("opens the models page directly and through keyboard navigation", async ({
   await page.goto("/models", { waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", {
-      name: "Which models merge. By the receipts.",
+      name: "Models",
       exact: true,
     }),
   ).toBeVisible();
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", {
-      name: "Which models merge. By the receipts.",
+      name: "Models",
       exact: true,
     }),
   ).toBeVisible();
-  const tableRegion = page.getByRole("region", {
+  const outcomes = page.getByRole("list", {
     name: "Accepted outcomes by model",
     exact: true,
   });
+  const firstModel = outcomes.locator(":scope > li").first();
+  await expect(firstModel).toBeVisible();
+  const metrics = firstModel.locator(".model-outcome-metrics");
+  await expect(metrics).toContainText("merged PRs");
+  await expect(metrics).toContainText("of all merged PRs");
+  await expect(metrics).toContainText("accepted reviews");
+  const bounds = await metrics.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds?.x).toBeGreaterThanOrEqual(0);
+  expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(
+    page.viewportSize()?.width ?? 0,
+  );
+  const disclosure = firstModel.locator("summary");
+  await disclosure.focus();
+  await page.keyboard.press("Enter");
   await expect(
-    tableRegion.getByRole("columnheader", {
-      name: "Share of all merged PRs",
-      exact: true,
-    }),
+    firstModel.getByText("Exact declarations", { exact: true }),
   ).toBeVisible();
   await expect(
-    tableRegion.getByRole("columnheader", {
-      name: "Top contributor share",
-      exact: true,
-    }),
-  ).toHaveCount(0);
-  const firstModel = tableRegion.locator("tbody tr").first();
-  await expect(firstModel.locator("td").nth(6)).toHaveText(
-    /\d[\d,]* of \d[\d,]* outcomes/,
-  );
-  await tableRegion.focus();
-  await expect(tableRegion).toBeFocused();
-  if (
-    await tableRegion.evaluate(
-      (element) => element.scrollWidth > element.clientWidth,
-    )
-  ) {
-    await page.keyboard.press("ArrowRight");
-    await expect
-      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
-      .toBeGreaterThan(0);
-  }
+    firstModel
+      .locator("dd")
+      .filter({ hasText: /\d[\d,]* of \d[\d,]* outcomes/ }),
+  ).toBeVisible();
+  const clients = page.locator(".model-clients > summary");
+  await clients.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("list", { name: "Client outcomes", exact: true }),
+  ).toBeVisible();
+  const client = page
+    .locator(".model-clients .model-outcome-list > li")
+    .first();
+  await client.locator("summary").press("Enter");
+  await expect(
+    client.getByText("Median output tokens", { exact: true }),
+  ).toBeVisible();
   await testInfo.attach("models-page", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
@@ -1329,7 +1417,7 @@ test("opens the models page directly and through keyboard navigation", async ({
   await page.goBack({ waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", {
-      name: "Which models merge. By the receipts.",
+      name: "Models",
       exact: true,
     }),
   ).toBeVisible();
@@ -1341,19 +1429,37 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", {
-      name: "Fund the merges. Keep the keys.",
+      name: "Fund a project.",
       exact: true,
     }),
   ).toBeVisible();
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", {
-      name: "Fund the merges. Keep the keys.",
+      name: "Fund a project.",
       exact: true,
     }),
   ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await expect(page.getByText("$5,050", { exact: true })).toBeVisible();
+  const audience = page
+    .locator("summary")
+    .filter({ hasText: "Audience report ·" });
+  await audience.focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByRole("heading", { name: "Who builds on Slop.", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Method and caveats" }),
+  ).toBeVisible();
+  const rules = page.getByText("Funding rules and payment stages", {
+    exact: true,
+  });
+  await rules.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Your money has exact states." }),
   ).toBeVisible();
   const tableRegion = page.getByRole("region", {
     name: "Project funding pools",
@@ -1384,7 +1490,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.goBack({ waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", {
-      name: "Fund the merges. Keep the keys.",
+      name: "Fund a project.",
       exact: true,
     }),
   ).toBeVisible();

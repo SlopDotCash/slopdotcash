@@ -138,18 +138,22 @@ jobs:
           from pathlib import Path
           result = json.loads(Path("evidence/cycle-action/action.json").read_text())
           reserving = result["action"] == "reserve-settlement"
+          modified = result.get("modifiedFiles", [])
           if reserving:
-              if result.get("newFiles") or result.get("modifiedFiles") != ["funding/payment-reservations.json"]:
+              if result.get("newFiles") or modified != ["funding/payment-reservations.json"]:
                   raise SystemExit("Invalid reservation output scope")
               subprocess.check_call(["git", "add", "--", "funding/payment-reservations.json"])
           else:
-              subprocess.check_call(["git", "add", "--", "cycles"])
-          expected = set(result["newFiles"]) | set(result.get("modifiedFiles", []))
+              expected_modified = ["src/lib/project-promotion.generated.json"] if result["action"] == "propose" else []
+              if modified != expected_modified:
+                  raise SystemExit("Invalid generated history output scope")
+              subprocess.check_call(["git", "add", "--", "cycles", *modified])
+          expected = set(result["newFiles"]) | set(modified)
           changes = subprocess.check_output(["git", "diff", "--cached", "--name-status", "--no-renames"], text=True).splitlines()
           actual = set()
           for change in changes:
               status, path = change.split("\t")
-              if status != ("M" if reserving else "A") or path not in expected:
+              if status != ("M" if path in modified else "A") or path not in expected:
                   raise SystemExit("Refusing any staged change outside the exact new lifecycle outputs")
               actual.add(path)
           if actual != expected:

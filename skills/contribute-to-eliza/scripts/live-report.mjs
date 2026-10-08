@@ -25,6 +25,8 @@ import { platform, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { authorizeSkill } from "./run-receipt.mjs";
+
 export const MODEL_DISCLOSURE_PREFIX = "AI provider/model:";
 export const REQUIRED_EVIDENCE_ROWS = [
   "before-screenshots",
@@ -899,22 +901,39 @@ const GRAPHQL_COMMENT_FIELDS = `
   authorAssociation
   author { ${GRAPHQL_ACTOR_FIELDS} }
 `;
+const ISSUE_ACTIVITY_FIELDS = `
+  number
+  comments(first: 100) {
+    totalCount
+    nodes { ${GRAPHQL_COMMENT_FIELDS} }
+  }
+`;
+const PULL_ACTIVITY_FIELDS = `
+  ${ISSUE_ACTIVITY_FIELDS}
+  reviews(first: 100) {
+    totalCount
+    nodes {
+      databaseId url body submittedAt state
+      commit { oid }
+      author { ${GRAPHQL_ACTOR_FIELDS} }
+    }
+  }
+  reviewThreads(first: 100) {
+    totalCount
+    nodes {
+      comments(first: 100) {
+        totalCount
+        nodes { ${GRAPHQL_COMMENT_FIELDS} }
+      }
+    }
+  }
+`;
 const OPEN_ISSUE_ACTIVITY_QUERY = `
   query($owner: String!, $name: String!, $endCursor: String) {
     repository(owner: $owner, name: $name) {
-      issues(
-        first: 100
-        after: $endCursor
-        states: OPEN
-        orderBy: { field: CREATED_AT, direction: ASC }
-      ) {
-        nodes {
-          number
-          comments(first: 100) {
-            totalCount
-            nodes { ${GRAPHQL_COMMENT_FIELDS} }
-          }
-        }
+      issues(first: 100, after: $endCursor, states: OPEN,
+        orderBy: { field: CREATED_AT, direction: ASC }) {
+        nodes { ${ISSUE_ACTIVITY_FIELDS} }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -923,45 +942,116 @@ const OPEN_ISSUE_ACTIVITY_QUERY = `
 const OPEN_PULL_ACTIVITY_QUERY = `
   query($owner: String!, $name: String!, $endCursor: String) {
     repository(owner: $owner, name: $name) {
-      pullRequests(
-        first: 20
-        after: $endCursor
-        states: OPEN
-        orderBy: { field: CREATED_AT, direction: ASC }
-      ) {
-        nodes {
-          number
-          comments(first: 100) {
-            totalCount
-            nodes { ${GRAPHQL_COMMENT_FIELDS} }
-          }
-          reviews(first: 100) {
-            totalCount
-            nodes {
-              databaseId
-              url
-              body
-              submittedAt
-              state
-              commit { oid }
-              author { ${GRAPHQL_ACTOR_FIELDS} }
-            }
-          }
-          reviewThreads(first: 100) {
-            totalCount
-            nodes {
-              comments(first: 100) {
-                totalCount
-                nodes { ${GRAPHQL_COMMENT_FIELDS} }
-              }
-            }
-          }
-        }
+      pullRequests(first: 20, after: $endCursor, states: OPEN,
+        orderBy: { field: CREATED_AT, direction: ASC }) {
+        nodes { ${PULL_ACTIVITY_FIELDS} }
         pageInfo { hasNextPage endCursor }
       }
     }
   }
 `;
+
+/** Only positive listing evidence can skip history; unknown state still needs a full read. */
+function excludedWithoutActivity(item, kind, referenceTime, closingPulls) {
+  const context = `${kind} #${item.number}`;
+  if (!isKnownHumanAccount(item.user)) return true;
+  const labels = labelNames(item, context);
+  if (labels.some((label) => SENSITIVE_LABEL_RE.test(label))) return true;
+  if (kind === "issue") {
+    if (
+      EPIC_TITLE_RE.test(item.title) ||
+      labels.some((label) => EPIC_LABEL_RE.test(label.trim()))
+    )
+      return true;
+    if (closingPulls.has(item.number)) return true;
+  } else {
+    if (typeof item.draft !== "boolean")
+      throw new TypeError(`${context}.draft must be a boolean`);
+    if (item.draft || requestedReviewTargets(item, context).length > 0)
+      return true;
+  }
+  return claimReasons(item, [], kind, context, referenceTime).length > 0;
+}
+
+function readSelectedActivity(repo, spawn, inventory) {
+  const { issueItems, pullItems, referenceTime, openPullsByClosingIssue } =
+    inventory;
+  const selected = [];
+  const skippedIssues = new Set();
+  const skippedPulls = new Set();
+  for (const [kind, items, skipped] of [
+    ["issue", issueItems, skippedIssues],
+    ["pull request", pullItems, skippedPulls],
+  ]) {
+    for (const item of items) {
+      if (
+        excludedWithoutActivity(
+          item,
+          kind,
+          referenceTime,
+          openPullsByClosingIssue,
+        )
+      )
+        skipped.add(item.number);
+      else selected.push({ kind, item });
+    }
+  }
+  const selectedPages = Math.ceil(selected.length / 20);
+  const completePages =
+    Math.max(1, Math.ceil(issueItems.length / 100)) +
+    Math.max(1, Math.ceil(pullItems.length / 20));
+  // The complete path uses two paginated commands. Do not trade fewer
+  // GraphQL pages for more commands or less room for overflow activity.
+  if (selectedPages >= completePages || selectedPages > 2) return null;
+  const issueNodes = [],
+    pullNodes = [];
+  for (let offset = 0; offset < selected.length; offset += 20) {
+    const batch = selected.slice(offset, offset + 20);
+    const fields = batch
+      .map(({ kind, item }) => {
+        if (!Number.isSafeInteger(item.number) || item.number <= 0)
+          throw new TypeError("Invalid live item number");
+        const pull = kind === "pull request";
+        return `${pull ? "p" : "i"}${item.number}: ${pull ? "pullRequest" : "issue"}(number: ${item.number}) {
+        id state updatedAt ${pull ? "headRefOid" : ""}
+        ${pull ? PULL_ACTIVITY_FIELDS : ISSUE_ACTIVITY_FIELDS}
+      }`;
+      })
+      .join("\n");
+    const nodes = readGraphqlActivityNodes(
+      repo,
+      `query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) { ${fields} }
+    }`,
+      ".data.repository[]",
+      spawn,
+      "selected open activity",
+      false,
+    );
+    if (nodes.length !== batch.length) throw new LiveInventoryChangedError();
+    const byNumber = new Map(
+      nodes.map((value) => {
+        const node = asRecord(value, "selected open activity");
+        return [node.number, node];
+      }),
+    );
+    if (byNumber.size !== batch.length) throw new LiveInventoryChangedError();
+    for (const { kind, item } of batch) {
+      const node = byNumber.get(item.number);
+      if (!node) throw new LiveInventoryChangedError();
+      if (
+        node.id !== item.node_id ||
+        node.number !== item.number ||
+        node.state !== "OPEN" ||
+        Date.parse(node.updatedAt) !== Date.parse(item.updated_at) ||
+        (kind === "pull request" && node.headRefOid !== item.head.sha)
+      )
+        throw new LiveInventoryChangedError();
+      (kind === "issue" ? issueNodes : pullNodes).push(node);
+    }
+  }
+  return { issueNodes, pullNodes, skippedIssues, skippedPulls };
+}
 
 function graphqlConnection(record, field, context) {
   const connection = asRecord(record[field], `${context}.${field}`);
@@ -1291,7 +1381,14 @@ function graphqlReview(value, context) {
   };
 }
 
-function readGraphqlActivityNodes(repo, query, selector, spawn, context) {
+function readGraphqlActivityNodes(
+  repo,
+  query,
+  selector,
+  spawn,
+  context,
+  paginate = true,
+) {
   const [owner, name] = repo.split("/");
   const result = spawn(
     "gh",
@@ -1300,7 +1397,7 @@ function readGraphqlActivityNodes(repo, query, selector, spawn, context) {
       "graphql",
       "--method",
       "POST",
-      "--paginate",
+      ...(paginate ? ["--paginate"] : []),
       "-f",
       `query=${query}`,
       "-F",
@@ -2181,7 +2278,12 @@ export function readGhRateLimits(spawn = spawnSync) {
 }
 
 /** Reads open activity in two batches plus bounded overflow pagination. */
-export function readGhOpenActivity(repo, spawn = spawnSync, rateLimits = null) {
+export function readGhOpenActivity(
+  repo,
+  spawn = spawnSync,
+  rateLimits = null,
+  inventory = null,
+) {
   if (!REPOSITORY_RE.test(repo)) {
     throw new TypeError("Repository must use the owner/name form");
   }
@@ -2225,20 +2327,26 @@ export function readGhOpenActivity(repo, spawn = spawnSync, rateLimits = null) {
       };
     }
   }
-  const issueNodes = readGraphqlActivityNodes(
-    repo,
-    OPEN_ISSUE_ACTIVITY_QUERY,
-    ".data.repository.issues.nodes[]",
-    spawn,
-    "open issue activity",
-  );
-  const pullNodes = readGraphqlActivityNodes(
-    repo,
-    OPEN_PULL_ACTIVITY_QUERY,
-    ".data.repository.pullRequests.nodes[]",
-    spawn,
-    "open pull request activity",
-  );
+  const selected =
+    inventory === null ? null : readSelectedActivity(repo, spawn, inventory);
+  const issueNodes =
+    selected?.issueNodes ??
+    readGraphqlActivityNodes(
+      repo,
+      OPEN_ISSUE_ACTIVITY_QUERY,
+      ".data.repository.issues.nodes[]",
+      spawn,
+      "open issue activity",
+    );
+  const pullNodes =
+    selected?.pullNodes ??
+    readGraphqlActivityNodes(
+      repo,
+      OPEN_PULL_ACTIVITY_QUERY,
+      ".data.repository.pullRequests.nodes[]",
+      spawn,
+      "open pull request activity",
+    );
   if (issueNodes.length > MAX_OPEN_ITEMS || pullNodes.length > MAX_OPEN_ITEMS) {
     throw new RangeError(
       `Live discovery exceeds the ${MAX_OPEN_ITEMS}-item per-kind safety bound`,
@@ -2338,11 +2446,22 @@ export function readGhOpenActivity(repo, spawn = spawnSync, rateLimits = null) {
     }
     pulls.set(number, { issueComments, inlineComments, reviews });
   }
+  if (selected) {
+    for (const number of selected.skippedIssues) issues.set(number, []);
+    for (const number of selected.skippedPulls)
+      pulls.set(number, { issueComments: [], inlineComments: [], reviews: [] });
+  }
   return {
     issues,
     pulls,
     ...(limits === null ? {} : { rateLimits: limits }),
-    source: "graphql",
+    source: selected ? "graphql-selected" : "graphql",
+    ...(selected
+      ? {
+          skippedIssues: selected.skippedIssues,
+          skippedPulls: selected.skippedPulls,
+        }
+      : {}),
   };
 }
 
@@ -2963,6 +3082,14 @@ export function collectLiveReport(
       `Live discovery exceeds the ${MAX_OPEN_ITEMS}-item per-kind safety bound`,
     );
   }
+  if (typeof openActivity === "function") {
+    openActivity = openActivity({
+      issueItems,
+      pullItems,
+      referenceTime,
+      openPullsByClosingIssue,
+    });
+  }
   if (openActivity !== null) {
     const activity = asRecord(openActivity, "open activity");
     if (!(activity.issues instanceof Map) || !(activity.pulls instanceof Map)) {
@@ -3173,13 +3300,21 @@ export function collectLiveReport(
       ...summary,
       updatedAt,
       headSha,
-      reviewState,
+      reviewState: openActivity?.skippedPulls?.has(summary.number)
+        ? {
+            ...reviewState,
+            currentHeadApprovals: null,
+            currentHeadChangesRequested: null,
+          }
+        : reviewState,
     };
     pullRequestAudits.push({
       ...detailedSummary,
       bodyProviderModel: parseModelDisclosure(body),
       bodyHumanOnly: hasHumanOnlyPullRequestDeclaration(body),
-      missingModelDisclosures: auditCommentDisclosures(allComments),
+      missingModelDisclosures: openActivity?.skippedPulls?.has(summary.number)
+        ? null
+        : auditCommentDisclosures(allComments),
       evidence: auditPrEvidence(body),
     });
 
@@ -3249,6 +3384,13 @@ export function collectLiveReport(
         changesRequestedPullRequests.sort(compareByNumber),
     },
     audits: {
+      skipped: {
+        reason: "Excluded by listing metadata; activity history was not read",
+        issues: [...(openActivity?.skippedIssues ?? [])].sort((a, b) => a - b),
+        pullRequests: [...(openActivity?.skippedPulls ?? [])].sort(
+          (a, b) => a - b,
+        ),
+      },
       issueComments: issueCommentAudits.sort(compareByNumber),
       pullRequests: pullRequestAudits.sort(compareByNumber),
     },
@@ -3311,6 +3453,16 @@ export function renderMarkdown(report) {
     "",
   ];
 
+  if (
+    report.audits.skipped &&
+    (report.audits.skipped.issues.length ||
+      report.audits.skipped.pullRequests.length)
+  ) {
+    lines.push(
+      `Activity audit skipped for ${report.audits.skipped.issues.length} issue(s) and ${report.audits.skipped.pullRequests.length} PR(s) already excluded by listing metadata. Their history was not checked.`,
+      "",
+    );
+  }
   const gaps = [];
   for (const issue of report.audits.issueComments) {
     gaps.push(
@@ -3322,7 +3474,7 @@ export function renderMarkdown(report) {
     if (pull.bodyProviderModel === null && !pull.bodyHumanOnly) {
       details.push("PR body lacks exact provider/model disclosure");
     }
-    if (pull.missingModelDisclosures.length > 0) {
+    if (pull.missingModelDisclosures?.length > 0) {
       details.push(
         `${pull.missingModelDisclosures.length} claim or AI-provenance comment(s) lack disclosure`,
       );
@@ -3519,6 +3671,7 @@ export function main(args = process.argv.slice(2)) {
     return;
   }
   if (options.recheckPr !== undefined) {
+    authorizeSkill();
     const commandBudget = createGhCommandBudget();
     const result = recheckLivePullHead(
       options.repo,
@@ -3541,16 +3694,23 @@ export function main(args = process.argv.slice(2)) {
         const boundedRead = (endpoint) => {
           return readGhPages(endpoint, commandBudget.run);
         };
-        const openActivity = readGhOpenActivity(
-          options.repo,
-          commandBudget.run,
-          rateLimits,
-        );
-        rateLimits = openActivity.rateLimits;
-        const limits = asRecord(openActivity.rateLimits, "GitHub rate limits");
-        process.stderr.write(
-          `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit} (${limits.graphqlBudgetSource}); REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
-        );
+        const loadActivity = (inventory) => {
+          const openActivity = readGhOpenActivity(
+            options.repo,
+            commandBudget.run,
+            rateLimits,
+            inventory,
+          );
+          rateLimits = openActivity.rateLimits;
+          const limits = asRecord(
+            openActivity.rateLimits,
+            "GitHub rate limits",
+          );
+          process.stderr.write(
+            `[Slop] GitHub budgets: GraphQL ${limits.graphqlRemaining}/${limits.graphqlLimit} (${limits.graphqlBudgetSource}); REST ${limits.restRemaining}/${limits.restLimit}; Search ${limits.searchRemaining}/${limits.searchLimit}; activity source ${openActivity.source}\n`,
+          );
+          return openActivity;
+        };
         return {
           report: collectLiveReport(
             options.repo,
@@ -3563,7 +3723,7 @@ export function main(args = process.argv.slice(2)) {
                 );
               }
             },
-            openActivity,
+            loadActivity,
             selectionPolicy.eligibleIssueLabels,
           ),
         };

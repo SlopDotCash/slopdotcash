@@ -11,6 +11,8 @@ if (sourceProject.length !== 1)
 const names = [
   "live-report.mjs",
   "run-receipt.mjs",
+  "skill-authority.mjs",
+  "skill-authority.d.mts",
   "terms-preflight.mjs",
   "wallet-claim.mjs",
 ];
@@ -21,7 +23,19 @@ for (const name of names) {
   for (const project of PROJECTS) {
     const target = join(root, project.skill.sourcePath, "scripts", name);
     // Some project contracts deliberately omit wallet support.
-    if (!existsSync(target)) continue;
+    if (!existsSync(target)) {
+      if (
+        !name.startsWith("skill-authority.") ||
+        !existsSync(
+          join(root, project.skill.sourcePath, "scripts", "run-receipt.mjs"),
+        )
+      )
+        continue;
+      if (check)
+        throw new Error(`${target} is missing; run bun run skills:sync`);
+      writeFileSync(target, contents);
+      continue;
+    }
     if (contents.equals(readFileSync(target))) continue;
     if (check)
       throw new Error(

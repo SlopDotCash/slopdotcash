@@ -51,6 +51,11 @@ Read `README.md`, `SUMMARY.md`, `CONTRIBUTING.md`, `AGENTS.md`,
 each trap cost real time, and several will cost you the same hours if you skip them.
 `REPRODUCE.md` maps every headline claim to the harness that regenerates it.
 
+Before new work and immediately before each contribution-related GitHub write, run
+`node <skill-directory>/scripts/run-receipt.mjs authorize`. A failed check blocks
+use of this installed skill for a new run or write. Preserve local work and install
+the current verified skill; historical receipts remain valid.
+
 Inspect live GitHub for existing work, open pull requests, and duplicate issues before
 choosing. Respect actual maintainer claims. In order, and stop at the first that yields a
 real outcome:

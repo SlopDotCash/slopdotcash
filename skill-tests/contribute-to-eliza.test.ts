@@ -61,6 +61,7 @@ import {
   normalizeSessionReport,
   usageDelta,
 } from "../skills/contribute-to-eliza/scripts/run-receipt.mjs";
+import { createInstallAuthorityFixture } from "../tests/install-authority-fixture";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const skillDir = join(testDir, "..", "skills", "contribute-to-eliza");
@@ -712,6 +713,131 @@ describe("live report parsing", () => {
     assert.strictEqual(activity.pulls.size, 1_097);
     assert.ok(activity.pulls.has(1));
     assert.ok(activity.pulls.has(1_097));
+
+    const items = pullNodes.map((node) =>
+      pullRequest(node.number, {
+        node_id: `PR_fixture_${node.number}`,
+        draft: node.number < 1_095,
+        requested_reviewers:
+          node.number === 1_095 ? [account("assigned-reviewer")] : [],
+        assignees: node.number === 1_096 ? [account("assigned-worker")] : [],
+      }),
+    );
+    const list = (endpoint: string) => {
+      if (endpoint.includes("/issues?state=open")) return [];
+      if (endpoint.includes("/pulls?state=open")) return items;
+      assert.fail(`Unexpected activity fetch: ${endpoint}`);
+    };
+    const complete = collectLiveReport(
+      "elizaOS/eliza",
+      list,
+      NOW,
+      () => {},
+      activity,
+    );
+    const calls: string[] = [];
+    const selectedRead = (inventory: unknown, changedHead = false) =>
+      readGhOpenActivity(
+        "elizaOS/eliza",
+        (_command, args) => {
+          const query = args.find((arg) => arg.startsWith("query=")) ?? "";
+          calls.push(query);
+          assert.ok(!args.includes("--paginate"));
+          assert.ok(query.includes("p1097: pullRequest(number: 1097)"));
+          assert.ok(!query.includes("p1096:"));
+          return {
+            status: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              ...pullNodes[1096],
+              id: "PR_fixture_1097",
+              state: "OPEN",
+              updatedAt: items[1096].updated_at,
+              headRefOid: changedHead ? PRIOR_SHA : HEAD_SHA,
+            }),
+          };
+        },
+        null,
+        inventory,
+      );
+    const selected = collectLiveReport(
+      "elizaOS/eliza",
+      list,
+      NOW,
+      () => {},
+      selectedRead,
+    );
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual(selected.totals, complete.totals);
+    assert.deepStrictEqual(
+      selected.selection.reviewEpoch,
+      complete.selection.reviewEpoch,
+    );
+    assert.deepStrictEqual(
+      selected.reviewablePullRequests,
+      complete.reviewablePullRequests,
+    );
+    assert.strictEqual(selected.audits.pullRequests.length, 1097);
+    assert.strictEqual(
+      selected.audits.pullRequests[0].missingModelDisclosures,
+      null,
+    );
+    assert.deepStrictEqual(
+      selected.audits.pullRequests[0].evidence,
+      complete.audits.pullRequests[0].evidence,
+    );
+    assert.strictEqual(selected.audits.skipped.pullRequests.length, 1096);
+    assert.strictEqual(
+      selected.filtered.draftPullRequests[0].reviewState.currentHeadApprovals,
+      null,
+    );
+    assert.match(renderMarkdown(selected), /Their history was not checked/);
+    let fullCalls = 0;
+    const busyItems = items.map((item) => ({
+      ...item,
+      draft: false,
+      requested_reviewers: [],
+      assignees: [],
+    }));
+    const busy = collectLiveReport(
+      "elizaOS/eliza",
+      (endpoint: string) =>
+        endpoint.includes("/pulls?state=open") ? busyItems : [],
+      NOW,
+      () => {},
+      (inventory: unknown) =>
+        readGhOpenActivity(
+          "elizaOS/eliza",
+          (_command, args) => {
+            fullCalls++;
+            assert.ok(args.includes("--paginate"));
+            return {
+              status: 0,
+              stderr: "",
+              stdout: args.at(-1)?.includes(".pullRequests.")
+                ? pullNodes.map((node) => JSON.stringify(node)).join("\n")
+                : "",
+            };
+          },
+          null,
+          inventory,
+        ),
+    );
+    assert.strictEqual(fullCalls, 2);
+    assert.strictEqual(busy.totals.openPullRequests, 1097);
+    assert.strictEqual(busy.totals.reviewablePullRequests, 1097);
+    assert.strictEqual(busy.audits.skipped.pullRequests.length, 0);
+    assert.throws(
+      () =>
+        collectLiveReport(
+          "elizaOS/eliza",
+          list,
+          NOW,
+          () => {},
+          (inventory: unknown) => selectedRead(inventory, true),
+        ),
+      LiveInventoryChangedError,
+    );
   });
 
   it("uses bounded REST activity when GraphQL cannot afford the scan", () => {
@@ -3919,12 +4045,28 @@ describe("run receipt CLI", () => {
         "scripts",
         "run-receipt.mjs",
       );
+      const skillAuthority = createInstallAuthorityFixture(
+        join(fixtureRoot, "skill-authority"),
+        {
+          developHead: sourceRevision,
+          revisions: {
+            [sourceRevision]: {
+              files: Object.fromEntries(
+                installedFiles.map((path) => [
+                  path,
+                  readFileSync(join(installedSkillRoot, path)),
+                ]),
+              ),
+            },
+          },
+        },
+      );
       const entrypoint = join(fixtureRoot, "run-receipt-test-harness.mjs");
       writeFileSync(
         entrypoint,
         `import { main } from ${JSON.stringify(pathToFileURL(receiptEntrypoint).href)};
 try {
-  await main(process.argv.slice(2), { testPolicyAuthority: ${JSON.stringify(pathToFileURL(policyRoot).href)} });
+  await main(process.argv.slice(2), { testPolicyAuthority: ${JSON.stringify(pathToFileURL(policyRoot).href)}, testSkillAuthority: ${JSON.stringify(skillAuthority)} });
 } catch (error) {
   process.stderr.write(\`project run receipt failed: \${error instanceof Error ? error.message : String(error)}\\n\`);
   process.exitCode = 1;
