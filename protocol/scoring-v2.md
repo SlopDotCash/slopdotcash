@@ -18,10 +18,12 @@ weighted monthly total is aggregated:
 | XL | 45 | 15 |
 | Exceptional | 75 | 25 |
 
-Every accepted merge begins as a provisional micro work unit. A Claude review
-agent may propose a higher tier, but only an immutable maintainer-authored
-`slop-score` record bound to the pull-request node ID and exact head SHA can
-ratify it. Related or artificially split PRs share one `workUnitId`; confirmed
+Every accepted merge begins as a provisional work unit: micro when merged
+before 2026-10-01T00:00:00Z, small from then on (PRD SCR-05), the same tier as
+an unratified standard review. A Claude review agent may propose another tier,
+but only an immutable maintainer-authored `slop-score` record bound to the
+pull-request node ID and exact head SHA can ratify it, including micro for
+trivial work. Related or artificially split PRs share one `workUnitId`; confirmed
 duplicates, valueless changes, and split-only work may be excluded by a public
 human decision. XL, exceptional, security-sensitive, and related-party cases
 require a second maintainer.

@@ -22,7 +22,9 @@ Token usage, cost, model, signed-receipt weight, wallet state, and payment never
 multiply points. Required source evidence and project participation rules apply.
 
 Historical merged PRs initially receive 10 provisional points each, including
-work before the project's payment program. This is a recognition backfill and
+work before the project's payment program. A Score v2 merge from
+2026-10-01T00:00:00Z without a ratified tier is provisional small credit and
+receives 30 provisional points. This is a recognition backfill and
 never retroactive cash eligibility. Verified archived and current scoring
 records supersede provisional amounts, including exclusions and work grouping
 within their complete source windows. Historical review credit is limited to

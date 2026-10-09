@@ -385,6 +385,13 @@ For new cycles under the adopted rule, calculate each actor's project-cycle allo
 - Split the ratified or provisional score thirds equally in integer thirds. The pull-request author is first, then the other actors in actor-ID order, and the first actors receive the remainder. Each actor receives at least one third (micro credit), so a micro merge with two committers gives each committer micro credit. Commit count, lines, and commit order do not change a share, so more commits cannot increase a share.
 - Each actor receives one share for one work unit. The pull-request author keeps the only evidence bonus. A review by any credit actor of that pull request is a self-review and does not score. Rolling-window bounds, work-unit grouping, and integer money arithmetic do not change.
 
+**SCR-05: Unratified merge parity.** Proposed on 9 October 2026 in response to a contributor question in the public community channel; it takes effect only when the repository owner approves it. Before this rule, an unratified formal review scored standard credit (3 thirds) while an unratified merge scored micro credit (1 third). No merge has received a maintainer `slop-score` record, so in practice one review outweighed three merged pull requests. Apply this rule to Score v2:
+
+- A merge at or after 2026-10-01T00:00:00Z without a maintainer `slop-score` record receives provisional small credit (3 thirds), the same tier as an unratified standard review. Merges before that instant keep provisional micro credit.
+- A ratified record still sets the tier, including micro for trivial work. SCR-04 splits the provisional thirds the same way it splits ratified thirds.
+- Review credit, review tiers, the optional review budget, work-unit grouping and aggregate rounding do not change. Closed cycles are never recalculated; the first affected cycle is October 2026, which has not closed.
+- Slop Points keep the ten-points-per-third conversion, so a provisional merge from that instant records 30 points instead of 10.
+
 Show both metric families on profiles, project pages, maintainer review queues, and leaderboard detail. Provide project/UTC-period filters, denominator counts, source coverage, last refresh, and bot-only rejection rate. Attribute negative events only to the responsible artifact author, not commenters/reviewers. Monthly outcome metrics use transition occurrence time; historical views are as-of-period-end, with subsequent corrections labeled. Ratios are diagnostic and do not add another automatic score multiplier or debit on top of the closure event.
 
 ### Leaderboard behavior
