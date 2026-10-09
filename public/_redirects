@@ -15,8 +15,6 @@
 /earnings/ / 200
 /wallet / 200
 /wallet/ / 200
-/projects / 200
-/projects/ / 200
 /projects/new / 200
 /projects/:project/funding/ / 200
 /projects/:project/funding / 200

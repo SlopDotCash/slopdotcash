@@ -72,14 +72,12 @@ export function Link({
   className,
   href,
   onNavigate,
-  tabIndex,
 }: {
   ariaLabel?: string;
   children: ReactNode;
   className?: string;
   href: string;
   onNavigate?: () => void;
-  tabIndex?: number;
 }) {
   const scrollAfterNavigation = () => {
     window.setTimeout(() => {
@@ -93,7 +91,6 @@ export function Link({
       aria-label={ariaLabel}
       className={className}
       href={href}
-      tabIndex={tabIndex}
       onClick={(event) => {
         if (
           event.button !== 0 ||
