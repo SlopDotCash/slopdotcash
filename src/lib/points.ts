@@ -235,7 +235,7 @@ export function awardForScore(event: ScoreEvent): PointAward {
     workUnitId: event.workUnitId ?? event.id,
     provisional:
       event.category === "merged-pull-request" &&
-      event.scoreThirds === 1 &&
+      event.scoreThirds !== undefined &&
       !event.scoreDecisionSourceId,
   };
 }

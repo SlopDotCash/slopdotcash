@@ -140,6 +140,9 @@ export const PROFILE_OPPORTUNITY_LIMIT = 5 as const;
 export const SCORE_RULE_VERSION = "slop-score-v2" as const;
 export const SCORE_V2_EFFECTIVE_AT = "2026-08-01T00:00:00.000Z" as const;
 const USAGE_NEUTRAL_EVIDENCE_POLICY_AT = "2026-08-19T00:00:00.000Z" as const;
+// SCR-05: from this instant an unratified merge starts at the same tier as an
+// unratified formal review (small, one point) instead of micro.
+export const UNRATIFIED_MERGE_PARITY_AT = "2026-10-01T00:00:00.000Z" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
 export const SCORE_WINDOW_DAYS = 35;
@@ -156,6 +159,16 @@ export const SCORE_CAPS = {
   evaluatedContributions: 3,
 } as const;
 export const DETAILED_MERGED_PULL_REQUESTS_PER_MONTH = 5;
+
+/**
+ * Provisional score thirds for a v2 merge without a maintainer slop-score
+ * record: micro before UNRATIFIED_MERGE_PARITY_AT, small from then on.
+ */
+export function unratifiedMergeScoreThirds(mergedAt: string): 1 | 3 {
+  return parseIsoTime(mergedAt) >= parseIsoTime(UNRATIFIED_MERGE_PARITY_AT)
+    ? 3
+    : 1;
+}
 
 /**
  * Gives every accepted merge positive credit while reducing the marginal
@@ -1366,14 +1379,14 @@ function requiresExplicitPrizeAcceptance(repositoryId: string): boolean {
 export function leaderboardMethodology(): LeaderboardMethodology {
   return {
     summary:
-      "Slop Score v2 groups accepted work into logical work units and stores credit in integer thirds. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the score on GitHub. Tiny accepted work starts at one third, and only the actor's aggregate is rounded down at cycle close.",
+      "Slop Score v2 groups accepted work into logical work units and stores credit in integer thirds. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the score on GitHub. An unratified merge starts at one third before October 2026 and at one point from then on, the same as an unratified formal review, and only the actor's aggregate is rounded down at cycle close.",
     scoringRules: [
       {
         id: "merged-pull-request",
         points: "micro 1/3; small 1; medium 3; large 8; XL 15; exceptional 25",
         cap: "uncapped; related or split pull requests share one workUnitId",
         qualification:
-          "Authored pull request merged during the rolling window. Unratified August work receives provisional micro credit; higher tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 1/3 each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
+          "Authored pull request merged during the rolling window. Unratified work merged before 2026-10-01 receives provisional micro credit and later work provisional small credit; other tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 1/3 each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
       },
       {
         id: "resolved-issue",
@@ -1440,7 +1453,7 @@ export function leaderboardMethodology(): LeaderboardMethodology {
     ],
     provenancePolicy:
       "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
-    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID and every artifact keeps its repository attribution. A scalar-only, budget-preflighted census selects every merged pull request with formal reviews for complete review hydration; missing or inconsistent census/detail data aborts the snapshot instead of publishing partial review credit. Score v2 applies to work from 2026-08-01 UTC. Every accepted merge receives at least provisional micro credit. Higher scores require an unedited maintainer-authored slop-score record bound to the PR node ID and exact head SHA; corrections append a successor. Proposal review records disclose exact provider, model, client, run, trace, effort, complexity, impact, review load, split risk, and confidence. XL and exceptional decisions require a second maintainer. Project reward views exclude work before the published reward start.`,
+    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID and every artifact keeps its repository attribution. A scalar-only, budget-preflighted census selects every merged pull request with formal reviews for complete review hydration; missing or inconsistent census/detail data aborts the snapshot instead of publishing partial review credit. Score v2 applies to work from 2026-08-01 UTC. Every accepted merge receives at least provisional micro credit, and provisional small credit when merged from 2026-10-01. Any other tier requires an unedited maintainer-authored slop-score record bound to the PR node ID and exact head SHA; corrections append a successor. Proposal review records disclose exact provider, model, client, run, trace, effort, complexity, impact, review load, split risk, and confidence. XL and exceptional decisions require a second maintainer. Project reward views exclude work before the published reward start.`,
   };
 }
 
@@ -1542,7 +1555,7 @@ function addScore(
     const scoreThirds =
       event.scoreThirds ??
       (event.category === "merged-pull-request"
-        ? 1
+        ? unratifiedMergeScoreThirds(event.occurredAt)
         : event.category === "substantive-review"
           ? 3
           : Math.max(1, Math.round(event.points * 3)));
@@ -2854,7 +2867,9 @@ export function createLeaderboardSnapshot(
         ? [author]
         : [];
     if (actors.length === 0) continue;
-    const totalThirds = ratification?.record.scoreThirds ?? 1;
+    const totalThirds =
+      ratification?.record.scoreThirds ??
+      unratifiedMergeScoreThirds(pullRequest.mergedAt);
     const shares = shareScoreThirds(totalThirds, actors.length);
     if (author) {
       const authorEntry = actorEntry(entries, author);
@@ -2877,7 +2892,7 @@ export function createLeaderboardSnapshot(
       : null;
     const baseReason = ratification
       ? `Maintainer-ratified ${ratification.record.tier} accepted outcome: ${ratification.record.reason}`
-      : "Accepted outcome has provisional micro credit pending immutable maintainer ratification.";
+      : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
     for (const [index, actor] of actors.entries()) {
       const isAuthor = actor.id === author?.id;
       const scoreThirds = shares[index] as number;
