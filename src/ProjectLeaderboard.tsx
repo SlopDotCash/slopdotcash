@@ -1,4 +1,3 @@
-import { ChevronRight } from "lucide-react";
 import { Link } from "./Link";
 import type { ProjectContributor, ProjectView } from "./lib/project-view";
 import {
@@ -41,11 +40,8 @@ export function ProjectLeaderboard({
         retryScore={retry}
         compact
       />
-      <details className="cycle-allocation-details">
-        <summary>
-          <span>Cycle allocation details</span>
-          <ChevronRight aria-hidden="true" size={18} />
-        </summary>
+      <details>
+        <summary>Cycle allocation details</summary>
         <CycleAllocation {...props} />
       </details>
     </div>
