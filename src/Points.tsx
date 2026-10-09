@@ -21,7 +21,6 @@ import {
   contributorStandings,
   type StandingsSort,
 } from "./lib/contributor-standings";
-import { copyText } from "./lib/copy-text";
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { requestIdentityAssertion } from "./lib/identity-flow";
@@ -37,12 +36,7 @@ import {
 import { profileCounts } from "./lib/profiles";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
-import {
-  DataNotice,
-  formatMicroUsdc,
-  formatScore,
-  stale,
-} from "./Presentation";
+import { DataNotice, formatMicroUsdc, formatScore } from "./Presentation";
 import { ProfileActivity, useProfiles } from "./Profiles";
 import { WalletRegistration } from "./WalletRegistration";
 
@@ -403,7 +397,7 @@ function Notice() {
     <p className="points-meta">
       Recorded history · updated{" "}
       {new Date(state.journal.generatedAt).toLocaleString()}
-      {stale(state.journal)
+      {Date.now() - Date.parse(state.journal.generatedAt) > 8 * 3600000
         ? " · Stale: the next verified update is pending."
         : ""}
     </p>
@@ -484,16 +478,7 @@ export function ProfilePoints({
           ? named[0]
           : undefined
       : undefined;
-  const pointsActor = m?.actor ?? identity?.actor ?? recorded;
   const [copied, setCopied] = useState("");
-  const copyProfile = () => {
-    void copyText(
-      `${window.location.origin}/contributors/${encodeURIComponent(login)}`,
-    ).then(
-      () => setCopied("Link copied"),
-      () => setCopied("Copy unavailable. Copy this page’s address."),
-    );
-  };
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
@@ -510,7 +495,7 @@ export function ProfilePoints({
             {summary}
             <div>
               <strong>
-                {state.status === "ready" && pointsActor
+                {state.status === "ready" && (m || identity || recorded)
                   ? (
                       (m?.total ?? 0) +
                       (identity?.welcome ?? 0) +
@@ -525,63 +510,56 @@ export function ProfilePoints({
           </>
         }
       />
-      <section
-        className="profile-points-summary"
-        aria-labelledby="profile-points-heading"
-      >
-        <div className="profile-points-heading">
-          <h2 id="profile-points-heading">Slop Points</h2>
-          <a href="/points#rules">How to earn points</a>
-        </div>
-        {state.status === "ready" && pointsActor ? (
-          <div className="profile-points-content">
-            <div className="profile-points-month">
-              <strong>{m?.monthly.toLocaleString() ?? "0"}</strong>
-              <span>Points earned this month</span>
-            </div>
-            <div className="profile-points-milestones">
-              <h3>Milestones</h3>
-              {m?.badges.length ? (
-                <ul aria-label="Points milestones">
-                  {m.badges.map((badge) => (
-                    <li key={badge}>{badge}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p>Welcome to Slop</p>
-              )}
-              {identity ? (
-                <p>
-                  5 welcome points · {identity.socialPoints ?? 0} X connection
-                  points
-                </p>
-              ) : null}
-              <PublicXLink actorId={pointsActor.id} />
-            </div>
-            <div className="profile-points-actions">
-              <button type="button" onClick={copyProfile}>
-                Copy profile link
-              </button>
-              <span role="status">{copied}</span>
-              {own ? (
-                <a href="/account">Manage account and social connections</a>
-              ) : null}
-            </div>
-          </div>
-        ) : state.status === "ready" ? (
+      <h2>Slop Points</h2>
+      <Notice />
+      {state.status === "ready" && (m || identity || recorded) ? (
+        <>
           <p>
-            {joinStatus === "loading"
-              ? "Looking up membership…"
-              : joinStatus === "unavailable"
-                ? "Membership is temporarily unavailable."
-                : "No recorded points for this account yet. Join to get started."}
+            {m?.monthly.toLocaleString() ?? "0"} earned points this month
+            {identity
+              ? ` · 5 welcome points · ${identity.socialPoints ?? 0} X connection points`
+              : ""}
           </p>
-        ) : null}
-        <div className="profile-points-notes">
-          <Notice />
-          <p>{POINTS_NOTICE}</p>
-        </div>
-      </section>
+          {m || identity || recorded ? (
+            <PublicXLink
+              actorId={(m?.actor ?? identity?.actor ?? recorded!).id}
+            />
+          ) : null}
+          <p>{m?.badges.join(" · ") ?? "Welcome to Slop"}</p>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard
+                .writeText(
+                  `${window.location.origin}/contributors/${encodeURIComponent(login)}`,
+                )
+                .then(
+                  () => setCopied("Link copied"),
+                  () =>
+                    setCopied("Copy unavailable. Copy this page’s address."),
+                );
+            }}
+          >
+            Copy profile link
+          </button>
+          <span role="status">{copied}</span>
+        </>
+      ) : state.status === "ready" ? (
+        <p>
+          {joinStatus === "loading"
+            ? "Looking up membership…"
+            : joinStatus === "unavailable"
+              ? "Membership is temporarily unavailable."
+              : "No recorded points for this account yet. Join to get started."}
+        </p>
+      ) : null}
+      <p>{POINTS_NOTICE}</p>
+      {own ? (
+        <p>
+          <a href="/account">Manage account and social connections</a>
+        </p>
+      ) : null}
+      <a href="/points#rules">How to earn points</a>
     </section>
   );
 }
@@ -832,23 +810,16 @@ const POINT_CATEGORIES: readonly (readonly [string, string, boolean])[] = [
 ];
 export function PointsPage() {
   return (
-    <main className="shell route-main points-page contributors-page">
-      <header className="contributors-page-heading">
-        <h1>Contributors</h1>
-        <p>Accepted work, participation, and verified payments.</p>
-      </header>
-      <nav
-        className="contributors-navigation"
-        aria-label="Contributor navigation"
-      >
-        <a href="#people">Find people</a>
-        <a href="#rules">Points rules</a>
-        <a href="/account">Account settings</a>
-      </nav>
-      <ContributorStandings title="Standings" />
+    <main className="shell route-main points-page">
+      <h1>Slop Points</h1>
+      <p>{POINTS_NOTICE}</p>
+      <p>
+        <a href="/account">Account settings</a> ·{" "}
+        <a href="#people">Find people</a> · <a href="#rules">Ways to earn</a>
+      </p>
+      <ContributorStandings />
       <section className="points-panel" id="rules">
-        <h2>Ways to earn points</h2>
-        <p className="points-meta">{POINTS_NOTICE}</p>
+        <h2>Ways to earn</h2>
         <ul aria-label="Point categories" className="points-rules">
           {POINT_CATEGORIES.map(([activity, points, ranked]) => (
             <li key={activity}>
@@ -1002,12 +973,6 @@ export function ContributorStandings({
     page,
     Math.max(0, Math.ceil(rows.length / pageSize) - 1),
   );
-  const coverageDate = (value: string) =>
-    new Intl.DateTimeFormat("en-US", {
-      dateStyle: "medium",
-      timeStyle: "medium",
-      timeZone: "UTC",
-    }).format(new Date(value));
   return (
     <section
       className="points-panel"
@@ -1017,100 +982,20 @@ export function ContributorStandings({
       {!scoreState ? (
         <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
       ) : null}
-      {state.status !== "ready" || stale(state.journal) ? <Notice /> : null}
-      <details className="standings-data-details">
-        <summary>
-          <span>Data freshness &amp; coverage</span>
-          <ChevronDown aria-hidden="true" size={16} />
-        </summary>
-        <dl className="standings-coverage-grid">
-          {scores.status === "ready" ? (
-            <>
-              <div>
-                <dt>Score freshness</dt>
-                <dd
-                  className={
-                    stale(scores.snapshot) ? "coverage-stale" : undefined
-                  }
-                >
-                  {stale(scores.snapshot)
-                    ? "Data may be outdated"
-                    : "Up to date"}
-                </dd>
-              </div>
-              <div>
-                <dt>Score updated · UTC</dt>
-                <dd>
-                  <time
-                    dateTime={scores.snapshot.generatedAt}
-                    title={scores.snapshot.generatedAt}
-                  >
-                    {coverageDate(scores.snapshot.generatedAt)}
-                  </time>
-                </dd>
-              </div>
-              <div className="coverage-window">
-                <dt>Score coverage · UTC</dt>
-                <dd>
-                  <time
-                    dateTime={scores.snapshot.window.from}
-                    title={scores.snapshot.window.from}
-                  >
-                    {coverageDate(scores.snapshot.window.from)}
-                  </time>
-                  <span className="coverage-to">to</span>
-                  <time
-                    dateTime={scores.snapshot.window.to}
-                    title={scores.snapshot.window.to}
-                  >
-                    {coverageDate(scores.snapshot.window.to)}
-                  </time>
-                  <small>Includes closed cycles.</small>
-                </dd>
-              </div>
-            </>
-          ) : null}
-          {state.status === "ready" ? (
-            <div>
-              <dt>Points history updated · UTC</dt>
-              <dd>
-                <time
-                  dateTime={state.journal.generatedAt}
-                  title={state.journal.generatedAt}
-                >
-                  {coverageDate(state.journal.generatedAt)}
-                </time>
-                <small>
-                  {stale(state.journal)
-                    ? "Stale: next verified update pending."
-                    : "Recorded history."}
-                </small>
-              </dd>
-            </div>
-          ) : null}
-          <div>
-            <dt>Selected period</dt>
-            <dd>
-              {period === "month"
-                ? `${new Date().toISOString().slice(0, 7)} (UTC)`
-                : "Recorded history"}
-              {period !== "month" ? (
-                <small>Coverage may have gaps.</small>
-              ) : null}
-            </dd>
-          </div>
-        </dl>
-        {scores.status === "ready" && !projection.scoreAvailable ? (
-          <p className="points-meta">
-            No score records cover this period. Select Recorded history or retry
-            after the next update.
-          </p>
-        ) : null}
-      </details>
-      <fieldset
-        className="points-controls standings-filter-bar"
-        aria-label="Leaderboard filters"
-      >
+      <Notice />
+      {scores.status === "ready" ? (
+        <p className="points-meta">
+          Score records: {scores.snapshot.window.from} to{" "}
+          {scores.snapshot.window.to}, plus closed cycles.
+          {period === "month"
+            ? ` Selected month: ${new Date().toISOString().slice(0, 7)} (UTC).`
+            : " Recorded history; coverage may have gaps."}
+          {!projection.scoreAvailable
+            ? " No score records cover this period. Select Recorded history or retry after the next update."
+            : ""}
+        </p>
+      ) : null}
+      <div className="points-controls">
         <label>
           Sort by
           <select
@@ -1170,10 +1055,9 @@ export function ContributorStandings({
             </select>
           </label>
         ) : null}
-        <label className="standings-search">
+        <label>
           Find a contributor
           <input
-            placeholder="GitHub username"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -1182,7 +1066,7 @@ export function ContributorStandings({
             type="search"
           />
         </label>
-      </fieldset>
+      </div>
       {(
         sort === "points"
           ? state.status === "ready"
@@ -1276,39 +1160,17 @@ export function ContributorStandings({
           </div>
         </>
       ) : null}
-      <footer className="standings-guide">
-        <dl className="standings-metrics">
-          <div>
-            <dt>Slop Score</dt>
-            <dd>Accepted open-source work.</dd>
-          </div>
-          <div>
-            <dt>Points</dt>
-            <dd>Participation and recognition. Nonfinancial.</dd>
-          </div>
-          <div>
-            <dt>Money received</dt>
-            <dd>Verified, finalized USDC principal.</dd>
-          </div>
-        </dl>
-        <p className="points-meta">Equal values share a rank.</p>
-        {compact ? (
-          <div className="standings-guide-bottom">
-            <nav
-              aria-label="Explore standings"
-              className="standings-guide-links"
-            >
-              <a className="button secondary-button" href="/points">
-                Full standings &amp; earning rules{" "}
-                <span aria-hidden="true">↗</span>
-              </a>
-              <a href="/points#people">
-                Find people <span aria-hidden="true">→</span>
-              </a>
-            </nav>
-          </div>
-        ) : null}
-      </footer>
+      <p className="points-meta">
+        Slop Score measures accepted work. Points record recognition. Money
+        received is verified finalized USDC principal. Equal values share a
+        rank. Historical review coverage follows verified records.
+      </p>
+      {compact ? (
+        <p>
+          <a href="/points">Full standings and earning rules</a> ·{" "}
+          <a href="/points#people">Find people</a>
+        </p>
+      ) : null}
     </section>
   );
 }

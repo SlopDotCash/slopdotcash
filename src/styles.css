@@ -603,7 +603,7 @@ textarea:focus-visible {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   padding-block: clamp(52px, 7vh, 84px) clamp(68px, 8vw, 110px);
 }
@@ -721,13 +721,48 @@ p {
 }
 
 .hero-action {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   color: var(--orange-dark);
   font-size: clamp(30px, 7vw, 94px);
   letter-spacing: -0.065em;
   line-height: 0.88;
   text-wrap: balance;
+}
+
+.hero-switch-sizer,
+.hero-typewriter {
+  grid-area: 1 / 1;
+}
+
+.hero-switch-sizer {
+  visibility: hidden;
+}
+
+.hero-typewriter {
+  position: relative;
+  align-self: start;
+}
+
+.hero-mobile-action {
+  display: none;
+}
+
+.hero-typewriter-caret {
+  width: 0.055em;
+  height: 0.78em;
+  display: inline-block;
+  margin-left: 0.04em;
+  animation: typewriter-caret 720ms steps(1, end) infinite;
+  background: currentColor;
+  transform: translateY(0.04em);
+}
+
+@keyframes typewriter-caret {
+  50% {
+    opacity: 0;
+  }
 }
 
 .hero-copy {
@@ -1405,6 +1440,78 @@ small {
   margin: 0.75rem 0 0;
   max-width: 46rem;
   padding-left: 0.75rem;
+}
+
+.reward-card {
+  padding: 24px;
+  border-radius: var(--radius);
+  background: var(--band);
+  color: var(--band-ink);
+}
+
+.reward-card > span {
+  color: #ff8a58;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+.reward-card > strong {
+  display: block;
+  margin: 16px 0 12px;
+  font-size: clamp(36px, 4vw, 54px);
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+}
+
+.reward-card > .reward-amount-monthly {
+  font-size: clamp(48px, 5vw, 68px);
+}
+
+.reward-card > p {
+  margin: 0;
+  color: #aaa398;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.reward-card small {
+  color: #aaa398;
+}
+
+.reward-card > div {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.reward-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.reward-actions a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.reward-actions a:hover {
+  border-color: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .profile-totals strong {
@@ -2318,6 +2425,25 @@ small {
     align-items: start;
   }
 
+  .reward-card {
+    max-width: 520px;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .reward-card > p {
+    max-width: 44ch;
+    margin-inline: auto;
+  }
+
+  .reward-card small {
+    display: block;
+  }
+
+  .reward-actions a {
+    justify-content: center;
+  }
+
   .project-card-content {
     grid-template-columns: minmax(0, 1fr);
     gap: 24px;
@@ -2351,6 +2477,15 @@ small {
     font-size: clamp(36px, 11.5vw, 52px);
     letter-spacing: -0.04em;
     line-height: 0.9;
+  }
+
+  .hero-typewriter {
+    display: none;
+  }
+
+  .hero-mobile-action {
+    display: block;
+    grid-area: 1 / 1;
   }
 
   .hero-copy {
@@ -2562,6 +2697,20 @@ small {
     padding-block: 28px 36px;
   }
 
+  .reward-card {
+    width: 100%;
+  }
+
+  .reward-actions {
+    gap: 6px;
+  }
+
+  .reward-actions a {
+    gap: 6px;
+    padding-inline: 8px;
+    font-size: 13px;
+  }
+
   .cycle-status-grid article {
     min-height: 0;
     padding: 16px;
@@ -2711,6 +2860,9 @@ small {
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+  .hero-typewriter-caret {
+    display: none;
   }
   *,
   *::before,
