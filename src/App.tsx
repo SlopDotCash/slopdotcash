@@ -714,11 +714,53 @@ function projectAgentPrompt(project: ProjectDefinition): string {
   return `Read ${origin}/SKILL.md and follow it to contribute to github.com/${repository}.`;
 }
 
-const AGENT_DEEP_LINKS = [
-  { name: "Cursor", href: "https://cursor.com/link/prompt?text=" },
-  { name: "ChatGPT", href: "https://chatgpt.com/?q=" },
-  { name: "Claude", href: "https://claude.ai/new?q=" },
-] as const;
+// Each link hands the prompt to the agent's own launch surface. Web chats
+// prefill a new conversation; OpenClaw asks before it runs the message; Hermes
+// has no prompt link, so it opens its confirmed skill install for SKILL.md.
+const AGENT_DEEP_LINKS: readonly {
+  name: string;
+  logo: string;
+  href: (prompt: string, skillUrl: string) => string;
+}[] = [
+  {
+    name: "Cursor",
+    logo: "cursor",
+    href: (prompt) =>
+      `https://cursor.com/link/prompt?text=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "Claude",
+    logo: "claude",
+    href: (prompt) => `https://claude.ai/new?q=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "ChatGPT",
+    logo: "chatgpt",
+    href: (prompt) => `https://chatgpt.com/?q=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "Grok",
+    logo: "grok",
+    href: (prompt) => `https://grok.com/?q=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "Meta AI (Muse Spark)",
+    logo: "meta-ai",
+    href: (prompt) =>
+      `https://www.meta.ai/?prompt=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "OpenClaw",
+    logo: "openclaw",
+    href: (prompt) => `openclaw://agent?message=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "Hermes Agent",
+    logo: "hermes-agent",
+    href: (_prompt, skillUrl) =>
+      `hermes://skill/install?identifier=${encodeURIComponent(skillUrl)}`,
+  },
+];
 
 function AgentPromptBox({
   prompt,
@@ -784,22 +826,36 @@ function AgentPromptBox({
     </div>
   );
   if (!openIn) return box;
+  const origin = window.location.origin.replace(/\/$/u, "");
   return (
     <div className="agent-prompt">
       {box}
-      <p className="agent-open-in">
+      <div className="agent-open-in">
         <span>Open in</span>
-        {AGENT_DEEP_LINKS.map((agent) => (
-          <ExternalLinkAnchor
-            href={`${agent.href}${encodeURIComponent(prompt)}`}
-            key={agent.name}
-            onClick={() => void copyText(prompt).catch(() => undefined)}
-          >
-            {agent.name}
-          </ExternalLinkAnchor>
-        ))}
-        <span>or any desktop agent</span>
-      </p>
+        <ul>
+          {AGENT_DEEP_LINKS.map((agent) => {
+            const href = agent.href(prompt, `${origin}/SKILL.md`);
+            const web = href.startsWith("https://");
+            return (
+              <li key={agent.name}>
+                <a
+                  href={href}
+                  onClick={() => void copyText(prompt).catch(() => undefined)}
+                  rel={web ? "noreferrer" : undefined}
+                  target={web ? "_blank" : undefined}
+                  title={agent.name}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`agent-logo agent-logo-${agent.logo}`}
+                  />
+                  <span className="visually-hidden">{agent.name}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </div>
   );
 }
