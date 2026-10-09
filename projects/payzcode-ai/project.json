@@ -1,11 +1,14 @@
 {
   "id": "payzcode-ai",
   "name": "Payzcode AI",
-  "description": "Polygon USDC Payout listing and landing page",
-  "version": "1.0.0",
-  "category": "DeFi / Payments",
-  "network": "Polygon",
-  "contractAddress": "",
-  "author": "Lysander Lombeh"
+  "description": "Autonomous Smart Contract & Web3 Automation Platform",
+  "links": {
+    "site": "https://slop.cash/",
+    "github": "https://github.com/lysande62/payzcode-enterprise"
+  },
+  "tags": [
+    "Web3",
+    "Automation",
+    "Smart Contracts"
+  ]
 }
-
