@@ -582,8 +582,7 @@ export default function ProjectProposalPage() {
           id: repository,
           displayName: repository,
           githubUrl: `https://github.com/${repository}`,
-          description:
-            "Describe the public repository and its role in this project.",
+          description: p.headline || "Describe the project in one sentence.",
           integrationBranch: p.integrationBranch,
         },
       ],
