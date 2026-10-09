@@ -544,23 +544,70 @@ label {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 20px;
+  gap: 8px 14px;
   margin: 18px 0 0;
   color: var(--muted);
   font-size: 15px;
 }
 
-.agent-open-in a {
-  color: var(--ink);
-  font-weight: 700;
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 5px;
+.agent-open-in ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.agent-open-in a:hover {
+.agent-open-in a {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--brand-radius-medium);
+  color: var(--ink);
+}
+
+.agent-open-in a:hover,
+.agent-open-in a:focus-visible {
+  border-color: var(--orange);
   color: var(--orange);
-  text-decoration-color: currentColor;
+}
+
+.agent-logo {
+  width: 22px;
+  height: 22px;
+  background: currentColor;
+  mask: center / contain no-repeat;
+}
+
+.agent-logo-cursor {
+  mask-image: url("./agent-logos/cursor.svg");
+}
+
+.agent-logo-claude {
+  mask-image: url("./agent-logos/claude.svg");
+}
+
+.agent-logo-chatgpt {
+  mask-image: url("./agent-logos/chatgpt.svg");
+}
+
+.agent-logo-grok {
+  mask-image: url("./agent-logos/grok.svg");
+}
+
+.agent-logo-meta-ai {
+  mask-image: url("./agent-logos/meta-ai.svg");
+}
+
+.agent-logo-openclaw {
+  mask-image: url("./agent-logos/openclaw.svg");
+}
+
+.agent-logo-hermes-agent {
+  mask-image: url("./agent-logos/hermes-agent.svg");
 }
 
 /* Install panel on project pages reads as a surface, not a color block. */
