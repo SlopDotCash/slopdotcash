@@ -131,6 +131,16 @@ const FundingReview = lazy(() =>
 const SOCIAL_X = "https://x.com/SlopCash";
 const SOCIAL_LINKEDIN = "https://www.linkedin.com/company/slop-cash";
 const SOCIAL_TELEGRAM = "https://t.me/slopcashofficial";
+const HERO_ACTIONS = [
+  "SHIPPING OPEN SOURCE.",
+  "SECURING THE WEB.",
+  "HACKING THE PLANET.",
+  "BUILDING AGI.",
+] as const;
+const HERO_HOLD_MS = 2_400;
+const HERO_TYPE_MS = 55;
+const HERO_DELETE_MS = 30;
+const HERO_GAP_MS = 220;
 
 export function publicFooterDomain(
   hostname: string,
@@ -324,6 +334,60 @@ function Footer() {
         </div>
       </div>
     </footer>
+  );
+}
+
+function TypewriterHeroHeading() {
+  const [index, setIndex] = useState(0);
+  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
+  const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
+    "holding",
+  );
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const target = HERO_ACTIONS[index];
+    let delay = 1;
+    let advance: () => void;
+    if (phase === "holding") {
+      delay = HERO_HOLD_MS;
+      advance = () => setPhase("deleting");
+    } else if (phase === "deleting" && characters > 0) {
+      delay = HERO_DELETE_MS;
+      advance = () => setCharacters((value) => Math.max(0, value - 1));
+    } else if (phase === "deleting") {
+      delay = HERO_GAP_MS;
+      advance = () => {
+        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
+        setPhase("typing");
+      };
+    } else if (characters < target.length) {
+      delay = HERO_TYPE_MS;
+      advance = () => setCharacters((value) => value + 1);
+    } else {
+      advance = () => setPhase("holding");
+    }
+    const timer = window.setTimeout(advance, delay);
+    return () => window.clearTimeout(timer);
+  }, [characters, index, phase]);
+  const action = HERO_ACTIONS[index];
+  return (
+    <h1 aria-label="MAKE MONEY SHIPPING OPEN SOURCE.">
+      <span aria-hidden="true" className="hero-message">
+        <span>MAKE MONEY</span>
+        <span className="hero-action">
+          {HERO_ACTIONS.map((candidate) => (
+            <span className="hero-switch-sizer" key={candidate}>
+              {candidate}
+            </span>
+          ))}
+          <span className="hero-typewriter">
+            {action.slice(0, characters)}
+            <span className="hero-typewriter-caret" />
+          </span>
+          <span className="hero-mobile-action">{action}</span>
+        </span>
+      </span>
+    </h1>
   );
 }
 
@@ -541,10 +605,7 @@ function HomePage() {
   return (
     <main>
       <section className="hero shell">
-        <h1 className="hero-message">
-          <span>MAKE MONEY</span>{" "}
-          <span className="hero-action">SHIPPING OPEN SOURCE.</span>
-        </h1>
+        <TypewriterHeroHeading />
         <p className="hero-copy">Paste this into your coding agent.</p>
         <AgentPromptBox openIn prompt={bootstrapAgentPrompt()} />
       </section>

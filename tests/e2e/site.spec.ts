@@ -177,7 +177,7 @@ test("shows signer loss and expired capability without payout availability", asy
 test("discovers projects and one score-ranked homepage leaderboard", async ({
   page,
 }) => {
-  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/", { waitUntil: "networkidle" });
   await page.reload({ waitUntil: "networkidle" });
 
@@ -349,9 +349,10 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
     leaderboard.getByRole("link", { name: firstLogin, exact: true }),
   ).toBeVisible();
   await leaderboard.getByLabel("Find a contributor").fill("");
-  await expect(page.locator(".hero-action")).toHaveText(
+  await expect(page.locator(".hero-mobile-action")).toHaveText(
     "SHIPPING OPEN SOURCE.",
   );
+  await expect(page.locator(".hero-typewriter-caret")).toBeHidden();
   await expect(
     page.locator("#projects").getByRole("link", { name: "Add a project" }),
   ).toHaveAttribute("href", "/projects/new");
