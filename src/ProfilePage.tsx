@@ -211,33 +211,28 @@ export function ProfilePage({
   return (
     <main className="shell route-main profile-page">
       <DataNotice state={state} retry={retry} />
-      <nav className="breadcrumb" aria-label="Breadcrumb">
-        <Link href="/points">Contributors</Link>
-        <span aria-hidden="true">/</span>
-        <span aria-current="page">{actor.login}</span>
-      </nav>
+      <p className="breadcrumb">
+        <Link href="/">Back to leaderboard</Link>
+      </p>
       <ContributorIdentity actor={actor}>
-        <details className="profile-wallet-details">
-          <summary>Payout wallet</summary>
-          {currentWallet.status === "ready" ? (
-            <ExternalLinkAnchor href={currentWallet.sourceUrl}>
-              Current payout wallet · {currentWallet.address}{" "}
-              <ExternalLink aria-hidden="true" size={15} />
-            </ExternalLinkAnchor>
-          ) : historicalWallet ? (
-            <ExternalLinkAnchor href={historicalWallet.sourceUrl}>
-              Historical payout wallet · {historicalWallet.address}{" "}
-              <ExternalLink aria-hidden="true" size={15} />
-            </ExternalLinkAnchor>
-          ) : currentWallet.status === "loading" ? (
-            <span>Checking current payout wallet…</span>
-          ) : currentWallet.status === "error" ? (
-            <span>Current payout wallet status unavailable</span>
-          ) : (
-            <span>No current payout wallet registered</span>
-          )}
-          <Link href="/account#wallets">Register or update your wallet</Link>
-        </details>
+        {currentWallet.status === "ready" ? (
+          <ExternalLinkAnchor href={currentWallet.sourceUrl}>
+            Current payout wallet · {currentWallet.address}{" "}
+            <ExternalLink aria-hidden="true" size={15} />
+          </ExternalLinkAnchor>
+        ) : historicalWallet ? (
+          <ExternalLinkAnchor href={historicalWallet.sourceUrl}>
+            Historical payout wallet · {historicalWallet.address}{" "}
+            <ExternalLink aria-hidden="true" size={15} />
+          </ExternalLinkAnchor>
+        ) : currentWallet.status === "loading" ? (
+          <span>Checking current payout wallet…</span>
+        ) : currentWallet.status === "error" ? (
+          <span>Current payout wallet status unavailable</span>
+        ) : (
+          <span>No current payout wallet registered</span>
+        )}
+        <Link href="/account#wallets">Register or update your wallet</Link>
       </ContributorIdentity>
       <ProfilePoints
         key={login.toLowerCase()}
@@ -270,7 +265,7 @@ export function ProfilePage({
           </>
         }
       />
-      <p className="profile-estimate-note">
+      <p>
         This estimate uses project budget targets. It is not an approved payout.
         The 14-day review applies to monthly proposals, not this estimate.
       </p>

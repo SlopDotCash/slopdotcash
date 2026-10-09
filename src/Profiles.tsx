@@ -1,4 +1,4 @@
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { browserDeployment } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
@@ -159,46 +159,44 @@ export function ProfileActivity({
       ) : null}
       <h2>Contribution record</h2>
       <div className="profile-totals">
-        <div className="profile-score-summary">{summary}</div>
-        <div className="profile-work-summary">
-          {state.status === "ready"
-            ? (
-                [
-                  ["Merged", "merged"],
-                  ["Open", "open"],
-                  ["Closed without merging", "closed"],
-                ] as const
-              ).map(([label, key]) => (
-                <div key={key}>
-                  <strong>
-                    {counts ? counts[key].toLocaleString() : "Unknown"}
-                  </strong>
-                  <span>PRs {label.toLowerCase()}</span>
-                </div>
-              ))
-            : null}
+        {summary}
+        {state.status === "ready" ? (
+          <>
+            {(
+              [
+                ["Merged", "merged"],
+                ["Open", "open"],
+                ["Closed without merging", "closed"],
+              ] as const
+            ).map(([label, key]) => (
+              <div key={key}>
+                <strong>
+                  {counts ? counts[key].toLocaleString() : "Unknown"}
+                </strong>
+                <span>PRs {label.toLowerCase()}</span>
+              </div>
+            ))}
+          </>
+        ) : null}
+        <div>
+          <strong>
+            {payments
+              ? dollars(payments.reduce((n, r) => n + r.amount, 0n))
+              : recordsLoading || (!id && state.status === "loading")
+                ? "Loading…"
+                : "Unavailable"}
+          </strong>
+          <span>verified payments received · USDC</span>
         </div>
-        <div className="profile-payment-summary">
-          <div>
-            <strong>
-              {payments
-                ? dollars(payments.reduce((n, r) => n + r.amount, 0n))
-                : recordsLoading || (!id && state.status === "loading")
-                  ? "Loading…"
-                  : "Unavailable"}
-            </strong>
-            <span>verified payments received · USDC</span>
-          </div>
-          <div>
-            <strong>
-              {id
-                ? dollars(direct.reduce((n, r) => n + r.amount, 0n))
-                : state.status === "loading"
-                  ? "Loading…"
-                  : "Unavailable"}
-            </strong>
-            <span>direct payments reported · USDC</span>
-          </div>
+        <div>
+          <strong>
+            {id
+              ? dollars(direct.reduce((n, r) => n + r.amount, 0n))
+              : state.status === "loading"
+                ? "Loading…"
+                : "Unavailable"}
+          </strong>
+          <span>direct payments reported · USDC</span>
         </div>
       </div>
 
@@ -292,9 +290,7 @@ function ProfileTimeline({
   }>;
   direct: Array<{ date: string; amount: bigint; href: string; name: string }>;
 }) {
-  const [requestedPage, setRequestedPage] = useState(0);
-  const previousButton = useRef<HTMLButtonElement>(null);
-  const nextButton = useRef<HTMLButtonElement>(null);
+  const [expanded, setExpanded] = useState(false);
   const unmatchedAwards = new Map(awards.map((award) => [award.key, award]));
   const records = [
     ...work.map((event) => {
@@ -355,18 +351,8 @@ function ProfileTimeline({
       (b.date ?? "").localeCompare(a.date ?? "") || a.key.localeCompare(b.key),
   );
   if (records.length === 0) return null;
-  const pageSize = 10;
-  const pageCount = Math.ceil(records.length / pageSize);
-  const page = Math.min(requestedPage, pageCount - 1);
-  const first = page * pageSize;
-  // A boundary page disables the pressed button; keep keyboard focus nearby.
-  const setPage = (next: number) => {
-    setRequestedPage(next);
-    if (next === 0) nextButton.current?.focus();
-    else if (next === pageCount - 1) previousButton.current?.focus();
-  };
   const groups = new Map<string, typeof records>();
-  for (const record of records.slice(first, first + pageSize)) {
+  for (const record of expanded ? records : records.slice(0, 10)) {
     const day = record.date?.slice(0, 10) ?? "";
     const group = groups.get(day) ?? [];
     group.push(record);
@@ -374,12 +360,18 @@ function ProfileTimeline({
   }
   return (
     <section className="profile-timeline" aria-label="Contribution activity">
-      <div className="profile-activity-heading">
-        <h2>Activity</h2>
-        <span className="profile-activity-count">
-          {records.length.toLocaleString()} records
-        </span>
-      </div>
+      <h2>Activity</h2>
+      {records.length > 10 ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded
+            ? "Show recent activity"
+            : `View all ${records.length} activity records`}
+        </button>
+      ) : null}
       {[...groups].map(([day, rows]) => (
         <section key={day}>
           <h3>
@@ -392,51 +384,17 @@ function ProfileTimeline({
           <ul className="points-history">
             {rows.map((row) => (
               <li key={row.key} data-activity-date={row.date ?? ""}>
-                <div className="profile-activity-description">
-                  <ExternalLinkAnchor href={row.href}>
-                    <strong>{row.title}</strong>
-                  </ExternalLinkAnchor>
-                  <small>{row.detail}</small>
-                </div>
-                <span className="profile-activity-amount">{row.amount}</span>
+                <ExternalLinkAnchor href={row.href}>
+                  <strong>{row.title}</strong>
+                </ExternalLinkAnchor>
+                <small>
+                  {row.amount} · {row.detail}
+                </small>
               </li>
             ))}
           </ul>
         </section>
       ))}
-      {pageCount > 1 ? (
-        <nav
-          className="profile-activity-pagination"
-          aria-label="Activity pages"
-        >
-          <p role="status">
-            {(first + 1).toLocaleString()}–
-            {Math.min(first + pageSize, records.length).toLocaleString()} of{" "}
-            {records.length.toLocaleString()}
-          </p>
-          <div>
-            <button
-              ref={previousButton}
-              type="button"
-              disabled={page === 0}
-              onClick={() => setPage(page - 1)}
-            >
-              Previous
-            </button>
-            <span>
-              Page {page + 1} of {pageCount}
-            </span>
-            <button
-              ref={nextButton}
-              type="button"
-              disabled={page === pageCount - 1}
-              onClick={() => setPage(page + 1)}
-            >
-              Next
-            </button>
-          </div>
-        </nav>
-      ) : null}
     </section>
   );
 }
