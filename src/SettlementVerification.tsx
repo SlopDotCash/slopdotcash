@@ -118,11 +118,7 @@ function BindingState({
   if (bindings.status === "empty")
     return (
       <p role="status">
-        No execution has been bound yet. No cycle has reached an approved
-        allocation and execution plan, so there is nothing on chain for the
-        verifier to observe. The ledger is empty rather than withheld, and an
-        empty ledger is the only state the transition gate accepts until the
-        first reviewed binding lands.
+        No payment has been made yet, so there is nothing on chain to verify.
       </p>
     );
   return (

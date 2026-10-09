@@ -1169,7 +1169,7 @@ export function ContributorStandings({
       <p className="points-meta">
         Slop Score measures accepted work. Points record recognition. Money
         received is verified finalized USDC principal. Equal values share a
-        rank. Historical review coverage follows verified records.
+        rank.
       </p>
       {compact ? (
         <p>
