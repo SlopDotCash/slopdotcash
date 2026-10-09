@@ -15,7 +15,8 @@ sign-in proves account control, not one unique person per account.
 
 Tiered accepted work earns ten points per unweighted score-third: micro 10,
 small 30, medium 90, large 240, XL 450, exceptional 750. Eligible standard
-reviews earn 30; reviewed triage, deep, and specialist reviews earn 10, 90,
+reviews earn 30; from 2026-10-01 an ordinary review earns 10 only as the one
+outcome review of its pull request; reviewed triage, deep, and specialist reviews earn 10, 90,
 and 240. Legacy integer score events earn 30 points per unweighted score.
 Verified evaluated contributions follow that same unweighted conversion.
 Token usage, cost, model, signed-receipt weight, wallet state, and payment never

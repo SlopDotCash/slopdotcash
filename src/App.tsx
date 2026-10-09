@@ -1875,10 +1875,12 @@ function HowItWorksPage() {
             </p>
             <p>
               Review is scored work: triage 1/3, standard review 1, deep
-              reproduction 3, specialist review 8. Self-review, post-merge
-              review, duplicate review, and bot activity do not score. A valid
-              signed receipt with a finalized private trace adds a fixed 15%
-              weight.
+              reproduction 3, specialist review 8. Since October 2026, an
+              ordinary review scores only when the merged code answered its
+              request for changes, once per pull request. Self-review,
+              post-merge review, duplicate review, and bot activity do not
+              score. A valid signed receipt with a finalized private trace adds
+              a fixed 15% weight.
             </p>
             <p>
               Token volume, cost, lines, commits, confidence, and account count
@@ -2069,11 +2071,14 @@ function HowItWorksPage() {
         </details>
         <details>
           <summary>Do reviews score?</summary>
-          <p>Yes. A review counts as a standard review, 1 point, when:</p>
+          <p>
+            Only when it changes what merges. Since October 2026, a review
+            scores 1/3 of a point when:
+          </p>
           <ul>
             <li>
-              It is submitted as Approve or Request changes. A plain Comment
-              review does not score.
+              It is submitted as Request changes. Approve and Comment reviews do
+              not score.
             </li>
             <li>It is on someone else&apos;s pull request.</li>
             <li>
@@ -2081,15 +2086,15 @@ function HowItWorksPage() {
               comment.
             </li>
             <li>
-              It is submitted before the pull request merges, and the pull
-              request does merge.
+              The author pushes new code after it, and the pull request then
+              merges.
             </li>
           </ul>
           <p>
-            One review scores per person per pull request, and reviews by or of
-            bot accounts do not score. If you left a Comment review, you can
-            submit a new Approve or Request changes review while the pull
-            request is still open.
+            Each pull request gives one review award, to the latest request for
+            changes that the merged code answered. Reviews by or of bot accounts
+            do not score. A maintainer can award a higher review tier for an
+            unusually valuable review.
           </p>
         </details>
         <details>
@@ -2103,12 +2108,15 @@ function HowItWorksPage() {
           </p>
         </details>
         <details>
-          <summary>Why does my merge show only 1/3 of a point?</summary>
+          <summary>
+            What is my merge worth before a maintainer scores it?
+          </summary>
           <p>
-            Every merge starts as a provisional micro unit. A review agent may
-            propose a higher tier from the table above, and the score moves up
-            only when a maintainer ratifies that tier on the exact merged
-            commit. Related or split pull requests share one work unit.
+            Since October 2026, every merge starts as a provisional small unit,
+            1 point; earlier merges started at 1/3. A review agent may propose
+            another tier from the table above, and the score changes only when a
+            maintainer ratifies that tier on the exact merged commit. Related or
+            split pull requests share one work unit.
           </p>
         </details>
         <details>
