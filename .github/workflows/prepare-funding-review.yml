@@ -1,6 +1,6 @@
 name: Prepare monthly funding review
 
-# Only trusted develop code runs with write credentials. No proposal is frozen.
+# Only trusted main code runs with write credentials. No proposal is frozen.
 on:
   workflow_dispatch:
     inputs:
@@ -37,11 +37,11 @@ env:
 
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: Checkout trusted develop
+      - name: Checkout trusted main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -51,7 +51,7 @@ jobs:
       - name: Verify trusted checkout
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = 'refs/heads/develop'
+          test "$GITHUB_REF" = 'refs/heads/main'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Setup Node.js
@@ -212,6 +212,6 @@ jobs:
               )
           Path("evidence/funding-review-pr.md").write_text(text)
           PY
-          gh pr create --draft --base develop --head "$branch" \
+          gh pr create --draft --base main --head "$branch" \
             --title "chore: prepare ${PREPARATION_CYCLE} funding review" \
             --body-file evidence/funding-review-pr.md

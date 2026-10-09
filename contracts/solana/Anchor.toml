@@ -1,0 +1,10 @@
+[toolchain]
+anchor_version = "0.32.1"
+[features]
+resolution = true
+skip-lint = false
+[programs.localnet]
+slop_escrow = "5KFQm1jLFkcS1V5PFpUFg6omNHoDQZTaxqTwwEpnenSL"
+[provider]
+cluster = "Localnet"
+wallet = "./.local/payer.json"

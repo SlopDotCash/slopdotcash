@@ -2,8 +2,10 @@
  * Strict committed-funding contracts: reviewed third-party instrument
  * references from the project manifest plus append-only public commitment
  * records for deposits into, releases from, and refunds out of an instrument.
- * Slop never holds a key, admin, or fee position in any instrument, and
- * verified and self-reported amounts are never added into one number.
+ * Slop holds no admin or fee position in any instrument, and no key in the
+ * 2-of-2 vault or the Sablier stream; in the 2-of-3 project vault it holds one
+ * vote-only key. Verified and self-reported amounts are never added into one
+ * number.
  */
 
 import { isFundingAddress, isSolanaTransactionId } from "./funding-address.mjs";
@@ -16,6 +18,7 @@ import {
 export type {
   FundingCommitmentInstrument,
   SablierLockupV4Instrument,
+  SquadsProjectVaultInstrument,
   SquadsV4VaultInstrument,
 } from "./funding-instruments.mjs";
 export {
@@ -46,6 +49,14 @@ export interface ProjectCommitmentRecord {
         funderMember: string;
         multisig: string;
         stewardMember: string;
+        vault: string;
+        vaultIndex: number;
+      }
+    | {
+        creatorMember: string;
+        independentMember: string;
+        multisig: string;
+        slopMember: string;
         vault: string;
         vaultIndex: number;
       }
@@ -179,6 +190,7 @@ function matchesInstrument(
   }
   if (candidate.kind === "squads-v4-vault") {
     return (
+      "funderMember" in identity &&
       identity.multisig === candidate.multisig &&
       identity.vault === candidate.vault &&
       identity.vaultIndex === candidate.vaultIndex &&
@@ -186,7 +198,19 @@ function matchesInstrument(
       identity.stewardMember === candidate.stewardMember
     );
   }
+  if (candidate.kind === "squads-project-vault") {
+    return (
+      "creatorMember" in identity &&
+      identity.multisig === candidate.multisig &&
+      identity.vault === candidate.vault &&
+      identity.vaultIndex === candidate.vaultIndex &&
+      identity.creatorMember === candidate.creatorMember &&
+      identity.slopMember === candidate.slopMember &&
+      identity.independentMember === candidate.independentMember
+    );
+  }
   return (
+    "contract" in identity &&
     identity.contract === candidate.contract &&
     identity.streamId === candidate.streamId &&
     identity.recipient === candidate.recipient
@@ -262,11 +286,22 @@ export function assertProjectCommitmentRecord(
     throw new TypeError("commitment record transaction id is invalid");
   }
   const identity = object(record.instrument, "commitment record instrument");
+  const projectVaultIdentity =
+    network === "solana" && Object.hasOwn(identity, "slopMember");
   exactKeys(
     identity,
-    network === "solana"
-      ? ["funderMember", "multisig", "stewardMember", "vault", "vaultIndex"]
-      : ["contract", "recipient", "streamId"],
+    network !== "solana"
+      ? ["contract", "recipient", "streamId"]
+      : projectVaultIdentity
+        ? [
+            "creatorMember",
+            "independentMember",
+            "multisig",
+            "slopMember",
+            "vault",
+            "vaultIndex",
+          ]
+        : ["funderMember", "multisig", "stewardMember", "vault", "vaultIndex"],
     "commitment record instrument",
   );
   if (
@@ -279,15 +314,22 @@ export function assertProjectCommitmentRecord(
       "commitment record vaultIndex must be an unsigned byte",
     );
   }
-  if (
-    network === "solana" &&
-    (!isFundingAddress("solana", identity.funderMember) ||
-      !isFundingAddress("solana", identity.stewardMember) ||
-      identity.funderMember === identity.stewardMember)
-  ) {
-    throw new TypeError(
-      "commitment record members must be distinct Solana public keys",
-    );
+  if (network === "solana") {
+    const members = projectVaultIdentity
+      ? [
+          identity.creatorMember,
+          identity.slopMember,
+          identity.independentMember,
+        ]
+      : [identity.funderMember, identity.stewardMember];
+    if (
+      members.some((member) => !isFundingAddress("solana", member)) ||
+      new Set(members).size !== members.length
+    ) {
+      throw new TypeError(
+        "commitment record members must be distinct Solana public keys",
+      );
+    }
   }
   if (
     record.supersedes !== null &&
@@ -349,7 +391,9 @@ export function assertProjectCommitmentRecord(
     const expectedVerifierVersion =
       instrument.kind === "squads-v4-vault"
         ? "commitment-squads-v2"
-        : "commitment-sablier-v2";
+        : instrument.kind === "squads-project-vault"
+          ? "project-vault-squads-v1"
+          : "commitment-sablier-v2";
     if (verifier.version !== expectedVerifierVersion) {
       throw new TypeError(
         "commitment record verifier version does not match its instrument",
@@ -376,9 +420,10 @@ export function assertProjectCommitmentRecord(
 
 function instrumentIdentityKey(record: ProjectCommitmentRecord): string {
   const identity = record.instrument as Record<string, unknown>;
-  return record.network === "solana"
-    ? `${identity.multisig}:${identity.vaultIndex}:${identity.vault}:${identity.funderMember}:${identity.stewardMember}`
-    : `${identity.contract}:${identity.streamId}:${identity.recipient}`;
+  return Object.keys(identity)
+    .sort()
+    .map((key) => `${key}=${String(identity[key])}`)
+    .join(":");
 }
 
 export function assertProjectCommitmentLedger(

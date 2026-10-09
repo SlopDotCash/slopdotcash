@@ -151,9 +151,12 @@ export async function importFundingPreparations(options: {
     const totalScore = contributors
       .reduce((s, r) => s + BigInt(r.scoreThirds), 0n)
       .toString();
-    const scoredMerges = view.ledger.filter(
-      (e) => e.category === "merged-pull-request",
-    ).length;
+    // Shared merge credit emits one event per commit author of one merge.
+    const scoredMerges = new Set(
+      view.ledger
+        .filter((e) => e.category === "merged-pull-request")
+        .map((e) => e.source.id),
+    ).size;
     if (
       String(p.totalScoreThirds) !== totalScore ||
       p.scoredMerges !== scoredMerges ||

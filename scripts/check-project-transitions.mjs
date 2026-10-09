@@ -87,6 +87,10 @@ export function validateProposalFundingTransitions(
       const prior = JSON.parse(priorFiles.get(path));
       if (prior.capMinor !== proposal.capMinor)
         throw new TypeError("historical proposal cap cannot change");
+      if (prior.chain !== proposal.chain)
+        throw new TypeError(
+          "historical proposal settlement network cannot change",
+        );
       if (
         JSON.stringify(prior.fundingBasis) !==
         JSON.stringify(proposal.fundingBasis)
@@ -122,6 +126,12 @@ export function validateProposalFundingTransitions(
     )
       throw new TypeError(
         "new proposal funding basis differs from the immutable base project policy",
+      );
+    // A new proposal freezes the network already reviewed on the base commit.
+    // A network change therefore lands between cycles, never inside one.
+    if (proposal.chain !== prior.reward.chain)
+      throw new TypeError(
+        "new proposal settlement network differs from the immutable base project policy",
       );
   }
 }

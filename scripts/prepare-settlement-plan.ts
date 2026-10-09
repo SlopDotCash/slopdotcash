@@ -1,8 +1,8 @@
 import { assertRewardAllocationManifest } from "../src/lib/rewards";
 /**
  * Releases the exact canonically reserved unsigned plan for a reviewed fresh cycle.
- * The creator signs it with an external Solana wallet; this process never reads
- * signing material or treats plan creation as payment.
+ * The creator signs it with an external Solana or Base wallet; this process
+ * never reads signing material or treats plan creation as payment.
  */
 
 import { constants } from "node:fs";
@@ -15,7 +15,10 @@ import {
   findProject,
   type ProjectId,
 } from "../src/lib/projects.mjs";
-import { assertSettlementExecutionPlan } from "../src/lib/settlement-plan";
+import {
+  assertNetworkSettlementExecutionPlan,
+  fundingInstrumentSource,
+} from "../src/lib/settlement-plan";
 import { loadCanonicalPaymentReservation } from "./load-payment-reservation";
 import {
   reservationJson,
@@ -125,7 +128,7 @@ export async function prepareSettlementPlan(
     arguments_.cycleId,
   );
   if (
-    arguments_.sourceOwner !== loaded.instrument.vault ||
+    arguments_.sourceOwner !== fundingInstrumentSource(loaded.instrument) ||
     arguments_.feeRecipient !== loaded.policy.feeRecipient ||
     (arguments_.createdAtExplicit &&
       arguments_.createdAt !== loaded.reservation.reservedAt)
@@ -138,9 +141,10 @@ export async function prepareSettlementPlan(
     (await fundingReviewProposalSha256(bytes)) !== loaded.reservation.planSha256
   )
     throw new TypeError("Reserved plan bytes failed exact digest check");
-  const plan = assertSettlementExecutionPlan(
+  const plan = assertNetworkSettlementExecutionPlan(
     reservationJson(bytes),
     assertRewardAllocationManifest(reservationJson(loaded.allocationBytes)),
+    [loaded.instrument],
   );
   const readiness = await assertCanonicalSettlementReadiness(
     REPOSITORY_ROOT,

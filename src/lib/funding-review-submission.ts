@@ -281,25 +281,3 @@ export async function applyFundingReviewSubmission(
     totals: { ...proposal.totals, suggestedMinor },
   });
 }
-
-/** Export a validated app handoff using exact fetched proposal bytes. */
-export async function createFundingReviewSubmission(
-  source: Uint8Array,
-  adjustments: readonly FundingReviewAdjustment[],
-  now = Date.now(),
-): Promise<FundingReviewSubmission> {
-  source = new Uint8Array(source);
-  const proposal = assertRewardAllocationManifest(
-    JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(source)),
-  );
-  const submission = assertFundingReviewSubmission({
-    schemaVersion: "1",
-    kind: "funding-review-submission",
-    projectId: proposal.projectId,
-    cycleId: proposal.cycleId,
-    sourceProposalSha256: await fundingReviewProposalSha256(source),
-    adjustments: [...adjustments],
-  });
-  await applyFundingReviewSubmission(source, submission, now);
-  return submission;
-}

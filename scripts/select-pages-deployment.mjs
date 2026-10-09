@@ -15,7 +15,13 @@ function asObject(value, path) {
 
 export function selectSuccessfulProductionDeployment(
   apiResponse,
-  { commitHash, notBefore },
+  {
+    commitHash,
+    notBefore,
+    environment = "production",
+    branch = "main",
+    project = "eliza-computer",
+  },
 ) {
   const response = asObject(apiResponse, "Cloudflare deployment response");
   if (response.success !== true || !Array.isArray(response.result)) {
@@ -47,12 +53,12 @@ export function selectSuccessfulProductionDeployment(
         : {};
     const createdOn = Date.parse(deployment.created_on);
     if (
-      deployment.environment !== "production" ||
-      deployment.project_name !== "eliza-computer" ||
+      deployment.environment !== environment ||
+      deployment.project_name !== project ||
       deployment.is_skipped !== false ||
       latestStage.name !== "deploy" ||
       latestStage.status !== "success" ||
-      metadata.branch !== "develop" ||
+      metadata.branch !== branch ||
       metadata.commit_dirty !== false ||
       metadata.commit_hash !== commitHash ||
       !Number.isFinite(createdOn) ||

@@ -493,12 +493,22 @@ export async function assertSquadsProjectVaultIdentity(
   };
 }
 
+/** Squads v4 member permission bits. */
+export const SQUADS_PERMISSION_INITIATE = 1;
+export const SQUADS_PERMISSION_VOTE = 2;
+export const SQUADS_PERMISSION_EXECUTE = 4;
+export interface SquadsMultisigMember {
+  key: string;
+  permissions: number;
+}
 export interface VerifiedSquadsCreatorSeat {
   configAuthority: boolean;
   creatorMember: string;
   creatorMultisig: string;
   creatorVaultIndex: number;
   memberCount: number;
+  /** Every member of the creator multisig with its permission mask. */
+  members: readonly SquadsMultisigMember[];
   threshold: number;
   timeLockSeconds: number;
 }
@@ -542,12 +552,24 @@ export async function assertSquadsCreatorSeat(
     bytes.length < memberCountOffset + 4 + 33 * memberCount
   )
     throw new TypeError("creator multisig membership is not canonical");
+  const members: SquadsMultisigMember[] = [];
+  const keys = new Set<string>();
+  for (let index = 0; index < memberCount; index += 1) {
+    const offset = memberCountOffset + 4 + 33 * index;
+    const key = encodeBase58(bytes.slice(offset, offset + 32));
+    const permissions = bytes[offset + 32];
+    if (keys.has(key) || permissions === 0 || permissions > 7)
+      throw new TypeError("creator multisig membership is not canonical");
+    keys.add(key);
+    members.push({ key, permissions });
+  }
   return {
     configAuthority: !bytes.slice(40, 72).every((byte) => byte === 0),
     creatorMember,
     creatorMultisig,
     creatorVaultIndex,
     memberCount,
+    members,
     threshold,
     timeLockSeconds: view.getUint32(74, true),
   };

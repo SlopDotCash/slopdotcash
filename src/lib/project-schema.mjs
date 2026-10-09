@@ -1,3 +1,4 @@
+import { assertEscrowPolicy } from "./escrow-policy.mjs";
 import { assertFreshCyclePaymentPolicy } from "./fresh-cycle-policy.mjs";
 /**
  * Validates untrusted project folders before they enter discovery, ingestion,
@@ -824,7 +825,7 @@ function validateReviewBudget(value, field, poolPaymentMode) {
 function validateReward(
   value,
   field,
-  { allowLegacyExternalPrizeFee = false } = {},
+  { allowLegacyExternalPrizeFee = false, escrow = undefined } = {},
 ) {
   const reward = record(value, field);
   const hasExternal = Object.hasOwn(reward, "externalOpportunity");
@@ -873,7 +874,7 @@ function validateReward(
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
   const expectedFeeBasisPoints =
-    reward.kind === "external-prize-share" ? 1000 : 100;
+    reward.kind === "external-prize-share" ? 1000 : escrow ? 200 : 100;
   const hasLegacyExternalPrizeFee =
     allowLegacyExternalPrizeFee &&
     reward.kind === "external-prize-share" &&
@@ -890,7 +891,11 @@ function validateReward(
     if (
       hasExternal ||
       reward.currency !== "USDC" ||
-      reward.chain !== "solana" ||
+      // `reward.chain` is the project's one settlement network (RFC #472).
+      // An escrow project settles on its escrow chain.
+      (escrow
+        ? reward.chain !== escrow.chain
+        : reward.chain !== "solana" && reward.chain !== "base") ||
       reward.unusedFunds !== "rollover-without-cap-increase" ||
       (paymentsDisabled
         ? !(
@@ -975,7 +980,7 @@ function validateReward(
   return reward;
 }
 
-function validateFunding(value, projectId) {
+function validateFunding(value, projectId, settlementNetwork) {
   const funding = record(value, "project.funding");
   const hasCommitments = Object.hasOwn(funding, "commitments");
   const hasPaymentPolicy = Object.hasOwn(funding, "freshCyclePaymentPolicy");
@@ -1010,17 +1015,26 @@ function validateFunding(value, projectId) {
     const policy = assertFreshCyclePaymentPolicy(
       funding.freshCyclePaymentPolicy,
     );
+    // The instrument must settle on the project's network (RFC #472): a
+    // Squads vault on Solana, or a Base Sablier stream with a reviewed
+    // recipient actor who attests control of the source address.
+    const fundsNetwork = (v) =>
+      settlementNetwork === "base"
+        ? v.kind === "sablier-lockup-v4" &&
+          v.network === "base" &&
+          v.recipientGithub !== undefined
+        : v.kind === "squads-v4-vault" || v.kind === "squads-project-vault";
     if (
       policy.projectId !== projectId ||
       !(funding.commitments ?? []).some(
         (v) =>
-          v.kind === "squads-v4-vault" &&
+          fundsNetwork(v) &&
           v.replacedAt === null &&
           v.monthlyCommitment?.cycleId === policy.cycleId,
       )
     )
       throw new TypeError(
-        "Fresh-cycle policy requires its exact active monthly Squads instrument",
+        "Fresh-cycle policy requires its exact active monthly instrument on the settlement network",
       );
   }
   return funding;
@@ -1040,10 +1054,29 @@ function validateProjectDefinition(
   exactKeys(
     project,
     allowLegacyMissingListingTier && !("listingTier" in project)
-      ? PROJECT_KEYS.filter((key) => key !== "listingTier")
-      : PROJECT_KEYS,
+      ? [
+          ...PROJECT_KEYS.filter((key) => key !== "listingTier"),
+          ...(Object.hasOwn(project, "escrow") ? ["escrow"] : []),
+          ...(Object.hasOwn(project, "participation") ? ["participation"] : []),
+        ]
+      : [
+          ...PROJECT_KEYS,
+          ...(Object.hasOwn(project, "escrow") ? ["escrow"] : []),
+          ...(Object.hasOwn(project, "participation") ? ["participation"] : []),
+        ],
     "project",
   );
+  if (project.escrow !== undefined) {
+    assertEscrowPolicy(project.escrow);
+    if (project.reward?.kind !== "monthly-pool")
+      throw new TypeError(
+        "External prize shares must be funded and converted before escrow activation",
+      );
+    if (project.reward?.paymentMode !== "disabled")
+      throw new TypeError(
+        "Escrow migration cannot leave the legacy payment path enabled",
+      );
+  }
   if (project.schemaVersion !== "1")
     throw new TypeError("project schemaVersion is unsupported");
   const id = text(project.id, "project.id", {
@@ -1065,6 +1098,35 @@ function validateProjectDefinition(
   }
   if (project.status !== "active" && project.status !== "paused") {
     throw new TypeError("project.status is invalid");
+  }
+  if (project.participation !== undefined) {
+    const participation = record(
+      project.participation,
+      "project.participation",
+    );
+    if (participation.state === "archived") {
+      exactKeys(
+        participation,
+        ["state", "successorProjectId"],
+        "project.participation",
+      );
+      text(
+        participation.successorProjectId,
+        "project.participation.successorProjectId",
+        {
+          max: 48,
+          pattern: /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u,
+        },
+      );
+      if (participation.successorProjectId === id)
+        throw new TypeError("archived project cannot be its own successor");
+    } else if (participation.state === "permission-required") {
+      exactKeys(participation, ["state"], "project.participation");
+    } else {
+      throw new TypeError("project.participation.state is invalid");
+    }
+    if (project.status !== "paused")
+      throw new TypeError("restricted participation requires a paused project");
   }
   if (
     !Array.isArray(project.repositories) ||
@@ -1096,8 +1158,9 @@ function validateProjectDefinition(
   );
   validateReward(project.reward, "project.reward", {
     allowLegacyExternalPrizeFee,
+    escrow: project.escrow,
   });
-  validateFunding(project.funding, id);
+  validateFunding(project.funding, id, project.reward.chain);
   if (
     (project.reward.fundingState === "committed" ||
       project.reward.reviewBudget?.fundingState === "committed") &&
@@ -1220,6 +1283,19 @@ export function assertProjectRegistry(values) {
   ]) {
     if (new Set(entries).size !== entries.length) {
       throw new TypeError(`project registry contains duplicate ${field}`);
+    }
+  }
+  for (const project of projects) {
+    if (
+      project.participation?.state === "archived" &&
+      !projects.some(
+        (candidate) =>
+          candidate.id === project.participation.successorProjectId,
+      )
+    ) {
+      throw new TypeError(
+        "archived project successor is not in the project registry",
+      );
     }
   }
   return projects;

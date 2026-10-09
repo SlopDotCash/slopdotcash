@@ -8,6 +8,7 @@ import {
 } from "../src/lib/bitcoin-funding";
 import { isFundingAddress } from "../src/lib/funding-address.mjs";
 import { assertFundingBlockTime } from "./funding-block-time";
+import { parseValueArguments } from "./parse-value-arguments";
 
 export const BITCOIN_FUNDING_API_AUTHORITIES = [
   "https://mempool.space/api",
@@ -26,23 +27,11 @@ const CLI_ARGUMENTS = new Set([
 ]);
 
 export function parseBitcoinFundingArguments(argv: readonly string[]) {
-  const parsed = new Map<string, string>();
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = argv[index];
-    const value = argv[index + 1];
-    if (
-      !name ||
-      !CLI_ARGUMENTS.has(name) ||
-      !value ||
-      value.startsWith("--") ||
-      parsed.has(name)
-    ) {
-      throw new TypeError(
-        "Usage: verify-funding-bitcoin.ts --transaction <txid> --recipient <bech32-address> --amount-minor <satoshis>",
-      );
-    }
-    parsed.set(name, value);
-  }
+  const parsed = parseValueArguments(
+    argv,
+    CLI_ARGUMENTS,
+    "Usage: verify-funding-bitcoin.ts --transaction <txid> --recipient <bech32-address> --amount-minor <satoshis>",
+  );
   return {
     transactionId: parsed.get("--transaction") ?? null,
     recipient: parsed.get("--recipient") ?? null,

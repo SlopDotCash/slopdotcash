@@ -43,7 +43,7 @@ export function renderInstallGuide({
   return `# Install ${skillName} for ${clientName}
 
 Install or update the complete skill archive. The authenticated installer
-accepts the current \`develop\` revision, a byte-identical authorized ancestor,
+accepts the current \`main\` revision, a byte-identical authorized ancestor,
 or an explicitly labeled same-repository release candidate. It independently
 compares packaged bytes with immutable GitHub source before atomic activation.
 Verification uses GitHub's anonymous API budget, which is shared by every

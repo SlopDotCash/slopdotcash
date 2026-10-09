@@ -26,15 +26,6 @@ export declare const TARGET_REPOSITORIES: readonly TargetRepository[];
 
 export declare const PRIMARY_REPOSITORY: TargetRepository;
 
-export declare function findTargetRepository(
-  owner: string,
-  name: string,
-): TargetRepository | null;
-
-export declare function findTargetRepositoryById(
-  id: string,
-): TargetRepository | null;
-
 export declare const REGISTERED_REPOSITORIES: readonly TargetRepository[];
 export declare function findRegisteredRepository(
   owner: string,

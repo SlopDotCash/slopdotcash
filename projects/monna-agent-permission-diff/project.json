@@ -21,16 +21,22 @@
     "website": null
   },
   "authority": {
-    "state": "unverified",
-    "reason": "missing-repository-proof",
+    "state": "verified",
+    "reason": null,
     "role": "project-steward",
     "repositoryId": "1359676365",
     "repositoryNodeId": "R_kgDOUQsDzQ",
-    "proof": null
+    "proof": {
+      "commitSha": "7555911a4990338791853c7f363c01941a2fd376",
+      "fileSha256": "f6a94967ba20e69ed4b722c1da0df42346008d12ef0bbdec6f6ce16dcffa61ab",
+      "policyRevision": "2026-10-03.1",
+      "url": "https://github.com/emanalshazly/monna-agent-permission-diff/blob/7555911a4990338791853c7f363c01941a2fd376/.github/slop-project.json",
+      "verifiedAt": "2026-10-03T17:12:00.000Z"
+    }
   },
   "terms": {
-    "revision": "2026-09-13.1",
-    "effectiveAt": "2026-09-13T00:00:00.000Z",
+    "revision": "2026-10-03.1",
+    "effectiveAt": "2026-10-03T00:00:00.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
       "activatedAt": null,
@@ -39,7 +45,7 @@
     "paymentTransfersIp": false,
     "retroactive": false,
     "copyright": {
-      "model": "unknown",
+      "model": "contributor-retained",
       "claimedLegalHolder": null,
       "notice": null,
       "legalCapacity": null,
@@ -53,12 +59,12 @@
       "fileSha256": "bedc8cd3db313c6fad7c55a7a7ef816ea77d4123e49bfac33363a73442a4a46c"
     },
     "inbound": {
-      "mode": "unknown",
-      "termsUrl": null,
-      "commitSha": null,
-      "fileSha256": null,
-      "version": null,
-      "acceptance": null
+      "mode": "license",
+      "termsUrl": "https://github.com/emanalshazly/monna-agent-permission-diff/blob/7555911a4990338791853c7f363c01941a2fd376/CONTRIBUTION-TERMS.md",
+      "commitSha": "7555911a4990338791853c7f363c01941a2fd376",
+      "fileSha256": "85f86172c526d63e9475c0a0d4e64735ec231d2650a0b869db573c101f618785",
+      "version": "2026-10-03.1",
+      "acceptance": "Pull-request contributions are licensed under the repository MIT license."
     },
     "assignment": null,
     "externalPrize": null

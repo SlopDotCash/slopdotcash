@@ -22,7 +22,13 @@ alias only.
 - Slop never infers copyright ownership, legal capacity, assignment, wallet
   control, or payment authority.
 - Slop never holds keys, signs transactions, broadcasts payments, or claims
-  success before public evidence proves it.
+  success before public evidence proves it, except for one key on the opt-in
+  `squads-project-vault` instrument (RFC #500, `funding/README.md`). For that
+  instrument only: Slop holds one of three keys on a project vault. That key
+  can vote on a payout the creator proposed. It cannot propose a transfer,
+  execute one, change the signers, or act alone. Slop holds no customer
+  balance, takes no fee from the vault, and never broadcasts a transfer of
+  vault funds.
 - Never publish secrets, prompts, responses, source files, credentials, session
   identifiers, private trajectories, or signing material.
 
@@ -133,8 +139,7 @@ backend/        private trace storage boundary
 workers/        narrowly scoped Cloudflare services
 src/            React product and strict browser/domain contracts
 scripts/        ingestion, packaging, rewards, settlement, and evidence
-skill-tests/    executable tests for bundled skill behavior
-tests/          unit, integration, accessibility, and browser coverage
+tests/e2e/      real-browser end-to-end, accessibility, and Pages coverage
 ```
 
 ## Add a project
@@ -179,14 +184,14 @@ usefulness, and places the machine review before the signed attribution footer.
 The public checksum detects corruption only. GitHub is the independent trust
 root. The generated installer may authorize:
 
-1. current `develop`;
-2. a `develop` ancestor whose canonical skill tree is unchanged, or a successful
+1. current `main`;
+2. a `main` ancestor whose canonical skill tree is unchanged, or a successful
    approved published revision not listed in `protocol/skill-revocations.json`; or
-3. an open, non-draft, same-repository PR head into `develop` with the
+3. an open, non-draft, same-repository PR head into `main` with the
    maintainer-controlled `slop-release-candidate` label applied after the exact
    current-head commit event.
 
-Reject candidates behind or divergent from `develop`, missing or extra files,
+Reject candidates behind or divergent from `main`, missing or extra files,
 working-tree provenance, stale label events, mutable redirects, and byte
 mismatches. Preserve immutable sibling version directories, the process-bound
 kernel lock, atomic relative-symlink activation, prior verified versions, and
@@ -250,7 +255,7 @@ Generated points projections are build outputs; do not edit them by hand.
 
 Closed cycles live only at `cycles/<project>/<YYYY-MM>/` and bind exact source
 snapshot bytes and scoring-rule version. The trusted first-of-month automation
-runs from `develop`, is idempotent, refuses partial cycles, and records
+runs from `main`, is idempotent, refuses partial cycles, and records
 zero-award months.
 
 Monthly allocations use integer USDC micro-units and largest remainder. The 1%
@@ -268,17 +273,30 @@ next cycle and never touches the current proposal. History is never edited.
 Missing wallets remain unclaimed. Related-party money requires separate
 approval.
 
-Settlement tools create unsigned Solana mainnet USDC plans only. `paid`
-requires finalized evidence whose exact source and destination deltas reconcile
-every immutable intent and fee. Reject replay, wrong mint, wrong owner, partial,
-duplicate, failed, or overpaid state. Delta Star publishes external-prize
-shares only and never enters the platform payment lifecycle.
+Each monthly-pool project has one settlement network, `reward.chain`: Solana
+(default) or Base (RFC #472). A proposal freezes that network for its cycle; a
+network change lands by PR between cycles. Only a wallet claim on the cycle
+network is payable; otherwise the row stays unclaimed. Settlement tools create
+unsigned USDC plans only: Solana mainnet transfers from the frozen Squads vault,
+or Base mainnet EIP-681 transfers from the frozen Base Sablier stream recipient.
+The fee is a separate transfer on the same network. `paid` requires finalized
+Solana evidence, or Base evidence under the 2-of-3 RPC quorum and 12
+confirmations, whose exact source and destination deltas reconcile every
+immutable intent and fee. Reject replay, wrong mint or token, wrong owner,
+partial, duplicate, failed, or overpaid state. Delta Star publishes
+external-prize shares only and never enters the platform payment lifecycle.
 
 Committed funding uses reviewed immutable third-party instruments: Squads v4
 multisig vaults on Solana and Sablier Lockup v4 streams on Base or Ethereum.
-Slop has no key, admin, or fee position. A positive committed amount requires
-an active reviewed instrument and deterministic verifier evidence. Never call
-funds “escrow” or “guaranteed.”
+Slop has no admin or fee position in any instrument and no key in the 2-of-2
+vault or a stream. On a 2-of-3 project vault Slop holds one vote-only key, and
+a payout is approved for payment only once the creator's on-chain proposal is
+bound in `funding/executions/ledger.json`. A project vault activates payments
+only with its exact reviewed fresh-cycle policy; its release needs current
+capability reports from the creator and the independent signer, and Slop's
+key never attests. A positive committed amount requires an active reviewed
+instrument and deterministic verifier evidence. Never call funds “escrow” or
+“guaranteed.”
 
 ## Project authority and IP
 
@@ -293,28 +311,34 @@ claim copyright.
 
 ## Deployment
 
+`development` deploys to `staging.slop.cash`. Promote changes through a reviewed
+PR from `development` to `main`. Only `main` deploys to `slop.cash`.
+Staging has a separate Pages project, D1 database, private R2 bucket, identity
+Worker, and secrets. Staging login and writes never use production storage.
+Both branches require the full CI and trusted policy checks. The temporary
+`develop` compatibility branch has no deployment authority.
+
 Production deploys through the checked-in GitHub Actions workflow only. Never
 deploy from a package script, local working tree, PR, feature branch, fork head,
 or tag.
 
 Required protected-environment secrets are `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`; Actions supplies `GITHUB_TOKEN` for ingestion. The
-`eliza-army-production` environment allows only `develop`, requires the
-designated reviewer, and disallows administrator bypass. Repository rules
+`eliza-army-production` environment allows only `main` and disallows
+administrator bypass. Successful protected merges deploy automatically. Repository rules
 require a pull request, resolved threads, and non-fast-forward history with no
 bypass actors.
 
-Code releases require approval at `eliza-army-production` before entering the
-publication lock. Publication credentials live in the develop-only
-`slop-data-refresh` environment. Its scoped token must support Pages, identity and
-D1 release operations; never expose it to pull-request runs. The approval job
-has no publication lock, so waiting for a reviewer cannot starve data refreshes.
+Code releases use the main-only `eliza-army-production` environment. Scheduled
+refreshes use `slop-data-refresh`. No separate manual release approval is
+required. Publication credentials must never be exposed to pull-request runs.
+Both release paths use the shared publication lock.
 
 Scheduled refreshes build the currently published GitHub-approved ancestor of
-`develop`, compare the complete bundle against a successful retained baseline,
+`main`, compare the complete bundle against a successful retained baseline,
 and may change only allowlisted data. Recheck the deployed revision under the
 shared publication lock before publishing; discard superseded refreshes.
-Code releases still require current develop equivalence. Every Pages deployment
+Code releases still require current main equivalence. Every Pages deployment
 is bound to its actual tested source SHA, not the schedule event SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
@@ -333,7 +357,7 @@ credentials.
 ## Working rules
 
 - Preserve unrelated user changes and untracked files.
-- Use a scoped branch from current `origin/develop`; rebase before final
+- Use a scoped branch from current `origin/development`; rebase before final
   review.
 - Prefer deterministic scripts and strict schemas over duplicated prose or
   fallback success.
@@ -366,7 +390,6 @@ bun run cycles:check
 bun run typecheck
 bun run lint:check
 bun run format:check
-bun run test
 bun run build
 bun run test:e2e
 bun run verify
@@ -380,7 +403,7 @@ changes, validate links, instructions, scope consistency, and policy mirrors;
 explain why application acceptance does not apply to the prose itself. Keep
 required repository checks. Do not fabricate UI or deployment evidence.
 
-Rebase onto current `origin/develop`, install the lockfile, run `bun run
+Rebase onto current `origin/development`, install the lockfile, run `bun run
 verify`, and run real-browser E2E against the exact head. UI changes require
 desktop and mobile review, keyboard and 200% zoom checks, WCAG AA, working copy
 feedback, raw Markdown and archive downloads, valid GitHub links, zero
@@ -396,3 +419,17 @@ only when genuinely inapplicable. Captured evidence is not committed.
 A local test is not proof of merge. A merge is not proof of deployment. A
 deployment is not proof of provider, device, identity, wallet, or settlement
 availability. Report each boundary precisely.
+
+
+## Escrow payout migration
+
+The maintainer-authorized escrow MVP is defined in `docs/payouts-mvp.md` and
+`docs/base-solana-payout-plan.md`. Its scoped contract, identity attestation and
+relayer services may execute isolated test-chain transactions under those rules.
+This supersedes the legacy unsigned-only model for that protocol only. Never
+use production credentials or move mainnet funds during testnet qualification.
+New gross awards deduct 2% before contributor earnings are displayed or paid.
+Unused-fund withdrawals deduct 10%; funded obligations cannot be withdrawn.
+Historical v1 records retain their original fee and authority rules. No project
+activates escrow merely because the new code is present. Keep project deployment
+bindings in the canonical manifest, never in a second project inventory.

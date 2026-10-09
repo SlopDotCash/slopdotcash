@@ -194,18 +194,3 @@ export function parsePublishedWallet(
 ): PublishedWallet<"solana"> | null {
   return parsePublishedWallets(markdown).solana ?? null;
 }
-
-/** Produces the exact marker contributors publish in a GitHub claim source. */
-export function formatPublishedWallet(
-  address: string,
-  chain: WalletChain = "solana",
-): string {
-  if (!isWalletAddress(chain, address)) {
-    throw new TypeError(
-      chain === "base"
-        ? "Cannot format an invalid Base address"
-        : "Cannot format an invalid Solana address",
-    );
-  }
-  return `<!-- ${WALLET_MARKER_PREFIX} ${JSON.stringify({ chain, address })} -->`;
-}

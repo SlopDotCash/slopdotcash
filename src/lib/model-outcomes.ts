@@ -282,6 +282,8 @@ export function summarizeModelOutcomes(
     acceptedReviewsWithModel: 0,
   };
 
+  const mergedSourceIdsWithModel = new Set<string>();
+  const mergedSourceIdsWithSignedRun = new Set<string>();
   const countOutcome = (event: ScoreEvent, isPullRequest: boolean): void => {
     const candidates =
       (isPullRequest
@@ -298,10 +300,13 @@ export function summarizeModelOutcomes(
     const share = event.points / keys.length;
 
     if (isPullRequest) {
-      totals.mergedPullRequestsWithModel += 1;
+      mergedSourceIdsWithModel.add(event.source.id);
+      totals.mergedPullRequestsWithModel = mergedSourceIdsWithModel.size;
       totals.pullRequestPointsWithModel += event.points;
       if (own.some((attribution) => attribution.run)) {
-        totals.mergedPullRequestsWithSignedRun += 1;
+        mergedSourceIdsWithSignedRun.add(event.source.id);
+        totals.mergedPullRequestsWithSignedRun =
+          mergedSourceIdsWithSignedRun.size;
       }
     } else {
       totals.acceptedReviewsWithModel += 1;
@@ -345,9 +350,12 @@ export function summarizeModelOutcomes(
     }
   };
 
+  // Shared merge credit emits one event per commit author of one merge.
+  const mergedSourceIds = new Set<string>();
   for (const event of snapshot.ledger) {
     if (event.category === "merged-pull-request") {
-      totals.mergedPullRequests += 1;
+      mergedSourceIds.add(event.source.id);
+      totals.mergedPullRequests = mergedSourceIds.size;
       totals.pullRequestPoints += event.points;
       countOutcome(event, true);
     } else if (event.category === "substantive-review") {

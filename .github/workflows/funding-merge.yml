@@ -19,11 +19,11 @@ concurrency:
 
 jobs:
   merge:
-    if: github.ref == 'refs/heads/develop' && vars.SLOP_FUNDING_AUTOMERGE_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && vars.SLOP_FUNDING_AUTOMERGE_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Checkout trusted develop only
+      - name: Checkout trusted main only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}

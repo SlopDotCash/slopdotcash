@@ -31,11 +31,11 @@ concurrency:
 
 jobs:
   verify:
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Checkout exact trusted develop
+      - name: Checkout exact trusted main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -45,10 +45,10 @@ jobs:
       - name: Require trusted checkout
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = 'refs/heads/develop'
+          test "$GITHUB_REF" = 'refs/heads/main'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git fetch --no-tags origin develop
-          test "$(git rev-parse origin/develop)" = "$GITHUB_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -97,8 +97,8 @@ jobs:
           EVIDENCE_DIGEST: ${{ steps.evidence.outputs.artifact-digest }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin develop
-          test "$(git rev-parse origin/develop)" = "$GITHUB_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
           branch="codex/funding-deposit-${RECORD_ID}"
           # A deterministic branch prevents duplicate pending PRs for one signature.
           if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null; then
@@ -126,7 +126,7 @@ jobs:
               f"Records a finalized {os.environ['AMOUNT_MINOR']} USDC micro-unit deposit for {os.environ['DEPOSIT_PROJECT']}/{os.environ['DEPOSIT_CYCLE']}. "
               "The destination and Squads members come from the reviewed exact-cycle instrument, not workflow inputs. "
               "The existing Squads quorum and direct-transfer verifiers agreed on the transaction.\n\n"
-              f"Trusted develop revision: {os.environ['GITHUB_SHA']}\n"
+              f"Trusted main revision: {os.environ['GITHUB_SHA']}\n"
               f"Public signature: {os.environ['DEPOSIT_SIGNATURE']}\n"
               f"Evidence: {os.environ['EVIDENCE_URL']}\nArtifact digest: {os.environ['EVIDENCE_DIGEST']}\n\n"
               "This PR adds one immutable deposit record. It does not activate funding, alter project policy, approve rewards, sign, or pay anyone. "
@@ -134,6 +134,6 @@ jobs:
           )
           Path(os.environ['RUNNER_TEMP'], 'funding-deposit-pr.md').write_text(body)
           PY
-          gh pr create --draft --base develop --head "$branch" \
+          gh pr create --draft --base main --head "$branch" \
             --title "chore: verify ${DEPOSIT_PROJECT}/${DEPOSIT_CYCLE} funding deposit" \
             --body-file "$RUNNER_TEMP/funding-deposit-pr.md"

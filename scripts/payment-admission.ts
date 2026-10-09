@@ -1,3 +1,4 @@
+import { hasCanonicalMergeBase } from "./canonical-merge-base";
 import { verifyUnsafeDestinationHistoryAuthorities } from "./check-unsafe-destination-transitions";
 import { verifyReceipt } from "./payment-admission-receipt";
 import { readPaymentSignerHistory } from "./payment-signer-history";
@@ -202,7 +203,7 @@ export async function verifyHistoricalPaymentAdmission(
       (p) =>
         p.merge_commit_sha === sha &&
         p.merged_at &&
-        p.base?.ref === "develop" &&
+        hasCanonicalMergeBase(root, sha, p.base?.ref) &&
         p.base.repo?.full_name === PAYMENT_REPOSITORY &&
         p.head?.sha === parents[1],
     );

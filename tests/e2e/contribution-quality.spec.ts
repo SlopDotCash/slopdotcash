@@ -9,7 +9,7 @@ test("quality review groups duplicate accepted work and carries an exact source-
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/projects/eliza/funding");
+  await page.goto("/projects/eliza/funding#payouts");
   await page
     .locator(".funding-workbench")
     .getByLabel("Contribution month")

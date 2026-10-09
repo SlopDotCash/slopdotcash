@@ -19,10 +19,21 @@ import {
 import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { createProjectView } from "../src/lib/project-view";
 import { PROJECTS, type ProjectDefinition } from "../src/lib/projects.mjs";
+import type { WalletChain } from "../src/lib/wallets";
 import { fetchPublishedGithubWallet } from "./github-wallets";
 import { fundingReviewSha256 } from "./prepare-funding-review";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * The wallet network a preparation observes: the project's settlement network.
+ * An external-prize project has no settlement network and keeps the historical
+ * Solana observation, which grants no payment authority.
+ */
+function observedChain(project: ProjectDefinition): WalletChain {
+  return project.reward.chain ?? "solana";
+}
+
 export function fundingCycle(cycleId: string, observedAt: string) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/u.test(cycleId))
     throw new TypeError("Cycle must be YYYY-MM");
@@ -55,7 +66,7 @@ interface Dependencies {
     actorId: string,
     login: string,
     observedAt: string,
-    options: { token?: string },
+    options: { chain: WalletChain; token?: string },
   ) => Promise<CycleWalletProof | null>;
 }
 const defaults: Dependencies = {
@@ -139,36 +150,46 @@ export async function prepareMonthlyFunding(
     return view;
   });
   const actors = new Map<string, { id: string; login: string }>();
+  // One observation per actor and network; a Solana-only run is unchanged.
+  const actorChains = new Map<string, Set<WalletChain>>();
   for (const view of views)
     for (const row of view.leaders) {
       const previous = actors.get(row.actor.id);
       if (previous && previous.login !== row.actor.login)
         throw new TypeError("Conflicting actor identity");
       actors.set(row.actor.id, { id: row.actor.id, login: row.actor.login });
+      const chains = actorChains.get(row.actor.id) ?? new Set<WalletChain>();
+      chains.add(observedChain(view.project));
+      actorChains.set(row.actor.id, chains);
     }
   const wallets = [];
   for (const actor of [...actors.values()].sort((a, b) =>
     a.id.localeCompare(b.id),
   )) {
-    // Lookup failure aborts this generic publication. A null successful lookup is
-    // a missing registration and retains its award. No raw API errors are copied.
-    const wallet = await dependencies.observeWallet(
-      actor.id,
-      actor.login,
-      observedAt,
-      { token: options.githubToken },
-    );
-    wallets.push({
-      actor,
-      status: wallet ? "registered" : "missing",
-      wallet,
-      observedAt,
-      cycleLocked: false,
-    });
+    for (const chain of [...(actorChains.get(actor.id) ?? [])].sort()) {
+      // Lookup failure aborts this generic publication. A null successful lookup is
+      // a missing registration and retains its award. No raw API errors are copied.
+      const wallet = await dependencies.observeWallet(
+        actor.id,
+        actor.login,
+        observedAt,
+        { chain, token: options.githubToken },
+      );
+      wallets.push({
+        actor,
+        chain,
+        status: wallet ? "registered" : "missing",
+        wallet,
+        observedAt,
+        cycleLocked: false,
+      });
+    }
   }
   const sourceSnapshotSha256 = fundingReviewSha256(sourceBytes);
   const walletBytes = `${JSON.stringify({ observedAt, sourceSnapshotSha256, wallets }, null, 2)}\n`;
-  const walletByActor = new Map(wallets.map((w) => [w.actor.id, w.wallet]));
+  const walletByActor = new Map(
+    wallets.map((w) => [`${w.chain}:${w.actor.id}`, w.wallet]),
+  );
   const inputs = views.map((view) => {
     const contributors = view.leaders.map((row) => {
       if (
@@ -186,7 +207,9 @@ export async function prepareMonthlyFunding(
         weight: String(row.adjustedWeight),
         eventCount: eventIds.length,
         eventIdsSha256: fundingReviewSha256(JSON.stringify(eventIds)),
-        wallet: walletByActor.get(row.actor.id) ?? null,
+        wallet:
+          walletByActor.get(`${observedChain(view.project)}:${row.actor.id}`) ??
+          null,
         lookupUnavailable: false,
       };
     });
@@ -209,9 +232,11 @@ export async function prepareMonthlyFunding(
         snapshotLedgerCount: snapshot.ledger.length,
         sourceMergedPullRequests: snapshot.source.counts.mergedPullRequests,
         mergedCensus: null,
-        scoredMerges: view.ledger.filter(
-          (e) => e.category === "merged-pull-request",
-        ).length,
+        scoredMerges: new Set(
+          view.ledger
+            .filter((e) => e.category === "merged-pull-request")
+            .map((e) => e.source.id),
+        ).size,
       },
       counts: {
         contributors: contributors.length,
@@ -281,11 +306,11 @@ export async function refreshPreparationWallets(
   options: WalletRefreshOptions,
   dependencies: Dependencies = defaults,
 ): Promise<FundingPreparation> {
-  if (
-    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(options.projectId) ||
-    !dependencies.projects.some((p) => p.id === options.projectId)
-  )
-    throw new TypeError("Unknown refresh project");
+  const project = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(options.projectId)
+    ? dependencies.projects.find((p) => p.id === options.projectId)
+    : undefined;
+  if (!project) throw new TypeError("Unknown refresh project");
+  const chain = observedChain(project);
   const observedAt = options.observedAt ?? new Date().toISOString();
   fundingCycle(options.cycleId, observedAt);
   const root = resolve(options.root ?? ROOT);
@@ -326,7 +351,7 @@ export async function refreshPreparationWallets(
         row.actor.id,
         row.actor.login,
         observedAt,
-        { token: options.githubToken },
+        { chain, token: options.githubToken },
       );
     } catch {
       // A failed lookup is not evidence of missing registration. Do not retain

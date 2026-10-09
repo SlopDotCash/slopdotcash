@@ -99,7 +99,7 @@ for the initial code release with no completed journal. Offline builds use the
 reviewed seed and available ledger and are not production freshness evidence.
 
 Keep the journal on rollback. Disable points mutations or withdraw an affected
-projection through a reviewed develop release; never delete history or reissue
+projection through a reviewed main release; never delete history or reissue
 welcome awards. Re-enable only after exact replay and reward-isolation tests.
 Measure first accepted outcomes, returning contributors, reviewer workload,
 source duplication, corrections, and publication delay, not points minted.
@@ -152,7 +152,7 @@ callback exactly (no wildcard):
 - `https://eliza.army/api/v1/points/x/callback` (only if supporting the alias)
 
 Place `X_CLIENT_ID` and `X_CLIENT_SECRET` together in the protected GitHub
-production environment. The existing protected develop release installs them
+production environment. The existing protected main release installs them
 as encrypted Pages secrets and applies migration `0009_points_social.sql`.
 Unattended schedules do not provision credentials. With neither configured,
 the app reports that X connections are not enabled; partial configuration is

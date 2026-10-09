@@ -28,6 +28,7 @@ import {
   assertProjectPaymentsEnabled,
   findProject,
 } from "../src/lib/projects.mjs";
+import { fundingInstrumentSource } from "../src/lib/settlement-plan";
 import { parseFinalizeArguments } from "./finalize-reward-cycle";
 import { loadCanonicalPaymentReservation } from "./load-payment-reservation";
 import { parsePaymentReservationArguments } from "./prepare-payment-reservation";
@@ -356,7 +357,7 @@ export async function prepareCycleAction(
       );
       args.push(
         "--source-wallet",
-        loaded.instrument.vault,
+        fundingInstrumentSource(loaded.instrument),
         "--fee-wallet",
         loaded.policy.feeRecipient,
       );

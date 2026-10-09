@@ -500,3 +500,64 @@ export function snapshotFixture(
     },
   };
 }
+
+export function archivedPaidCycleIndex() {
+  const index = cycleIndexFixture();
+  const prefix = "/data/cycles/eliza/2026-07";
+  const file = (name: string) => ({
+    sha256: "a".repeat(64),
+    url: `${prefix}/${name}.json`,
+  });
+  index.cycles = [
+    {
+      projectId: "eliza",
+      cycleId: "2026-07",
+      kind: "monthly-pool",
+      state: "paid",
+      generatedAt: "2026-08-02T00:00:00.000Z",
+      contributionWindow: {
+        from: "2026-07-07T00:00:00.000Z",
+        to: "2026-08-01T00:00:00.000Z",
+      },
+      reviewEndsAt: "2026-08-15T00:00:00.000Z",
+      approvedAt: "2026-08-16T00:00:00.000Z",
+      settledAt: "2026-08-16T00:00:00.000Z",
+      reward: {
+        currency: "USDC",
+        capMinor: "10000000000",
+        suggestedMinor: "1000000",
+        approvedMinor: "1000000",
+        paidMinor: "1000000",
+        feeMinor: "10000",
+        sharePartsPerMillion: null,
+      },
+      contributors: [
+        {
+          actor: { id: "U_archived", login: "archive-only" },
+          score: 7,
+          state: "paid",
+          suggestedMinor: "1000000",
+          approvedMinor: "1000000",
+          paidMinor: "1000000",
+          sharePartsPerMillion: null,
+          wallet: {
+            address: "11111111111111111111111111111111",
+            chain: "solana",
+            observedAt: "2026-08-01T00:00:00.000Z",
+            sourceCommit: "b".repeat(40),
+            sourceUrl: `https://github.com/archive-only/archive-only/blob/${"b".repeat(40)}/README.md`,
+          },
+        },
+      ],
+      files: {
+        sourceSnapshot: file("source-snapshot"),
+        proposal: file("proposal"),
+        allocation: file("allocation"),
+        executionPlan: file("execution-plan"),
+        settlement: file("settlement"),
+        windup: null,
+      },
+    },
+  ];
+  return index;
+}

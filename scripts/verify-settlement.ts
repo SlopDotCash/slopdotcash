@@ -1,14 +1,21 @@
 /**
- * Converts public transaction signatures into a paid settlement only after a
- * finalized Solana RPC response proves exact USDC debits and credits for every
- * approved contributor intent and the platform fee.
+ * Converts public transaction evidence into a paid settlement only after the
+ * allocation's network proves exact USDC debits and credits for every approved
+ * contributor intent and the platform fee: a finalized Solana RPC response, or
+ * the read-only Base verifier under its RPC quorum and confirmation policy.
  */
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isEvmTransactionHash } from "../src/lib/evm-funding";
+import { assertFreshCyclePaymentPolicy } from "../src/lib/fresh-cycle-policy.mjs";
 import { isSolanaTransactionId } from "../src/lib/funding-address.mjs";
+import {
+  assertProjectVaultApprovalBinding,
+  isProjectVaultInstrumentId,
+} from "../src/lib/project-vault-approval";
 import {
   assertProjectPaymentsEnabled,
   findProject,
@@ -17,23 +24,37 @@ import {
 import {
   assertRewardAllocationManifest,
   assertRewardSettlementManifest,
+  type SettlementNetwork,
 } from "../src/lib/rewards";
-import { assertSettlementExecutionPlan } from "../src/lib/settlement-plan";
-import { verifyRewardSettlementOnchain } from "../src/lib/solana-settlement";
+import {
+  assertNetworkSettlementExecutionPlan,
+  planCarriesPlatformFee,
+} from "../src/lib/settlement-plan";
+import {
+  type VerifyBaseSettlementTransaction,
+  verifyRewardSettlementOnchain,
+} from "../src/lib/solana-settlement";
 import {
   DEFAULT_SOLANA_RPC_URL,
   fetchFinalizedSolanaTransaction,
 } from "./solana-rpc";
-import { validateCycleTransition } from "./sync-cycle-index";
+import {
+  assertSettlementTransactionsAvailable,
+  validateCycleTransition,
+} from "./sync-cycle-index";
+import { verifyBaseSettlementTransaction } from "./verify-settlement-evm";
 import { writeNewJsonFile } from "./write-new-file";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CYCLES_ROOT = resolve(REPOSITORY_ROOT, "cycles");
+const EXECUTION_LEDGER_PATH = resolve(
+  REPOSITORY_ROOT,
+  "funding/executions/ledger.json",
+);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
+/** Normalized evidence. A Base transaction hash fills the generic `signature`. */
 interface SettlementEvidence {
-  schemaVersion: "1";
-  kind: "solana-settlement-evidence";
   cycleId: string;
   attempts: Array<{
     attemptId: string;
@@ -43,10 +64,28 @@ interface SettlementEvidence {
   platformFeeSignature: string | null;
 }
 
+/** Each network names its own evidence kind and transaction fields. */
+const EVIDENCE_FORMAT = {
+  solana: {
+    kind: "solana-settlement-evidence",
+    transaction: "signature",
+    platformFee: "platformFeeSignature",
+    isTransaction: isSolanaTransactionId,
+  },
+  base: {
+    kind: "base-settlement-evidence",
+    transaction: "transactionHash",
+    platformFee: "platformFeeTransactionHash",
+    isTransaction: isEvmTransactionHash,
+  },
+} as const;
+
 interface VerifyArguments {
   allocationPath: string;
   cycleId: string;
   evidencePath: string;
+  /** Canonical execution binding ledger; required only for a project vault. */
+  executionLedgerPath?: string;
   outputPath: string;
   planPath: string;
   projectId: ProjectId;
@@ -105,6 +144,7 @@ export function parseVerifySettlementArguments(
     allocationPath: resolve(directory, "allocation.json"),
     cycleId,
     evidencePath: resolve(directory, "transactions.json"),
+    executionLedgerPath: EXECUTION_LEDGER_PATH,
     outputPath: resolve(directory, "settlement.json"),
     planPath: resolve(directory, "execution-plan.json"),
     projectId,
@@ -130,16 +170,21 @@ function exactKeys(
   }
 }
 
-function parseEvidence(value: unknown, cycleId: string): SettlementEvidence {
+export function parseSettlementEvidence(
+  value: unknown,
+  cycleId: string,
+  network: SettlementNetwork,
+): SettlementEvidence {
+  const format = EVIDENCE_FORMAT[network];
   const evidence = record(value, "settlement evidence");
   exactKeys(
     evidence,
-    ["attempts", "cycleId", "kind", "platformFeeSignature", "schemaVersion"],
+    ["attempts", "cycleId", "kind", format.platformFee, "schemaVersion"],
     "settlement evidence",
   );
   if (
     evidence.schemaVersion !== "1" ||
-    evidence.kind !== "solana-settlement-evidence" ||
+    evidence.kind !== format.kind ||
     evidence.cycleId !== cycleId ||
     !Array.isArray(evidence.attempts)
   ) {
@@ -150,9 +195,10 @@ function parseEvidence(value: unknown, cycleId: string): SettlementEvidence {
     const attempt = record(value, `settlement evidence attempts[${index}]`);
     exactKeys(
       attempt,
-      ["attemptId", "intentIds", "signature"],
+      ["attemptId", "intentIds", format.transaction],
       `settlement evidence attempts[${index}]`,
     );
+    const signature = attempt[format.transaction];
     if (
       typeof attempt.attemptId !== "string" ||
       !/^attempt_[a-z0-9][a-z0-9_-]+$/u.test(attempt.attemptId) ||
@@ -160,24 +206,24 @@ function parseEvidence(value: unknown, cycleId: string): SettlementEvidence {
       attempt.intentIds.length === 0 ||
       !attempt.intentIds.every((id) => typeof id === "string") ||
       new Set(attempt.intentIds).size !== attempt.intentIds.length ||
-      !isSolanaTransactionId(attempt.signature)
+      !format.isTransaction(signature)
     ) {
       throw new TypeError(`Settlement evidence attempt ${index} is invalid`);
     }
-    if (signatures.has(attempt.signature)) {
+    if (signatures.has(signature)) {
       throw new TypeError("Settlement evidence reuses a transaction signature");
     }
-    signatures.add(attempt.signature);
+    signatures.add(signature);
     return {
       attemptId: attempt.attemptId,
       intentIds: attempt.intentIds as string[],
-      signature: attempt.signature,
+      signature,
     };
   });
-  const platformFeeSignature = evidence.platformFeeSignature;
+  const platformFeeSignature = evidence[format.platformFee];
   if (
     platformFeeSignature !== null &&
-    (!isSolanaTransactionId(platformFeeSignature) ||
+    (!format.isTransaction(platformFeeSignature) ||
       signatures.has(platformFeeSignature))
   ) {
     throw new TypeError(
@@ -185,8 +231,6 @@ function parseEvidence(value: unknown, cycleId: string): SettlementEvidence {
     );
   }
   return {
-    schemaVersion: "1",
-    kind: "solana-settlement-evidence",
     cycleId,
     attempts,
     platformFeeSignature,
@@ -206,10 +250,69 @@ async function readJson(
   }
 }
 
+/**
+ * The platform fee record for a settlement. A 2-of-2 vault pays it from the
+ * plan's fee transfer. A project vault carries no fee transfer (RFC #500
+ * section 8): the fee due is the allocation's, the recipient is the reviewed
+ * fresh-cycle policy's, and the evidence is the creator's separate transaction,
+ * which the on-chain verifier then proves did not move the vault's USDC.
+ */
+export function projectVaultPlatformFee(input: {
+  allocation: {
+    fundingBasis?: { instrumentId?: string | null };
+    totals: { feeMinor: string };
+  };
+  feeTransfer: { recipientOwner: string; amountMinor: string } | undefined;
+  platformFeeSignature: string | null;
+  policy: unknown;
+}): {
+  recipient: string | null;
+  dueMinor: string;
+  paidMinor: string;
+  signature: string | null;
+  state: "not-applicable" | "paid";
+} {
+  if (input.feeTransfer) {
+    return {
+      recipient: input.feeTransfer.recipientOwner,
+      dueMinor: input.feeTransfer.amountMinor,
+      paidMinor: input.feeTransfer.amountMinor,
+      signature: input.platformFeeSignature,
+      state: "paid",
+    };
+  }
+  const dueMinor = input.allocation.totals.feeMinor;
+  if (
+    planCarriesPlatformFee(input.allocation.fundingBasis?.instrumentId) ||
+    BigInt(dueMinor) === 0n
+  ) {
+    return {
+      recipient: null,
+      dueMinor: "0",
+      paidMinor: "0",
+      signature: null,
+      state: "not-applicable",
+    };
+  }
+  if (!input.platformFeeSignature) {
+    throw new TypeError(
+      "Project vault settlement requires the creator's separate fee transaction signature",
+    );
+  }
+  return {
+    recipient: assertFreshCyclePaymentPolicy(input.policy).feeRecipient,
+    dueMinor,
+    paidMinor: dueMinor,
+    signature: input.platformFeeSignature,
+    state: "paid",
+  };
+}
+
 export async function verifySettlement(
   arguments_: VerifyArguments,
   options: {
     getTransaction?: (signature: string) => Promise<unknown>;
+    verifyBaseTransaction?: VerifyBaseSettlementTransaction;
     now?: number;
     validate?: (
       projectId: string,
@@ -219,13 +322,21 @@ export async function verifySettlement(
     write?: (path: string, value: unknown) => Promise<void>;
   } = {},
 ) {
-  assertProjectPaymentsEnabled(arguments_.projectId, arguments_.cycleId);
+  const project = assertProjectPaymentsEnabled(
+    arguments_.projectId,
+    arguments_.cycleId,
+  );
   const cycle = await (options.validate ?? validateCycleTransition)(
     arguments_.projectId,
     arguments_.cycleId,
     { allowPendingTransactionEvidence: true },
   );
-  if (cycle.state !== "settlement-planned") {
+  // A project vault windup (RFC #500 s.10) holds every approved row but does
+  // not cancel the bound Squads proposal: approval and the time lock are what
+  // the program checks at execution, not the balance at some earlier instant.
+  // If funds return and the exact bound plan executes, its finalized evidence
+  // is verified here like any other and recorded beside the windup.
+  if (cycle.state !== "settlement-planned" && cycle.state !== "wound-up") {
     throw new TypeError(
       "Only a verified execution plan can enter settlement verification",
     );
@@ -242,11 +353,27 @@ export async function verifySettlement(
   const allocationSha256 = createHash("sha256")
     .update(allocationFile.bytes)
     .digest("hex");
-  const plan = assertSettlementExecutionPlan(planFile.value, allocation);
+  const plan = assertNetworkSettlementExecutionPlan(planFile.value, allocation);
   if (plan.allocationSha256 !== allocationSha256) {
     throw new TypeError("Settlement plan does not match allocation file bytes");
   }
-  const evidence = parseEvidence(evidenceFile.value, arguments_.cycleId);
+  // RFC #500 section 3: on a project vault, settlement can only reconcile a
+  // payout the creator bound on chain. An approved but unbound cycle is not
+  // approved for payment purposes and cannot be recorded as paid.
+  if (isProjectVaultInstrumentId(allocation.fundingBasis?.instrumentId)) {
+    const ledgerPath = arguments_.executionLedgerPath ?? EXECUTION_LEDGER_PATH;
+    const ledgerFile = await readJson(ledgerPath);
+    await assertProjectVaultApprovalBinding({
+      allocation: allocationFile.value,
+      planBytes: planFile.bytes,
+      ledger: ledgerFile.value,
+    });
+  }
+  const evidence = parseSettlementEvidence(
+    evidenceFile.value,
+    arguments_.cycleId,
+    allocation.chain,
+  );
   if (!Number.isFinite(Date.parse(arguments_.settledAt))) {
     throw new TypeError("Settlement time is invalid");
   }
@@ -257,6 +384,12 @@ export async function verifySettlement(
   const feeTransfer = plan.transfers.find(
     (transfer) => transfer.kind === "platform-fee",
   );
+  const platformFee = projectVaultPlatformFee({
+    allocation,
+    feeTransfer,
+    platformFeeSignature: evidence.platformFeeSignature,
+    policy: project.funding.freshCyclePaymentPolicy,
+  });
   const settlement = assertRewardSettlementManifest(
     {
       schemaVersion: "1",
@@ -266,7 +399,7 @@ export async function verifySettlement(
       allocationSha256,
       settledAt: arguments_.settledAt,
       currency: "USDC",
-      chain: "solana",
+      chain: allocation.chain,
       status: "paid",
       recipients: allocation.allocations
         .filter((row) => row.state === "approved")
@@ -294,21 +427,7 @@ export async function verifySettlement(
         ...attempt,
         state: "finalized",
       })),
-      platformFee: feeTransfer
-        ? {
-            recipient: feeTransfer.recipientOwner,
-            dueMinor: feeTransfer.amountMinor,
-            paidMinor: feeTransfer.amountMinor,
-            signature: evidence.platformFeeSignature,
-            state: "paid",
-          }
-        : {
-            recipient: null,
-            dueMinor: "0",
-            paidMinor: "0",
-            signature: null,
-            state: "not-applicable",
-          },
+      platformFee,
       totals: {
         approvedMinor: allocation.totals.approvedMinor,
         paidMinor: allocation.totals.approvedMinor,
@@ -326,7 +445,10 @@ export async function verifySettlement(
         fetchFinalizedSolanaTransaction(arguments_.rpcUrl, signature)),
     plan,
     settlement,
+    verifyBaseTransaction:
+      options.verifyBaseTransaction ?? verifyBaseSettlementTransaction,
   });
+  await assertSettlementTransactionsAvailable(settlement);
   await (
     options.write ??
     ((path, value) =>
@@ -342,7 +464,7 @@ if (import.meta.main) {
     });
     const result = await verifySettlement(arguments_);
     process.stdout.write(
-      `[Slop] verified ${result.transactions.length} finalized Solana transaction(s) and wrote ${arguments_.outputPath}\n`,
+      `[Slop] verified ${result.transactions.length} ${result.settlement.chain === "base" ? "confirmed Base" : "finalized Solana"} transaction(s) and wrote ${arguments_.outputPath}\n`,
     );
   } catch (error) {
     // error-policy:J1 command boundary exposes a non-zero, actionable failure.

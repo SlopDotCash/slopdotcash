@@ -21,16 +21,22 @@
     "website": null
   },
   "authority": {
-    "state": "unverified",
-    "reason": "missing-repository-proof",
+    "state": "verified",
+    "reason": null,
     "role": "project-steward",
     "repositoryId": "1367980137",
     "repositoryNodeId": "R_kgDOUYm4aQ",
-    "proof": null
+    "proof": {
+      "commitSha": "2714e7e889dee9cfe3752b1da0762e944a360a45",
+      "fileSha256": "5336f33f4b033631b5d700d0803bc5f00308ea8e0128fde9b798c195369e81e9",
+      "policyRevision": "2026-10-03.1",
+      "url": "https://github.com/emanalshazly/monna-visual-strategy-canvas/blob/2714e7e889dee9cfe3752b1da0762e944a360a45/.github/slop-project.json",
+      "verifiedAt": "2026-10-03T17:12:04.000Z"
+    }
   },
   "terms": {
-    "revision": "2026-09-13.1",
-    "effectiveAt": "2026-09-13T00:00:00.000Z",
+    "revision": "2026-10-03.1",
+    "effectiveAt": "2026-10-03T00:00:00.000Z",
     "receiptPolicy": {
       "state": "pending-authority-activation",
       "activatedAt": null,
@@ -39,7 +45,7 @@
     "paymentTransfersIp": false,
     "retroactive": false,
     "copyright": {
-      "model": "unknown",
+      "model": "contributor-retained",
       "claimedLegalHolder": null,
       "notice": null,
       "legalCapacity": null,
@@ -53,12 +59,12 @@
       "fileSha256": "0a5d97e55cefcbdd06d31f343bcc36c7c7e14deaea6ee9ca8029ee596b27a79f"
     },
     "inbound": {
-      "mode": "unknown",
-      "termsUrl": null,
-      "commitSha": null,
-      "fileSha256": null,
-      "version": null,
-      "acceptance": null
+      "mode": "license",
+      "termsUrl": "https://github.com/emanalshazly/monna-visual-strategy-canvas/blob/2714e7e889dee9cfe3752b1da0762e944a360a45/CONTRIBUTION-TERMS.md",
+      "commitSha": "2714e7e889dee9cfe3752b1da0762e944a360a45",
+      "fileSha256": "85f86172c526d63e9475c0a0d4e64735ec231d2650a0b869db573c101f618785",
+      "version": "2026-10-03.1",
+      "acceptance": "Pull-request contributions are licensed under the repository MIT license."
     },
     "assignment": null,
     "externalPrize": null

@@ -34,11 +34,11 @@ concurrency:
 
 jobs:
   verify:
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Checkout exact trusted develop
+      - name: Checkout exact trusted main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -48,10 +48,10 @@ jobs:
       - name: Require trusted checkout
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = 'refs/heads/develop'
+          test "$GITHUB_REF" = 'refs/heads/main'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git fetch --no-tags origin develop
-          test "$(git rev-parse origin/develop)" = "$GITHUB_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -94,8 +94,8 @@ jobs:
           EVIDENCE_DIGEST: ${{ steps.evidence.outputs.artifact-digest }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin develop
-          test "$(git rev-parse origin/develop)" = "$GITHUB_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
           branch="codex/squads-binding-${PLAN_SHA256}"
           if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null; then
             echo 'A binding branch already exists for this plan; review it instead.' >&2
@@ -120,7 +120,7 @@ jobs:
               f"Links the externally created Squads {os.environ['BINDING_MODE']} proposal at public index {os.environ['BINDING_TRANSACTION_INDEX']} "
               f"to the reviewed {os.environ['BINDING_PROJECT']}/{os.environ['BINDING_CYCLE']} allocation and execution plan. "
               "The fixed finalized RPC quorum verified exact instructions, amounts, mint, owners and canonical accounts.\n\n"
-              f"Trusted develop: {os.environ['GITHUB_SHA']}\n"
+              f"Trusted main: {os.environ['GITHUB_SHA']}\n"
               f"Allocation SHA256: {os.environ['ALLOCATION_SHA256']}\n"
               f"Plan SHA256: {os.environ['PLAN_SHA256']}\n"
               f"Evidence: {os.environ['EVIDENCE_URL']}\nArtifact digest: {os.environ['EVIDENCE_DIGEST']}\n\n"
@@ -129,6 +129,6 @@ jobs:
           )
           Path(os.environ['RUNNER_TEMP'], 'squads-binding-pr.md').write_text(body)
           PYCODE
-          gh pr create --draft --base develop --head "$branch" \
+          gh pr create --draft --base main --head "$branch" \
             --title "chore: link ${BINDING_PROJECT}/${BINDING_CYCLE} Squads execution" \
             --body-file "$RUNNER_TEMP/squads-binding-pr.md"

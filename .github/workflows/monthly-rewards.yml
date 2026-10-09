@@ -1,6 +1,6 @@
 name: Close monthly rewards
 
-# Trusted develop code freezes the prior UTC month and opens an auditable PR.
+# Trusted main code freezes the prior UTC month and opens an auditable PR.
 # Pull-request code never executes with write credentials in this workflow.
 on:
   schedule:
@@ -28,22 +28,22 @@ env:
 
 jobs:
   propose:
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: Checkout trusted develop
+      - name: Checkout trusted main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify trusted develop checkout
+      - name: Verify trusted main checkout
         run: |
           set -euo pipefail
-          if [ "$GITHUB_REF" != "refs/heads/develop" ]; then
-            echo "::error::Monthly rewards must run from refs/heads/develop."
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Monthly rewards must run from refs/heads/main."
             exit 1
           fi
           checked_out_sha="$(git rev-parse HEAD)"
@@ -129,7 +129,7 @@ jobs:
           git commit -m "chore: prepare ${CYCLE} reward review"
           git push --set-upstream origin "$branch"
           gh pr create \
-            --base develop \
+            --base main \
             --head "$branch" \
             --title "chore: review ${CYCLE} rewards" \
             --body "Freezes the complete ${CYCLE} UTC contribution ledger and opens the 14-day public reward review. No payment is approved or sent by this PR."

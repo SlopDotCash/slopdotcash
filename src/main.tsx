@@ -2,17 +2,16 @@
  * Boots the static contribution-compute surface in the browser.
  */
 
-import "@fontsource/poppins/400.css";
-import "@fontsource/poppins/500.css";
-import "@fontsource/poppins/600.css";
-import "@fontsource/poppins/700.css";
-import "@fontsource/poppins/800.css";
+import "@fontsource-variable/bricolage-grotesque/opsz.css";
+import "@fontsource/jetbrains-mono/500.css";
+import "@fontsource/jetbrains-mono/700.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import "./brand-tokens.css";
 import "./styles.css";
+import "./design-system.css";
 
 const root = document.getElementById("root");
 if (!root) {

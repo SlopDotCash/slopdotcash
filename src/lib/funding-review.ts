@@ -100,7 +100,7 @@ export function reviewedVaultFunding(
       r.projectId === projectId &&
       !superseded.has(r.recordId) &&
       r.network === "solana" &&
-      "vault" in r.instrument &&
+      "funderMember" in r.instrument &&
       r.instrument.vault === vault.vault &&
       r.instrument.multisig === vault.multisig &&
       r.instrument.vaultIndex === vault.vaultIndex &&

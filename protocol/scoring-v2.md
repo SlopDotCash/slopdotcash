@@ -26,6 +26,29 @@ duplicates, valueless changes, and split-only work may be excluded by a public
 human decision. XL, exceptional, security-sensitive, and related-party cases
 require a second maintainer.
 
+## Shared merge credit
+
+Approved by the repository owner on 2026-10-08 in response to issue #506
+(PRD SCR-04). The merge credit of a pull request into the repository's
+integration branch is shared among its pull-request author and every distinct
+non-bot GitHub user that GitHub links as a commit author. Unlinked commit
+emails, `[bot]` app logins, the vendor coding-agent accounts `claude`, `codex`,
+and `cursoragent` (pinned by node ID), and `Co-authored-by` trailers do not
+count. A commit SHA gives credit
+only in the earliest merged pull request that lists it, so a consolidation or
+promotion pull request cannot score it again. Collect every commit page before
+scoring. Above GitHub's 250-commit pull-request listing limit, paginate the
+immutable base/head comparison and reconcile its total and known SHAs.
+Incomplete evidence must fail snapshot collection. A pull request into another
+branch keeps author-only credit.
+
+The work unit's score thirds are split equally. The author is first and the
+other actors follow in actor-ID order; the first actors receive the remainder.
+Each actor keeps at least one third. The author's event keeps the
+`<pull-request-node-id>:merged` ID and the only evidence bonus; each other
+actor's event is `<pull-request-node-id>:merged:<actor-node-id>`. A formal
+review by any credit actor of the same pull request is a self-review.
+
 ## Review credit
 
 Review is paid from the same project pool: triage 1/3, standard 1, deep

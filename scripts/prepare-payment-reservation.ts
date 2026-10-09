@@ -8,6 +8,7 @@ import {
   reservedPlanBytes,
 } from "../src/lib/payment-reservations";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
+import { fundingInstrumentSource } from "../src/lib/settlement-plan";
 import {
   assertNoHistoricalInstrumentUse,
   assertReservationInstrument,
@@ -97,7 +98,12 @@ export async function preparePaymentReservation(
   );
   const row =
     existing ??
-    (await draftPaymentReservation(allocation, policy, args.reservedAt));
+    (await draftPaymentReservation(
+      allocation,
+      policy,
+      args.reservedAt,
+      instrument,
+    ));
   assertReservationInstrument(
     instrument,
     reservationJson(allocation),
@@ -106,12 +112,13 @@ export async function preparePaymentReservation(
   );
   if (existing) {
     // Validate frozen input bytes; never replace an accepted intent or timestamp.
-    await reservedPlanBytes(existing, allocation, policy);
+    await reservedPlanBytes(existing, allocation, policy, instrument);
   } else {
     assertNoHistoricalInstrumentUse(
       ROOT,
       revision,
       row.instrumentId,
+      fundingInstrumentSource(instrument),
       `${args.projectId}/${args.cycleId}`,
     );
   }

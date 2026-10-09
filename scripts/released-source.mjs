@@ -25,7 +25,7 @@ if (
   !/^[a-f0-9]{40}$/.test(sha)
 )
   throw new Error("Invalid deployed source revision");
-execFileSync("git", ["merge-base", "--is-ancestor", sha, "origin/develop"]);
+execFileSync("git", ["merge-base", "--is-ancestor", sha, "origin/main"]);
 const gh = (...args) =>
   JSON.parse(execFileSync("gh", args, { encoding: "utf8", timeout: 30000 }));
 const runs = gh(
@@ -37,7 +37,7 @@ const released = runs.find(
     run.conclusion === "success" &&
     run.head_repository?.full_name === repository &&
     run.head_sha === sha &&
-    run.head_branch === "develop" &&
+    run.head_branch === "main" &&
     ["push", "workflow_dispatch"].includes(run.event),
 );
 if (!released)
@@ -52,7 +52,7 @@ for (const artifact of artifacts) {
   if (
     artifact.name !== `slop-source-${sha}` ||
     artifact.expired ||
-    artifact.workflow_run?.head_branch !== "develop"
+    artifact.workflow_run?.head_branch !== "main"
   )
     continue;
   const run = gh(

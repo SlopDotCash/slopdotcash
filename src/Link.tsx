@@ -23,6 +23,13 @@ function hashTargetId(hash: string): string {
 function scrollToTarget(targetId: string): boolean {
   const target = targetId ? document.getElementById(targetId) : null;
   if (!target) return false;
+  for (
+    let parent = target.parentElement;
+    parent;
+    parent = parent.parentElement
+  ) {
+    if (parent instanceof HTMLDetailsElement) parent.open = true;
+  }
   target.scrollIntoView({ behavior: "auto", block: "start" });
   return true;
 }

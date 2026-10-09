@@ -33,6 +33,7 @@ import {
   type VerifiedSquadsProjectVaultState,
   type VerifiedSquadsVaultState,
 } from "../src/lib/squads-funding";
+import { parseValueArguments } from "./parse-value-arguments";
 
 export const SOLANA_COMMITMENT_RPC_AUTHORITIES = [
   "https://api.mainnet-beta.solana.com",
@@ -93,21 +94,7 @@ const CLI_USAGE =
   "Usage: verify-commitment-squads.ts --mode state --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --token-account <token-account> | --mode deposit --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --signature <signature> --amount-minor <integer> | --mode <release|refund> --multisig <multisig> --vault <vault> --vault-index <0..255> --funder-member <pubkey> --steward-member <pubkey> --recipient <owner> --signature <signature> --amount-minor <integer>. For a 2-of-3 project vault, replace --funder-member and --steward-member in any mode with --creator-member <pubkey> --slop-member <pubkey> --independent-member <pubkey>";
 
 export function parseCommitmentSquadsArguments(argv: readonly string[]) {
-  const parsed = new Map<string, string>();
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = argv[index];
-    const value = argv[index + 1];
-    if (
-      !name ||
-      !CLI_ARGUMENTS.has(name) ||
-      !value ||
-      value.startsWith("--") ||
-      parsed.has(name)
-    ) {
-      throw new TypeError(CLI_USAGE);
-    }
-    parsed.set(name, value);
-  }
+  const parsed = parseValueArguments(argv, CLI_ARGUMENTS, CLI_USAGE);
   return {
     mode: parsed.get("--mode") ?? null,
     multisig: parsed.get("--multisig") ?? null,

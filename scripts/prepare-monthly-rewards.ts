@@ -7,6 +7,7 @@
 import { lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { PROJECTS, type ProjectDefinition } from "../src/lib/projects.mjs";
+import { prepareEscrowCycle } from "./prepare-escrow-cycle";
 import {
   type PrepareRewardCycleArguments,
   parsePrepareRewardCycleArguments,
@@ -81,7 +82,12 @@ async function inspectRegularPath(path: string): Promise<ExistingPath> {
 
 const DEFAULT_DEPENDENCIES: MonthlyDependencies = {
   inspectPath: inspectRegularPath,
-  prepare: prepareRewardCycle,
+  prepare: (args, options) => {
+    const project = PROJECTS.find((p) => p.id === args.projectId);
+    return project?.escrow && args.cycleId >= project.escrow.effectiveCycle
+      ? prepareEscrowCycle({ ...args, ...options })
+      : prepareRewardCycle(args, options);
+  },
   projects: PROJECTS,
   validateCycles: () => syncCycleIndex(),
 };
@@ -136,8 +142,19 @@ export async function prepareMonthlyRewards(
         : []),
     ]);
     const [proposalState, snapshotState] = await Promise.all([
-      dependencies.inspectPath(arguments_.outputPath),
-      dependencies.inspectPath(arguments_.snapshotArchivePath),
+      dependencies.inspectPath(
+        project.escrow && cycleId >= project.escrow.effectiveCycle
+          ? resolve(arguments_.outputPath, "../escrow-v2/proposal.json")
+          : arguments_.outputPath,
+      ),
+      dependencies.inspectPath(
+        project.escrow && cycleId >= project.escrow.effectiveCycle
+          ? resolve(
+              arguments_.snapshotArchivePath,
+              "../escrow-v2/source-snapshot.json",
+            )
+          : arguments_.snapshotArchivePath,
+      ),
     ]);
     if (proposalState !== snapshotState) {
       throw new Error(

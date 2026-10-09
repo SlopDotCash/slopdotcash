@@ -249,6 +249,10 @@ export async function prepareRewardCycle(
     for (const [actorId, login] of priorAccrual.actorLogins) {
       if (!actors.has(actorId)) actors.set(actorId, login);
     }
+    const chain = project.reward.chain;
+    if (chain === null) {
+      throw new TypeError("Monthly pool has no settlement network");
+    }
     if (actors.size > MAX_WALLET_LOOKUPS) {
       throw new RangeError(
         "Reward cycle exceeds the bounded wallet lookup limit",
@@ -258,6 +262,8 @@ export async function prepareRewardCycle(
       options.observeWallet ??
       ((actorId: string, login: string, observedAt: string) =>
         fetchPublishedGithubWallet(actorId, login, observedAt, {
+          // Only a claim on the project's settlement network is payable.
+          chain,
           token: options.githubToken,
         }));
     const observations = await mapWithConcurrency(

@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fundingInstrumentId } from "../src/lib/allocation-funding-basis.mjs";
 import {
   assertProjectFundingAddresses,
   assertProjectFundingIndex,
@@ -22,10 +23,7 @@ import {
 } from "../src/lib/signer-capability";
 import { canonicalFundingDecisionBytes } from "./check-funding-record-pr";
 import { signerReportPath } from "./signer-access-ledger";
-import {
-  assertSignerAccessReport,
-  squadsAccessInstrumentId,
-} from "./verify-signer-access";
+import { assertSignerAccessReport } from "./verify-signer-access";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT = join(ROOT, "public", "data", "funding.json");
@@ -285,8 +283,12 @@ export async function buildFundingIndex(
       if (
         !instruments.some(
           (instrument) =>
-            instrument.kind === "squads-v4-vault" &&
-            squadsAccessInstrumentId(instrument) === report.instrumentId &&
+            // A 2-of-2 Squads vault, or a Base Sablier stream whose
+            // recipient attests (RFC #472).
+            (instrument.kind === "squads-v4-vault" ||
+              (instrument.kind === "sablier-lockup-v4" &&
+                instrument.network === "base")) &&
+            fundingInstrumentId(instrument) === report.instrumentId &&
             instrument.monthlyCommitment?.cycleId === report.cycleId,
         )
       )

@@ -93,16 +93,25 @@ site select another repository, entrypoint, file, or argument:
 - `repository`: `SlopDotCash/slopdotcash`;
 - `entrypoint`: `scripts/render-install-guide.mjs`;
 - `paths`, in this order: `scripts/render-install-guide.mjs` and
-  `src/lib/install-command.ts`;
+  `src/lib/install-command.ts`, followed by
+  `skills/contribute-to-eliza/scripts/skill-authority.mjs` only when the
+  immutable `install-command.ts` imports that shared authority module;
 - `arguments`: `--artifact-origin` followed by the selected `project_url`
   without its trailing slash; `--client` followed by `codex`, `claude-code`, or
   `manual`;
   `--skill` followed by the selected `skill`; and `--source` followed by the
   selected `skill_source`.
 
-In a fresh temporary directory, fetch only those two paths from
+In a fresh temporary directory, first fetch the two renderer paths from
 `raw.githubusercontent.com/SlopDotCash/slopdotcash/<revision>/`, preserving their
-relative paths. Also fetch `<skill_source>/project.json` from that same immutable
+relative paths. Inspect the immutable `src/lib/install-command.ts` before
+execution. If it imports `SKILL_AUTHORITY_PYTHON` from
+`../../skills/contribute-to-eliza/scripts/skill-authority.mjs`, require the
+three-path contract above and fetch that exact third path from the same
+revision. Otherwise require the two-path contract. Reject any other renderer
+dependency, missing or extra manifest path, or different path order. The shared
+authority path stays fixed for every project; it is not a second project
+selection. Also fetch `<skill_source>/project.json` from that same immutable
 revision. Require its schema version, project id, repository id, skill name,
 skill source, and public origin to match the selected registry entry, with the
 registry URL's single trailing slash removed;

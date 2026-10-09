@@ -2,7 +2,11 @@
 import { deriveAllocationFundingBasis } from "./allocation-funding";
 import type { CycleWalletProof } from "./cycle-index";
 import { findProject } from "./projects.mjs";
-import { isSolanaAddress, WALLET_CLAIM_REPOSITORY } from "./wallets";
+import {
+  isWalletAddress,
+  isWalletChain,
+  WALLET_CLAIM_REPOSITORY,
+} from "./wallets";
 
 export interface FundingPreparationContributor {
   actor: { id: string; login: string };
@@ -134,7 +138,9 @@ function wallet(value: unknown, actor: { id: string; login: string }): void {
       throw new TypeError("Wallet issue does not bind actor");
   }
   date(v.observedAt);
-  if (v.chain !== "solana" || !isSolanaAddress(v.address))
+  // Preparation observes the project's settlement network; a preparation stays
+  // valid if the project later changes network, so match the wallet's own chain.
+  if (!isWalletChain(v.chain) || !isWalletAddress(v.chain, v.address))
     throw new TypeError("Invalid wallet address");
 }
 const preparationKeys =

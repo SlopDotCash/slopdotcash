@@ -2,6 +2,10 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
+import {
+  currentSignerStatus,
+  requiredSignerRoles,
+} from "../src/lib/signer-capability";
 import { canonicalFundingDecisionBytes } from "./check-funding-record-pr";
 import {
   assertSignerAccessReport,
@@ -69,7 +73,7 @@ export function signerReportPath(report: SignerAccessReport): string {
 
 /**
  * Reads every report from head, preserving every base blob. The caller must
- * resolve base to current trusted develop; a proposed manifest is not authority.
+ * resolve base to current trusted main; a proposed manifest is not authority.
  * All reports, including historical loss, are authenticated before returning.
  */
 export async function readSignerAccessLedger(input: {
@@ -174,13 +178,18 @@ export function assertSignerCapabilityForSettlement(
   now: string,
 ) {
   const instrumentId = allocation.fundingBasis?.instrumentId;
-  if (!instrumentId?.startsWith("squads-v4-vault:")) return;
+  if (
+    !instrumentId?.startsWith("squads-v4-vault:") &&
+    !instrumentId?.startsWith("squads-project-vault:") &&
+    !instrumentId?.startsWith("sablier-lockup-v4:base:")
+  )
+    return;
   const result = signerCapabilityState(
     ledger,
     { ...allocation, instrumentId },
     now,
   );
-  if (result.state !== "both-signers-current")
+  if (result.state !== currentSignerStatus(instrumentId))
     throw new TypeError(
       `Settlement blocked by signer capability state: ${result.state}`,
     );
@@ -195,9 +204,9 @@ export async function readCurrentSignerAccessLedger(
     "fetch",
     "--no-tags",
     "origin",
-    "+refs/heads/develop:refs/remotes/origin/develop",
+    "+refs/heads/main:refs/remotes/origin/main",
   ]);
-  const current = git(root, ["rev-parse", "refs/remotes/origin/develop"])
+  const current = git(root, ["rev-parse", "refs/remotes/origin/main"])
     .toString()
     .trim();
   return readSignerAccessLedger({
@@ -242,7 +251,7 @@ export function signerCapabilityState(
       losses,
       paymentAuthorized: false as const,
     };
-  const current = (["funder", "steward"] as const).every((role) =>
+  const current = requiredSignerRoles(identity.instrumentId).every((role) =>
     relevant.some(
       (report) =>
         report.role === role &&
@@ -252,7 +261,9 @@ export function signerCapabilityState(
     ),
   );
   return {
-    state: current ? ("both-signers-current" as const) : ("unknown" as const),
+    state: current
+      ? currentSignerStatus(identity.instrumentId)
+      : ("unknown" as const),
     losses,
     paymentAuthorized: false as const,
   };

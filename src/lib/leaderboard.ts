@@ -1290,13 +1290,6 @@ export function qualifiesResolvedIssue(issue: IssueRecord): boolean {
   );
 }
 
-export function isSubstantiveReview(
-  review: PullRequestReview,
-  pullRequest: PullRequestRecord,
-): boolean {
-  return reviewExclusionReason(review, pullRequest) === null;
-}
-
 function reviewExclusionReason(
   review: PullRequestReview,
   pullRequest: Pick<PullRequestRecord, "author" | "mergedAt">,
@@ -1380,7 +1373,7 @@ export function leaderboardMethodology(): LeaderboardMethodology {
         points: "micro 1/3; small 1; medium 3; large 8; XL 15; exceptional 25",
         cap: "uncapped; related or split pull requests share one workUnitId",
         qualification:
-          "Authored pull request merged during the rolling window. Unratified August work receives provisional micro credit; higher tiers require an immutable exact-head maintainer slop-score record.",
+          "Authored pull request merged during the rolling window. Unratified August work receives provisional micro credit; higher tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 1/3 each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
       },
       {
         id: "resolved-issue",
@@ -1566,6 +1559,7 @@ function addScore(
       ledger.some(
         (existing) =>
           existing.category === "merged-pull-request" &&
+          existing.source.id !== event.source.id &&
           `${projectId}\0${existing.occurredAt.slice(0, 7)}\0${existing.workUnitId}` ===
             globalWorkUnitKey,
       )
@@ -2465,6 +2459,101 @@ function latestSourceUpdate(input: LeaderboardInput): string {
   );
 }
 
+/**
+ * Assigns each commit SHA to the earliest merged integration-branch pull
+ * request that lists it, so a later consolidation or promotion pull request
+ * cannot score the same commits again.
+ */
+function commitCreditOwners(
+  outcomes: readonly MergedPullRequestOutcome[],
+): Map<string, string> {
+  const owners = new Map<string, string>();
+  const ordered = [...outcomes].sort(
+    (left, right) =>
+      parseIsoTime(left.mergedAt) - parseIsoTime(right.mergedAt) ||
+      compareCodeUnits(left.id, right.id),
+  );
+  for (const pullRequest of ordered) {
+    const repositoryId = repositoryIdFromUrl(pullRequest.url);
+    if (
+      pullRequest.commits === null ||
+      pullRequest.baseRefName !==
+        findRegisteredRepositoryById(repositoryId)?.integrationBranch
+    ) {
+      continue;
+    }
+    for (const commit of pullRequest.commits) {
+      const key = `${repositoryId.toLowerCase()}\0${commit.oid}`;
+      if (!owners.has(key)) owners.set(key, pullRequest.id);
+    }
+  }
+  return owners;
+}
+
+/**
+ * Vendor coding-agent User accounts that GitHub links to agent commit emails.
+ * An agent run is attributed to the human who submits it, never to the vendor.
+ */
+const AGENT_COMMIT_ACCOUNT_IDS: ReadonlySet<string> = new Set([
+  "MDQ6VXNlcjgxODQ3", // claude (Anthropic)
+  "U_kgDOD-0LXg", // codex (OpenAI)
+  "U_kgDOC972lw", // cursoragent (Cursor)
+]);
+
+/**
+ * Returns the non-bot pull-request author first, then every other non-bot
+ * GitHub author of a commit this pull request owns, in actor-ID order.
+ */
+function mergeCreditActors(
+  pullRequest: MergedPullRequestOutcome,
+  commitOwners: ReadonlyMap<string, string>,
+): GitHubActor[] {
+  const author =
+    pullRequest.author && !isBotActor(pullRequest.author)
+      ? pullRequest.author
+      : null;
+  const committers = new Map<string, GitHubActor>();
+  const repositoryId = repositoryIdFromUrl(pullRequest.url).toLowerCase();
+  for (const commit of pullRequest.commits ?? []) {
+    if (
+      commit.author &&
+      !isBotActor(commit.author) &&
+      !AGENT_COMMIT_ACCOUNT_IDS.has(commit.author.id) &&
+      commit.author.id !== author?.id &&
+      commitOwners.get(`${repositoryId}\0${commit.oid}`) === pullRequest.id
+    ) {
+      committers.set(commit.author.id, commit.author);
+    }
+  }
+  return [
+    ...(author ? [author] : []),
+    ...[...committers.values()].sort((left, right) =>
+      compareCodeUnits(left.id, right.id),
+    ),
+  ];
+}
+
+/**
+ * Splits integer score thirds equally; earlier actors receive the remainder.
+ * Every actor keeps at least the one-third micro credit of an accepted merge.
+ */
+export function shareScoreThirds(total: number, actors: number): number[] {
+  if (
+    !Number.isSafeInteger(total) ||
+    total < 1 ||
+    !Number.isSafeInteger(actors) ||
+    actors < 1
+  ) {
+    throw new TypeError("score shares need positive integer inputs");
+  }
+  const base = Math.floor(total / actors);
+  if (base === 0) return Array.from({ length: actors }, () => 1);
+  return Array.from(
+    { length: actors },
+    (_, index) => base + (index < total % actors ? 1 : 0),
+  );
+}
+
 export function createLeaderboardSnapshot(
   input: LeaderboardInput,
 ): LeaderboardSnapshot {
@@ -2743,43 +2832,67 @@ export function createLeaderboardSnapshot(
     if (current) scoreRatifications.set(pullRequest.id, current);
   }
 
+  const commitOwners = commitCreditOwners(mergedPullRequestOutcomes);
   for (const pullRequest of mergedPullRequestOutcomes) {
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
     const ratification = detailEligibleMergedPullRequestIds.has(pullRequest.id)
       ? scoreRatifications.get(pullRequest.id)
       : undefined;
-    if (
-      pullRequest.author &&
-      !isBotActor(pullRequest.author) &&
-      (!requiresExplicitPrizeAcceptance(repositoryId) || ratification)
-    ) {
-      const authorEntry = actorEntry(entries, pullRequest.author);
+    if (requiresExplicitPrizeAcceptance(repositoryId) && !ratification) {
+      continue;
+    }
+    const v2 =
+      parseIsoTime(pullRequest.mergedAt) >= parseIsoTime(SCORE_V2_EFFECTIVE_AT);
+    const author =
+      pullRequest.author && !isBotActor(pullRequest.author)
+        ? pullRequest.author
+        : null;
+    // Score v1 history credits the pull-request author only.
+    const actors = v2
+      ? mergeCreditActors(pullRequest, commitOwners)
+      : author
+        ? [author]
+        : [];
+    if (actors.length === 0) continue;
+    const totalThirds = ratification?.record.scoreThirds ?? 1;
+    const shares = shareScoreThirds(totalThirds, actors.length);
+    if (author) {
+      const authorEntry = actorEntry(entries, author);
       authorEntry.rawActivity.additions += pullRequest.additions;
       authorEntry.rawActivity.deletions += pullRequest.deletions;
-      const contributionAssessment = assessModelAttribution(
-        [pullRequestBodySource(pullRequest)],
-        {
-          requireEverySource: true,
-          verifyRunReceipt: input.verifyRunReceipt,
-        },
-      );
-      const contributionRun = input.verifyRunReceipt
-        ? contributionAssessment.declarations.find(
-            (declaration) =>
-              declaration.actor?.id === pullRequest.author?.id &&
-              declaration.artifactId === pullRequest.id,
-          )?.run
-        : null;
-      const contributionBonus = contributionRun?.traceUpload ? 1_500 : 0;
+    }
+    const contributionAssessment = assessModelAttribution(
+      [pullRequestBodySource(pullRequest)],
+      {
+        requireEverySource: true,
+        verifyRunReceipt: input.verifyRunReceipt,
+      },
+    );
+    const contributionRun = input.verifyRunReceipt
+      ? contributionAssessment.declarations.find(
+          (declaration) =>
+            declaration.actor?.id === author?.id &&
+            declaration.artifactId === pullRequest.id,
+        )?.run
+      : null;
+    const baseReason = ratification
+      ? `Maintainer-ratified ${ratification.record.tier} accepted outcome: ${ratification.record.reason}`
+      : "Accepted outcome has provisional micro credit pending immutable maintainer ratification.";
+    for (const [index, actor] of actors.entries()) {
+      const isAuthor = actor.id === author?.id;
+      const scoreThirds = shares[index] as number;
+      const contributionBonus =
+        isAuthor && contributionRun?.traceUpload ? 1_500 : 0;
       const scored = addScore(entries, ledger, {
-        id: `${pullRequest.id}:merged`,
-        actor: pullRequest.author,
+        id: isAuthor
+          ? `${pullRequest.id}:merged`
+          : `${pullRequest.id}:merged:${actor.id}`,
+        actor,
         category: "merged-pull-request",
-        points: ratification ? ratification.record.scoreThirds / 3 : 1 / 3,
-        ...(parseIsoTime(pullRequest.mergedAt) >=
-        parseIsoTime(SCORE_V2_EFFECTIVE_AT)
+        points: v2 ? scoreThirds / 3 : totalThirds / 3,
+        ...(v2
           ? {
-              scoreThirds: ratification?.record.scoreThirds ?? 1,
+              scoreThirds,
               evidenceBonusBasisPoints: contributionBonus as
                 | 0
                 | 1_000
@@ -2787,7 +2900,7 @@ export function createLeaderboardSnapshot(
                 | 2_500,
               workUnitId:
                 ratification?.record.workUnitId ??
-                `wu_${repositoryIdFromUrl(pullRequest.url)
+                `wu_${repositoryId
                   .toLowerCase()
                   .replace(/[^a-z0-9_-]+/gu, "_")}_pr_${pullRequest.number}`,
               scoreDecisionSourceId: ratification?.source.id,
@@ -2802,11 +2915,12 @@ export function createLeaderboardSnapshot(
           title: pullRequest.title,
           url: pullRequest.url,
         },
-        reason: ratification
-          ? `Maintainer-ratified ${ratification.record.tier} accepted outcome: ${ratification.record.reason}`
-          : "Accepted outcome has provisional micro credit pending immutable maintainer ratification.",
+        reason:
+          actors.length === 1
+            ? baseReason
+            : `${baseReason} Shared equally among ${actors.length} commit authors.`,
       });
-      if (scored) {
+      if (scored && isAuthor) {
         recordScoredSources([pullRequestBodySource(pullRequest)]);
       }
     }
@@ -3168,7 +3282,16 @@ export function createLeaderboardSnapshot(
         excludeReview(pullRequest, review, "evaluated-contribution-award");
         continue;
       }
-      const exclusionReason = reviewExclusionReason(review, pullRequest);
+      const exclusionReason =
+        reviewExclusionReason(review, pullRequest) ??
+        (ledger.some(
+          (event) =>
+            event.category === "merged-pull-request" &&
+            event.source.id === pullRequest.id &&
+            event.actor.id === review.author?.id,
+        )
+          ? "self-review"
+          : null);
       if (exclusionReason !== null) {
         excludeReview(pullRequest, review, exclusionReason);
         continue;
@@ -5824,8 +5947,11 @@ export function assertLeaderboardSnapshot(
       "snapshot.source.counts.openPullRequests must match the pull request queue length",
     );
   }
-  const mergedOutcomeEvents = validatedLedger.filter(
-    (event) => event.category === "merged-pull-request",
+  // Shared merge credit emits one event per commit author of one source.
+  const mergedOutcomeSourceIds = new Set(
+    validatedLedger
+      .filter((event) => event.category === "merged-pull-request")
+      .map((event) => event.source.id),
   );
   const detailedPullRequestIds = new Set(
     validatedLedger
@@ -5863,7 +5989,7 @@ export function assertLeaderboardSnapshot(
     "snapshot.source.counts.resolvedIssues",
   );
   if (
-    mergedOutcomeEvents.length > mergedPullRequestCount ||
+    mergedOutcomeSourceIds.size > mergedPullRequestCount ||
     detailedPullRequestIds.size > detailedMergedPullRequestCount ||
     reviewedPullRequestIds.size > mergedPullRequestCount ||
     resolvedIssueEvents.length > resolvedIssueCount

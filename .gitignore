@@ -33,3 +33,6 @@ public/projects/
 public/protocol/
 
 .points-build/
+
+# Local smart-contract invariant runs
+/cache/

@@ -31,6 +31,9 @@ const DEFAULT_RETRY_DELAY_MS = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 5 * 60_000;
 const CANONICAL_ORIGIN = "https://slop.cash";
+// Staging verifies its custom domain and the exact Pages deployment URL.
+const STAGING_ORIGIN_PATTERN =
+  /^https:\/\/(?:staging\.slop\.cash|[0-9a-f]{8}\.slop-staging\.pages\.dev)$/u;
 const RESERVED_PATHS = new Set([
   "_headers",
   "_redirects",
@@ -543,7 +546,8 @@ async function main(arguments_) {
   if (
     command === "verify" &&
     distRoot !== undefined &&
-    origin === CANONICAL_ORIGIN &&
+    origin !== undefined &&
+    (origin === CANONICAL_ORIGIN || STAGING_ORIGIN_PATTERN.test(origin)) &&
     verificationToken !== undefined &&
     extra.length === 0
   ) {
@@ -558,7 +562,7 @@ async function main(arguments_) {
     return;
   }
   throw new TypeError(
-    `Usage: ${basename(process.argv[1])} create <dist> | verify-local <dist> | verify <dist> ${CANONICAL_ORIGIN} <token>`,
+    `Usage: ${basename(process.argv[1])} create <dist> | verify-local <dist> | verify <dist> ${CANONICAL_ORIGIN}|<staging origin> <token>`,
   );
 }
 

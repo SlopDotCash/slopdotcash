@@ -11,19 +11,18 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROJECTS } from "../src/lib/projects.mjs";
+import { packageSkillArtifact } from "./package-skill-artifact.mjs";
 import { readIdentityRecord } from "./protocol-identity.mjs";
 import { renderInstallGuide } from "./render-install-guide.mjs";
+import { pythonCommand } from "./skill-python.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = packageRoot;
@@ -57,22 +56,11 @@ const evidenceRubricPath = join(
   "references",
   "evidence-review-rubric.md",
 );
-const packager = join(
-  repositoryRoot,
-  "scripts",
-  "skill-validation",
-  "package_skill.py",
-);
 const skillValidator = join(
   repositoryRoot,
   "scripts",
   "skill-validation",
   "quick_validate.py",
-);
-const archiveNormalizer = join(
-  packageRoot,
-  "scripts",
-  "normalize-skill-archive.py",
 );
 const archiveName = `${rootSkillName}.skill`;
 const archivePath = join(downloadsRoot, archiveName);
@@ -110,41 +98,7 @@ function run(executable, args, cwd = repositoryRoot) {
   });
 }
 
-function pythonCommand() {
-  const candidates = [
-    process.env.SLOP_PYTHON,
-    "python3",
-    "/usr/bin/python3",
-  ].filter((value, index, values) => value && values.indexOf(value) === index);
-  for (const executable of candidates) {
-    try {
-      execFileSync(
-        executable,
-        [
-          "-c",
-          "import yaml,sys;sys.exit(0 if yaml.__version__ == '6.0.3' else 1)",
-        ],
-        { cwd: repositoryRoot, stdio: "ignore" },
-      );
-      return { executable, prefix: [] };
-    } catch {
-      // error-policy:J3 an unavailable validator runtime tries the next pinned path.
-    }
-  }
-  try {
-    execFileSync("uv", ["--version"], { stdio: "ignore" });
-    return {
-      executable: "uv",
-      prefix: ["run", "--with", "PyYAML==6.0.3", "python"],
-    };
-  } catch {
-    throw new TypeError(
-      "[Slop] skill packaging requires Python with PyYAML 6.0.3 or uv; set SLOP_PYTHON to an interpreter with that exact version",
-    );
-  }
-}
-
-const python = pythonCommand();
+const python = pythonCommand(repositoryRoot);
 
 function runPython(args, cwd = repositoryRoot) {
   run(python.executable, [...python.prefix, "-B", ...args], cwd);
@@ -355,52 +309,21 @@ run(process.execPath, [
   "--ogembeds",
 ]);
 
-const packagingRoot = mkdtempSync(join(tmpdir(), "slop-skill-package-"));
-const stagedSkillRoot = join(packagingRoot, rootSkillName);
-const stagedDownloadsRoot = join(packagingRoot, "downloads");
-const stagedPublicArchive = join(
+const archive = packageSkillArtifact({
+  repositoryRoot,
+  skillRoot,
   downloadsRoot,
-  `.${archiveName}.${process.pid}.tmp`,
-);
-let archive;
-try {
-  for (const path of trackedSkillFiles) {
-    const destination = join(stagedSkillRoot, path);
-    mkdirSync(dirname(destination), { recursive: true });
-    copyFileSync(join(skillRoot, path), destination);
-  }
-  writeFileSync(
-    join(stagedSkillRoot, "PROVENANCE.json"),
-    `${JSON.stringify(
-      {
-        schemaVersion: "1",
-        name: rootSkillName,
-        repository: "SlopDotCash/slopdotcash",
-        revision: sourceRevisionStatus === "committed" ? commit : null,
-        revisionStatus: sourceRevisionStatus,
-        source: {
-          path: sourcePath,
-          sha256: skillDigest,
-        },
-        files: skillFileManifest,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  runPython([packager, stagedSkillRoot, stagedDownloadsRoot]);
-  const packagedArchive = join(stagedDownloadsRoot, archiveName);
-  runPython([archiveNormalizer, packagedArchive]);
-  archive = readFileSync(packagedArchive);
-  if (archive.length === 0) {
-    throw new Error("[Slop] packaged skill archive is empty");
-  }
-  copyFileSync(packagedArchive, stagedPublicArchive);
-  renameSync(stagedPublicArchive, archivePath);
-} finally {
-  rmSync(stagedPublicArchive, { force: true });
-  rmSync(packagingRoot, { force: true, recursive: true });
-}
+  runPython,
+  provenance: {
+    schemaVersion: "1",
+    name: rootSkillName,
+    repository: sourceRepository,
+    revision: sourceRevisionStatus === "committed" ? commit : null,
+    revisionStatus: sourceRevisionStatus,
+    source: { path: sourcePath, sha256: skillDigest },
+    files: skillFileManifest,
+  },
+});
 
 const archiveDigest = sha256(archive);
 
@@ -587,9 +510,9 @@ const manifest = {
     canonicalPath: skillRepositoryPath,
     releaseCandidateLabel: "slop-release-candidate",
     acceptedRevisions: [
-      "current develop head",
-      "develop ancestor whose complete canonical skill tree is byte-identical to current develop",
-      "open non-draft same-repository PR head into develop, zero behind current develop, with a release-candidate label event after the exact current-head event",
+      "current main head",
+      "main ancestor whose complete canonical skill tree is byte-identical to current main",
+      "open non-draft same-repository PR head into main, zero behind current main, with a release-candidate label event after the exact current-head event",
     ],
   },
   provenance: {
@@ -730,47 +653,21 @@ function publishAdditionalProject({
     );
   const revisionStatus = sourceMatchesCommit ? "committed" : "working-tree";
   const skillBytes = readFileSync(additionalSkillSource);
-  const packagingRoot = mkdtempSync(join(tmpdir(), `${name}-package-`));
-  const stagedSkillRoot = join(packagingRoot, name);
-  const stagedDownloadsRoot = join(packagingRoot, "downloads");
-  const stagedArchive = join(
-    projectDownloads,
-    `.${archiveName}.${process.pid}.tmp`,
-  );
-  let archive;
-  try {
-    for (const path of trackedFiles) {
-      const destination = join(stagedSkillRoot, path);
-      mkdirSync(dirname(destination), { recursive: true });
-      copyFileSync(join(additionalSkillRoot, path), destination);
-    }
-    writeFileSync(
-      join(stagedSkillRoot, "PROVENANCE.json"),
-      `${JSON.stringify(
-        {
-          schemaVersion: "1",
-          name,
-          repository: "SlopDotCash/slopdotcash",
-          revision: revisionStatus === "committed" ? commit : null,
-          revisionStatus,
-          source: { path: sourcePath, sha256: sha256(skillBytes) },
-          files: fileManifest,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    runPython([packager, stagedSkillRoot, stagedDownloadsRoot]);
-    const packagedArchive = join(stagedDownloadsRoot, archiveName);
-    runPython([archiveNormalizer, packagedArchive]);
-    archive = readFileSync(packagedArchive);
-    if (archive.length === 0) throw new Error(`[Slop] ${archiveName} is empty`);
-    copyFileSync(packagedArchive, stagedArchive);
-    renameSync(stagedArchive, join(projectDownloads, archiveName));
-  } finally {
-    rmSync(stagedArchive, { force: true });
-    rmSync(packagingRoot, { force: true, recursive: true });
-  }
+  const archive = packageSkillArtifact({
+    repositoryRoot,
+    skillRoot: additionalSkillRoot,
+    downloadsRoot: projectDownloads,
+    runPython,
+    provenance: {
+      schemaVersion: "1",
+      name,
+      repository: sourceRepository,
+      revision: revisionStatus === "committed" ? commit : null,
+      revisionStatus,
+      source: { path: sourcePath, sha256: sha256(skillBytes) },
+      files: fileManifest,
+    },
+  });
 
   const archiveDigest = sha256(archive);
   const references = trackedFiles

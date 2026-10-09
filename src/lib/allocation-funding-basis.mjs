@@ -1,10 +1,16 @@
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 
 /** Stable public identity, never a mutable list index or observed balance. */
-function instrumentIdentity(instrument) {
-  return instrument.kind === "squads-v4-vault"
-    ? `squads-v4-vault:solana:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`
-    : `sablier-lockup-v4:${instrument.network}:${instrument.contract}:${instrument.streamId}`;
+export function fundingInstrumentId(instrument) {
+  switch (instrument.kind) {
+    case "squads-v4-vault":
+    case "squads-project-vault":
+      return `${instrument.kind}:solana:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`;
+    case "sablier-lockup-v4":
+      return `sablier-lockup-v4:${instrument.network}:${instrument.contract}:${instrument.streamId}`;
+    default:
+      throw new TypeError("unsupported funding instrument kind");
+  }
 }
 
 export function assertAllocationFundingBasis(value) {
@@ -24,7 +30,7 @@ export function assertAllocationFundingBasis(value) {
     (value.instrumentId !== null &&
       (typeof value.instrumentId !== "string" ||
         value.instrumentId.length > 200 ||
-        !/^(?:squads-v4-vault:solana:[1-9A-HJ-NP-Za-km-z]{32,44}:(?:0|[1-9][0-9]*):[1-9A-HJ-NP-Za-km-z]{32,44}|sablier-lockup-v4:(?:base|ethereum):0x[0-9a-fA-F]{40}:(?:0|[1-9][0-9]*))$/u.test(
+        !/^(?:(?:squads-v4-vault|squads-project-vault):solana:[1-9A-HJ-NP-Za-km-z]{32,44}:(?:0|[1-9][0-9]*):[1-9A-HJ-NP-Za-km-z]{32,44}|sablier-lockup-v4:(?:base|ethereum):0x[0-9a-fA-F]{40}:(?:0|[1-9][0-9]*))$/u.test(
           value.instrumentId,
         ))) ||
     (BigInt(value.committedMinor) > 0n
@@ -60,7 +66,7 @@ export function deriveAllocationFundingBasis(project, cycleId) {
   return assertAllocationFundingBasis({
     cycleId,
     instrumentId:
-      BigInt(committedMinor) > 0n ? instrumentIdentity(instrument) : null,
+      BigInt(committedMinor) > 0n ? fundingInstrumentId(instrument) : null,
     fundingState: project.reward.fundingState,
     committedMinor,
     monthlyCapMinor: resolveRewardCapMinor(project, cycleId),

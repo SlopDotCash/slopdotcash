@@ -1,18 +1,23 @@
 name: slop.cash
 
 # Builds the contribution site from live elizaOS/eliza data, verifies the
-# canonical skill and browser surface, and publishes only trusted develop
+# canonical skill and browser surface, and publishes only trusted main
 # revisions to Cloudflare Pages.
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [develop, development, main]
   push:
-    branches: [develop]
+    branches: [develop, development, main]
   schedule:
     # Offset from the hour so this refresh does not join the top-of-hour surge.
     - cron: "17 */6 * * *"
   workflow_dispatch:
+    inputs:
+      bootstrap_staging_profiles:
+        description: "First staging publication only: use the reviewed profile seed after verifying no staging Pages deployment exists"
+        type: boolean
+        default: false
 
 concurrency:
   # PR supersessions cancel, while trusted runs keep independent quality lanes
@@ -66,11 +71,12 @@ jobs:
     needs: source
     env:
       RELEASE_SHA: ${{ needs.source.outputs.sha }}
+      VITE_SLOP_ENVIRONMENT: ${{ (github.ref == 'refs/heads/development' || github.base_ref == 'development') && 'staging' || 'production' }}
     runs-on: ubuntu-24.04
     concurrency:
       # A newer trusted revision supersedes stale live-data generation, while
       # each pull request retains its own independently superseding lane.
-      group: slop-quality-${{ github.event.pull_request.number || github.event_name }}
+      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
       cancel-in-progress: true
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Leave room for complete fail-closed hydration plus four browser projects.
@@ -133,14 +139,7 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ]; then
             node scripts/check-project-transitions.mjs "$PROJECT_POLICY_BASE_SHA" "$PROJECT_POLICY_HEAD_SHA"
           fi
-          bun run projects:check
-          bun run skills:check
-          bun run evaluations:check
-          for skill in skills/*; do
-            test -d "$skill"
-            python scripts/skill-validation/quick_validate.py "$skill"
-          done
-          bun test ./skill-tests
+          bun run verify:contracts
 
       - name: Authenticate signer history before trusted publication
         if: github.event_name != 'pull_request'
@@ -153,18 +152,36 @@ jobs:
 
       - name: Generate live contribution data
         # Pull-request code is untrusted, so this step never explicitly injects
-        # a repository-scoped token into it. Trusted develop runs refresh the
+        # a repository-scoped token into it. Trusted main runs refresh the
         # ledger before producing a deployable build.
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
+          BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
         run: |
+          set -euo pipefail
+          profile_origin="https://slop.cash"
+          if [ "$VITE_SLOP_ENVIRONMENT" = "staging" ]; then
+            profile_origin="https://staging.slop.cash"
+          fi
+          previous_profiles="$RUNNER_TEMP/slop-previous-profiles.json"
+          if [ "$BOOTSTRAP_STAGING_PROFILES" = "true" ]; then
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+            test "$GITHUB_REF" = "refs/heads/development"
+            test "$VITE_SLOP_ENVIRONMENT" = "staging"
+            cp data/profiles/seed.json "$previous_profiles"
+            echo "First staging publication: start from the reviewed profile census."
+          else
+            curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 60 --max-filesize 8388608 \
+              "$profile_origin/data/profiles.json" --output "$previous_profiles"
+          fi
           bun run leaderboard:generate
-          # The census crawls every upstream PR and fails closed if the
-          # inventory shrinks mid-crawl. One retry covers a single race.
+          # Preserve previously observed issue history, including records
+          # no longer accessible. Both source inventories must reconcile.
           for attempt in 1 2; do
-            if bun run profiles:generate; then
+            if bun run profiles:generate --previous "$previous_profiles"; then
               break
             fi
             if [ "$attempt" -eq 2 ]; then
@@ -207,23 +224,13 @@ jobs:
           SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
         run: bun run cycles:verify
 
-      - name: Check types
-        run: |
-          bun run typecheck
-          bun run check:unused
-
-      - name: Check formatting and lint
-        run: |
-          bun run format:check
-          bun run lint:check
-
-      - name: Run unit tests
-        run: |
-          bun run test:evidence
-          bun run test
+      - name: Check code
+        run: bun run verify:code
 
       - name: Build production site
         env:
+          # Trusted refreshes use the census produced above; PR builds use the captured seed.
+          SLOP_PROFILES_INPUT: ${{ github.event_name == 'pull_request' && 'data/profiles/seed.json' || 'public/data/profiles.json' }}
           SLOP_POINTS_ONLINE: ${{ github.event_name != 'pull_request' && '1' || '0' }}
           SLOP_POINTS_BOOTSTRAP: ${{ github.event_name != 'schedule' && '1' || '0' }}
         run: bun run build
@@ -241,6 +248,9 @@ jobs:
             fi
             echo "::warning::Playwright Chromium installation stalled or failed; retrying once."
           done
+
+      - name: Run installer lifecycle end-to-end checks
+        run: bun run test:installer:e2e
 
       - name: Run desktop and mobile browser tests
         env:
@@ -267,13 +277,93 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  staging:
+    name: Deploy verified development to staging
+    if: >-
+      needs.quality.result == 'success' &&
+      github.ref == 'refs/heads/development' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [source, quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: slop-staging
+      cancel-in-progress: false
+    environment:
+      name: slop-staging
+      url: https://staging.slop.cash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: slop-source-${{ needs.source.outputs.sha }}
+          path: dist
+      - name: Require staging credentials
+        env:
+          HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          HAS_CLIENT: ${{ secrets.SLOP_GITHUB_CLIENT_ID != '' && secrets.SLOP_GITHUB_CLIENT_SECRET != '' }}
+          HAS_KEYS: ${{ secrets.IDENTITY_STATE_KEY != '' && secrets.IDENTITY_ASSERTION_KEY != '' && secrets.TRACE_AUTH_SECRET != '' }}
+        run: |
+          test "$HAS_CLOUDFLARE" = true
+          test "$HAS_CLIENT" = true
+          test "$HAS_KEYS" = true
+      - name: Publish and verify isolated staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_APP_CLIENT_ID: ${{ secrets.SLOP_GITHUB_CLIENT_ID }}
+          GITHUB_APP_CLIENT_SECRET: ${{ secrets.SLOP_GITHUB_CLIENT_SECRET }}
+          IDENTITY_STATE_KEY: ${{ secrets.IDENTITY_STATE_KEY }}
+          IDENTITY_ASSERTION_KEY: ${{ secrets.IDENTITY_ASSERTION_KEY }}
+          TRACE_AUTH_SECRET: ${{ secrets.TRACE_AUTH_SECRET }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/development
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          live_sha="$(git ls-remote --exit-code --refs origin refs/heads/development | awk 'NR == 1 { print $1 }')"
+          test "$live_sha" = "$GITHUB_SHA"
+          node scripts/dist-manifest.mjs verify-local dist
+          started_at="$(node -e 'process.stdout.write(String(Date.now()))')"
+          ./node_modules/.bin/wrangler d1 migrations apply slop-staging --remote --config wrangler.staging.toml
+          ./node_modules/.bin/wrangler deploy --config workers/identity/wrangler.staging.toml
+          node scripts/configure-staging-secrets.mjs
+          # Pages requires the standard config filename in its working directory.
+          # Keep the production config untouched and publish the verified bundle
+          # with the staging config from this exact source revision.
+          publish_dir="$(mktemp -d "$RUNNER_TEMP/slop-staging-pages.XXXXXX")"
+          git archive "$GITHUB_SHA" | tar -x -C "$publish_dir"
+          cp wrangler.staging.toml "$publish_dir/wrangler.toml"
+          cp -R dist "$publish_dir/dist"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
+          (
+            cd "$publish_dir"
+            ./node_modules/.bin/wrangler pages deploy \
+              --project-name=slop-staging \
+              --branch=development \
+              --commit-hash="$GITHUB_SHA" \
+              --commit-dirty=false
+          )
+          node scripts/verify-staging-deployment.mjs "$GITHUB_SHA" "$started_at"
+          node scripts/verify-staging-backend.mjs
+
   deploy:
     name: Deploy trusted production bundle
     if: >-
       needs.quality.result == 'success' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
-      (github.event_name == 'schedule' && github.ref == 'refs/heads/develop') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop'))
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'schedule' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     needs: [source, quality]
     env:
       RELEASE_SHA: ${{ needs.source.outputs.sha }}
@@ -284,7 +374,7 @@ jobs:
     timeout-minutes: 30
     concurrency:
       # Only publication holds this lock. Neither environment requires a
-      # manual reviewer: the protected develop merge is the release decision.
+      # manual reviewer: the protected main merge is the release decision.
       group: slop-production
       cancel-in-progress: false
     environment:
@@ -320,8 +410,8 @@ jobs:
               exit 1
               ;;
           esac
-          if [ "$GITHUB_REF" != "refs/heads/develop" ]; then
-            echo "::error::$GITHUB_EVENT_NAME production releases are restricted to refs/heads/develop."
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::$GITHUB_EVENT_NAME production releases are restricted to refs/heads/main."
             exit 1
           fi
 
@@ -369,19 +459,19 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             node scripts/released-source.mjs --check
           else
-          live_develop="$(
+          live_main="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
-              https://github.com/SlopDotCash/slopdotcash.git refs/heads/develop |
+              https://github.com/SlopDotCash/slopdotcash.git refs/heads/main |
               awk 'NR == 1 { print $1 }'
           )"
-          if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::GitHub did not return a valid live develop SHA."
+          if ! [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub did not return a valid live main SHA."
             exit 1
           fi
           git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
-            "$live_develop:refs/remotes/origin/slop-live-develop"
-          if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
-            echo "::error::Live develop changed a slop.cash release input after $GITHUB_SHA was tested."
+            "$live_main:refs/remotes/origin/slop-live-main"
+          if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_main" -- .; then
+            echo "::error::Live main changed a slop.cash release input after $GITHUB_SHA was tested."
             exit 1
           fi
           fi
@@ -426,7 +516,7 @@ jobs:
           if (
             value?.success !== true ||
             value?.result?.name !== "eliza-computer" ||
-            value?.result?.production_branch !== "develop"
+            value?.result?.production_branch !== "main"
           ) {
             throw new TypeError("the reviewed eliza-computer Pages project contract drifted");
           }
@@ -480,19 +570,19 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             node scripts/released-source.mjs --check
           else
-          live_develop="$(
+          live_main="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
-              https://github.com/SlopDotCash/slopdotcash.git refs/heads/develop |
+              https://github.com/SlopDotCash/slopdotcash.git refs/heads/main |
               awk 'NR == 1 { print $1 }'
           )"
-          if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::GitHub did not return a valid live develop SHA before deployment."
+          if ! [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub did not return a valid live main SHA before deployment."
             exit 1
           fi
           git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
-            "$live_develop:refs/remotes/origin/slop-live-develop"
-          if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
-            echo "::error::Live develop changed a slop.cash release input immediately before deployment."
+            "$live_main:refs/remotes/origin/slop-live-main"
+          if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_main" -- .; then
+            echo "::error::Live main changed a slop.cash release input immediately before deployment."
             exit 1
           fi
 
@@ -832,19 +922,19 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             node scripts/released-source.mjs --check
           else
-          live_develop="$(
+          live_main="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
-              https://github.com/SlopDotCash/slopdotcash.git refs/heads/develop |
+              https://github.com/SlopDotCash/slopdotcash.git refs/heads/main |
               awk 'NR == 1 { print $1 }'
           )"
-          if ! [[ "$live_develop" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::GitHub did not return a valid live develop SHA immediately before the Pages deployment."
+          if ! [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub did not return a valid live main SHA immediately before the Pages deployment."
             exit 1
           fi
           git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
-            "$live_develop:refs/remotes/origin/slop-live-develop"
-          if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_develop" -- .; then
-            echo "::error::Live develop changed a slop.cash release input immediately before the Pages deployment."
+            "$live_main:refs/remotes/origin/slop-live-main"
+          if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_main" -- .; then
+            echo "::error::Live main changed a slop.cash release input immediately before the Pages deployment."
             exit 1
           fi
 
@@ -854,7 +944,7 @@ jobs:
           for attempt in 1 2 3; do
             if ./node_modules/.bin/wrangler pages deploy \
               --project-name=eliza-computer \
-              --branch=develop \
+              --branch=main \
               --commit-hash="$RELEASE_SHA" \
               --commit-dirty=false; then
               exit 0

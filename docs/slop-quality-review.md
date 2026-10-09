@@ -368,3 +368,15 @@ Acceptance targets:
 - Existing links, immutable records, raw Markdown, archives, downloads, and GitHub authority remain intact.
 
 This is a review and proposed edit plan. No application changes or policy changes were made.
+
+## Participation metadata delivery
+
+UX-04 uses optional reviewed `participation` metadata in the project manifest.
+`archived` names a `successorProjectId` from the same registry;
+`permission-required` records a restriction without inferring permission from a
+license identifier. Both remain paused. Omitted metadata preserves existing
+activation policy and does not assert unrestricted permission.
+
+The trusted project-transition gate reads its schema from the base revision.
+Merge schema support before a separate PR records these fields in manifests.
+This schema step does not activate a project or complete the UI requirements.

@@ -1,0 +1,939 @@
+{
+  "address": "5KFQm1jLFkcS1V5PFpUFg6omNHoDQZTaxqTwwEpnenSL",
+  "metadata": {
+    "name": "slop_escrow",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "bind_wallet",
+      "discriminator": [156, 226, 250, 174, 87, 6, 18, 131],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "identity_authority",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project"
+        },
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [119, 97, 108, 108, 101, 116]
+              },
+              {
+                "kind": "account",
+                "path": "identity_authority"
+              },
+              {
+                "kind": "arg",
+                "path": "network"
+              },
+              {
+                "kind": "arg",
+                "path": "actor_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "network",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "expected_version",
+          "type": "u64"
+        },
+        {
+          "name": "destination",
+          "type": "pubkey"
+        },
+        {
+          "name": "claim_digest",
+          "type": {
+            "array": ["u8", 32]
+          }
+        }
+      ]
+    },
+    {
+      "name": "commit",
+      "discriminator": [223, 140, 142, 165, 229, 208, 156, 74],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "origin",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 105, 103, 105, 110]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "obligation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [97, 119, 97, 114, 100]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "award_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "award_id",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "source_digest",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "gross",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "deposit",
+      "discriminator": [242, 35, 198, 137, 82, 225, 242, 182],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "relations": ["project"]
+        },
+        {
+          "name": "source",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 114, 111, 106, 101, 99, 116]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "project_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "project_id",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "network",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "identity_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "binding_delay",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "pay",
+      "discriminator": [119, 18, 216, 65, 192, 117, 122, 220],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["obligation"]
+        },
+        {
+          "name": "obligation",
+          "writable": true
+        },
+        {
+          "name": "binding"
+        },
+        {
+          "name": "mint",
+          "relations": ["project"]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "fee_account",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "veto",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 101, 116, 111]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "account",
+                "path": "obligation.actor_id",
+                "account": "Obligation"
+              },
+              {
+                "kind": "account",
+                "path": "binding.version",
+                "account": "WalletBinding"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "expected_version",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "veto_binding",
+      "discriminator": [229, 13, 188, 173, 4, 57, 14, 0],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project"
+        },
+        {
+          "name": "binding"
+        },
+        {
+          "name": "veto",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 101, 116, 111]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "actor_id"
+              },
+              {
+                "kind": "arg",
+                "path": "version"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "version",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [183, 18, 70, 156, 148, 109, 161, 34],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "relations": ["project"]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "fee_account",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "gross",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "BindingVeto",
+      "discriminator": [32, 181, 30, 14, 10, 91, 29, 158]
+    },
+    {
+      "name": "Obligation",
+      "discriminator": [168, 206, 141, 106, 88, 76, 172, 167]
+    },
+    {
+      "name": "Origin",
+      "discriminator": [87, 219, 181, 178, 82, 71, 48, 97]
+    },
+    {
+      "name": "Project",
+      "discriminator": [205, 168, 189, 202, 181, 247, 142, 19]
+    },
+    {
+      "name": "WalletBinding",
+      "discriminator": [51, 211, 204, 185, 168, 68, 52, 176]
+    }
+  ],
+  "events": [
+    {
+      "name": "AwardCommitted",
+      "discriminator": [20, 15, 203, 164, 118, 172, 208, 203]
+    },
+    {
+      "name": "AwardPaid",
+      "discriminator": [142, 122, 234, 181, 22, 175, 250, 145]
+    },
+    {
+      "name": "BindingVetoed",
+      "discriminator": [218, 122, 70, 149, 6, 123, 80, 103]
+    },
+    {
+      "name": "UnusedWithdrawn",
+      "discriminator": [158, 175, 215, 198, 157, 135, 114, 234]
+    },
+    {
+      "name": "WalletBound",
+      "discriminator": [90, 1, 160, 109, 127, 116, 183, 84]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidIdentity",
+      "msg": "Invalid actor or destination"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidAmount",
+      "msg": "Amount must be positive"
+    },
+    {
+      "code": 6002,
+      "name": "Arithmetic",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6003,
+      "name": "InsufficientFreeBalance",
+      "msg": "Withdrawal or award would consume reserved funds"
+    },
+    {
+      "code": 6004,
+      "name": "AlreadyPaid",
+      "msg": "Obligation already paid"
+    },
+    {
+      "code": 6005,
+      "name": "StaleBinding",
+      "msg": "Wallet predecessor version is stale"
+    },
+    {
+      "code": 6006,
+      "name": "WrongNetwork",
+      "msg": "Network domain does not match project"
+    },
+    {
+      "code": 6007,
+      "name": "WrongMint",
+      "msg": "Only six decimal classic SPL tokens are supported"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidAward",
+      "msg": "Award ID is not bound to this project and source"
+    },
+    {
+      "code": 6009,
+      "name": "BindingPending",
+      "msg": "Wallet binding is still in its activation delay"
+    },
+    {
+      "code": 6010,
+      "name": "BindingVetoed",
+      "msg": "Project owner vetoed this wallet binding"
+    },
+    {
+      "code": 6011,
+      "name": "BindingActive",
+      "msg": "Wallet binding is already active"
+    },
+    {
+      "code": 6012,
+      "name": "WrongDestination",
+      "msg": "Destination must be the bound wallet's associated token account"
+    }
+  ],
+  "types": [
+    {
+      "name": "AwardCommitted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "source_digest",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "award_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AwardPaid",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "award_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "wallet_version",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BindingVeto",
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
+    {
+      "name": "BindingVetoed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "version",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Obligation",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "source_digest",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "award_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Origin",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "obligation",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Project",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "project_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "network",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "identity_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserved",
+            "type": "u64"
+          },
+          {
+            "name": "deposited",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "payout_fees",
+            "type": "u64"
+          },
+          {
+            "name": "withdrawn_gross",
+            "type": "u64"
+          },
+          {
+            "name": "withdrawal_fees",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "binding_delay",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnusedWithdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "returned",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WalletBinding",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "claim_digest",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "network",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "version",
+            "type": "u64"
+          },
+          {
+            "name": "bound_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WalletBound",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "network",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "version",
+            "type": "u64"
+          },
+          {
+            "name": "bound_at",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

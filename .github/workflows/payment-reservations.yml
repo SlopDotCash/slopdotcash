@@ -2,7 +2,7 @@ name: Trusted payment reservation gate
 
 on:
   pull_request_target:
-    branches: [develop]
+    branches: [develop, development, main]
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:

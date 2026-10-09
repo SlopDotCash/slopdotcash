@@ -2,10 +2,12 @@
  * V1 has no retirement or expiry: every accepted instrument and intent remains
  * reserved indefinitely. Policy changes and signer loss cannot erase it. */
 
+import { fundingInstrumentId } from "./allocation-funding-basis.mjs";
+import type { FundingCommitmentInstrument } from "./funding-instruments.mjs";
 import { assertFreshCyclePaymentPolicy } from "./funding-readiness";
 import { fundingReviewProposalSha256 } from "./funding-review-submission";
 import { assertRewardAllocationManifest } from "./rewards";
-import { createSettlementExecutionPlan } from "./settlement-plan";
+import { createNetworkSettlementExecutionPlan } from "./settlement-plan";
 
 export const PAYMENT_RESERVATION_PATH = "funding/payment-reservations.json";
 export const PAYMENT_RESERVATION_CHECK = "Trusted payment reservation gate";
@@ -41,10 +43,16 @@ function assertReservation(value: unknown): PaymentReservation {
     typeof r.cycleId !== "string" ||
     !/^\d{4}-(0[1-9]|1[0-2])$/u.test(r.cycleId) ||
     typeof r.instrumentId !== "string" ||
-    !/^squads-v4-vault:solana:[1-9A-HJ-NP-Za-km-z]{32,44}:(0|[1-9][0-9]{0,2}):[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(
-      r.instrumentId,
+    !(
+      (/^squads-(?:v4|project)-vault:solana:[1-9A-HJ-NP-Za-km-z]{32,44}:(0|[1-9][0-9]{0,2}):[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(
+        r.instrumentId,
+      ) &&
+        Number(r.instrumentId.split(":")[3]) <= 255) ||
+      // RFC #472: a Base Sablier stream on the reviewed Lockup v4 contract.
+      /^sablier-lockup-v4:base:0x[0-9a-f]{40}:[1-9][0-9]{0,77}$/u.test(
+        r.instrumentId,
+      )
     ) ||
-    Number(r.instrumentId.split(":")[3]) > 255 ||
     ![r.allocationSha256, r.policySha256, r.planSha256].every(
       (h) => typeof h === "string" && HASH.test(h),
     ) ||
@@ -132,11 +140,14 @@ export function assertPaymentReservationTransition(
   return next;
 }
 /** Pure drafting helper. Output is a reservation proposal, NOT released plan bytes.
- * Trusted transition validates policy and allocation from immutable base blobs. */
+ * Trusted transition validates policy and allocation from immutable base blobs.
+ * `instrument` is the exact reviewed instrument the policy hash binds; the plan
+ * source is its Squads vault or its Base stream recipient, never a caller wallet. */
 export async function draftPaymentReservation(
   allocationBytes: Uint8Array,
   policyValue: unknown,
   reservedAt: string,
+  instrument: FundingCommitmentInstrument,
 ): Promise<PaymentReservation> {
   const source = new Uint8Array(allocationBytes);
   const policy = assertFreshCyclePaymentPolicy(policyValue);
@@ -146,9 +157,13 @@ export async function draftPaymentReservation(
   if (
     allocation.projectId !== policy.projectId ||
     allocation.cycleId !== policy.cycleId ||
-    !allocation.fundingBasis?.instrumentId?.startsWith(
-      "squads-v4-vault:solana:",
-    ) ||
+    // A 2-of-2 or project vault on Solana, or a Base stream (RFC #472). A
+    // project vault reservation binds contributor principal only (RFC #500 s.8).
+    !allocation.fundingBasis?.instrumentId ||
+    allocation.fundingBasis.instrumentId !== fundingInstrumentId(instrument) ||
+    (instrument.kind === "sablier-lockup-v4"
+      ? instrument.network !== "base" || allocation.chain !== "base"
+      : allocation.chain !== "solana") ||
     allocation.fundingBasis.fundingState !== "committed" ||
     allocation.status !== "approved" ||
     !allocation.approvedAt ||
@@ -165,12 +180,12 @@ export async function draftPaymentReservation(
       "Reservation requires exact approved fresh-cycle allocation and pre-freeze policy without carry or review budget",
     );
   const allocationSha256 = await fundingReviewProposalSha256(source);
-  const plan = createSettlementExecutionPlan({
+  const plan = createNetworkSettlementExecutionPlan({
     allocation,
     allocationSha256,
     createdAt: reservedAt,
     feeRecipient: policy.feeRecipient,
-    sourceOwner: allocation.fundingBasis.instrumentId.split(":")[4],
+    instrument,
   });
   return assertReservation({
     schemaVersion: "1",
@@ -192,11 +207,13 @@ export async function reservedPlanBytes(
   reservation: PaymentReservation,
   allocationBytes: Uint8Array,
   policy: unknown,
+  instrument: FundingCommitmentInstrument,
 ): Promise<Uint8Array> {
   const expected = await draftPaymentReservation(
     allocationBytes,
     policy,
     reservation.reservedAt,
+    instrument,
   );
   if (
     JSON.stringify(expected) !== JSON.stringify(assertReservation(reservation))
@@ -208,12 +225,12 @@ export async function reservedPlanBytes(
     JSON.parse(new TextDecoder().decode(allocationBytes)),
   );
   return paymentRecordBytes(
-    createSettlementExecutionPlan({
+    createNetworkSettlementExecutionPlan({
       allocation,
       allocationSha256: expected.allocationSha256,
       createdAt: expected.reservedAt,
       feeRecipient: assertFreshCyclePaymentPolicy(policy).feeRecipient,
-      sourceOwner: expected.instrumentId.split(":")[4],
+      instrument,
     }),
   );
 }

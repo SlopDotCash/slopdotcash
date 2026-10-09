@@ -88,7 +88,7 @@ export async function prepareSquadsBinding(
   )
     throw new TypeError("Expected exact approved project/cycle artifacts");
   const instrument = allocation.fundingBasis?.instrumentId?.match(
-    /^squads-v4-vault:solana:([^:]+):([0-9]+):([^:]+)$/u,
+    /^(?:squads-v4-vault|squads-project-vault):solana:([^:]+):([0-9]+):([^:]+)$/u,
   );
   if (!instrument)
     throw new TypeError("Expected frozen Squads funding instrument");
@@ -210,14 +210,14 @@ if (import.meta.main) {
   const root = process.cwd();
   const revision = process.env.GITHUB_SHA ?? "";
   if (
-    process.env.GITHUB_REF !== "refs/heads/develop" ||
+    process.env.GITHUB_REF !== "refs/heads/main" ||
     execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim() !==
       revision ||
-    execFileSync("git", ["rev-parse", "origin/develop"], {
+    execFileSync("git", ["rev-parse", "origin/main"], {
       encoding: "utf8",
     }).trim() !== revision
   )
-    throw new TypeError("Expected exact trusted develop checkout");
+    throw new TypeError("Expected exact trusted main checkout");
   const request = assertSquadsBindingRequest({
     project: process.env.BINDING_PROJECT,
     cycle: process.env.BINDING_CYCLE,

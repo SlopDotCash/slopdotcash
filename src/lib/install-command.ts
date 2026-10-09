@@ -169,6 +169,7 @@ local_signature = 0x04034B50
 
 ${SKILL_AUTHORITY_PYTHON}
 
+
 def validate_provenance(
     provenance, revision, canonical_files, expected_repository=repository
 ):

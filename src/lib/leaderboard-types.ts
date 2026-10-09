@@ -152,6 +152,10 @@ export interface MergedPullRequestOutcome {
   author: GitHubActor | null;
   additions: number;
   deletions: number;
+  /** Target branch; only integration-branch merges share commit credit. */
+  baseRefName: string;
+  /** Complete commit SHAs and linked GitHub authors; null for legacy evidence or non-integration merges. */
+  commits: Array<{ oid: string; author: GitHubActor | null }> | null;
 }
 
 export interface IssueRecord {

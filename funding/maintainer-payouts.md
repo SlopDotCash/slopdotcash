@@ -37,7 +37,7 @@ review aid; the published cycle supplies frozen wallets, approvals, and payments
    approval. The app exports a validated successor only for an active review.
 6. **Approve and reserve.** The approval workflow creates a reviewable allocation
    PR. An unsigned plan must bind that exact approved allocation and an accepted
-   global reservation on protected `develop`. Reservations prevent overlapping
+   global reservation on protected `main`. Reservations prevent overlapping
    plans from reusing principal or payout intents. They are not retired by a
    timeout, cancellation, retry, or reported signer loss.
 7. **Sign externally.** Review the recipients and exact amounts in Squads. The
@@ -51,7 +51,7 @@ review aid; the published cycle supplies frozen wallets, approvals, and payments
    executed proposal is not displayed as paid until finalized source/destination
    deltas reconcile every intent and fee in the canonical settlement record.
 
-All workflow links run trusted `develop` code and create reviewable evidence;
+All workflow links run trusted `main` code and create reviewable evidence;
 none are an alternative payment authority. Contributors never need a maintainer
 credential. Local browser drafts contain no OAuth token or signing material.
 

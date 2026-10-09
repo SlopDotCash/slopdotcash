@@ -124,7 +124,7 @@ export function assertPaymentBranchProtection(
     p.allow_deletions?.enabled !== false
   )
     throw new TypeError(
-      "Canonical payment release requires verified strict protected develop, required reservation check, review, and no bypass/force-push/deletion",
+      "Canonical payment release requires verified strict protected main, required reservation check, review, and no bypass/force-push/deletion",
     );
 }
 export function verifyPaymentAuthority(root: string): string {
@@ -149,30 +149,28 @@ export function verifyPaymentAuthority(root: string): string {
   )
     throw new TypeError("Cannot verify required check publisher");
   assertPaymentBranchProtection(
-    reservationGithub(
-      `repos/${PAYMENT_REPOSITORY}/branches/develop/protection`,
-    ),
+    reservationGithub(`repos/${PAYMENT_REPOSITORY}/branches/main/protection`),
     app.id,
   );
   reservationGit(root, [
     "fetch",
     "--no-tags",
     "origin",
-    "+refs/heads/develop:refs/remotes/origin/develop",
+    "+refs/heads/main:refs/remotes/origin/main",
   ]);
   const revision = reservationGit(root, [
     "rev-parse",
-    "refs/remotes/origin/develop",
+    "refs/remotes/origin/main",
   ])
     .toString()
     .trim();
   const branch = reservationGithub(
-    `repos/${PAYMENT_REPOSITORY}/branches/develop`,
+    `repos/${PAYMENT_REPOSITORY}/branches/main`,
   ) as {
     protected?: boolean;
     commit?: { sha?: string };
   };
   if (!branch.protected || branch.commit?.sha !== revision)
-    throw new TypeError("Canonical develop moved or is not protected; retry");
+    throw new TypeError("Canonical main moved or is not protected; retry");
   return revision;
 }

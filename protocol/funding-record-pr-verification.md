@@ -99,7 +99,7 @@ not an extension of a production reviewer's private credentials or authority.
 The workflow token may review and merge PRs and dispatch Actions. It receives no
 production environment secrets and cannot approve production deployment.
 
-The scheduled/manual workflow executes only the checked-out `develop` code,
+The scheduled/manual workflow executes only the checked-out `main` code,
 installs no PR dependencies, and consumes no artifacts as authority. It fetches
 PR heads as Git objects and independently reruns the complete chain verifier.
 It refuses missing or weakened classic protection: strict up-to-date required
@@ -133,10 +133,10 @@ must confirm the exact PR head and both expected merge parents. At most one PR
 is merged per run; no decision is reused after the base changes.
 
 Because a `GITHUB_TOKEN` merge does not trigger a push workflow, the worker
-explicitly dispatches the existing production workflow on `develop` after
+explicitly dispatches the existing production workflow on `main` after
 successful merge readback. The protected production reviewer is still required.
 An ambiguous merge response, failed readback, or failed dispatch fails the job;
-inspect GitHub before retrying and manually dispatch the ordinary `develop`
+inspect GitHub before retrying and manually dispatch the ordinary `main`
 release if the merge succeeded but dispatch did not. Merge is not deployment.
 
 Activation requires the protection policy above and Actions permission to

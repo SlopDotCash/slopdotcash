@@ -6,6 +6,7 @@ import {
   SOLANA_FUNDING_VERIFIER_VERSION,
 } from "../src/lib/solana-settlement";
 import { isSolanaAddress } from "../src/lib/wallets";
+import { parseValueArguments } from "./parse-value-arguments";
 import {
   DEFAULT_SOLANA_RPC_URL,
   fetchFinalizedSolanaTransaction,
@@ -22,21 +23,7 @@ const CLI_USAGE =
   "Usage: verify-funding-solana.ts --signature <signature> --recipient <owner> --amount-minor <integer> [--rpc-url <https-url>]";
 
 export function parseSolanaFundingArguments(argv: readonly string[]) {
-  const parsed = new Map<string, string>();
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = argv[index];
-    const value = argv[index + 1];
-    if (
-      !name ||
-      !CLI_ARGUMENTS.has(name) ||
-      !value ||
-      value.startsWith("--") ||
-      parsed.has(name)
-    ) {
-      throw new TypeError(CLI_USAGE);
-    }
-    parsed.set(name, value);
-  }
+  const parsed = parseValueArguments(argv, CLI_ARGUMENTS, CLI_USAGE);
   return {
     signature: parsed.get("--signature") ?? null,
     recipient: parsed.get("--recipient") ?? null,

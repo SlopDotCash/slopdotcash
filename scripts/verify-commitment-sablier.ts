@@ -10,6 +10,7 @@ import { isFundingAddress } from "../src/lib/funding-address.mjs";
 import {
   assertSablierStreamState,
   COMMITMENT_SABLIER_VERIFIER_VERSION,
+  EVM_FUNDING_USDC_CONTRACTS,
   isSablierStreamId,
   SABLIER_LOCKUP_V4_CONTRACTS,
   type SablierNetwork,
@@ -17,6 +18,7 @@ import {
   sablierStreamCallData,
   type VerifiedSablierStream,
 } from "../src/lib/sablier-funding";
+import { parseValueArguments } from "./parse-value-arguments";
 
 export const EVM_COMMITMENT_RPC_AUTHORITIES = Object.freeze({
   base: [
@@ -57,21 +59,7 @@ const CLI_USAGE =
   "Usage: verify-commitment-sablier.ts --network <base|ethereum> --stream-id <integer> --recipient <0x-address>";
 
 export function parseCommitmentSablierArguments(argv: readonly string[]) {
-  const parsed = new Map<string, string>();
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = argv[index];
-    const value = argv[index + 1];
-    if (
-      !name ||
-      !CLI_ARGUMENTS.has(name) ||
-      !value ||
-      value.startsWith("--") ||
-      parsed.has(name)
-    ) {
-      throw new TypeError(CLI_USAGE);
-    }
-    parsed.set(name, value);
-  }
+  const parsed = parseValueArguments(argv, CLI_ARGUMENTS, CLI_USAGE);
   return {
     network: parsed.get("--network") ?? null,
     streamId: parsed.get("--stream-id") ?? null,
@@ -248,6 +236,133 @@ function quorumGroups<Result>(
   return agreeing;
 }
 
+/** Reads one authority's stream state at its own finalized block. */
+async function readStreamAtFinalizedBlock(
+  network: SablierNetwork,
+  streamId: string,
+  recipient: string,
+  authority: string,
+  index: number,
+  fetchImpl: FetchLike,
+) {
+  const contract = SABLIER_LOCKUP_V4_CONTRACTS[network];
+  const { rpc, request } = authorityRequest(authority, index, fetchImpl);
+  const chainId = await request("eth_chainId", []);
+  if (chainId !== EVM_CHAIN_IDS[network]) {
+    throw new TypeError("EVM RPC chain id is not the declared network");
+  }
+  const block = assertEvmFinalizedBlock(
+    await request("eth_getBlockByNumber", ["finalized", false]),
+  );
+  const callResults: Partial<Record<SablierStreamCall, unknown>> = {};
+  for (const [call, data] of Object.entries(sablierStreamCallData(streamId))) {
+    callResults[call as SablierStreamCall] = await request("eth_call", [
+      { to: contract, data },
+      block.numberHex,
+    ]);
+  }
+  const verified = assertSablierStreamState(
+    callResults as Record<SablierStreamCall, unknown>,
+    network,
+    streamId,
+    { blockNumber: block.number, recipient },
+  );
+  return { authority: rpc.toString(), block, request, verified };
+}
+
+/** One Base settlement source observation agreed by the RPC quorum. */
+export interface BaseSourceObservation {
+  network: "base";
+  blockNumber: number;
+  blockHash: string;
+  recipient: string;
+  recipientCode: string;
+  balanceMinor: string;
+  stream: {
+    streamId: string;
+    wasCanceled: boolean;
+    isDepleted: boolean;
+    lockedMinor: string;
+  };
+}
+
+/**
+ * RFC #472 release readiness for a Base stream. At each authority's finalized
+ * block it proves the stream state (USDC, exact recipient, non-cancelable),
+ * reads the recipient's code (an EOA has none) and its USDC balance. Two
+ * authorities must agree on the same block and every value. Read-only.
+ */
+export async function observeBaseSettlementSource(input: {
+  fetchImpl?: FetchLike;
+  recipient: string;
+  streamId: string;
+}): Promise<BaseSourceObservation> {
+  const fetchImpl = input.fetchImpl ?? fetch;
+  if (
+    !isSablierStreamId(input.streamId) ||
+    !isFundingAddress("base", input.recipient)
+  ) {
+    throw new TypeError("stream id or recipient is not canonical");
+  }
+  const balanceCall = `0x70a08231${input.recipient.slice(2).padStart(64, "0")}`;
+  const settled = await Promise.allSettled(
+    EVM_COMMITMENT_RPC_AUTHORITIES.base.map(async (authority, index) => {
+      const read = await readStreamAtFinalizedBlock(
+        "base",
+        input.streamId,
+        input.recipient,
+        authority,
+        index,
+        fetchImpl,
+      );
+      const code = await read.request("eth_getCode", [
+        input.recipient,
+        read.block.numberHex,
+      ]);
+      const balance = await read.request("eth_call", [
+        { to: EVM_FUNDING_USDC_CONTRACTS.base, data: balanceCall },
+        read.block.numberHex,
+      ]);
+      if (
+        typeof code !== "string" ||
+        !/^0x(?:[0-9a-f]{2})*$/u.test(code) ||
+        typeof balance !== "string" ||
+        !/^0x[0-9a-f]{64}$/u.test(balance)
+      ) {
+        throw new TypeError("EVM recipient code or balance is malformed");
+      }
+      return {
+        authority: read.authority,
+        block: read.block,
+        verified: {
+          network: "base" as const,
+          blockNumber: read.block.number,
+          blockHash: read.block.hash,
+          recipient: input.recipient,
+          recipientCode: code,
+          balanceMinor: BigInt(balance).toString(),
+          stream: {
+            streamId: input.streamId,
+            wasCanceled: read.verified.wasCanceled,
+            isDepleted: read.verified.isDepleted,
+            lockedMinor: read.verified.lockedMinor,
+          },
+        },
+      };
+    }),
+  );
+  // Authorities may sit at adjacent finalized blocks; every observed value
+  // must agree, and the result reports the newest agreeing block.
+  const agreeing = quorumGroups<BaseSourceObservation>(
+    settled,
+    ({ blockNumber: _number, blockHash: _hash, ...values }) =>
+      JSON.stringify(values),
+  );
+  return agreeing.reduce((newest, entry) =>
+    entry.verified.blockNumber > newest.verified.blockNumber ? entry : newest,
+  ).verified;
+}
+
 async function verifyStreamState(
   network: SablierNetwork,
   streamId: string,
@@ -255,31 +370,17 @@ async function verifyStreamState(
   fetchImpl: FetchLike,
 ) {
   const contract = SABLIER_LOCKUP_V4_CONTRACTS[network];
-  const callData = sablierStreamCallData(streamId);
   const settled = await Promise.allSettled(
     EVM_COMMITMENT_RPC_AUTHORITIES[network].map(async (authority, index) => {
-      const { rpc, request } = authorityRequest(authority, index, fetchImpl);
-      const chainId = await request("eth_chainId", []);
-      if (chainId !== EVM_CHAIN_IDS[network]) {
-        throw new TypeError("EVM RPC chain id is not the declared network");
-      }
-      const block = assertEvmFinalizedBlock(
-        await request("eth_getBlockByNumber", ["finalized", false]),
-      );
-      const callResults: Partial<Record<SablierStreamCall, unknown>> = {};
-      for (const [call, data] of Object.entries(callData)) {
-        callResults[call as SablierStreamCall] = await request("eth_call", [
-          { to: contract, data },
-          block.numberHex,
-        ]);
-      }
-      const verified = assertSablierStreamState(
-        callResults as Record<SablierStreamCall, unknown>,
+      const { request: _request, ...read } = await readStreamAtFinalizedBlock(
         network,
         streamId,
-        { blockNumber: block.number, recipient },
+        recipient,
+        authority,
+        index,
+        fetchImpl,
       );
-      return { authority: rpc.toString(), block, verified };
+      return read;
     }),
   );
   const agreeing = quorumGroups<VerifiedSablierStream>(settled, (verified) =>

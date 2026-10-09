@@ -4,8 +4,8 @@
   "slug": "heir-elements-sdk",
   "name": "Heir Elements SDK",
   "eyebrow": "Public repository",
-  "headline": "Make Money Creating Intelligent Inheritance Apps",
-  "description": "Deprecated repository. Historical activity and reward records remain here; the replacement is registered separately as Heir Desk SDK (heir-desk-sdk).",
+  "headline": "Heir Elements SDK archive",
+  "description": "Historical activity and reward records for the deprecated Heir Elements SDK remain available here.",
   "listingTier": "community",
   "status": "paused",
   "steward": {
@@ -110,5 +110,9 @@
     "creator": "https://github.com/awidearray",
     "repository": "https://github.com/heirlabs/element-sdk",
     "issues": "https://github.com/heirlabs/element-sdk/issues"
+  },
+  "participation": {
+    "state": "archived",
+    "successorProjectId": "heir-desk-sdk"
   }
 }

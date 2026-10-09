@@ -1,8 +1,9 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import { assertProfiles } from "../../src/lib/profiles";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 
-test("a contributor with only open and closed PRs has a searchable individual profile", async ({
+test("profiles preserve legacy coverage and expose recorded issue history", async ({
   page,
 }, info) => {
   const errors: string[] = [];
@@ -49,7 +50,7 @@ test("a contributor with only open and closed PRs has a searchable individual pr
     }),
   );
   await page.goto("/points");
-  const directory = page.getByRole("region", { name: "Contributor directory" });
+  const directory = page.getByRole("region", { name: "People", exact: true });
   await directory.getByLabel("GitHub username").fill("profile-only");
   await directory
     .getByRole("link", { name: "profile-only-contributor", exact: true })
@@ -67,10 +68,34 @@ test("a contributor with only open and closed PRs has a searchable individual pr
   await expect(profile.locator(".profile-totals").first()).toContainText(
     "2PRs closed without merging",
   );
-  await expect(page.locator(".points-total")).toHaveText("0 pts");
+  await expect(
+    page
+      .getByText("Points · recorded history", { exact: true })
+      .locator("..")
+      .locator("strong"),
+  ).toHaveText("0");
   await expect(
     profile.getByRole("link", { name: "GitHub · @profile-only-contributor" }),
   ).toHaveAttribute("href", "https://github.com/profile-only-contributor");
+  await profile.getByText("Issue outcomes", { exact: true }).click();
+  await expect(
+    profile.getByText("Issue history is unavailable in this census."),
+  ).toBeVisible();
+  await expect(profile.getByLabel("Period (UTC)")).toHaveCount(0);
+  const penalty = profile.locator("summary", { hasText: /^Penalty history$/ });
+  await penalty.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    profile.getByText(
+      "No penalty policy version is approved or active. No penalties are recorded.",
+    ),
+  ).toBeVisible();
+  await expect(
+    profile.getByRole("link", { name: "Penalty policy" }),
+  ).toHaveAttribute(
+    "href",
+    /\/docs\/slop-product-requirements\.md#closure-penalties-and-outcome-ratios$/,
+  );
   await page.keyboard.press("Tab");
   expect(
     await page.evaluate(() => document.activeElement !== document.body),
@@ -109,6 +134,66 @@ test("a contributor with only open and closed PRs has a searchable individual pr
   ).toBe(true);
   await page.screenshot({
     path: info.outputPath("individual-profile-zoom.png"),
+    fullPage: true,
+  });
+  await page.unroute("**/data/profiles.json");
+  const response = await page.request.get("/data/profiles.json");
+  expect(response.ok()).toBe(true);
+  const census = await response.json();
+  assertProfiles(census);
+  expect(census.schemaVersion).toBe("2");
+  const reopened = census.issues?.items.find(
+    (issue) =>
+      issue.authorId !== null &&
+      issue.events.some((event) => event.kind === "reopened"),
+  );
+  if (!reopened)
+    throw Error("The reviewed census must include a reopened issue");
+  const actor = census.people.find((person) => person.id === reopened.authorId);
+  if (!actor) throw Error("The issue author must have a profile");
+  const lastReopen = [...reopened.events]
+    .reverse()
+    .find((event) => event.kind === "reopened");
+  if (!lastReopen) throw Error("The issue must retain its reopen event");
+  const repository = TARGET_REPOSITORIES.find(
+    (item) => item.id === reopened.repository,
+  );
+  if (!repository) throw Error("The issue repository must be registered");
+  await page.goto(`/contributors/${actor.login}`);
+  await page.getByText("Issue outcomes", { exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Repository", exact: true })
+    .selectOption(reopened.repository);
+  await page
+    .getByRole("combobox", { name: "Period (UTC)", exact: true })
+    .selectOption(new Date(lastReopen.occurredAt).toISOString().slice(0, 7));
+  const issueDetails = page.locator("details").filter({
+    has: page.locator(":scope > summary", { hasText: /^Issue outcomes$/ }),
+  });
+  await issueDetails.locator("summary", { hasText: /^Issue history/ }).click();
+  const reopenedRecord = issueDetails
+    .locator("li")
+    .filter({
+      has: page.locator(
+        `a[href="https://github.com/${repository.owner}/${repository.name}/issues/${reopened.number}"]`,
+      ),
+    })
+    .filter({ hasText: "Reopened" });
+  await expect(reopenedRecord.first()).toBeVisible();
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("issue-outcomes.png"),
     fullPage: true,
   });
   expect(errors).toEqual([]);

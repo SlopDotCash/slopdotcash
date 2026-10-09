@@ -4,7 +4,7 @@ name: Invalidate slop.cash release approval
 
 on:
   pull_request_target:
-    branches: [develop]
+    branches: [develop, development, main]
     types: [synchronize]
 
 concurrency:

@@ -170,7 +170,7 @@ function intentComponent(value: string): string {
     .slice(0, 48);
 }
 
-function ensureCompleteCycle(
+export function ensureCompleteCycle(
   input: CreateRewardCycleProposalInput,
   view: ReturnType<typeof createProjectView>,
 ): void {
@@ -212,6 +212,10 @@ export function createRewardCycleProposal(
   input: CreateRewardCycleProposalInput,
 ): RewardCycleProposal {
   const project = findProject(input.projectId);
+  if (project?.escrow && input.cycleId >= project.escrow.effectiveCycle)
+    throw new TypeError(
+      "Escrow awards use the v2 gross allocation workflow; legacy Solana plans cannot reserve them",
+    );
   if (
     project?.funding.freshCyclePaymentPolicy?.cycleId === input.cycleId &&
     (input.legacyCapMinor !== undefined ||
@@ -280,6 +284,10 @@ export function createRewardCycleProposal(
 
   if (!fundingBasis)
     throw new TypeError("Monthly proposal needs a funding basis");
+  // The proposal freezes the project's settlement network for this cycle.
+  const chain = view.project.reward.chain;
+  if (chain === null)
+    throw new TypeError("Monthly proposal needs a settlement network");
   // A previously reviewed balance survives a quiet month, so carried-only
   // actors get their own allocation rows after the leaders.
   const leaderIds = new Set(view.leaders.map((leader) => leader.actor.id));
@@ -352,7 +360,7 @@ export function createRewardCycleProposal(
       endsAt: reviewEndsAt,
     },
     currency: "USDC",
-    chain: "solana",
+    chain,
     capMinor:
       input.legacyCapMinor ?? allocationFundingMinor(fundingBasis).toString(),
     ...(input.legacyCapMinor === undefined ? { fundingBasis } : {}),

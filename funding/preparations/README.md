@@ -49,7 +49,7 @@ All counts were reconciled at import, rather than copied from a UI slice.
 
 ## Preparing any registered project
 
-Run the trusted `prepare-funding-review.yml` workflow on `develop`. `cycle` selects
+Run the trusted `prepare-funding-review.yml` workflow on `main`. `cycle` selects
 a closed UTC month (blank defaults to the previous month); optional `project`
 selects one canonical manifest ID. Without a project it prepares every launched
 project, including paused projects whose accepted work still needs review. If any

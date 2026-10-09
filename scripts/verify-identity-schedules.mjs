@@ -125,10 +125,10 @@ if (
       process.argv.length > (restoreMissing ? 3 : 2) ||
       (restoreMissing &&
         (process.env.GITHUB_ACTIONS !== "true" ||
-          process.env.GITHUB_REF !== "refs/heads/develop"))
+          process.env.GITHUB_REF !== "refs/heads/main"))
     ) {
       throw new Error(
-        "Schedule restoration requires the protected develop workflow",
+        "Schedule restoration requires the protected main workflow",
       );
     }
     const configuration = Bun.TOML.parse(

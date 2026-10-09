@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ContributionQualityReview } from "./ContributionQualityReview";
+import { browserDeployment } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
-import type { CycleIndex } from "./lib/cycle-index";
+import { copyText } from "./lib/copy-text";
+import type { CycleIndex, CycleIndexEntry } from "./lib/cycle-index";
 import type { ProjectFundingIndex } from "./lib/funding";
+import { commitmentVerifiedNetMinor } from "./lib/funding-commitment";
 import {
   assertLiveVaultObservation,
   displayUsdc,
@@ -21,12 +24,42 @@ import {
 import { applyFundingReviewSubmission } from "./lib/funding-review-submission";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { isSolanaAddress } from "./lib/wallets";
+import { formatDate, formatMicroUsdc } from "./Presentation";
 import { SquadsTracking } from "./SquadsTracking";
 
 type ReviewState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; index: FundingReviewIndex };
+type RecipientFilter = "all" | "missing" | "changed" | "excluded" | "review";
+const PAGE_SIZE = 25;
+const STEPS = [
+  "Review recipients",
+  "Prepare funding",
+  "Approve cycle",
+  "Track payments",
+] as const;
+const FILTERS: { id: RecipientFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "missing", label: "Missing destination" },
+  { id: "changed", label: "Changed amount" },
+  { id: "excluded", label: "Proposed exclusion" },
+  { id: "review", label: "Needs review" },
+];
+const PAYMENT_STATE_LABELS: Record<
+  CycleIndexEntry["contributors"][number]["state"],
+  string
+> = {
+  proposed: "Proposed, not approved",
+  approved: "Approved, not paid",
+  unclaimed: "Approved, needs a destination",
+  held: "Held",
+  "held-below-minimum": "Held below minimum",
+  excluded: "Excluded",
+  paid: "Paid, verified",
+  "external-share": "External share",
+};
+
 function download(value: unknown, name: string) {
   const url = URL.createObjectURL(
     new Blob([`${JSON.stringify(value, null, 2)}\n`], {
@@ -39,6 +72,24 @@ function download(value: unknown, name: string) {
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+function StepStatus({
+  tone,
+  children,
+}: {
+  tone: "done" | "blocked" | "waiting";
+  children: string;
+}) {
+  return (
+    <p className={`step-status step-status-${tone}`}>
+      <strong>
+        {tone === "done" ? "Ready" : tone === "blocked" ? "Blocked" : "Waiting"}
+      </strong>{" "}
+      {children}
+    </p>
+  );
+}
+
 export function FundingReview({
   project,
   sourceRepositoryUrl,
@@ -55,8 +106,10 @@ export function FundingReview({
   const [attempt, setAttempt] = useState(0);
   const [selectedCycle, setSelectedCycle] = useState("");
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<RecipientFilter>("all");
+  const [page, setPage] = useState(0);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [rawAmounts, setRawAmounts] = useState<Record<string, string>>({});
-  const [missingOnly, setMissingOnly] = useState(false);
   const [adjustments, setAdjustments] = useState<
     Record<string, ReviewAdjustment>
   >({});
@@ -75,6 +128,8 @@ export function FundingReview({
     useState<LiveVaultObservation | null>(null);
   const [vaultChecking, setVaultChecking] = useState(false);
   const [vaultMessage, setVaultMessage] = useState("");
+  const [copied, setCopied] = useState<"inputs" | "request" | null>(null);
+  const [copyFailed, setCopyFailed] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
@@ -186,6 +241,7 @@ export function FundingReview({
     setAdjustments({});
     setRawAmounts({});
     setInvalidAmounts({});
+    setExpanded({});
     setMessage("");
     try {
       const stored = localStorage.getItem(draftKey);
@@ -216,13 +272,10 @@ export function FundingReview({
       );
     }
   }, [draftKey, recipients, availableReviewMinor]);
+  const hasInvalidAmount = Object.values(invalidAmounts).some(Boolean);
+  const exportable = canEdit && !!selection.result && !hasInvalidAmount;
   function saveDraft() {
-    if (
-      !canEdit ||
-      !selection.result ||
-      Object.values(invalidAmounts).some(Boolean)
-    )
-      return;
+    if (!exportable) return;
     try {
       localStorage.setItem(
         draftKey,
@@ -239,10 +292,12 @@ export function FundingReview({
     (v) => v.monthlyCommitment?.cycleId === cycleId,
   );
   const vault = instrument?.kind === "squads-v4-vault" ? instrument : undefined;
+  const projectVault =
+    instrument?.kind === "squads-project-vault" ? instrument : undefined;
   let vaultError: string | null = null;
   let vaultLedger: ReturnType<typeof reviewedVaultFunding> | null = null;
   try {
-    if (vault?.kind === "squads-v4-vault" && funding)
+    if (vault && funding)
       vaultLedger = reviewedVaultFunding(
         project.id,
         vault,
@@ -252,15 +307,33 @@ export function FundingReview({
     vaultError =
       error instanceof Error ? error.message : "Vault ledger unavailable.";
   }
+  const projectVaultRecords =
+    projectVault && funding
+      ? funding.commitments.filter(
+          (r) =>
+            r.projectId === project.id &&
+            "vault" in r.instrument &&
+            r.instrument.vault === projectVault.vault &&
+            r.instrument.multisig === projectVault.multisig,
+        )
+      : [];
+  const verifiedNetMinor = vaultLedger
+    ? vaultLedger.netMinor
+    : projectVaultRecords.length > 0
+      ? commitmentVerifiedNetMinor(projectVaultRecords).toString()
+      : null;
+  // A zero or negative verified net is not a deposit; never show it as done.
+  const hasVerifiedDeposit =
+    verifiedNetMinor !== null && BigInt(verifiedNetMinor) > 0n;
   async function refreshVault() {
-    if (vault?.kind !== "squads-v4-vault") return;
+    if (!vault) return;
     const requestContext = currentContext.current;
     setVaultChecking(true);
     setVaultMessage("");
     setVaultObservation(null);
     try {
       const response = await fetch(
-        `https://api.slop.cash/api/v1/projects/${encodeURIComponent(project.id)}/funding/${cycleId}`,
+        `${browserDeployment.api}/api/v1/projects/${encodeURIComponent(project.id)}/funding/${cycleId}`,
         { cache: "no-store", signal: AbortSignal.timeout(35000) },
       );
       if (!response.ok)
@@ -289,10 +362,51 @@ export function FundingReview({
       if (currentContext.current === requestContext) setVaultChecking(false);
     }
   }
-  const visible = recipients.filter(
-    (r) =>
-      r.actor.login.toLowerCase().includes(query.toLowerCase()) &&
-      (!missingOnly || (!r.wallet && !r.lookupUnavailable)),
+  const rowFacts = (r: (typeof recipients)[number]) => {
+    const a = adjustments[r.actor.id];
+    const decision =
+      a?.decision ??
+      ("state" in r && r.state === "excluded" ? "exclude" : "include");
+    const amountMinor =
+      decision === "exclude" ? "0" : (a?.amountMinor ?? r.simulatedMinor);
+    const changed =
+      !!a && (a.decision === "exclude" || a.amountMinor !== r.simulatedMinor);
+    const missing = !r.wallet && !r.lookupUnavailable;
+    const needsReview =
+      (changed && !a?.reason.trim()) ||
+      r.lookupUnavailable ||
+      !!invalidAmounts[r.actor.id];
+    return { a, decision, amountMinor, changed, missing, needsReview };
+  };
+  const counts = {
+    all: recipients.length,
+    missing: 0,
+    changed: 0,
+    excluded: 0,
+    review: 0,
+  };
+  for (const r of recipients) {
+    const facts = rowFacts(r);
+    if (facts.missing) counts.missing += 1;
+    if (facts.changed) counts.changed += 1;
+    if (facts.decision === "exclude") counts.excluded += 1;
+    if (facts.needsReview) counts.review += 1;
+  }
+  const matching = recipients.filter((r) => {
+    if (!r.actor.login.toLowerCase().includes(query.trim().toLowerCase()))
+      return false;
+    const facts = rowFacts(r);
+    if (filter === "missing") return facts.missing;
+    if (filter === "changed") return facts.changed;
+    if (filter === "excluded") return facts.decision === "exclude";
+    if (filter === "review") return facts.needsReview;
+    return true;
+  });
+  const pageCount = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visible = matching.slice(
+    currentPage * PAGE_SIZE,
+    (currentPage + 1) * PAGE_SIZE,
   );
   const change = (actorId: string, patch: Partial<ReviewAdjustment>) => {
     const recipient = recipients.find((r) => r.actor.id === actorId);
@@ -318,7 +432,7 @@ export function FundingReview({
       );
       return;
     }
-    if (Object.values(invalidAmounts).some(Boolean)) {
+    if (hasInvalidAmount) {
       setMessage("Correct invalid USDC amounts before downloading.");
       return;
     }
@@ -384,7 +498,90 @@ export function FundingReview({
       "Review downloaded. Upload it to the GitHub review; nothing has been approved or paid.",
     );
   }
-  const requestUrl = `${repo}/issues/new?${new URLSearchParams({ title: `Funding review: ${project.id} ${cycleId}`, body: `Please review the attached funding review for ${project.name}, contribution month ${cycleId}.\n\nSource snapshot: ${review?.sourceSnapshotSha256 ?? published?.files.sourceSnapshot.sha256 ?? "No complete preparation published"}\n\nAttach the downloaded review JSON. It contains all contributors, original amounts, proposed changes and reasons. This request is not payment approval.` })}`;
+  async function copyValue(kind: "inputs" | "request", value: string) {
+    try {
+      await copyText(value);
+      setCopied(kind);
+      setCopyFailed(false);
+    } catch {
+      setCopied(kind);
+      setCopyFailed(true);
+    }
+  }
+  const sourceSha =
+    review?.sourceSnapshotSha256 ??
+    published?.files.sourceSnapshot.sha256 ??
+    "No complete preparation published";
+  const requestText = `Funding review: ${project.id} ${cycleId}\n\nPlease review the attached funding review for ${project.name}, contribution month ${cycleId}.\n\nSource snapshot: ${sourceSha}\n\nThe attached review JSON contains all contributors, original amounts, proposed changes and reasons. This request is not payment approval.`;
+  const cycleAction = !published
+    ? "propose"
+    : published.files.executionPlan
+      ? "verify-settlement"
+      : published.files.allocation
+        ? "reserve-settlement"
+        : "finalize-allocation";
+  const requiredSha =
+    published?.files.executionPlan?.sha256 ??
+    published?.files.allocation?.sha256 ??
+    published?.files.proposal.sha256 ??
+    review?.sourceSnapshotSha256 ??
+    "";
+  const workflowInputs = `branch: main\nproject: ${project.id}\nmonth: ${cycleId}\naction: ${cycleAction}\nsource SHA-256: ${requiredSha}`;
+  const paymentsDisabled = project.reward.paymentMode === "disabled";
+  const reviewOpen =
+    published?.state === "review" &&
+    !!published.reviewEndsAt &&
+    Date.parse(published.reviewEndsAt) > Date.now();
+  const stepStatus: {
+    tone: "done" | "blocked" | "waiting";
+    text: string;
+  }[] = [
+    !cycleIndex
+      ? { tone: "blocked", text: "Cycle records are unavailable." }
+      : !canEdit
+        ? {
+            tone: published ? "done" : "waiting",
+            text: published
+              ? "The published proposal is read only."
+              : "No complete preparation is available.",
+          }
+        : selection.error || hasInvalidAmount
+          ? {
+              tone: "blocked",
+              text: hasInvalidAmount
+                ? "Correct the invalid amounts."
+                : (selection.error ?? "Review is invalid."),
+            }
+          : {
+              tone: "done",
+              text: `${counts.missing} missing destination${counts.missing === 1 ? "" : "s"}, ${counts.changed} changed.`,
+            },
+    !vault && !projectVault
+      ? { tone: "waiting", text: "No reviewed vault for this month." }
+      : paymentsDisabled
+        ? { tone: "blocked", text: "Payments are disabled. Do not deposit." }
+        : !hasVerifiedDeposit || verifiedNetMinor === null
+          ? { tone: "waiting", text: "No verified deposit." }
+          : {
+              tone: "done",
+              text: `${formatMicroUsdc(verifiedNetMinor)} verified.`,
+            },
+    !published
+      ? { tone: "waiting", text: "No funded proposal is published." }
+      : published.files.allocation
+        ? { tone: "done", text: "Allocation approved." }
+        : reviewOpen && published.reviewEndsAt
+          ? {
+              tone: "waiting",
+              text: `Review open until ${formatDate(published.reviewEndsAt)}.`,
+            }
+          : { tone: "waiting", text: "Waiting for maintainer approval." },
+    !published?.files.executionPlan
+      ? { tone: "waiting", text: "Payments are not authorized." }
+      : published.files.settlement
+        ? { tone: "done", text: "Settlement evidence published." }
+        : { tone: "waiting", text: "Unsigned plan published. Not paid." },
+  ];
   return (
     <section
       className="funding-workbench"
@@ -393,10 +590,15 @@ export function FundingReview({
       <div className="simple-heading">
         <div>
           <h2 id="funding-review-title">Manage payouts</h2>
-          <p>Review a month, fund its vault, and follow every payment.</p>
-          <a href={`${repo}/blob/develop/funding/maintainer-payouts.md`}>
-            Step-by-step guide
-          </a>
+          <p>
+            Drafts stay on this device. GitHub review approves awards; signers
+            send payments outside Slop.{" "}
+            <a
+              href={`${repo}/blob/${browserDeployment.branch}/funding/maintainer-payouts.md`}
+            >
+              Step-by-step guide
+            </a>
+          </p>
         </div>
       </div>
       {state.status === "loading" ? (
@@ -428,6 +630,8 @@ export function FundingReview({
                 setAdjustments({});
                 setInvalidAmounts({});
                 setRawAmounts({});
+                setExpanded({});
+                setPage(0);
                 setVaultObservation(null);
                 setVaultMessage("");
                 setVaultChecking(false);
@@ -439,24 +643,6 @@ export function FundingReview({
               ))}
             </select>
           </label>
-          <nav aria-label="Payout steps" className="payout-steps">
-            {[
-              "Review recipients",
-              "Prepare funding",
-              "Approve cycle",
-              "Track payments",
-            ].map((label, index) => (
-              <button
-                type="button"
-                key={label}
-                aria-current={step === index + 1 ? "step" : undefined}
-                onClick={() => setStep(index + 1)}
-              >
-                <span>{index + 1}</span>
-                {label}
-              </button>
-            ))}
-          </nav>
           {project.reward.kind === "external-prize-share" ? (
             <p className="data-notice">
               This project publishes external-prize shares. It does not use the
@@ -464,6 +650,15 @@ export function FundingReview({
             </p>
           ) : (
             <>
+              {paymentsDisabled ? (
+                <p className="payments-disabled-notice" role="note">
+                  <strong>Payments are disabled for this project.</strong> Do
+                  not deposit yet.{" "}
+                  <a href={`${repo}/issues/333`}>
+                    View outstanding requirements
+                  </a>
+                </p>
+              ) : null}
               <div className="payout-summary">
                 <p>
                   <small>Month’s cap</small>
@@ -475,13 +670,7 @@ export function FundingReview({
                 </p>
                 <p>
                   <small>Missing destinations</small>
-                  <strong>
-                    {
-                      recipients.filter(
-                        (r) => !r.wallet && !r.lookupUnavailable,
-                      ).length
-                    }
-                  </strong>
+                  <strong>{counts.missing}</strong>
                 </p>
                 <p>
                   <small>Verified paid</small>
@@ -492,9 +681,33 @@ export function FundingReview({
                   </strong>
                 </p>
               </div>
+              <nav aria-label="Payout steps">
+                <ol className="payout-steps">
+                  {STEPS.map((label, index) => (
+                    <li key={label}>
+                      <button
+                        type="button"
+                        aria-current={step === index + 1 ? "step" : undefined}
+                        onClick={() => setStep(index + 1)}
+                      >
+                        <span className="step-number">{index + 1}</span>
+                        <span className="step-label">{label}</span>
+                        <small
+                          className={`step-tone step-tone-${stepStatus[index].tone}`}
+                        >
+                          {stepStatus[index].text}
+                        </small>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
               {step === 1 && (
                 <>
                   <h3>Review recipients</h3>
+                  <StepStatus tone={stepStatus[0].tone}>
+                    {stepStatus[0].text}
+                  </StepStatus>
                   {review &&
                     review.rewardKind === "monthly-pool" &&
                     !published &&
@@ -553,247 +766,380 @@ export function FundingReview({
                   )}
                   <p>
                     {published
-                      ? "Published cycle records are shown below. Amount changes need a reviewed successor of the proposal and restart its 14-day review."
-                      : "These are cap-based suggestions from the complete monthly census. Everyone remains included until maintainers review a reasoned change."}
+                      ? "Published cycle records. An amount change needs a reviewed successor proposal and restarts its 14-day review."
+                      : "Suggestions from the complete monthly census. Everyone stays included until a maintainer gives a reason for a change."}
                   </p>
-                  <p>
-                    Registered is a public receiving-address claim. Locked means
-                    that exact destination is frozen in the published cycle.
-                    Neither status means paid.
-                  </p>
+                  <div className="review-working-summary" aria-live="polite">
+                    {selection.result ? (
+                      <p>
+                        Proposed{" "}
+                        <strong>
+                          {formatUsdc(selection.result.totalMinor)} USDC
+                        </strong>{" "}
+                        · Unallocated{" "}
+                        {formatUsdc(selection.result.unallocatedMinor)} USDC ·
+                        Maximum fee{" "}
+                        {formatUsdc(selection.result.maximumFeeMinor)} USDC
+                      </p>
+                    ) : (
+                      <p role="alert">{selection.error}</p>
+                    )}
+                    <div className="review-actions">
+                      <button
+                        type="button"
+                        disabled={!exportable}
+                        onClick={saveDraft}
+                      >
+                        Save draft on this device
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!exportable}
+                        onClick={() => void exportReview()}
+                      >
+                        Download review
+                      </button>
+                      {published ? (
+                        <a
+                          href={`${repo}/upload/development/cycles/${project.id}/${cycleId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open proposal PR
+                        </a>
+                      ) : (
+                        <>
+                          <a
+                            href={`${repo}/issues/new`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open GitHub review
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void copyValue("request", requestText)
+                            }
+                          >
+                            {copied === "request"
+                              ? copyFailed
+                                ? "Copy unavailable; select the request text"
+                                : "Request text copied"
+                              : "Copy request text"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {copied === "request" && copyFailed ? (
+                      <textarea
+                        aria-label="Funding review request text"
+                        readOnly
+                        value={requestText}
+                      />
+                    ) : null}
+                  </div>
                   <div className="review-filters">
                     <label>
                       Find contributor
                       <input
                         type="search"
                         value={query}
-                        onChange={(e) => setQuery(e.target.value)}
+                        onChange={(e) => {
+                          setQuery(e.target.value);
+                          setPage(0);
+                        }}
                       />
                     </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={missingOnly}
-                        onChange={(e) => setMissingOnly(e.target.checked)}
-                      />{" "}
-                      Missing wallets only
-                    </label>
+                    <fieldset>
+                      <legend>Show</legend>
+                      {FILTERS.map((option) => (
+                        <button
+                          aria-pressed={filter === option.id}
+                          key={option.id}
+                          onClick={() => {
+                            setFilter(option.id);
+                            setPage(0);
+                          }}
+                          type="button"
+                        >
+                          {option.label} ({counts[option.id]})
+                        </button>
+                      ))}
+                    </fieldset>
                   </div>
-                  <p>
-                    {visible.length} of {recipients.length} contributors shown.
-                    Changes are local until downloaded; no automatic
-                    redistribution.
+                  <p aria-live="polite">
+                    {matching.length === 0
+                      ? `0 of ${recipients.length} contributors match.`
+                      : `Showing ${currentPage * PAGE_SIZE + 1}–${currentPage * PAGE_SIZE + visible.length} of ${matching.length} matching contributors (${recipients.length} total).`}{" "}
+                    Edits stay while you search, filter or change pages.
                   </p>
                   <section
                     className="plain-table-wrap"
                     aria-label="Scrollable payout records"
                   >
-                    <table className="plain-table">
+                    <table className="plain-table recipient-table">
                       <caption className="visually-hidden">
                         {project.name} {cycleId} payout review
                       </caption>
                       <thead>
                         <tr>
                           <th scope="col">Contributor</th>
-                          <th scope="col">Suggested USDC</th>
+                          <th scope="col">Award</th>
                           <th scope="col">Destination</th>
-                          <th scope="col">Proposed award</th>
+                          <th scope="col">Decision</th>
+                          <th scope="col">
+                            <span className="visually-hidden">Details</span>
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
                         {visible.map((r) => {
-                          const a = adjustments[r.actor.id];
-                          const decision =
-                            a?.decision ??
-                            ("state" in r && r.state === "excluded"
-                              ? "exclude"
-                              : "include");
+                          const { a, decision, amountMinor, changed } =
+                            rowFacts(r);
+                          const open = !!expanded[r.actor.id];
+                          const panelId = `recipient-${r.actor.id}`;
+                          const lockLabel = cycleIndex
+                            ? walletLockLabel(published, r.actor.id)
+                            : "Lock status unavailable";
                           return (
-                            <tr key={`${cycleId}:${r.actor.id}`}>
-                              <th scope="row">
-                                <a
-                                  href={`https://github.com/${encodeURIComponent(r.actor.login)}`}
-                                >
-                                  {r.actor.login}
-                                </a>
-                              </th>
-                              <td>{displayUsdc(r.simulatedMinor)}</td>
-                              <td>
-                                {r.wallet ? (
-                                  <>
-                                    <a href={r.wallet.sourceUrl}>
-                                      Registered · view proof
-                                    </a>
-                                    <code className="wallet-address">
-                                      {r.wallet.address}
-                                    </code>
-                                  </>
-                                ) : (
-                                  <span>
-                                    {r.lookupUnavailable
+                            <Fragment key={`${cycleId}:${r.actor.id}`}>
+                              <tr className="recipient-row">
+                                <th scope="row">
+                                  <a
+                                    href={`https://github.com/${encodeURIComponent(r.actor.login)}`}
+                                  >
+                                    {r.actor.login}
+                                  </a>
+                                </th>
+                                <td>
+                                  {invalidAmounts[r.actor.id]
+                                    ? "Invalid amount"
+                                    : formatMicroUsdc(amountMinor)}
+                                  {changed ? (
+                                    <small>
+                                      was {formatMicroUsdc(r.simulatedMinor)}
+                                    </small>
+                                  ) : null}
+                                </td>
+                                <td>
+                                  {r.wallet
+                                    ? "Registered"
+                                    : r.lookupUnavailable
                                       ? "Wallet lookup unavailable"
                                       : "Missing registration"}
-                                  </span>
-                                )}
-                                <small>
-                                  {cycleIndex
-                                    ? walletLockLabel(published, r.actor.id)
-                                    : "Lock status unavailable"}
-                                </small>
-                                {published?.contributors.find(
-                                  (c) => c.actor.id === r.actor.id,
-                                )?.wallet && (
-                                  <a href={published.files.proposal.url}>
-                                    View locked proposal
-                                  </a>
-                                )}
-                              </td>
-                              <td>
-                                <label
-                                  className="visually-hidden"
-                                  htmlFor={`decision-${r.actor.id}`}
-                                >
-                                  Decision for {r.actor.login}
-                                </label>
-                                <select
-                                  id={`decision-${r.actor.id}`}
-                                  value={decision}
-                                  disabled={!canEdit}
-                                  onChange={(e) =>
-                                    change(r.actor.id, {
-                                      decision: e.target.value as
-                                        | "include"
-                                        | "exclude",
-                                    })
-                                  }
-                                >
-                                  <option value="include">Include</option>
-                                  <option value="exclude">
-                                    Propose exclusion
-                                  </option>
-                                </select>
-                                <label>
-                                  USDC for {r.actor.login}
-                                  <input
-                                    aria-label={`USDC for ${r.actor.login}`}
-                                    inputMode="decimal"
-                                    disabled={
-                                      !!published || a?.decision === "exclude"
+                                  <small>{lockLabel}</small>
+                                </td>
+                                <td>
+                                  {decision === "exclude"
+                                    ? "Proposed exclusion"
+                                    : "Include"}
+                                  {changed && !a?.reason.trim() ? (
+                                    <small>Needs a reason</small>
+                                  ) : null}
+                                </td>
+                                <td>
+                                  <button
+                                    aria-controls={panelId}
+                                    aria-expanded={open}
+                                    aria-label={`Details for ${r.actor.login}`}
+                                    onClick={() =>
+                                      setExpanded((value) => ({
+                                        ...value,
+                                        [r.actor.id]: !open,
+                                      }))
                                     }
-                                    value={
-                                      rawAmounts[r.actor.id] ??
-                                      displayUsdc(
-                                        a?.amountMinor ?? r.simulatedMinor,
-                                      )
-                                    }
-                                    onChange={(e) => {
-                                      setRawAmounts((v) => ({
-                                        ...v,
-                                        [r.actor.id]: e.target.value,
-                                      }));
-                                      try {
-                                        change(r.actor.id, {
-                                          amountMinor: parseUsdc(
-                                            e.target.value,
-                                          ),
-                                        });
-                                        e.target.setCustomValidity("");
-                                        setInvalidAmounts((v) => ({
-                                          ...v,
-                                          [r.actor.id]: false,
-                                        }));
-                                      } catch {
-                                        setInvalidAmounts((v) => ({
-                                          ...v,
-                                          [r.actor.id]: true,
-                                        }));
-                                        e.target.setCustomValidity(
-                                          "Enter an exact USDC amount with up to six decimals.",
-                                        );
-                                        e.target.reportValidity();
-                                      }
-                                    }}
-                                  />
-                                </label>
-                                <label
-                                  className="visually-hidden"
-                                  htmlFor={`reason-${r.actor.id}`}
-                                >
-                                  Reason for {r.actor.login}
-                                </label>
-                                <textarea
-                                  id={`reason-${r.actor.id}`}
-                                  disabled={!canEdit}
-                                  placeholder="Public reason for a change"
-                                  value={a?.reason ?? ""}
-                                  onChange={(e) =>
-                                    change(r.actor.id, {
-                                      reason: e.target.value,
-                                    })
-                                  }
-                                />
-                              </td>
-                            </tr>
+                                    type="button"
+                                  >
+                                    Details
+                                  </button>
+                                </td>
+                              </tr>
+                              {open ? (
+                                <tr className="recipient-details" id={panelId}>
+                                  <td colSpan={5}>
+                                    <div className="recipient-detail-grid">
+                                      <div>
+                                        <p>
+                                          Suggested exact:{" "}
+                                          <code>
+                                            {displayUsdc(r.simulatedMinor)} USDC
+                                          </code>
+                                        </p>
+                                        {r.wallet ? (
+                                          <>
+                                            <a href={r.wallet.sourceUrl}>
+                                              Registered · view proof
+                                            </a>
+                                            <code className="wallet-address">
+                                              {r.wallet.address}
+                                            </code>
+                                          </>
+                                        ) : (
+                                          <p>
+                                            {r.lookupUnavailable
+                                              ? "Wallet lookup unavailable."
+                                              : "No registered destination. An approved award stays unclaimed until the contributor registers."}
+                                          </p>
+                                        )}
+                                        <p>{lockLabel}</p>
+                                        {published?.contributors.find(
+                                          (c) => c.actor.id === r.actor.id,
+                                        )?.wallet && (
+                                          <a
+                                            href={published.files.proposal.url}
+                                          >
+                                            View locked proposal
+                                          </a>
+                                        )}
+                                      </div>
+                                      <div>
+                                        <label
+                                          htmlFor={`decision-${r.actor.id}`}
+                                        >
+                                          Decision
+                                          <span className="visually-hidden">
+                                            {" "}
+                                            for {r.actor.login}
+                                          </span>
+                                        </label>
+                                        <select
+                                          id={`decision-${r.actor.id}`}
+                                          value={decision}
+                                          disabled={!canEdit}
+                                          onChange={(e) =>
+                                            change(r.actor.id, {
+                                              decision: e.target.value as
+                                                | "include"
+                                                | "exclude",
+                                            })
+                                          }
+                                        >
+                                          <option value="include">
+                                            Include
+                                          </option>
+                                          <option value="exclude">
+                                            Propose exclusion
+                                          </option>
+                                        </select>
+                                        <label htmlFor={`amount-${r.actor.id}`}>
+                                          USDC
+                                          <span className="visually-hidden">
+                                            {" "}
+                                            for {r.actor.login}
+                                          </span>
+                                        </label>
+                                        <input
+                                          id={`amount-${r.actor.id}`}
+                                          inputMode="decimal"
+                                          disabled={
+                                            !!published ||
+                                            a?.decision === "exclude"
+                                          }
+                                          value={
+                                            rawAmounts[r.actor.id] ??
+                                            displayUsdc(
+                                              a?.amountMinor ??
+                                                r.simulatedMinor,
+                                            )
+                                          }
+                                          onChange={(e) => {
+                                            setRawAmounts((v) => ({
+                                              ...v,
+                                              [r.actor.id]: e.target.value,
+                                            }));
+                                            try {
+                                              change(r.actor.id, {
+                                                amountMinor: parseUsdc(
+                                                  e.target.value,
+                                                ),
+                                              });
+                                              e.target.setCustomValidity("");
+                                              setInvalidAmounts((v) => ({
+                                                ...v,
+                                                [r.actor.id]: false,
+                                              }));
+                                            } catch {
+                                              setInvalidAmounts((v) => ({
+                                                ...v,
+                                                [r.actor.id]: true,
+                                              }));
+                                              e.target.setCustomValidity(
+                                                "Enter an exact USDC amount with up to six decimals.",
+                                              );
+                                              e.target.reportValidity();
+                                            }
+                                          }}
+                                        />
+                                        <label htmlFor={`reason-${r.actor.id}`}>
+                                          Reason
+                                          <span className="visually-hidden">
+                                            {" "}
+                                            for {r.actor.login}
+                                          </span>
+                                        </label>
+                                        <textarea
+                                          id={`reason-${r.actor.id}`}
+                                          disabled={!canEdit}
+                                          placeholder="Public reason for a change"
+                                          value={a?.reason ?? ""}
+                                          onChange={(e) =>
+                                            change(r.actor.id, {
+                                              reason: e.target.value,
+                                            })
+                                          }
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
                           );
                         })}
                       </tbody>
                     </table>
                   </section>
-                  {selection.error && <p role="alert">{selection.error}</p>}
-                  {selection.result && (
-                    <p>
-                      Proposed principal:{" "}
-                      {displayUsdc(selection.result.totalMinor)} USDC ·
-                      Unallocated:{" "}
-                      {displayUsdc(selection.result.unallocatedMinor)} USDC ·
-                      Maximum fee:{" "}
-                      {displayUsdc(selection.result.maximumFeeMinor)} USDC. Fees
-                      apply only to principal approved for payment.
-                    </p>
-                  )}
-                  <div className="review-actions">
-                    <button
-                      type="button"
-                      disabled={
-                        !selection.result ||
-                        !canEdit ||
-                        Object.values(invalidAmounts).some(Boolean)
-                      }
-                      onClick={saveDraft}
+                  {pageCount > 1 ? (
+                    <nav
+                      aria-label="Recipient pages"
+                      className="recipient-pagination"
                     >
-                      Save draft on this device
-                    </button>
-                    <button
-                      type="button"
-                      disabled={
-                        !selection.result ||
-                        !canEdit ||
-                        Object.values(invalidAmounts).some(Boolean)
-                      }
-                      onClick={() => void exportReview()}
-                    >
-                      Download review
-                    </button>
-                    <a
-                      href={
-                        published
-                          ? `${repo}/upload/develop/cycles/${project.id}/${cycleId}`
-                          : requestUrl
-                      }
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {published ? "Open proposal PR" : "Open GitHub review"}
-                    </a>
-                    <a href="/wallet">Register your payout wallet</a>
-                    {!published && (
-                      <a
-                        href={`${repo}/actions/workflows/prepare-funding-review.yml`}
+                      <button
+                        disabled={currentPage === 0}
+                        onClick={() => setPage(currentPage - 1)}
+                        type="button"
                       >
-                        Refresh registered wallets
-                      </a>
-                    )}
-                  </div>
+                        Previous page
+                      </button>
+                      <span>
+                        Page {currentPage + 1} of {pageCount}
+                      </span>
+                      <button
+                        disabled={currentPage >= pageCount - 1}
+                        onClick={() => setPage(currentPage + 1)}
+                        type="button"
+                      >
+                        Next page
+                      </button>
+                    </nav>
+                  ) : null}
+                  <p className="review-footnote">
+                    Registered is a public receiving-address claim. Locked means
+                    that exact destination is frozen in the published cycle.
+                    Neither status means paid.{" "}
+                    <a href="/account#wallets">Register your payout wallet</a>
+                    {!published ? (
+                      <>
+                        {" · "}
+                        <a
+                          href={`${repo}/actions/workflows/prepare-funding-review.yml`}
+                        >
+                          Refresh registered wallets
+                        </a>
+                      </>
+                    ) : null}
+                  </p>
                   {review && (
                     <details>
                       <summary>Source and wallet observations</summary>
@@ -814,49 +1160,215 @@ export function FundingReview({
               {step === 2 && (
                 <>
                   <h3>Prepare funding</h3>
+                  <StepStatus tone={stepStatus[1].tone}>
+                    {stepStatus[1].text}
+                  </StepStatus>
                   {vaultError && (
                     <p role="alert">Vault funding unavailable: {vaultError}</p>
                   )}
-                  <p>
-                    Use your existing Phantom wallet, or create a dedicated
-                    wallet in Phantom. Signing stays in your wallet.
-                  </p>
-                  {selection.result && (
-                    <p>
-                      Current draft: {formatUsdc(selection.result.totalMinor)}{" "}
-                      USDC in awards, plus up to{" "}
-                      {formatUsdc(selection.result.maximumFeeMinor)} USDC in
-                      platform fees. The final approved plan determines the
-                      amount to send. Keep SOL in the signing wallet for network
-                      fees and in the vault for any new recipient token
-                      accounts.
-                    </p>
-                  )}
-                  <ol>
-                    <li>
-                      Review recipients and resolve missing wallet
-                      registrations.
+                  <ol className="readiness-checklist">
+                    <li data-state={published ? "done" : "open"}>
+                      <strong>Recipients:</strong>{" "}
+                      {published
+                        ? "Proposal published."
+                        : "Draft only. Export it from step 1."}{" "}
+                      {counts.missing} missing destination
+                      {counts.missing === 1 ? "" : "s"}.
                     </li>
-                    <li>
-                      Create this month’s vault in Squads with the funder and
-                      independent co-signer, then submit its configuration for
-                      review.
+                    <li data-state={vault || projectVault ? "done" : "open"}>
+                      <strong>Monthly vault:</strong>{" "}
+                      {vault || projectVault
+                        ? "Reviewed configuration published."
+                        : instrument?.kind === "sablier-lockup-v4"
+                          ? "A Sablier instrument covers this month. This Solana flow needs a reviewed Squads vault."
+                          : "No reviewed vault."}
                     </li>
-                    <li>
-                      After the vault configuration and payout protocol are
-                      reviewed, send Solana USDC from Phantom to its exact
-                      address and verify the deposit.
+                    <li data-state={paymentsDisabled ? "blocked" : "done"}>
+                      <strong>Payout protocol:</strong>{" "}
+                      {paymentsDisabled
+                        ? "Payments are disabled in the project manifest."
+                        : "Payments are enabled in the project manifest."}
                     </li>
-                    <li>
-                      Complete allocation review, then review and sign the
-                      payout proposal in Squads. Return here to verify
-                      settlement.
+                    <li data-state={hasVerifiedDeposit ? "done" : "open"}>
+                      <strong>Deposit:</strong>{" "}
+                      {hasVerifiedDeposit && verifiedNetMinor
+                        ? `${formatUsdc(verifiedNetMinor)} USDC in the verified ledger. This is not a live balance.`
+                        : "No verified deposit."}
                     </li>
                   </ol>
-                  {vault?.kind === "squads-v4-vault" ? (
-                    <>
+                  <h4>Next action</h4>
+                  {!vault && !projectVault ? (
+                    instrument?.kind === "sablier-lockup-v4" ? (
                       <p>
-                        Reviewed vault for {cycleId}:{" "}
+                        Do not deposit into a second instrument for the same
+                        month. The reviewed Sablier instrument on{" "}
+                        {instrument.network} stays separate.
+                      </p>
+                    ) : project.reward.chain !== "solana" ? (
+                      <p>
+                        This project settles on {project.reward.chain}. The
+                        Squads vault intake on this page applies to Solana
+                        projects only. A reviewed project vault on this network
+                        is required before any deposit.
+                      </p>
+                    ) : (
+                      <>
+                        <p>
+                          Submit the vault configuration for review. A funder
+                          and an independent co-signer must approve the 2-of-2
+                          vault before any deposit. Signing stays in your
+                          wallet.
+                        </p>
+                        <label>
+                          Funder GitHub account
+                          <input
+                            value={funder}
+                            onChange={(e) => setFunder(e.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Independent co-signer GitHub account
+                          <input
+                            value={steward}
+                            onChange={(e) => setSteward(e.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Funder’s public Solana address
+                          <input
+                            value={funderAddress}
+                            maxLength={44}
+                            spellCheck={false}
+                            onChange={(e) =>
+                              setFunderAddress(e.target.value.trim())
+                            }
+                          />
+                        </label>
+                        <label>
+                          Co-signer’s public Solana address
+                          <input
+                            value={stewardAddress}
+                            maxLength={44}
+                            spellCheck={false}
+                            onChange={(e) =>
+                              setStewardAddress(e.target.value.trim())
+                            }
+                          />
+                        </label>
+                        <label>
+                          Reviewed platform fee address
+                          <input
+                            value={feeAddress}
+                            maxLength={44}
+                            spellCheck={false}
+                            onChange={(e) =>
+                              setFeeAddress(e.target.value.trim())
+                            }
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={
+                            !/^[a-zA-Z0-9-]{1,39}$/.test(funder) ||
+                            !/^[a-zA-Z0-9-]{1,39}$/.test(steward) ||
+                            funder.toLowerCase() === steward.toLowerCase() ||
+                            !isSolanaAddress(funderAddress) ||
+                            !isSolanaAddress(stewardAddress) ||
+                            !isSolanaAddress(feeAddress) ||
+                            funderAddress === stewardAddress
+                          }
+                          onClick={() => {
+                            download(
+                              {
+                                kind: "monthly-funding-intake",
+                                status: "draft",
+                                projectId: project.id,
+                                cycleId,
+                                principalCapMinor: capMinor,
+                                funderGithub: funder,
+                                independentStewardGithub: steward,
+                                funderPublicAddress: funderAddress,
+                                independentStewardPublicAddress: stewardAddress,
+                                platformFeePublicAddress: feeAddress,
+                              },
+                              `${project.id}-${cycleId}-funding-intake.json`,
+                            );
+                            setMessage(
+                              "Funding intake downloaded for review. No wallet was created or funded.",
+                            );
+                          }}
+                        >
+                          Download funding intake
+                        </button>
+                        <p>
+                          <a href="https://docs.squads.so/main/getting-started/quickstart-guide">
+                            Squads setup guide
+                          </a>
+                        </p>
+                      </>
+                    )
+                  ) : paymentsDisabled ? (
+                    <p>
+                      Wait for the payout protocol review. Do not deposit into
+                      the vault while payments are disabled.
+                    </p>
+                  ) : !vault ? (
+                    <p>
+                      Project vault deposit verification is not available in
+                      this version. Do not submit a deposit for verification.
+                    </p>
+                  ) : (
+                    <details open={!hasVerifiedDeposit}>
+                      <summary>
+                        Record a funding transaction for verification
+                      </summary>
+                      <p>
+                        <a
+                          href={`${repo}/actions/workflows/verify-funding-deposit.yml`}
+                        >
+                          Verify deposit on GitHub
+                        </a>{" "}
+                        — select main and enter project {project.id}, month{" "}
+                        {cycleId}, and the public transaction signature. Review
+                        the resulting evidence PR.
+                      </p>
+                      <label>
+                        Public Solana transaction signature
+                        <input
+                          value={transaction}
+                          onChange={(e) => setTransaction(e.target.value)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={
+                          !/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(transaction)
+                        }
+                        onClick={() => {
+                          download(
+                            {
+                              kind: "funding-evidence-request",
+                              status: "unverified",
+                              projectId: project.id,
+                              cycleId,
+                              vault: vault.vault,
+                              transactionId: transaction,
+                            },
+                            `${project.id}-${cycleId}-funding-evidence.json`,
+                          );
+                          setMessage(
+                            "Verification request downloaded. A submitted signature is not verified funding.",
+                          );
+                        }}
+                      >
+                        Download verification request
+                      </button>
+                    </details>
+                  )}
+                  {vault ? (
+                    <details>
+                      <summary>Reviewed vault for {cycleId}</summary>
+                      <p>
                         <a
                           href={`https://explorer.solana.com/address/${vault.vault}`}
                         >
@@ -866,14 +1378,6 @@ export function FundingReview({
                       <p>
                         Funder: <code>{vault.funderMember}</code> · Independent
                         steward: {vault.stewardGithub?.login ?? "Unspecified"}
-                      </p>
-                      <p>
-                        Verified net funding ledger:{" "}
-                        {vaultLedger
-                          ? `${displayUsdc(vaultLedger.netMinor)} USDC`
-                          : "Unavailable"}
-                        . This is published deposit minus release/refund
-                        evidence, not a live wallet balance.
                       </p>
                       <button
                         type="button"
@@ -893,7 +1397,8 @@ export function FundingReview({
                             {vaultObservation.coversCommitment
                               ? "Covers the declared principal."
                               : "Below the declared principal."}{" "}
-                            Fees and signer readiness are checked separately.
+                            Balance does not show signer capability or approve
+                            payment.
                           </p>
                         )}
                       <p role="status">{vaultMessage}</p>
@@ -904,256 +1409,155 @@ export function FundingReview({
                       >
                         Open Squads
                       </a>
-                    </>
-                  ) : instrument?.kind === "sablier-lockup-v4" ? (
-                    <p>
-                      This month has a reviewed Sablier instrument on{" "}
-                      {instrument.network}. Its funding remains separate; this
-                      Solana payout flow requires a reviewed Squads vault. Do
-                      not deposit into a second instrument for the same month.
-                    </p>
-                  ) : (
-                    <>
+                    </details>
+                  ) : projectVault ? (
+                    <details>
+                      <summary>Reviewed project vault for {cycleId}</summary>
                       <p>
-                        No reviewed monthly vault yet. A funder and an
-                        independent co-signer must approve the 2-of-2 vault
-                        configuration before depositing.
-                      </p>
-                      <label>
-                        Funder GitHub account
-                        <input
-                          value={funder}
-                          onChange={(e) => setFunder(e.target.value)}
-                        />
-                      </label>
-                      <label>
-                        Independent co-signer GitHub account
-                        <input
-                          value={steward}
-                          onChange={(e) => setSteward(e.target.value)}
-                        />
-                      </label>
-                      <label>
-                        Funder’s public Solana address
-                        <input
-                          value={funderAddress}
-                          maxLength={44}
-                          spellCheck={false}
-                          onChange={(e) =>
-                            setFunderAddress(e.target.value.trim())
-                          }
-                        />
-                      </label>
-                      <label>
-                        Co-signer’s public Solana address
-                        <input
-                          value={stewardAddress}
-                          maxLength={44}
-                          spellCheck={false}
-                          onChange={(e) =>
-                            setStewardAddress(e.target.value.trim())
-                          }
-                        />
-                      </label>
-                      <label>
-                        Reviewed platform fee address
-                        <input
-                          value={feeAddress}
-                          maxLength={44}
-                          spellCheck={false}
-                          onChange={(e) => setFeeAddress(e.target.value.trim())}
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        disabled={
-                          !/^[a-zA-Z0-9-]{1,39}$/.test(funder) ||
-                          !/^[a-zA-Z0-9-]{1,39}$/.test(steward) ||
-                          funder.toLowerCase() === steward.toLowerCase() ||
-                          !isSolanaAddress(funderAddress) ||
-                          !isSolanaAddress(stewardAddress) ||
-                          !isSolanaAddress(feeAddress) ||
-                          funderAddress === stewardAddress
-                        }
-                        onClick={() => {
-                          download(
-                            {
-                              kind: "monthly-funding-intake",
-                              status: "draft",
-                              projectId: project.id,
-                              cycleId,
-                              principalCapMinor: capMinor,
-                              funderGithub: funder,
-                              independentStewardGithub: steward,
-                              funderPublicAddress: funderAddress,
-                              independentStewardPublicAddress: stewardAddress,
-                              platformFeePublicAddress: feeAddress,
-                            },
-                            `${project.id}-${cycleId}-funding-intake.json`,
-                          );
-                          setMessage(
-                            "Funding intake downloaded for review. No wallet was created or funded.",
-                          );
-                        }}
-                      >
-                        Download funding intake
-                      </button>
-                      <p>
-                        <a href="https://docs.squads.so/main/getting-started/quickstart-guide">
-                          Squads setup guide
+                        <a
+                          href={`https://explorer.solana.com/address/${projectVault.vault}`}
+                        >
+                          {projectVault.vault}
                         </a>
                       </p>
-                    </>
-                  )}
-                  {project.reward.paymentMode === "disabled" && (
-                    <p className="data-notice">
-                      Payments are disabled for this project. Complete the vault
-                      configuration and payout protocol review before
-                      depositing.{" "}
-                      <a href={`${repo}/issues/333`}>
-                        View outstanding requirements
-                      </a>
-                    </p>
-                  )}
-                  <details>
-                    <summary>
-                      Record a funding transaction for verification
-                    </summary>
-                    <p>
-                      <a
-                        href={`${repo}/actions/workflows/verify-funding-deposit.yml`}
-                      >
-                        Verify deposit on GitHub
-                      </a>{" "}
-                      — select develop and enter project {project.id}, month{" "}
-                      {cycleId}, and the public transaction signature. Review
-                      the resulting evidence PR.
-                    </p>
-                    <label>
-                      Public Solana transaction signature
-                      <input
-                        value={transaction}
-                        onChange={(e) => setTransaction(e.target.value)}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      disabled={
-                        !/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(transaction) ||
-                        !vault
-                      }
-                      onClick={() => {
-                        download(
-                          {
-                            kind: "funding-evidence-request",
-                            status: "unverified",
-                            projectId: project.id,
-                            cycleId,
-                            vault:
-                              vault?.kind === "squads-v4-vault"
-                                ? vault.vault
-                                : null,
-                            transactionId: transaction,
-                          },
-                          `${project.id}-${cycleId}-funding-evidence.json`,
-                        );
-                        setMessage(
-                          "Verification request downloaded. A submitted signature is not verified funding.",
-                        );
-                      }}
-                    >
-                      Download verification request
-                    </button>
-                  </details>
+                      <p>
+                        2-of-3 members: creator{" "}
+                        <code>{projectVault.creatorMember}</code>, Slop
+                        vote-only <code>{projectVault.slopMember}</code>,
+                        independent {projectVault.independentGithub.login}. Time
+                        lock: {projectVault.timeLockSeconds} seconds.
+                      </p>
+                      <p>
+                        A live balance check is not available for this vault
+                        type. The verified ledger above uses published evidence
+                        only.
+                      </p>
+                    </details>
+                  ) : null}
                 </>
               )}
               {step === 3 && (
                 <>
                   <h3>Approve cycle</h3>
+                  <StepStatus tone={stepStatus[2].tone}>
+                    {stepStatus[2].text}
+                  </StepStatus>
                   {published ? (
-                    <>
-                      <p>
-                        Published state: {published.state}. Review ends:{" "}
-                        {published.reviewEndsAt ?? "Not applicable"}.
-                      </p>
-                      <a href={published.files.proposal.url}>
-                        Read the exact proposal
-                      </a>
-                      {published.files.allocation && (
-                        <p>
-                          <a href={published.files.allocation.url}>
-                            Read approved allocation
-                          </a>
-                        </p>
-                      )}
-                      <p>
-                        Wallet destinations are frozen in the proposal. Missing
-                        wallets remain unclaimed; changes observed after
-                        freezing apply to a later cycle.
-                      </p>
-                    </>
+                    <p>
+                      Published state: {published.state.replaceAll("-", " ")}.
+                      {published.reviewEndsAt
+                        ? ` Review ends ${formatDate(published.reviewEndsAt)}.`
+                        : ""}{" "}
+                      Missing wallets stay unclaimed. A wallet change after the
+                      freeze applies to a later cycle.
+                    </p>
                   ) : (
                     <p>
-                      Publish the verified funding policy first, then generate
-                      the complete funded proposal. The public review lasts 14
-                      days. Any material amount change restarts that period.
+                      Publish the verified funding policy first, then propose
+                      the complete funded cycle. The public review lasts 14
+                      days. A material amount change restarts it.
                     </p>
                   )}
                   <p>
-                    GitHub review and maintainer approval are authoritative.
-                    Related-party awards require separate approval. An app draft
-                    cannot approve an allocation.
+                    GitHub review and maintainer approval decide. Related-party
+                    awards need separate approval. A draft on this page cannot
+                    approve an allocation.
                   </p>
-                  <a
-                    href={`${repo}/actions/workflows/reward-cycle-actions.yml`}
-                  >
-                    Open cycle workflow
-                  </a>
+                  <h4>Next action</h4>
                   <p>
-                    Select develop, project {project.id}, month {cycleId}, and
-                    action{" "}
-                    <code>
-                      {!published
-                        ? "propose"
-                        : published.files.executionPlan
-                          ? "verify-settlement"
-                          : published.files.allocation
-                            ? "reserve-settlement"
-                            : "finalize-allocation"}
-                    </code>
-                    . The workflow prepares a GitHub PR for review.
+                    Run the cycle workflow with these inputs. It prepares a
+                    GitHub PR for review.
                   </p>
-                  <p>
-                    Required source SHA-256:{" "}
-                    <code>
-                      {published?.files.executionPlan?.sha256 ??
-                        published?.files.allocation?.sha256 ??
-                        published?.files.proposal.sha256 ??
-                        review?.sourceSnapshotSha256}
-                    </code>
-                  </p>
-                  {published?.files.allocation &&
-                    !published.files.executionPlan && (
+                  <dl className="workflow-inputs">
+                    <dt>Branch</dt>
+                    <dd>
+                      <code>main</code>
+                    </dd>
+                    <dt>Project</dt>
+                    <dd>
+                      <code>{project.id}</code>
+                    </dd>
+                    <dt>Month</dt>
+                    <dd>
+                      <code>{cycleId}</code>
+                    </dd>
+                    <dt>Action</dt>
+                    <dd>
+                      <code>{cycleAction}</code>
+                    </dd>
+                    <dt>Source SHA-256</dt>
+                    <dd>
+                      <code>{requiredSha || "Unavailable"}</code>
+                    </dd>
+                  </dl>
+                  <div className="review-actions">
+                    <a
+                      className="button primary-button"
+                      href={`${repo}/actions/workflows/reward-cycle-actions.yml`}
+                    >
+                      Open cycle workflow
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => void copyValue("inputs", workflowInputs)}
+                    >
+                      {copied === "inputs"
+                        ? copyFailed
+                          ? "Copy unavailable; select the inputs"
+                          : "Inputs copied"
+                        : "Copy inputs"}
+                    </button>
+                  </div>
+                  <details>
+                    <summary>Source evidence</summary>
+                    {published ? (
+                      <ul>
+                        <li>
+                          <a href={published.files.proposal.url}>
+                            Exact proposal
+                          </a>{" "}
+                          <code>{published.files.proposal.sha256}</code>
+                        </li>
+                        {published.files.allocation ? (
+                          <li>
+                            <a href={published.files.allocation.url}>
+                              Approved allocation
+                            </a>{" "}
+                            <code>{published.files.allocation.sha256}</code>
+                          </li>
+                        ) : null}
+                        <li>
+                          Source snapshot{" "}
+                          <code>{published.files.sourceSnapshot.sha256}</code>
+                        </li>
+                      </ul>
+                    ) : (
                       <p>
-                        First merge the reservation PR. Then run{" "}
-                        <code>prepare-settlement</code> with the same allocation
-                        hash to release its exact unsigned plan. Reuse that plan
-                        on retries; do not create a replacement payout.
+                        Source snapshot <code>{sourceSha}</code>. Proposing also
+                        needs the original snapshot artifact from the
+                        preparation run. For an audited import, use its exact
+                        archived source. Do not substitute a new snapshot.
                       </p>
                     )}
-                  {!published && (
-                    <p>
-                      Proposing also requires the original snapshot artifact
-                      from the preparation run. For an independently audited
-                      import, retain and use its exact archived source; do not
-                      substitute a newly generated snapshot.
-                    </p>
-                  )}
+                    {published?.files.allocation &&
+                      !published.files.executionPlan && (
+                        <p>
+                          First merge the reservation PR. Then run{" "}
+                          <code>prepare-settlement</code> with the same
+                          allocation hash to release its exact unsigned plan.
+                          Reuse that plan on retries; do not create a
+                          replacement payout.
+                        </p>
+                      )}
+                  </details>
                 </>
               )}
               {step === 4 && (
                 <>
                   <h3>Track payments</h3>
+                  <StepStatus tone={stepStatus[3].tone}>
+                    {stepStatus[3].text}
+                  </StepStatus>
                   {published?.files.executionPlan && (
                     <>
                       <SquadsTracking cycle={published} />
@@ -1163,7 +1567,7 @@ export function FundingReview({
                         >
                           Link your Squads proposal
                         </a>{" "}
-                        — select develop, {project.id}/{cycleId}, its public
+                        — select main, {project.id}/{cycleId}, its public
                         transaction index, and single or batch mode. The
                         workflow checks every transfer before opening a binding
                         PR.
@@ -1182,30 +1586,37 @@ export function FundingReview({
                     </p>
                   ) : (
                     <>
-                      <p>
-                        Approved: {displayUsdc(published.reward.approvedMinor)}{" "}
-                        USDC · Paid: {displayUsdc(published.reward.paidMinor)}{" "}
-                        USDC · Fee: {displayUsdc(published.reward.feeMinor)}{" "}
-                        USDC.
+                      <p className="money-summary">
+                        <span>
+                          Approved {formatUsdc(published.reward.approvedMinor)}{" "}
+                          USDC
+                        </span>
+                        <strong>
+                          Paid {formatUsdc(published.reward.paidMinor)} USDC
+                        </strong>
+                        <span>
+                          Fee {formatUsdc(published.reward.feeMinor)} USDC
+                        </span>
                       </p>
                       {published.files.executionPlan ? (
-                        <a href={published.files.executionPlan.url}>
-                          Download unsigned execution plan
-                        </a>
+                        <>
+                          <a href={published.files.executionPlan.url}>
+                            Download unsigned execution plan
+                          </a>
+                          <p>
+                            <a
+                              href={`${repo}/actions/workflows/reward-cycle-actions.yml`}
+                            >
+                              Verify settlement on GitHub
+                            </a>{" "}
+                            — choose verify-settlement for {project.id}/
+                            {cycleId} and bind the transaction evidence to plan
+                            SHA-256{" "}
+                            <code>{published.files.executionPlan.sha256}</code>.
+                          </p>
+                        </>
                       ) : (
                         <p>No execution plan has been published.</p>
-                      )}
-                      {published.files.executionPlan && (
-                        <p>
-                          <a
-                            href={`${repo}/actions/workflows/reward-cycle-actions.yml`}
-                          >
-                            Verify settlement on GitHub
-                          </a>{" "}
-                          — choose verify-settlement for {project.id}/{cycleId}{" "}
-                          and bind the transaction evidence to plan SHA-256{" "}
-                          <code>{published.files.executionPlan.sha256}</code>.
-                        </p>
                       )}
                       {published.files.settlement && (
                         <p>
@@ -1216,7 +1627,7 @@ export function FundingReview({
                       )}
                       <section
                         className="plain-table-wrap"
-                        aria-label="Scrollable payout records"
+                        aria-label="Scrollable payment status records"
                       >
                         <table className="plain-table">
                           <caption className="visually-hidden">
@@ -1225,9 +1636,9 @@ export function FundingReview({
                           <thead>
                             <tr>
                               <th scope="col">Contributor</th>
-                              <th scope="col">State</th>
-                              <th scope="col">Approved USDC</th>
-                              <th scope="col">Paid USDC</th>
+                              <th scope="col">Status</th>
+                              <th scope="col">Approved</th>
+                              <th scope="col">Paid</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1240,9 +1651,9 @@ export function FundingReview({
                                     {r.actor.login}
                                   </a>
                                 </th>
-                                <td>{r.state.replaceAll("-", " ")}</td>
-                                <td>{displayUsdc(r.approvedMinor)}</td>
-                                <td>{displayUsdc(r.paidMinor)}</td>
+                                <td>{PAYMENT_STATE_LABELS[r.state]}</td>
+                                <td>{formatMicroUsdc(r.approvedMinor)}</td>
+                                <td>{formatMicroUsdc(r.paidMinor)}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1251,14 +1662,14 @@ export function FundingReview({
                     </>
                   )}
                   <p>
-                    Both vault members sign externally. A Squads approval or
-                    transaction submission is not a completed payment; finalized
-                    principal and fee evidence must reconcile first.
+                    Vault members sign outside Slop. A Squads approval or a
+                    submitted transaction is not a payment. Paid needs finalized
+                    principal and fee evidence that reconciles.
                   </p>
                   {vaultLedger && (
                     <section
                       className="plain-table-wrap"
-                      aria-label="Scrollable payout records"
+                      aria-label="Scrollable vault funding records"
                     >
                       <table className="plain-table">
                         <caption>Vault funding history</caption>

@@ -105,12 +105,17 @@ A project may additionally declare reviewed commitment instruments in
 `project.funding.commitments`. Each instrument is a third-party on-chain
 mechanism that Slop does not control: an autonomous Squads v4 multisig vault
 holding USDC on Solana or a Sablier Lockup v4 USDC stream on Base or Ethereum.
-A Squads commitment requires an exact 2-of-2 funder and independently reviewed steward
-multisig with no configuration authority; a Sablier commitment uses a
-non-upgradeable, non-cancelable stream. Slop holds no key, admin, or fee position in any
-instrument; it publishes the reviewed reference and read-only evidence only.
-Committed funds are constrained by that reviewed third-party instrument, not
-held by Slop.
+A Squads commitment has one of two reviewed shapes. The 2-of-2
+(`squads-v4-vault`) requires an exact funder and independently reviewed
+steward multisig with no configuration authority, and Slop holds no key in it.
+The 2-of-3 project vault (`squads-project-vault`, RFC #500) has three fixed
+members, the creator, Slop, and an independent signer, a threshold of 2, and no
+configuration authority; Slop holds one vote-only key in it, as set out under
+"Project vaults" below. A Sablier commitment uses a non-upgradeable,
+non-cancelable stream. Slop holds no admin or fee position in any instrument;
+it publishes the reviewed reference and read-only evidence only. Committed
+funds are constrained by that reviewed third-party instrument, not held by
+Slop.
 
 Public commitment evidence is append-only under:
 
@@ -162,10 +167,11 @@ input—a release must credit an active manifest receiving route and a refund th
 funder's claimed wallet—and are never inferred. The verifier never signs,
 broadcasts, handles a key, or writes a record.
 
-The same verifier can also check the three-member project vault shape proposed
-in RFC #500. This is verifier support only. No manifest may declare a project
-vault, no project uses one, and every statement above about current
-instruments is unchanged. Replace the two member arguments in any mode with:
+The same verifier also checks the three-member project vault shape from RFC
+#500, declared in a manifest as the `squads-project-vault` instrument
+described under "Project vaults" below. No project declares one today. Every
+statement above about the 2-of-2 and Sablier instruments is unchanged. Replace
+the two member arguments in any mode with:
 
 ```text
   --creator-member <pubkey> --slop-member <pubkey> --independent-member <pubkey>
@@ -232,6 +238,146 @@ none of them: how the creator protects its own seat is the creator's choice.
 A plain-key creator seat fails this mode; it is only wrong for a project that
 declared a multisig seat.
 
+### Project vaults (RFC #500)
+
+A project vault is the one instrument in which Slop holds a key. The accurate
+public statement for this instrument kind, and only this kind, is:
+
+> Slop holds one of three keys on a project vault. That key can vote on a
+> payout the creator proposed. It cannot propose a transfer, execute one,
+> change the signers, or act alone. Slop holds no customer balance, takes no
+> fee from the vault, and never broadcasts a transfer of vault funds.
+
+What the Squads v4 program enforces, and the read-only verifier proves: only
+the creator (mask 7) can create a transfer, a batch, or a configuration
+change; Slop (mask 2) can only vote; the independent signer (mask 6) can vote
+and execute; the threshold is 2; there is no configuration authority. Slop
+cannot block a payout either, because the creator and the independent signer
+are two votes without it.
+
+The manifest declares the instrument in `project.funding.commitments`:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `squads-project-vault` |
+| `multisig`, `vault`, `vaultIndex` | the project vault, one per project, never shared |
+| `creatorActorId` | the creator's GitHub numeric actor id |
+| `creatorMember`, `creatorMultisig`, `creatorVaultIndex` | the creator seat, which must be the canonical vault of the creator's own Squads multisig so one lost device does not strand the project vault |
+| `slopMember` | Slop's vote-only key, held by a named person on a hardware device, never in CI, a server, or a bot |
+| `independentMember`, `independentGithub` | the independent signer's key and reviewed GitHub identity, which must differ from the creator and the project steward |
+| `timeLockSeconds` | the on-chain time lock every action waits after reaching two votes (default 72 hours) |
+| `fallbackWaitSeconds` | the wait the two non-creator signers observe by agreement before releasing a payout the creator has not voted on (default 14 days); at least the time lock, at most 90 days |
+| `monthlyCommitment`, `effectiveAt`, `deadline`, `replacedAt` | as for every monthly instrument |
+
+The manifest validator checks distinctness, the waits, and the identities. It
+does not derive PDAs or read the chain; the `project-vault-squads-v1` and
+`project-vault-rules-v1` verifiers do. Commitment records for a project vault
+name all three members and carry verifier version `project-vault-squads-v1`.
+
+**Approval binding (RFC #500 section 3).** Creator approval keeps its meaning
+in `allocation.json`. On a project vault one step is added: the creator creates
+the Squads proposal for the exact `execution-plan.json`, and that binding is
+recorded in `funding/executions/ledger.json` through the trusted transition
+gate. Until then the allocation is `approved-unbound`: an immutable payout
+intent that nothing on chain can release, so it is not approved for payment
+purposes. `src/lib/project-vault-approval.ts` reports the state, and the
+settlement verifier refuses to record a project vault cycle as paid unless the
+binding names this vault and these exact plan bytes. Without this rule a
+creator could approve in the repository, never create the on-chain proposal,
+and leave nothing for anyone to release.
+
+**What is not enforced on chain.** The destination list, the fallback wait, and
+the independence of the third signer rest on the creator's exclusive power to
+write a transfer, on Slop's signing rule, and on the independent signer's
+written agreement. The rules verifier above makes a breach visible after the
+fact; it cannot prevent one. Squads spending limits are never used on a
+project vault, because a spending limit lets one listed key move funds with no
+vote and no time lock.
+
+**Payment activation.** A project vault activates payments the same way a
+2-of-2 vault does: `paymentMode: "enabled"` with an exact
+`freshCyclePaymentPolicy` whose `instrumentSha256` is the reviewed project
+vault. Readiness, the trusted reservation gate, and the release loader accept
+the kind and prove the three-member shape at release time from one finalized
+`getMultipleAccounts` observation of the multisig, its USDC account, and the
+creator multisig: masks 7/2/6, threshold 2, no configuration authority, an
+on-chain time lock equal to `timeLockSeconds`, and a creator seat that is the
+canonical vault of the creator multisig. A plan that pays the vault, Slop's
+member, or the fee recipient is never released. Coverage is contributor
+principal only. No manifest declares a project vault today, and activation of
+the first vault waits on the written opinion of Slop's US counsel described in
+RFC #500 and on Shaw's sign-off on RFC sections 2 and 3.
+
+**Signer capability on a project vault.** The signer-access protocol
+(`protocol/signer-access-attestations.md`) has two roles on a project vault,
+`creator` and `independent`, and both must be current before a plan is
+released. The creator must be current because only the creator can write a
+proposal; the independent signer must be current so that a release never
+depends on Slop's vote. Slop's vote-only key has no role in the protocol: it is
+never necessary for a release and adds no capability to any other member, so
+it neither attests nor blocks. Loss of Slop's key is a same-day public issue
+followed by a reviewed signer replacement, not a ledger report. The creator
+seat is a program address and cannot sign, so a creator capability report is
+signed by a key the creator controls inside the creator multisig; readiness
+checks that key against the creator multisig on chain and requires the
+Initiate permission on it. A creator loss report names the seat and needs no
+key.
+
+**Windup against a bound proposal (RFC #500 section 10).** The creator may
+return the vault balance to the creator's wallet at any time; Slop takes no
+part and cannot prevent it. When that happens after the creator bound a
+proposal, the proposal cannot execute and the approved rows cannot be paid.
+The refund itself is recorded like any vault outflow, as a verified `refund`
+commitment record. `funding:prepare-project-vault-windup` then derives
+`cycles/<project>/<month>/windup.json` from that record, the frozen allocation
+and plan, the execution binding, and a finalized quorum observation of the
+remaining balance; the cycle index validates it against the verified funding
+ledger and publishes the cycle as `wound-up` with every approved row `held`
+under one public reason naming the refund transactions. Nothing is paid,
+carried, or reissued in that state. The record does not cancel the bound
+proposal: if the vault is refunded and the exact bound plan later executes,
+the settlement verifier records the finalized payment beside the windup. See
+`cycles/README.md`, "Project vault windup".
+
+**The fee never enters a project vault.** On the 2-of-2 instrument the
+execution plan ends with the fee transfer, readiness requires the vault to
+cover principal plus fee, and a batch must include that transfer. On a
+project vault the rule is different (RFC #500 section 8): the 1% fee is a
+separate transfer the creator sends from the creator seat wallet
+(`creatorMember`), the vault
+holds contributor principal only, the plan and the proposal carry no fee
+transfer, and settlement reconciles the fee from the creator's own transfer.
+Slop never votes on a proposal that contains a transfer to a Slop address.
+
+What enforces it, all read-only:
+
+- The plan builder (`createSettlementExecutionPlan`) emits no fee transfer
+  for a project vault and reports `totals.platformFeeMinor: "0"`, so
+  `totals.totalMinor` is the vault outflow. The fee due stays
+  `allocation.totals.feeMinor`. A project vault plan that contains a fee
+  transfer, however it got there, fails readback against its allocation.
+- A payment reservation drafted for a project vault binds contributor
+  principal only (`feeMinor: "0"`), and the trusted reservation gate admits
+  it against the reviewed policy exactly as it admits a 2-of-2 reservation.
+- A Squads batch is compiled from the plan, so it covers contributor
+  transfers only; a proposal with a fee child cannot match the plan.
+- Settlement proves the fee as a separate finalized transaction that credits
+  the reviewed `freshCyclePaymentPolicy.feeRecipient` exactly (for a new
+  Solana policy, Slop's published
+  `9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY`), debits only
+  the reviewed `creatorMember` of the instrument that funded the cycle,
+  moves none of the vault's USDC, uses a signature that no other cycle's
+  `settlement.json` records, and is not earlier than any finalized contributor
+  transfer, because the fee becomes payable only when the contributor payout
+  is complete. Without that transaction the cycle cannot be recorded as
+  `paid`.
+- Readiness keeps the rule in the same helper (`planCarriesPlatformFee`), so
+  the vault must cover contributor principal only and the canonical funding
+  ledger must cover the same.
+
+Slop's operating procedure for its key is
+[`protocol/project-vault-signing.md`](../protocol/project-vault-signing.md).
+
 For a Sablier Lockup v4 USDC stream on Base or Ethereum, the read-only
 verifier (`commitment-sablier-v2`) queries three fixed public RPC authorities,
 checks each authority's chain ID, pins every stream view call to that
@@ -256,6 +402,14 @@ funder could reclaim the undistributed balance at any time, so it cannot back
 a positive `committedMinor`, and no evidence is emitted for it. Only a stream
 whose `isCancelable` flag is already false can be recorded. The verifier never
 signs, broadcasts, handles a key, or writes a record.
+
+A Base stream that backs a fresh-cycle payment policy (RFC #472) must also
+name `recipientGithub`: the reviewed GitHub actor (actor ID, node ID, login)
+who attests control of `recipient`, the settlement source. The release path,
+its EIP-191 signer proof, its quorum readiness and Slop's published Base fee
+recipient `0x8f77c37d8650776bfe73c9b12b15209ee15d9b86` (9 October 2026; it
+replaces the retired `0xb7b0d5e45016d6d31629d9ab375df770fd2aaf77`) are described in
+[`protocol/fresh-cycle-payments.md`](../protocol/fresh-cycle-payments.md).
 
 A manifest may set `fundingState: "committed"` only while an active instrument
 is declared and the verified commitment ledger (deposits minus releases and

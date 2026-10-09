@@ -1,5 +1,6 @@
 /** Runs only from an immutable trusted PR base. Head is data, never executed. */
 import { createHash } from "node:crypto";
+import { fundingInstrumentId } from "../src/lib/allocation-funding-basis.mjs";
 import { assertFreshCyclePaymentPolicy } from "../src/lib/fresh-cycle-policy.mjs";
 import { assertFundingCommitments } from "../src/lib/funding-instruments.mjs";
 import {
@@ -7,6 +8,7 @@ import {
   draftPaymentReservation,
   PAYMENT_RESERVATION_PATH,
 } from "../src/lib/payment-reservations";
+import { fundingInstrumentSource } from "../src/lib/settlement-plan";
 import { verifyUnsafeDestinationHistoryAuthorities } from "./check-unsafe-destination-transitions";
 import {
   gitReservationBlob,
@@ -19,16 +21,23 @@ import { readPaymentSignerHistory } from "./payment-signer-history";
 export function reviewedReservationPolicy(project: unknown) {
   const p = project as {
     id: string;
-    reward: { kind: string; reviewBudget?: unknown };
+    reward: { kind: string; chain?: unknown; reviewBudget?: unknown };
     funding: { freshCyclePaymentPolicy?: unknown; commitments?: unknown };
   };
   const policy = assertFreshCyclePaymentPolicy(
     p.funding?.freshCyclePaymentPolicy,
   );
   const instruments = assertFundingCommitments(p.funding.commitments ?? []);
+  // On Solana either reviewed Squads shape: the 2-of-2 commitment vault or
+  // the 2-of-3 project vault (RFC #500). On Base a Sablier stream whose
+  // recipient has a reviewed GitHub actor (RFC #472).
   const matches = instruments.filter(
     (v) =>
-      v.kind === "squads-v4-vault" &&
+      (p.reward.chain === "base"
+        ? v.kind === "sablier-lockup-v4" &&
+          v.network === "base" &&
+          v.recipientGithub !== undefined
+        : v.kind === "squads-v4-vault" || v.kind === "squads-project-vault") &&
       v.replacedAt === null &&
       v.monthlyCommitment?.cycleId === policy.cycleId,
   );
@@ -39,11 +48,9 @@ export function reviewedReservationPolicy(project: unknown) {
     matches.length !== 1
   )
     throw new TypeError(
-      "Policy requires one exact Squads cycle without additive review budget",
+      "Policy requires one exact instrument cycle on the settlement network without additive review budget",
     );
   const instrument = matches[0];
-  if (instrument.kind !== "squads-v4-vault")
-    throw new TypeError("Wrong instrument kind");
   // Bind manifest object bytes in a deterministic existing validator order.
   const instrumentBytes = new TextEncoder().encode(JSON.stringify(instrument));
   if (
@@ -65,7 +72,7 @@ export function assertReservationInstrument(
     cycleId?: string;
     fundingBasis?: { instrumentId?: string; cycleId?: string };
   };
-  const identity = `squads-v4-vault:solana:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`;
+  const identity = fundingInstrumentId(instrument);
   if (
     row.instrumentId !== identity ||
     allocation.fundingBasis?.instrumentId !== identity ||
@@ -84,6 +91,7 @@ export function assertNoHistoricalInstrumentUse(
   root: string,
   base: string,
   instrumentId: string,
+  source: string,
   allowedCycle?: string,
 ) {
   const commits = reservationGit(root, [
@@ -128,11 +136,13 @@ export function assertNoHistoricalInstrumentUse(
         capMinor?: string;
         totals?: { approvedMinor?: string };
       };
+      // The same instrument, another Squads identity over the same vault, or
+      // any plan already paying from this source account.
+      const basis = r.fundingBasis?.instrumentId;
       const same =
-        r.fundingBasis?.instrumentId === instrumentId ||
-        r.fundingBasis?.instrumentId?.split(":")[4] ===
-          instrumentId.split(":")[4] ||
-        r.sourceOwner === instrumentId.split(":")[4];
+        basis === instrumentId ||
+        (basis?.startsWith("squads-") && basis.split(":")[4] === source) ||
+        r.sourceOwner === source;
       const own =
         allowedCycle &&
         path.startsWith(`cycles/${allowedCycle}/`) &&
@@ -220,7 +230,7 @@ export async function checkPaymentReservationRecords(
         throw new TypeError(
           "Policy activation timestamp cannot claim future review",
         );
-      const instrumentId = `squads-v4-vault:solana:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`;
+      const instrumentId = fundingInstrumentId(instrument);
       if (
         prior.some(
           (r) =>
@@ -229,7 +239,12 @@ export async function checkPaymentReservationRecords(
         )
       )
         throw new TypeError("Policy cannot reactivate an existing reservation");
-      assertNoHistoricalInstrumentUse(root, base, instrumentId);
+      assertNoHistoricalInstrumentUse(
+        root,
+        base,
+        instrumentId,
+        fundingInstrumentSource(instrument),
+      );
       // Inspect every prior version, not just the latest zeroed/superseded file.
       const cyclePath = `cycles/${policy.projectId}/${policy.cycleId}/proposal.json`;
       const commits = reservationGit(root, ["rev-list", base, "--", cyclePath])
@@ -345,6 +360,7 @@ export async function checkPaymentReservationRecords(
       root,
       base,
       row.instrumentId,
+      fundingInstrumentSource(instrument),
       `${row.projectId}/${row.cycleId}`,
     );
     const nextAllocation = gitReservationBlob(root, head, allocationPath);
@@ -363,6 +379,7 @@ export async function checkPaymentReservationRecords(
       allocation,
       policy,
       row.reservedAt,
+      instrument,
     );
     if (JSON.stringify(expected) !== JSON.stringify(row))
       throw new TypeError("Reservation differs from exact canonical plan");

@@ -1,8 +1,12 @@
 import {
+  type DeploymentTier,
+  deploymentOrigins,
+} from "../../src/lib/deployment";
+import {
   ASSERTION_TTL_SECONDS,
   IDENTITY_INTERNAL_HOST,
-  IDENTITY_PUBLIC_ORIGIN,
   type IdentityPersistence,
+  identityPublicOrigin,
   isIdentityAudience,
   OAUTH_FLOW_TTL_SECONDS,
   POINTS_AUDIENCE,
@@ -18,10 +22,12 @@ import {
 } from "./crypto";
 
 export type IdentityWorkerDependencies = {
+  tier?: DeploymentTier;
   persistence: IdentityPersistence;
   stateEncryptionSecret: string;
   assertionSecret: string;
   githubClientId: string;
+  publicOrigin?: string;
   now: () => Date;
   randomToken: (bytes?: number) => string;
   resolveGithubIdentity: (
@@ -183,7 +189,7 @@ async function startFlow(
 
   const authorizationUrl = new URL(
     "/v1/oauth/authorize",
-    IDENTITY_PUBLIC_ORIGIN,
+    identityPublicOrigin(deps.publicOrigin, deps.tier),
   );
   authorizationUrl.searchParams.set("flow_id", flowId);
   authorizationUrl.searchParams.set("state", state);
@@ -228,7 +234,7 @@ async function authorizeBrowser(
   githubUrl.searchParams.set("client_id", deps.githubClientId);
   githubUrl.searchParams.set(
     "redirect_uri",
-    `${IDENTITY_PUBLIC_ORIGIN}/v1/oauth/callback`,
+    `${identityPublicOrigin(deps.publicOrigin, deps.tier)}/v1/oauth/callback`,
   );
   githubUrl.searchParams.set("state", state);
   githubUrl.searchParams.set("code_challenge", await pkceChallenge(verifier));
@@ -456,7 +462,10 @@ async function handleIdentityRequestCore(
     ) {
       return await consumeAssertion(request, deps);
     }
-    if (url.host !== new URL(IDENTITY_PUBLIC_ORIGIN).host) {
+    if (
+      url.host !==
+      new URL(identityPublicOrigin(deps.publicOrigin, deps.tier)).host
+    ) {
       return json(404, { error: "not_found" });
     }
     if (request.method === "POST" && url.pathname === "/v1/oauth/start") {
@@ -500,28 +509,36 @@ async function handleIdentityRequestCore(
 }
 
 // Public product origins only. CLI requests without Origin retain their protocol.
-const WALLET_APP_ORIGINS = new Set([
-  "https://slop.cash",
-  "https://slop.tech",
-  "https://eliza.army",
-]);
-function browserIdentityEndpoint(request: Request): boolean {
+function browserIdentityEndpoint(
+  request: Request,
+  deps: { tier?: DeploymentTier; publicOrigin?: string },
+): boolean {
   const url = new URL(request.url);
   return (
-    url.origin === IDENTITY_PUBLIC_ORIGIN &&
+    url.origin === identityPublicOrigin(deps.publicOrigin, deps.tier) &&
     ["/v1/oauth/start", "/v1/oauth/poll"].includes(url.pathname)
   );
+}
+function browserOrigins(deps: {
+  tier?: DeploymentTier;
+  publicOrigin?: string;
+}): Set<string> {
+  return identityPublicOrigin(deps.publicOrigin, deps.tier) ===
+    deploymentOrigins(deps.tier).identity
+    ? deploymentOrigins(deps.tier).browserOrigins
+    : new Set(["https://staging.slop.cash", "https://slop-staging.pages.dev"]);
 }
 /** Also used by the entrypoint for rate-limit responses before core dispatch. */
 export function identityBrowserResponse(
   request: Request,
   response: Response,
+  deps: { tier?: DeploymentTier; publicOrigin?: string } = {},
 ): Response {
   const origin = request.headers.get("origin");
   if (
-    !browserIdentityEndpoint(request) ||
+    !browserIdentityEndpoint(request, deps) ||
     !origin ||
-    !WALLET_APP_ORIGINS.has(origin)
+    !browserOrigins(deps).has(origin)
   )
     return response;
   const headers = new Headers(response.headers);
@@ -538,8 +555,8 @@ export async function handleIdentityRequest(
   deps: IdentityWorkerDependencies,
 ): Promise<Response> {
   const origin = request.headers.get("origin");
-  if (browserIdentityEndpoint(request) && origin) {
-    if (!WALLET_APP_ORIGINS.has(origin))
+  if (browserIdentityEndpoint(request, deps) && origin) {
+    if (!browserOrigins(deps).has(origin))
       return json(403, { error: "origin_forbidden" });
     if (request.method === "OPTIONS") {
       const requestedHeaders = (
@@ -555,6 +572,7 @@ export async function handleIdentityRequest(
         return identityBrowserResponse(
           request,
           json(403, { error: "preflight_forbidden" }),
+          deps,
         );
       const headers = securityHeaders("text/plain; charset=utf-8");
       headers.set("access-control-allow-methods", "POST");
@@ -566,11 +584,13 @@ export async function handleIdentityRequest(
       return identityBrowserResponse(
         request,
         new Response(null, { status: 204, headers }),
+        deps,
       );
     }
   }
   return identityBrowserResponse(
     request,
     await handleIdentityRequestCore(request, deps),
+    deps,
   );
 }

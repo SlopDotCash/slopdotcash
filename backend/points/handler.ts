@@ -1,4 +1,8 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
+import {
+  type DeploymentTier,
+  deploymentOrigins,
+} from "../../src/lib/deployment";
 import { POINTS_RULE } from "../../src/lib/points";
 import { randomToken, sha256Hex } from "../../workers/identity/crypto";
 import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
@@ -6,18 +10,16 @@ import type { D1Database } from "../trace/cloudflare-persistence";
 import { handleX, type XConfiguration } from "./x";
 
 export interface PointsDependencies {
+  tier?: DeploymentTier;
   db: D1Database;
   rateLimitSecret: string;
   identity: { fetch(request: Request): Promise<Response> };
   now?: () => Date;
+  /** Trusted deployment origins; never request-supplied. */
+  allowedOrigins?: readonly string[];
   x?: XConfiguration;
   xFetch?: (input: string, init: RequestInit) => Promise<Response>;
 }
-const origins = new Set([
-  "https://slop.cash",
-  "https://slop.tech",
-  "https://eliza.army",
-]);
 const cookieName = "__Host-slop_points";
 const headers = {
   "content-type": "application/json; charset=utf-8",
@@ -67,7 +69,13 @@ export async function handlePointsApi(
   const url = new URL(request.url);
   const route = url.pathname.replace("/api/v1/points", "");
   const now = (deps.now?.() ?? new Date()).toISOString();
-  if (!origins.has(url.origin)) return json(403, { error: "origin_forbidden" });
+  if (
+    !new Set([
+      ...deploymentOrigins(deps.tier).browserOrigins,
+      ...(deps.allowedOrigins ?? []),
+    ]).has(url.origin)
+  )
+    return json(403, { error: "origin_forbidden" });
   if (
     request.method !== "GET" &&
     (request.method !== "POST" ||

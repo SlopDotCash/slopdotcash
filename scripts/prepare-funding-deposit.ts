@@ -1,4 +1,4 @@
-/** Trusted-develop evidence preparation. No signer, funding activation or payout. */
+/** Trusted-main evidence preparation. No signer, funding activation or payout. */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
@@ -216,11 +216,11 @@ if (import.meta.main) {
     encoding: "utf8",
   }).trim();
   if (
-    process.env.GITHUB_REF !== "refs/heads/develop" ||
+    process.env.GITHUB_REF !== "refs/heads/main" ||
     process.env.GITHUB_SHA !== revision
   )
     throw new TypeError(
-      "Run funding-deposit preparation from the exact dispatched develop checkout",
+      "Run funding-deposit preparation from the exact dispatched main checkout",
     );
   const request = assertFundingDepositRequest({
     project: process.env.DEPOSIT_PROJECT ?? "",
@@ -240,9 +240,7 @@ if (import.meta.main) {
     { cwd: root },
   );
   if (!manifestBytes.equals(committed))
-    throw new TypeError(
-      "Project working-tree bytes differ from trusted develop",
-    );
+    throw new TypeError("Project working-tree bytes differ from trusted main");
   const result = await createFundingDepositEvidence(request, {
     project,
     manifestRevision: revision,

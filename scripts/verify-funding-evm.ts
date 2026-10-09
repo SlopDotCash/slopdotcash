@@ -14,6 +14,7 @@ import {
 } from "../src/lib/evm-funding";
 import { isFundingAddress } from "../src/lib/funding-address.mjs";
 import { assertFundingBlockTime } from "./funding-block-time";
+import { parseValueArguments } from "./parse-value-arguments";
 
 export const EVM_FUNDING_RPC_AUTHORITIES = {
   base: [
@@ -44,23 +45,11 @@ const CLI_ARGUMENTS = new Set([
 ]);
 
 export function parseEvmFundingArguments(argv: readonly string[]) {
-  const parsed = new Map<string, string>();
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = argv[index];
-    const value = argv[index + 1];
-    if (
-      !name ||
-      !CLI_ARGUMENTS.has(name) ||
-      !value ||
-      value.startsWith("--") ||
-      parsed.has(name)
-    ) {
-      throw new TypeError(
-        "Usage: verify-funding-evm.ts --network <base|ethereum> --transaction <0x-hash> --recipient <0x-address> --amount-minor <integer>",
-      );
-    }
-    parsed.set(name, value);
-  }
+  const parsed = parseValueArguments(
+    argv,
+    CLI_ARGUMENTS,
+    "Usage: verify-funding-evm.ts --network <base|ethereum> --transaction <0x-hash> --recipient <0x-address> --amount-minor <integer>",
+  );
   return {
     network: parsed.get("--network") ?? null,
     transactionHash: parsed.get("--transaction") ?? null,

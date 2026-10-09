@@ -56,10 +56,13 @@ function Address({ label, value }: { label: string; value: string }) {
   );
 }
 
-function useBindings(): Bindings {
+function useBindings(): [Bindings, () => void] {
+  const [attempt, setAttempt] = useState(0);
   const [bindings, setBindings] = useState<Bindings>({ status: "loading" });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry reloads the published index.
   useEffect(() => {
     let active = true;
+    setBindings({ status: "loading" });
     const controller = new AbortController();
     void (async () => {
       const response = await fetch("/data/squads-executions.json", {
@@ -90,17 +93,26 @@ function useBindings(): Bindings {
       active = false;
       controller.abort();
     };
-  }, []);
-  return bindings;
+  }, [attempt]);
+  return [bindings, () => setAttempt((value) => value + 1)];
 }
 
-function BindingState({ bindings }: { bindings: Bindings }): ReactNode {
+function BindingState({
+  bindings,
+  retry,
+}: {
+  bindings: Bindings;
+  retry: () => void;
+}): ReactNode {
   if (bindings.status === "loading")
     return <p role="status">Loading reviewed vault proposals…</p>;
   if (bindings.status === "failed")
     return (
-      <p role="status">
-        Reviewed vault proposals could not be loaded: {bindings.reason}
+      <p role="alert">
+        Reviewed vault proposals could not be loaded: {bindings.reason}{" "}
+        <button type="button" onClick={retry}>
+          Retry
+        </button>
       </p>
     );
   if (bindings.status === "empty")
@@ -122,13 +134,8 @@ function BindingState({ bindings }: { bindings: Bindings }): ReactNode {
   );
 }
 
-export function SettlementVerification({
-  embedded = false,
-}: {
-  embedded?: boolean;
-}) {
-  const Container = embedded ? "section" : "main";
-  const Heading = embedded ? "h2" : "h1";
+/** The How it works payment section; /verification is a compatibility route. */
+export function SettlementVerification() {
   const headingId = useId();
   const addressId = useId();
   const indexId = useId();
@@ -140,7 +147,7 @@ export function SettlementVerification({
   const [multisig, setMultisig] = useState("");
   const [vaultIndex, setVaultIndex] = useState("0");
   const [vault, setVault] = useState<Vault>({ status: "idle" });
-  const bindings = useBindings();
+  const [bindings, retryBindings] = useBindings();
 
   const derive = () => {
     const candidate = address.trim();
@@ -218,13 +225,9 @@ export function SettlementVerification({
   };
 
   return (
-    <Container
-      className={embedded ? "model-outcomes-section" : "shell route-main"}
-      id={embedded ? "verification" : undefined}
-      aria-labelledby={embedded ? undefined : headingId}
-    >
+    <section className="model-outcomes-section" id="verification">
       <section aria-labelledby={headingId} className="funding-workbench">
-        <Heading id={headingId}>Settlement verification</Heading>
+        <h2 id={headingId}>Settlement verification</h2>
         <p>
           Slop does not take your word for a payment, and you do not have to
           take ours. Every monthly execution is bound to one external Squads v4
@@ -232,174 +235,179 @@ export function SettlementVerification({
           from Solana mainnet before anything is described as paid.
         </p>
 
-        <h2>What the verifier checks</h2>
-        <ul>
-          <li>
-            Three fixed mainnet RPC authorities at finalized commitment, with
-            two required to agree. One disagreeing or unavailable endpoint
-            leaves the observation unresolved rather than passing it.
-          </li>
-          <li>
-            The Squads program owner, account discriminators, full Borsh layout,
-            multisig, transaction index, canonical PDAs, vault index and bump,
-            and proposal status.
-          </li>
-          <li>
-            Exactly the approved plan's ordered USDC transfers, including its
-            fee transfer, with exact amounts, source vault authority, and
-            canonical token accounts. A reassigned token account does not pass
-            merely by matching an address.
-          </li>
-          <li>
-            The instruction decoder follows the official Squads v4 Rust layout
-            and is derived from that source rather than trusting an installed
-            SDK. Unknown layouts, malformed vectors, trailing bytes, and
-            unsupported instructions all fail closed.
-          </li>
-        </ul>
-
-        <h2>What it does not establish</h2>
-        <p>
-          A verified instruction match is not approval, not available funding,
-          and not permission to carry an amount forward. A matched plan is not a
-          paid one. Slop holds no key, signs nothing, and broadcasts nothing;
-          the creator signs and broadcasts externally, and settlement is
-          described as paid only once finalized on-chain deltas reconcile
-          exactly.
-        </p>
-
         <h2>Bound proposals today</h2>
-        <BindingState bindings={bindings} />
+        <BindingState bindings={bindings} retry={retryBindings} />
+        <details>
+          <summary>Advanced verification</summary>
+          <h2>What the verifier checks</h2>
+          <ul>
+            <li>
+              Three fixed mainnet RPC authorities at finalized commitment, with
+              two required to agree. One disagreeing or unavailable endpoint
+              leaves the observation unresolved rather than passing it.
+            </li>
+            <li>
+              The Squads program owner, account discriminators, full Borsh
+              layout, multisig, transaction index, canonical PDAs, vault index
+              and bump, and proposal status.
+            </li>
+            <li>
+              Exactly the approved plan's ordered USDC transfers, including its
+              fee transfer, with exact amounts, source vault authority, and
+              canonical token accounts. A reassigned token account does not pass
+              merely by matching an address.
+            </li>
+            <li>
+              The instruction decoder follows the official Squads v4 Rust layout
+              and is derived from that source rather than trusting an installed
+              SDK. Unknown layouts, malformed vectors, trailing bytes, and
+              unsupported instructions all fail closed.
+            </li>
+          </ul>
 
-        <h2>Derive the addresses yourself</h2>
-        <p>
-          The fields below run the verifier's own derivation in your browser.
-          Nothing is sent anywhere. Enter any Solana address to see the
-          canonical USDC associated token account the verifier would require for
-          it, and the Squads v4 proposal address it would derive for a given
-          transaction index. Both are checkable against any explorer.
-        </p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            derive();
-          }}
-        >
-          <label htmlFor={addressId}>Solana address</label>
-          <input
-            autoComplete="off"
-            id={addressId}
-            maxLength={44}
-            name="derivation-address"
-            onChange={(event) => setAddress(event.target.value)}
-            placeholder="Owner wallet or Squads multisig"
-            required
-            spellCheck={false}
-            value={address}
-          />
-          <label htmlFor={indexId}>Squads transaction index</label>
-          <input
-            autoComplete="off"
-            id={indexId}
-            inputMode="numeric"
-            maxLength={19}
-            name="derivation-index"
-            onChange={(event) => setTransactionIndex(event.target.value)}
-            required
-            spellCheck={false}
-            value={transactionIndex}
-          />
-          <button className="button primary-button" type="submit">
-            Derive addresses
-          </button>
-        </form>
+          <h2>What it does not establish</h2>
+          <p>
+            A verified instruction match is not approval, not available funding,
+            and not permission to carry an amount forward. A matched plan is not
+            a paid one. Slop signs and broadcasts no transfer; the creator signs
+            and broadcasts externally. On a 2-of-3 project vault Slop's
+            vote-only key can approve a bound proposal but cannot write or
+            execute one, and an approved cycle without a bound proposal is not
+            approved for payment. Settlement is described as paid only once
+            finalized on-chain deltas reconcile exactly.
+          </p>
 
-        {derivation.status === "invalid" && (
-          <p role="alert">{derivation.reason}</p>
-        )}
-        {derivation.status === "deriving" && <p role="status">Deriving…</p>}
-        {derivation.status === "failed" && (
-          <p role="alert">Derivation failed: {derivation.reason}</p>
-        )}
-        {derivation.status === "derived" && (
-          <div className="funding-routes">
-            <Address label="USDC token account" value={derivation.ata} />
-            <Address label="Squads proposal" value={derivation.proposal} />
-            <p>
-              Proposal bump {derivation.bump}. Derived against Squads v4 program{" "}
-              <code>{SQUADS_V4_PROGRAM_ID}</code> and USDC mint{" "}
-              <code>{SOLANA_MAINNET_USDC_MINT}</code>.
-            </p>
-            <p>
-              A derived address existing on chain does not mean it belongs to a
-              reviewed Slop cycle. Derivation is arithmetic, not authorization.
-            </p>
-          </div>
-        )}
+          <h2>Derive the addresses yourself</h2>
+          <p>
+            The fields below run the verifier's own derivation in your browser.
+            Nothing is sent anywhere. Enter any Solana address to see the
+            canonical USDC associated token account the verifier would require
+            for it, and the Squads v4 proposal address it would derive for a
+            given transaction index. Both are checkable against any explorer.
+          </p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              derive();
+            }}
+          >
+            <label htmlFor={addressId}>Solana address</label>
+            <input
+              autoComplete="off"
+              id={addressId}
+              maxLength={44}
+              name="derivation-address"
+              onChange={(event) => setAddress(event.target.value)}
+              placeholder="Owner wallet or Squads multisig"
+              required
+              spellCheck={false}
+              value={address}
+            />
+            <label htmlFor={indexId}>Squads transaction index</label>
+            <input
+              autoComplete="off"
+              id={indexId}
+              inputMode="numeric"
+              maxLength={19}
+              name="derivation-index"
+              onChange={(event) => setTransactionIndex(event.target.value)}
+              required
+              spellCheck={false}
+              value={transactionIndex}
+            />
+            <button className="button primary-button" type="submit">
+              Derive addresses
+            </button>
+          </form>
 
-        <h2>Check a vault before you commit</h2>
-        <p>
-          If you are considering funding a pool, this is the exact account Slop
-          would watch. Enter the Squads v4 multisig you control and the vault
-          index, and the same derivation the commitment verifier uses will
-          return the vault address and its canonical USDC token account. You can
-          confirm both against your own Squads interface before declaring
-          anything, and Slop never needs a key, a signer seat, or an admin role
-          on that vault to read it.
-        </p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            deriveVault();
-          }}
-        >
-          <label htmlFor={multisigId}>Squads v4 multisig</label>
-          <input
-            autoComplete="off"
-            id={multisigId}
-            maxLength={44}
-            name="vault-multisig"
-            onChange={(event) => setMultisig(event.target.value)}
-            required
-            spellCheck={false}
-            value={multisig}
-          />
-          <label htmlFor={vaultIndexId}>Vault index</label>
-          <input
-            autoComplete="off"
-            id={vaultIndexId}
-            inputMode="numeric"
-            maxLength={3}
-            name="vault-index"
-            onChange={(event) => setVaultIndex(event.target.value)}
-            required
-            spellCheck={false}
-            value={vaultIndex}
-          />
-          <button className="button primary-button" type="submit">
-            Derive vault accounts
-          </button>
-        </form>
+          {derivation.status === "invalid" && (
+            <p role="alert">{derivation.reason}</p>
+          )}
+          {derivation.status === "deriving" && <p role="status">Deriving…</p>}
+          {derivation.status === "failed" && (
+            <p role="alert">Derivation failed: {derivation.reason}</p>
+          )}
+          {derivation.status === "derived" && (
+            <div className="funding-routes">
+              <Address label="USDC token account" value={derivation.ata} />
+              <Address label="Squads proposal" value={derivation.proposal} />
+              <p>
+                Proposal bump {derivation.bump}. Derived against Squads v4
+                program <code>{SQUADS_V4_PROGRAM_ID}</code> and USDC mint{" "}
+                <code>{SOLANA_MAINNET_USDC_MINT}</code>.
+              </p>
+              <p>
+                A derived address existing on chain does not mean it belongs to
+                a reviewed Slop cycle. Derivation is arithmetic, not
+                authorization.
+              </p>
+            </div>
+          )}
 
-        {vault.status === "invalid" && <p role="alert">{vault.reason}</p>}
-        {vault.status === "deriving" && <p role="status">Deriving vault…</p>}
-        {vault.status === "failed" && (
-          <p role="alert">Vault derivation failed: {vault.reason}</p>
-        )}
-        {vault.status === "derived" && (
-          <div className="funding-routes">
-            <Address label="Vault address" value={vault.vault} />
-            <Address label="Vault USDC account" value={vault.tokenAccount} />
-            <p>
-              A committed pool additionally requires a reviewed instrument in
-              the project manifest and deterministic verifier evidence. No
-              project declares one today, so nothing on Slop is currently
-              reporting a verified commitment. Deriving these accounts commits
-              nothing and is not an escrow, a guarantee, or an approval.
-            </p>
-          </div>
-        )}
+          <h2>Check a vault before you commit</h2>
+          <p>
+            If you are considering funding a pool, this is the exact account
+            Slop would watch. Enter the Squads v4 multisig you control and the
+            vault index, and the same derivation the commitment verifier uses
+            will return the vault address and its canonical USDC token account.
+            You can confirm both against your own Squads interface before
+            declaring anything, and Slop never needs a key, a signer seat, or an
+            admin role on that vault to read it.
+          </p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              deriveVault();
+            }}
+          >
+            <label htmlFor={multisigId}>Squads v4 multisig</label>
+            <input
+              autoComplete="off"
+              id={multisigId}
+              maxLength={44}
+              name="vault-multisig"
+              onChange={(event) => setMultisig(event.target.value)}
+              required
+              spellCheck={false}
+              value={multisig}
+            />
+            <label htmlFor={vaultIndexId}>Vault index</label>
+            <input
+              autoComplete="off"
+              id={vaultIndexId}
+              inputMode="numeric"
+              maxLength={3}
+              name="vault-index"
+              onChange={(event) => setVaultIndex(event.target.value)}
+              required
+              spellCheck={false}
+              value={vaultIndex}
+            />
+            <button className="button primary-button" type="submit">
+              Derive vault accounts
+            </button>
+          </form>
+
+          {vault.status === "invalid" && <p role="alert">{vault.reason}</p>}
+          {vault.status === "deriving" && <p role="status">Deriving vault…</p>}
+          {vault.status === "failed" && (
+            <p role="alert">Vault derivation failed: {vault.reason}</p>
+          )}
+          {vault.status === "derived" && (
+            <div className="funding-routes">
+              <Address label="Vault address" value={vault.vault} />
+              <Address label="Vault USDC account" value={vault.tokenAccount} />
+              <p>
+                A committed pool additionally requires a reviewed instrument in
+                the project manifest and deterministic verifier evidence. No
+                project declares one today, so nothing on Slop is currently
+                reporting a verified commitment. Deriving these accounts commits
+                nothing and is not an escrow, a guarantee, or an approval.
+              </p>
+            </div>
+          )}
+        </details>
       </section>
-    </Container>
+    </section>
   );
 }

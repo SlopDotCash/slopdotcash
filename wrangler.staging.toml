@@ -1,0 +1,31 @@
+name = "slop-staging"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-07-30"
+
+[vars]
+PUBLIC_SITE_URL = "https://staging.slop.cash"
+SLOP_ENVIRONMENT = "staging"
+
+[[d1_databases]]
+binding = "SLOP_DB"
+database_name = "slop-staging"
+database_id = "6fcddcc1-f3d7-4175-bdde-09afddd53a8a"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "PRIVATE_TRACES"
+bucket_name = "slop-staging-traces"
+
+[[services]]
+binding = "SLOP_IDENTITY"
+service = "slop-identity-staging"
+
+# Only the protected development release gets test backend bindings.
+[env.preview]
+d1_databases = []
+r2_buckets = []
+services = []
+
+[env.preview.vars]
+PUBLIC_SITE_URL = "https://staging.slop.cash"
+SLOP_ENVIRONMENT = "staging"

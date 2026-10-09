@@ -111,7 +111,15 @@ Slop uses precise financial states:
 
 Project owners keep control of their funds and sign payments outside Slop.
 Slop does not create wallets, custody assets, hold keys, or broadcast
-transactions. A 1% platform fee applies only when an approved payout is paid.
+transactions, except for one key on the opt-in `squads-project-vault`
+instrument (RFC #500). For that instrument only:
+
+> Slop holds one of three keys on a project vault. That key can vote on a
+> payout the creator proposed. It cannot propose a transfer, execute one,
+> change the signers, or act alone. Slop holds no customer balance, takes no
+> fee from the vault, and never broadcasts a transfer of vault funds.
+
+A 1% platform fee applies only when an approved payout is paid.
 
 ## Repository architecture
 
@@ -168,7 +176,7 @@ and produces the static build.
 GitHub is the write-master for project work and policy. Cloudflare Pages serves
 the tested static build at [slop.cash](https://slop.cash) and
 [slop.tech](https://slop.tech). Production deploys only from the exact tested
-`develop` commit through the protected GitHub Actions environment. A merge is
+`main` commit through the protected GitHub Actions environment. A merge is
 not proof of deployment; release evidence must match the deployed bytes, DNS,
 TLS, and security headers.
 
@@ -189,12 +197,19 @@ Slop is experimental software. The repository is licensed under the
 
 ### Focused maintenance commands
 
+`bun run prepare:publication` runs site packaging, points generation and profile
+publication in order. Development and production builds use this same entrypoint.
+Offline profile builds read `data/profiles/seed.json`. To use a captured census,
+set `SLOP_PROFILES_INPUT` to its path. Trusted CI sets that path to the live census
+it generated earlier. A missing declared input stops publication; leftover public
+files never select the source.
+
+`bun run verify:contracts` and `bun run verify:code` are shared by local verification
+and CI. The former checks source records; the latter checks types, formatting,
+lint and tests. Live chain verification and browser checks remain separate.
+
 - `bun run check:unused` checks application locals and parameters; review exports,
   generated entry points, CLI tools, and configuration before removing dependencies.
-- `bun run test:evidence` runs the planted evidence-verifier failure cases.
-- `bun run test:coverage` produces branch-coverage reports for core domain boundaries
-  under `coverage/`. Use uncovered behavior to investigate meaningful risks, not
-  to create shape-only tests or score-padding submissions.
 - `bun run quality:simulate -- PREPARATION EVIDENCE PROPOSAL OUTPUT` recalculates
   a saved quality proposal against its exact source and budget. It creates a new
   output file and never authorizes payments or trusts imported output amounts.
@@ -209,3 +224,20 @@ successful screenshots and results as well as failure diagnostics. Tests use
 finite per-case budgets; pure domain tests run in Node, while shared publication
 fixtures remain serial. `bun run verify` remains the complete local source gate;
 run `bun run test:e2e` separately for the full browser matrix.
+
+## Release environments
+
+`development` serves [staging](https://staging.slop.cash), including an isolated
+login and write backend. `main` serves [production](https://slop.cash). See
+[release environments](docs/release-environments.md) for setup, promotion, and
+acceptance requirements.
+
+## Base and Solana escrow migration
+
+The new escrow protocol is being qualified separately from legacy payouts.
+Projects select one chain. A gross 100-USDC award pays 98 to the contributor
+and 2 in fees. Unused escrow withdrawals incur 10%, while funded unpaid awards
+remain reserved until their recipients register a wallet. GitHub remains the
+only login. See [the approved MVP](docs/payouts-mvp.md) for the authority model,
+acceptance tests and deployment gates. Existing project payment history and
+production activation are not changed by adding this implementation.

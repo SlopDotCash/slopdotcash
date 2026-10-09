@@ -52,11 +52,11 @@ env:
 
 jobs:
   transition:
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Checkout immutable trusted develop
+      - name: Checkout immutable trusted main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -66,7 +66,7 @@ jobs:
       - name: Verify trusted checkout
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = 'refs/heads/develop'
+          test "$GITHUB_REF" = 'refs/heads/main'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Setup Node.js
@@ -178,13 +178,13 @@ jobs:
               )
           if action == "prepare-settlement":
               detail = (
-                  "Releases only the exact unsigned plan reserved on canonical develop. The existing CLI authenticates reservation and policy history, "
+                  "Releases only the exact unsigned plan reserved on canonical main. The existing CLI authenticates reservation and policy history, "
                   "rechecks live finalized vault funding and current signer access, and refuses stale or mismatched reservations. "
                   "Vault and fee destinations come from canonical reserved inputs; none are supplied by the requester. No transaction is signed or broadcast."
               )
           body = (
               f"{detail}\n\nProject/month: {result['project']}/{result['cycle']}\n"
-              f"Exact source SHA-256: {result['sourceSha256']}\nTrusted develop SHA: {os.environ['GITHUB_SHA']}\n\n"
+              f"Exact source SHA-256: {result['sourceSha256']}\nTrusted main SHA: {os.environ['GITHUB_SHA']}\n\n"
               f"Exact source files, outputs and SHA256SUMS: {os.environ['ARTIFACT_URL']}\n\n"
               "No transaction was signed or broadcast by this workflow. Review and merge remain required. "
               "Artifact downloads may require GitHub sign-in and expire after 90 days; retain them for review.\n"
@@ -196,6 +196,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -F evidence/cycle-action-title.txt
           git push --set-upstream origin "$branch"
-          gh pr create --draft --base develop --head "$branch" \
+          gh pr create --draft --base main --head "$branch" \
             --title "$(cat evidence/cycle-action-title.txt)" \
             --body-file evidence/cycle-action-pr.md

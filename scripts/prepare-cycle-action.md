@@ -1,6 +1,6 @@
 # Exact-source cycle actions
 
-`reward-cycle-actions.yml` runs on trusted `develop` and opens draft PRs. It never
+`reward-cycle-actions.yml` runs on trusted `main` and opens draft PRs. It never
 signs or broadcasts a transaction. `propose` requires one project and a complete
 snapshot whose exact SHA-256 matches that project's reviewed preparation. It
 also requires enabled payments, a positive canonical cycle cap backed by the
@@ -18,7 +18,7 @@ artifacts before their Actions retention expires.
 
 ## Local exact-source fallback
 
-Run in a clean, scoped checkout of current trusted `develop` with the exact source
+Run in a clean, scoped checkout of current trusted `main` with the exact source
 file available. The local adapter uses the same gates and lifecycle CLI as the
 workflow. It cannot bypass funding readiness, prior-cycle policy, or review rules.
 
@@ -65,7 +65,7 @@ No canonical cycle file or execution plan may be created or changed by this step
 The draft PR includes exact allocation bytes and before/after ledger evidence.
 
 Only after the trusted reservation gate passes and maintainers merge that PR on
-canonical `develop` can `prepare-settlement` release the exact reserved plan in
+canonical `main` can `prepare-settlement` release the exact reserved plan in
 its own PR. Both actions bind `source_sha256` to the approved allocation and accept
 no caller-selected destination, fee wallet, timestamp or reservation override.
 Neither action signs or sends a transaction.

@@ -88,6 +88,14 @@ async function showMonth(
   await expect(month).toHaveValue(cycleId);
 }
 
+async function openRecipient(page: Page, login: string) {
+  const panel = page.locator(".funding-workbench");
+  await panel.getByLabel("Find contributor").fill(login);
+  const toggle = panel.getByRole("button", { name: `Details for ${login}` });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true")
+    await toggle.click();
+}
+
 async function downloadedReview(page: Page) {
   const [download] = await Promise.all([
     page.waitForEvent("download"),
@@ -173,16 +181,18 @@ test("published July proposal overrides competing preparation amounts and locks 
     reviews: [...reviews.reviews, competing],
   });
   await routeIndexes(page, fixture, cycles);
-  await page.goto("/projects/eliza/funding");
+  await page.goto("/projects/eliza/funding#payouts");
   const panel = page.locator(".funding-workbench");
   await panel.getByLabel("Contribution month").selectOption(july.cycleId);
-  await expect(panel).toContainText("Published cycle records are shown below");
-  await panel.getByLabel("Find contributor").fill(locked.actor.login);
-  const row = panel.locator("tbody tr").filter({
+  await expect(panel).toContainText("Published cycle records.");
+  await openRecipient(page, locked.actor.login);
+  const summary = panel.locator(".recipient-row").filter({
     has: page.getByRole("link", { name: locked.actor.login, exact: true }),
   });
-  await expect(row).toHaveCount(1);
-  await expect(row).toContainText(`Locked for ${july.cycleId}`);
+  await expect(summary).toHaveCount(1);
+  await expect(summary).toContainText(`Locked for ${july.cycleId}`);
+  await expect(summary).not.toContainText("Missing registration");
+  const row = panel.locator(".recipient-details");
   await expect(row.locator(".wallet-address")).toHaveText(
     locked.wallet.address,
   );
@@ -212,13 +222,16 @@ test("failed cycle fetch keeps preparation visible but disables review download 
       json: { error: "Test-only cycle service unavailable" },
     }),
   );
-  await page.goto("/projects/eliza/funding");
+  await page.goto("/projects/eliza/funding#payouts");
   const panel = page.locator(".funding-workbench");
   await expect(panel.getByLabel("Contribution month")).toHaveValue(
     august.cycleId,
   );
-  await expect(panel.locator("tbody tr")).toHaveCount(
-    august.contributors.length,
+  await expect(panel.locator(".recipient-row")).toHaveCount(
+    Math.min(25, august.contributors.length),
+  );
+  await expect(panel).toContainText(
+    `of ${august.contributors.length} matching`,
   );
   await expect(panel).toContainText("Published cycle state is unavailable");
   await expect(panel).toContainText("Lock status unavailable");
@@ -256,10 +269,10 @@ test("switching contribution months clears the previous amount, reason and inval
   const previous = july.contributors.find((r) => r.actor.id === actor.actor.id);
   if (!previous) throw new Error("Missing July contributor");
   await routeIndexes(page, reviews, cycles);
-  await page.goto("/projects/eliza/funding");
+  await page.goto("/projects/eliza/funding#payouts");
   const panel = page.locator(".funding-workbench");
   await showMonth(page, reviews, cycles, august.cycleId);
-  await panel.getByLabel("Find contributor").fill(actor.actor.login);
+  await openRecipient(page, actor.actor.login);
   const amount = panel.getByLabel(`USDC for ${actor.actor.login}`, {
     exact: true,
   });
@@ -276,9 +289,11 @@ test("switching contribution months clears the previous amount, reason and inval
     panel.getByRole("button", { name: "Download review", exact: true }),
   ).toBeDisabled();
   await panel.getByLabel("Contribution month").selectOption(july.cycleId);
+  await openRecipient(page, actor.actor.login);
   await expect(amount).toHaveValue(displayUsdc(previous.suggestedMinor));
   await expect(reason).toHaveValue("");
   await panel.getByLabel("Contribution month").selectOption(august.cycleId);
+  await openRecipient(page, actor.actor.login);
   await expect(amount).toHaveValue(displayUsdc(actor.simulatedMinor));
   await expect(reason).toHaveValue("");
   await expect(
@@ -307,10 +322,10 @@ test("saved drafts restore only for the exact project, month, source and budget"
   await page.route("**/data/funding-reviews.json*", (route) =>
     route.fulfill({ json: currentReviews }),
   );
-  await page.goto("/projects/eliza/funding");
+  await page.goto("/projects/eliza/funding#payouts");
   const panel = page.locator(".funding-workbench");
   await showMonth(page, reviews, cycles, august.cycleId);
-  await panel.getByLabel("Find contributor").fill(actor.actor.login);
+  await openRecipient(page, actor.actor.login);
   const amount = panel.getByLabel(`USDC for ${actor.actor.login}`, {
     exact: true,
   });
@@ -332,7 +347,7 @@ test("saved drafts restore only for the exact project, month, source and budget"
   await expect(panel).toContainText(
     "Saved draft restored for this exact source and budget",
   );
-  await panel.getByLabel("Find contributor").fill(actor.actor.login);
+  await openRecipient(page, actor.actor.login);
   await expect(amount).toHaveValue("0.000001");
   await expect(reason).toHaveValue("Test-only saved reduction");
   const restored = await downloadedReview(page);
@@ -354,7 +369,7 @@ test("saved drafts restore only for the exact project, month, source and budget"
   });
   await page.reload();
   await showMonth(page, currentReviews, cycles, august.cycleId);
-  await panel.getByLabel("Find contributor").fill(actor.actor.login);
+  await openRecipient(page, actor.actor.login);
   await expect(amount).toHaveValue(displayUsdc(actor.simulatedMinor));
   await expect(reason).toHaveValue("");
   await expect(panel).not.toContainText("Saved draft restored");

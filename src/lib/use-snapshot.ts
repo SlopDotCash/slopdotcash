@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { readBoundedJson } from "./browser-json";
+import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import { assertCycleIndex, type CycleIndex } from "./cycle-index";
 import {
   assertLeaderboardSnapshot,
@@ -51,11 +51,11 @@ export function useSnapshot(enabled: boolean): [DataState, () => void] {
           signal: requestController.signal,
         };
         const [response, cycleResponse] = await Promise.all([
-          fetch(
+          fetchWithDeadline(
             `/data/leaderboard.json?attempt=${attempt}&retry=${retry}`,
             request,
           ),
-          fetch(
+          fetchWithDeadline(
             `/data/cycles/index.json?attempt=${attempt}&retry=${retry}`,
             request,
           ),

@@ -1,4 +1,4 @@
-/** Runs only from trusted develop. PR objects are data, never executable input. */
+/** Runs only from trusted main. PR objects are data, never executable input. */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile } from "node:fs/promises";
@@ -58,12 +58,10 @@ export async function mergeVerifiedFunding(): Promise<void> {
     !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ||
     !token ||
     !log ||
-    process.env.GITHUB_REF !== "refs/heads/develop" ||
+    process.env.GITHUB_REF !== "refs/heads/main" ||
     process.env.SLOP_FUNDING_AUTOMERGE_ENABLED !== "true"
   ) {
-    throw new Error(
-      "Trusted develop workflow and explicit activation required",
-    );
+    throw new Error("Trusted main workflow and explicit activation required");
   }
   const git = (...args: string[]) =>
     execFileSync("git", ["--no-replace-objects", ...args], {
@@ -97,13 +95,13 @@ export async function mergeVerifiedFunding(): Promise<void> {
   const guard = async (number: number, headSha: string) => {
     const pr = await api<PullRequest>(`${prefix}/pulls/${number}`);
     const branch = await api<{ object: { sha: string } }>(
-      `${prefix}/git/ref/heads/develop`,
+      `${prefix}/git/ref/heads/main`,
     );
     if (
       branch.object.sha !== baseSha ||
       pr.base.sha !== baseSha ||
       pr.head.sha !== headSha ||
-      pr.base.ref !== "develop" ||
+      pr.base.ref !== "main" ||
       pr.base.repo.full_name !== repository ||
       pr.state !== "open" ||
       pr.merged ||
@@ -153,7 +151,7 @@ export async function mergeVerifiedFunding(): Promise<void> {
     });
     if (result.errors?.length) throw new Error("GitHub authority query failed");
     const authority = result.data.repository;
-    if (authority.defaultBranchRef.name !== "develop")
+    if (authority.defaultBranchRef.name !== "main")
       throw new Error("Default branch changed");
     assertFundingMergeProtection(
       authority.defaultBranchRef.branchProtectionRule,
@@ -220,7 +218,7 @@ export async function mergeVerifiedFunding(): Promise<void> {
   };
 
   const candidates = await api<PullRequest[]>(
-    `${prefix}/pulls?state=open&base=develop&sort=created&direction=asc&per_page=100`,
+    `${prefix}/pulls?state=open&base=main&sort=created&direction=asc&per_page=100`,
   );
   if (candidates.length >= 100) throw new Error("Open PR inventory truncated");
   for (const candidate of candidates) {
@@ -308,9 +306,9 @@ export async function mergeVerifiedFunding(): Promise<void> {
         decisionHash,
       });
       // GITHUB_TOKEN merges do not trigger push workflows. Dispatch the normal
-      // develop workflow explicitly; its designated production reviewer remains.
+      // main workflow explicitly; its designated production reviewer remains.
       await api(`${prefix}/actions/workflows/deploy.yml/dispatches`, "POST", {
-        ref: "develop",
+        ref: "main",
       });
       await evidence({ number, productionWorkflowDispatched: true });
       return; // One merge per run: never reuse verification across a new base.

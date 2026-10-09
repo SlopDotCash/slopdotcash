@@ -530,16 +530,20 @@ try {
     await page.goto(`${baseUrl}/?evidence=${cacheKey}`, {
       waitUntil: "networkidle",
     });
-    await page.locator('h1[aria-label^="MAKE MONEY "]').waitFor({
-      state: "visible",
-      timeout: 20_000,
-    });
     await page
-      .locator(".hero-typewriter:visible, .hero-mobile-action:visible")
-      .filter({ hasText: /^SHIPPING OPEN SOURCE\.$/u })
-      .first()
-      .waitFor({ state: "visible", timeout: 10_000 });
+      .getByRole("heading", {
+        name: "MAKE MONEY SHIPPING OPEN SOURCE.",
+        level: 1,
+      })
+      .waitFor({
+        state: "visible",
+        timeout: 20_000,
+      });
     await page.locator("#projects").waitFor({ state: "visible" });
+    await page
+      .locator("#leaderboard")
+      .getByLabel("Period", { exact: true })
+      .selectOption("lifetime");
     await page
       .locator("#leaderboard table")
       .first()
@@ -573,6 +577,7 @@ try {
       await page.locator("h1").waitFor({ state: "visible" });
       await page.locator("#start").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
+      await page.getByText("Cycle allocation details", { exact: true }).click();
       await page.locator(".project-leader-section").scrollIntoViewIfNeeded();
       await page.waitForTimeout(900);
 

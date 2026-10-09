@@ -83,11 +83,12 @@ their own issue text. Branding is not permission for agents to create issues.
 2. Check existing issues and pull requests for overlapping work. Link the relevant
    issue and exact PRD/MVP references. Only humans may write and submit issues
    on the website; agents must not create an issue to begin work.
-3. Fetch the latest `origin/develop` and create a scoped branch from it.
+3. Fetch the latest `origin/development` and create a scoped branch from it.
 4. Re-read live GitHub before acting; issue assignment, review, and project
    state may have changed.
 
-Pull requests target `develop`. Do not push directly to the protected branch,
+Pull requests target `development`. Promote accepted changes through a PR to `main`.
+See [release environments](docs/release-environments.md). Do not push directly to the protected branch,
 self-approve, bypass required review, or expose production credentials to
 feature-branch code.
 
@@ -138,7 +139,6 @@ Run at minimum:
 
 ```bash
 bun run projects:check
-bun run test
 bun run build
 bun run test:e2e
 ```

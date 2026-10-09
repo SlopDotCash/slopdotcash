@@ -8,7 +8,7 @@ never makes public funding accessibility true.
 ## Operator prerequisites
 
 Deploy the trusted reservation workflow and verifier before activation. Configure
-classic protection on canonical `SlopDotCash/slopdotcash` `develop`: strict
+classic protection on canonical `SlopDotCash/slopdotcash` `main`: strict
 up-to-date PR checks requiring `Trusted payment reservation gate` from the verified
 GitHub Actions app, approving review with stale dismissal and last-push approval,
 resolved conversations, admin enforcement, no review bypass, force push or deletion.
@@ -29,8 +29,11 @@ payments.
 The checkpoint is a reviewed trust root in verifier code, never a CLI argument,
 candidate manifest, or environment assertion.
 
-The loader rejects shallow history, requires continuous two-parent develop merges
+The loader rejects shallow history, requires continuous two-parent canonical merges
 since that checkpoint, and replays every policy/allocation/reservation transition.
+Current merges target `main`. Historical `develop` merges are accepted only
+when they are ancestors of the immutable branch-migration checkpoint
+`2b1ec5089d03d2b6413ce5475cbccaab63005daf`.
 For each merge it also verifies the actual successful `pull_request_target` run
 with a receipt bound to the exact first-parent base, the pinned workflow bytes, successful named job,
 and a digest-checked workflow receipt binding PR number, base, head, run and attempt.
@@ -99,7 +102,10 @@ project.
 1. Review a project manifest with optional `funding.freshCyclePaymentPolicy`:
    `schemaVersion: "1"`, `kind: "fresh-cycle-payment-policy"`, `projectId`, exact
    `cycleId`, truthful UTC `effectiveAt`, bounded UTC `planningExpiresAt`,
-   `instrumentSha256`, and the fixed reviewed `feeRecipient`. The instrument hash
+   `instrumentSha256`, and the fixed reviewed `feeRecipient`. On Solana,
+   `feeRecipient` must be Slop's published Solana fee recipient
+   `9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY` (owner decision, 9 October
+   2026). The schema refuses any other address. The instrument hash
    is SHA-256 of compact JSON of the strict normalized reviewed Squads instrument.
    Enable the monthly pool only with this policy and its exact active instrument.
    Additive review budgets are outside this mode.
@@ -130,8 +136,49 @@ project.
    checks fresh finalized quorum observations of configuration and token balance,
    and requires principal plus fee coverage. Both members vote; collectively they
    must also be able to propose and execute. Permissions 3/6 or 7/2 suffice.
+   On a `squads-project-vault` the plan carries no fee transfer and coverage is
+   principal only; the fee is the creator's separate transfer (RFC #500 s.8).
+   Its observation also carries the creator multisig, the shape must be masks
+   7/2/6 at threshold 2 with the manifest's time lock and no config authority,
+   and the current signers are the creator and the independent signer
+   (`funding/README.md`, "Signer capability on a project vault").
    Local output creation is exclusive; identical bytes are an idempotent retry,
    conflicting bytes cannot be overwritten. No new intent is generated on retry.
+
+### Base streams (RFC #472)
+
+On 8 October 2026 the repository owner approved Base as a settlement network
+and chose this release policy. A project with `reward.chain: "base"` uses the
+same four steps with a Base Sablier Lockup v4 stream instead of a Squads vault:
+
+- The policy's instrument is the one active monthly Base stream. It must name
+  a reviewed `recipientGithub` (actor ID, node ID, login) for its `recipient`.
+  `instrumentSha256` binds that normalized stream object.
+- `feeRecipient` must be Slop's published Base fee recipient
+  `0x8f77c37d8650776bfe73c9b12b15209ee15d9b86` (lowercase canonical form). The
+  schema refuses any other Base address. On 9 October 2026 the owner replaced
+  the 8 October recipient `0xb7b0d5e45016d6d31629d9ab375df770fd2aaf77`. That
+  address is retired.
+- The reservation `instrumentId` is `sablier-lockup-v4:base:<contract>:<stream>`.
+  The reserved plan is a `base-usdc-transfer-plan` whose source is the stream
+  recipient. The fee is a separate transfer in the same plan.
+- The only signer role is `recipient`. It must be current, with an EIP-191
+  proof (`protocol/signer-access-attestations.md`). Loss blocks new plans.
+- Release readiness queries the three fixed Base RPC authorities. Two must
+  agree, at their finalized blocks, that the stream uses Base USDC, pays the
+  exact recipient, is non-cancelable and was not canceled; that the recipient
+  has no contract code; and that the recipient's USDC balance covers principal
+  plus fee. The canonical verified commitment ledger must also cover principal
+  plus fee.
+- `rewards:verify-settlement` proves each Base transaction hash through the
+  same quorum (12 confirmations) and accepts only exact deltas. Hashes cannot
+  be reused across cycles.
+
+The owner accepted that a Base reservation is bookkeeping only once the
+recipient withdraws the funds: a single key then controls them, and Slop cannot
+stop that key from spending elsewhere. A contract recipient (for example a
+Safe) is refused until a separate reviewed proof method exists. No project uses
+Base today and no payment is enabled.
 
 Distinct monthly instruments keep truthful later replacement timestamps. Window
 overlap remains forbidden within the same exact month. Retired unscoped

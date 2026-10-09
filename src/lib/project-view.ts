@@ -75,7 +75,7 @@ export type ProjectRewardProjection =
   | {
       kind: "monthly-pool";
       currency: "USDC";
-      chain: "solana";
+      chain: "solana" | "base";
       capMinor: string;
       projectedPrincipalMinor: string;
       platformFeeMinor: string;
@@ -197,46 +197,6 @@ function opportunityPointsWithinCap(
   return opportunity.potentialPoints;
 }
 
-export function formatCapUsageLine(capUsage: CapUsageStatus): string | null {
-  const parts: string[] = [];
-  if (capUsage.mergedPullRequests.used > 0) {
-    parts.push(
-      capUsage.mergedPullRequests.cap === null
-        ? `merges ${capUsage.mergedPullRequests.used} uncapped`
-        : `merges ${capUsage.mergedPullRequests.used}/${capUsage.mergedPullRequests.cap}`,
-    );
-  }
-  if (capUsage.resolvedIssues.used > 0) {
-    parts.push(
-      `issues ${capUsage.resolvedIssues.used}/${capUsage.resolvedIssues.cap}`,
-    );
-  }
-  if (capUsage.materialTestChanges.used > 0) {
-    parts.push(
-      `tests ${capUsage.materialTestChanges.used}/${capUsage.materialTestChanges.cap}`,
-    );
-  }
-  if (capUsage.evidencePoints.used > 0) {
-    parts.push(
-      `evidence ${capUsage.evidencePoints.used}/${capUsage.evidencePoints.cap}`,
-    );
-  }
-  if (capUsage.substantiveReviews.used > 0) {
-    parts.push(
-      `reviews ${capUsage.substantiveReviews.used}/${capUsage.substantiveReviews.cap}`,
-    );
-  }
-  if (capUsage.evaluatedContributions.used > 0) {
-    parts.push(
-      `evaluated ${capUsage.evaluatedContributions.used}/${capUsage.evaluatedContributions.cap}`,
-    );
-  }
-  if (parts.length === 0) {
-    return null;
-  }
-  return `${capUsage.month} scoring · ${parts.join(" · ")}`;
-}
-
 function cycleBounds(cycleId: string): { from: number; to: number } {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
     throw new TypeError(`Invalid reward cycle id: ${cycleId}`);
@@ -263,7 +223,7 @@ function emptyUsage(): ProjectUsageSummary {
   };
 }
 
-function allocateIntegerTotal(
+export function allocateIntegerTotal(
   total: bigint,
   contributors: readonly ProjectContributor[],
 ): Map<string, bigint> {
@@ -530,8 +490,11 @@ export function createProjectView(
     AllocationFundingBasis,
     "fundingState" | "committedMinor" | "monthlyCapMinor"
   >,
+  archivedProject?: ProjectDefinition,
 ): ProjectView {
-  const project = findProject(projectId);
+  const project = archivedProject ?? findProject(projectId);
+  if (project && project.id !== projectId)
+    throw new Error("Archived project identity mismatch");
   if (!project) throw new TypeError(`Unknown project: ${projectId}`);
   if (
     project.repositories.some(
@@ -668,6 +631,10 @@ export function createProjectView(
     const monthlyCapMinor = allocationFundingMinor(
       fundingBasis ?? deriveAllocationFundingBasis(project, cycleId),
     );
+    const escrow =
+      project.escrow && cycleId >= project.escrow.effectiveCycle
+        ? project.escrow
+        : undefined;
     const projected = allocateIntegerTotal(monthlyCapMinor, leaders);
     const projectedCents = allocateIntegerTotal(
       monthlyCapMinor / 10_000n,
@@ -686,21 +653,38 @@ export function createProjectView(
         (simulatedCents.get(entry.actor.id) ?? 0n) * 10_000n
       ).toString();
       entry.projectedMinor = (projected.get(entry.actor.id) ?? 0n).toString();
+      if (escrow) {
+        // New escrow projections are recipient net, never gross plus a fee.
+        const net = (gross: string) =>
+          (BigInt(gross) - BigInt(gross) / 50n).toString();
+        entry.simulatedMinor = net(entry.simulatedMinor);
+        entry.simulatedDisplayMinor = entry.simulatedMinor;
+        entry.projectedMinor = net(entry.projectedMinor);
+      }
       entry.projectedDisplayMinor = (
         (projectedCents.get(entry.actor.id) ?? 0n) * 10_000n
       ).toString();
+      if (escrow) entry.projectedDisplayMinor = entry.projectedMinor;
     }
     reward = {
       kind: "monthly-pool",
       currency: "USDC",
-      chain: "solana",
+      chain: escrow?.chain ?? "solana",
       capMinor,
       projectedPrincipalMinor: [...projected.values()]
-        .reduce((total, amount) => total + amount, 0n)
+        .reduce(
+          (total, amount) => total + (escrow ? amount - amount / 50n : amount),
+          0n,
+        )
         .toString(),
-      platformFeeMinor: (
-        (monthlyCapMinor * BigInt(project.reward.feeBasisPoints)) /
-        10_000n
+      platformFeeMinor: (escrow
+        ? [...projected.values()].reduce(
+            (total, amount) => total + amount / 50n,
+            0n,
+          )
+        : (monthlyCapMinor *
+            BigInt(project.escrow ? 100 : project.reward.feeBasisPoints)) /
+          10_000n
       ).toString(),
       status: "simulation",
     };

@@ -317,20 +317,20 @@ def pull_matches_repository_contract(pull, revision, *, require_open, require_la
         and pull.get("draft") is False
         and head.get("sha") == revision
         and head_repository.get("full_name") == github_repository
-        and base.get("ref") == "develop"
+        and base.get("ref") == "main"
         and base_repository.get("full_name") == github_repository
         and (not require_label or release_label in label_names)
     )
 
 
 def develop_head():
-    response = api_json(f"/repos/{github_repository}/git/ref/heads/develop")
-    if not isinstance(response, dict) or response.get("ref") != "refs/heads/develop":
-        raise ValueError("GitHub develop ref response has the wrong identity")
+    response = api_json(f"/repos/{github_repository}/git/ref/heads/main")
+    if not isinstance(response, dict) or response.get("ref") != "refs/heads/main":
+        raise ValueError("GitHub main ref response has the wrong identity")
     target = response.get("object")
     if not isinstance(target, dict) or target.get("type") != "commit":
-        raise ValueError("GitHub develop ref does not resolve to a commit")
-    return require_sha(target.get("sha"), "GitHub develop head")
+        raise ValueError("GitHub main ref does not resolve to a commit")
+    return require_sha(target.get("sha"), "GitHub main head")
 
 
 def authorize_revision(revision, canonical_files):
@@ -366,15 +366,15 @@ def authorize_revision(revision, canonical_files):
         if not approved:
             raise ValueError("release-candidate approval is not bound to the current pull-request head")
         if not compare_is_ancestor(current_develop, revision):
-            raise ValueError("release candidate is behind or divergent from current develop")
+            raise ValueError("release candidate is behind or divergent from current main")
         return {"kind": "candidate", "develop": current_develop, "pull": approved[0]}
     if compare_is_ancestor(revision, current_develop):
         current_files = remote_skill_bytes(current_develop)
         if current_files == canonical_files:
             return {"kind": "develop", "develop": current_develop}
-        raise ValueError(f"installed skill bytes differ from current develop {current_develop}; install the current skill")
+        raise ValueError(f"installed skill bytes differ from current main {current_develop}; install the current skill")
     raise ValueError(
-        "archive revision is neither the current canonical develop skill nor an open labeled same-repository release candidate"
+        "archive revision is neither the current canonical main skill nor an open labeled same-repository release candidate"
     )
 
 

@@ -1,11 +1,17 @@
 /**
- * Resolves a Solana wallet marker from a canonical Slop claim issue or an
- * immutable revision of the contributor's public profile README. API responses
- * are bounded and every source is rebound to the exact GitHub actor.
+ * Resolves the contributor's wallet on one settlement network from the Slop
+ * wallet registry or an immutable revision of the contributor's public profile
+ * README. Each network has its own claim lineage; a claim on another network
+ * never substitutes. API responses are bounded and every source is rebound to
+ * the exact GitHub actor.
  */
 
 import type { WalletProof } from "../src/lib/rewards";
-import { isSolanaAddress, parsePublishedWallet } from "../src/lib/wallets";
+import {
+  isWalletAddress,
+  parsePublishedWallets,
+  type WalletChain,
+} from "../src/lib/wallets";
 
 const API_ORIGIN = "https://api.github.com";
 const WALLET_AUTHORITY = "https://api.slop.cash";
@@ -228,10 +234,12 @@ async function fetchRegistryWallet(
   sourceActorId: string,
   login: string,
   observedAt: string,
+  chain: WalletChain,
   fetchImpl: FetchLike,
 ): Promise<WalletProof | null> {
+  // Solana keeps the original route; the registry defaults it to Solana.
   const response = await registryJson(
-    `/api/v1/wallet-claims/actors/${githubNumericId}/current`,
+    `/api/v1/wallet-claims/actors/${githubNumericId}/current${chain === "solana" ? "" : `?chain=${chain}`}`,
     fetchImpl,
   );
   if (response === null) return null;
@@ -243,7 +251,8 @@ async function fetchRegistryWallet(
     claim.githubActorId !== githubNumericId ||
     typeof claim.githubLogin !== "string" ||
     claim.githubLogin.toLowerCase() !== login.toLowerCase() ||
-    !isSolanaAddress(claim.address) ||
+    (claim.chain ?? "solana") !== chain ||
+    !isWalletAddress(chain, claim.address) ||
     !["d1_registry", "github_issue", "profile_readme"].includes(
       String(claim.source),
     ) ||
@@ -258,8 +267,8 @@ async function fetchRegistryWallet(
     throw new TypeError("Slop wallet registry claim is invalid");
   }
   return {
-    address: claim.address,
-    chain: "solana",
+    address: claim.address as string,
+    chain,
     observedAt,
     sourceActorId,
     sourceClaimId: claim.claimId,
@@ -273,8 +282,9 @@ export async function fetchPublishedGithubWallet(
   actorIdInput: string,
   loginInput: string,
   observedAt: string,
-  options: { fetch?: FetchLike; token?: string } = {},
+  options: { chain?: WalletChain; fetch?: FetchLike; token?: string } = {},
 ): Promise<WalletProof | null> {
+  const chain = options.chain ?? "solana";
   if (!/^[A-Za-z0-9_=-]{4,128}$/u.test(actorIdInput)) {
     throw new TypeError("GitHub actor id is invalid");
   }
@@ -304,6 +314,7 @@ export async function fetchPublishedGithubWallet(
     actorIdInput,
     login,
     observedAt,
+    chain,
     fetchImpl,
   );
   if (registryWallet) return registryWallet;
@@ -375,11 +386,11 @@ export async function fetchPublishedGithubWallet(
       "Immutable GitHub profile README base64 is not canonical",
     );
   }
-  const published = parsePublishedWallet(decoded.toString("utf8"));
+  const published = parsePublishedWallets(decoded.toString("utf8"))[chain];
   if (!published) return null;
   return {
     address: published.address,
-    chain: "solana",
+    chain,
     observedAt,
     sourceCommit: commit.sha,
     sourceUrl: `https://github.com/${repository}/blob/${commit.sha}/${readme.path}`,

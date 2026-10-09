@@ -68,37 +68,6 @@ export const REGISTERED_REPOSITORIES = Object.freeze(
 
 export const PRIMARY_REPOSITORY = TARGET_REPOSITORIES[0];
 
-const REPOSITORIES_BY_LOWERCASE_ID = new Map(
-  TARGET_REPOSITORIES.flatMap((repository) =>
-    [repository.id, ...(repository.aliases ?? [])].map((repositoryId) => [
-      repositoryId.toLowerCase(),
-      repository,
-    ]),
-  ),
-);
-
-/**
- * Returns the registry entry for an owner/name pair, matching GitHub's
- * case-insensitive repository identity, or null when the pair is not a
- * registered target repository.
- */
-export function findTargetRepository(owner, name) {
-  if (typeof owner !== "string" || typeof name !== "string") {
-    return null;
-  }
-  return (
-    REPOSITORIES_BY_LOWERCASE_ID.get(`${owner}/${name}`.toLowerCase()) ?? null
-  );
-}
-
-/** Returns the registry entry whose id matches, or null. */
-export function findTargetRepositoryById(id) {
-  if (typeof id !== "string") {
-    return null;
-  }
-  return REPOSITORIES_BY_LOWERCASE_ID.get(id.toLowerCase()) ?? null;
-}
-
 /** Historical lookup never authorizes collection of a paused repository. */
 export function findRegisteredRepositoryById(id) {
   if (typeof id !== "string") return null;

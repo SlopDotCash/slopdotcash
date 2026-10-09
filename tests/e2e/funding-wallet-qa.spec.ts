@@ -2,6 +2,11 @@
 import { createHash } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
+import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+
+const deployment = deploymentOrigins(
+  deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+);
 
 test.setTimeout(120_000);
 
@@ -9,20 +14,27 @@ const address = "11111111111111111111111111111111";
 const sha = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-test("serves wallet registration on direct navigation and reload", async ({
-  page,
-}) => {
+test("legacy wallet links open Account Wallets on direct navigation and reload", {
+  tag: ["@pages"],
+}, async ({ page }) => {
   for (const path of ["/wallet", "/wallet/"]) {
     const response = await page.goto(path, { waitUntil: "networkidle" });
     expect(response?.status()).toBe(200);
+    await expect(page).toHaveURL(/\/account#wallets$/u);
     await expect(
-      page.getByRole("heading", { name: "Register your wallet" }),
+      page.getByRole("heading", { name: "Account", exact: true }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Wallets", exact: true }),
+    ).toBeInViewport();
     const reloaded = await page.reload({ waitUntil: "networkidle" });
     expect(reloaded?.status()).toBe(200);
     await expect(
-      page.getByRole("button", { name: "Continue with GitHub" }),
+      page.getByRole("button", { name: "Verify with GitHub" }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("listitem").filter({ hasText: "Address" }),
+    ).toHaveAttribute("aria-current", "step");
   }
 });
 
@@ -114,7 +126,7 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
   page,
 }, info) => {
   const evidence = observe(page);
-  for (const path of ["/wallet", "/projects/eliza/funding"]) {
+  for (const path of ["/wallet", "/projects/eliza/funding#payouts"]) {
     await page.goto(path, { waitUntil: "networkidle" });
     await page.evaluate(() => {
       const sizes = [...document.querySelectorAll<HTMLElement>("body *")].map(
@@ -144,7 +156,7 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
       await panel.getByLabel("Contribution month").selectOption("2026-08");
       await keyboardTo(page, panel.getByLabel("Find contributor"));
       await page.keyboard.type("lalalune");
-      await expect(panel.locator("tbody tr")).toHaveCount(1);
+      await expect(panel.locator(".recipient-row")).toHaveCount(1);
       await audit(page, info, "funding-review-200-percent-text");
       for (const label of [
         "Prepare funding",
@@ -154,6 +166,7 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
         const button = panel.getByRole("button", { name: label });
         await keyboardTo(page, button, label === "Prepare funding");
         await page.keyboard.press("Enter");
+        await expect(button).toHaveAttribute("aria-current", "step");
         await audit(
           page,
           info,
@@ -215,7 +228,7 @@ for (const sameTab of [false, true]) {
         exp: Date.parse(expiresAt) / 1000,
       }),
     ).toString("base64url")}.fixture`;
-    await context.route("https://identity.slop.cash/**", async (route) => {
+    await context.route(`${deployment.identity}/**`, async (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === "/v1/oauth/authorize") {
         authorized = true;
@@ -232,7 +245,7 @@ for (const sameTab of [false, true]) {
             pollCapability: "p".repeat(48),
             expiresAt,
             pollAfterSeconds: 1,
-            authorizationUrl: `https://identity.slop.cash/v1/oauth/authorize?flow_id=${flowId}&state=${"s".repeat(48)}`,
+            authorizationUrl: `${deployment.identity}/v1/oauth/authorize?flow_id=${flowId}&state=${"s".repeat(48)}`,
           },
         });
       } else if (path === "/v1/oauth/poll") {
@@ -253,7 +266,7 @@ for (const sameTab of [false, true]) {
         });
       } else throw new Error(`Unexpected identity request ${path}`);
     });
-    await context.route("https://api.slop.cash/**", async (route) => {
+    await context.route(`${deployment.api}/**`, async (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === "/api/v1/auth/session") {
         await route.fulfill({
@@ -287,7 +300,7 @@ for (const sameTab of [false, true]) {
         });
       } else throw new Error(`Unexpected API request ${path}`);
     });
-    await page.goto("/wallet", { waitUntil: "networkidle" });
+    await page.goto("/account#wallets", { waitUntil: "networkidle" });
     await keyboardTo(page, page.getByLabel("Solana public address"));
     await page.keyboard.type(address);
     await page.keyboard.press("Enter");
@@ -323,15 +336,30 @@ for (const sameTab of [false, true]) {
     expect(writes).toBe(0);
     await keyboardTo(
       page,
-      page.getByRole("button", { name: "Continue with GitHub" }),
+      page.getByRole("button", { name: "Verify with GitHub" }),
     );
     await page.keyboard.press("Enter");
     await returnFromSameTab();
     const confirm = page.getByRole("button", {
-      name: "Confirm register",
+      name: "Register address",
       exact: true,
     });
     await expect(confirm).toBeVisible();
+    const consequence = page.getByText(
+      "Your GitHub identity and this address become a public, permanent record.",
+    );
+    await expect(consequence).toBeVisible();
+    // The public-registration consequence sits immediately before the action.
+    expect(
+      await consequence.evaluate(
+        (text) =>
+          text.closest("p")?.nextElementSibling?.textContent ===
+          "Register address",
+      ),
+    ).toBe(true);
+    await expect(
+      page.getByRole("listitem").filter({ hasText: "Confirm" }),
+    ).toHaveAttribute("aria-current", "step");
     await keyboardTo(page, confirm);
     await page.keyboard.press("Enter");
     await expect(
@@ -339,11 +367,17 @@ for (const sameTab of [false, true]) {
     ).toBeVisible();
     expect(writes).toBe(1);
     expect(starts).toBe(2);
+    await expect(page.getByText(/^Record digest:/u)).toBeHidden();
     await expect(
-      page.getByRole("link", { name: "View public claim" }),
+      page.getByRole("listitem").filter({ hasText: "Saved" }),
+    ).toHaveAttribute("aria-current", "step");
+    await page.getByText("Technical details", { exact: true }).click();
+    await expect(page.getByText(/^Record digest:/u)).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "View public record" }),
     ).toHaveAttribute(
       "href",
-      "https://api.slop.cash/api/v1/wallet-claims/qa_new_claim",
+      `${deployment.api}/api/v1/wallet-claims/qa_new_claim`,
     );
     await audit(page, info, "wallet-confirmed-synthetic");
     await info.attach("console-network.json", {

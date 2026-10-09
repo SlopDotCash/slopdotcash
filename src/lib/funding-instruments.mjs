@@ -5,7 +5,11 @@ import { resolveRewardCapMinor } from "./reward-cap.mjs";
  * Validates reviewed committed-funding instrument references. Each instrument
  * points at a third-party, immutable, audited on-chain contract that Slop
  * never controls: a Squads v4 multisig vault on Solana or a Sablier Lockup v4
- * stream on Base or Ethereum. Slop holds no key, admin, or fee position.
+ * stream on Base or Ethereum. In the 2-of-2 vault and the Sablier stream Slop
+ * holds no key, admin, or fee position. In the 2-of-3 project vault (RFC #500)
+ * Slop holds one vote-only key: it cannot write, execute, or block a transfer,
+ * change a signer, or act alone. Slop holds no admin or fee position in any
+ * instrument.
  */
 
 import { isFundingAddress } from "./funding-address.mjs";
@@ -137,6 +141,127 @@ function validateSquadsInstrument(candidate, field) {
   };
 }
 
+/** Squads v4 caps a multisig time lock at 90 days. */
+export const PROJECT_VAULT_MAX_TIME_LOCK_SECONDS = 90 * 24 * 60 * 60;
+/** RFC #500 defaults. Each manifest declares its own values within the cap. */
+export const PROJECT_VAULT_DEFAULT_TIME_LOCK_SECONDS = 72 * 60 * 60;
+export const PROJECT_VAULT_DEFAULT_FALLBACK_WAIT_SECONDS = 14 * 24 * 60 * 60;
+
+/**
+ * The 2-of-3 project vault from RFC #500: creator (Initiate, Vote, Execute),
+ * Slop (Vote only), independent signer (Vote, Execute), threshold 2, no
+ * configuration authority. The manifest declares the reviewed members, the
+ * creator's own multisig behind the creator seat, and the two waits. Masks,
+ * threshold, PDA derivation, and the observed time lock are proven by the
+ * read-only verifier, never assumed here. A project vault always carries a
+ * monthly binding; it has no legacy unscoped form.
+ */
+function validateProjectVaultInstrument(candidate, field) {
+  exactCommitmentKeys(
+    candidate,
+    [
+      "asset",
+      "creatorActorId",
+      "creatorMember",
+      "creatorMultisig",
+      "creatorVaultIndex",
+      "deadline",
+      "effectiveAt",
+      "fallbackWaitSeconds",
+      "independentGithub",
+      "independentMember",
+      "kind",
+      "monthlyCommitment",
+      "multisig",
+      "network",
+      "replacedAt",
+      "slopMember",
+      "timeLockSeconds",
+      "vault",
+      "vaultIndex",
+    ],
+    field,
+  );
+  if (candidate.network !== "solana" || candidate.asset !== "USDC") {
+    throw new TypeError(`${field} network or asset is unsupported`);
+  }
+  const addressKeys = [
+    "multisig",
+    "vault",
+    "creatorMember",
+    "creatorMultisig",
+    "slopMember",
+    "independentMember",
+  ];
+  for (const key of addressKeys) {
+    if (!isFundingAddress("solana", candidate[key])) {
+      throw new TypeError(`${field}.${key} is invalid`);
+    }
+  }
+  if (new Set(addressKeys.map((key) => candidate[key])).size !== 6) {
+    throw new TypeError(
+      `${field} multisig, vault, creator multisig, and members must be distinct`,
+    );
+  }
+  for (const key of ["vaultIndex", "creatorVaultIndex"]) {
+    if (
+      !Number.isSafeInteger(candidate[key]) ||
+      candidate[key] < 0 ||
+      candidate[key] > 255
+    ) {
+      throw new TypeError(`${field}.${key} must be an unsigned byte`);
+    }
+  }
+  if (
+    typeof candidate.creatorActorId !== "string" ||
+    !/^[1-9]\d{0,19}$/u.test(candidate.creatorActorId)
+  ) {
+    throw new TypeError(`${field}.creatorActorId is invalid`);
+  }
+  const { timeLockSeconds, fallbackWaitSeconds } = candidate;
+  if (
+    !Number.isSafeInteger(timeLockSeconds) ||
+    timeLockSeconds < 1 ||
+    timeLockSeconds > PROJECT_VAULT_MAX_TIME_LOCK_SECONDS
+  ) {
+    throw new TypeError(
+      `${field}.timeLockSeconds must be between 1 and ${PROJECT_VAULT_MAX_TIME_LOCK_SECONDS}`,
+    );
+  }
+  if (
+    !Number.isSafeInteger(fallbackWaitSeconds) ||
+    fallbackWaitSeconds < timeLockSeconds ||
+    fallbackWaitSeconds > PROJECT_VAULT_MAX_TIME_LOCK_SECONDS
+  ) {
+    throw new TypeError(
+      `${field}.fallbackWaitSeconds must be at least the time lock and at most ${PROJECT_VAULT_MAX_TIME_LOCK_SECONDS}`,
+    );
+  }
+  const window = commitmentWindow(candidate, field);
+  return {
+    kind: "squads-project-vault",
+    network: "solana",
+    asset: "USDC",
+    multisig: candidate.multisig,
+    vault: candidate.vault,
+    vaultIndex: candidate.vaultIndex,
+    creatorActorId: candidate.creatorActorId,
+    creatorMember: candidate.creatorMember,
+    creatorMultisig: candidate.creatorMultisig,
+    creatorVaultIndex: candidate.creatorVaultIndex,
+    slopMember: candidate.slopMember,
+    independentMember: candidate.independentMember,
+    independentGithub: validateGithubIdentity(
+      candidate.independentGithub,
+      `${field}.independentGithub`,
+    ),
+    timeLockSeconds,
+    fallbackWaitSeconds,
+    ...monthlyCommitment(candidate, field),
+    ...window,
+  };
+}
+
 function validateSablierInstrument(candidate, field) {
   exactCommitmentKeys(
     candidate,
@@ -151,6 +276,9 @@ function validateSablierInstrument(candidate, field) {
         : []),
       "network",
       "recipient",
+      ...(Object.hasOwn(candidate, "recipientGithub")
+        ? ["recipientGithub"]
+        : []),
       "replacedAt",
       "streamId",
     ],
@@ -184,6 +312,16 @@ function validateSablierInstrument(candidate, field) {
     asset: "USDC",
     contract: candidate.contract,
     recipient: candidate.recipient,
+    // RFC #472: the reviewed GitHub actor who attests control of the stream
+    // recipient, the Base settlement source. Required for a fresh-cycle policy.
+    ...(Object.hasOwn(candidate, "recipientGithub")
+      ? {
+          recipientGithub: validateGithubIdentity(
+            candidate.recipientGithub,
+            `${field}.recipientGithub`,
+          ),
+        }
+      : {}),
     streamId: candidate.streamId,
     ...monthlyCommitment(candidate, field),
     ...window,
@@ -191,12 +329,12 @@ function validateSablierInstrument(candidate, field) {
 }
 
 function validateStewardGithub(value, field) {
-  const identity = commitmentRecord(value, `${field}.stewardGithub`);
-  exactCommitmentKeys(
-    identity,
-    ["actorId", "nodeId", "login"],
-    `${field}.stewardGithub`,
-  );
+  return validateGithubIdentity(value, `${field}.stewardGithub`);
+}
+
+function validateGithubIdentity(value, field) {
+  const identity = commitmentRecord(value, field);
+  exactCommitmentKeys(identity, ["actorId", "nodeId", "login"], field);
   if (
     typeof identity.actorId !== "string" ||
     !/^[1-9]\d{0,19}$/u.test(identity.actorId) ||
@@ -205,7 +343,7 @@ function validateStewardGithub(value, field) {
     typeof identity.login !== "string" ||
     !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u.test(identity.login)
   )
-    throw new TypeError(`${field}.stewardGithub is invalid`);
+    throw new TypeError(`${field} is invalid`);
   return {
     actorId: identity.actorId,
     nodeId: identity.nodeId,
@@ -282,6 +420,11 @@ export function assertMonthlyCommitmentPolicy(project) {
       attributed.add(instrument.funderMember);
       attributed.add(instrument.multisig);
       attributed.add(instrument.vault);
+    } else if (instrument.kind === "squads-project-vault") {
+      attributed.add(instrument.creatorMember);
+      attributed.add(instrument.creatorMultisig);
+      attributed.add(instrument.multisig);
+      attributed.add(instrument.vault);
     }
   }
   const cycles = new Set();
@@ -329,6 +472,27 @@ export function assertMonthlyCommitmentPolicy(project) {
           "Squads steward member must differ from every manifest-attributed project or funder address",
         );
     }
+    if (instrument.kind === "squads-project-vault") {
+      const identity = instrument.independentGithub;
+      if (
+        identity.actorId === instrument.creatorActorId ||
+        identity.actorId === project.steward.github.actorId ||
+        identity.nodeId === project.steward.github.nodeId ||
+        identity.login.toLowerCase() ===
+          project.steward.github.login.toLowerCase()
+      ) {
+        throw new TypeError(
+          "project vault independent signer identity must differ from the project steward and creator",
+        );
+      }
+      if (
+        attributed.has(instrument.slopMember) ||
+        attributed.has(instrument.independentMember)
+      )
+        throw new TypeError(
+          "project vault Slop and independent members must differ from every manifest-attributed project or creator address",
+        );
+    }
   }
   if (
     project.reward.paymentMode === "enabled" ||
@@ -342,16 +506,27 @@ export function assertMonthlyCommitmentPolicy(project) {
       project.funding.freshCyclePaymentPolicy,
     );
     const active = instruments.filter((v) => v.replacedAt === null);
+    // On Solana either reviewed Squads shape may activate: the 2-of-2
+    // commitment vault, or the 2-of-3 project vault (RFC #500) whose
+    // readiness, reservation, signer-capability, and approval-binding rules
+    // cover three members. On Base a Sablier stream with a reviewed recipient
+    // actor may activate (RFC #472).
+    const activates = (v) =>
+      project.reward.chain === "base"
+        ? v.kind === "sablier-lockup-v4" &&
+          v.network === "base" &&
+          v.recipientGithub !== undefined
+        : v.kind === "squads-v4-vault" || v.kind === "squads-project-vault";
     if (
       project.reward.kind !== "monthly-pool" ||
       project.reward.reviewBudget ||
       policy.projectId !== project.id ||
       active.length !== 1 ||
-      active[0].kind !== "squads-v4-vault" ||
+      !activates(active[0]) ||
       active[0].monthlyCommitment?.cycleId !== policy.cycleId
     )
       throw new TypeError(
-        "Fresh-cycle payment activation requires one matching reviewed Squads instrument without a review budget",
+        "Fresh-cycle payment activation requires one matching reviewed instrument on the settlement network without a review budget",
       );
   }
   const claimed =
@@ -373,9 +548,15 @@ export function assertMonthlyCommitmentPolicy(project) {
 }
 
 function instrumentIdentity(instrument) {
-  return instrument.kind === "squads-v4-vault"
-    ? `${instrument.network}:${instrument.asset}:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`
-    : `${instrument.network}:${instrument.asset}:${instrument.contract}:${instrument.streamId}`;
+  switch (instrument.kind) {
+    case "squads-v4-vault":
+    case "squads-project-vault":
+      return `${instrument.network}:${instrument.asset}:${instrument.multisig}:${instrument.vaultIndex}:${instrument.vault}`;
+    case "sablier-lockup-v4":
+      return `${instrument.network}:${instrument.asset}:${instrument.contract}:${instrument.streamId}`;
+    default:
+      throw new TypeError("funding instrument kind is unsupported");
+  }
 }
 
 /**
@@ -401,6 +582,8 @@ export function assertFundingCommitments(
     let result;
     if (instrument.kind === "squads-v4-vault") {
       result = validateSquadsInstrument(instrument, instrumentField);
+    } else if (instrument.kind === "squads-project-vault") {
+      result = validateProjectVaultInstrument(instrument, instrumentField);
     } else if (instrument.kind === "sablier-lockup-v4") {
       result = validateSablierInstrument(instrument, instrumentField);
     } else {

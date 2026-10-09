@@ -1,7 +1,7 @@
 /**
  * Adapts the currently deployed public ledger for untrusted pull-request
  * browser checks when a schema migration has landed in code before production.
- * Trusted develop builds always regenerate from GitHub and never call this.
+ * Trusted main builds always regenerate from GitHub and never call this.
  */
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";

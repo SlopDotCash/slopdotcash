@@ -5,7 +5,7 @@
   "name": "Heir Desk SDK",
   "eyebrow": "Public repository",
   "headline": "Review the Heir Desk SDK migration",
-  "description": "Replacement for the deprecated Heir Elements SDK. The Desk SDK currently has a proprietary license; contribution requires a separate permission grant from Heir Labs.",
+  "description": "Protocol SDK for Heir Desk Elements from Heir Labs under a proprietary license.",
   "listingTier": "community",
   "status": "paused",
   "steward": {
@@ -110,5 +110,8 @@
     "creator": "https://github.com/awidearray",
     "repository": "https://github.com/heirlabs/elements-sdk",
     "issues": "https://github.com/heirlabs/elements-sdk/issues"
+  },
+  "participation": {
+    "state": "permission-required"
   }
 }

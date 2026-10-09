@@ -115,9 +115,9 @@ export function createInstallAuthorityFixture(
   mkdirSync(rawRoot, { recursive: true });
 
   const responses: Record<string, unknown> = {
-    [`/repos/${REPOSITORY}/git/ref/heads/develop`]: {
+    [`/repos/${REPOSITORY}/git/ref/heads/main`]: {
       object: { sha: options.developHead, type: "commit" },
-      ref: "refs/heads/develop",
+      ref: "refs/heads/main",
     },
   };
   for (const [revision, configuration] of Object.entries(options.revisions)) {
@@ -128,7 +128,7 @@ export function createInstallAuthorityFixture(
         ? [
             {
               head_sha: revision,
-              head_branch: "develop",
+              head_branch: "main",
               event: "push",
               conclusion: "success",
               head_repository: { full_name: REPOSITORY },

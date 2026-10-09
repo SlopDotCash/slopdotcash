@@ -1,0 +1,42 @@
+name = "slop-identity-staging"
+main = "index.ts"
+compatibility_date = "2026-07-30"
+workers_dev = false
+
+routes = [
+  { pattern = "identity-staging.slop.cash", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "IDENTITY_DB"
+database_name = "slop-staging"
+database_id = "6fcddcc1-f3d7-4175-bdde-09afddd53a8a"
+migrations_dir = "../../migrations"
+
+[[ratelimits]]
+name = "IDENTITY_START_LIMITER"
+namespace_id = "82001"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+[[ratelimits]]
+name = "IDENTITY_POLL_LIMITER"
+namespace_id = "82002"
+
+  [ratelimits.simple]
+  limit = 600
+  period = 60
+
+[triggers]
+crons = ["17 * * * *"]
+
+[observability]
+enabled = true
+
+  [observability.logs]
+  invocation_logs = false
+
+[vars]
+SLOP_ENVIRONMENT = "staging"

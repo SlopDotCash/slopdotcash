@@ -1,3 +1,4 @@
+import { assertEscrowTransition } from "./escrow-policy.mjs";
 /**
  * Enforces non-retroactive project policy transitions. This is deliberately
  * independent from payment state: money events cannot rewrite IP policy.
@@ -175,6 +176,7 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
   const previous = assertHistoricalProjectDefinition(previousValue);
   const next = assertProjectDefinition(nextValue);
   if (previous.id !== next.id) throw new TypeError("project id cannot change");
+  assertEscrowTransition(previous.escrow, next.escrow);
   assertFundingRouteTransition(
     previous.funding.addresses,
     next.funding.addresses,
@@ -273,16 +275,6 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
     throw new TypeError(
       "repository proof does not bind the current policy revision",
     );
-  }
-  return next;
-}
-
-/** Proves a payment-only transition did not mutate copyright or legal terms. */
-export function assertPaymentDoesNotMutateTerms(previousValue, nextValue) {
-  const previous = assertProjectDefinition(previousValue);
-  const next = assertProjectDefinition(nextValue);
-  if (canonical(previous.terms) !== canonical(next.terms)) {
-    throw new TypeError("payment state cannot mutate IP terms");
   }
   return next;
 }

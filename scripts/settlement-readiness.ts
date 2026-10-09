@@ -1,3 +1,4 @@
+import { hasCanonicalMergeBase } from "./canonical-merge-base";
 /** Production evidence assembly. All history comes from a verified canonical SHA;
  * no caller-supplied ledger, RPC endpoint, or positive readiness flag is accepted. */
 
@@ -11,6 +12,8 @@ import {
 import { fetchWithRateLimitRetry } from "../src/lib/rate-limited-fetch";
 import { publicSignerReport } from "../src/lib/signer-capability";
 import {
+  assertSquadsCreatorSeat,
+  assertSquadsProjectVaultUsdcState,
   assertSquadsVaultUsdcState,
   deriveVaultUsdcTokenAccount,
 } from "../src/lib/squads-funding";
@@ -22,6 +25,7 @@ import {
   reservationGithub,
   reservationJson,
 } from "./payment-reservation-history";
+import { observeBaseSettlementSource } from "./verify-commitment-sablier";
 import { SOLANA_COMMITMENT_RPC_AUTHORITIES } from "./verify-commitment-squads";
 
 type Loaded = Awaited<ReturnType<typeof loadCanonicalPaymentReservation>>;
@@ -42,7 +46,7 @@ function paths(root: string, sha: string, directory: string): string[] {
     throw new TypeError("Canonical inventory exceeds bound");
   return rows;
 }
-function acceptedAt(sha: string): string {
+function acceptedAt(root: string, sha: string): string {
   const prs = reservationGithub(
     `repos/${PAYMENT_REPOSITORY}/commits/${sha}/pulls?per_page=100`,
   ) as {
@@ -54,14 +58,14 @@ function acceptedAt(sha: string): string {
     ? prs.filter(
         (p) =>
           p.merge_commit_sha === sha &&
-          p.base?.ref === "develop" &&
-          p.base.repo?.full_name === PAYMENT_REPOSITORY &&
+          hasCanonicalMergeBase(root, sha, p.base?.ref) &&
+          p.base?.repo?.full_name === PAYMENT_REPOSITORY &&
           p.merged_at,
       )
     : [];
   if (matches.length !== 1)
     throw new TypeError(
-      "Cannot prove canonical policy/proposal acceptance through a merged develop PR",
+      "Cannot prove canonical policy/proposal acceptance through a merged main PR",
     );
   const time = new Date(matches[0].merged_at as string);
   if (!Number.isFinite(time.getTime()))
@@ -156,13 +160,13 @@ function history(root: string, loaded: Loaded) {
         instrumentId: r.fundingBasis?.instrumentId ?? "legacy",
         generatedAt: r.generatedAt,
         sourceSnapshotSha256: r.sourceSnapshotSha256,
-        firstPublishedAt: acceptedAt(sha),
+        firstPublishedAt: acceptedAt(root, sha),
       });
     }
   }
   return {
     reviewedCommit: policyCommit,
-    reviewedAt: acceptedAt(policyCommit),
+    reviewedAt: acceptedAt(root, policyCommit),
     fundedProposalHistory: freezes,
   };
 }
@@ -175,9 +179,53 @@ function canonical(value: unknown): string {
       .join(",")}}`;
   return JSON.stringify(value);
 }
+type SquadsInstrument = Exclude<
+  Loaded["instrument"],
+  { kind: "sablier-lockup-v4" }
+>;
+async function observedVaultState(
+  instrument: SquadsInstrument,
+  accounts: unknown,
+  tokenAccount: string,
+) {
+  if (instrument.kind === "squads-v4-vault")
+    return assertSquadsVaultUsdcState(
+      accounts,
+      instrument.multisig,
+      instrument.vault,
+      instrument.vaultIndex,
+      tokenAccount,
+      instrument.funderMember,
+      instrument.stewardMember,
+    );
+  const observation = accounts as { context: unknown; value: unknown[] };
+  if (!Array.isArray(observation.value) || observation.value.length !== 3)
+    throw new TypeError(
+      "Project vault observation must contain the multisig, its USDC account, and the creator multisig",
+    );
+  const state = await assertSquadsProjectVaultUsdcState(
+    { context: observation.context, value: observation.value.slice(0, 2) },
+    instrument.multisig,
+    instrument.vault,
+    instrument.vaultIndex,
+    tokenAccount,
+    {
+      creatorMember: instrument.creatorMember,
+      slopMember: instrument.slopMember,
+      independentMember: instrument.independentMember,
+    },
+  );
+  await assertSquadsCreatorSeat(
+    observation.value[2],
+    instrument.creatorMultisig,
+    instrument.creatorMember,
+    instrument.creatorVaultIndex,
+  );
+  return state;
+}
 /** Fixed public RPCs; two independently validated finalized observations must
  * agree on configuration and balance. Fresh finalized slot rejects stale replay. */
-export async function observeSettlementVault(instrument: Loaded["instrument"]) {
+export async function observeSettlementVault(instrument: SquadsInstrument) {
   const tokenAccount = await deriveVaultUsdcTokenAccount(instrument.vault);
   const settled = await Promise.allSettled(
     SOLANA_COMMITMENT_RPC_AUTHORITIES.map(async (authority, index) => {
@@ -214,18 +262,21 @@ export async function observeSettlementVault(instrument: Loaded["instrument"]) {
           throw new TypeError("Invalid finalized RPC envelope");
         return value.result;
       }
+      // A project vault observation also carries the creator multisig, so
+      // readiness can prove the creator seat and the attesting creator key
+      // from the same finalized slot.
+      const addresses =
+        instrument.kind === "squads-project-vault"
+          ? [instrument.multisig, tokenAccount, instrument.creatorMultisig]
+          : [instrument.multisig, tokenAccount];
       const accounts = await rpc("getMultipleAccounts", [
-        [instrument.multisig, tokenAccount],
+        addresses,
         { commitment: "finalized", encoding: "jsonParsed" },
       ]);
-      const state = await assertSquadsVaultUsdcState(
+      const state = await observedVaultState(
+        instrument,
         accounts,
-        instrument.multisig,
-        instrument.vault,
-        instrument.vaultIndex,
         tokenAccount,
-        instrument.funderMember,
-        instrument.stewardMember,
       );
       const latest = await rpc("getSlot", [{ commitment: "finalized" }]);
       if (
@@ -289,11 +340,14 @@ export async function assertCanonicalSettlementReadiness(
         a.observedAt.localeCompare(b.observedAt) ||
         a.recordId.localeCompare(b.recordId),
     );
-  const relevant = allRecords.filter(
-    (r) =>
-      r.instrument.vault === loaded.instrument.vault &&
-      r.instrument.multisig === loaded.instrument.multisig &&
-      r.instrument.vaultIndex === loaded.instrument.vaultIndex,
+  const instrument = loaded.instrument;
+  const relevant = allRecords.filter((r) =>
+    instrument.kind === "sablier-lockup-v4"
+      ? r.instrument.contract === instrument.contract &&
+        r.instrument.streamId === instrument.streamId
+      : r.instrument.vault === instrument.vault &&
+        r.instrument.multisig === instrument.multisig &&
+        r.instrument.vaultIndex === instrument.vaultIndex,
   );
   for (const r of relevant) {
     if (
@@ -311,7 +365,22 @@ export async function assertCanonicalSettlementReadiness(
   const fundingRecords = assertProjectCommitmentLedger(relevant, [
     loaded.instrument,
   ]);
-  const observation = await observeSettlementVault(loaded.instrument);
+  // RFC #472: a Base stream is observed through the read-only EVM quorum.
+  const observation =
+    instrument.kind === "sablier-lockup-v4"
+      ? {
+          accounts: await observeBaseSettlementSource({
+            recipient: instrument.recipient,
+            streamId: instrument.streamId,
+          }),
+          observedAt: new Date().toISOString(),
+          tokenAccount: instrument.recipient,
+          cluster: "base-mainnet" as const,
+        }
+      : {
+          ...(await observeSettlementVault(instrument)),
+          cluster: "mainnet-beta" as const,
+        };
   const result = await verifyFundingReadiness({
     allocationBytes: loaded.allocationBytes,
     now: new Date().toISOString(),
@@ -321,7 +390,6 @@ export async function assertCanonicalSettlementReadiness(
       policy: loaded.policy,
       instrumentBytes: loaded.instrumentBytes,
       allocationSha256: loaded.reservation.allocationSha256,
-      cluster: "mainnet-beta",
       commitment: "finalized",
       fundingRecords: [...fundingRecords],
       signerReports: loaded.signerLedger.reports

@@ -1,3 +1,12 @@
+/** Keep a request deadline when its caller also cancels on navigation or retry. */
+export function fetchWithDeadline(url: string, init: RequestInit = {}) {
+  const deadline = AbortSignal.timeout(15_000);
+  return fetch(url, {
+    ...init,
+    signal: init.signal ? AbortSignal.any([init.signal, deadline]) : deadline,
+  });
+}
+
 /** Bounded public JSON transport shared by app views. */
 export async function readBoundedText(
   response: Response,
