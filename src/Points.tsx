@@ -645,7 +645,13 @@ function JoinPoints({
       setMessage("You’re signed in. Your welcome points are recorded.");
     } catch (e) {
       if (!c.signal.aborted)
-        setMessage(e instanceof Error ? e.message : "Sign-in unavailable");
+        setMessage(
+          e instanceof TypeError
+            ? "Could not reach Slop. Check your connection and try again."
+            : e instanceof Error
+              ? e.message
+              : "Sign-in unavailable",
+        );
     } finally {
       if (active.current === c) {
         setBusy(false);
