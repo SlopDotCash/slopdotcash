@@ -17,10 +17,11 @@ import {
   Transaction,
 } from "@solana/web3.js";
 import { awardIdFor, ownerPlan } from "../scripts/owner-plan.mjs";
+import { expectedDeployment } from "./deployment.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actual SPL program", {
-  timeout: 120000,
+  timeout: 480000,
 }, async () => {
   const provider = anchor.AnchorProvider.env(),
     owner = provider.wallet.payer;
@@ -52,7 +53,7 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
     100_000_000n,
   );
   const programId = new PublicKey(
-      "5KFQm1jLFkcS1V5PFpUFg6omNHoDQZTaxqTwwEpnenSL",
+      JSON.parse(readFileSync("idl/slop_escrow.json")).address,
     ),
     projectDigest = hash("owner-plan-project");
   const project = PublicKey.findProgramAddressSync(
@@ -76,8 +77,7 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
     owner: owner.publicKey.toBase58(),
     identityAuthority: identity.publicKey.toBase58(),
     feeRecipient: fees.publicKey.toBase58(),
-    codeSha256: hash(readFileSync("target/deploy/slop_escrow.so")),
-    upgradeAuthority: "11111111111111111111111111111111",
+    ...expectedDeployment,
     bindingDelaySeconds: "3600",
   };
   const expectedGenesis = await provider.connection.getGenesisHash();

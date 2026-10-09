@@ -94,9 +94,6 @@ export function assertPaymentBranchProtection(
       checks?: { context: string; app_id: number }[];
     };
     required_pull_request_reviews?: {
-      required_approving_review_count?: number;
-      dismiss_stale_reviews?: boolean;
-      require_last_push_approval?: boolean;
       bypass_pull_request_allowances?: Record<string, unknown[]>;
     };
     required_conversation_resolution?: { enabled?: boolean };
@@ -113,9 +110,7 @@ export function assertPaymentBranchProtection(
         Number.isSafeInteger(c.app_id) &&
         c.app_id === actionsAppId,
     ) ||
-    (review?.required_approving_review_count ?? 0) < 1 ||
-    !review?.dismiss_stale_reviews ||
-    !review.require_last_push_approval ||
+    !review ||
     Object.values(review.bypass_pull_request_allowances ?? {}).some(
       (v) => !Array.isArray(v) || v.length !== 0,
     ) ||
@@ -124,7 +119,7 @@ export function assertPaymentBranchProtection(
     p.allow_deletions?.enabled !== false
   )
     throw new TypeError(
-      "Canonical payment release requires verified strict protected main, required reservation check, review, and no bypass/force-push/deletion",
+      "Canonical payment release requires verified strict protected main, required reservation check, pull requests, and no bypass/force-push/deletion",
     );
 }
 export function verifyPaymentAuthority(root: string): string {

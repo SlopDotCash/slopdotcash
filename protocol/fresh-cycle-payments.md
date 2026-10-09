@@ -10,8 +10,9 @@ never makes public funding accessibility true.
 Deploy the trusted reservation workflow and verifier before activation. Configure
 classic protection on canonical `SlopDotCash/slopdotcash` `main`: strict
 up-to-date PR checks requiring `Trusted payment reservation gate` from the verified
-GitHub Actions app, approving review with stale dismissal and last-push approval,
-resolved conversations, admin enforcement, no review bypass, force push or deletion.
+GitHub Actions app, required pull requests (no approving review count is
+required), resolved conversations, admin enforcement, no pull-request bypass,
+force push or deletion.
 The loader verifies these through GitHub REST; it never changes settings.
 Ruleset-only protection is not implemented by this bounded verifier.
 

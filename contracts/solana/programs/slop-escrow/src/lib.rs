@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use solana_sha256_hasher::hashv;
 use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, TransferChecked};
-declare_id!("5KFQm1jLFkcS1V5PFpUFg6omNHoDQZTaxqTwwEpnenSL");
+declare_id!("4hXeYxsTKbwVKRRn8P1emGNDmVUSx13VMykfUAsbPnnj");
 #[program]
 pub mod slop_escrow {
     use super::*;

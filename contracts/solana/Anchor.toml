@@ -4,7 +4,7 @@ anchor_version = "0.32.1"
 resolution = true
 skip-lint = false
 [programs.localnet]
-slop_escrow = "5KFQm1jLFkcS1V5PFpUFg6omNHoDQZTaxqTwwEpnenSL"
+slop_escrow = "4hXeYxsTKbwVKRRn8P1emGNDmVUSx13VMykfUAsbPnnj"
 [provider]
 cluster = "Localnet"
 wallet = "./.local/payer.json"

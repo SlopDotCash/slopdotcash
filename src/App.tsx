@@ -1,19 +1,13 @@
 import {
-  ArrowLeft,
   ArrowRight,
-  BadgeCheck,
   Check,
   ChevronRight,
   CircleAlert,
   Clipboard,
-  Coins,
   ExternalLink,
   FolderGit2,
-  GitPullRequest,
   Plus,
   RotateCcw,
-  ShieldCheck,
-  Terminal,
 } from "lucide-react";
 import {
   lazy,
@@ -36,7 +30,6 @@ import {
 import { Link, useInitialHashScroll } from "./Link";
 import { SlopMark, Wordmark } from "./Logo";
 import {
-  allocationFundingMinor,
   type PromotionCycle,
   projectPromotionEligible,
 } from "./lib/allocation-funding";
@@ -151,6 +144,7 @@ interface Route {
     | "new-project"
     | "profile"
     | "project"
+    | "projects"
     | "receipts"
     | "models"
     | "sponsors"
@@ -173,6 +167,8 @@ function internalRoute(pathname: string): Route {
     return { kind: "unknown" };
   }
   if (segments.length === 0) return { kind: "home" };
+  if (segments.length === 1 && segments[0] === "projects")
+    return { kind: "projects" };
   if (segments.length === 1 && segments[0] === "earnings")
     return { kind: "earnings" };
   if (segments.length === 1 && segments[0] === "login")
@@ -288,7 +284,7 @@ function Footer() {
         </div>
         <nav className="footer-links" aria-label="Product">
           <span>Product</span>
-          <Link href="/#projects">Projects</Link>
+          <Link href="/projects">Projects</Link>
           <Link href="/#leaderboard">Leaderboard</Link>
           <Link href="/how-it-works">How it works</Link>
           <Link href="/how-it-works#faq">FAQ</Link>
@@ -340,13 +336,19 @@ function monthlyPoolCapLabel(reward: ProjectDefinition["reward"]): string {
     .replace(/K$/u, "k");
 }
 
-function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
+function ProjectOwnerAvatar({
+  project,
+  size = 96,
+}: {
+  project: ProjectDefinition;
+  size?: number;
+}) {
   const repository = project.repositories[0];
   const owner = (repository?.aliases?.at(-1) ?? repository?.id ?? "").split(
     "/",
   )[0];
   const src = owner
-    ? `https://avatars.githubusercontent.com/${encodeURIComponent(owner)}?size=96`
+    ? `https://avatars.githubusercontent.com/${encodeURIComponent(owner)}?size=${size}`
     : "";
   const [failed, setFailed] = useState(false);
   if (!src || failed) {
@@ -372,9 +374,11 @@ function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
 function ProjectCard({
   project,
   funding,
+  repeated = false,
 }: {
   project: ProjectDefinition;
   funding: FundingDataState;
+  repeated?: boolean;
 }) {
   const vaults =
     project.funding.commitments?.filter(
@@ -412,13 +416,22 @@ function ProjectCard({
       : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
         "External");
   return (
-    <Link className="project-card" href={`/projects/${project.slug}`}>
+    <Link
+      className="project-card carousel-project-card"
+      href={`/projects/${project.slug}`}
+      tabIndex={repeated ? -1 : undefined}
+    >
+      <div className="project-card-image">
+        <ProjectOwnerAvatar project={project} size={512} />
+      </div>
       <div className="project-card-heading">
-        <ProjectOwnerAvatar project={project} />
         <h3>{project.name}</h3>
         <ArrowRight aria-hidden="true" />
       </div>
       <div className="project-card-content">
+        <small className="project-tier-label">
+          {project.listingTier === "featured" ? "Featured" : "Community"}
+        </small>
         <p className="project-summary">{project.description}</p>
         <p className="project-bounty">
           <strong>{amount}</strong>
@@ -441,78 +454,6 @@ function ProjectCard({
   );
 }
 
-function ProjectRow({ project }: { project: ProjectDefinition }) {
-  const amount =
-    project.reward.kind === "monthly-pool"
-      ? `${monthlyPoolCapLabel(project.reward)}/mo target`
-      : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
-        "External prize");
-  return (
-    <li>
-      <Link className="project-row" href={`/projects/${project.slug}`}>
-        <ProjectOwnerAvatar project={project} />
-        <span className="project-row-name">
-          <strong>{project.name}</strong>
-          <small>{project.description}</small>
-        </span>
-        <span className="project-row-amount">{amount}</span>
-        <ChevronRight aria-hidden="true" />
-      </Link>
-    </li>
-  );
-}
-
-const COMMUNITY_PAGE_SIZE = 10;
-
-function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
-  const [page, setPage] = useState(0);
-  if (projects.length === 0) return null;
-  const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
-  const current = Math.min(page, pages - 1);
-  const visible = projects.slice(
-    current * COMMUNITY_PAGE_SIZE,
-    (current + 1) * COMMUNITY_PAGE_SIZE,
-  );
-  return (
-    <section
-      className="project-tier community-projects"
-      aria-labelledby="community-projects"
-    >
-      <h3 id="community-projects">Community</h3>
-      <ul className="project-rows">
-        {visible.map((project) => (
-          <ProjectRow key={project.id} project={project} />
-        ))}
-      </ul>
-      {pages > 1 ? (
-        <nav aria-label="Community project pages" className="pagination">
-          <button
-            aria-label="Previous page"
-            className="button secondary-button icon-button"
-            disabled={current === 0}
-            onClick={() => setPage(current - 1)}
-            type="button"
-          >
-            <ArrowLeft aria-hidden="true" />
-          </button>
-          <span>
-            {current + 1} / {pages}
-          </span>
-          <button
-            aria-label="Next page"
-            className="button secondary-button icon-button"
-            disabled={current === pages - 1}
-            onClick={() => setPage(current + 1)}
-            type="button"
-          >
-            <ArrowRight aria-hidden="true" />
-          </button>
-        </nav>
-      ) : null}
-    </section>
-  );
-}
-
 function GlobalLeaderboard() {
   return (
     <section
@@ -529,24 +470,232 @@ function bootstrapAgentPrompt(): string {
   return `Read ${origin}/SKILL.md and follow it.`;
 }
 
-function HomePage() {
+function ProjectCarousel({
+  projects,
+}: {
+  projects: readonly ProjectDefinition[];
+}) {
   const [funding] = useFundingIndex();
+  const [paused, setPaused] = useState(false);
+  if (projects.length === 0) {
+    return (
+      <p className="data-notice">
+        No project is open for contributions now.{" "}
+        <Link href="/projects">See all projects</Link>
+      </p>
+    );
+  }
+  // Fill the visible strip with copies; only the first copy is announced or
+  // focusable, so each project appears once to assistive technology.
+  const loopProjects = Array.from(
+    { length: Math.ceil(8 / projects.length) },
+    (_, copy) =>
+      projects.map((project) => ({
+        project,
+        copy,
+        key: `${project.id}-${copy}`,
+      })),
+  ).flat();
+  return (
+    <section
+      aria-label="Project carousel"
+      aria-roledescription="carousel"
+      className="project-carousel"
+    >
+      <div className="project-carousel-window">
+        <div
+          className={`project-carousel-track${paused ? " is-paused" : ""}`}
+          style={{
+            animationDuration: `${Math.max(30, loopProjects.length * 6)}s`,
+          }}
+        >
+          {[false, true].map((repeatedGroup) => (
+            <div
+              className="project-carousel-group"
+              key={String(repeatedGroup)}
+              aria-hidden={repeatedGroup || undefined}
+            >
+              {loopProjects.map(({ project, copy, key }) => (
+                <div
+                  aria-hidden={(!repeatedGroup && copy > 0) || undefined}
+                  className="project-carousel-slot"
+                  key={key}
+                >
+                  <ProjectCard
+                    project={project}
+                    funding={funding}
+                    repeated={repeatedGroup || copy > 0}
+                  />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="carousel-actions">
+        <button
+          aria-pressed={paused}
+          className="button secondary-button carousel-motion-toggle"
+          onClick={() => setPaused(!paused)}
+          type="button"
+        >
+          {paused ? "Play motion" : "Pause motion"}
+        </button>
+        <Link className="button secondary-button" href="/projects">
+          All projects <ArrowRight aria-hidden="true" />
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+function ProjectsPage() {
+  const [funding] = useFundingIndex();
+  return (
+    <main className="shell projects-directory">
+      <div className="home-section-heading">
+        <div>
+          <h1 className="home-section-title">All projects</h1>
+          <p className="directory-intro">
+            Find your next open-source contribution.
+          </p>
+        </div>
+        <Link className="button primary-button" href="/projects/new">
+          <Plus aria-hidden="true" /> Add a project
+        </Link>
+      </div>
+      {(
+        [
+          ["featured", "Featured"],
+          ["community", "Community"],
+        ] as const
+      ).map(([tier, label]) => {
+        const projects = PROJECTS.filter(
+          (project) => project.listingTier === tier,
+        );
+        return (
+          <section
+            aria-labelledby={`directory-${tier}`}
+            className="directory-tier"
+            key={tier}
+          >
+            <h2 id={`directory-${tier}`}>{label}</h2>
+            {projects.length === 0 ? (
+              <p className="directory-state">No {label} projects are listed.</p>
+            ) : (
+              <div className="directory-grid">
+                {projects.map((project) => (
+                  <div className="directory-project" key={project.id}>
+                    <ProjectCard project={project} funding={funding} />
+                    <p className="directory-state">
+                      {project.status === "paused"
+                        ? "Paused · listed only"
+                        : "Active"}
+                      {project.reward.paymentMode === "disabled"
+                        ? " · Payments disabled"
+                        : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </main>
+  );
+}
+
+function HowItWorksSection() {
+  const tracks = [
+    {
+      title: "Contributors",
+      steps: [
+        {
+          title: "Paste the skill.",
+          description:
+            "Your agent reads the project terms and picks unblocked work on GitHub.",
+        },
+        {
+          title: "Ship a PR.",
+          description: "The skill tests the change and prepares the evidence.",
+        },
+        {
+          title: "Get merged.",
+          description:
+            "Accepted work raises your Slop Score. Owners approve rewards.",
+        },
+      ],
+    },
+    {
+      title: "Maintainers",
+      steps: [
+        {
+          title: "Add your repo.",
+          description:
+            "Draft the manifest and agent brief, then open the PR on GitHub.",
+        },
+        {
+          title: "Set a monthly pool.",
+          description: "Fund it through a reviewed third-party instrument.",
+        },
+        {
+          title: "Review on GitHub.",
+          description: "You merge the work. You approve each payout.",
+        },
+      ],
+    },
+  ];
+  return (
+    <section className="how-section" id="how-it-works">
+      <div className="shell">
+        <div className="home-section-heading">
+          <h2 className="home-section-title">How it works</h2>
+          <Link className="button secondary-button" href="/how-it-works">
+            Scores and rewards <ArrowRight aria-hidden="true" />
+          </Link>
+        </div>
+        <div className="how-tracks">
+          {tracks.map((track) => (
+            <article key={track.title}>
+              <h3>{track.title}</h3>
+              <ol className="how-steps">
+                {track.steps.map((step, index) => (
+                  <li key={step.title}>
+                    <span className="how-step-marker" aria-hidden="true">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <span>
+                      <strong>{step.title}</strong>
+                      {step.description}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HomePage() {
   const promotedProjects = homeProjects();
-  const featuredProjects = promotedProjects.filter(
-    (project) => project.listingTier === "featured",
-  );
-  const communityProjects = promotedProjects.filter(
-    (project) => project.listingTier === "community",
-  );
   return (
     <main>
-      <section className="hero shell">
+      <section className="hero shell hero-poster">
         <h1 className="hero-message">
           <span>MAKE MONEY</span>{" "}
           <span className="hero-action">SHIPPING OPEN SOURCE.</span>
         </h1>
-        <p className="hero-copy">Paste this into your coding agent.</p>
-        <AgentPromptBox openIn prompt={bootstrapAgentPrompt()} />
+        <div className="hero-start">
+          <p className="hero-copy">
+            Start with your agent.
+            <span>Paste the skill. Pick useful work.</span>
+          </p>
+          <AgentPromptBox openIn prompt={bootstrapAgentPrompt()} />
+        </div>
       </section>
 
       <section className="section shell home-projects-section" id="projects">
@@ -556,84 +705,9 @@ function HomePage() {
             <Plus aria-hidden="true" /> Add a project
           </Link>
         </div>
-        <section className="project-tier" aria-labelledby="featured-projects">
-          <h3 id="featured-projects">Featured</h3>
-          <div className="project-grid">
-            {featuredProjects.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                funding={funding}
-              />
-            ))}
-          </div>
-        </section>
-        <CommunityProjects projects={communityProjects} />
+        <ProjectCarousel projects={promotedProjects} />
       </section>
-      <section className="how-section" id="how-it-works">
-        <div className="shell">
-          <div className="home-section-heading">
-            <h2 className="home-section-title">How it works</h2>
-            <Link className="button secondary-button" href="/how-it-works">
-              Scores and rewards <ArrowRight aria-hidden="true" />
-            </Link>
-          </div>
-          <div className="how-tracks">
-            <article>
-              <h3>Contributors</h3>
-              <ol className="how-steps">
-                <li>
-                  <Terminal aria-hidden="true" />
-                  <span>
-                    <strong>Paste the skill.</strong> Your agent reads the
-                    project terms and picks unblocked work on GitHub.
-                  </span>
-                </li>
-                <li>
-                  <GitPullRequest aria-hidden="true" />
-                  <span>
-                    <strong>Ship a PR.</strong> The skill tests the change and
-                    prepares the evidence.
-                  </span>
-                </li>
-                <li>
-                  <BadgeCheck aria-hidden="true" />
-                  <span>
-                    <strong>Get merged.</strong> Accepted work raises your Slop
-                    Score. Owners approve rewards.
-                  </span>
-                </li>
-              </ol>
-            </article>
-            <article>
-              <h3>Maintainers</h3>
-              <ol className="how-steps">
-                <li>
-                  <FolderGit2 aria-hidden="true" />
-                  <span>
-                    <strong>Add your repo.</strong> Draft the manifest and the
-                    agent brief, then open the PR on GitHub.
-                  </span>
-                </li>
-                <li>
-                  <Coins aria-hidden="true" />
-                  <span>
-                    <strong>Set a monthly pool.</strong> Fund it through a
-                    reviewed third-party instrument.
-                  </span>
-                </li>
-                <li>
-                  <ShieldCheck aria-hidden="true" />
-                  <span>
-                    <strong>Review on GitHub.</strong> You merge the work. You
-                    approve each payout.
-                  </span>
-                </li>
-              </ol>
-            </article>
-          </div>
-        </div>
-      </section>
+      <HowItWorksSection />
       <GlobalLeaderboard />
     </main>
   );
@@ -836,25 +910,19 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
     <div className="install-panel" id="start">
       <div className="install-heading">
         <div>
-          <h2>Copy this into your agent.</h2>
+          <h2>Start with your agent.</h2>
         </div>
       </div>
       <AgentPromptBox prompt={projectAgentPrompt(project)} />
-      {project.reward.kind === "monthly-pool" &&
-      allocationFundingMinor(project.reward) === 0n ? (
-        <p>
-          Unfunded trial: this skill records accepted work and scores with a $0
-          funding-backed projection.
-        </p>
-      ) : null}
-      <p className="install-note">
-        Any model can join. The skill publishes the exact provider, model, and
-        client. Signed receipts and permanent private traces are optional; only
-        Slop operators can access uploaded trace contents. Payout setup uses an
-        authenticated, append-only Slop wallet registry.
-      </p>
       <details className="install-advanced">
-        <summary>Advanced options</summary>
+        <summary>Installation, disclosures &amp; optional receipts</summary>
+        <p className="install-note">
+          Any model can join. The skill publishes the exact provider, model, and
+          client. Signed receipts and permanent private traces are optional;
+          only Slop operators can access uploaded trace contents. Payout setup
+          uses an authenticated, append-only Slop wallet registry.
+        </p>
+
         <p>
           Use the direct installer if your agent cannot follow the prompt, or
           open the workflow document to inspect the instructions without running
@@ -907,8 +975,6 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
   );
 }
 
-/** Dollars are simulated only against committed funds; otherwise a share. */
-
 function ProjectPaymentHistory({
   project,
   state,
@@ -937,14 +1003,6 @@ function ProjectPaymentHistory({
     <section className="section payment-history">
       <div className="simple-heading">
         <h2>{externalPrize ? "Cycle history" : "Payment history"}</h2>
-        {externalPrize ? null : (
-          <Link href={`/projects/${project.slug}/funding#payouts`}>
-            Manage payouts
-          </Link>
-        )}
-        <Link href={`/projects/${project.slug}/manage`}>
-          Draft a project update
-        </Link>
       </div>
       {externalPrize ? null : (
         <p className="money-summary">
@@ -1526,6 +1584,83 @@ function ProjectFundingPage({
   );
 }
 
+function ProjectSummary({
+  project,
+  primaryRepository,
+  showContributors,
+  children,
+}: {
+  project: ProjectDefinition;
+  primaryRepository?: ProjectDefinition["repositories"][number];
+  showContributors: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="project-summary-component">
+      <ProjectOwnerAvatar project={project} size={256} />
+      <div className="project-summary-content">
+        <div className="project-info-heading">
+          <div className="project-identity-text">
+            <h2>{project.name}</h2>
+            <ExternalLinkAnchor href={project.links.repository}>
+              <FolderGit2 aria-hidden="true" size={16} />
+              {primaryRepository?.displayName ?? "View repository"}
+              <ExternalLink aria-hidden="true" size={14} />
+            </ExternalLinkAnchor>
+          </div>
+        </div>
+
+        <div className="project-info">
+          {children}
+          <dl className="project-facts">
+            <div>
+              <dt>Steward</dt>
+              <dd>
+                <ExternalLinkAnchor href={project.steward.github.profileUrl}>
+                  {project.steward.displayName}
+                </ExternalLinkAnchor>
+                {project.steward.github.type === "User" ? (
+                  <PublicXLink actorId={project.steward.github.nodeId} />
+                ) : null}
+              </dd>
+            </div>
+            <div>
+              <dt>License &amp; inbound</dt>
+              <dd>
+                {project.terms.repositoryLicense.spdx ?? "License unknown"}
+                <span>
+                  {project.terms.inbound.mode === "unknown"
+                    ? "Inbound terms unknown"
+                    : `${project.terms.inbound.mode} inbound terms`}
+                </span>
+              </dd>
+            </div>
+            {primaryRepository?.integrationBranch ? (
+              <div>
+                <dt>Contribution branch</dt>
+                <dd>
+                  <code>{primaryRepository.integrationBranch}</code>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+          <p className="hero-copy">{project.description}</p>
+          <div className="project-summary-links">
+            <a href={`/projects/${project.id}/terms.json`}>
+              Terms <ExternalLink aria-hidden="true" size={12} />
+            </a>
+            {showContributors ? (
+              <Link href={`/projects/${project.slug}#contributors`}>
+                Contributors <ArrowRight aria-hidden="true" size={12} />
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProjectPage({
   project,
   state,
@@ -1539,6 +1674,9 @@ function ProjectPage({
     state.status === "ready"
       ? state.views.find((candidate) => candidate.project.id === project.id)
       : undefined;
+  const primaryRepository = project.repositories.find(
+    (repository) => repository.githubUrl === project.links.repository,
+  );
   const headlinePrefix = "Make money ";
   const promotionEligible = projectPromotionEligible(
     project,
@@ -1553,59 +1691,43 @@ function ProjectPage({
       <section className="project-hero">
         <div className="shell">
           <DataNotice state={state} retry={retry} />
-          <p className="breadcrumb">
-            <Link href="/">Projects</Link>
-            <span>/</span>
-            {project.name}
-          </p>
+          <nav className="breadcrumb" aria-label="Breadcrumb">
+            <Link href="/projects">Projects</Link>
+            <ChevronRight aria-hidden="true" size={14} />
+            <span aria-current="page">{project.name}</span>
+          </nav>
+          <h1 className="project-contribution-headline">
+            {project.status === "paused" ? (
+              project.name
+            ) : headlineAction ? (
+              <>
+                Make money{" "}
+                <span className="project-headline-action">
+                  {headlineAction}
+                </span>
+              </>
+            ) : (
+              project.headline
+            )}
+          </h1>
           <div className="project-hero-grid">
             <div>
-              <h1>
+              <ProjectSummary
+                project={project}
+                primaryRepository={primaryRepository}
+                showContributors={Boolean(view)}
+              >
                 {project.status === "paused" ? (
-                  project.name
-                ) : headlineAction ? (
-                  <>
-                    Make money{" "}
-                    <span className="project-headline-action">
-                      {headlineAction}
-                    </span>
-                  </>
-                ) : (
-                  project.headline
-                )}
-              </h1>
-              <p className="hero-copy">{project.description}</p>
-              {project.status === "paused" ? (
-                <ProjectParticipation
-                  project={project}
-                  displayCycleId={view?.cycle.id ?? null}
-                  cycles={
-                    state.status === "ready" ? state.cycleIndex.cycles : null
-                  }
-                />
-              ) : null}
-              <p className="project-terms-line">
-                By{" "}
-                <ExternalLinkAnchor href={project.steward.github.profileUrl}>
-                  {project.steward.displayName}
-                </ExternalLinkAnchor>{" "}
-                · {project.terms.repositoryLicense.spdx ?? "license unknown"} ·{" "}
-                {project.terms.inbound.mode === "unknown"
-                  ? "inbound terms unknown"
-                  : `${project.terms.inbound.mode} inbound terms`}{" "}
-                · <a href={`/projects/${project.id}/terms.json`}>Terms</a>
-                {project.steward.github.type === "User" ? (
-                  <PublicXLink actorId={project.steward.github.nodeId} />
+                  <ProjectParticipation
+                    project={project}
+                    displayCycleId={view?.cycle.id ?? null}
+                    cycles={
+                      state.status === "ready" ? state.cycleIndex.cycles : null
+                    }
+                  />
                 ) : null}
-                {view ? (
-                  <>
-                    {" · "}
-                    <Link href={`/projects/${project.slug}#contributors`}>
-                      Contributors
-                    </Link>
-                  </>
-                ) : null}
-              </p>
+              </ProjectSummary>
+
               {project.terms.externalPrize ? (
                 <p className="project-policy-warning">
                   Organizer rules decide eligibility, amount, and payment.
@@ -1613,7 +1735,7 @@ function ProjectPage({
               ) : null}
             </div>
             {project.status === "paused" ? null : state.status !== "ready" ? (
-              <aside className="reward-card">
+              <aside className="project-reward-status">
                 <strong>
                   {state.status === "loading"
                     ? "Loading funding history…"
@@ -1624,7 +1746,7 @@ function ProjectPage({
                 </p>
               </aside>
             ) : promotionEligible ? (
-              <aside className="reward-card">
+              <aside className="project-reward-status">
                 <strong
                   className={
                     project.reward.kind === "monthly-pool" &&
@@ -1656,16 +1778,10 @@ function ProjectPage({
                   {project.reward.kind === "external-prize-share" ? (
                     <small>No platform pool · no dollar projection</small>
                   ) : null}
-                  <div className="reward-actions">
-                    <ExternalLinkAnchor href={project.links.repository}>
-                      View in GitHub
-                      <ExternalLink aria-hidden="true" size={14} />
-                    </ExternalLinkAnchor>
-                  </div>
                 </div>
               </aside>
             ) : (
-              <aside className="reward-card">
+              <aside className="project-reward-status">
                 <strong>Funding promotion paused</strong>
                 <p>
                   Accepted work and cycle history remain available. No payment
@@ -1674,6 +1790,7 @@ function ProjectPage({
               </aside>
             )}
           </div>
+
           {project.status !== "paused" && state.status === "ready" ? (
             <ProjectParticipation
               project={project}
@@ -1681,7 +1798,6 @@ function ProjectPage({
               cycles={state.cycleIndex.cycles}
             />
           ) : null}
-          <ProjectFunding project={project} />
         </div>
       </section>
       <div className="shell">
@@ -1696,15 +1812,42 @@ function ProjectPage({
             Activity for this project has not been collected yet.
           </p>
         ) : null}
-        <ProjectPaymentHistory project={project} state={state} />
-        {view && state.status === "ready" ? (
-          <ProjectLeaderboard
-            state={state}
-            retry={retry}
-            updatedAt={state.snapshot.generatedAt}
-            view={view}
-          />
-        ) : null}
+        <div id="project-records">
+          <ProjectPaymentHistory project={project} state={state} />
+        </div>
+        <div>
+          {view && state.status === "ready" ? (
+            <ProjectLeaderboard
+              state={state}
+              retry={retry}
+              updatedAt={state.snapshot.generatedAt}
+              view={view}
+            />
+          ) : null}
+          {!view ? (
+            <p className="data-notice">
+              {state.status === "loading"
+                ? "Loading contributors…"
+                : state.status !== "ready"
+                  ? "Contributor records unavailable. Retry loading above."
+                  : "No contributor records are available for this project yet."}
+            </p>
+          ) : null}
+        </div>
+        <section className="project-tools" id="project-tools">
+          <h2>Funding &amp; maintainer tools</h2>
+          <ProjectFunding project={project} />
+          <div className="project-links">
+            {project.reward.kind === "external-prize-share" ? null : (
+              <Link href={`/projects/${project.slug}/funding#payouts`}>
+                Manage payouts
+              </Link>
+            )}
+            <Link href={`/projects/${project.slug}/manage`}>
+              Draft a project update
+            </Link>
+          </div>
+        </section>
       </div>
     </main>
   );
@@ -3243,6 +3386,7 @@ function AppContent({ route }: { route: Route }) {
   const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
   if (route.kind === "home") content = <HomePage />;
+  else if (route.kind === "projects") content = <ProjectsPage />;
   else if (route.kind === "points") content = <PointsPage />;
   else if (route.kind === "account") content = <AccountPage />;
   else if (route.kind === "login") content = <LoginPage />;

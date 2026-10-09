@@ -28,7 +28,12 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
     await page.goto("/", { waitUntil: "domcontentloaded" });
     const expected = homeProjects();
     expect(expected.length).toBeGreaterThan(0);
-    await expect(page.locator(".project-card")).toHaveCount(expected.length);
+    // Only the first carousel copy is announced; moving copies stay hidden.
+    await expect(
+      page.locator(
+        ".project-carousel-group:not([aria-hidden]) > .project-carousel-slot:not([aria-hidden]) > a.project-card",
+      ),
+    ).toHaveCount(expected.length);
     for (const project of expected.filter(
       (project) => project.listingTier === "featured",
     )) {

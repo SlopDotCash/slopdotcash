@@ -7,7 +7,7 @@ if [[ ! -f .local/payer.json ]]; then
 fi
 npm ci --ignore-scripts --legacy-peer-deps
 bash scripts/build-local.sh
-solana-test-validator --reset --quiet --ledger .local/ledger --rpc-port 18899 --faucet-port 18940 --dynamic-port-range 18901-18930 --bpf-program 5KFQm1jLFkcS1V5PFpUFg6omNHoDQZTaxqTwwEpnenSL target/deploy/slop_escrow.so >.local/validator.log 2>&1 &
+solana-test-validator --reset --quiet --ledger .local/ledger --rpc-port 18899 --faucet-port 18940 --dynamic-port-range 18901-18930 --bpf-program 4hXeYxsTKbwVKRRn8P1emGNDmVUSx13VMykfUAsbPnnj target/deploy/slop_escrow.so >.local/validator.log 2>&1 &
 validator_pid=$!
 trap 'kill "$validator_pid" 2>/dev/null || true' EXIT
 export ANCHOR_PROVIDER_URL=http://127.0.0.1:18899
