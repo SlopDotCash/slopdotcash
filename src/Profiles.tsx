@@ -527,6 +527,7 @@ function IssueOutcomes({
                   ["Duplicate", counts.duplicate],
                   ["Unknown close reason", counts.unknown],
                   ["Source unavailable", counts.unavailable],
+                  ["History incomplete", counts.incomplete],
                 ] as const
               ).map(([label, count]) => (
                 <div key={label}>
@@ -539,9 +540,17 @@ function IssueOutcomes({
               {period
                 ? "Final state at month end for issues opened or transitioned in this month."
                 : "Latest recorded GitHub state."}{" "}
-              Duplicate, unknown and unavailable outcomes are excluded from the
-              rate.
+              Duplicate, unknown, unavailable and incomplete outcomes are
+              excluded from the rate.
             </p>
+            {counts.incomplete ? (
+              <p>
+                {counts.incomplete.toLocaleString()} issues have a current
+                GitHub state that their visible history does not explain, for
+                example when GitHub hides events by an account that is no longer
+                available.
+              </p>
+            ) : null}
             {counts.transferred ? (
               <p>
                 {counts.transferred.toLocaleString()} issues have a transfer in
@@ -586,6 +595,9 @@ function IssueOutcomes({
                         {record.label}
                         {record.issue.unavailableSince
                           ? " · Source now unavailable"
+                          : ""}
+                        {record.issue.historyIncompleteSince != null
+                          ? " · History incomplete"
                           : ""}
                       </li>
                     );

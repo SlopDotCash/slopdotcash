@@ -140,6 +140,10 @@ export const PROFILE_OPPORTUNITY_LIMIT = 5 as const;
 export const SCORE_RULE_VERSION = "slop-score-v2" as const;
 export const SCORE_V2_EFFECTIVE_AT = "2026-08-01T00:00:00.000Z" as const;
 const USAGE_NEUTRAL_EVIDENCE_POLICY_AT = "2026-08-19T00:00:00.000Z" as const;
+// SCR-05: from this instant an unratified merge starts at small credit, and an
+// ordinary formal review scores only when the code changed after it requested
+// changes, at most once per pull request and at triage weight.
+export const OUTCOME_FIRST_POLICY_AT = "2026-10-01T00:00:00.000Z" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
 export const SCORE_WINDOW_DAYS = 35;
@@ -156,6 +160,16 @@ export const SCORE_CAPS = {
   evaluatedContributions: 3,
 } as const;
 export const DETAILED_MERGED_PULL_REQUESTS_PER_MONTH = 5;
+
+/**
+ * Provisional score thirds for a v2 merge without a maintainer slop-score
+ * record: micro before OUTCOME_FIRST_POLICY_AT, small from then on.
+ */
+export function unratifiedMergeScoreThirds(mergedAt: string): 1 | 3 {
+  return parseIsoTime(mergedAt) >= parseIsoTime(OUTCOME_FIRST_POLICY_AT)
+    ? 3
+    : 1;
+}
 
 /**
  * Gives every accepted merge positive credit while reducing the marginal
@@ -196,6 +210,8 @@ export const REVIEW_EXCLUSION_REASONS = [
   "evaluated-contribution-award",
   "external-prize-policy",
   "reviewer-cycle-cap",
+  "unchanged-outcome",
+  "pull-request-review-awarded",
 ] as const;
 
 function exactEvidenceBonusRun(
@@ -1346,7 +1362,30 @@ export function isExpandableReviewOpportunity(
   if (!["APPROVED", "CHANGES_REQUESTED"].includes(review.state)) {
     return false;
   }
+  // SCR-05: an approval no longer scores, so expanding one earns nothing.
+  if (
+    review.state === "APPROVED" &&
+    parseIsoTime(review.submittedAt) >= parseIsoTime(OUTCOME_FIRST_POLICY_AT)
+  ) {
+    return false;
+  }
   return !hasSubstantiveReviewBody(review);
+}
+
+/**
+ * SCR-05: a review changed the accepted outcome when it requested changes on
+ * a commit that is not the merged head. Approvals and requests the merge
+ * ignored did not change what shipped. A missing reviewed commit fails closed.
+ */
+function changedAcceptedOutcome(
+  review: PullRequestReview,
+  pullRequest: Pick<PullRequestRecord, "headRefOid">,
+): boolean {
+  return (
+    review.state === "CHANGES_REQUESTED" &&
+    typeof review.commitId === "string" &&
+    review.commitId.toLowerCase() !== pullRequest.headRefOid.toLowerCase()
+  );
 }
 
 function hasSubstantiveReviewBody(review: PullRequestReview): boolean {
@@ -1366,14 +1405,14 @@ function requiresExplicitPrizeAcceptance(repositoryId: string): boolean {
 export function leaderboardMethodology(): LeaderboardMethodology {
   return {
     summary:
-      "Slop Score v2 groups accepted work into logical work units and stores credit in integer thirds. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the score on GitHub. Tiny accepted work starts at one third, and only the actor's aggregate is rounded down at cycle close.",
+      "Slop Score v2 groups accepted work into logical work units and stores credit in integer thirds. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the score on GitHub. From October 2026 an unratified merge starts at one point, and a formal review scores 1/3 only when the merged code answered its request for changes, once per pull request. Only the actor's aggregate is rounded down at cycle close.",
     scoringRules: [
       {
         id: "merged-pull-request",
         points: "micro 1/3; small 1; medium 3; large 8; XL 15; exceptional 25",
         cap: "uncapped; related or split pull requests share one workUnitId",
         qualification:
-          "Authored pull request merged during the rolling window. Unratified August work receives provisional micro credit; higher tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 1/3 each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
+          "Authored pull request merged during the rolling window. Unratified work merged before 2026-10-01 receives provisional micro credit and later work provisional small credit; other tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 1/3 each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
       },
       {
         id: "resolved-issue",
@@ -1399,9 +1438,9 @@ export function leaderboardMethodology(): LeaderboardMethodology {
         id: "substantive-review",
         points:
           "triage 1/3; standard 1; deep reproduction 3; specialist 8; ratification 1/3",
-        cap: "uncapped; no self-review and no duplicate reviewer credit on one artifact",
+        cap: "from 2026-10-01, one ordinary review award per merged pull request; no self-review and no duplicate reviewer credit on one artifact",
         qualification:
-          "Every merged pull request with a formal review is selected through a separate bounded review census, independent of the pull-request author's detail cap. A pre-merge APPROVED or CHANGES_REQUESTED review of human-authored work has substantive text or inline discussion; excluded formal reviews publish a machine-readable reason.",
+          "Every merged pull request with a formal review is selected through a separate bounded review census, independent of the pull-request author's detail cap. A pre-merge APPROVED or CHANGES_REQUESTED review of human-authored work has substantive text or inline discussion. Before 2026-10-01 such a review scores standard credit. From 2026-10-01 only the latest CHANGES_REQUESTED review on a commit other than the merged head scores, at triage credit; approvals and ignored requests do not. Higher review tiers require maintainer ratification. Excluded formal reviews publish a machine-readable reason.",
       },
       {
         id: "evaluated-contribution",
@@ -1425,6 +1464,7 @@ export function leaderboardMethodology(): LeaderboardMethodology {
       "pull-request comments created or edited after merge; bodies created after merge; author post-merge body edits; and non-author post-merge body edits that no longer pin the merged head via a single evidence-head marker",
       "duplicate immutable GitHub node IDs",
       "repeated reviews by the same reviewer on the same pull request",
+      "from 2026-10-01, approvals, requests for changes the merge ignored, and every review after the one review award on a pull request",
       "arbitrary external media links, bare checksums, and unstructured evidence claims",
       "unreachable, empty, malformed, wrong-kind, or conflicting evidence artifacts",
       "closed issues that only carry GitHub's COMPLETED state reason",
@@ -1440,7 +1480,7 @@ export function leaderboardMethodology(): LeaderboardMethodology {
     ],
     provenancePolicy:
       "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
-    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID and every artifact keeps its repository attribution. A scalar-only, budget-preflighted census selects every merged pull request with formal reviews for complete review hydration; missing or inconsistent census/detail data aborts the snapshot instead of publishing partial review credit. Score v2 applies to work from 2026-08-01 UTC. Every accepted merge receives at least provisional micro credit. Higher scores require an unedited maintainer-authored slop-score record bound to the PR node ID and exact head SHA; corrections append a successor. Proposal review records disclose exact provider, model, client, run, trace, effort, complexity, impact, review load, split risk, and confidence. XL and exceptional decisions require a second maintainer. Project reward views exclude work before the published reward start.`,
+    collectionPolicy: `The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID and every artifact keeps its repository attribution. A scalar-only, budget-preflighted census selects every merged pull request with formal reviews for complete review hydration; missing or inconsistent census/detail data aborts the snapshot instead of publishing partial review credit. Score v2 applies to work from 2026-08-01 UTC. Every accepted merge receives at least provisional micro credit, and provisional small credit when merged from 2026-10-01. Any other tier requires an unedited maintainer-authored slop-score record bound to the PR node ID and exact head SHA; corrections append a successor. Proposal review records disclose exact provider, model, client, run, trace, effort, complexity, impact, review load, split risk, and confidence. XL and exceptional decisions require a second maintainer. Project reward views exclude work before the published reward start.`,
   };
 }
 
@@ -1542,7 +1582,7 @@ function addScore(
     const scoreThirds =
       event.scoreThirds ??
       (event.category === "merged-pull-request"
-        ? 1
+        ? unratifiedMergeScoreThirds(event.occurredAt)
         : event.category === "substantive-review"
           ? 3
           : Math.max(1, Math.round(event.points * 3)));
@@ -2377,9 +2417,9 @@ function collectOpenPullRequestOpportunities(
       continue;
     }
 
-    // A reviewer who already left a qualifying review on this pull request
-    // scores once it merges, so telling them to expand a thinner review would
-    // be false guidance.
+    // A reviewer who already left a substantive review on this pull request
+    // gains nothing from expanding a thinner one, so that guidance would be
+    // false.
     const qualifiedReviewers = new Set(
       dedupeByNodeId(pullRequest.reviews).flatMap((review) =>
         review.author &&
@@ -2854,7 +2894,9 @@ export function createLeaderboardSnapshot(
         ? [author]
         : [];
     if (actors.length === 0) continue;
-    const totalThirds = ratification?.record.scoreThirds ?? 1;
+    const totalThirds =
+      ratification?.record.scoreThirds ??
+      unratifiedMergeScoreThirds(pullRequest.mergedAt);
     const shares = shareScoreThirds(totalThirds, actors.length);
     if (author) {
       const authorEntry = actorEntry(entries, author);
@@ -2877,7 +2919,7 @@ export function createLeaderboardSnapshot(
       : null;
     const baseReason = ratification
       ? `Maintainer-ratified ${ratification.record.tier} accepted outcome: ${ratification.record.reason}`
-      : "Accepted outcome has provisional micro credit pending immutable maintainer ratification.";
+      : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
     for (const [index, actor] of actors.entries()) {
       const isAuthor = actor.id === author?.id;
       const scoreThirds = shares[index] as number;
@@ -3268,6 +3310,57 @@ export function createLeaderboardSnapshot(
         return left.submittedAt.localeCompare(right.submittedAt);
       },
     );
+    const awardReview = (
+      review: PullRequestReview,
+      outcomeBound: boolean,
+      reason: string,
+    ): void => {
+      if (!review.author || !review.submittedAt) {
+        throw new Error(`Qualifying review ${review.id} lost its reviewer`);
+      }
+      const reviewSource = sources.find(
+        (candidate) => candidate.id === review.id,
+      );
+      const reviewReceipt =
+        reviewSource && input.verifyRunReceipt
+          ? assessModelAttribution([reviewSource], {
+              requireEverySource: true,
+              verifyRunReceipt: input.verifyRunReceipt,
+            }).declarations.find(
+              (declaration) =>
+                declaration.sourceId === review.id &&
+                declaration.actor?.id === review.author?.id,
+            )?.run
+          : null;
+      awardedReviewers.add(review.author.id);
+      const scored = addScore(entries, ledger, {
+        id: `${pullRequest.id}:reviewer:${review.author.id}`,
+        actor: review.author,
+        category: "substantive-review",
+        ...(outcomeBound ? { points: 1 / 3, scoreThirds: 1 } : { points: 3 }),
+        ...(reviewReceipt?.traceUpload
+          ? { evidenceBonusBasisPoints: 1_500 as const }
+          : {}),
+        occurredAt: review.submittedAt,
+        repository: repositoryIdFromUrl(review.url),
+        source: {
+          id: review.id,
+          kind: "review",
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: review.url,
+        },
+        reason,
+      });
+      if (scored) {
+        if (reviewSource) {
+          recordScoredSources([reviewSource]);
+        }
+      } else {
+        excludeReview(pullRequest, review, "reviewer-cycle-cap");
+      }
+    };
+    const outcomeReviews: PullRequestReview[] = [];
     for (const review of orderedReviews) {
       if (review.author && !isBotActor(review.author)) {
         actorEntry(entries, review.author).rawActivity.reviews += 1;
@@ -3312,47 +3405,32 @@ export function createLeaderboardSnapshot(
           `Qualifying review ${review.id} is missing its submitted timestamp`,
         );
       }
-      const reviewSource = sources.find(
-        (candidate) => candidate.id === review.id,
-      );
-      const reviewReceipt =
-        reviewSource && input.verifyRunReceipt
-          ? assessModelAttribution([reviewSource], {
-              requireEverySource: true,
-              verifyRunReceipt: input.verifyRunReceipt,
-            }).declarations.find(
-              (declaration) =>
-                declaration.sourceId === review.id &&
-                declaration.actor?.id === review.author?.id,
-            )?.run
-          : null;
-      awardedReviewers.add(review.author.id);
-      const scored = addScore(entries, ledger, {
-        id: `${pullRequest.id}:reviewer:${review.author.id}`,
-        actor: review.author,
-        category: "substantive-review",
-        points: 3,
-        ...(reviewReceipt?.traceUpload
-          ? { evidenceBonusBasisPoints: 1_500 as const }
-          : {}),
-        occurredAt: review.submittedAt,
-        repository: repositoryIdFromUrl(review.url),
-        source: {
-          id: review.id,
-          kind: "review",
-          number: pullRequest.number,
-          title: pullRequest.title,
-          url: review.url,
-        },
-        reason:
+      if (
+        parseIsoTime(review.submittedAt) < parseIsoTime(OUTCOME_FIRST_POLICY_AT)
+      ) {
+        awardReview(
+          review,
+          false,
           "First qualifying substantive, non-self review submitted before merge.",
-      });
-      if (scored) {
-        if (reviewSource) {
-          recordScoredSources([reviewSource]);
-        }
+        );
+      } else if (changedAcceptedOutcome(review, pullRequest)) {
+        outcomeReviews.push(review);
       } else {
-        excludeReview(pullRequest, review, "reviewer-cycle-cap");
+        excludeReview(pullRequest, review, "unchanged-outcome");
+      }
+    }
+    // SCR-05: the pull request's one review award goes to the latest request
+    // for changes that the merged code answered.
+    const outcomeReview = outcomeReviews.at(-1);
+    for (const review of outcomeReviews) {
+      if (review === outcomeReview) {
+        awardReview(
+          review,
+          true,
+          "Latest pre-merge request for changes that the merged code answered; one review award per pull request.",
+        );
+      } else {
+        excludeReview(pullRequest, review, "pull-request-review-awarded");
       }
     }
     // Preserve the later verification without another award or evidence bonus.

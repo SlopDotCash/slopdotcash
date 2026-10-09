@@ -15,14 +15,17 @@ sign-in proves account control, not one unique person per account.
 
 Tiered accepted work earns ten points per unweighted score-third: micro 10,
 small 30, medium 90, large 240, XL 450, exceptional 750. Eligible standard
-reviews earn 30; reviewed triage, deep, and specialist reviews earn 10, 90,
+reviews earn 30; from 2026-10-01 an ordinary review earns 10 only as the one
+outcome review of its pull request; reviewed triage, deep, and specialist reviews earn 10, 90,
 and 240. Legacy integer score events earn 30 points per unweighted score.
 Verified evaluated contributions follow that same unweighted conversion.
 Token usage, cost, model, signed-receipt weight, wallet state, and payment never
 multiply points. Required source evidence and project participation rules apply.
 
 Historical merged PRs initially receive 10 provisional points each, including
-work before the project's payment program. This is a recognition backfill and
+work before the project's payment program. A Score v2 merge from
+2026-10-01T00:00:00Z without a ratified tier is provisional small credit and
+receives 30 provisional points. This is a recognition backfill and
 never retroactive cash eligibility. Verified archived and current scoring
 records supersede provisional amounts, including exclusions and work grouping
 within their complete source windows. Historical review credit is limited to

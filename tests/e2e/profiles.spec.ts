@@ -1,6 +1,17 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { assertProfiles } from "../../src/lib/profiles";
+import {
+  type CensusRequest,
+  collectProfileIssues,
+} from "../../scripts/profile-issue-census";
+import {
+  assertProfiles,
+  type ProfileIndex,
+  type ProfileIssue,
+  type ProfileIssueHistory,
+  type ProfileRecord,
+  profileIssueOutcomes,
+} from "../../src/lib/profiles";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 
 test("profiles preserve legacy coverage and expose recorded issue history", async ({
@@ -198,4 +209,171 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
   });
   expect(errors).toEqual([]);
   expect(failures).toEqual([]);
+});
+
+test("issue census records a hidden transition as incomplete history", async () => {
+  const author = "U_issue_author";
+  const repository = TARGET_REPOSITORIES[0];
+  const createdAt = "2026-09-01T00:00:00.000Z";
+  const closedAt = "2026-09-02T00:00:00.000Z";
+  const avatarUrl = "https://avatars.githubusercontent.com/u/7654321";
+  const page = <T>(nodes: T[]) => ({
+    totalCount: nodes.length,
+    pageInfo: { hasNextPage: false, endCursor: null },
+    nodes,
+  });
+  const source = (id: string, number: number, closedEvents: string[]) => ({
+    id,
+    number,
+    createdAt,
+    state: "CLOSED",
+    stateReason: "COMPLETED",
+    author: {
+      __typename: "User",
+      id: author,
+      login: "issue-author",
+      avatarUrl,
+    },
+    timelineItems: page(
+      closedEvents.map((eventId) => ({
+        __typename: "ClosedEvent",
+        id: eventId,
+        createdAt: closedAt,
+        stateReason: "COMPLETED",
+        duplicateOf: null,
+      })),
+    ),
+  });
+  // GitHub hides the closing event of an account that is no longer
+  // available, while the issue itself still reports CLOSED/COMPLETED.
+  const request: CensusRequest = async <T>(
+    _query: string,
+    variables: Record<string, string | null>,
+  ) =>
+    ({
+      repository: {
+        id:
+          TARGET_REPOSITORIES.find((item) => item.name === variables.name)
+            ?.expectedNodeId ?? `R_${variables.name}`,
+        issues:
+          variables.name === repository.name
+            ? page([
+                source("I_visible", 1, ["CE_visible"]),
+                source("I_hidden", 2, []),
+              ])
+            : page([]),
+      },
+    }) as T;
+  const census = (
+    issues: ProfileIssueHistory | undefined,
+    people: ProfileRecord[],
+  ): ProfileIndex => ({
+    schemaVersion: "2",
+    startedAt: createdAt,
+    generatedAt: new Date().toISOString(),
+    repositories: TARGET_REPOSITORIES.map((item) => ({
+      repository: item.id,
+      count: 0,
+      excluded: 0,
+    })),
+    people,
+    issues,
+  });
+  // The previous census saw the closing event before it was hidden, and was
+  // published before records carried the incomplete-history field.
+  const priorClosed = {
+    id: "CE_hidden",
+    kind: "closed" as const,
+    occurredAt: closedAt,
+    reason: "COMPLETED",
+    relatedIssueId: null,
+  };
+  const previous = census(
+    {
+      firstObservedAt: createdAt,
+      repositories: TARGET_REPOSITORIES.map((item) => ({
+        repository: item.id,
+        count: item.id === repository.id ? 1 : 0,
+      })),
+      items: [
+        {
+          id: "I_hidden",
+          repository: repository.id,
+          number: 2,
+          authorId: author,
+          createdAt,
+          observedAt: closedAt,
+          state: "CLOSED",
+          reason: "COMPLETED",
+          unavailableSince: null,
+          correctedAt: null,
+          events: [priorClosed],
+        },
+      ],
+    },
+    [{ id: author, login: "issue-author", avatarUrl, repositories: [] }],
+  );
+  assertProfiles(previous);
+  const collect = async (prior: ProfileIndex) => {
+    const people = new Map<string, ProfileRecord>();
+    const issues = await collectProfileIssues(
+      request,
+      people,
+      prior,
+      createdAt,
+    );
+    const index = census(issues, [...people.values()]);
+    assertProfiles(index);
+    return index;
+  };
+
+  const first = await collect(previous);
+  const items = first.issues?.items ?? [];
+  const hidden = items.find((issue) => issue.id === "I_hidden");
+  const visible = items.find((issue) => issue.id === "I_visible");
+  if (!hidden || !visible) throw Error("Both issues must be collected");
+  expect(visible.historyIncompleteSince).toBeNull();
+  // Nothing is invented: the record keeps only what GitHub shows today,
+  // flags the gap, and notes that a previously observed event disappeared.
+  expect(hidden.events).toEqual([]);
+  expect(hidden.historyIncompleteSince).toBe(hidden.observedAt);
+  expect(hidden.correctedAt).toBe(hidden.observedAt);
+  expect(profileIssueOutcomes(items, author)).toMatchObject({
+    open: 0,
+    completed: 1,
+    incomplete: 1,
+    corrected: 1,
+  });
+
+  // The gap keeps the time it was first observed across later censuses.
+  const second = await collect(first);
+  expect(
+    second.issues?.items.find((issue) => issue.id === "I_hidden")
+      ?.historyIncompleteSince,
+  ).toBe(hidden.historyIncompleteSince);
+
+  // An unflagged gap and a flag on a complete history both stay invalid.
+  const withHidden = (change: Partial<ProfileIssue>) =>
+    census(
+      {
+        ...(first.issues as ProfileIssueHistory),
+        items: items.map((issue) =>
+          issue.id === "I_hidden" ? { ...issue, ...change } : issue,
+        ),
+      },
+      first.people,
+    );
+  expect(() =>
+    assertProfiles(withHidden({ historyIncompleteSince: null })),
+  ).toThrow("Issue history does not reconcile with its current state");
+  expect(() =>
+    assertProfiles(
+      withHidden({
+        events: [{ ...priorClosed, occurredAt: hidden.observedAt }],
+      }),
+    ),
+  ).toThrow("Issue history is flagged incomplete but reconciles");
+  expect(() =>
+    assertProfiles(withHidden({ historyIncompleteSince: "not a time" })),
+  ).toThrow("Invalid issue history record");
 });
