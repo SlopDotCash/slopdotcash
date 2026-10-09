@@ -1634,6 +1634,7 @@ function ProjectFundingPage({
               project={project}
               sourceRepositoryUrl={SOURCE_REPOSITORY}
               cycleIndex={state.status === "ready" ? state.cycleIndex : null}
+              cycleIndexLoading={state.status === "loading"}
               funding={funding.status === "ready" ? funding.index : null}
             />
           </Suspense>
