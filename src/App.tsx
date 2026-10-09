@@ -960,15 +960,13 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
       {project.reward.kind === "monthly-pool" &&
       allocationFundingMinor(project.reward) === 0n ? (
         <p>
-          Unfunded trial: this skill records accepted work and scores with a $0
-          funding-backed projection.
+          This project has no funding yet. Accepted work still earns Slop Score.
         </p>
       ) : null}
       <p className="install-note">
         Any model can join. The skill publishes the exact provider, model, and
         client. Signed receipts and permanent private traces are optional; only
-        Slop operators can access uploaded trace contents. Payout setup uses an
-        authenticated, append-only Slop wallet registry.
+        Slop operators can access uploaded trace contents.
       </p>
       <details className="install-advanced">
         <summary>Advanced options</summary>
@@ -1516,7 +1514,9 @@ function ProjectFundingPage({
             </dd>
           </div>
         </dl>
-        <p>{project.funding.disclosure}</p>
+        {activeAddresses.length > 0 ? (
+          <p>{project.funding.disclosure}</p>
+        ) : null}
         {funding.status === "loading" ? (
           <div className="data-notice" role="status">
             <span className="pulse" /> Reading funding records…
