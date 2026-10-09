@@ -69,6 +69,7 @@
     "test:contracts:solana": "bash contracts/solana/scripts/test-e2e.sh"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.126.0",
     "@fontsource-variable/bricolage-grotesque": "5.2.10",
     "@fontsource/jetbrains-mono": "5.2.8",
     "@noble/hashes": "2.4.0",
