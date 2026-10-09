@@ -87,15 +87,25 @@ Do these in order. Each step names who does it and how to verify it.
 
    Optionally add `SURPLUS_BASE_URL` if Surplus's Anthropic endpoint differs
    from the default.
-5. **Create the queues:**
-   - `bunx wrangler queues create slopbot-jobs`
-   - `bunx wrangler queues create slopbot-jobs-dlq`
-6. **Deploy only through the protected workflow:** a reviewed PR adds the
-   `slop-slopbot` deploy and the D1 migration step to
-   `.github/workflows/deploy.yml`, then merges to `develop`. Claim the
-   deploy lever on the issue first (AGENTS.md "Deployment"). Add the worker
-   route (for example `slopbot.slop.cash`) in the same PR, then set the App
-   webhook URL from step 1 and activate it.
+5. **Queues:** `slopbot-jobs` and `slopbot-jobs-dlq` were created on
+   9 October 2026 with `wrangler queues create`.
+6. **One-time bootstrap (owner, after claiming the deploy lever):**
+   1. In Cloudflare → Workers, create a Worker named `slop-slopbot` from the
+      "Hello World" template. Do not deploy from a local tree.
+   2. Add the custom domain `slopbot.slop.cash` to that Worker.
+   3. Add the step 4 secrets.
+   4. Attach the queue consumer:
+      `bunx wrangler queues consumer add slopbot-jobs slop-slopbot --batch-size 5 --message-retries 5 --dead-letter-queue slopbot-jobs-dlq`.
+   5. In GitHub → repository Settings → Variables, set `SLOPBOT_RELEASE` to
+      `enabled`.
+
+   The next protected release runs these steps:
+   - checks the secret inventory;
+   - uploads and promotes the version bound to the release SHA;
+   - probes `https://slopbot.slop.cash/health`.
+
+   Then set the App webhook URL to `https://slopbot.slop.cash/github/webhook`
+   and activate it.
 7. **Verify live:**
    - `GET /health` returns `{"service":"slopbot","ok":true}`.
    - The App's "Advanced" tab shows `202` for the ping delivery.
