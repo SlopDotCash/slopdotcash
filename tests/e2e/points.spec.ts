@@ -24,7 +24,7 @@ test(
     const reloaded = await page.reload();
     expect(reloaded?.status()).toBe(200);
     await expect(
-      page.getByRole("heading", { name: "Slop Points", exact: true }),
+      page.getByRole("heading", { name: "Contributors", exact: true }),
     ).toBeVisible();
     await expect(page.getByLabel("Sort by")).toHaveValue("score");
     await page.getByLabel("Period", { exact: true }).selectOption("lifetime");

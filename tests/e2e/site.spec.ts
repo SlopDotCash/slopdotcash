@@ -220,30 +220,24 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
       name: "Eliza",
     }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { exact: true, name: "Featured" }),
-  ).toBeVisible();
-  const community = page.locator("section.community-projects");
-  const eligibleCommunity = homeProjects().filter(
-    (project) => project.listingTier === "community",
+  // The carousel announces each promoted project once; moving copies are
+  // hidden from assistive technology and removed from the tab order.
+  const carouselCards = page.locator(
+    ".project-carousel-group:not([aria-hidden]) > .project-carousel-slot:not([aria-hidden]) > a.project-card",
   );
-  if (eligibleCommunity.length === 0) {
-    await expect(community).toHaveCount(0);
-  } else {
-    // Community projects list ten per page; every page stays reachable.
-    const pages = Math.ceil(eligibleCommunity.length / 10);
-    for (let index = 0; index < pages; index += 1) {
-      for (const project of eligibleCommunity.slice(
-        index * 10,
-        (index + 1) * 10,
-      ))
-        await expect(
-          community.locator(`a.project-row[href="/projects/${project.id}"]`),
-        ).toBeVisible();
-      if (index < pages - 1)
-        await community.getByRole("button", { name: "Next page" }).click();
-    }
-  }
+  await expect(carouselCards).toHaveCount(homeProjects().length);
+  for (const project of homeProjects())
+    await expect(
+      carouselCards.and(page.locator(`[href="/projects/${project.id}"]`)),
+    ).toContainText(
+      project.listingTier === "featured" ? "Featured" : "Community",
+    );
+  for (const copy of await page
+    .locator(
+      ".project-carousel-group[aria-hidden] a.project-card, .project-carousel-slot[aria-hidden] a.project-card",
+    )
+    .all())
+    await expect(copy).toHaveAttribute("tabindex", "-1");
   for (const project of PROJECTS.filter(
     (project) => project.status === "paused",
   )) {
@@ -254,7 +248,7 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
   await expect(
     page.getByRole("heading", { exact: true, name: "Delta Star" }),
   ).toBeVisible();
-  const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
+  const elizaCard = carouselCards.and(page.locator('[href="/projects/eliza"]'));
   await expect(
     elizaCard.getByText("Not funded yet", { exact: true }),
   ).toHaveCount(0);
@@ -269,7 +263,9 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
   await expect(
     elizaCard.getByText(/Build and verify the elizaOS framework/u),
   ).toBeVisible();
-  const deltaCard = page.locator('a.project-card[href="/projects/delta-star"]');
+  const deltaCard = carouselCards.and(
+    page.locator('[href="/projects/delta-star"]'),
+  );
   await expect(
     deltaCard.getByText("$1,000,000", { exact: true }),
   ).toBeVisible();
@@ -279,25 +275,18 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
   await expect(
     deltaCard.getByText(/Advance machine-checked Reed–Solomon/u),
   ).toBeVisible();
-  const [gridBox, elizaBox, deltaBox] = await Promise.all([
-    page
-      .locator(
-        '.project-tier[aria-labelledby="featured-projects"] .project-grid',
-      )
-      .boundingBox(),
-    elizaCard.boundingBox(),
-    deltaCard.boundingBox(),
-  ]);
-  expect(gridBox).not.toBeNull();
-  expect(elizaBox).not.toBeNull();
-  expect(deltaBox).not.toBeNull();
-  // Featured cards share the grid and never spill past it.
-  for (const box of [elizaBox, deltaBox]) {
-    expect(box?.x ?? 0).toBeGreaterThanOrEqual((gridBox?.x ?? 0) - 1);
-    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(
-      (gridBox?.x ?? 0) + (gridBox?.width ?? 0) + 1,
-    );
-  }
+  // A visible control stops the moving carousel (WCAG 2.2.2).
+  const motion = page.getByRole("button", { name: "Pause motion" });
+  await expect(motion).toHaveAttribute("aria-pressed", "false");
+  await motion.click();
+  await expect(
+    page.getByRole("button", { name: "Play motion" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.mouse.move(0, 0);
+  await expect(page.locator(".project-carousel-track")).toHaveCSS(
+    "animation-play-state",
+    "paused",
+  );
   await expect(page.getByText("Public beta.")).toHaveCount(0);
   await expect(
     page.getByText(/Rankings are live. Payouts are off/u),
@@ -395,7 +384,7 @@ test("starts Eliza with one prompt and no separate payout form", async ({
     name: "Projects",
     exact: true,
   });
-  await expect(projectLink).toHaveAttribute("href", "/#projects");
+  await expect(projectLink).toHaveAttribute("href", "/projects");
   await expect(
     page.getByRole("heading", { name: "Make money building agents." }),
   ).toBeVisible();
@@ -407,25 +396,16 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   ).toHaveCount(0);
   await expect(page.getByRole("link", { name: /View cycle/u })).toHaveCount(0);
   await expect(
-    page.getByRole("link", { name: /View in GitHub/u }),
+    page.locator(".project-identity-text").getByRole("link"),
   ).toHaveAttribute("href", "https://github.com/elizaOS/eliza");
   await expect(
     page.getByRole("link", { name: /View in SlopHub/u }),
   ).toHaveCount(0);
   await expect(page.getByText("1% platform fee · Solana")).toHaveCount(0);
-  const rewardStyle = await page.locator(".reward-card").evaluate((card) => {
-    const amount = card.querySelector<HTMLElement>(":scope > strong");
-    const actions = card.querySelector<HTMLElement>(":scope > div");
-    if (!amount || !actions) return null;
-    return {
-      amountText: amount.textContent,
-      actionBorderTopWidth: getComputedStyle(actions).borderTopWidth,
-    };
-  });
-  expect(rewardStyle).not.toBeNull();
   // Eliza is pledged, so the headline is the funding state, never the cap.
-  expect(rewardStyle?.amountText).toBe("Not funded yet");
-  expect(rewardStyle?.actionBorderTopWidth).toBe("0px");
+  await expect(page.locator(".project-reward-status > strong")).toHaveText(
+    "Not funded yet",
+  );
   const projectGaps = await page.evaluate(() => {
     const breadcrumb = document.querySelector(".breadcrumb");
     const heading = document.querySelector(".project-hero h1");
@@ -446,33 +426,6 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   expect(projectGaps).not.toBeNull();
   expect(projectGaps?.breadcrumbToHeading ?? 100).toBeLessThanOrEqual(48);
   expect(projectGaps?.heroToInstall ?? 100).toBeLessThanOrEqual(64);
-  if ((page.viewportSize()?.width ?? 0) <= 900) {
-    const rewardLayout = await page.evaluate(() => {
-      const card = document.querySelector<HTMLElement>(".reward-card");
-      const shell = card?.closest<HTMLElement>(".shell");
-      const actions = Array.from(
-        card?.querySelectorAll<HTMLElement>(".reward-actions a") ?? [],
-      );
-      if (!card || !shell) return null;
-      const cardBounds = card.getBoundingClientRect();
-      const shellBounds = shell.getBoundingClientRect();
-      return {
-        centerOffset: Math.abs(
-          cardBounds.left +
-            cardBounds.width / 2 -
-            (shellBounds.left + shellBounds.width / 2),
-        ),
-        minimumActionHeight: Math.min(
-          ...actions.map((action) => action.getBoundingClientRect().height),
-        ),
-        textAlign: getComputedStyle(card).textAlign,
-      };
-    });
-    expect(rewardLayout).not.toBeNull();
-    expect(rewardLayout?.centerOffset ?? 100).toBeLessThanOrEqual(1);
-    expect(rewardLayout?.minimumActionHeight ?? 0).toBeGreaterThanOrEqual(44);
-    expect(rewardLayout?.textAlign).toBe("center");
-  }
   const prompt = page.getByRole("status", { name: "Agent prompt" });
   await expect(prompt).toContainText(/\/SKILL\.md/u);
   await expect(prompt).toContainText(
@@ -486,7 +439,7 @@ test("starts Eliza with one prompt and no separate payout form", async ({
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
     "/SKILL.md",
   );
-  await page.getByText("Advanced options").click();
+  await page.getByText("Installation, disclosures & optional receipts").click();
   const command = page.getByRole("textbox", {
     name: "Manual install command",
   });
@@ -655,7 +608,7 @@ test("renders contributor and cycle records from validated public data", {
     const leader = view.leaders.find((entry) => entry.actor.id === actor.id);
     return total + BigInt(leader?.simulatedMinor ?? "0");
   }, 0n);
-  const estimate = page.locator(".profile-totals > div").filter({
+  const estimate = page.locator(".profile-score-summary > div").filter({
     hasText: /simulated estimate/u,
   });
   await expect(estimate.locator("strong")).toHaveText(
@@ -683,40 +636,44 @@ test("renders contributor and cycle records from validated public data", {
   expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)));
   if (acceptedRecords.length > 10) {
     await expect(activity.locator("li[data-activity-date]")).toHaveCount(10);
-    const expand = activity.getByRole("button", {
-      name: /View all .* activity records/u,
-    });
-    await expand.scrollIntoViewIfNeeded();
-    await expand.focus();
-    await page.keyboard.press("Enter");
-    const collapse = activity.getByRole("button", {
-      name: "Show recent activity",
-    });
-    await expect(collapse).toBeFocused();
-    await expect(collapse).toBeInViewport();
-    const fullDates = await activity
+    const total = activity.locator(".profile-activity-count");
+    const count = Number(
+      (await total.textContent())?.replace(/[^0-9]/gu, "") ?? "0",
+    );
+    expect(count).toBeGreaterThanOrEqual(acceptedRecords.length);
+    const pages = activity.getByRole("navigation", { name: "Activity pages" });
+    await expect(pages.getByRole("status")).toHaveText(
+      `1–10 of ${count.toLocaleString("en-US")}`,
+    );
+    const previous = pages.getByRole("button", { name: "Previous" });
+    const next = pages.getByRole("button", { name: "Next" });
+    await expect(previous).toBeDisabled();
+    const firstPage = await activity
       .locator("li[data-activity-date]")
       .evaluateAll((rows) =>
         rows.map((row) => row.getAttribute("data-activity-date") ?? ""),
       );
-    expect(fullDates.length).toBeGreaterThanOrEqual(acceptedRecords.length);
-    expect(fullDates).toEqual(
-      [...fullDates].sort((a, b) => b.localeCompare(a)),
-    );
-    const latest = [...acceptedRecords].sort((a, b) =>
-      b.occurredAt.localeCompare(a.occurredAt),
-    )[0];
-    await expect(
-      activity
-        .getByRole("link", { name: latest.source.title, exact: true })
-        .first(),
-    ).toBeVisible();
-    await expect(
-      activity.getByRole("button", { name: "Show recent activity" }),
-    ).toHaveAttribute("aria-expanded", "true");
+    await next.focus();
     await page.keyboard.press("Enter");
-    await expect(expand).toBeFocused();
-    await expect(expand).toBeInViewport();
+    await expect(pages.getByRole("status")).toHaveText(
+      `11–${Math.min(20, count).toLocaleString("en-US")} of ${count.toLocaleString("en-US")}`,
+    );
+    const secondPage = await activity
+      .locator("li[data-activity-date]")
+      .evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute("data-activity-date") ?? ""),
+      );
+    // Pages continue the same newest-first order without repeating records.
+    expect(
+      secondPage[0].localeCompare(firstPage.at(-1) ?? ""),
+    ).toBeLessThanOrEqual(0);
+    await expect(previous.or(next).and(page.locator(":focus"))).toHaveCount(1);
+    await previous.focus();
+    await page.keyboard.press("Enter");
+    await expect(pages.getByRole("status")).toHaveText(
+      `1–10 of ${count.toLocaleString("en-US")}`,
+    );
+    await expect(next).toBeFocused();
     await expect(activity.locator("li[data-activity-date]")).toHaveCount(10);
   }
 
@@ -1224,11 +1181,11 @@ test("shows an explicit error for invalid data and retries", async ({
   await expect(page.getByRole("alert")).toContainText(
     "Live totals unavailable",
   );
-  await expect(page.locator(".reward-card")).toContainText(
+  await expect(page.locator(".project-reward-status")).toContainText(
     "Funding history unavailable",
   );
-  await expect(page.locator(".reward-card")).not.toContainText("$0");
-  await expect(page.locator(".reward-card")).not.toContainText(
+  await expect(page.locator(".project-reward-status")).not.toContainText("$0");
+  await expect(page.locator(".project-reward-status")).not.toContainText(
     "Funding promotion paused",
   );
   const errorAccessibility = await new AxeBuilder({ page })
@@ -1462,7 +1419,7 @@ for (const route of [
       ).toBeVisible();
       await expect(page.getByText(/after two unfunded cycles/u)).toHaveCount(0);
       await expect(page.getByLabel("Manual install command")).toHaveCount(0);
-      await expect(page.locator(".reward-card")).toHaveCount(0);
+      await expect(page.locator(".project-reward-status")).toHaveCount(0);
       if (project.participation?.state === "archived") {
         const successorId = project.participation.successorProjectId;
         const successor = PROJECTS.find((entry) => entry.id === successorId);
@@ -1826,4 +1783,38 @@ test("derives Solana addresses on the settlement verification page", async ({
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
   });
+});
+
+test("lists every manifest project by tier on the projects directory", async ({
+  page,
+}) => {
+  const response = await page.goto("/projects");
+  expect(response?.status()).toBe(200);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "All projects" }),
+  ).toBeVisible();
+  for (const [tier, label] of [
+    ["featured", "Featured"],
+    ["community", "Community"],
+  ] as const) {
+    const section = page.getByRole("region", { name: label, exact: true });
+    for (const project of PROJECTS.filter(
+      (project) => project.listingTier === tier,
+    )) {
+      const card = section.locator(
+        `a.project-card[href="/projects/${project.slug}"]`,
+      );
+      await expect(card).toBeVisible();
+      await expect(card.locator("xpath=..")).toContainText(
+        project.status === "paused" ? "Paused · listed only" : "Active",
+      );
+    }
+  }
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth <=
+        document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
 });
