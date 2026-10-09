@@ -41,6 +41,12 @@ export interface ProfileIssue {
   reason: string | null;
   unavailableSince: string | null;
   correctedAt: string | null;
+  /**
+   * First observed when the visible events stopped reproducing the current
+   * state, e.g. GitHub hides events by an account that is no longer
+   * available. Absent on records published before this field existed.
+   */
+  historyIncompleteSince?: string | null;
   events: ProfileIssueEvent[];
 }
 export interface ProfileIssueHistory {
@@ -162,6 +168,12 @@ function assertProfileIssues(index: ProfileIndex) {
       (issue.correctedAt !== null &&
         (!time(issue.correctedAt) ||
           Date.parse(issue.correctedAt) > Date.parse(issue.observedAt))) ||
+      (issue.historyIncompleteSince != null &&
+        (!time(issue.historyIncompleteSince) ||
+          Date.parse(issue.historyIncompleteSince) <
+            Date.parse(issue.createdAt) ||
+          Date.parse(issue.historyIncompleteSince) >
+            Date.parse(issue.observedAt))) ||
       !Array.isArray(issue.events)
     )
       throw Error("Invalid issue history record");
@@ -170,8 +182,6 @@ function assertProfileIssues(index: ProfileIndex) {
       counts.set(issue.repository, (counts.get(issue.repository) ?? 0) + 1);
     const events = new Set<string>();
     let previous = Date.parse(issue.createdAt);
-    let state = "OPEN";
-    let stateReason: string | null = null;
     for (const event of issue.events) {
       if (
         !event ||
@@ -195,13 +205,16 @@ function assertProfileIssues(index: ProfileIndex) {
         throw Error("Invalid or incomplete issue event history");
       events.add(event.id);
       previous = Date.parse(event.occurredAt);
-      if (event.kind === "closed" || event.kind === "reopened") {
-        state = event.kind === "closed" ? "CLOSED" : "OPEN";
-        stateReason = event.reason;
-      }
     }
-    if (state !== issue.state || stateReason !== issue.reason)
-      throw Error("Issue history does not reconcile with its current state");
+    // A visible history that cannot reproduce the current state must say so,
+    // and a record flagged as incomplete must actually be incomplete.
+    const incomplete = issue.historyIncompleteSince != null;
+    if (issueHistoryReconciles(issue) === incomplete)
+      throw Error(
+        incomplete
+          ? "Issue history is flagged incomplete but reconciles"
+          : "Issue history does not reconcile with its current state",
+      );
   }
   for (const row of history.repositories)
     if (
@@ -210,6 +223,20 @@ function assertProfileIssues(index: ProfileIndex) {
       (counts.get(row.repository) ?? 0) !== row.count
     )
       throw Error("Incomplete issue census");
+}
+
+/** Whether replaying the visible transitions reproduces the current state. */
+export function issueHistoryReconciles(
+  issue: Pick<ProfileIssue, "state" | "reason" | "events">,
+) {
+  let state = "OPEN";
+  let reason: string | null = null;
+  for (const event of issue.events)
+    if (event.kind === "closed" || event.kind === "reopened") {
+      state = event.kind === "closed" ? "CLOSED" : "OPEN";
+      reason = event.reason;
+    }
+  return state === issue.state && reason === issue.reason;
 }
 
 /** Diagnostic outcomes only; these counts never change score or money. */
@@ -234,6 +261,7 @@ export function profileIssueOutcomes(
     unknown: 0,
     transferred: 0,
     unavailable: 0,
+    incomplete: 0,
     corrected: 0,
   };
   for (const issue of issues) {
@@ -264,6 +292,11 @@ export function profileIssueOutcomes(
     if (issue.correctedAt !== null) counts.corrected++;
     if (history.some((event) => event.kind === "transferred"))
       counts.transferred++;
+    // The visible events cannot say how or when the issue reached its state.
+    if (issue.historyIncompleteSince != null) {
+      counts.incomplete++;
+      continue;
+    }
     if (transition?.kind !== "closed") {
       if (transition?.kind === "reopened") counts.reopened++;
       else counts.open++;

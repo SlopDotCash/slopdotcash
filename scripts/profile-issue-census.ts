@@ -1,9 +1,10 @@
-import type {
-  ProfileIndex,
-  ProfileIssue,
-  ProfileIssueEvent,
-  ProfileIssueHistory,
-  ProfileRecord,
+import {
+  issueHistoryReconciles,
+  type ProfileIndex,
+  type ProfileIssue,
+  type ProfileIssueEvent,
+  type ProfileIssueHistory,
+  type ProfileRecord,
 } from "../src/lib/profiles";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 
@@ -75,6 +76,7 @@ export async function collectProfileIssues(
     let repositoryId: string | null = repository.expectedNodeId;
     let reported = 0;
     let count = 0;
+    let incomplete = 0;
     do {
       const data: RepositoryIssues = await request<RepositoryIssues>(query, {
         owner: repository.owner,
@@ -159,7 +161,7 @@ export async function collectProfileIssues(
           person.avatarUrl = author.avatarUrl;
           people.set(authorId, person);
         }
-        result.items.push({
+        const item: ProfileIssue = {
           id: source.id,
           repository: repository.id,
           number: source.number,
@@ -170,8 +172,18 @@ export async function collectProfileIssues(
           reason: source.stateReason,
           unavailableSince: null,
           correctedAt: changed ? observedAt : (before?.correctedAt ?? null),
+          historyIncompleteSince: null,
           events: normalized,
-        });
+        };
+        // GitHub hides events by unavailable accounts, so the visible history
+        // may not reproduce the current state. Record the gap; never infer
+        // the missing transition.
+        if (!issueHistoryReconciles(item)) {
+          item.historyIncompleteSince =
+            before?.historyIncompleteSince ?? observedAt;
+          incomplete++;
+        }
+        result.items.push(item);
       }
       if (
         page.pageInfo.hasNextPage &&
@@ -183,7 +195,10 @@ export async function collectProfileIssues(
     if (count !== reported) throw Error("Issue count reconciliation failed");
     result.repositories.push({ repository: repository.id, count });
     console.log(
-      `${repository.id}: ${count} issues and their event histories reconciled`,
+      `${repository.id}: ${count} issues and their event histories reconciled` +
+        (incomplete
+          ? `; ${incomplete} recorded as incomplete because their visible events do not reproduce the current state`
+          : ""),
     );
   }
   const previousPeople = new Map(
