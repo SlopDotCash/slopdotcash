@@ -1,10 +1,11 @@
 {
+  "id": "payzcode-ai",
   "name": "Payzcode AI",
-  "repo": "lysande62/payzcode-enterprise",
-  "repo_id": "1227266226",
-  "node_id": "R_kgDOSSaYsg",
-  "owner_id": "161756292",
-  "owner_node_id": "U_kgDOCaQ0hA",
-  "payout_address": "",
-  "network": ""
+  "description": "Polygon USDC Payout listing and landing page",
+  "version": "1.0.0",
+  "category": "DeFi / Payments",
+  "network": "Polygon",
+  "contractAddress": "",
+  "author": "Lysander Lombeh"
 }
+
