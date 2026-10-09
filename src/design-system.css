@@ -553,7 +553,7 @@ label {
 .agent-open-in ul {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -562,8 +562,8 @@ label {
 .agent-open-in a {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border: 1px solid var(--line-strong);
   border-radius: var(--brand-radius-medium);
   color: var(--ink);
