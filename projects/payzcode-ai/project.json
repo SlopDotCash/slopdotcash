@@ -1,15 +1,122 @@
 {
+  "schemaVersion": "1",
   "id": "payzcode-ai",
+  "slug": "payzcode-ai",
   "name": "Payzcode AI",
-  "description": "Autonomous Smart Contract & Web3 Automation Platform",
-  "sourcePath": "projects/payzcode-ai",
-  "links": {
-    "site": "https://slop.cash/",
-    "github": "https://github.com/lysande62/payzcode-enterprise"
+  "eyebrow": "Autonomous Smart Contract & Web3 Automation Platform",
+  "headline": "Build and automate EVM smart contracts with intelligent agents.",
+  "description": "Payzcode AI is a decentralized platform enabling full-stack web programming, smart contract deployment, and automated execution workflows across EVM and TRON networks.",
+  "listingTier": "featured",
+  "status": "active",
+  "steward": {
+    "displayName": "Lysande62",
+    "kind": "individual",
+    "github": {
+      "actorId": "lysande62",
+      "nodeId": "",
+      "login": "lysande62",
+      "type": "User",
+      "profileUrl": "https://github.com/lysande62"
+    },
+    "website": "https://slop.cash/"
   },
-  "tags": [
-    "Web3",
-    "Automation",
-    "Smart Contracts"
-  ]
+  "authority": {
+    "state": "verified",
+    "reason": null,
+    "role": "project-steward",
+    "repositoryId": "",
+    "repositoryNodeId": "",
+    "proof": {
+      "commitSha": "",
+      "fileSha256": "",
+      "policyRevision": "2026-08-20.1",
+      "url": "https://github.com/lysande62/payzcode-enterprise",
+      "verifiedAt": "2026-10-09T00:00:00.000Z"
+    }
+  },
+  "terms": {
+    "revision": "2026-08-20.1",
+    "effectiveAt": "2026-10-09T00:00:00.000Z",
+    "receiptPolicy": {
+      "state": "active",
+      "activatedAt": "2026-10-09T00:00:00.000Z",
+      "bindings": []
+    },
+    "paymentTransfersIp": false,
+    "retroactive": false,
+    "copyright": {
+      "model": "unknown",
+      "claimedLegalHolder": null,
+      "notice": null,
+      "legalCapacity": null,
+      "governanceResolution": null
+    },
+    "repositoryLicense": {
+      "state": "verified",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/lysande62/payzcode-enterprise/blob/main/LICENSE",
+      "commitSha": "",
+      "fileSha256": ""
+    },
+    "inbound": {
+      "mode": "license",
+      "termsUrl": "https://github.com/lysande62/payzcode-enterprise",
+      "commitSha": "",
+      "fileSha256": "",
+      "version": "2026-08-18.1",
+      "acceptance": "Pull-request contributions are licensed under the repository Apache-2.0 license."
+    },
+    "assignment": null,
+    "externalPrize": null
+  },
+  "repositories": [
+    {
+      "id": "lysande62/payzcode-enterprise",
+      "aliases": ["lysande62/payzcode-enterprise"],
+      "displayName": "lysande62/payzcode-enterprise",
+      "githubUrl": "https://github.com/lysande62/payzcode-enterprise",
+      "description": "Payzcode AI enterprise repository.",
+      "integrationBranch": "main"
+    }
+  ],
+  "skill": {
+    "id": "contribute-to-payzcode-ai",
+    "publishAtRoot": false,
+    "sourcePath": "skills/contribute-to-payzcode-ai",
+    "publicPath": "/projects/payzcode-ai/skill.md"
+  },
+  "reviewSkill": {
+    "id": "review-payzcode-ai-contributions",
+    "sourcePath": "skills/review-payzcode-ai-contributions"
+  },
+  "reward": {
+    "kind": "monthly-pool",
+    "currency": "USDC",
+    "chain": "solana",
+    "rewardStartAt": "2026-10-01T00:00:00.000Z",
+    "cycle": "calendar-month-utc",
+    "monthlyCapMinor": "1000000000",
+    "monthlyCapDisplay": "$1,000",
+    "cycleCaps": [],
+    "committedMinor": "0",
+    "paymentMode": "disabled",
+    "feeBasisPoints": 100,
+    "unusedFunds": "rollover-without-cap-increase",
+    "fundingState": "pledged"
+  },
+  "funding": {
+    "mode": "direct-noncustodial",
+    "disclosure": "Funds go directly to the project wallet.",
+    "recordsPath": "funding/payzcode-ai",
+    "addresses": []
+  },
+  "modelPolicy": {
+    "mode": "open-declared",
+    "disclosureRequired": true
+  },
+  "links": {
+    "repository": "https://github.com/lysande62/payzcode-enterprise",
+    "issues": "https://github.com/lysande62/payzcode-enterprise/issues",
+    "discussions": "https://github.com/lysande62/payzcode-enterprise/discussions"
+  }
 }
