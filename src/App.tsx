@@ -210,7 +210,11 @@ function internalRoute(pathname: string): Route {
   if (segments.length === 1 && segments[0] === "cycles") {
     return { kind: "cycle-archive" };
   }
-  if (segments[0] === "projects" && segments[1] === "new") {
+  if (
+    segments.length === 2 &&
+    segments[0] === "projects" &&
+    segments[1] === "new"
+  ) {
     return { kind: "new-project" };
   }
   if (
@@ -3294,7 +3298,7 @@ export function App() {
 
 function AppContent({ route }: { route: Route }) {
   useInitialHashScroll();
-  const needsSnapshot = ![
+  const snapshotFree: Route["kind"][] = [
     "home",
     "points",
     "account",
@@ -3303,11 +3307,10 @@ function AppContent({ route }: { route: Route }) {
     "how-it-works",
     "new-project",
     "manage-project",
-    "wallet",
     "unknown",
-    "verification",
     "cycle-archive",
-  ].includes(route.kind);
+  ];
+  const needsSnapshot = !snapshotFree.includes(route.kind);
   const [state, retry] = useSnapshot(needsSnapshot);
   const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
