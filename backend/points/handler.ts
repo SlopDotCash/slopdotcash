@@ -172,10 +172,12 @@ export async function handlePointsApi(
       const hash = await sha256Hex(token);
       const expires = new Date(Date.parse(now) + 60 * 60 * 1000).toISOString();
       // A unique actor/numeric identity and one atomic batch make retries safe.
+      // Sign-in can opt in to a public membership but never hides one; the
+      // account visibility control is the only way to make it private.
       const results = await deps.db.batch([
         deps.db
           .prepare(
-            "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,?) ON CONFLICT(actor_id) DO UPDATE SET login=excluded.login, public=excluded.public WHERE points_members.github_id=excluded.github_id",
+            "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,?) ON CONFLICT(actor_id) DO UPDATE SET login=excluded.login, public=MAX(points_members.public,excluded.public) WHERE points_members.github_id=excluded.github_id",
           )
           .bind(node, id, login, now, value.public ? 1 : 0),
         deps.db
