@@ -105,8 +105,13 @@ Do these in order. Each step names who does it and how to verify it.
 
    Optionally add `SURPLUS_BASE_URL` if Surplus's Anthropic endpoint differs
    from the default.
-5. **Queues:** `slopbot-jobs` and `slopbot-jobs-dlq` were created on
-   9 October 2026 with `wrangler queues create`.
+5. **Create the queues in the production Cloudflare account** (the account
+   in the `CLOUDFLARE_ACCOUNT_ID` environment secret, which also holds
+   `slop-private` and the `eliza-computer` Pages project):
+   `bunx wrangler queues create slopbot-jobs` and
+   `bunx wrangler queues create slopbot-jobs-dlq`. A personal Cloudflare
+   login is a different account; check with `bunx wrangler whoami` and
+   `bunx wrangler d1 list` (it must list `slop-private`) first.
 6. **One-time bootstrap (owner, after claiming the deploy lever):**
    1. In Cloudflare → Workers, create a Worker named `slop-slopbot` from the
       "Hello World" template. Do not deploy from a local tree.
