@@ -1570,7 +1570,7 @@ function People() {
                     {p.member ? <small>Public member</small> : null}
                     {steward.length ? (
                       <small>
-                        Project steward ·{" "}
+                        Project maintainer ·{" "}
                         {steward.map((s) => s.name).join(", ")}
                       </small>
                     ) : null}
