@@ -273,7 +273,6 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                     <td>{(contributor.sharePartsPerMillion ?? 0) / 10_000}%</td>
                   ) : (
                     <>
-                      {" "}
                       <td>
                         {formatMicroUsdc(contributor.suggestedMinor)}
                         {contributor.lines ? (
