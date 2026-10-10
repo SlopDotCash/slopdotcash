@@ -2,8 +2,7 @@ import type { D1Database } from "../trace/cloudflare-persistence";
 
 /** Public per-repository Slopbot aggregates (PRD BOT-07, LDR-04). */
 export interface SlopbotRepositorySummary {
-  installationId: number;
-  account: string | null;
+  installationIds: number[];
   repositoryId: number;
   itemsReviewed: number;
   itemsLabeled: number;
@@ -29,17 +28,17 @@ const SUMMARY_QUERY = `WITH base AS (
   SELECT installation_id, repository_id, item_node_id, status, COALESCE(completed_at, created_at) AS at
   FROM slopbot_reviews WHERE status IN ('completed','failed')
 ), repos AS (
-  SELECT installation_id, repository_id, MAX(at) AS at FROM base GROUP BY installation_id, repository_id
+  SELECT repository_id, MAX(at) AS at FROM base GROUP BY repository_id
 ), closed AS (
   SELECT repository_id, item_node_id, MIN(created_at) AS at FROM slopbot_actions
   WHERE action = 'close' GROUP BY repository_id, item_node_id
 )
 SELECT json_group_array(json_object(
-  'installationId', r.installation_id,
-  'account', i.account_login,
+  'installationIds', json((SELECT json_group_array(installation_id) FROM
+    (SELECT DISTINCT installation_id FROM base b WHERE b.repository_id = r.repository_id ORDER BY installation_id))),
   'repositoryId', r.repository_id,
   'itemsReviewed', (SELECT COUNT(DISTINCT b.item_node_id) FROM base b
-    WHERE b.installation_id = r.installation_id AND b.repository_id = r.repository_id AND b.status = 'completed'),
+    WHERE b.repository_id = r.repository_id AND b.status = 'completed'),
   'itemsLabeled', (SELECT COUNT(DISTINCT a.item_node_id) FROM slopbot_actions a
     WHERE a.repository_id = r.repository_id AND a.action = 'label'),
   'itemsClosed', (SELECT COUNT(*) FROM closed c WHERE c.repository_id = r.repository_id),
@@ -51,11 +50,10 @@ SELECT json_group_array(json_object(
     WHERE a.repository_id = r.repository_id AND a.action = 'appeal' AND a.created_at >= c.at),
   'costRecoveryMicroUsdc', (SELECT CAST(COALESCE(SUM(k.billed_micro_usdc), 0) AS TEXT)
     FROM slopbot_costs k JOIN slopbot_reviews v ON v.review_key = k.review_key
-    WHERE k.installation_id = r.installation_id AND v.repository_id = r.repository_id),
+    WHERE v.repository_id = r.repository_id),
   'lastActivityAt', MAX(r.at, COALESCE((SELECT MAX(a.created_at) FROM slopbot_actions a
     WHERE a.repository_id = r.repository_id), ''))
-)) AS items FROM (SELECT * FROM repos ORDER BY installation_id, repository_id) r
-LEFT JOIN slopbot_installations i ON i.installation_id = r.installation_id`;
+)) AS items FROM (SELECT * FROM repos ORDER BY repository_id) r`;
 
 export async function handleSlopbotApi(
   request: Request,

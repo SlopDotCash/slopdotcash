@@ -98,7 +98,7 @@ function AutomationBody({
   const repositories = state.repositories;
   const sum = (key: (typeof COUNTS)[number][0]) =>
     repositories.reduce((total, repository) => total + repository[key], 0);
-  if (sum("itemsReviewed") === 0)
+  if (repositories.length === 0)
     return <EmptyState text="Slopbot has not reviewed anything yet" />;
   const lastActivity = repositories
     .map((repository) => repository.lastActivityAt ?? "")
@@ -108,7 +108,7 @@ function AutomationBody({
     0n,
   );
   const installations = new Set(
-    repositories.map((repository) => repository.installationId),
+    repositories.flatMap((repository) => repository.installationIds),
   ).size;
   return (
     <>
