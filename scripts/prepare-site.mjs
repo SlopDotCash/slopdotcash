@@ -826,6 +826,7 @@ for (const project of PROJECTS) {
   );
 }
 run("bun", [join(repositoryRoot, "scripts", "sync-cycle-index.ts")]);
+run("bun", [join(repositoryRoot, "scripts", "generate-sitemap.ts")]);
 run("bun", [
   join(repositoryRoot, "scripts", "sync-squads-execution-registry.ts"),
 ]);
