@@ -107,13 +107,15 @@ Rules:
 7. summary: two to four plain sentences addressed to the author, explaining the decision and what would make the submission acceptable. No links. No mentions.
 8. limitations: what you could not check (for example, tests were not run).`;
 
-function neutralize(text: string): string {
+export function neutralize(text: string): string {
   // Model and repository text is echoed into a public comment: break
-  // mentions, HTML comments and markdown links that hostile input may plant.
+  // mentions, raw HTML (comments, links, images), inline and reference
+  // markdown links, and bare URLs that hostile input may plant.
   return text
-    .replaceAll("@", "@​")
-    .replaceAll("<!--", "&lt;!--")
-    .replace(/\]\(/gu, "] (")
+    .replaceAll("@", "@\u200b")
+    .replaceAll("<", "&lt;")
+    .replace(/\]([(:])/gu, "] $1")
+    .replaceAll("://", ":\u200b//")
     .slice(0, 1500);
 }
 
@@ -333,16 +335,17 @@ function prefilter(context: Context): Verdict | null {
 }
 
 // Deterministic checks the model cannot talk its way around: guidance quotes
-// must exist verbatim in the named policy file, and evidence in the item.
-function grounded(
+// must exist verbatim in the named policy file, and every evidence entry in
+// the item.
+export function grounded(
   verdict: Verdict,
-  context: Context,
+  context: Pick<Context, "itemText" | "policy">,
   deterministic: boolean,
 ): { ok: boolean; why: string } {
   if (deterministic) return { ok: true, why: "deterministic pre-filter" };
-  const evidenceOk = verdict.evidence.some(
-    (e) => e.trim().length >= 8 && context.itemText.includes(e),
-  );
+  const evidenceOk =
+    verdict.evidence.some((e) => e.trim().length >= 8) &&
+    verdict.evidence.every((e) => context.itemText.includes(e));
   if (!evidenceOk)
     return { ok: false, why: "no verbatim evidence from the item" };
   if (UNIVERSAL_CATEGORIES.has(verdict.category))
@@ -760,22 +763,38 @@ async function runReview(
     category,
   );
   if (close) {
-    if (job.itemKind === "pull_request") {
-      await context.github.request(
-        "PATCH",
-        `/repos/${job.owner}/${job.repo}/pulls/${job.number}`,
-        { state: "closed" },
-      );
-    } else {
-      await context.github.request(
-        "PATCH",
-        `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
-        {
-          state: "closed",
-          state_reason: "not_planned",
-        },
+    const closed =
+      job.itemKind === "pull_request"
+        ? await context.github.request<{ state: string }>(
+            "PATCH",
+            `/repos/${job.owner}/${job.repo}/pulls/${job.number}`,
+            { state: "closed" },
+          )
+        : await context.github.request<{ state: string }>(
+            "PATCH",
+            `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
+            { state: "closed", state_reason: "not_planned" },
+          );
+    // Only a transition GitHub confirms is a close, and only a confirmed close
+    // can create the SCR-01 penalty (BOT-06).
+    if (closed.status !== 200 || closed.data?.state !== "closed") {
+      close = false;
+      await upsertComment(
+        env,
+        job,
+        context,
+        commentBody({
+          verdict,
+          action: "label",
+          blockedClose: "GitHub did not confirm the close",
+          context,
+          triage,
+          confirm,
+        }),
       );
     }
+  }
+  if (close) {
     await store.recordAction(
       db,
       reviewKey,
@@ -793,6 +812,7 @@ async function runReview(
 }
 
 // Appeals and human reopens both stop Slopbot from re-closing this revision.
+// Penalty accounting remains disabled until the full SCR-01 lifecycle is reviewed.
 export async function recordHumanSignal(
   env: ReviewEnv,
   job: Extract<Job, { kind: "appeal" | "human_reopen" }>,
@@ -838,9 +858,10 @@ export async function recordHumanSignal(
       return "reopen by a non-maintainer recorded as no decision";
     }
   }
+  const signalKey = `reopen:${issue.node_id}:${revision}`;
   await store.recordAction(
     db,
-    `reopen:${issue.node_id}:${revision}`,
+    signalKey,
     job.repositoryId,
     issue.node_id,
     kind,
