@@ -3308,6 +3308,41 @@ small {
 .points-panel p {
   max-width: 72ch;
 }
+.home-leaderboard-section > .points-panel + .points-panel {
+  margin-top: 3rem;
+}
+/* Slopbot is a separate, unranked Automation row (PRD LDR-04). */
+.automation-row {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem 1.125rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.automation-name {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+}
+.automation-name small {
+  color: var(--muted);
+}
+.automation-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 1rem;
+  margin: 0;
+}
+.automation-metrics dt {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.automation-metrics dd {
+  margin: 0.25rem 0 0;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
 .points-meta {
   font-size: 0.875rem;
   line-height: 1.6;
