@@ -38,6 +38,7 @@ import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   DataNotice,
+  formatDate,
   formatMicroUsdc,
   formatScore,
   NotFound,
@@ -400,8 +401,7 @@ function Notice() {
     );
   return (
     <p className="points-meta">
-      Recorded history · updated{" "}
-      {new Date(state.journal.generatedAt).toLocaleString()}
+      Points updated {new Date(state.journal.generatedAt).toLocaleString()}
       {Date.now() - Date.parse(state.journal.generatedAt) > 8 * 3600000
         ? " · Stale: the next verified update is pending."
         : ""}
@@ -1014,8 +1014,8 @@ export function ContributorStandings({
       <Notice />
       {scores.status === "ready" ? (
         <p className="points-meta">
-          Score records: {scores.snapshot.window.from} to{" "}
-          {scores.snapshot.window.to}, plus closed cycles.
+          Score records: {formatDate(scores.snapshot.window.from)} to{" "}
+          {formatDate(scores.snapshot.window.to)}, plus closed cycles.
           {period === "month"
             ? ` Selected month: ${new Date().toISOString().slice(0, 7)} (UTC).`
             : " Recorded history; coverage may have gaps."}
