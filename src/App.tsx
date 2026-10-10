@@ -46,7 +46,7 @@ import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { copyText } from "./lib/copy-text";
 import { currentProjectFundingRecords } from "./lib/funding";
 import { commitmentVerifiedNetMinor } from "./lib/funding-commitment";
-import { homeProjects } from "./lib/home-projects";
+import { communityProjects, homeProjects } from "./lib/home-projects";
 import { createInstallCommand } from "./lib/install-command";
 import {
   type ModelOutcomeSummary,
@@ -62,6 +62,7 @@ import {
   type PublicSignerReport,
   publicSignerStatus,
 } from "./lib/signer-capability";
+import { pageTitle, SITE_ORIGIN, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
@@ -270,6 +271,86 @@ function useRoute(): Route {
     return () => window.removeEventListener("popstate", update);
   }, []);
   return useMemo(() => internalRoute(path), [path]);
+}
+
+const PRIVATE_PAGE_TITLES = new Map<Route["kind"], string>([
+  ["account", "Account"],
+  ["login", "Log in"],
+  ["earnings", "Your earnings"],
+]);
+
+/** The title and canonical path of a route; a missing page has no canonical. */
+function routeHead(route: Route): { title: string; path: string | null } {
+  const notFound = { title: pageTitle("Page not found"), path: null };
+  const privateTitle = PRIVATE_PAGE_TITLES.get(route.kind);
+  if (privateTitle) {
+    return { title: pageTitle(privateTitle), path: `/${route.kind}` };
+  }
+  if (route.kind === "profile") {
+    const login = route.login ?? "";
+    return {
+      title: pageTitle(login),
+      path: `/contributors/${encodeURIComponent(login)}`,
+    };
+  }
+  if (
+    route.kind === "project" ||
+    route.kind === "funding-project" ||
+    route.kind === "manage-project" ||
+    route.kind === "cycle"
+  ) {
+    const project = findProject(route.projectId ?? "");
+    if (!project) return notFound;
+    if (route.kind === "cycle") {
+      return {
+        title: pageTitle(`${project.name} ${route.cycleId} cycle`),
+        path: `/cycles/${project.id}/${encodeURIComponent(route.cycleId ?? "")}`,
+      };
+    }
+    const base = `/projects/${project.slug}`;
+    if (route.kind === "funding-project") {
+      return {
+        title: pageTitle(`${project.name} funding`),
+        path: `${base}/funding`,
+      };
+    }
+    if (route.kind === "manage-project") {
+      return {
+        title: pageTitle(`Manage ${project.name}`),
+        path: `${base}/manage`,
+      };
+    }
+    return { title: pageTitle(project.name), path: base };
+  }
+  const path = window.location.pathname.replace(/(.)\/$/u, "$1");
+  const title = STATIC_PAGE_TITLES.get(path);
+  return title ? { title: pageTitle(title), path } : notFound;
+}
+
+function useDocumentHead(route: Route) {
+  useEffect(() => {
+    const { title, path } = routeHead(route);
+    document.title = title;
+    const canonical = document.head.querySelector<HTMLLinkElement>(
+      'link[rel="canonical"]',
+    );
+    const ogUrl = document.head.querySelector<HTMLMetaElement>(
+      'meta[property="og:url"]',
+    );
+    if (path === null) {
+      canonical?.remove();
+      return;
+    }
+    const href = `${SITE_ORIGIN}${path}`;
+    if (canonical) canonical.href = href;
+    else {
+      const link = document.createElement("link");
+      link.rel = "canonical";
+      link.href = href;
+      document.head.append(link);
+    }
+    ogUrl?.setAttribute("content", href);
+  }, [route]);
 }
 
 function Header() {
@@ -522,7 +603,9 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
           <strong>{project.name}</strong>
           <small>{project.description}</small>
         </span>
-        <span className="project-row-amount">{amount}</span>
+        <span className="project-row-amount">
+          {project.status === "paused" ? "Paused" : amount}
+        </span>
         <ChevronRight aria-hidden="true" />
       </Link>
     </li>
@@ -546,6 +629,10 @@ function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
       aria-labelledby="community-projects"
     >
       <h3 id="community-projects">Community</h3>
+      <p className="project-tier-note">
+        Community-listed through a reviewed manifest, not featured by Slop.
+        Paused projects are listed but not collected yet.
+      </p>
       <ul className="project-rows">
         {visible.map((project) => (
           <ProjectRow key={project.id} project={project} />
@@ -599,12 +686,8 @@ function bootstrapAgentPrompt(): string {
 
 function HomePage() {
   const [funding] = useFundingIndex();
-  const promotedProjects = homeProjects();
-  const featuredProjects = promotedProjects.filter(
+  const featuredProjects = homeProjects().filter(
     (project) => project.listingTier === "featured",
-  );
-  const communityProjects = promotedProjects.filter(
-    (project) => project.listingTier === "community",
   );
   return (
     <main>
@@ -633,7 +716,7 @@ function HomePage() {
             ))}
           </div>
         </section>
-        <CommunityProjects projects={communityProjects} />
+        <CommunityProjects projects={communityProjects()} />
       </section>
       <section className="how-section" id="how-it-works">
         <div className="shell">
@@ -3367,6 +3450,7 @@ export function App() {
 
 function AppContent({ route }: { route: Route }) {
   useInitialHashScroll();
+  useDocumentHead(route);
   const needsSnapshot = ![
     "home",
     "points",
