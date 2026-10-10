@@ -463,7 +463,6 @@ function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
       },
     )
       .then(async (response) => {
-        if (response.status === 404) return null;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return readBoundedJson(
           response,

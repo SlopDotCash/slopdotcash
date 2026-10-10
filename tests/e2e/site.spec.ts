@@ -260,7 +260,7 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
     elizaCard.getByText("/mo target", { exact: true }),
   ).toBeVisible();
   await expect(
-    elizaCard.getByText("Vault: Unavailable", { exact: true }),
+    elizaCard.getByText("Vault: Not funded", { exact: true }),
   ).toBeVisible();
   await expect(elizaCard.getByText("$5,000", { exact: true })).toHaveCount(0);
   await expect(
@@ -848,9 +848,9 @@ test("keeps a frozen-month contributor reachable after the rolling window moves 
     `${deployment.api}/api/v1/wallet-claims/actors/*/current`,
     (route) =>
       route.fulfill({
-        status: 404,
+        status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ error: "not_found" }),
+        body: "null",
       }),
   );
   await page.goto(

@@ -542,15 +542,16 @@ function ProjectCard({
       : [];
   const vaultBalance =
     vaults.length === 0
-      ? "Unavailable"
+      ? "Not funded"
       : funding.status === "loading"
         ? "Loading…"
-        : funding.status === "error" ||
-            !vaultRecords.some((record) => record.state === "verified-on-chain")
+        : funding.status === "error"
           ? "Unavailable"
-          : formatMicroUsdc(
-              commitmentVerifiedNetMinor(vaultRecords).toString(),
-            );
+          : !vaultRecords.some((record) => record.state === "verified-on-chain")
+            ? "Not verified"
+            : formatMicroUsdc(
+                commitmentVerifiedNetMinor(vaultRecords).toString(),
+              );
   const amount =
     project.reward.kind === "monthly-pool"
       ? monthlyPoolCapLabel(project.reward)
@@ -744,7 +745,7 @@ function HomePage() {
                   <BadgeCheck aria-hidden="true" />
                   <span>
                     <strong>Get merged.</strong> Accepted work raises your Slop
-                    Score. Owners approve rewards.
+                    Score. Maintainers approve rewards.
                   </span>
                 </li>
               </ol>
@@ -2071,9 +2072,11 @@ function HowItWorksPage() {
             <span>A frozen monthly proposal in its 14-day public window.</span>
           </li>
           <li>
-            <small className="payment-gate">Creator approval</small>
+            <small className="payment-gate">Maintainer approval</small>
             <strong>Approved</strong>
-            <span>Immutable payout intents after the creator signs off.</span>
+            <span>
+              Immutable payout intents after the maintainer signs off.
+            </span>
           </li>
           <li>
             <small className="payment-gate">Unsigned plan</small>
@@ -2218,19 +2221,19 @@ function HowItWorksPage() {
             <Link href="/account#wallets">Account wallets</Link> with your
             GitHub account. No wallet connection or signing is needed. Payments
             are USDC on the project's settlement network, Base or Solana, sent
-            by the project creator, never by Slop. A wallet must be registered
-            before a month freezes to apply to that month. Without one, your row
-            stays unclaimed and carries forward.
+            by the project maintainer, never by Slop. A wallet must be
+            registered before a month freezes to apply to that month. Without
+            one, your row stays unclaimed and carries forward.
           </p>
         </details>
         <details>
           <summary>When are payments sent?</summary>
           <p>
             At 00:11 UTC on the first of each month, the previous month freezes
-            into a proposal. After 14 days of public review the creator approves
-            it and sends USDC from their own wallet. Slop shows a payment as
-            paid only after the transfers are confirmed on-chain. Amounts below
-            $2 carry to the next month.
+            into a proposal. After 14 days of public review the maintainer
+            approves it and sends USDC from their own wallet. Slop shows a
+            payment as paid only after the transfers are confirmed on-chain.
+            Amounts below $2 carry to the next month.
           </p>
         </details>
         <details>
@@ -2247,7 +2250,7 @@ function HowItWorksPage() {
           <summary>What is the 14-day review?</summary>
           <p>
             It reviews the monthly allocation, not your code. After the freeze
-            the proposal is public for 14 days, and the creator may approve,
+            the proposal is public for 14 days, and the maintainer may approve,
             hold, exclude, reduce, or increase rows, each with a public reason.
             It is separate from pull request reviews on GitHub.
           </p>
@@ -2552,6 +2555,9 @@ function SponsorsPage({
 }) {
   const protocolRoot = `${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/protocol`;
   const now = Date.now();
+  const hasReviewBudget = PROJECTS.some(
+    (project) => project.reward.reviewBudget,
+  );
   return (
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
@@ -2580,7 +2586,7 @@ function SponsorsPage({
                 <th scope="col">Project</th>
                 <th scope="col">Pool</th>
                 <th scope="col">Payments</th>
-                <th scope="col">Review line</th>
+                {hasReviewBudget ? <th scope="col">Review line</th> : null}
                 <th scope="col">Receiving addresses</th>
               </tr>
             </thead>
@@ -2599,11 +2605,13 @@ function SponsorsPage({
                     </th>
                     <td>{sponsorPoolLabel(project.reward)}</td>
                     <td>{project.reward.paymentMode}</td>
-                    <td>
-                      {project.reward.reviewBudget
-                        ? reviewBudgetLabel(project.reward.reviewBudget)
-                        : "none"}
-                    </td>
+                    {hasReviewBudget ? (
+                      <td>
+                        {project.reward.reviewBudget
+                          ? reviewBudgetLabel(project.reward.reviewBudget)
+                          : "none"}
+                      </td>
+                    ) : null}
                     <td>
                       {activeAddresses === 0
                         ? "none published"
@@ -2652,7 +2660,7 @@ function SponsorsPage({
           <h2>Start with a pull request.</h2>
           <p>
             Add a project to prepare a GitHub proposal. New projects start
-            paused. Existing stewards update receiving addresses and funding
+            paused. Existing maintainers update receiving addresses and funding
             instruments through a reviewed manifest change.
           </p>
         </div>
@@ -2709,7 +2717,7 @@ function SponsorsPage({
           <li>
             <strong>03 · You decide and sign</strong>
             <p>
-              Project owners review proposed awards within the cap and record
+              Maintainers review proposed awards within the cap and record
               changes with a public reason. Authorized signers execute the
               reviewed transfer plan outside Slop. Slop marks the cycle paid
               only when finalized on-chain evidence reconciles every approved
@@ -2723,7 +2731,7 @@ function SponsorsPage({
             <ul>
               <li>The monthly cap, with exact-cycle overrides.</li>
               <li>
-                Project owners may adjust proposed awards within the cap, with a
+                Maintainers may adjust proposed awards within the cap, with a
                 public reason. Amount changes restart the 14-day review.
               </li>
               <li>
@@ -2822,7 +2830,7 @@ function SponsorsPage({
               execute, redirect, or block a transfer.
             </li>
             <li>
-              Direct gifts go straight from your wallet to the steward&apos;s
+              Direct gifts go straight from your wallet to the project&apos;s
               published address and are recorded append-only under funding
               records, self-reported until a verifier confirms them on-chain.
             </li>
@@ -2859,6 +2867,10 @@ function SponsorsPage({
           Audience report ·{" "}
           {whoBuildsDateLabel(WHO_BUILDS_SNAPSHOT.generatedAt)}
         </summary>
+        <p>
+          This report shows sponsors the public GitHub work of the people on the
+          leaderboard. It does not change points or payments.
+        </p>
         <WhoBuildsOnSlop retry={retry} state={state} />
       </details>
       <section className="custody-proof mechanism-sources">

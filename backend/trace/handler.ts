@@ -83,7 +83,7 @@ function fail(status: number, code: string, message: string): never {
   throw error;
 }
 
-function json(status: number, body: Record<string, unknown>): Response {
+function json(status: number, body: Record<string, unknown> | null): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -332,7 +332,8 @@ async function readCurrentWalletClaim(
     githubId,
     requestedWalletChain(request),
   );
-  if (claim === null) fail(404, "not_found", "Wallet claim not found");
+  // A valid actor without a claim is a successful read, not a missing route.
+  if (claim === null) return json(200, null);
   const response = json(200, publicWalletClaim(claim));
   response.headers.set("cache-control", "public, max-age=60, must-revalidate");
   return response;
