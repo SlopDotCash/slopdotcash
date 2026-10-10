@@ -23,6 +23,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { AutomationSection } from "./Automation";
 import { CycleArchivePage, CyclePage } from "./CyclePages";
 import { EarningsPage } from "./Earnings";
 import { EscrowFunding } from "./EscrowFunding";
@@ -672,6 +673,7 @@ function GlobalLeaderboard() {
       id="leaderboard"
     >
       <ContributorStandings compact title="Top sloperators" />
+      <AutomationSection />
     </section>
   );
 }
@@ -798,11 +800,53 @@ function projectAgentPrompt(project: ProjectDefinition): string {
   return `Read ${origin}/SKILL.md and follow it to contribute to github.com/${repository}.`;
 }
 
-const AGENT_DEEP_LINKS = [
-  { name: "Cursor", href: "https://cursor.com/link/prompt?text=" },
-  { name: "ChatGPT", href: "https://chatgpt.com/?q=" },
-  { name: "Claude", href: "https://claude.ai/new?q=" },
-] as const;
+// Each link hands the prompt to the agent's own launch surface. Web chats
+// prefill a new conversation; OpenClaw asks before it runs the message; Hermes
+// has no prompt link, so it opens its confirmed skill install for SKILL.md.
+const AGENT_DEEP_LINKS: readonly {
+  name: string;
+  logo: string;
+  href: (prompt: string, skillUrl: string) => string;
+}[] = [
+  {
+    name: "Cursor",
+    logo: "cursor",
+    href: (prompt) =>
+      `https://cursor.com/link/prompt?text=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "Claude",
+    logo: "claude",
+    href: (prompt) => `https://claude.ai/new?q=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "ChatGPT",
+    logo: "chatgpt",
+    href: (prompt) => `https://chatgpt.com/?q=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "Grok",
+    logo: "grok",
+    href: (prompt) => `https://grok.com/?q=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "Meta AI (Muse Spark)",
+    logo: "meta-ai",
+    href: (prompt) =>
+      `https://www.meta.ai/?prompt=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "OpenClaw",
+    logo: "openclaw",
+    href: (prompt) => `openclaw://agent?message=${encodeURIComponent(prompt)}`,
+  },
+  {
+    name: "Hermes Agent",
+    logo: "hermes-agent",
+    href: (_prompt, skillUrl) =>
+      `hermes://skill/install?identifier=${encodeURIComponent(skillUrl)}`,
+  },
+];
 
 function AgentPromptBox({
   prompt,
@@ -868,22 +912,36 @@ function AgentPromptBox({
     </div>
   );
   if (!openIn) return box;
+  const origin = window.location.origin.replace(/\/$/u, "");
   return (
     <div className="agent-prompt">
       {box}
-      <p className="agent-open-in">
+      <div className="agent-open-in">
         <span>Open in</span>
-        {AGENT_DEEP_LINKS.map((agent) => (
-          <ExternalLinkAnchor
-            href={`${agent.href}${encodeURIComponent(prompt)}`}
-            key={agent.name}
-            onClick={() => void copyText(prompt).catch(() => undefined)}
-          >
-            {agent.name}
-          </ExternalLinkAnchor>
-        ))}
-        <span>or any desktop agent</span>
-      </p>
+        <ul>
+          {AGENT_DEEP_LINKS.map((agent) => {
+            const href = agent.href(prompt, `${origin}/SKILL.md`);
+            const web = href.startsWith("https://");
+            return (
+              <li key={agent.name}>
+                <a
+                  href={href}
+                  onClick={() => void copyText(prompt).catch(() => undefined)}
+                  rel={web ? "noreferrer" : undefined}
+                  target={web ? "_blank" : undefined}
+                  title={agent.name}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`agent-logo agent-logo-${agent.logo}`}
+                  />
+                  <span className="visually-hidden">{agent.name}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -988,15 +1046,13 @@ function InstallPanel({ project }: { project: ProjectDefinition }) {
       {project.reward.kind === "monthly-pool" &&
       allocationFundingMinor(project.reward) === 0n ? (
         <p>
-          Unfunded trial: this skill records accepted work and scores with a $0
-          funding-backed projection.
+          This project has no funding yet. Accepted work still earns Slop Score.
         </p>
       ) : null}
       <p className="install-note">
         Any model can join. The skill publishes the exact provider, model, and
         client. Signed receipts and permanent private traces are optional; only
-        Slop operators can access uploaded trace contents. Payout setup uses an
-        authenticated, append-only Slop wallet registry.
+        Slop operators can access uploaded trace contents.
       </p>
       <details className="install-advanced">
         <summary>Advanced options</summary>
@@ -1544,7 +1600,9 @@ function ProjectFundingPage({
             </dd>
           </div>
         </dl>
-        <p>{project.funding.disclosure}</p>
+        {activeAddresses.length > 0 ? (
+          <p>{project.funding.disclosure}</p>
+        ) : null}
         {funding.status === "loading" ? (
           <div className="data-notice" role="status">
             <span className="pulse" /> Reading funding records…
@@ -1662,6 +1720,7 @@ function ProjectFundingPage({
               project={project}
               sourceRepositoryUrl={SOURCE_REPOSITORY}
               cycleIndex={state.status === "ready" ? state.cycleIndex : null}
+              cycleIndexLoading={state.status === "loading"}
               funding={funding.status === "ready" ? funding.index : null}
             />
           </Suspense>
@@ -1842,6 +1901,7 @@ function ProjectPage({
           </p>
         ) : null}
         <ProjectPaymentHistory project={project} state={state} />
+        <AutomationSection project={project} />
         {view && state.status === "ready" ? (
           <ProjectLeaderboard
             state={state}
