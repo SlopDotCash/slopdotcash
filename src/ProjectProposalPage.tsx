@@ -656,7 +656,7 @@ export default function ProjectProposalPage() {
   const proposalInputText = JSON.stringify(
     {
       acceptanceCriteria:
-        p.criteria || "Define exact accepted outcomes with the creator.",
+        p.criteria || "Define exact accepted outcomes with the maintainer.",
     },
     null,
     2,
