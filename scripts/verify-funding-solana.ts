@@ -36,7 +36,6 @@ export async function verifyFundingSolana(input: {
   amountMinor: string;
   fetchImpl?: (url: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   recipient: string;
-  requiredSender?: string;
   rpcUrl?: string;
   signature: string;
 }) {
@@ -61,7 +60,6 @@ export async function verifyFundingSolana(input: {
     input.signature,
     input.recipient,
     input.amountMinor,
-    { requiredSender: input.requiredSender },
   );
   const checkedAt = new Date().toISOString();
   return {

@@ -51,34 +51,23 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
 
 A missing or invalid file means label-only review.
 
-## Prepaid credit and invoices (BOT-11 Step A)
-
-Slop's service addresses are its published fee recipients (PAY-09) in
-`src/lib/fresh-cycle-policy.mjs`:
-
-- Base USDC: `0x8f77c37d8650776bfe73c9b12b15209ee15d9b86`
-- Solana USDC: `9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY`
-
-1. Sign in on slop.cash. Register and authorize the wallet that will pay
-   (`/api/v1/payments/wallets/*`). This wallet is the payment reference.
-2. Send USDC from that wallet to the service address on the same network.
-3. `POST /api/v1/payments/slopbot/deposits` with
-   `{"installationId": 123, "network": "base", "transaction": "0x…", "amountMicroUsdc": "25000000"}`.
-   The finalized-transfer verifier (Base: 2-of-3 RPC quorum and 12
-   confirmations past finality; Solana: finalized) must prove that the
-   authorized wallet was the only payer and that the service address got the
-   exact amount. Then one `slopbot_credits` row of kind `deposit` is appended,
-   with the transaction as its unique `reference`.
-
-A replayed reference returns `409`. A failed, unfinalized, wrong-asset,
-wrong-destination, wrong-amount or wrong-payer transfer returns `422` with
-the reason. Nothing is credited, and Slop moves no funds.
+## Cost statements and vault billing
 
 `GET /api/v1/payments/slopbot/installations/<id>/invoices/<YYYY-MM>` returns
-the UTC-month invoice: the billed model calls in `slopbot_costs`, the
-payout-fee offset, and the amount due. The offset is `0` with a reason until a
-reviewed link from an installation to a funded project exists. Refunds are not
-built yet.
+one installation's billed model calls for the UTC month. Values use integer
+micro-USDC. This is a cost statement, not a request for payment or proof of
+settlement. The fee offset is zero until a reviewed project binding exists.
+
+Billing must use the existing project vaults under PAY-10. The owner authorizes
+`chargeService` on Base or `charge_service` on Solana. The operation must use
+only free sponsor funds, preserve reserved awards and donor funds, and prevent
+a second charge for the same invoice digest. Neither contract has that
+operation yet; finalized invoice reconciliation is also required before launch.
+Issue #616 tracks these dependencies.
+
+Do not send service deposits to payout-fee wallets. There is no public prepaid
+deposit-credit endpoint. A past fee transfer must never become new service
+credit. This change neither enables billing nor moves funds.
 
 ## Setup checklist (owner)
 
@@ -139,8 +128,8 @@ Do these in order. Each step names who does it and how to verify it.
    - `GET /health` returns `{"service":"slopbot","ok":true}`.
    - The App's "Advanced" tab shows `202` for the ping delivery.
 8. **Fund the dogfood installation:** install the App on
-   `SlopDotCash/slopdotcash` only. There is no free allowance. Add credit
-   through the prepaid deposit flow below.
+   `SlopDotCash/slopdotcash` only. There is no free allowance. Keep billable review disabled until the
+   vault service-charge path and invoice reconciliation are qualified.
 9. **Observe the shadow period:** review the labels and comments for at least
    14 days and 50 items, with `SLOPBOT_CLOSURE_ENABLED` still `"false"`.
    Enabling closure later is a separate reviewed PR that sets the variable

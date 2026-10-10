@@ -10,7 +10,7 @@ import {
   buildPaymentWalletMessage,
   verifyPaymentWalletSignature,
 } from "./possession";
-import { creditSlopbotDeposit, slopbotInvoice } from "./slopbot-billing";
+import { slopbotInvoice } from "./slopbot-billing";
 import { registerPaymentWallet } from "./wallet-registration";
 
 export interface PaymentsDependencies {
@@ -162,19 +162,6 @@ export async function handlePaymentsApi(
       return json(201, { id, state: "pending_contributor_authorization" });
     }
 
-    if (path === "/slopbot/deposits" && request.method === "POST") {
-      const result = await creditSlopbotDeposit(
-        deps.db,
-        member.github_id,
-        await readBoundedJson(
-          request as unknown as Response,
-          4096,
-          "slopbot deposit",
-        ),
-        now,
-      );
-      return json(result.status, result.body);
-    }
     if (path === "/wallets/register" && request.method === "POST") {
       const body = (await readBoundedJson(
         request as unknown as Response,
