@@ -34,6 +34,8 @@ function amount(value: string): string {
   return `${(number / 1_000_000n).toLocaleString()}${fraction ? `.${fraction}` : ""} USDC`;
 }
 
+class SignedOutError extends Error {}
+
 async function request(path: string, body?: unknown, signal?: AbortSignal) {
   const response = await fetch(`/api/v1/payments/${path}`, {
     method: body === undefined ? "GET" : "POST",
@@ -47,8 +49,7 @@ async function request(path: string, body?: unknown, signal?: AbortSignal) {
       ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
       : AbortSignal.timeout(30_000),
   });
-  if (response.status === 401)
-    throw new Error("Sign in with GitHub to view your earnings.");
+  if (response.status === 401) throw new SignedOutError();
   if (!response.ok) {
     if (response.status === 409)
       throw new Error(
@@ -131,6 +132,7 @@ export function EarningsPage() {
   const [data, setData] = useState<PaymentsAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [signedOut, setSignedOut] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<PaymentChain | null>(null);
   const [revision, setRevision] = useState(0);
@@ -150,10 +152,17 @@ export function EarningsPage() {
     setError("");
     request("me", undefined, controller.signal)
       .then((value) => {
-        if (!controller.signal.aborted) setData(account(value));
+        if (!controller.signal.aborted) {
+          setSignedOut(false);
+          setData(account(value));
+        }
       })
       .catch((e: unknown) => {
-        if (!controller.signal.aborted)
+        if (controller.signal.aborted) return;
+        if (e instanceof SignedOutError) {
+          setSignedOut(true);
+          setData(null);
+        } else
           setError(
             e instanceof Error ? e.message : "Could not load your earnings.",
           );
@@ -244,7 +253,11 @@ export function EarningsPage() {
         refresh();
       }
     } catch (e) {
-      if (mounted.current)
+      if (!mounted.current) return;
+      if (e instanceof SignedOutError) {
+        setSignedOut(true);
+        setData(null);
+      } else
         setError(
           e instanceof Error
             ? e.message
@@ -260,10 +273,17 @@ export function EarningsPage() {
       <h1 id={heading}>Your earnings</h1>
       <p>Contributor amounts include the 2% payout fee deduction.</p>
       {loading && <p role="status">Checking your earnings…</p>}
+      {signedOut && !loading && (
+        <div>
+          <p>Sign in with GitHub to view your earnings.</p>
+          <a className="button" href="/login?next=earnings">
+            Sign in with GitHub
+          </a>
+        </div>
+      )}
       {error && (
         <div role="alert">
           <p>{error}</p>
-          <a href="/login?next=earnings">Log in with GitHub</a>{" "}
           <button type="button" onClick={refresh}>
             Retry
           </button>
