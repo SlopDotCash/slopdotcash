@@ -265,64 +265,6 @@ export async function recordAction(
   return (result.meta?.changes ?? 0) === 1;
 }
 
-// SCR-01 debit for a confirmed close (migrations/0014_points_penalties.sql).
-// Only a registered participant, matched by GitHub ID, can be debited, and an
-// item is debited once whatever retries or recloses follow.
-export async function recordPenalty(
-  db: D1Database,
-  penalty: {
-    itemNodeId: string;
-    authorId: number;
-    repositoryId: number;
-    reviewKey: string;
-    policyDigest: string;
-    reason: string;
-    occurredAt: string;
-  },
-): Promise<boolean> {
-  const result = await db
-    .prepare(
-      `INSERT INTO points_penalties (item_node_id, kind, previous, actor_id, repository_id, review_key,
-        policy_digest, reason, points, score_thirds, occurred_at, recorded_at)
-       SELECT ?, 'debit', NULL, actor_id, ?, ?, ?, ?, -10, -3, ?, ? FROM points_members WHERE github_id = ?
-       ON CONFLICT(item_node_id, kind) DO NOTHING`,
-    )
-    .bind(
-      penalty.itemNodeId,
-      penalty.repositoryId,
-      penalty.reviewKey,
-      penalty.policyDigest,
-      penalty.reason,
-      penalty.occurredAt,
-      now(),
-      String(penalty.authorId),
-    )
-    .run();
-  return (result.meta?.changes ?? 0) === 1;
-}
-
-// A maintainer reopen or an author appeal appends one reversing successor to
-// the item's debit. Without a debit this does nothing.
-export async function reversePenalty(
-  db: D1Database,
-  itemNodeId: string,
-  reviewKey: string,
-  reason: "appeal" | "human_reopen",
-): Promise<boolean> {
-  const at = now();
-  const result = await db
-    .prepare(
-      `INSERT INTO points_penalties (item_node_id, kind, previous, actor_id, repository_id, review_key,
-        policy_digest, reason, points, score_thirds, occurred_at, recorded_at)
-       SELECT item_node_id, 'reversal', id, actor_id, repository_id, ?, policy_digest, ?, 10, 3, ?, ?
-       FROM points_penalties WHERE item_node_id = ? AND kind = 'debit'
-       ON CONFLICT(item_node_id, kind) DO NOTHING`,
-    )
-    .bind(reviewKey, reason, at, at, itemNodeId)
-    .run();
-  return (result.meta?.changes ?? 0) === 1;
-}
-
 export async function commentId(
   db: D1Database,
   itemNodeId: string,

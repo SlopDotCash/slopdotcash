@@ -9,7 +9,6 @@ import {
   type ConfigResult,
   type Job,
   NEVER_CLOSE,
-  PENALTY_EFFECTIVE_AT,
   parseRepositoryConfig,
   REOPEN_BREAKER_RATIO,
   SHADOW_DAYS,
@@ -796,7 +795,6 @@ async function runReview(
     }
   }
   if (close) {
-    const closedAt = new Date().toISOString();
     await store.recordAction(
       db,
       reviewKey,
@@ -805,16 +803,6 @@ async function runReview(
       "close",
       JSON.stringify({ category, penaltyEligible: routing.penaltyEligible }),
     );
-    if (routing.penaltyEligible && closedAt >= PENALTY_EFFECTIVE_AT)
-      await store.recordPenalty(db, {
-        itemNodeId: issue.node_id,
-        authorId: issue.user.id,
-        repositoryId: job.repositoryId,
-        reviewKey,
-        policyDigest: context.policyDigest,
-        reason: category,
-        occurredAt: closedAt,
-      });
   }
   await store.finishReview(db, reviewKey, "completed", {
     verdict,
@@ -823,8 +811,8 @@ async function runReview(
   return close ? `closed (${category})` : `labeled (${category})`;
 }
 
-// Appeals and human reopens both stop Slopbot from re-closing this revision,
-// and either one reverses the item's SCR-01 debit.
+// Appeals and human reopens both stop Slopbot from re-closing this revision.
+// Penalty accounting remains disabled until the full SCR-01 lifecycle is reviewed.
 export async function recordHumanSignal(
   env: ReviewEnv,
   job: Extract<Job, { kind: "appeal" | "human_reopen" }>,
@@ -879,7 +867,6 @@ export async function recordHumanSignal(
     kind,
     String(job.senderId),
   );
-  await store.reversePenalty(db, issue.node_id, signalKey, kind);
   if (kind === "appeal") {
     await github.request(
       "POST",

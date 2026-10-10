@@ -316,9 +316,6 @@ export const SHADOW_MIN_REVIEWS = 50;
 export const AUTHOR_DAILY_CAP = 3;
 export const CLOSE_CONFIDENCE = 0.9;
 export const REOPEN_BREAKER_RATIO = 0.1;
-// SCR-01: closures before the v2 effective time never create a penalty. The
-// amounts (-10 points, -3 score-thirds) are fixed in migrations/0014.
-export const PENALTY_EFFECTIVE_AT = "2026-11-01T00:00:00.000Z";
 
 // The queue carries identifiers only; the consumer re-reads GitHub state.
 export type Job =
