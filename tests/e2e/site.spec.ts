@@ -263,7 +263,7 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
     elizaCard.getByText("/mo target", { exact: true }),
   ).toBeVisible();
   await expect(
-    elizaCard.getByText("Vault: Unavailable", { exact: true }),
+    elizaCard.getByText("Vault: Not funded", { exact: true }),
   ).toBeVisible();
   await expect(elizaCard.getByText("$5,000", { exact: true })).toHaveCount(0);
   await expect(
