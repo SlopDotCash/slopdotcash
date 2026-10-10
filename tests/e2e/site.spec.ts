@@ -200,7 +200,9 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
   );
   await expect(footer.getByRole("link", { name: "Slop Git" })).toHaveCount(0);
   await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
-  await expect(page.getByRole("link", { name: "Protocol" })).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { exact: true, name: "Protocol" }),
+  ).toHaveCount(0);
   await expect(
     page.getByText(`© ${new Date().getUTCFullYear()} slop.cash.`),
   ).toBeVisible();
