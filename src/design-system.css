@@ -807,6 +807,12 @@ label {
   margin-top: 64px;
 }
 
+.project-tier-note {
+  margin: -12px 0 20px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .pagination {
   display: flex;
   align-items: center;
