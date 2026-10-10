@@ -208,7 +208,7 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
   ).toBeVisible();
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
     "content",
-    "https://slop.cash/og-open-source.png",
+    "https://slop.cash/og-slop-cash.png",
   );
   await expect(
     page.getByRole("heading", {
