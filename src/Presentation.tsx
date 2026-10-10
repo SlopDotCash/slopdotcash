@@ -55,14 +55,24 @@ export function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-export function NotFound({ title = "Page not found" }: { title?: string }) {
+/** Renders as a section when the route already provides its own `main`. */
+export function NotFound({
+  title = "Page not found",
+  children,
+  as: Element = "main",
+}: {
+  title?: string;
+  children?: ReactNode;
+  as?: "main" | "section";
+}) {
   return (
-    <main className="shell not-found">
+    <Element className={Element === "main" ? "shell not-found" : "not-found"}>
       <h1>{title}</h1>
+      {children}
       <Link className="button primary-button" href="/">
         See open projects <ArrowRight aria-hidden="true" />
       </Link>
-    </main>
+    </Element>
   );
 }
 
@@ -119,6 +129,30 @@ export function cycleStateLabel(state: CycleIndexEntry["state"]): string {
     .split("-")
     .map((part) => part[0]?.toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+/**
+ * A closed review window waits on owner approval. The record keeps its
+ * `review` state, so the page derives this from `reviewEndsAt`.
+ */
+export function awaitingApproval(
+  cycle: Pick<CycleIndexEntry, "approvedAt" | "reviewEndsAt" | "state">,
+  now = Date.now(),
+): boolean {
+  return (
+    cycle.state === "review" &&
+    cycle.approvedAt === null &&
+    cycle.reviewEndsAt !== null &&
+    Date.parse(cycle.reviewEndsAt) <= now
+  );
+}
+
+export function cycleLifecycleLabel(
+  cycle: Pick<CycleIndexEntry, "approvedAt" | "reviewEndsAt" | "state">,
+): string {
+  return awaitingApproval(cycle)
+    ? "Awaiting approval"
+    : cycleStateLabel(cycle.state);
 }
 
 export function reviewBudgetLabel(

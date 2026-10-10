@@ -36,7 +36,12 @@ import {
 import { profileCounts } from "./lib/profiles";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
-import { DataNotice, formatMicroUsdc, formatScore } from "./Presentation";
+import {
+  DataNotice,
+  formatMicroUsdc,
+  formatScore,
+  NotFound,
+} from "./Presentation";
 import { ProfileActivity, useProfiles } from "./Profiles";
 import { WalletRegistration } from "./WalletRegistration";
 
@@ -411,6 +416,7 @@ export function ProfilePoints({
   cycles,
   recordsLoading = false,
   showIdentity = false,
+  notFoundWhenUnrecorded = false,
 }: {
   login: string;
   work?: readonly ScoreEvent[];
@@ -419,6 +425,8 @@ export function ProfilePoints({
   showIdentity?: boolean;
   summary?: ReactNode;
   actorId?: string;
+  /** The caller found no score record, so no points record means no contributor. */
+  notFoundWhenUnrecorded?: boolean;
 }) {
   const { state, me } = useContext(Context);
   const census = useProfiles();
@@ -479,6 +487,21 @@ export function ProfilePoints({
           : undefined
       : undefined;
   const [copied, setCopied] = useState("");
+  if (
+    notFoundWhenUnrecorded &&
+    state.status === "ready" &&
+    census.state.status === "ready" &&
+    joinStatus === "absent" &&
+    !own &&
+    !m &&
+    !recorded &&
+    named.length === 0
+  )
+    return (
+      <NotFound as="section" title="Contributor not found">
+        <p>Slop has no public record for {login}.</p>
+      </NotFound>
+    );
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
