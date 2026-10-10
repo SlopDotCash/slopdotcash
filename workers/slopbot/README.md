@@ -31,8 +31,13 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    - an unchanged item just before acting.
 
    Otherwise the bot only comments and labels.
-7. `/slopbot appeal` from the author, or any reopen, blocks re-closing that
-   revision.
+7. A close counts only when GitHub confirms the closed state. A confirmed
+   close of a registered Slop participant's item on or after
+   2026-11-01T00:00:00Z appends one SCR-01 debit (-10 points, -3
+   score-thirds) to `points_penalties`, keyed by the item node ID.
+8. `/slopbot appeal` from the author, or a maintainer reopen, blocks
+   re-closing that revision and appends one reversing successor to the
+   item's debit.
 
 ## Repository policy file
 
@@ -132,5 +137,6 @@ Do these in order. Each step names who does it and how to verify it.
 
 - Prepaid deposit crediting (BOT-11 Step A).
 - The vault `charge_service` instruction (PAY-10).
-- SCR-01 penalty journal events. Closures record `penaltyEligible` for them.
+- Public projection of `points_penalties` into points and Slop Score totals,
+  and a reclose that restores a reversed debit (SCR-01).
 - Maintainer dashboard and Automation row (LDR-04).
