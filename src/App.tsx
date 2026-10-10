@@ -280,7 +280,7 @@ function useRoute(): Route {
 const PRIVATE_PAGE_TITLES = new Map<Route["kind"], string>([
   ["account", "Account"],
   ["login", "Log in"],
-  ["earnings", "Your earnings"],
+  ["earnings", "Your payouts"],
 ]);
 
 /** The title and canonical path of a route; a missing page has no canonical. */

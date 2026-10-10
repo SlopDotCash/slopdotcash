@@ -85,7 +85,7 @@ try {
     };
   }, signer.address);
   await page.goto("http://127.0.0.1:18549/earnings");
-  await page.getByRole("heading", { name: "Your earnings" }).waitFor();
+  await page.getByRole("heading", { name: "Your payouts" }).waitFor();
   await page.getByRole("button", { name: "Connect Base wallet" }).waitFor();
   await page.screenshot({
     path: "evidence/payout-desktop-before.png",

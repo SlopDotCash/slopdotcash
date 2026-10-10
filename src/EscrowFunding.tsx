@@ -116,7 +116,7 @@ export function EscrowFunding({ project }: { project: ProjectDefinition }) {
         </>
       )}
       <p>
-        <a href="/earnings">View your earnings and payout wallets</a>
+        <a href="/earnings">View your payouts and wallets</a>
       </p>
     </section>
   );
