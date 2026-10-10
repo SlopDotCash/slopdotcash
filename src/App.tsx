@@ -80,6 +80,7 @@ import {
   PublicXLink,
 } from "./Points";
 import {
+  cycleLifecycleLabel,
   DataNotice,
   EmptyState,
   ExternalLinkAnchor,
@@ -1048,7 +1049,7 @@ function ProjectPaymentHistory({
                       <td>{formatMicroUsdc(cycle.reward.paidMinor)}</td>
                     </>
                   )}
-                  <td>{cycle.state.replaceAll("-", " ")}</td>
+                  <td>{cycleLifecycleLabel(cycle)}</td>
                 </tr>
               ))}
             </tbody>

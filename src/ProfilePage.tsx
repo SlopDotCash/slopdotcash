@@ -23,6 +23,7 @@ import type { DataState } from "./lib/use-snapshot";
 import { ProfilePoints } from "./Points";
 import {
   ContributorIdentity,
+  cycleLifecycleLabel,
   DataNotice,
   EmptyState,
   ExternalLinkAnchor,
@@ -147,6 +148,7 @@ export function ProfilePage({
           login={login}
           cycles={state.cycleIndex}
           showIdentity
+          notFoundWhenUnrecorded
         />
       </main>
     );
@@ -330,7 +332,7 @@ export function ProfilePage({
                     {findProject(cycle.projectId)?.name ?? cycle.projectId}
                   </strong>
                   <small>
-                    {cycle.cycleId} · {cycle.state.replaceAll("-", " ")}
+                    {cycle.cycleId} · {cycleLifecycleLabel(cycle)}
                   </small>
                 </span>
                 <span>
