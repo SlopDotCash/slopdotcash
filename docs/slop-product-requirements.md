@@ -107,7 +107,7 @@ GitHub stewardship does not prove legal ownership or authority over a wallet. A 
 
 After OAuth, show the verified GitHub identity and a short setup screen. Require applicable account terms and privacy acknowledgement. Offer a display name, public-profile preference, and notification settings. Defer X and wallets until the user chooses them or needs payment. New membership remains private until the user opts into directory display; public GitHub contribution records remain public regardless.
 
-**ACC-02 — One account surface.** The account menu leads to Profile, Earnings, Wallets, Connections, Notifications, and Sessions. A visible checklist explains optional versus required setup. Registration must succeed without a wallet, X account, repository installation, or contribution skill.
+**ACC-02 — One account surface.** The account menu leads to Profile, Payouts, Wallets, Connections, Notifications, and Sessions. A visible checklist explains optional versus required setup. Registration must succeed without a wallet, X account, repository installation, or contribution skill.
 
 **ACC-03 — Session boundaries.** Reuse the identity worker, but issue distinct scopes for web account actions, installed contribution clients, and operators. An account session cannot read traces, import awards, approve payments, or become an operator. Use secure HTTP-only cookies, CSRF protection, expiry, server-side revocation, and recent authentication for wallet changes. Do not put capabilities in public URLs, receipts, model context, or analytics.
 
@@ -508,7 +508,7 @@ This inventory covers the routes in inspected upstream `src/App.tsx` and related
 | `/verification` | Settlement verification tool | Compatibility entry to How it works verification; preserve read-only tools, result states and exact scope |
 | Raw Markdown, terms, skill guides and downloads | Machine and manual onboarding | Stable discoverable links, exact version/digest, working copy/download feedback |
 | Unknown routes | Not-found state | Useful recovery links; no misleading empty project or account |
-| Proposed `/account` and subpages | Missing unified personal area | Profile, Connections, Wallets, Earnings, Notifications, Sessions |
+| Proposed `/account` and subpages | Missing unified personal area | Profile, Connections, Wallets, Payouts, Notifications, Sessions |
 | Proposed `/leaderboard` | Missing unified full-screen entry | Slop Score default, Points/Money received sorts, outcome denominators, signed-event breakdown and shareable filters |
 | Proposed `/admin` | No complete operator console established | Feature/remove featuring, quarantine/ban/reinstate, restricted VM traces and model findings, auditable queues and recovery |
 | Proposed legal/help/status pages | Fragmented policy and support | Terms, privacy, fees, appeals, private reporting contact, service state, account help |
