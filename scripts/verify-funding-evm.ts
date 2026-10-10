@@ -243,8 +243,16 @@ export function requireEvmRpcQuorum(
     (left, right) => right.length - left.length,
   )[0];
   if (!results || results.length < EVM_FUNDING_RPC_QUORUM) {
+    // Surface why authorities refused; a bare quorum failure hides a mismatch.
+    const reasons = new Set(
+      settled.flatMap((result) =>
+        result.status === "rejected" && result.reason instanceof Error
+          ? [result.reason.message]
+          : [],
+      ),
+    );
     throw new TypeError(
-      "EVM RPC authorities did not reach canonical transaction quorum",
+      `EVM RPC authorities did not reach canonical transaction quorum${reasons.size > 0 ? `: ${[...reasons].join("; ")}` : ""}`,
     );
   }
   return results;
@@ -255,6 +263,7 @@ async function verifyWithAuthority(
     amountMinor: string;
     network: EvmFundingNetwork;
     recipient: string;
+    requiredSender?: string;
     transactionHash: string;
   },
   authority: string,
@@ -276,6 +285,7 @@ async function verifyWithAuthority(
     input.amountMinor,
     context.finalizedBlock,
     context.receiptBlock,
+    { requiredSender: input.requiredSender },
   );
   return {
     authority: context.authority,
@@ -289,6 +299,7 @@ export async function verifyFundingEvm(input: {
   fetchImpl?: FetchLike;
   network: EvmFundingNetwork;
   recipient: string;
+  requiredSender?: string;
   transactionHash: string;
 }) {
   if (

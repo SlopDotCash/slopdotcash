@@ -120,23 +120,7 @@ export async function verifySettlementEvm(input: {
       verifyWithAuthority(input, authority, index, fetchImpl),
     ),
   );
-  let results: EvmAuthorityVerification[];
-  try {
-    results = requireEvmRpcQuorum(settled);
-  } catch (error) {
-    // Surface why authorities refused; a bare quorum failure hides a mismatch.
-    const reasons = new Set(
-      settled.flatMap((result) =>
-        result.status === "rejected" && result.reason instanceof Error
-          ? [result.reason.message]
-          : [],
-      ),
-    );
-    throw new TypeError(
-      `${error instanceof Error ? error.message : "quorum failed"}${reasons.size > 0 ? `: ${[...reasons].join("; ")}` : ""}`,
-      { cause: error },
-    );
-  }
+  const results = requireEvmRpcQuorum(settled);
   const first = results[0];
   const confirmations = Math.min(
     ...results.map(({ verified }) => verified.confirmations),

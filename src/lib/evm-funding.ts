@@ -219,7 +219,9 @@ export function assertConfirmedUsdcDeltas(
   };
 }
 
-/** Validates one confirmed direct-funding credit without trusting its sender. */
+/** Validates one confirmed direct-funding credit. Without `requiredSender`
+ * the sender is not trusted; with it, that address must be the only debited
+ * USDC owner and must send the exact amount. */
 export function assertConfirmedUsdcFundingTransfer(
   receiptValue: unknown,
   network: EvmFundingNetwork,
@@ -228,6 +230,7 @@ export function assertConfirmedUsdcFundingTransfer(
   amountMinor: string,
   finalizedBlock: EvmCanonicalBlock,
   receiptBlock: EvmCanonicalBlock,
+  options: { requiredSender?: string } = {},
 ): VerifiedEvmTransaction {
   if (!isEvmFundingNetwork(network)) {
     throw new TypeError("funding network must be base or ethereum");
@@ -241,6 +244,14 @@ export function assertConfirmedUsdcFundingTransfer(
     !/^[1-9]\d*$/u.test(amountMinor)
   ) {
     throw new TypeError("funding transfer expectation is invalid");
+  }
+  if (
+    options.requiredSender !== undefined &&
+    (!/^0x[0-9a-f]{40}$/u.test(options.requiredSender) ||
+      options.requiredSender === ZERO_EVM_ADDRESS ||
+      options.requiredSender === recipient)
+  ) {
+    throw new TypeError("required sender must be a distinct EVM address");
   }
   const { deltas, verified } = assertConfirmedUsdcDeltas(
     receiptValue,
@@ -262,6 +273,18 @@ export function assertConfirmedUsdcFundingTransfer(
     )
   ) {
     throw new TypeError("EVM funding transaction has an undeclared credit");
+  }
+  if (options.requiredSender !== undefined) {
+    const debited = [...deltas.entries()].filter(([, delta]) => delta < 0n);
+    if (
+      debited.length !== 1 ||
+      debited[0][0] !== options.requiredSender ||
+      debited[0][1] !== -expected
+    ) {
+      throw new TypeError(
+        "EVM funding transaction was not sent by the required payer",
+      );
+    }
   }
   const netDelta = [...deltas.values()].reduce(
     (total, delta) => total + delta,
