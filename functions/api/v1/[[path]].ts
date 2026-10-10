@@ -1,5 +1,6 @@
 import { handlePaymentsApi } from "../../../backend/payments/handler";
 import { handlePointsApi } from "../../../backend/points/handler";
+import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import {
   CloudflareTracePersistence,
   type D1Database,
@@ -164,6 +165,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
             }
           : undefined,
     });
+  if (new URL(context.request.url).pathname.startsWith("/api/v1/slopbot/"))
+    return handleSlopbotApi(context.request, context.env.SLOP_DB);
   return handleTraceApi(context.request, {
     tier: deploymentTier(context.env.SLOP_ENVIRONMENT),
     persistence: new CloudflareTracePersistence(
