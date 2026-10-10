@@ -148,7 +148,7 @@ export function ProfilePage({
           login={login}
           cycles={state.cycleIndex}
           showIdentity
-          notFoundWhenUnrecorded
+          notFoundWhenUnrecorded={fundingReviews.status === "ready"}
         />
       </main>
     );
