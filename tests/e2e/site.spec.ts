@@ -9,7 +9,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, test as base, expect } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { homeProjects } from "../../src/lib/home-projects";
+import { communityProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
@@ -224,19 +224,14 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
     page.getByRole("heading", { exact: true, name: "Featured" }),
   ).toBeVisible();
   const community = page.locator("section.community-projects");
-  const eligibleCommunity = homeProjects().filter(
-    (project) => project.listingTier === "community",
-  );
-  if (eligibleCommunity.length === 0) {
+  const listedCommunity = communityProjects();
+  if (listedCommunity.length === 0) {
     await expect(community).toHaveCount(0);
   } else {
     // Community projects list ten per page; every page stays reachable.
-    const pages = Math.ceil(eligibleCommunity.length / 10);
+    const pages = Math.ceil(listedCommunity.length / 10);
     for (let index = 0; index < pages; index += 1) {
-      for (const project of eligibleCommunity.slice(
-        index * 10,
-        (index + 1) * 10,
-      ))
+      for (const project of listedCommunity.slice(index * 10, (index + 1) * 10))
         await expect(
           community.locator(`a.project-row[href="/projects/${project.id}"]`),
         ).toBeVisible();
