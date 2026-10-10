@@ -10,6 +10,7 @@ import {
   buildPaymentWalletMessage,
   verifyPaymentWalletSignature,
 } from "./possession";
+import { slopbotInvoice } from "./slopbot-billing";
 import { registerPaymentWallet } from "./wallet-registration";
 
 export interface PaymentsDependencies {
@@ -97,6 +98,21 @@ export async function handlePaymentsApi(
         },
         syncedAt: cursor?.synced_at ?? null,
       });
+    }
+    const invoiceRoute =
+      /^\/slopbot\/installations\/([1-9]\d{0,14})\/invoices\/(\d{4}-(?:0[1-9]|1[0-2]))$/.exec(
+        path,
+      );
+    if (invoiceRoute && request.method === "GET") {
+      const invoice = await slopbotInvoice(
+        deps.db,
+        Number(invoiceRoute[1]),
+        invoiceRoute[2],
+        now,
+      );
+      return invoice
+        ? json(200, invoice)
+        : json(404, { error: "installation_not_found" });
     }
     const token = (request.headers.get("cookie") ?? "")
       .split(";")
