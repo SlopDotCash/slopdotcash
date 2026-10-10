@@ -23,6 +23,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { AutomationSection } from "./Automation";
 import { CycleArchivePage, CyclePage } from "./CyclePages";
 import { EarningsPage } from "./Earnings";
 import { EscrowFunding } from "./EscrowFunding";
@@ -586,6 +587,7 @@ function GlobalLeaderboard() {
       id="leaderboard"
     >
       <ContributorStandings compact title="Top sloperators" />
+      <AutomationSection />
     </section>
   );
 }
@@ -1760,6 +1762,7 @@ function ProjectPage({
           </p>
         ) : null}
         <ProjectPaymentHistory project={project} state={state} />
+        <AutomationSection project={project} />
         {view && state.status === "ready" ? (
           <ProjectLeaderboard
             state={state}
