@@ -878,7 +878,7 @@ test("makes the public project draft boundary unmistakable", async ({
   ).toBeVisible();
   await expect(page.locator(".manage-intro .draft-badge")).toHaveText("Draft");
   await expect(
-    page.getByText(/does not save or publish changes/u),
+    page.locator(".manage-intro").getByText(/Changes go to GitHub for review/u),
   ).toBeVisible();
   await expect(
     page.getByText("Payouts are disabled in the project manifest."),
@@ -1776,7 +1776,9 @@ test("derives Solana addresses on the settlement verification page", async ({
   // No cycle has ever reached an approved allocation, so the honest state is an
   // empty ledger rather than a fabricated binding.
   await expect(
-    page.getByText("No execution has been bound yet.", { exact: false }),
+    page.getByText("No payment execution is recorded here yet", {
+      exact: false,
+    }),
   ).toBeVisible();
 
   await page.getByText("Advanced verification", { exact: true }).click();

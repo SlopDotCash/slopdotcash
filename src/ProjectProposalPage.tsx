@@ -582,8 +582,7 @@ export default function ProjectProposalPage() {
           id: repository,
           displayName: repository,
           githubUrl: `https://github.com/${repository}`,
-          description:
-            "Describe the public repository and its role in this project.",
+          description: p.headline || "Describe the project in one sentence.",
           integrationBranch: p.integrationBranch,
         },
       ],
@@ -1503,10 +1502,7 @@ Keep the project manifest, contributor skill, reviewer skill, goals, and criteri
         <h1>
           Edit project proposal <span className="draft-badge">Draft</span>
         </h1>
-        <p>
-          {project.name} · Changes go to GitHub for review. This page does not
-          save or publish changes.
-        </p>
+        <p>{project.name} · Changes go to GitHub for review.</p>
       </div>
       <form
         className="proposal-form"
