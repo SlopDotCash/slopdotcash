@@ -99,7 +99,8 @@ append their claim with `POST /api/v1/wallet-claims`. `GET
 /api/v1/wallet-claims/current` returns only the authenticated contributor's
 current safe metadata; `GET /api/v1/wallet-claims/actors/{numericId}/current`
 and `GET /api/v1/wallet-claims/{claimId}` are public metadata receipts used by
-reward preparation. Wallet records are append-only; changes must name the exact
+reward preparation. The actor route returns `200` with a JSON `null` body when
+that actor has no current claim. Wallet records are append-only; changes must name the exact
 current predecessor, unique lineage indexes reject forks, and SQLite triggers
 reject updates and deletes.
 
