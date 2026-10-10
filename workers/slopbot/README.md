@@ -127,9 +127,10 @@ Do these in order. Each step names who does it and how to verify it.
 7. **Verify live:**
    - `GET /health` returns `{"service":"slopbot","ok":true}`.
    - The App's "Advanced" tab shows `202` for the ping delivery.
-8. **Fund the dogfood installation:** install the App on
-   `SlopDotCash/slopdotcash` only. There is no free allowance. Keep billable review disabled until the
-   vault service-charge path and invoice reconciliation are qualified.
+8. **Qualify billing for the dogfood installation:** install the App on
+   `SlopDotCash/slopdotcash` only. There is no free allowance. Keep billable
+   review disabled until the vault service-charge path and invoice
+   reconciliation are qualified.
 9. **Observe the shadow period:** review the labels and comments for at least
    14 days and 50 items, with `SLOPBOT_CLOSURE_ENABLED` still `"false"`.
    Enabling closure later is a separate reviewed PR that sets the variable
@@ -143,10 +144,8 @@ Do these in order. Each step names who does it and how to verify it.
 
 ## Not yet implemented
 
-- There is no free allowance: an installation reviews nothing until it has a
-  prepaid balance (owner decision, 9 October 2026).
-
-- Prepaid deposit crediting (BOT-11 Step A).
-- The vault `charge_service` instruction (PAY-10).
+- There is no free allowance. Review stays blocked until billing is qualified.
+- Vault service charging and finalized invoice reconciliation (PAY-10/BOT-11).
+- Reviewed installation-to-project binding and payout-fee offsets.
 - SCR-01 penalty journal events. Closures record `penaltyEligible` for them.
 - Maintainer dashboard and Automation row (LDR-04).
