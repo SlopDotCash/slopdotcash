@@ -1,8 +1,9 @@
 import { CircleAlert, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import type { SlopbotRepositorySummary } from "../backend/slopbot/summary";
 import { browserDeployment } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import type { ProjectDefinition } from "./lib/projects.mjs";
 import { EmptyState, formatDate, formatMicroUsdc } from "./Presentation";
 
 /** No Slopbot activity for this long marks the row as stale (BOT-07). */
@@ -24,9 +25,14 @@ const COUNTS = [
 
 /**
  * LDR-04 Automation row. Slopbot is shown apart from people and is never
- * ranked; its billed amount is cost recovery, not earnings.
+ * ranked. Billed costs do not establish verified recovery or earnings.
  */
-export function AutomationSection() {
+export function AutomationSection({
+  project,
+}: {
+  project?: ProjectDefinition;
+}) {
+  const heading = useId();
   const [state, setState] = useState<AutomationState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
@@ -57,13 +63,33 @@ export function AutomationSection() {
   }, [attempt]);
 
   return (
-    <section className="points-panel" aria-labelledby="automation-heading">
-      <h2 id="automation-heading">Automation</h2>
+    <section className="points-panel" aria-labelledby={heading}>
+      <h2 id={heading}>Automation</h2>
       <p className="points-meta">
         Slopbot reviews issues and pull requests for maintainers. It is not
         ranked with people and takes no pool share.
       </p>
-      <AutomationBody state={state} retry={retry} />
+      {project ? (
+        <p className="points-meta">
+          Activity for{" "}
+          <a href={project.links.repository}>the project repository</a>.
+        </p>
+      ) : null}
+      <AutomationBody
+        state={
+          state.status === "ready" && project
+            ? {
+                ...state,
+                repositories: state.repositories.filter(
+                  (repository) =>
+                    String(repository.repositoryId) ===
+                    project.authority.repositoryId,
+                ),
+              }
+            : state
+        }
+        retry={retry}
+      />
     </section>
   );
 }
@@ -99,12 +125,14 @@ function AutomationBody({
   const sum = (key: (typeof COUNTS)[number][0]) =>
     repositories.reduce((total, repository) => total + repository[key], 0);
   if (repositories.length === 0)
-    return <EmptyState text="Slopbot has not reviewed anything yet" />;
+    return (
+      <EmptyState text="No Slopbot activity is recorded for these repositories yet" />
+    );
   const lastActivity = repositories
     .map((repository) => repository.lastActivityAt ?? "")
     .reduce((latest, value) => (value > latest ? value : latest), "");
-  const costRecovery = repositories.reduce(
-    (total, repository) => total + BigInt(repository.costRecoveryMicroUsdc),
+  const billed = repositories.reduce(
+    (total, repository) => total + BigInt(repository.billedMicroUsdc),
     0n,
   );
   const installations = new Set(
@@ -137,11 +165,24 @@ function AutomationBody({
             </div>
           ))}
           <div>
-            <dt>Billed (cost recovery, not earnings)</dt>
-            <dd>{formatMicroUsdc(costRecovery.toString())}</dd>
+            <dt>Cost billed (not earnings)</dt>
+            <dd>{formatMicroUsdc(billed.toString())}</dd>
+          </div>
+          <div>
+            <dt>Cost recovered</dt>
+            <dd>Not verified</dd>
+          </div>
+          <div>
+            <dt>Agreement with maintainers</dt>
+            <dd>Not recorded</dd>
           </div>
         </dl>
       </div>
+      <p className="points-meta">
+        Cost recovery is not earnings. Billed costs are not proof of payment.
+        Settlement evidence and maintainer agreement records are not available
+        yet.
+      </p>
     </>
   );
 }

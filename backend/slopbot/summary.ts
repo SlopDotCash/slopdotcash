@@ -9,8 +9,8 @@ export interface SlopbotRepositorySummary {
   itemsClosed: number;
   closuresReopened: number;
   closuresAppealed: number;
-  /** Billed cost recovery in USDC micro-units, never earnings. */
-  costRecoveryMicroUsdc: string;
+  /** Billed costs in USDC micro-units; not verified recovery or earnings. */
+  billedMicroUsdc: string;
   lastActivityAt: string | null;
 }
 
@@ -48,7 +48,7 @@ SELECT json_group_array(json_object(
   'closuresAppealed', (SELECT COUNT(DISTINCT a.item_node_id) FROM slopbot_actions a
     JOIN closed c ON c.repository_id = a.repository_id AND c.item_node_id = a.item_node_id
     WHERE a.repository_id = r.repository_id AND a.action = 'appeal' AND a.created_at >= c.at),
-  'costRecoveryMicroUsdc', (SELECT CAST(COALESCE(SUM(k.billed_micro_usdc), 0) AS TEXT)
+  'billedMicroUsdc', (SELECT CAST(COALESCE(SUM(k.billed_micro_usdc), 0) AS TEXT)
     FROM slopbot_costs k JOIN slopbot_reviews v ON v.review_key = k.review_key
     WHERE v.repository_id = r.repository_id),
   'lastActivityAt', MAX(r.at, COALESCE((SELECT MAX(a.created_at) FROM slopbot_actions a

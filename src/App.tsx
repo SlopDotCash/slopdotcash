@@ -1761,6 +1761,7 @@ function ProjectPage({
           </p>
         ) : null}
         <ProjectPaymentHistory project={project} state={state} />
+        <AutomationSection project={project} />
         {view && state.status === "ready" ? (
           <ProjectLeaderboard
             state={state}
