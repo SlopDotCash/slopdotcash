@@ -1776,7 +1776,9 @@ test("derives Solana addresses on the settlement verification page", async ({
   // No cycle has ever reached an approved allocation, so the honest state is an
   // empty ledger rather than a fabricated binding.
   await expect(
-    page.getByText("No payment has been made yet", { exact: false }),
+    page.getByText("No payment execution is recorded here yet", {
+      exact: false,
+    }),
   ).toBeVisible();
 
   await page.getByText("Advanced verification", { exact: true }).click();

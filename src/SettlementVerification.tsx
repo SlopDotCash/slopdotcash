@@ -118,7 +118,8 @@ function BindingState({
   if (bindings.status === "empty")
     return (
       <p role="status">
-        No payment has been made yet, so there is nothing on chain to verify.
+        No payment execution is recorded here yet. Payments outside this ledger
+        are not verified by this page.
       </p>
     );
   return (
