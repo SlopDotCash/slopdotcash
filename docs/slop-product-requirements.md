@@ -220,6 +220,8 @@ Use signed webhooks, immutable installation/repository/actor IDs, and deduplicat
 
 Apply precedence in this order: project security ban/quarantine; Slopbot enabled and operational; repository/type scope; actor ignore rules; then marker, membership, external-review option, or explicit one-item request. An ignore rule wins over automatic eligibility. A one-item request can override an ignore only through an explicit recorded confirmation; it cannot override a security suspension. A membership lookup failure is unknown, not membership or nonmembership: a marker may still establish review scope; otherwise hold the eligibility decision and retry. Recheck scope immediately before posting or closure.
 
+*Slopbot v2 amendment (approved by the repository owner on 9 October 2026, `docs/slopbot-v2-proposal.md` Q4):* add a second audience mode, **Protection**, which reviews every issue/PR from non-exempt authors. **Participants only** is the behavior above. Protection is the default for protection-only installations (BOT-08); Participants only remains the default for funded Slop projects. Repository owners, organization members, and collaborators with write or higher permission are exempt from closure by default, verified through the organization-members and collaborator-permission APIs, never through `author_association`. A maintainer may opt exempt actors into advisory review only. Bots, including dependency updaters and the repository's own Apps, are skipped by default. Separate switches control issues and PRs.
+
 **BOT-03 — Ignore lists.** Maintainers may opt to ignore whitelisted maintainers, named contributors, or both. Use immutable actor IDs and verified repository roles; preview the affected people. Default to an empty ignore list. This review-ignore list is distinct from the cash payout-exclusion list, platform bans, and featured-project approval. Ignoring Slopbot does not suppress contribution/outcome ingestion, grant cash eligibility, or bypass mandatory security vetting. Ignored actors incur no bot closure penalty because no automatic bot closure may run on their items.
 
 **BOT-04 — Review context.** Read the project's canonical contributor/reviewer skills, published contributor guidelines, root and applicable directory-scoped `AGENTS.md`/`agents.md`, `CONTRIBUTING.md`/`contributing.md`, and `README.md`/`readme.md`, plus approved PRD/MVP scope and linked authoritative rules. Capture immutable revisions/digests and identify conflicts or unavailable required guidance. Use approved base-branch policy for authority; treat a PR's proposed changes to policy as changes under review, not permission to weaken its own review. For issues, bind the review to the issue ID and current body/title revision digest; for PRs, bind to exact head SHA.
@@ -236,7 +238,27 @@ Every policy-rejection closure actually performed by Slopbot triggers the negati
 
 This is an explicit target change from `protocol/slopbot-v1.md`, which currently prohibits bot closure. Implement a reviewed protocol and least-privilege permission transition first. Slopbot still cannot merge, approve awards, alter penalty amounts, ban users at will, or authorize payments. Independent human review remains eligible under the active contribution policy.
 
+*Slopbot v2 amendment (approved by the repository owner on 9 October 2026, proposal Q7 and Q12):* closure and penalty are separate. In Protection mode Slopbot may close an external item under a published category; the SCR-01 penalty still applies only to a consenting Slop participant. Each category is set to off, label, or close. Universal categories (spam or advertising; scam, phishing, malware or credential bait; empty, no-op or same-author duplicate) may close without repository guidance. Scope, busywork and gaming categories need a cited rule from the repository's base-branch guidance and default to label. Missing evidence and plausible good-faith work never close. Every close needs a cited rule, cited evidence, an unchanged revision, and confirmation by a directly contracted provider (BOT-09). Slopbot never closes a merged PR, an assigned or maintainer-claimed item, an item a human reopened at the same revision, or an item whose author membership is unknown.
+
 **BOT-07 — Operation and cost.** Show eligibility and skip reasons, queued/running/completed/stale/blocked/failed runs, closure decisions, appeals, cost allowance, last healthy webhook, and retry/disable controls. Set per-project and per-item inference budgets. Budget exhaustion means blocked, not clean. Review-service charges stay outside contributor principal. Track confirmed findings, false positives, independent contradictions, closure reversals, and policy/model versions. Repeated webhook delivery, body edits, and bot comments must not create review loops or multiply penalties.
+
+*Slopbot v2 amendment (approved by the repository owner on 9 October 2026, proposal Q10 and Q14):* Slopbot is billed at metered cost plus 10%. The billed amount for a run is `ceil(cost × 1.10)` in integer micro-USDC, where cost is the actual model charge for that run, including any confirmation call, priced from a reviewed price table that changes only at a future UTC month boundary. Pre-filtered items, Slop-caused retries, and failed provider calls are not billed. Charges are per review, never per closure. There is no free allowance (owner decision, 9 October 2026): an installation reviews nothing until it has a prepaid balance. Exhausted budget sets Suspended; nothing is reviewed or closed without budget. Publish a deterministic monthly invoice per installation.
+
+### Slopbot v2 requirements (approved by the repository owner on 9 October 2026)
+
+These requirements come from `docs/slopbot-v2-proposal.md`. Approval of the requirements does not activate closure: the protocol takes effect at its published effective time, and production still needs the protected deploy workflow, a registered App, and counsel review of prepaid balances.
+
+**BOT-08 — Protection-only installation.** A repository without a bounty may use Slopbot. The maintainer signs in, installs the App on selected public repositories, proves admin authority, adds a prepaid balance (BOT-11), and commits `.github/slopbot.json` to the default branch. The file is schema-validated; an invalid or missing file fails closed to label-only. A protection-only installation adds no `projects/` manifest, advertises no paid work, and needs no VET admission while Slopbot performs static review only. It may later become a full project without losing history.
+
+**BOT-09 — Model route and disclosure.** Owner decision, 9 October 2026: triage and closure confirmation both use Claude Opus 5.5 through Surplus Intelligence. On error, timeout, schema-invalid output, or no offer, fall back to GPT-6.1 Sol (`gpt-6.1-sol`) from OpenAI. A close candidate needs a second, independent confirming call at higher effort. The owner accepts that Surplus cannot prove which model served a closure verdict. Private repositories never use Surplus and are outside v2. The model receives no tools, secrets, or network access and returns a strict JSON verdict (category, rule reference, evidence references, confidence, summary). Each result discloses provider, requested model, and route step; a Surplus result states that the served model is unverified. Use API-key billing; Slop holds no inference wallet.
+
+**BOT-10 — Cost ledger.** Record one immutable row per model call: installation, repository, item, revision, run, provider, model, route step, input/cache/output tokens, price-table version, cost micro-USD, billed micro-USDC, and reconciliation status. Reconcile monthly against provider invoices and publish differences; never adjust silently.
+
+**BOT-11 — Billing.** Step A: prepaid credits. The maintainer sends USDC on Base or Solana to Slop's published service address with a payment reference; the finalized-transfer verifier credits the balance. Unused credit is refundable on request. Step B: the project vault charge in PAY-10. For a funded project, Slop's payout fee from the same project in the same month first offsets that month's Slopbot invoice; only the excess is charged. Contributor amounts never change.
+
+**BOT-12 — Safe rollout and appeals.** New installations start in shadow mode (label and comment only) for the later of 14 days or 50 reviewed items. The dashboard shows would-be closures and the maintainer's decisions on them. Closure needs explicit maintainer enablement. Default cap: 25 closures per repository per day. If more than 10% of closures in 7 days are reopened, revert to label-only. Every close comment states the rule, evidence and appeal path; `/slopbot appeal` labels the item and queues it for a maintainer. A maintainer reopen always wins. Slopbot never bans.
+
+**BOT-13 — Cost abuse protection.** Run free deterministic pre-filters (empty diff, exact duplicate, known spam fingerprint, author burst) before any model call. Default cap: 3 reviews per day for an author with no history in the repository. Recommend GitHub's pull-request limits. Queue actions with backoff against GitHub's content-creation limits; keep one bot comment per item, edited in place.
 
 ## 11 Funding and project donations
 
@@ -255,6 +277,8 @@ For the initial design, reserve donor-class funds for awards before refundable s
 If the project closes, donor funds remain restricted while existing obligations settle. The default is no discretionary operator sweep. Any future wind-down transfer to another project requires terms established before deposit and the specified approval; otherwise keep the balance restricted. This is a contract-design requirement missing from the simpler single-sponsor payout proposal.
 
 **FND-05 — Accounting.** Publish deposited USDC, gross awards, free reward funding, reserved net contributor principal, reserved payout fees, contributor-paid principal, platform fees, and refunded sponsor funds separately. Do not add an external commitment, a vault deposit, and its payout into one “funding” total. Record exact integers and provenance; formatted currency is presentation only.
+
+**FND-06 — Slopbot service allocation (approved 9 October 2026).** When depositing sponsor-class funds, the owner may set a service allocation percentage (suggested 2%). It is a Slopbot budget cap, not a transfer. Money moves only through a PAY-10 charge; an unused allocation stays refundable sponsor money. Donor-class funds are never used for Slopbot.
 
 ## 12 Payouts and vault architecture
 
@@ -317,6 +341,8 @@ Base uses the same reservation, readiness, release and verification commands as 
 **PAY-07.** A token freeze, wrong destination, low gas balance, indexer delay, unavailable RPC, or failed transfer leaves the amount unpaid and reserved. One bad destination must not block all other recipients. Show a human-readable cause and recovery action. No silent retries to a different wallet.
 
 **PAY-08.** Only free refundable sponsor funds can be withdrawn, under the disclosed fee. Reserved contributor principal, reserved fees, and restricted donations remain protected. The contract/program must enforce this rule. A database flag is insufficient. An upgrade key that can override it must be disclosed and reviewed; prefer immutable versioned Base deployments and a narrowly governed, explicitly disclosed Solana upgrade policy.
+
+**PAY-10 — Service charge (approved 9 October 2026).** Before the contract security review, add `charge_service(amount, invoice_digest)` to the Solana program and `chargeService` to the EVM vault. Only the owner authorizes it. It moves only free sponsor-class funds to the existing fee recipient, adds a `service_fees` counter to the conservation equation, and is exactly-once per invoice digest. It cannot touch reserved principal, reserved fees, or donor-class funds. No Slop key can pull funds.
 
 ### Accounting example
 
@@ -405,6 +431,8 @@ Show both metric families on profiles, project pages, maintainer review queues, 
 **LDR-03.** The primary sort choices are Slop Score, Points, and Money received (verified finalized USDC principal). Default descending Slop Score for monthly, history, global, and project views; retain an explicitly selected sort in the URL. Offer accepted-work counts and outcome ratios as secondary analysis. Project cycle pages also show allocation weight and projected/approved share. Token volume and inference spend are diagnostic only, never merit sorts.
 
 Equal primary values receive equal ranks; stable actor-ID ordering only stabilizes display. Search, project, period, role, sort, and pagination are URL-addressable. Archived cycles replace overlapping rolling events exactly once. Corrections recompute the projection without erasing history. Missing/stale data is labeled and never substituted with zero.
+
+**LDR-04 — Automation row (approved 9 October 2026).** Show Slopbot in a separate Automation section on the leaderboard and on project pages: items reviewed, items closed, closures reopened or overturned, agreement with maintainers, and USDC cost recovered, labeled "cost recovery, not earnings". Slopbot never appears in Slop Score, Points, or Money received ranks and never takes a pool share. Item records name Slopbot as initial reviewer or closer.
 
 ## 15 Homepage and project discovery
 
@@ -670,7 +698,7 @@ Use the maintainer-approved 2% deduction as the new MVP payout-service revenue m
 
 ### Additional revenue
 
-- Operated Slopbot subscriptions or metered review plans, with a visible included allowance and hard spending controls. Do not take inference charges from contributor principal.
+- Operated Slopbot subscriptions or metered review plans, with a visible included allowance and hard spending controls. Do not take inference charges from contributor principal. Slopbot v2 (approved 9 October 2026): metered cost plus 10% under BOT-07 and BOT-11.
 - Future organization plans for multi-repository administration, audit exports, policy support, and service commitments.
 - Future private security programs: the agreed 50% Slop share compensates intake, validation, coordination, and collection; define it clearly before researchers submit.
 
@@ -793,6 +821,7 @@ served files. Issue #534 tracks this approved operational change.
 | New points and penalty values | Adopt separate signed journals, fixed negative closure schedule, prospective score-to-allocation policy and appeal reversals | Product and scoring-policy owners |
 | Community admission | Permissionless eligibility with canonical GitHub activation; disclose review latency | Maintainers |
 | Slopbot permissions/review policy | Optional; marker/member scope and ignore lists; explicit delegated closure; no merge or payment authority | Maintainers and security owner |
+| Slopbot v2 | **Approved 9 October 2026 by the repository owner:** Surplus Opus 5.5 for triage and confirmation, GPT-6.1 Sol fallback, no free allowance, deposit earmark (FND-06) and Slop-fee offset (BOT-11), Protection audience mode, closure categories, 14-day shadow, cost plus 10%, prepaid credits then PAY-10 vault charge, Automation row, appeals (`docs/slopbot-v2-proposal.md`) | Repository owner, security and finance owners; counsel for prepaid balances |
 | Community security gate | Required secure VM, complete declared telemetry, artifact quarantine, independent Astra/Opus scans, confirmed-malware ban policy | Security and platform owners |
 | Project admin controls | Featuring through canonical policy; immediate restrictive quarantine/ban overlay with audited GitHub synchronization | Maintainers and security owner |
 | Privacy and retention | Field-level inventory, public wallet compatibility, closure/recovery policy | Privacy and backend owners |

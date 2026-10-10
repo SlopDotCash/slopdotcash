@@ -563,6 +563,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+          SLOPBOT_RELEASE: ${{ vars.SLOPBOT_RELEASE }}
         # wrangler.toml owns pages_build_output_dir. A positional directory
         # bypasses that deployment contract and must not be added here.
         run: |
@@ -916,6 +917,95 @@ jobs:
             throw new TypeError("identity exact rate-limit bucket has an unexpected state");
           }
           NODE
+
+          # Slopbot (workers/slopbot, protocol/slopbot-v2.md). The owner creates
+          # the Worker shell, its custom domain and its secrets once, then sets
+          # the SLOPBOT_RELEASE repository variable to "enabled". Releases only
+          # upload and promote versions. Its D1 tables come from the shared
+          # slop-private migration apply above.
+          if [ "$SLOPBOT_RELEASE" = "enabled" ]; then
+          slopbot_secrets="$RUNNER_TEMP/slopbot-secrets.json"
+          ./node_modules/.bin/wrangler secret list \
+            --config workers/slopbot/wrangler.toml > "$slopbot_secrets"
+          node - "$slopbot_secrets" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (!Array.isArray(value)) throw new TypeError("slopbot secret inventory must be an array");
+          const names = value.map((entry) => entry?.name).sort();
+          const required = [
+            "OPENAI_API_KEY",
+            "SLOPBOT_APP_ID",
+            "SLOPBOT_APP_PRIVATE_KEY",
+            "SLOPBOT_APP_USER_ID",
+            "SLOPBOT_WEBHOOK_SECRET",
+            "SURPLUS_API_KEY",
+          ];
+          const allowed = new Set([...required, "SURPLUS_BASE_URL"]);
+          if (!required.every((name) => names.includes(name)) || !names.every((name) => allowed.has(name))) {
+            throw new TypeError("slopbot Worker secret inventory is incomplete or contains unexpected entries");
+          }
+          NODE
+
+          slopbot_upload="$RUNNER_TEMP/slopbot-upload.log"
+          ./node_modules/.bin/wrangler versions upload \
+            --config workers/slopbot/wrangler.toml \
+            --minify \
+            --tag="$GITHUB_SHA" \
+            --message="slop.cash release $GITHUB_SHA" 2>&1 | tee "$slopbot_upload"
+          slopbot_version_id="$(node - "$slopbot_upload" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const contents = readFileSync(process.argv[2], "utf8");
+          const matches = [...contents.matchAll(/^Worker Version ID:\s*([0-9a-f-]+)\s*$/gmu)];
+          if (matches.length !== 1 || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(matches[0][1])) {
+            throw new TypeError("slopbot upload did not return exactly one Worker version id");
+          }
+          process.stdout.write(matches[0][1]);
+          NODE
+          )"
+          ./node_modules/.bin/wrangler versions deploy \
+            --name slop-slopbot \
+            --version-id="$slopbot_version_id" \
+            --percentage=100 \
+            --message="slop.cash release $GITHUB_SHA" \
+            --yes
+
+          slopbot_versions="$RUNNER_TEMP/slopbot-versions.json"
+          slopbot_deployment="$RUNNER_TEMP/slopbot-deployment.json"
+          ./node_modules/.bin/wrangler versions list --name slop-slopbot --json > "$slopbot_versions"
+          ./node_modules/.bin/wrangler deployments status --name slop-slopbot --json > "$slopbot_deployment"
+          node - "$slopbot_versions" "$slopbot_deployment" "$GITHUB_SHA" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const versions = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const deployment = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const sha = process.argv[4];
+          const active = Array.isArray(deployment?.versions) && deployment.versions.length === 1 ? deployment.versions[0] : null;
+          if (active?.percentage !== 100 || typeof active?.version_id !== "string") {
+            throw new TypeError("slopbot Worker deployment is not pinned 100% to one version");
+          }
+          const version = Array.isArray(versions) ? versions.find((candidate) => candidate?.id === active.version_id) : undefined;
+          if (version?.annotations?.["workers/tag"] !== sha) {
+            throw new TypeError("slopbot Worker deployment is not bound to the tested commit");
+          }
+          NODE
+
+          slopbot_health="$RUNNER_TEMP/slopbot-health.json"
+          slopbot_status="$(
+            curl --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --max-filesize 4096 \
+              --output "$slopbot_health" \
+              --write-out "%{http_code}" \
+              https://slopbot.slop.cash/health
+          )"
+          if [ "$slopbot_status" != "200" ]; then
+            echo "::error::Slopbot health returned HTTP $slopbot_status; expected 200."
+            exit 1
+          fi
+          node -e 'const v=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); if (v.service!=="slopbot"||v.ok!==true) throw new TypeError("unexpected slopbot health body")' "$slopbot_health"
+          else
+            echo "::notice::Slopbot release is not enabled (SLOPBOT_RELEASE repository variable)."
+          fi
 
           fi
 
