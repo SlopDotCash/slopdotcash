@@ -23,6 +23,7 @@ import type { DataState } from "./lib/use-snapshot";
 import { ProfilePoints } from "./Points";
 import {
   ContributorIdentity,
+  cycleLifecycleLabel,
   DataNotice,
   EmptyState,
   ExternalLinkAnchor,
@@ -147,6 +148,7 @@ export function ProfilePage({
           login={login}
           cycles={state.cycleIndex}
           showIdentity
+          notFoundWhenUnrecorded={fundingReviews.status === "ready"}
         />
       </main>
     );
@@ -330,7 +332,7 @@ export function ProfilePage({
                     {findProject(cycle.projectId)?.name ?? cycle.projectId}
                   </strong>
                   <small>
-                    {cycle.cycleId} · {cycle.state.replaceAll("-", " ")}
+                    {cycle.cycleId} · {cycleLifecycleLabel(cycle)}
                   </small>
                 </span>
                 <span>
@@ -463,7 +465,6 @@ function useCurrentWallet(state: DataState, login: string): CurrentWalletState {
       },
     )
       .then(async (response) => {
-        if (response.status === 404) return null;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return readBoundedJson(
           response,

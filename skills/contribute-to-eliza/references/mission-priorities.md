@@ -6,9 +6,11 @@ this gate before claiming, implementing, reviewing, or validating work.
 
 ## Pass all three gates
 
-Apply the gates inside the queue-first order in `SKILL.md`. PRs without a
-substantive review of their exact current head come first, then existing
-authorized issues without PRs. Only after the old queue is reconciled may
+Prioritize shipping accepted outcomes. Existing authorized issues without PRs
+come first. Review an open PR only when the review can change what merges: a
+request for changes that the author must answer before the PR is correct.
+Approvals and reviews that do not change the merged result earn no score, so do
+not review to clear a queue. Only after authorized issues are handled may
 self-directed inspection move through security, bugs, incorrect or stale
 documentation and code comments, and missing real-system verification, in that
 order.
@@ -122,7 +124,7 @@ active contribution at a time and consolidate all work required for its outcome.
 ## Review application
 
 Apply the same gates to reviews. Do not review a low-value PR merely because it
-is open. For a mission-relevant PR, determine whether it solves the authorized
+is open, and do not approve a PR as a substitute for shipping an outcome. For a mission-relevant PR, determine whether it solves the authorized
 need completely, adds unrelated scope, or creates activity without product
 value. Recommend closure rather than repairs when the premise fails the mission
 gate. These PRs earn no accepted-outcome score and may be excluded or penalized
@@ -132,8 +134,8 @@ product value are subject to the same judgment.
 
 ## Queue-cleared audit order
 
-Do not use discovery to manufacture backlog. After the live issue and PR queue
-is reconciled, inspect exactly one tier at a time:
+Do not use discovery to manufacture backlog. After the authorized issues are
+handled, inspect exactly one tier at a time:
 
 1. **Security**: authorization, secret handling, injection, unsafe execution,
    supply chain, privacy, tenant isolation, and trust-boundary failures. Follow

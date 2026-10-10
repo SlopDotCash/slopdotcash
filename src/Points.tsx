@@ -36,7 +36,13 @@ import {
 import { profileCounts } from "./lib/profiles";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
-import { DataNotice, formatMicroUsdc, formatScore } from "./Presentation";
+import {
+  DataNotice,
+  formatDate,
+  formatMicroUsdc,
+  formatScore,
+  NotFound,
+} from "./Presentation";
 import { ProfileActivity, useProfiles } from "./Profiles";
 import { WalletRegistration } from "./WalletRegistration";
 
@@ -395,8 +401,7 @@ function Notice() {
     );
   return (
     <p className="points-meta">
-      Recorded history · updated{" "}
-      {new Date(state.journal.generatedAt).toLocaleString()}
+      Points updated {new Date(state.journal.generatedAt).toLocaleString()}
       {Date.now() - Date.parse(state.journal.generatedAt) > 8 * 3600000
         ? " · Stale: the next verified update is pending."
         : ""}
@@ -411,6 +416,7 @@ export function ProfilePoints({
   cycles,
   recordsLoading = false,
   showIdentity = false,
+  notFoundWhenUnrecorded = false,
 }: {
   login: string;
   work?: readonly ScoreEvent[];
@@ -419,6 +425,8 @@ export function ProfilePoints({
   showIdentity?: boolean;
   summary?: ReactNode;
   actorId?: string;
+  /** The caller found no score record, so no points record means no contributor. */
+  notFoundWhenUnrecorded?: boolean;
 }) {
   const { state, me } = useContext(Context);
   const census = useProfiles();
@@ -479,6 +487,21 @@ export function ProfilePoints({
           : undefined
       : undefined;
   const [copied, setCopied] = useState("");
+  if (
+    notFoundWhenUnrecorded &&
+    state.status === "ready" &&
+    census.state.status === "ready" &&
+    joinStatus === "absent" &&
+    !own &&
+    !m &&
+    !recorded &&
+    named.length === 0
+  )
+    return (
+      <NotFound as="section" title="Contributor not found">
+        <p>Slop has no public record for {login}.</p>
+      </NotFound>
+    );
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
@@ -645,7 +668,13 @@ function JoinPoints({
       setMessage("You’re signed in. Your welcome points are recorded.");
     } catch (e) {
       if (!c.signal.aborted)
-        setMessage(e instanceof Error ? e.message : "Sign-in unavailable");
+        setMessage(
+          e instanceof TypeError
+            ? "Could not reach Slop. Check your connection and try again."
+            : e instanceof Error
+              ? e.message
+              : "Sign-in unavailable",
+        );
     } finally {
       if (active.current === c) {
         setBusy(false);
@@ -985,8 +1014,8 @@ export function ContributorStandings({
       <Notice />
       {scores.status === "ready" ? (
         <p className="points-meta">
-          Score records: {scores.snapshot.window.from} to{" "}
-          {scores.snapshot.window.to}, plus closed cycles.
+          Score records: {formatDate(scores.snapshot.window.from)} to{" "}
+          {formatDate(scores.snapshot.window.to)}, plus closed cycles.
           {period === "month"
             ? ` Selected month: ${new Date().toISOString().slice(0, 7)} (UTC).`
             : " Recorded history; coverage may have gaps."}
@@ -1163,7 +1192,7 @@ export function ContributorStandings({
       <p className="points-meta">
         Slop Score measures accepted work. Points record recognition. Money
         received is verified finalized USDC principal. Equal values share a
-        rank. Historical review coverage follows verified records.
+        rank.
       </p>
       {compact ? (
         <p>
@@ -1570,7 +1599,7 @@ function People() {
                     {p.member ? <small>Public member</small> : null}
                     {steward.length ? (
                       <small>
-                        Project steward ·{" "}
+                        Project maintainer ·{" "}
                         {steward.map((s) => s.name).join(", ")}
                       </small>
                     ) : null}

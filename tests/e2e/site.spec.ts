@@ -9,7 +9,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, test as base, expect } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { homeProjects } from "../../src/lib/home-projects";
+import { communityProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
@@ -200,13 +200,15 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
   );
   await expect(footer.getByRole("link", { name: "Slop Git" })).toHaveCount(0);
   await expect(page.locator(".footer-wordmark")).toHaveText("slop.cash");
-  await expect(page.getByRole("link", { name: "Protocol" })).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { exact: true, name: "Protocol" }),
+  ).toHaveCount(0);
   await expect(
     page.getByText(`© ${new Date().getUTCFullYear()} slop.cash.`),
   ).toBeVisible();
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
     "content",
-    "https://slop.cash/og-open-source.png",
+    "https://slop.cash/og-slop-cash.png",
   );
   await expect(
     page.getByRole("heading", {
@@ -224,19 +226,14 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
     page.getByRole("heading", { exact: true, name: "Featured" }),
   ).toBeVisible();
   const community = page.locator("section.community-projects");
-  const eligibleCommunity = homeProjects().filter(
-    (project) => project.listingTier === "community",
-  );
-  if (eligibleCommunity.length === 0) {
+  const listedCommunity = communityProjects();
+  if (listedCommunity.length === 0) {
     await expect(community).toHaveCount(0);
   } else {
     // Community projects list ten per page; every page stays reachable.
-    const pages = Math.ceil(eligibleCommunity.length / 10);
+    const pages = Math.ceil(listedCommunity.length / 10);
     for (let index = 0; index < pages; index += 1) {
-      for (const project of eligibleCommunity.slice(
-        index * 10,
-        (index + 1) * 10,
-      ))
+      for (const project of listedCommunity.slice(index * 10, (index + 1) * 10))
         await expect(
           community.locator(`a.project-row[href="/projects/${project.id}"]`),
         ).toBeVisible();
@@ -263,7 +260,7 @@ test("discovers projects and one score-ranked homepage leaderboard", async ({
     elizaCard.getByText("/mo target", { exact: true }),
   ).toBeVisible();
   await expect(
-    elizaCard.getByText("Vault: Unavailable", { exact: true }),
+    elizaCard.getByText("Vault: Not funded", { exact: true }),
   ).toBeVisible();
   await expect(elizaCard.getByText("$5,000", { exact: true })).toHaveCount(0);
   await expect(
@@ -851,9 +848,9 @@ test("keeps a frozen-month contributor reachable after the rolling window moves 
     `${deployment.api}/api/v1/wallet-claims/actors/*/current`,
     (route) =>
       route.fulfill({
-        status: 404,
+        status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ error: "not_found" }),
+        body: "null",
       }),
   );
   await page.goto(
@@ -878,7 +875,7 @@ test("makes the public project draft boundary unmistakable", async ({
   ).toBeVisible();
   await expect(page.locator(".manage-intro .draft-badge")).toHaveText("Draft");
   await expect(
-    page.getByText(/does not save or publish changes/u),
+    page.locator(".manage-intro").getByText(/Changes go to GitHub for review/u),
   ).toBeVisible();
   await expect(
     page.getByText("Payouts are disabled in the project manifest."),
@@ -1776,7 +1773,9 @@ test("derives Solana addresses on the settlement verification page", async ({
   // No cycle has ever reached an approved allocation, so the honest state is an
   // empty ledger rather than a fabricated binding.
   await expect(
-    page.getByText("No execution has been bound yet.", { exact: false }),
+    page.getByText("No payment execution is recorded here yet", {
+      exact: false,
+    }),
   ).toBeVisible();
 
   await page.getByText("Advanced verification", { exact: true }).click();

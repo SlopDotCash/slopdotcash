@@ -9,6 +9,8 @@ import { formatThirds } from "./lib/reviewer-leaders";
 import type { CycleIndexState } from "./lib/use-cycle-index";
 import type { DataState } from "./lib/use-snapshot";
 import {
+  awaitingApproval,
+  cycleLifecycleLabel,
   cycleStateLabel,
   DataNotice,
   EmptyState,
@@ -80,10 +82,11 @@ export function CyclePage({
     settledAt: record?.settledAt ?? null,
     state: record?.state ?? (view?.cycle.status === "live" ? "live" : "review"),
   });
+  const reviewClosed = record ? awaitingApproval(record) : false;
   const currentStage =
     record?.state === "paid" || record?.state === "settlement-planned"
       ? 3
-      : record?.state === "payment-ready"
+      : record?.state === "payment-ready" || reviewClosed
         ? 2
         : lifecycle === "live"
           ? 0
@@ -115,8 +118,10 @@ export function CyclePage({
             {project.name} · {formatCycleMonth(cycleId)}
           </h1>
           <p>
-            {lifecycle.replaceAll("-", " ")} · {formatDate(from)}–
-            {formatDate(to)}
+            {record
+              ? cycleLifecycleLabel(record)
+              : lifecycle.replaceAll("-", " ")}{" "}
+            · {formatDate(from)}–{formatDate(to)}
           </p>
         </div>
         <div className="cycle-number">
@@ -177,14 +182,16 @@ export function CyclePage({
             [
               "Review",
               record?.reviewEndsAt
-                ? `Review ends ${formatDate(record.reviewEndsAt)}`
+                ? `Review ${reviewClosed ? "ended" : "ends"} ${formatDate(record.reviewEndsAt)}`
                 : "Review has not started",
             ],
             [
               "Approval",
               record?.approvedAt
                 ? `Approved ${formatDate(record.approvedAt)}`
-                : "Not approved",
+                : reviewClosed
+                  ? "Awaiting owner approval"
+                  : "Not approved",
             ],
             [
               "Settlement",
@@ -266,7 +273,6 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                     <td>{(contributor.sharePartsPerMillion ?? 0) / 10_000}%</td>
                   ) : (
                     <>
-                      {" "}
                       <td>
                         {formatMicroUsdc(contributor.suggestedMinor)}
                         {contributor.lines ? (
@@ -515,7 +521,7 @@ export function CycleArchivePage({
                     {formatCycleMonth(cycle.cycleId)}
                   </Link>
                 </h2>
-                <p>{cycleStateLabel(cycle.state)}</p>
+                <p>{cycleLifecycleLabel(cycle)}</p>
               </div>
               <dl>
                 {cycle.kind === "external-prize-share" ? (

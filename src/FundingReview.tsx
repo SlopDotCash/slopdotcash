@@ -94,11 +94,13 @@ export function FundingReview({
   project,
   sourceRepositoryUrl,
   cycleIndex,
+  cycleIndexLoading,
   funding,
 }: {
   project: ProjectDefinition;
   sourceRepositoryUrl: string;
   cycleIndex: CycleIndex | null;
+  cycleIndexLoading: boolean;
   funding: ProjectFundingIndex | null;
 }) {
   const repo = sourceRepositoryUrl;
@@ -537,7 +539,9 @@ export function FundingReview({
     text: string;
   }[] = [
     !cycleIndex
-      ? { tone: "blocked", text: "Cycle records are unavailable." }
+      ? cycleIndexLoading
+        ? { tone: "waiting", text: "Loading cycle records…" }
+        : { tone: "blocked", text: "Cycle records are unavailable." }
       : !canEdit
         ? {
             tone: published ? "done" : "waiting",
@@ -677,7 +681,9 @@ export function FundingReview({
                   <strong>
                     {cycleIndex
                       ? `${displayUsdc(published?.reward.paidMinor ?? "0")} USDC`
-                      : "Unavailable"}
+                      : cycleIndexLoading
+                        ? "Loading…"
+                        : "Unavailable"}
                   </strong>
                 </p>
               </div>
@@ -752,7 +758,7 @@ export function FundingReview({
                       review budget is verified in the funded proposal.
                     </p>
                   )}
-                  {!cycleIndex && (
+                  {!cycleIndex && !cycleIndexLoading && (
                     <p role="alert">
                       Published cycle state is unavailable. Review actions are
                       disabled until it loads.
@@ -901,7 +907,9 @@ export function FundingReview({
                           const panelId = `recipient-${r.actor.id}`;
                           const lockLabel = cycleIndex
                             ? walletLockLabel(published, r.actor.id)
-                            : "Lock status unavailable";
+                            : cycleIndexLoading
+                              ? "Loading lock status…"
+                              : "Lock status unavailable";
                           return (
                             <Fragment key={`${cycleId}:${r.actor.id}`}>
                               <tr className="recipient-row">
@@ -1575,9 +1583,10 @@ export function FundingReview({
                     </>
                   )}
                   {!cycleIndex ? (
-                    <p role="alert">
-                      Payment records are unavailable. Retry the page’s data
-                      request.
+                    <p role={cycleIndexLoading ? "status" : "alert"}>
+                      {cycleIndexLoading
+                        ? "Loading payment records…"
+                        : "Payment records are unavailable. Retry the page’s data request."}
                     </p>
                   ) : !published ? (
                     <p>

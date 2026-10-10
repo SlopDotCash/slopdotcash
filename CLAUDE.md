@@ -173,7 +173,10 @@ issue or create placeholder submissions.
 The current reviewer skill is separate and advisory. The PRD specifies optional
 Slopbot closure and security-vetting enforcement as gated MVP additions. A
 document merge alone does not enable those powers; implement and review the
-versioned protocols and explicit permissions first.
+versioned protocols and explicit permissions first. The hosted Slopbot service
+is `workers/slopbot` under `protocol/slopbot-v2.md` (effective
+2026-11-01T00:00:00Z). Its global closure switch stays off until a reviewed
+production activation; it never merges, approves, scores, bans, or pays.
 
 It measures its own run, checks
 correctness, tests, security, evidence, duplication, abuse signals, scope, and

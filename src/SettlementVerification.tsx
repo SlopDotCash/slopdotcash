@@ -118,11 +118,8 @@ function BindingState({
   if (bindings.status === "empty")
     return (
       <p role="status">
-        No execution has been bound yet. No cycle has reached an approved
-        allocation and execution plan, so there is nothing on chain for the
-        verifier to observe. The ledger is empty rather than withheld, and an
-        empty ledger is the only state the transition gate accepts until the
-        first reviewed binding lands.
+        No payment execution is recorded here yet. Payments outside this ledger
+        are not verified by this page.
       </p>
     );
   return (
@@ -269,11 +266,11 @@ export function SettlementVerification() {
           <p>
             A verified instruction match is not approval, not available funding,
             and not permission to carry an amount forward. A matched plan is not
-            a paid one. Slop signs and broadcasts no transfer; the creator signs
-            and broadcasts externally. On a 2-of-3 project vault Slop's
-            vote-only key can approve a bound proposal but cannot write or
-            execute one, and an approved cycle without a bound proposal is not
-            approved for payment. Settlement is described as paid only once
+            a paid one. Slop signs and broadcasts no transfer; an authorized
+            signer signs and broadcasts externally. On a 2-of-3 project vault
+            Slop's vote-only key can approve a bound proposal but cannot write
+            or execute one, and an approved cycle without a bound proposal is
+            not approved for payment. Settlement is described as paid only once
             finalized on-chain deltas reconcile exactly.
           </p>
 
