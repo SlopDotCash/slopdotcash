@@ -51,6 +51,24 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
 
 A missing or invalid file means label-only review.
 
+## Cost statements and vault billing
+
+`GET /api/v1/payments/slopbot/installations/<id>/invoices/<YYYY-MM>` returns
+one installation's billed model calls for the UTC month. Values use integer
+micro-USDC. This is a cost statement, not a request for payment or proof of
+settlement. The fee offset is zero until a reviewed project binding exists.
+
+Billing must use the existing project vaults under PAY-10. The owner authorizes
+`chargeService` on Base or `charge_service` on Solana. The operation must use
+only free sponsor funds, preserve reserved awards and donor funds, and prevent
+a second charge for the same invoice digest. Neither contract has that
+operation yet; finalized invoice reconciliation is also required before launch.
+Issue #616 tracks these dependencies.
+
+Do not send service deposits to payout-fee wallets. There is no public prepaid
+deposit-credit endpoint. A past fee transfer must never become new service
+credit. This change neither enables billing nor moves funds.
+
 ## Setup checklist (owner)
 
 Do these in order. Each step names who does it and how to verify it.
@@ -109,11 +127,10 @@ Do these in order. Each step names who does it and how to verify it.
 7. **Verify live:**
    - `GET /health` returns `{"service":"slopbot","ok":true}`.
    - The App's "Advanced" tab shows `202` for the ping delivery.
-8. **Fund the dogfood installation:** install the App on
-   `SlopDotCash/slopdotcash` only. There is no free allowance, and automatic
-   deposit crediting (BOT-11 Step A) is not built yet. Until it is, an
-   operator records a verified deposit as one `slopbot_credits` row of kind
-   `deposit`, with the transaction signature as its `reference`.
+8. **Qualify billing for the dogfood installation:** install the App on
+   `SlopDotCash/slopdotcash` only. There is no free allowance. Keep billable
+   review disabled until the vault service-charge path and invoice
+   reconciliation are qualified.
 9. **Observe the shadow period:** review the labels and comments for at least
    14 days and 50 items, with `SLOPBOT_CLOSURE_ENABLED` still `"false"`.
    Enabling closure later is a separate reviewed PR that sets the variable
@@ -127,10 +144,8 @@ Do these in order. Each step names who does it and how to verify it.
 
 ## Not yet implemented
 
-- There is no free allowance: an installation reviews nothing until it has a
-  prepaid balance (owner decision, 9 October 2026).
-
-- Prepaid deposit crediting (BOT-11 Step A).
-- The vault `charge_service` instruction (PAY-10).
+- There is no free allowance. Review stays blocked until billing is qualified.
+- Vault service charging and finalized invoice reconciliation (PAY-10/BOT-11).
+- Reviewed installation-to-project binding and payout-fee offsets.
 - SCR-01 penalty journal events. Closures record `penaltyEligible` for them.
 - Maintainer dashboard and Automation row (LDR-04).
