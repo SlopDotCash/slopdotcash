@@ -212,6 +212,11 @@ export const REVIEW_EXCLUSION_REASONS = [
   "reviewer-cycle-cap",
   "unchanged-outcome",
   "pull-request-review-awarded",
+  // SCR-05 co-attribution: this reviewer found the same unresolved blocker as
+  // the awarded reviewer, so the award stays capped at one third per pull
+  // request while the earlier causal work remains visible in the audit record
+  // instead of being erased by the latest-timestamp tie-breaker.
+  "co-attributed-review-award",
 ] as const;
 
 function exactEvidenceBonusRun(
@@ -3420,7 +3425,11 @@ export function createLeaderboardSnapshot(
       }
     }
     // SCR-05: the pull request's one review award goes to the latest request
-    // for changes that the merged code answered.
+    // for changes that the merged code answered. The cap is one third per pull
+    // request, but attribution is recorded separately: another actor who found
+    // the same unresolved blocker keeps a co-attribution record instead of
+    // being erased by the latest-timestamp tie-breaker, while a repeat by the
+    // already-awarded actor stays deduplicated as one lifecycle.
     const outcomeReview = outcomeReviews.at(-1);
     for (const review of outcomeReviews) {
       if (review === outcomeReview) {
@@ -3429,8 +3438,10 @@ export function createLeaderboardSnapshot(
           true,
           "Latest pre-merge request for changes that the merged code answered; one review award per pull request.",
         );
-      } else {
+      } else if (outcomeReview?.author && review.author?.id === outcomeReview.author.id) {
         excludeReview(pullRequest, review, "pull-request-review-awarded");
+      } else {
+        excludeReview(pullRequest, review, "co-attributed-review-award");
       }
     }
     // Preserve the later verification without another award or evidence bonus.
