@@ -7,7 +7,7 @@
   "headline": "Make money hardening Slop itself.",
   "description": "Find and fix real defects in Slop: security, identity, scoring, verification, vault and settlement correctness. Accepted outcomes share a monthly contributor pool. UI changes are out of scope unless they fix a broken flow.",
   "listingTier": "community",
-  "status": "active",
+  "status": "paused",
   "steward": {
     "displayName": "$SLOP holder governance",
     "kind": "dao",
@@ -21,34 +21,20 @@
     "website": "https://slop.cash"
   },
   "authority": {
-    "state": "verified",
-    "reason": null,
+    "state": "unverified",
+    "reason": "missing-repository-proof",
     "role": "project-steward",
     "repositoryId": "1319812413",
     "repositoryNodeId": "R_kgDOTqq9PQ",
-    "proof": {
-      "commitSha": "5d0142faf7e6120c44402332261302a7e8b89d0e",
-      "fileSha256": "cf7a58c890dd314f39ee0789941f7d1040133ba6893736d59f33e4863999956f",
-      "policyRevision": "2026-10-11.1",
-      "url": "https://github.com/SlopDotCash/slopdotcash/blob/5d0142faf7e6120c44402332261302a7e8b89d0e/.github/slop-project.json",
-      "verifiedAt": "2026-10-11T21:37:22.000Z"
-    }
+    "proof": null
   },
   "terms": {
     "revision": "2026-10-11.1",
-    "effectiveAt": "2026-10-11T21:37:22.000Z",
+    "effectiveAt": "2026-10-11T00:00:00.000Z",
     "receiptPolicy": {
-      "state": "active",
-      "activatedAt": "2026-10-11T21:37:22.000Z",
-      "bindings": [
-        {
-          "policyRevision": "2026-10-11.1",
-          "activatedAt": "2026-10-11T21:37:22.000Z",
-          "licenseSha256": "3c50e19c2a6022364f5cef932e4e5cdbddc91087e52ae8d8614b48a04fee40a5",
-          "inboundTermsSha256": "69302e234b8c5dececde858d7ba5736a2471b18875ca8fdb0adb099a3cebb962",
-          "prizeRulesSha256": null
-        }
-      ]
+      "state": "pending-authority-activation",
+      "activatedAt": null,
+      "bindings": []
     },
     "paymentTransfersIp": false,
     "retroactive": false,

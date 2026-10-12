@@ -26,12 +26,12 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
   await page.route(/https:\/\/[^/]*github[^/]*\//, (route) => route.abort());
   try {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    const expected = homeProjects().filter(
-      (project) => project.listingTier === "featured",
-    );
+    const expected = homeProjects();
     expect(expected.length).toBeGreaterThan(0);
     await expect(page.locator(".project-card")).toHaveCount(expected.length);
-    for (const project of expected) {
+    for (const project of expected.filter(
+      (project) => project.listingTier === "featured",
+    )) {
       await expect(
         page.getByRole("heading", { name: project.name, exact: true }),
       ).toBeVisible();

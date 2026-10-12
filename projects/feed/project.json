@@ -21,18 +21,12 @@
     "website": "https://feed.fun"
   },
   "authority": {
-    "state": "verified",
-    "reason": null,
+    "state": "unverified",
+    "reason": "missing-repository-proof",
     "role": "project-steward",
     "repositoryId": "1083451760",
     "repositoryNodeId": "R_kgDOQJQpcA",
-    "proof": {
-      "commitSha": "1fa953e9770c6a71c9aba338e0d96dd4633c8969",
-      "fileSha256": "4af0e226070fc495b42447192ac72bd44c85e65af3a7e8740f17c5f4ddc1bddc",
-      "policyRevision": "2026-10-11.1",
-      "url": "https://github.com/feedforagents/feed/blob/1fa953e9770c6a71c9aba338e0d96dd4633c8969/.github/slop-project.json",
-      "verifiedAt": "2026-10-11T21:45:01.000Z"
-    }
+    "proof": null
   },
   "terms": {
     "revision": "2026-10-11.1",
