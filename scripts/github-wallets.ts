@@ -6,6 +6,7 @@
  * the exact GitHub actor.
  */
 
+import { githubUserIdFromNodeId } from "../src/lib/github-actor";
 import type { WalletProof } from "../src/lib/rewards";
 import {
   isWalletAddress,
@@ -249,7 +250,6 @@ function object(value: unknown, context: string): Record<string, unknown> {
 async function fetchRegistryWallet(
   githubNumericId: string,
   sourceActorId: string,
-  login: string,
   observedAt: string,
   chain: WalletChain,
   fetchImpl: FetchLike,
@@ -265,9 +265,10 @@ async function fetchRegistryWallet(
     claim.schemaVersion !== 1 ||
     typeof claim.claimId !== "string" ||
     !/^[A-Za-z0-9_-]+$/u.test(claim.claimId) ||
+    // The claim is bound to the immutable numeric id. Its login is a display
+    // alias recorded at claim time; a later rename keeps the claim (ACC-01).
     claim.githubActorId !== githubNumericId ||
     typeof claim.githubLogin !== "string" ||
-    claim.githubLogin.toLowerCase() !== login.toLowerCase() ||
     (claim.chain ?? "solana") !== chain ||
     !isWalletAddress(chain, claim.address) ||
     !["d1_registry", "github_issue", "profile_readme"].includes(
@@ -305,13 +306,19 @@ export async function fetchPublishedGithubWallet(
   if (!/^[A-Za-z0-9_=-]{4,128}$/u.test(actorIdInput)) {
     throw new TypeError("GitHub actor id is invalid");
   }
-  const login = githubLogin(loginInput);
+  githubLogin(loginInput);
   if (!Number.isFinite(Date.parse(observedAt))) {
     throw new TypeError("Wallet observation time is invalid");
   }
   const fetchImpl = options.fetch ?? fetch;
+  // The node id encodes the numeric id, so the identity is read by that
+  // immutable id. A recorded login can be stale (rename) or now belong to
+  // another account (handle reuse); neither may change whose wallet is read.
+  const numericId = githubUserIdFromNodeId(actorIdInput);
   const identityResponse = await apiJson(
-    `/users/${encodeURIComponent(login)}`,
+    numericId === null
+      ? `/users/${encodeURIComponent(loginInput)}`
+      : `/user/${numericId}`,
     options.token,
     fetchImpl,
   );
@@ -320,16 +327,19 @@ export async function fetchPublishedGithubWallet(
   if (
     !Number.isSafeInteger(identity.id) ||
     Number(identity.id) < 1 ||
+    (numericId !== null && String(identity.id) !== numericId) ||
     identity.node_id !== actorIdInput ||
     typeof identity.login !== "string" ||
-    identity.login.toLowerCase() !== login.toLowerCase()
+    (numericId === null &&
+      identity.login.toLowerCase() !== loginInput.toLowerCase())
   ) {
     throw new TypeError("GitHub wallet actor identity changed");
   }
+  // The README fallback is addressed by the actor's current login.
+  const login = githubLogin(identity.login);
   const registryWallet = await fetchRegistryWallet(
     String(identity.id),
     actorIdInput,
-    login,
     observedAt,
     chain,
     fetchImpl,
