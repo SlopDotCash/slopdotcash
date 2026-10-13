@@ -306,7 +306,7 @@ export async function fetchPublishedGithubWallet(
   if (!/^[A-Za-z0-9_=-]{4,128}$/u.test(actorIdInput)) {
     throw new TypeError("GitHub actor id is invalid");
   }
-  githubLogin(loginInput);
+  const recordedLogin = githubLogin(loginInput);
   if (!Number.isFinite(Date.parse(observedAt))) {
     throw new TypeError("Wallet observation time is invalid");
   }
@@ -335,7 +335,6 @@ export async function fetchPublishedGithubWallet(
   ) {
     throw new TypeError("GitHub wallet actor identity changed");
   }
-  // The README fallback is addressed by the actor's current login.
   const login = githubLogin(identity.login);
   const registryWallet = await fetchRegistryWallet(
     String(identity.id),
@@ -345,6 +344,14 @@ export async function fetchPublishedGithubWallet(
     fetchImpl,
   );
   if (registryWallet) return registryWallet;
+  // A README proof has no actor id. Proposal validation and payment import
+  // bind it to the login recorded for the actor (`actor.login`). After a
+  // rename that login is stale, so a proof under the current login would be
+  // rejected there and stop the whole cycle. Then no README is read: the row
+  // stays unclaimed, its accrual carries forward, and the actor can claim
+  // through the actor-bound registry. The README of whoever now holds the old
+  // login is never read, so a reused handle receives nothing (ACC-01).
+  if (login.toLowerCase() !== recordedLogin.toLowerCase()) return null;
   const repository = `${login}/${login}`;
   const readmeResponse = await apiJson(
     `/repos/${encodeURIComponent(login)}/${encodeURIComponent(login)}/readme`,
