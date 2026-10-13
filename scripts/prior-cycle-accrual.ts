@@ -11,6 +11,7 @@ import {
   assertRewardAllocationManifest,
   type RewardAllocationManifest,
   type UnsafeDestinationReport,
+  type WalletProof,
 } from "../src/lib/rewards";
 
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
@@ -21,6 +22,12 @@ const MAX_ACTOR_REPORTS = 32;
 
 export interface PriorCycleAccrual {
   actorLogins: ReadonlyMap<string, string>;
+  /**
+   * The wallet that the reviewed prior manifest froze for each carried actor.
+   * It was bound to the actor when that cycle was reviewed. A carried row may
+   * keep exactly this README proof; it may not gain a new one (ACC-01).
+   */
+  actorWallets?: ReadonlyMap<string, WalletProof>;
   accruedMinor: ReadonlyMap<string, string>;
   unsafeDestinationReports?: ReadonlyMap<string, UnsafeDestinationReport[]>;
 }
@@ -44,6 +51,26 @@ export class PriorCycleNotReadyError extends Error {
     this.projectId = input.projectId;
     this.reason = input.reason;
   }
+}
+
+/**
+ * The carried actors of a cycle (a prior accrual and no score in this cycle),
+ * each with the wallet that the reviewed prior manifest froze for it. Proposal
+ * generation and validation both use this map, so they agree on which rows
+ * may not gain a new README proof.
+ */
+export function carriedPriorWallets(
+  priorAccrual: PriorCycleAccrual,
+  scoredActorIds: ReadonlySet<string>,
+): Map<string, WalletProof | null> {
+  return new Map(
+    [...priorAccrual.accruedMinor.keys()]
+      .filter((actorId) => !scoredActorIds.has(actorId))
+      .map((actorId) => [
+        actorId,
+        priorAccrual.actorWallets?.get(actorId) ?? null,
+      ]),
+  );
 }
 
 export function previousCycleId(cycleId: string): string {
@@ -320,6 +347,7 @@ export async function loadPriorCycleAccrual(input: {
 
   const accruedMinor = new Map<string, string>();
   const actorLogins = new Map<string, string>();
+  const actorWallets = new Map<string, WalletProof>();
   for (const row of proposal.allocations) {
     // A review lapse is an absent decision, not a decision against the
     // contributor, so a lapsed row carries forward exactly like an unclaimed
@@ -343,6 +371,7 @@ export async function loadPriorCycleAccrual(input: {
     if (BigInt(amount) === 0n) continue;
     accruedMinor.set(row.actor.id, amount);
     actorLogins.set(row.actor.id, row.actor.login);
+    if (row.wallet) actorWallets.set(row.actor.id, row.wallet);
   }
-  return { actorLogins, accruedMinor, unsafeDestinationReports };
+  return { actorLogins, actorWallets, accruedMinor, unsafeDestinationReports };
 }

@@ -43,6 +43,7 @@ import {
   assertRewardSettlementManifest,
   type RewardAllocationManifest,
   type RewardSettlementManifest,
+  type WalletProof,
 } from "../src/lib/rewards";
 import {
   assertNetworkSettlementExecutionPlan,
@@ -55,7 +56,10 @@ import {
 import { assertEscrowDecisions } from "./escrow-review";
 import { loadProjectCommitmentRecords } from "./funding-commitment-records";
 import { validateEscrowCycle } from "./prepare-escrow-cycle";
-import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
+import {
+  carriedPriorWallets,
+  loadPriorCycleAccrual,
+} from "./prior-cycle-accrual";
 import {
   DEFAULT_SOLANA_RPC_URL,
   fetchFinalizedSolanaTransaction,
@@ -171,6 +175,7 @@ type Allocation = RewardAllocationManifest["allocations"][number];
 export function assertAllocationsMatchBaseline(
   proposal: RewardAllocationManifest,
   baseline: { allocations: readonly Allocation[] },
+  carriedPriorWallets: ReadonlyMap<string, WalletProof | null>,
 ): void {
   const byIntent = new Map(
     baseline.allocations.map((allocation) => [allocation.intentId, allocation]),
@@ -200,6 +205,28 @@ export function assertAllocationsMatchBaseline(
       throw new TypeError(
         `Reward proposal intent ${allocation.intentId} differs from its frozen snapshot`,
       );
+    }
+    // A carried row has no score in this cycle. Its login comes from the prior
+    // manifest and can now belong to another account, so a README proof that
+    // matches the login is not bound to the actor id. The row may keep only
+    // the README proof that the reviewed prior manifest froze for the same
+    // actor id. Registry and issue proofs carry the actor id and are checked
+    // by assertRewardAllocationManifest. Otherwise the row stays unclaimed.
+    if (
+      carriedPriorWallets.has(allocation.actor.id) &&
+      allocation.wallet &&
+      "sourceCommit" in allocation.wallet
+    ) {
+      const prior = carriedPriorWallets.get(allocation.actor.id) ?? null;
+      if (
+        !prior ||
+        !("sourceCommit" in prior) ||
+        canonical(allocation.wallet) !== canonical(prior)
+      ) {
+        throw new TypeError(
+          `Reward proposal intent ${allocation.intentId} adds a README wallet to a carried row; only an actor-bound claim or the frozen prior proof is accepted`,
+        );
+      }
     }
   }
 }
@@ -236,7 +263,20 @@ export async function verifyProposalAgainstSnapshot(
   if (baseline.kind !== "reward-allocation") {
     throw new TypeError("Monthly proposal regenerated as an external share");
   }
-  assertAllocationsMatchBaseline(proposal, baseline);
+  assertAllocationsMatchBaseline(
+    proposal,
+    baseline,
+    carriedPriorWallets(
+      priorAccrual,
+      new Set(
+        createProjectView(
+          snapshot,
+          proposal.projectId,
+          proposal.cycleId,
+        ).leaders.map((leader) => leader.actor.id),
+      ),
+    ),
+  );
   if (
     proposal.sourceSnapshotSha256 !== snapshotDigest ||
     proposal.scoringRuleVersion !== snapshot.ruleVersion ||

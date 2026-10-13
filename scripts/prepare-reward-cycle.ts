@@ -16,6 +16,7 @@ import type { WalletProof } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
 import type { PriorCycleAccrual } from "./prior-cycle-accrual";
 import {
+  carriedPriorWallets,
   loadPriorCycleAccrual,
   loadUnsafeDestinationHistory,
 } from "./prior-cycle-accrual";
@@ -150,6 +151,34 @@ async function writeImmutableBytes(path: string, bytes: Buffer): Promise<void> {
   }
 }
 
+/**
+ * One wallet lookup per scored or carried actor. A scored actor is looked up
+ * by its snapshot login. A carried actor (prior accrual, no score) carries the
+ * wallet that the reviewed prior manifest froze for it: it may keep only that
+ * README proof or gain an actor-bound registry claim, as validation requires.
+ */
+export function walletObservationRequests(
+  leaders: readonly { actor: { id: string; login: string } }[],
+  priorAccrual: PriorCycleAccrual,
+): {
+  actorId: string;
+  login: string;
+  carried?: { priorWallet: WalletProof | null };
+}[] {
+  const carried = carriedPriorWallets(
+    priorAccrual,
+    new Set(leaders.map((leader) => leader.actor.id)),
+  );
+  return [
+    ...leaders.map(({ actor }) => ({ actorId: actor.id, login: actor.login })),
+    ...[...carried].map(([actorId, priorWallet]) => {
+      const login = priorAccrual.actorLogins.get(actorId);
+      if (!login) throw new TypeError(`carried actor ${actorId} has no login`);
+      return { actorId, login, carried: { priorWallet } };
+    }),
+  ];
+}
+
 export async function prepareRewardCycle(
   arguments_: PrepareRewardCycleArguments,
   options: {
@@ -166,6 +195,7 @@ export async function prepareRewardCycle(
       actorId: string,
       login: string,
       observedAt: string,
+      carried?: { priorWallet: WalletProof | null },
     ) => Promise<WalletProof | null>;
     write?: (path: string, value: unknown) => Promise<void>;
     writeSnapshot?: (path: string, bytes: Buffer) => Promise<void>;
@@ -243,35 +273,38 @@ export async function prepareRewardCycle(
       arguments_.projectId,
       arguments_.cycleId,
     ).leaders;
-    const actors = new Map(
-      projectLeaders.map((leader) => [leader.actor.id, leader.actor.login]),
-    );
-    for (const [actorId, login] of priorAccrual.actorLogins) {
-      if (!actors.has(actorId)) actors.set(actorId, login);
-    }
+    const requests = walletObservationRequests(projectLeaders, priorAccrual);
     const chain = project.reward.chain;
     if (chain === null) {
       throw new TypeError("Monthly pool has no settlement network");
     }
-    if (actors.size > MAX_WALLET_LOOKUPS) {
+    if (requests.length > MAX_WALLET_LOOKUPS) {
       throw new RangeError(
         "Reward cycle exceeds the bounded wallet lookup limit",
       );
     }
     const observe =
       options.observeWallet ??
-      ((actorId: string, login: string, observedAt: string) =>
+      ((
+        actorId: string,
+        login: string,
+        observedAt: string,
+        carried?: { priorWallet: WalletProof | null },
+      ) =>
         fetchPublishedGithubWallet(actorId, login, observedAt, {
           // Only a claim on the project's settlement network is payable.
           chain,
           token: options.githubToken,
+          ...(carried ? { carried } : {}),
         }));
     const observations = await mapWithConcurrency(
-      [...actors],
+      requests,
       WALLET_LOOKUP_CONCURRENCY,
-      async ([actorId, login]) => ({
+      async ({ actorId, login, carried }) => ({
         actorId,
-        wallet: await observe(actorId, login, generatedAt),
+        wallet: carried
+          ? await observe(actorId, login, generatedAt, carried)
+          : await observe(actorId, login, generatedAt),
       }),
     );
     for (const observation of observations) {

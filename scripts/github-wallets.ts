@@ -7,7 +7,7 @@
  */
 
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
-import type { WalletProof } from "../src/lib/rewards";
+import type { ProfileReadmeWalletProof, WalletProof } from "../src/lib/rewards";
 import {
   isWalletAddress,
   parsePublishedWallets,
@@ -300,7 +300,17 @@ export async function fetchPublishedGithubWallet(
   actorIdInput: string,
   loginInput: string,
   observedAt: string,
-  options: { chain?: WalletChain; fetch?: FetchLike; token?: string } = {},
+  options: {
+    chain?: WalletChain;
+    fetch?: FetchLike;
+    token?: string;
+    /**
+     * Set for a carried actor (no score in this cycle, only a prior accrual).
+     * `priorWallet` is the wallet that the reviewed prior manifest froze for
+     * the actor, or null. A carried row may not gain a new README proof.
+     */
+    carried?: { priorWallet: WalletProof | null };
+  } = {},
 ): Promise<WalletProof | null> {
   const chain = options.chain ?? "solana";
   if (!/^[A-Za-z0-9_=-]{4,128}$/u.test(actorIdInput)) {
@@ -344,14 +354,85 @@ export async function fetchPublishedGithubWallet(
     fetchImpl,
   );
   if (registryWallet) return registryWallet;
+  if (options.carried) {
+    return carriedReadmeWallet(
+      options.carried.priorWallet,
+      recordedLogin,
+      login,
+      chain,
+      (readmeLogin) =>
+        fetchProfileReadmeWallet(
+          readmeLogin,
+          observedAt,
+          chain,
+          options.token,
+          fetchImpl,
+        ),
+    );
+  }
   // A README proof has no actor id. Proposal validation and payment import
   // bind it to the login recorded for the actor (`actor.login`). After a
   // rename that login is stale, so a proof under the current login would be
   // rejected there and stop the whole cycle. Then no README is read: the row
-  // stays unclaimed, its accrual carries forward, and the actor can claim
-  // through the actor-bound registry. The README of whoever now holds the old
-  // login is never read, so a reused handle receives nothing (ACC-01).
+  // stays unclaimed, and the actor can claim through the actor-bound
+  // registry. The README of whoever now holds the old login is never read,
+  // so a reused handle receives nothing (ACC-01).
   if (login.toLowerCase() !== recordedLogin.toLowerCase()) return null;
+  return fetchProfileReadmeWallet(
+    login,
+    observedAt,
+    chain,
+    options.token,
+    fetchImpl,
+  );
+}
+
+/**
+ * The README wallet of a carried actor. The verifier binds a README proof on a
+ * carried row only to the proof that the reviewed prior manifest froze for the
+ * same actor id, because the frozen login can now belong to another account.
+ * So no new README proof is returned:
+ * - no frozen README proof: null (the row stays unclaimed; registry claim).
+ * - unchanged login: the README is read again; the frozen proof is kept only
+ *   if the README still publishes the same address, else null.
+ * - renamed actor: the frozen proof is kept (ACC-01: a rename keeps claims).
+ *   The README of whoever now holds the old login is never read.
+ */
+export async function carriedReadmeWallet(
+  priorWallet: WalletProof | null,
+  recordedLogin: string,
+  currentLogin: string,
+  chain: WalletChain,
+  readCurrent: (login: string) => Promise<WalletProof | null>,
+): Promise<ProfileReadmeWalletProof | null> {
+  if (
+    !priorWallet ||
+    !("sourceCommit" in priorWallet) ||
+    priorWallet.chain !== chain
+  )
+    return null;
+  const proofLogin = /^https:\/\/github\.com\/([^/]+)\/\1\/blob\//iu.exec(
+    priorWallet.sourceUrl,
+  )?.[1];
+  if (proofLogin?.toLowerCase() !== recordedLogin.toLowerCase()) return null;
+  if (currentLogin.toLowerCase() !== recordedLogin.toLowerCase())
+    return priorWallet;
+  const current = await readCurrent(currentLogin);
+  return current &&
+    current.chain === priorWallet.chain &&
+    current.address === priorWallet.address
+    ? priorWallet
+    : null;
+}
+
+async function fetchProfileReadmeWallet(
+  login: string,
+  observedAt: string,
+  chain: WalletChain,
+  token: string | undefined,
+  fetchImpl: FetchLike,
+): Promise<WalletProof | null> {
+  const options = { token };
   const repository = `${login}/${login}`;
   const readmeResponse = await apiJson(
     `/repos/${encodeURIComponent(login)}/${encodeURIComponent(login)}/readme`,

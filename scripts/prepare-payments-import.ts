@@ -10,6 +10,8 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
+import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
+import { createProjectView } from "../src/lib/project-view";
 import { isWalletAddress } from "../src/lib/wallets";
 import {
   checkDirectPaymentDisclosures,
@@ -88,19 +90,42 @@ interface FrozenWallet {
   sourceUrl: string;
 }
 
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+interface FrozenCycleBindings {
+  /** The login that the frozen inputs record for each actor id. */
+  logins: Map<string, string>;
+  /** Actor ids scored in this cycle (project leaders of the snapshot). */
+  scored: Set<string>;
+  /** The wallet that the prior cycle manifest froze for each actor id. */
+  priorWallets: Map<string, unknown>;
+}
+
 /**
- * Returns the login that the frozen inputs of a cycle record for each actor
- * id: the snapshot login for a scored actor, else the login in the prior
- * cycle manifest (allocation.json, else proposal.json) for a carried actor.
- * Proposal validation regenerates rows from the same inputs. A README proof
- * has no actor id, so the import binds it only to this login, never to a
- * login that the proposal itself states (ACC-01).
+ * Returns what the frozen inputs of a cycle bind to each actor id: the
+ * snapshot login for a scored actor, else the login in the prior cycle
+ * manifest (allocation.json, else proposal.json) for a carried actor, and the
+ * wallet of the prior manifest. Proposal validation regenerates rows from the
+ * same inputs. A README proof has no actor id, so the import binds it only to
+ * these values, never to a login or proof that the proposal itself states
+ * (ACC-01).
  */
-function frozenCycleLogins(root: string, path: string): Map<string, string> {
+function frozenCycleBindings(root: string, path: string): FrozenCycleBindings {
   const match = /^cycles\/([^/]+)\/(\d{4}-\d{2})\/proposal\.json$/u.exec(path);
   if (!match) throw new Error(`${path}: not a cycle proposal path`);
   const [, projectId, cycleId] = match;
   const logins = new Map<string, string>();
+  const priorWallets = new Map<string, unknown>();
+  const scored = new Set<string>();
   const priorDirectory = join(
     root,
     "cycles",
@@ -112,10 +137,15 @@ function frozenCycleLogins(root: string, path: string): Map<string, string> {
     .find((candidate) => existsSync(candidate));
   if (priorPath) {
     const prior = JSON.parse(readFileSync(priorPath, "utf8")) as {
-      allocations?: { actor: { id: string; login: string } }[];
+      allocations?: {
+        actor: { id: string; login: string };
+        wallet?: unknown;
+      }[];
     };
-    for (const { actor } of prior.allocations ?? [])
+    for (const { actor, wallet } of prior.allocations ?? []) {
       logins.set(actor.id, actor.login);
+      priorWallets.set(actor.id, wallet ?? null);
+    }
   }
   const snapshotPath = join(
     root,
@@ -125,14 +155,20 @@ function frozenCycleLogins(root: string, path: string): Map<string, string> {
     "source-snapshot.json",
   );
   if (existsSync(snapshotPath)) {
-    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8")) as {
-      leaders?: { actor: { id: string; login: string } }[];
-    };
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
     // A scored actor takes the snapshot login, as in proposal validation.
-    for (const { actor } of snapshot.leaders ?? [])
+    for (const { actor } of (
+      snapshot as {
+        leaders?: { actor: { id: string; login: string } }[];
+      }
+    ).leaders ?? [])
       logins.set(actor.id, actor.login);
+    assertLeaderboardSnapshot(snapshot);
+    for (const leader of createProjectView(snapshot, projectId, cycleId)
+      .leaders)
+      scored.add(leader.actor.id);
   }
-  return logins;
+  return { logins, scored, priorWallets };
 }
 
 /** Legacy README observations; registry-sourced wallets are already in D1. */
@@ -170,17 +206,28 @@ export function walletObservationsSql(
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw error;
     }
-    let frozenLogins: Map<string, string> | undefined;
+    let frozen: FrozenCycleBindings | undefined;
     for (const { actor, wallet } of [
       ...(record.contributors ?? []),
       ...(record.allocations ?? []),
     ]) {
       if (!wallet?.sourceCommit) continue;
       if (path.startsWith("cycles/")) {
-        frozenLogins ??= frozenCycleLogins(root, path);
-        if (frozenLogins.get(actor.id) !== actor.login)
+        frozen ??= frozenCycleBindings(root, path);
+        if (frozen.logins.get(actor.id) !== actor.login)
           throw new Error(
             `${path}: README wallet login ${actor.login} is not the frozen login of ${actor.id}`,
+          );
+        // A carried row (no score in this cycle) may keep only the README
+        // proof that the prior manifest froze for the same actor id: its
+        // login can now belong to another account.
+        if (
+          !frozen.scored.has(actor.id) &&
+          canonical(frozen.priorWallets.get(actor.id) ?? null) !==
+            canonical(wallet)
+        )
+          throw new Error(
+            `${path}: README wallet of carried actor ${actor.id} is not its frozen prior proof`,
           );
       }
       const readme = new RegExp(
