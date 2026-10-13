@@ -7,7 +7,7 @@
  * frozen preparation, and the database refuses a row that contradicts an
  * earlier import. It reads no chain and authorizes no payment or wallet.
  */
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
 import { isWalletAddress } from "../src/lib/wallets";
@@ -15,6 +15,7 @@ import {
   checkDirectPaymentDisclosures,
   type Disclosure,
 } from "./check-direct-payment-disclosures";
+import { previousCycleId } from "./prior-cycle-accrual";
 
 const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
@@ -87,6 +88,53 @@ interface FrozenWallet {
   sourceUrl: string;
 }
 
+/**
+ * Returns the login that the frozen inputs of a cycle record for each actor
+ * id: the snapshot login for a scored actor, else the login in the prior
+ * cycle manifest (allocation.json, else proposal.json) for a carried actor.
+ * Proposal validation regenerates rows from the same inputs. A README proof
+ * has no actor id, so the import binds it only to this login, never to a
+ * login that the proposal itself states (ACC-01).
+ */
+function frozenCycleLogins(root: string, path: string): Map<string, string> {
+  const match = /^cycles\/([^/]+)\/(\d{4}-\d{2})\/proposal\.json$/u.exec(path);
+  if (!match) throw new Error(`${path}: not a cycle proposal path`);
+  const [, projectId, cycleId] = match;
+  const logins = new Map<string, string>();
+  const priorDirectory = join(
+    root,
+    "cycles",
+    projectId,
+    previousCycleId(cycleId),
+  );
+  const priorPath = ["allocation.json", "proposal.json"]
+    .map((name) => join(priorDirectory, name))
+    .find((candidate) => existsSync(candidate));
+  if (priorPath) {
+    const prior = JSON.parse(readFileSync(priorPath, "utf8")) as {
+      allocations?: { actor: { id: string; login: string } }[];
+    };
+    for (const { actor } of prior.allocations ?? [])
+      logins.set(actor.id, actor.login);
+  }
+  const snapshotPath = join(
+    root,
+    "cycles",
+    projectId,
+    cycleId,
+    "source-snapshot.json",
+  );
+  if (existsSync(snapshotPath)) {
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8")) as {
+      leaders?: { actor: { id: string; login: string } }[];
+    };
+    // A scored actor takes the snapshot login, as in proposal validation.
+    for (const { actor } of snapshot.leaders ?? [])
+      logins.set(actor.id, actor.login);
+  }
+  return logins;
+}
+
 /** Legacy README observations; registry-sourced wallets are already in D1. */
 export function walletObservationsSql(
   root: string,
@@ -122,11 +170,19 @@ export function walletObservationsSql(
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw error;
     }
+    let frozenLogins: Map<string, string> | undefined;
     for (const { actor, wallet } of [
       ...(record.contributors ?? []),
       ...(record.allocations ?? []),
     ]) {
       if (!wallet?.sourceCommit) continue;
+      if (path.startsWith("cycles/")) {
+        frozenLogins ??= frozenCycleLogins(root, path);
+        if (frozenLogins.get(actor.id) !== actor.login)
+          throw new Error(
+            `${path}: README wallet login ${actor.login} is not the frozen login of ${actor.id}`,
+          );
+      }
       const readme = new RegExp(
         `^https://github\\.com/([^/]+)/\\1/blob/${wallet.sourceCommit}/README\\.md$`,
         "iu",

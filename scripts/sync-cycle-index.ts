@@ -161,30 +161,47 @@ async function jsonFile(
 type Allocation = RewardAllocationManifest["allocations"][number];
 
 /**
- * A carried row can show a login that differs from the prior manifest only
- * when it holds a README proof under that login. The proposal step takes that
- * login from GitHub's answer for the immutable id (ACC-01).
+ * Compares each proposal row with the row regenerated from the frozen inputs.
+ * The login must be the exact login of the regenerated row: the snapshot
+ * login for a scored row, the prior-manifest login for a carried row. A README
+ * proof has no actor id and is bound to that login, so a login that this check
+ * cannot bind to the immutable actor id is never accepted. After a rename
+ * without a registry claim, the carried row stays unclaimed (ACC-01).
  */
-export function isRenamedCarriedRow(
-  allocation: Allocation,
-  expected: Allocation,
-  priorLogin: string | undefined,
-): boolean {
-  const wallet = allocation.wallet;
-  if (
-    expected.score !== 0 ||
-    expected.evidenceEventIds.length !== 0 ||
-    priorLogin !== expected.actor.login ||
-    !wallet ||
-    !("sourceCommit" in wallet)
-  ) {
-    return false;
-  }
-  const login = allocation.actor.login;
-  return (
-    wallet.sourceUrl.toLowerCase() ===
-    `https://github.com/${login}/${login}/blob/${wallet.sourceCommit}/README.md`.toLowerCase()
+export function assertAllocationsMatchBaseline(
+  proposal: RewardAllocationManifest,
+  baseline: { allocations: readonly Allocation[] },
+): void {
+  const byIntent = new Map(
+    baseline.allocations.map((allocation) => [allocation.intentId, allocation]),
   );
+  if (proposal.allocations.length !== baseline.allocations.length) {
+    throw new TypeError("Reward proposal adds or removes a scored contributor");
+  }
+  for (const allocation of proposal.allocations) {
+    const expected = byIntent.get(allocation.intentId);
+    if (
+      !expected ||
+      allocation.actor.id !== expected.actor.id ||
+      allocation.actor.login !== expected.actor.login ||
+      allocation.score !== expected.score ||
+      allocation.suggestedMinor !== expected.suggestedMinor ||
+      allocation.accruedMinor !== expected.accruedMinor ||
+      (expected.unsafeDestinationReports ?? []).some(
+        (report) =>
+          !(allocation.unsafeDestinationReports ?? []).some(
+            (candidate) => canonical(candidate) === canonical(report),
+          ),
+      ) ||
+      canonical(allocation.lines) !== canonical(expected.lines) ||
+      canonical(allocation.evidenceEventIds) !==
+        canonical(expected.evidenceEventIds)
+    ) {
+      throw new TypeError(
+        `Reward proposal intent ${allocation.intentId} differs from its frozen snapshot`,
+      );
+    }
+  }
 }
 
 export async function verifyProposalAgainstSnapshot(
@@ -219,41 +236,7 @@ export async function verifyProposalAgainstSnapshot(
   if (baseline.kind !== "reward-allocation") {
     throw new TypeError("Monthly proposal regenerated as an external share");
   }
-  const byIntent = new Map(
-    baseline.allocations.map((allocation) => [allocation.intentId, allocation]),
-  );
-  if (proposal.allocations.length !== baseline.allocations.length) {
-    throw new TypeError("Reward proposal adds or removes a scored contributor");
-  }
-  for (const allocation of proposal.allocations) {
-    const expected = byIntent.get(allocation.intentId);
-    if (
-      !expected ||
-      allocation.actor.id !== expected.actor.id ||
-      (allocation.actor.login !== expected.actor.login &&
-        !isRenamedCarriedRow(
-          allocation,
-          expected,
-          priorAccrual.actorLogins.get(allocation.actor.id),
-        )) ||
-      allocation.score !== expected.score ||
-      allocation.suggestedMinor !== expected.suggestedMinor ||
-      allocation.accruedMinor !== expected.accruedMinor ||
-      (expected.unsafeDestinationReports ?? []).some(
-        (report) =>
-          !(allocation.unsafeDestinationReports ?? []).some(
-            (candidate) => canonical(candidate) === canonical(report),
-          ),
-      ) ||
-      canonical(allocation.lines) !== canonical(expected.lines) ||
-      canonical(allocation.evidenceEventIds) !==
-        canonical(expected.evidenceEventIds)
-    ) {
-      throw new TypeError(
-        `Reward proposal intent ${allocation.intentId} differs from its frozen snapshot`,
-      );
-    }
-  }
+  assertAllocationsMatchBaseline(proposal, baseline);
   if (
     proposal.sourceSnapshotSha256 !== snapshotDigest ||
     proposal.scoringRuleVersion !== snapshot.ruleVersion ||

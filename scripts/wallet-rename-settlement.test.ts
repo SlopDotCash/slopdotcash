@@ -1,9 +1,12 @@
-// A renamed actor must keep its earnings and its wallet claim, must not stop
-// the cycle, and a new account that takes the old login must receive nothing
-// (PRD ACC-01,
+// A renamed actor must keep its earnings, must not stop the cycle, and no
+// other account may receive its award (PRD ACC-01,
 // docs/base-solana-payout-plan.md "Rename account and preserve earnings").
-// These tests run the wallet observation through proposal validation and the
-// payment import, with and without a registry claim.
+// A README proof has no actor id. Proposal validation and the payment import
+// bind it only to the login that the frozen inputs record for the actor id.
+// So after a rename without a registry claim the carried row stays unclaimed,
+// and a proposal that changes a login, README and address together to another
+// account is rejected. These tests run the wallet observation through proposal
+// validation and the payment import.
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -13,8 +16,7 @@ import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import type { RewardAllocationManifest, WalletProof } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
 import { walletObservationsSql } from "./prepare-payments-import";
-import { carriedActorLogins } from "./prepare-reward-cycle";
-import { isRenamedCarriedRow } from "./sync-cycle-index";
+import { assertAllocationsMatchBaseline } from "./sync-cycle-index";
 
 // A frozen monthly-pool cycle is the base; one carried accrual is added.
 const CYCLE_DIR = join(import.meta.dir, "../cycles/eliza/2026-09");
@@ -28,6 +30,7 @@ const NEW_ACCOUNT_NODE = "U_kgDOAA9CPw"; // actor 999999, took the free "alice"
 const CARRIED_MINOR = "3000000";
 const ACTOR_WALLET = "4Nd1mBQtrMJVYVfKf2PJy9NZUse8sLfY4Yt9JZ7bW6Lx";
 const NEW_ACCOUNT_WALLET = "Cr8wzyr222pyjHpQorndcZBeUDH8LP1x3MnbcuNSd3zH";
+const ATTACKER_WALLET = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
 const SHA = "c".repeat(40);
 const API = "https://api.github.com";
 const REGISTRY =
@@ -95,14 +98,8 @@ function world(options: {
   return { fetchImpl: fetchImpl as unknown as typeof fetch, requests };
 }
 
-/**
- * Regenerates the frozen cycle with one carried accrual for actor 123456.
- * `current` is the login that the observer verified for the immutable id.
- */
-function propose(
-  wallet: WalletProof | null,
-  current?: string,
-): RewardAllocationManifest {
+/** Regenerates the frozen cycle with one carried accrual for actor 123456. */
+function propose(wallet: WalletProof | null): RewardAllocationManifest {
   const proposal = createRewardCycleProposal({
     ...(FROZEN.fundingBasis
       ? { fundingBasis: FROZEN.fundingBasis }
@@ -116,11 +113,7 @@ function propose(
       .digest("hex"),
     priorAccruedMinor: new Map([[NODE, CARRIED_MINOR]]),
     // The prior manifest recorded the login the actor had then.
-    priorActorLogins: carriedActorLogins(
-      new Map([[NODE, "alice"]]),
-      new Map(wallet ? [[NODE, wallet]] : []),
-      new Map(current ? [[NODE, current]] : []),
-    ),
+    priorActorLogins: new Map([[NODE, "alice"]]),
     // Every other recipient keeps the wallet frozen in the cycle.
     wallets: new Map([
       ...FROZEN.allocations.flatMap((row) =>
@@ -134,16 +127,30 @@ function propose(
   return proposal;
 }
 
-/** Runs the payment import over a repository that holds only `proposal`. */
+/**
+ * Runs the payment import over a repository that holds `proposal`, its frozen
+ * source snapshot, and a prior manifest that records actor 123456 as "alice".
+ */
 function importSql(proposal: unknown): string {
   const root = mkdtempSync(join(tmpdir(), "slop-676-"));
   mkdirSync(join(root, "funding/preparations"), { recursive: true });
+  mkdirSync(join(root, "cycles/eliza/2026-08"), { recursive: true });
   mkdirSync(join(root, "cycles/eliza/2026-09"), { recursive: true });
+  writeFileSync(
+    join(root, "cycles/eliza/2026-08/proposal.json"),
+    JSON.stringify({
+      allocations: [{ actor: { id: NODE, login: "alice" }, wallet: null }],
+    }),
+  );
+  writeFileSync(
+    join(root, "cycles/eliza/2026-09/source-snapshot.json"),
+    SNAPSHOT_BYTES,
+  );
   writeFileSync(
     join(root, "cycles/eliza/2026-09/proposal.json"),
     JSON.stringify(proposal),
   );
-  return walletObservationsSql(root, "2026-10-13T00:00:00.000Z");
+  return walletObservationsSql(root, "Tue 2026-10-13 3:00 AM EEST (UTC+03:00)");
 }
 
 const carried = (proposal: RewardAllocationManifest) => {
@@ -157,67 +164,43 @@ const observe = (login: string, fetchImpl: typeof fetch) =>
     fetch: fetchImpl,
   });
 
-/** Observes as prepare-reward-cycle does for a carried row. */
-async function observeCarried(login: string, fetchImpl: typeof fetch) {
-  let current: string | undefined;
-  const wallet = await fetchPublishedGithubWallet(
-    NODE,
-    login,
-    FROZEN.generatedAt,
-    {
-      fetch: fetchImpl,
-      onCurrentLogin: (value) => {
-        current = value;
-      },
-    },
-  );
-  return { current, wallet };
+const readmeProof = (login: string, address: string) => ({
+  address,
+  chain: "solana" as const,
+  observedAt: FROZEN.generatedAt,
+  sourceCommit: SHA,
+  sourceUrl: `https://github.com/${login}/${login}/blob/${SHA}/README.md`,
+});
+
+/**
+ * Changes the login, the README URL and the address of one row together to
+ * another account, so the row is self-consistent.
+ */
+function retarget(
+  proposal: RewardAllocationManifest,
+  actorId: string,
+  login: string,
+  address: string,
+): RewardAllocationManifest {
+  const tampered = structuredClone(proposal);
+  const row = tampered.allocations.find((a) => a.actor.id === actorId);
+  if (!row) throw new Error("row is missing");
+  row.actor.login = login;
+  row.wallet = readmeProof(login, address);
+  row.state = "proposed";
+  return tampered;
 }
 
 describe("renamed actor through proposal and payment import", () => {
-  test("no registry claim: the README claim under the current login is kept", async () => {
-    const { fetchImpl, requests } = world({
-      current: "alice-new",
-      registry: false,
-    });
-    const { current, wallet } = await observeCarried("alice", fetchImpl);
-    expect(current).toBe("alice-new");
-    expect(wallet).toMatchObject({
-      address: ACTOR_WALLET,
-      sourceUrl: `https://github.com/alice-new/alice-new/blob/${SHA}/README.md`,
-    });
-    // The README of the account that now holds "alice" is never read.
-    expect(requests.some((url) => url.startsWith(`${API}/repos/alice/`))).toBe(
-      false,
-    );
-
-    const proposal = propose(wallet, current);
-    expect(carried(proposal)).toMatchObject({
-      actor: { id: NODE, login: "alice-new" },
-      accruedMinor: CARRIED_MINOR,
-      state: "proposed",
-      wallet: { address: ACTOR_WALLET },
-    });
-    const sql = importSql(proposal);
-    expect(sql).toContain(`'123456','${NODE}','alice-new','solana'`);
-    expect(sql).toContain(ACTOR_WALLET);
-    expect(sql).not.toContain(NEW_ACCOUNT_WALLET);
-
-    // The cycle check accepts the current login only on this carried row.
-    const expected = carried(propose(null));
-    expect(isRenamedCarriedRow(carried(proposal), expected, "alice")).toBe(
-      true,
-    );
-  });
-
-  test("a caller that does not record the current login gets no README proof", async () => {
+  test("no registry claim: the row stays unclaimed and the accrual carries", async () => {
     const { fetchImpl, requests } = world({
       current: "alice-new",
       registry: false,
     });
     const wallet = await observe("alice", fetchImpl);
     expect(wallet).toBeNull();
-    // No profile README is read for a login that is not the recorded one.
+    // No profile README is read for a login that is not the recorded one,
+    // so the README of the account that now holds "alice" is never read.
     expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
 
     const proposal = propose(wallet);
@@ -228,30 +211,38 @@ describe("renamed actor through proposal and payment import", () => {
       state: "unclaimed",
       wallet: null,
     });
+    // Proposal validation accepts the regenerated proposal.
+    expect(() =>
+      assertAllocationsMatchBaseline(proposal, propose(null)),
+    ).not.toThrow();
 
     // The import still runs for every other recipient of the cycle.
     const sql = importSql(proposal);
     expect(sql).toContain("INSERT INTO wallet_observations");
     expect(sql).not.toContain("'123456'");
     expect(sql).not.toContain("alice");
+    expect(sql).not.toContain(NEW_ACCOUNT_WALLET);
   });
 
   test("registry claim: the renamed actor is payable through its immutable id", async () => {
     const { fetchImpl } = world({ current: "alice-new", registry: true });
-    const { current, wallet } = await observeCarried("alice", fetchImpl);
+    const wallet = await observe("alice", fetchImpl);
     expect(wallet).toMatchObject({
       address: ACTOR_WALLET,
       sourceActorId: NODE,
     });
 
     // A registry proof is bound by the id, so the recorded login is kept.
-    const proposal = propose(wallet, current);
+    const proposal = propose(wallet);
     expect(carried(proposal)).toMatchObject({
       actor: { id: NODE, login: "alice" },
       accruedMinor: CARRIED_MINOR,
       state: "proposed",
       wallet: { address: ACTOR_WALLET },
     });
+    expect(() =>
+      assertAllocationsMatchBaseline(proposal, propose(null)),
+    ).not.toThrow();
     // Registry wallets are already in D1; the README import skips them.
     expect(importSql(proposal)).not.toContain("'123456'");
   });
@@ -266,58 +257,53 @@ describe("renamed actor through proposal and payment import", () => {
 
     const proposal = propose(wallet);
     expect(carried(proposal).state).toBe("proposed");
+    expect(() =>
+      assertAllocationsMatchBaseline(proposal, propose(null)),
+    ).not.toThrow();
     const sql = importSql(proposal);
     expect(sql).toContain(`'123456','${NODE}','alice','solana'`);
     expect(sql).toContain(ACTOR_WALLET);
   });
 });
 
-describe("a rename never pays another account", () => {
-  test("a new account that took the old login receives nothing", async () => {
-    const { fetchImpl, requests } = world({
-      current: "alice-new",
-      registry: false,
+describe("a changed login never redirects an award", () => {
+  // Review of #676 at e6f73d8: victim "alice" is carried; an edited proposal
+  // sets login, README URL and address to "mallory" consistently.
+  for (const login of ["mallory", "alice-new"]) {
+    test(`a carried row retargeted to "${login}" is rejected by validation and import`, () => {
+      const honest = propose(null);
+      const tampered = retarget(honest, NODE, login, ATTACKER_WALLET);
+      expect(() => assertAllocationsMatchBaseline(tampered, honest)).toThrow(
+        "differs from its frozen snapshot",
+      );
+      expect(() => importSql(tampered)).toThrow(
+        `README wallet login ${login} is not the frozen login of ${NODE}`,
+      );
     });
-    const { current, wallet } = await observeCarried("alice", fetchImpl);
-    expect(wallet?.address).toBe(ACTOR_WALLET);
-    expect(requests).not.toContain(`${API}/users/alice`);
-    expect(requests.some((url) => url.startsWith(`${API}/repos/alice/`))).toBe(
-      false,
-    );
+  }
 
-    const proposal = propose(wallet, current);
-    const text = JSON.stringify(proposal);
-    expect(text).not.toContain(NEW_ACCOUNT_NODE);
-    expect(text).not.toContain(NEW_ACCOUNT_WALLET);
-    expect(importSql(proposal)).not.toContain(NEW_ACCOUNT_WALLET);
+  test("a scored row retargeted to another account is rejected by validation and import", () => {
+    const honest = propose(null);
+    const leader = honest.allocations.find((row) => row.score > 0);
+    if (!leader) throw new Error("no scored row");
+    const tampered = retarget(
+      honest,
+      leader.actor.id,
+      "mallory",
+      ATTACKER_WALLET,
+    );
+    expect(() => assertAllocationsMatchBaseline(tampered, honest)).toThrow(
+      "differs from its frozen snapshot",
+    );
+    expect(() => importSql(tampered)).toThrow(
+      `README wallet login mallory is not the frozen login of ${leader.actor.id}`,
+    );
   });
 
   test("a README proof is still bound to the recorded login", () => {
     // A current-login README on a row that keeps the stale login.
-    const currentLoginProof = {
-      address: ACTOR_WALLET,
-      chain: "solana" as const,
-      observedAt: FROZEN.generatedAt,
-      sourceCommit: SHA,
-      sourceUrl: `https://github.com/alice-new/alice-new/blob/${SHA}/README.md`,
-    };
-    expect(() => propose(currentLoginProof)).toThrow(
+    expect(() => propose(readmeProof("alice-new", ACTOR_WALLET))).toThrow(
       "must be the actor's immutable GitHub profile README",
-    );
-
-    // The new holder of "alice" cannot be attached to actor 123456 by import.
-    const proposal = propose(null);
-    const tampered = structuredClone(proposal);
-    const row = tampered.allocations.find((a) => a.actor.id === NODE);
-    if (!row) throw new Error("carried row is missing");
-    row.actor.login = "alice-new";
-    row.wallet = {
-      ...currentLoginProof,
-      address: NEW_ACCOUNT_WALLET,
-      sourceUrl: `https://github.com/alice/alice/blob/${SHA}/README.md`,
-    };
-    expect(() => importSql(tampered)).toThrow(
-      "invalid README wallet for alice-new",
     );
   });
 
@@ -327,51 +313,9 @@ describe("a rename never pays another account", () => {
       registry: true,
       claimActorId: "999999",
     });
-    await expect(observeCarried("alice", fetchImpl)).rejects.toThrow(
+    await expect(observe("alice", fetchImpl)).rejects.toThrow(
       "Slop wallet registry claim is invalid",
     );
-  });
-
-  test("the cycle check accepts a new login only on a carried row with its README", () => {
-    const expected = carried(propose(null));
-    const renamed = {
-      ...expected,
-      actor: { id: NODE, login: "alice-new" },
-      wallet: {
-        address: ACTOR_WALLET,
-        chain: "solana" as const,
-        observedAt: FROZEN.generatedAt,
-        sourceCommit: SHA,
-        sourceUrl: `https://github.com/alice-new/alice-new/blob/${SHA}/README.md`,
-      },
-    };
-    expect(isRenamedCarriedRow(renamed, expected, "alice")).toBe(true);
-    // No README proof under the new login.
-    expect(
-      isRenamedCarriedRow({ ...renamed, wallet: null }, expected, "alice"),
-    ).toBe(false);
-    expect(
-      isRenamedCarriedRow(
-        {
-          ...renamed,
-          wallet: {
-            ...renamed.wallet,
-            sourceUrl: `https://github.com/alice/alice/blob/${SHA}/README.md`,
-          },
-        },
-        expected,
-        "alice",
-      ),
-    ).toBe(false);
-    // A scored row keeps its snapshot login.
-    const leader = FROZEN.allocations[0];
-    expect(
-      isRenamedCarriedRow(
-        { ...leader, actor: { ...leader.actor, login: "alice-new" } },
-        leader,
-        leader.actor.login,
-      ),
-    ).toBe(false);
   });
 
   test("an identity that does not match the immutable id is rejected", async () => {

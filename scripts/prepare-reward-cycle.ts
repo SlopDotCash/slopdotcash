@@ -150,26 +150,6 @@ async function writeImmutableBytes(path: string, bytes: Buffer): Promise<void> {
   }
 }
 
-/**
- * Returns the login for each carried row. A README proof has no actor id and
- * is bound to `actor.login`, so a carried row with a README proof takes the
- * current login that GitHub returned for its immutable id (ACC-01).
- */
-export function carriedActorLogins(
-  priorActorLogins: ReadonlyMap<string, string>,
-  wallets: ReadonlyMap<string, WalletProof>,
-  currentLogins: ReadonlyMap<string, string>,
-): Map<string, string> {
-  const logins = new Map(priorActorLogins);
-  for (const [actorId, login] of currentLogins) {
-    const wallet = wallets.get(actorId);
-    if (logins.has(actorId) && wallet && "sourceCommit" in wallet) {
-      logins.set(actorId, login);
-    }
-  }
-  return logins;
-}
-
 export async function prepareRewardCycle(
   arguments_: PrepareRewardCycleArguments,
   options: {
@@ -257,7 +237,6 @@ export async function prepareRewardCycle(
   }
 
   const wallets = new Map<string, WalletProof>();
-  const currentLogins = new Map<string, string>();
   if (project.reward.kind === "monthly-pool") {
     const projectLeaders = createProjectView(
       snapshot,
@@ -267,12 +246,8 @@ export async function prepareRewardCycle(
     const actors = new Map(
       projectLeaders.map((leader) => [leader.actor.id, leader.actor.login]),
     );
-    const carried = new Set<string>();
     for (const [actorId, login] of priorAccrual.actorLogins) {
-      if (!actors.has(actorId)) {
-        actors.set(actorId, login);
-        carried.add(actorId);
-      }
+      if (!actors.has(actorId)) actors.set(actorId, login);
     }
     const chain = project.reward.chain;
     if (chain === null) {
@@ -290,14 +265,6 @@ export async function prepareRewardCycle(
           // Only a claim on the project's settlement network is payable.
           chain,
           token: options.githubToken,
-          // A carried row takes the login that GitHub verified for its id.
-          // A leader row keeps the snapshot login, so it gets no new login.
-          ...(carried.has(actorId)
-            ? {
-                onCurrentLogin: (current: string) =>
-                  currentLogins.set(actorId, current),
-              }
-            : {}),
         }));
     const observations = await mapWithConcurrency(
       [...actors],
@@ -323,11 +290,7 @@ export async function prepareRewardCycle(
       .digest("hex"),
     wallets,
     priorAccruedMinor: priorAccrual.accruedMinor,
-    priorActorLogins: carriedActorLogins(
-      priorAccrual.actorLogins,
-      wallets,
-      currentLogins,
-    ),
+    priorActorLogins: priorAccrual.actorLogins,
     priorUnsafeDestinationReports:
       "unsafeDestinationReports" in priorAccrual
         ? priorAccrual.unsafeDestinationReports

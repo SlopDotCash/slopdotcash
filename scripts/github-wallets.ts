@@ -300,17 +300,7 @@ export async function fetchPublishedGithubWallet(
   actorIdInput: string,
   loginInput: string,
   observedAt: string,
-  options: {
-    chain?: WalletChain;
-    fetch?: FetchLike;
-    token?: string;
-    /**
-     * Receives the login that GitHub returns for the immutable id. A caller
-     * that sets it records that login with the proof, so a README proof under
-     * the current login is read after a rename.
-     */
-    onCurrentLogin?: (login: string) => void;
-  } = {},
+  options: { chain?: WalletChain; fetch?: FetchLike; token?: string } = {},
 ): Promise<WalletProof | null> {
   const chain = options.chain ?? "solana";
   if (!/^[A-Za-z0-9_=-]{4,128}$/u.test(actorIdInput)) {
@@ -346,7 +336,6 @@ export async function fetchPublishedGithubWallet(
     throw new TypeError("GitHub wallet actor identity changed");
   }
   const login = githubLogin(identity.login);
-  options.onCurrentLogin?.(login);
   const registryWallet = await fetchRegistryWallet(
     String(identity.id),
     actorIdInput,
@@ -356,17 +345,13 @@ export async function fetchPublishedGithubWallet(
   );
   if (registryWallet) return registryWallet;
   // A README proof has no actor id. Proposal validation and payment import
-  // bind it to the login recorded for the actor (`actor.login`). The README
-  // is read only under the login that GitHub returns for the immutable id, so
-  // the README of whoever now holds an old login is never read (ACC-01).
-  // After a rename, the recorded login is stale. A caller that records the
-  // current login (`onCurrentLogin`) keeps the README claim. Other callers get
-  // no README proof: the row stays unclaimed and its accrual carries forward.
-  if (
-    !options.onCurrentLogin &&
-    login.toLowerCase() !== recordedLogin.toLowerCase()
-  )
-    return null;
+  // bind it to the login recorded for the actor (`actor.login`). After a
+  // rename that login is stale, so a proof under the current login would be
+  // rejected there and stop the whole cycle. Then no README is read: the row
+  // stays unclaimed, its accrual carries forward, and the actor can claim
+  // through the actor-bound registry. The README of whoever now holds the old
+  // login is never read, so a reused handle receives nothing (ACC-01).
+  if (login.toLowerCase() !== recordedLogin.toLowerCase()) return null;
   const repository = `${login}/${login}`;
   const readmeResponse = await apiJson(
     `/repos/${encodeURIComponent(login)}/${encodeURIComponent(login)}/readme`,
