@@ -158,6 +158,35 @@ async function jsonFile(
   };
 }
 
+type Allocation = RewardAllocationManifest["allocations"][number];
+
+/**
+ * A carried row can show a login that differs from the prior manifest only
+ * when it holds a README proof under that login. The proposal step takes that
+ * login from GitHub's answer for the immutable id (ACC-01).
+ */
+export function isRenamedCarriedRow(
+  allocation: Allocation,
+  expected: Allocation,
+  priorLogin: string | undefined,
+): boolean {
+  const wallet = allocation.wallet;
+  if (
+    expected.score !== 0 ||
+    expected.evidenceEventIds.length !== 0 ||
+    priorLogin !== expected.actor.login ||
+    !wallet ||
+    !("sourceCommit" in wallet)
+  ) {
+    return false;
+  }
+  const login = allocation.actor.login;
+  return (
+    wallet.sourceUrl.toLowerCase() ===
+    `https://github.com/${login}/${login}/blob/${wallet.sourceCommit}/README.md`.toLowerCase()
+  );
+}
+
 export async function verifyProposalAgainstSnapshot(
   proposal: RewardAllocationManifest,
   snapshot: LeaderboardSnapshot,
@@ -201,7 +230,12 @@ export async function verifyProposalAgainstSnapshot(
     if (
       !expected ||
       allocation.actor.id !== expected.actor.id ||
-      allocation.actor.login !== expected.actor.login ||
+      (allocation.actor.login !== expected.actor.login &&
+        !isRenamedCarriedRow(
+          allocation,
+          expected,
+          priorAccrual.actorLogins.get(allocation.actor.id),
+        )) ||
       allocation.score !== expected.score ||
       allocation.suggestedMinor !== expected.suggestedMinor ||
       allocation.accruedMinor !== expected.accruedMinor ||
