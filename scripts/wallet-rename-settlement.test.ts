@@ -24,6 +24,7 @@ import {
   cycleWalletObserver,
   walletObservationRequests,
 } from "./prepare-reward-cycle";
+import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
 import {
   LEGACY_README_PROOFS,
   priorReadmeProofs,
@@ -847,5 +848,21 @@ describe("cross-project: a leader of another project only is carried here (P1)",
       (entry) => entry.projectId === "eliza" && entry.cycleId === "2026-09",
     ))
       expect(sql).toContain(pin.wallet.address);
+  });
+});
+
+describe("a fresh-policy cycle keeps the frozen prior README proofs", () => {
+  test("generation and validation load the proofs without the carry", async () => {
+    const prior = await loadPriorCycleAccrual({
+      asOf: "2026-11-01T00:00:00.000Z",
+      cycleId: "2026-10",
+      cyclesRoot: join(import.meta.dir, "../cycles"),
+      projectId: "eliza",
+      freshPolicy: true,
+    });
+    expect(prior.accruedMinor.size).toBe(0);
+    expect(prior.actorLogins.size).toBe(0);
+    expect(prior.actorReadmeProofs?.size).toBeGreaterThan(0);
+    expect(prior.actorReadmeProofs).toEqual(priorReadmeProofs(FROZEN));
   });
 });

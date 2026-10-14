@@ -14,10 +14,9 @@ import { findProject, type ProjectId } from "../src/lib/projects.mjs";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import type { WalletProof } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
-import type { PriorCycleAccrual } from "./prior-cycle-accrual";
 import {
   loadPriorCycleAccrual,
-  loadUnsafeDestinationHistory,
+  type PriorCycleAccrual,
 } from "./prior-cycle-accrual";
 import {
   ExistingFileError,
@@ -217,13 +216,7 @@ export async function prepareRewardCycle(
   options: {
     generatedAt?: string;
     githubToken?: string;
-    loadPriorAccrual?: (input: {
-      asOf: string;
-      cycleId: string;
-      cyclesRoot: string;
-      projectId: ProjectId;
-    }) => Promise<PriorCycleAccrual>;
-    loadUnsafeHistory?: typeof loadUnsafeDestinationHistory;
+    loadPriorAccrual?: typeof loadPriorCycleAccrual;
     observeWallet?: (
       actorId: string,
       login: string,
@@ -285,18 +278,14 @@ export async function prepareRewardCycle(
     accruedMinor: new Map<string, string>(),
   };
   if (project.reward.kind === "monthly-pool") {
-    if (
-      project.funding.freshCyclePaymentPolicy?.cycleId === arguments_.cycleId
-    ) {
-      // Fresh principal excludes carry, but cannot revive an unsafe destination.
-      priorAccrual.unsafeDestinationReports = await (
-        options.loadUnsafeHistory ?? loadUnsafeDestinationHistory
-      )(historyInput);
-    } else {
-      priorAccrual = await (options.loadPriorAccrual ?? loadPriorCycleAccrual)(
-        historyInput,
-      );
-    }
+    // Fresh principal excludes carry, but it cannot revive an unsafe
+    // destination, and it keeps the frozen prior README proofs exactly as
+    // proposal validation does (sync-cycle-index.ts).
+    priorAccrual = await (options.loadPriorAccrual ?? loadPriorCycleAccrual)({
+      ...historyInput,
+      freshPolicy:
+        project.funding.freshCyclePaymentPolicy?.cycleId === arguments_.cycleId,
+    });
   }
 
   const wallets = new Map<string, WalletProof>();

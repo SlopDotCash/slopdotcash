@@ -245,6 +245,9 @@ export async function verifyProposalAgainstSnapshot(
     cycleId: proposal.cycleId,
     cyclesRoot: CYCLES_ROOT,
     projectId: proposal.projectId as ProjectId,
+    freshPolicy:
+      findProject(proposal.projectId)?.funding.freshCyclePaymentPolicy
+        ?.cycleId === proposal.cycleId,
   });
   const baseline = createRewardCycleProposal({
     ...(proposal.fundingBasis
