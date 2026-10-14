@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { assertCycleIndex } from "../src/lib/cycle-index";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import {
   assertRewardAllocationManifest,
@@ -35,7 +36,10 @@ import {
   LEGACY_README_PROOFS,
   priorReadmeProofs,
 } from "./readme-proof-binding";
-import { assertAllocationsMatchBaseline } from "./sync-cycle-index";
+import {
+  assertAllocationsMatchBaseline,
+  syncCycleIndex,
+} from "./sync-cycle-index";
 
 // A frozen monthly-pool cycle is the base; one carried accrual is added.
 const CYCLE_DIR = join(import.meta.dir, "../cycles/eliza/2026-09");
@@ -813,6 +817,164 @@ describe("a renamed actor who scores again keeps the frozen README proof (P2)", 
     // Neither the old login (now account 999999) nor the new login is read.
     expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
   });
+});
+
+describe("renamed before the snapshot: the frozen README claim survives (P2 at 6df7bbf)", () => {
+  // A scored leader of the frozen snapshot is the renamed actor: its snapshot
+  // login is the new login, and the prior manifest froze a README proof under
+  // its old login for the same actor id.
+  const renamed = () => {
+    const leader = unclaimedLeader();
+    const oldLogin = `${leader.actor.login}-old`.slice(0, 39);
+    const proof = readmeProof(oldLogin, ACTOR_WALLET);
+    const priorRows = [
+      { actor: { id: leader.actor.id, login: oldLogin }, wallet: proof },
+    ];
+    return { leader, oldLogin, proof, priorRows };
+  };
+
+  test("the old-login frozen proof passes proposal validation and import", () => {
+    const { leader, proof, priorRows } = renamed();
+    const proposal = propose(null, { wallets: [[leader.actor.id, proof]] });
+    const row = proposal.allocations.find(
+      (allocation) => allocation.actor.id === leader.actor.id,
+    );
+    expect(row?.actor.login).toBe(leader.actor.login);
+    expect(row?.wallet).toEqual(proof);
+    expect(row?.state).not.toBe("unclaimed");
+    expect(() => validate(proposal, null, priorRows)).not.toThrow();
+    const { sql, skipped } = importRun(proposal, null, priorRows);
+    expect(skipped).toEqual([]);
+    expect(sql).toContain(ACTOR_WALLET);
+  });
+
+  test("a README under a foreign login that no prior manifest froze is rejected", () => {
+    const { leader, priorRows } = renamed();
+    const tampered = propose(null, {
+      wallets: [[leader.actor.id, readmeProof("mallory", ATTACKER_WALLET)]],
+    });
+    expect(() => validate(tampered, null, priorRows)).toThrow(
+      NOT_FROZEN(leader.actor.id),
+    );
+    expectNotImported(
+      tampered,
+      null,
+      ATTACKER_WALLET,
+      NOT_FROZEN(leader.actor.id),
+      priorRows,
+    );
+    // Without any frozen proof for the actor id: rejected as new.
+    expect(() => validate(tampered)).toThrow(NEW_README(leader.actor.id));
+  });
+
+  test("the frozen proof of another actor id cannot be moved to this row", () => {
+    const { leader } = renamed();
+    // FROZEN_PROOF is frozen for actor 123456, not for this leader.
+    const tampered = propose(null, {
+      wallets: [[leader.actor.id, FROZEN_PROOF]],
+    });
+    expect(() => validate(tampered, FROZEN_PROOF)).toThrow(
+      NEW_README(leader.actor.id),
+    );
+    expectNotImported(
+      tampered,
+      FROZEN_PROOF,
+      ACTOR_WALLET,
+      NEW_README(leader.actor.id),
+    );
+  });
+
+  test("the old-login frozen proof with another address is rejected", () => {
+    const { leader, oldLogin, priorRows } = renamed();
+    const tampered = propose(null, {
+      wallets: [[leader.actor.id, readmeProof(oldLogin, ATTACKER_WALLET)]],
+    });
+    expect(() => validate(tampered, null, priorRows)).toThrow(
+      NOT_FROZEN(leader.actor.id),
+    );
+    expectNotImported(
+      tampered,
+      null,
+      ATTACKER_WALLET,
+      NOT_FROZEN(leader.actor.id),
+      priorRows,
+    );
+  });
+});
+
+describe("cycle index: the renamed actor's frozen README proof (P2)", () => {
+  // The order of cycles:check: proposal validation binds the README proof to
+  // the actor id, then the cycle-index shape check reads the published row.
+  const indexWith = async (
+    proposal: RewardAllocationManifest,
+    actorId: string,
+  ) => {
+    const row = proposal.allocations.find((a) => a.actor.id === actorId);
+    if (!row) throw new Error("row is missing");
+    const index = await syncCycleIndex({
+      checkOnly: true,
+      generatedAt: "2026-10-14T00:00:00.000Z",
+    });
+    const entry = index.cycles.find(
+      (cycle) => cycle.projectId === "eliza" && cycle.cycleId === "2026-09",
+    );
+    const contributor = entry?.contributors.find((c) => c.actor.id === actorId);
+    if (!contributor) throw new Error("index contributor is missing");
+    expect(contributor.actor.login).toBe(row.actor.login);
+    contributor.state = row.state as typeof contributor.state;
+    contributor.wallet = row.wallet as typeof contributor.wallet;
+    return { index, contributor };
+  };
+  const renamedLeader = () => {
+    const leader = unclaimedLeader();
+    const oldLogin = `${leader.actor.login}-old`.slice(0, 39);
+    const proof = readmeProof(oldLogin, ACTOR_WALLET);
+    const priorRows = [
+      { actor: { id: leader.actor.id, login: oldLogin }, wallet: proof },
+    ];
+    return { leader, oldLogin, proof, priorRows };
+  };
+
+  test("the index accepts the old-login proof that validation bound to the actor id", async () => {
+    const { leader, oldLogin, proof, priorRows } = renamedLeader();
+    const proposal = propose(null, { wallets: [[leader.actor.id, proof]] });
+    expect(() => validate(proposal, null, priorRows)).not.toThrow();
+    const { index, contributor } = await indexWith(proposal, leader.actor.id);
+    expect(contributor.actor.login).not.toBe(oldLogin);
+    expect(contributor.wallet).toEqual(proof);
+    expect(() => assertCycleIndex(index)).not.toThrow();
+  }, 30_000);
+
+  test("a swapped address or a foreign-login proof stops cycles:check at validation", () => {
+    const { leader, oldLogin, priorRows } = renamedLeader();
+    for (const wallet of [
+      readmeProof(oldLogin, ATTACKER_WALLET),
+      readmeProof("mallory", ATTACKER_WALLET),
+      readmeProof("mallory", ACTOR_WALLET),
+    ]) {
+      const tampered = propose(null, { wallets: [[leader.actor.id, wallet]] });
+      expect(() => validate(tampered, null, priorRows)).toThrow(
+        NOT_FROZEN(leader.actor.id),
+      );
+    }
+  });
+
+  test("the index still rejects a README path that is not a profile README", async () => {
+    const { leader, oldLogin, proof, priorRows } = renamedLeader();
+    const proposal = propose(null, { wallets: [[leader.actor.id, proof]] });
+    expect(() => validate(proposal, null, priorRows)).not.toThrow();
+    for (const sourceUrl of [
+      `https://github.com/${oldLogin}/other/blob/${SHA}/README.md`,
+      `https://github.com/${oldLogin}/${oldLogin}/blob/${"f".repeat(40)}/README.md`,
+      `https://github.com/${oldLogin}/${oldLogin}/blob/${SHA}/docs/README.md`,
+    ]) {
+      const { index, contributor } = await indexWith(proposal, leader.actor.id);
+      contributor.wallet = { ...proof, sourceUrl };
+      expect(() => assertCycleIndex(index)).toThrow(
+        "sourceUrl is not immutable profile proof",
+      );
+    }
+  }, 30_000);
 });
 
 describe("cross-project: a leader of another project only is carried here (P1)", () => {
