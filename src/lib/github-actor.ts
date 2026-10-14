@@ -8,7 +8,14 @@ export function githubUserIdFromNodeId(nodeId: string): string | null {
   let bytes: Uint8Array;
   const current = nodeId.startsWith("U_");
   const text = current ? nodeId.slice(2) : nodeId;
-  if (!/^[A-Za-z0-9+/_-]{4,64}={0,2}$/u.test(text)) return null;
+  // Each form has one alphabet: standard base64 for legacy IDs, base64url
+  // for current IDs. A spelling from the other alphabet never names an actor.
+  if (
+    !(current ? /^[A-Za-z0-9_-]{4,64}$/u : /^[A-Za-z0-9+/]{4,64}={0,2}$/u).test(
+      text,
+    )
+  )
+    return null;
   try {
     const base64 = text.replace(/-/gu, "+").replace(/_/gu, "/");
     bytes = Uint8Array.from(
@@ -18,6 +25,15 @@ export function githubUserIdFromNodeId(nodeId: string): string | null {
   } catch {
     return null;
   }
+  // Only the canonical spelling GitHub emits may name an actor: padded
+  // standard base64 for legacy IDs, unpadded base64url for current IDs.
+  // Re-encoding rejects stripped or added padding and non-zero unused
+  // trailing bits, which atob would otherwise discard silently.
+  const encoded = btoa(String.fromCharCode(...bytes));
+  const canonical = current
+    ? encoded.replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "")
+    : encoded;
+  if (canonical !== text) return null;
   if (!current) {
     const legacy = /^04:User([1-9]\d{0,15})$/u.exec(
       new TextDecoder().decode(bytes),
