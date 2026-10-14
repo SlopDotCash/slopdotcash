@@ -430,10 +430,20 @@ function assertWallet(
     const sourceCommit = text(wallet.sourceCommit, `${path}.sourceCommit`, {
       pattern: /^[0-9a-f]{40}$/u,
     });
-    const expectedPath = `/${actor.login}/${actor.login}/blob/${sourceCommit}/README.md`;
+    // The README owner is the row login, or, after a rename, the login of the
+    // exact README proof that the reviewed prior manifest froze for the same
+    // actor id. A login is a display alias (ACC-01); cycle validation and the
+    // payment import accept a README proof only when that prior proof, or a
+    // pinned legacy proof, binds it to the actor id (readme-proof-binding.ts).
+    const readmeOwner =
+      /^\/([A-Za-z0-9-]{1,39})\/\1\/blob\/[0-9a-f]{40}\/README\.md$/iu.exec(
+        parsedUrl.pathname,
+      )?.[1];
     if (
       commonUrlInvalid ||
-      parsedUrl.pathname.toLowerCase() !== expectedPath.toLowerCase()
+      !readmeOwner ||
+      parsedUrl.pathname.toLowerCase() !==
+        `/${readmeOwner}/${readmeOwner}/blob/${sourceCommit}/README.md`.toLowerCase()
     ) {
       throw new TypeError(
         `${path}.sourceUrl must be the actor's immutable GitHub profile README`,

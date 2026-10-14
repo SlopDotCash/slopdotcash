@@ -9,9 +9,11 @@ import {
 import type { ProjectId } from "../src/lib/projects.mjs";
 import {
   assertRewardAllocationManifest,
+  type ProfileReadmeWalletProof,
   type RewardAllocationManifest,
   type UnsafeDestinationReport,
 } from "../src/lib/rewards";
+import { priorReadmeProofs } from "./readme-proof-binding";
 
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
 const MAX_HISTORY_BYTES = 32 * 1024 * 1024;
@@ -21,6 +23,12 @@ const MAX_ACTOR_REPORTS = 32;
 
 export interface PriorCycleAccrual {
   actorLogins: ReadonlyMap<string, string>;
+  /**
+   * The README proof that the reviewed prior manifest froze for each actor id
+   * (every row, not only accruals). A row of this cycle may hold a README
+   * proof only if it is byte-equal to this proof (readme-proof-binding.ts).
+   */
+  actorReadmeProofs?: ReadonlyMap<string, ProfileReadmeWalletProof>;
   accruedMinor: ReadonlyMap<string, string>;
   unsafeDestinationReports?: ReadonlyMap<string, UnsafeDestinationReport[]>;
 }
@@ -233,6 +241,13 @@ export async function loadPriorCycleAccrual(input: {
   cycleId: string;
   cyclesRoot: string;
   projectId: ProjectId;
+  /**
+   * A fresh-cycle payment policy imports no accrued principal and no README
+   * proof: legacy records do not authorize a new payout protocol (PRD WAL-01,
+   * section 23). The unsafe destination history still applies, so it is
+   * loaded without the monetary readiness checks.
+   */
+  freshPolicy?: boolean;
 }): Promise<PriorCycleAccrual> {
   const priorId = previousCycleId(input.cycleId);
   const unsafeDestinationReports = await loadUnsafeDestinationHistory(input);
@@ -264,6 +279,7 @@ export async function loadPriorCycleAccrual(input: {
     );
   }
   const proposal = allocation ?? reviewedProposal;
+  const actorReadmeProofs = priorReadmeProofs(proposal);
   if (proposal.projectId !== input.projectId || proposal.cycleId !== priorId) {
     throw new TypeError(
       `Prior accrual manifest does not match ${input.projectId}/${priorId}`,
@@ -278,11 +294,22 @@ export async function loadPriorCycleAccrual(input: {
       `Prior cycle ${input.projectId}/${priorId} contains future review state`,
     );
   }
+  if (input.freshPolicy) {
+    // No frozen README proof becomes a fresh-policy destination. A row needs
+    // an actor-bound claim, else it stays unclaimed (readme-proof-binding.ts).
+    return {
+      actorLogins: new Map(),
+      actorReadmeProofs: new Map(),
+      accruedMinor: new Map(),
+      unsafeDestinationReports,
+    };
+  }
   // The historical trial never creates a monetary balance, including when
   // a later reviewed allocation retains its original unclaimed suggestions.
   if (!proposal.fundingBasis && proposal.cycleId <= LAST_LEGACY_CAP_CYCLE) {
     return {
       actorLogins: new Map(),
+      actorReadmeProofs,
       accruedMinor: new Map(),
       unsafeDestinationReports,
     };
@@ -296,6 +323,7 @@ export async function loadPriorCycleAccrual(input: {
     ) {
       return {
         actorLogins: new Map(),
+        actorReadmeProofs,
         accruedMinor: new Map(),
         unsafeDestinationReports,
       };
@@ -344,5 +372,10 @@ export async function loadPriorCycleAccrual(input: {
     accruedMinor.set(row.actor.id, amount);
     actorLogins.set(row.actor.id, row.actor.login);
   }
-  return { actorLogins, accruedMinor, unsafeDestinationReports };
+  return {
+    actorLogins,
+    actorReadmeProofs,
+    accruedMinor,
+    unsafeDestinationReports,
+  };
 }

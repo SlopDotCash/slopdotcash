@@ -7,14 +7,23 @@
  * frozen preparation, and the database refuses a row that contradicts an
  * earlier import. It reads no chain and authorizes no payment or wallet.
  */
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
+import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
+import { createProjectView } from "../src/lib/project-view";
+import type { ProfileReadmeWalletProof } from "../src/lib/rewards";
 import { isWalletAddress } from "../src/lib/wallets";
 import {
   checkDirectPaymentDisclosures,
   type Disclosure,
 } from "./check-direct-payment-disclosures";
+import { previousCycleId } from "./prior-cycle-accrual";
+import {
+  isFreshPolicyCycle,
+  priorReadmeProofs,
+  unboundReadmeProofReason,
+} from "./readme-proof-binding";
 
 const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
@@ -87,10 +96,73 @@ interface FrozenWallet {
   sourceUrl: string;
 }
 
+interface FrozenCycleBindings {
+  /** The login that the frozen inputs record for each actor id. */
+  logins: Map<string, string>;
+  /** The README proof that the prior cycle manifest froze for each actor id. */
+  priorProofs: Map<string, ProfileReadmeWalletProof>;
+}
+
+/**
+ * Returns what the frozen inputs of a cycle bind to each actor id: the login
+ * of a project leader in this cycle's project view (a scored actor), else the
+ * login in the prior cycle manifest (allocation.json, else proposal.json; a
+ * carried actor), and the README proof of the prior manifest. Proposal
+ * validation regenerates rows from the same inputs and the same project view,
+ * so an actor that is a leader only in another project keeps its prior login.
+ * A README proof has no actor id, so the import binds it only to these
+ * values, never to a login or proof that the proposal itself states (ACC-01).
+ */
+function frozenCycleBindings(root: string, path: string): FrozenCycleBindings {
+  const match = /^cycles\/([^/]+)\/(\d{4}-\d{2})\/proposal\.json$/u.exec(path);
+  if (!match) throw new Error(`${path}: not a cycle proposal path`);
+  const [, projectId, cycleId] = match;
+  const logins = new Map<string, string>();
+  let priorProofs = new Map<string, ProfileReadmeWalletProof>();
+  const priorDirectory = join(
+    root,
+    "cycles",
+    projectId,
+    previousCycleId(cycleId),
+  );
+  const priorPath = ["allocation.json", "proposal.json"]
+    .map((name) => join(priorDirectory, name))
+    .find((candidate) => existsSync(candidate));
+  if (priorPath) {
+    const prior = JSON.parse(readFileSync(priorPath, "utf8")) as {
+      allocations?: {
+        actor: { id: string; login: string };
+        wallet?: unknown;
+      }[];
+    };
+    for (const { actor } of prior.allocations ?? [])
+      logins.set(actor.id, actor.login);
+    priorProofs = priorReadmeProofs(prior);
+  }
+  const snapshotPath = join(
+    root,
+    "cycles",
+    projectId,
+    cycleId,
+    "source-snapshot.json",
+  );
+  if (existsSync(snapshotPath)) {
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+    assertLeaderboardSnapshot(snapshot);
+    // A scored actor takes the login of the project view, as in proposal
+    // validation. A leader of another project only is not scored here.
+    for (const { actor } of createProjectView(snapshot, projectId, cycleId)
+      .leaders)
+      logins.set(actor.id, actor.login);
+  }
+  return { logins, priorProofs };
+}
+
 /** Legacy README observations; registry-sourced wallets are already in D1. */
 export function walletObservationsSql(
   root: string,
   importedAt: string,
+  report: (message: string) => void = (message) => console.warn(message),
 ): string {
   const files = [
     ...readdirSync(join(root, "funding/preparations"))
@@ -122,11 +194,36 @@ export function walletObservationsSql(
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw error;
     }
+    let frozen: FrozenCycleBindings | undefined;
     for (const { actor, wallet } of [
       ...(record.contributors ?? []),
       ...(record.allocations ?? []),
     ]) {
       if (!wallet?.sourceCommit) continue;
+      if (path.startsWith("cycles/")) {
+        frozen ??= frozenCycleBindings(root, path);
+        const [, projectId, cycleId] = path.split("/");
+        // An unbound README proof is not imported. It is skipped and reported,
+        // so one bad row does not stop the import of all others (PAY-07).
+        // Proposal validation rejects the same row. A fresh-policy cycle
+        // accepts no README proof (WAL-01).
+        const freshPolicy = isFreshPolicyCycle(projectId, cycleId);
+        const reason =
+          !freshPolicy && frozen.logins.get(actor.id) !== actor.login
+            ? `README wallet login ${actor.login} is not the frozen login of ${actor.id}`
+            : unboundReadmeProofReason({
+                projectId,
+                cycleId,
+                actorId: actor.id,
+                wallet: wallet as ProfileReadmeWalletProof,
+                priorProof: frozen.priorProofs.get(actor.id),
+                freshPolicy,
+              });
+        if (reason) {
+          report(`${path}: ${reason}; not imported`);
+          continue;
+        }
+      }
       const readme = new RegExp(
         `^https://github\\.com/([^/]+)/\\1/blob/${wallet.sourceCommit}/README\\.md$`,
         "iu",
@@ -134,7 +231,12 @@ export function walletObservationsSql(
       const githubUserId = githubUserIdFromNodeId(actor.id);
       if (
         !readme ||
-        readme[1].toLowerCase() !== actor.login.toLowerCase() ||
+        // A cycle row passed the binding above: its README proof is the exact
+        // proof that the reviewed prior manifest (or a pin) bound to this
+        // actor id, so after a rename its login may differ from actor.login
+        // (ACC-01). A preparation row has no such binding.
+        (!path.startsWith("cycles/") &&
+          readme[1].toLowerCase() !== actor.login.toLowerCase()) ||
         !/^[0-9a-f]{40}$/u.test(wallet.sourceCommit) ||
         !githubUserId ||
         !isWalletAddress(wallet.chain, wallet.address) ||

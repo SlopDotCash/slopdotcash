@@ -6,7 +6,8 @@
  * the exact GitHub actor.
  */
 
-import type { WalletProof } from "../src/lib/rewards";
+import { githubUserIdFromNodeId } from "../src/lib/github-actor";
+import type { ProfileReadmeWalletProof, WalletProof } from "../src/lib/rewards";
 import {
   isWalletAddress,
   parsePublishedWallets,
@@ -249,7 +250,6 @@ function object(value: unknown, context: string): Record<string, unknown> {
 async function fetchRegistryWallet(
   githubNumericId: string,
   sourceActorId: string,
-  login: string,
   observedAt: string,
   chain: WalletChain,
   fetchImpl: FetchLike,
@@ -265,9 +265,10 @@ async function fetchRegistryWallet(
     claim.schemaVersion !== 1 ||
     typeof claim.claimId !== "string" ||
     !/^[A-Za-z0-9_-]+$/u.test(claim.claimId) ||
+    // The claim is bound to the immutable numeric id. Its login is a display
+    // alias recorded at claim time; a later rename keeps the claim (ACC-01).
     claim.githubActorId !== githubNumericId ||
     typeof claim.githubLogin !== "string" ||
-    claim.githubLogin.toLowerCase() !== login.toLowerCase() ||
     (claim.chain ?? "solana") !== chain ||
     !isWalletAddress(chain, claim.address) ||
     !["d1_registry", "github_issue", "profile_readme"].includes(
@@ -299,19 +300,37 @@ export async function fetchPublishedGithubWallet(
   actorIdInput: string,
   loginInput: string,
   observedAt: string,
-  options: { chain?: WalletChain; fetch?: FetchLike; token?: string } = {},
+  options: {
+    chain?: WalletChain;
+    fetch?: FetchLike;
+    token?: string;
+    /**
+     * Set by the reward cycle generator for every actor, scored or carried.
+     * `readmeProof` is the README proof that the reviewed prior manifest froze
+     * for the actor id, or null. A cycle row may not gain a new README proof
+     * (readme-proof-binding.ts). Unset: the live README is read (legacy
+     * funding preparations only).
+     */
+    prior?: { readmeProof: WalletProof | null };
+  } = {},
 ): Promise<WalletProof | null> {
   const chain = options.chain ?? "solana";
   if (!/^[A-Za-z0-9_=-]{4,128}$/u.test(actorIdInput)) {
     throw new TypeError("GitHub actor id is invalid");
   }
-  const login = githubLogin(loginInput);
+  const recordedLogin = githubLogin(loginInput);
   if (!Number.isFinite(Date.parse(observedAt))) {
     throw new TypeError("Wallet observation time is invalid");
   }
   const fetchImpl = options.fetch ?? fetch;
+  // The node id encodes the numeric id, so the identity is read by that
+  // immutable id. A recorded login can be stale (rename) or now belong to
+  // another account (handle reuse); neither may change whose wallet is read.
+  const numericId = githubUserIdFromNodeId(actorIdInput);
   const identityResponse = await apiJson(
-    `/users/${encodeURIComponent(login)}`,
+    numericId === null
+      ? `/users/${encodeURIComponent(loginInput)}`
+      : `/user/${numericId}`,
     options.token,
     fetchImpl,
   );
@@ -320,21 +339,108 @@ export async function fetchPublishedGithubWallet(
   if (
     !Number.isSafeInteger(identity.id) ||
     Number(identity.id) < 1 ||
+    (numericId !== null && String(identity.id) !== numericId) ||
     identity.node_id !== actorIdInput ||
     typeof identity.login !== "string" ||
-    identity.login.toLowerCase() !== login.toLowerCase()
+    (numericId === null &&
+      identity.login.toLowerCase() !== loginInput.toLowerCase())
   ) {
     throw new TypeError("GitHub wallet actor identity changed");
   }
+  const login = githubLogin(identity.login);
   const registryWallet = await fetchRegistryWallet(
     String(identity.id),
     actorIdInput,
-    login,
     observedAt,
     chain,
     fetchImpl,
   );
   if (registryWallet) return registryWallet;
+  if (options.prior) {
+    return boundReadmeWallet(
+      options.prior.readmeProof,
+      recordedLogin,
+      login,
+      chain,
+      (readmeLogin) =>
+        fetchProfileReadmeWallet(
+          readmeLogin,
+          observedAt,
+          chain,
+          options.token,
+          fetchImpl,
+        ),
+    );
+  }
+  // A README proof has no actor id. Proposal validation and payment import
+  // bind it to the login recorded for the actor (`actor.login`). After a
+  // rename that login is stale, so a proof under the current login would be
+  // rejected there and stop the whole cycle. Then no README is read: the row
+  // stays unclaimed, and the actor can claim through the actor-bound
+  // registry. The README of whoever now holds the old login is never read,
+  // so a reused handle receives nothing (ACC-01).
+  if (login.toLowerCase() !== recordedLogin.toLowerCase()) return null;
+  return fetchProfileReadmeWallet(
+    login,
+    observedAt,
+    chain,
+    options.token,
+    fetchImpl,
+  );
+}
+
+/**
+ * The README wallet of a cycle row (scored or carried). The verifier accepts a
+ * README proof only if it is byte-equal to the proof that the reviewed prior
+ * manifest froze for the same actor id, because the recorded login can now
+ * belong to another account and offline nothing else binds a README to the
+ * actor id. The frozen proof is bound to the immutable actor id by that
+ * manifest, so its login is only a display alias (ACC-01). So no new README
+ * proof is returned:
+ * - no frozen README proof: null (the row stays unclaimed; the actor can use
+ *   the actor-bound registry).
+ * - a frozen README proof: the README under the current login of the actor id
+ *   is read again, also when the frozen proof names another login (the actor
+ *   renamed, before or after the snapshot). The frozen proof is kept only if
+ *   that README still publishes the same address (ACC-01: a rename keeps
+ *   claims), else null, so a README change applies to the next cycle (WAL-03).
+ *   The README of whoever now holds the old login is never read.
+ */
+export async function boundReadmeWallet(
+  priorWallet: WalletProof | null,
+  _recordedLogin: string,
+  currentLogin: string,
+  chain: WalletChain,
+  readCurrent: (login: string) => Promise<WalletProof | null>,
+): Promise<ProfileReadmeWalletProof | null> {
+  if (
+    !priorWallet ||
+    !("sourceCommit" in priorWallet) ||
+    priorWallet.chain !== chain
+  )
+    return null;
+  const proofLogin = /^https:\/\/github\.com\/([^/]+)\/\1\/blob\//iu.exec(
+    priorWallet.sourceUrl,
+  )?.[1];
+  if (!proofLogin) return null;
+  // currentLogin is read through the immutable numeric id, so only a README
+  // under that login is the actor's own README now.
+  const current = await readCurrent(currentLogin);
+  return current &&
+    current.chain === priorWallet.chain &&
+    current.address === priorWallet.address
+    ? priorWallet
+    : null;
+}
+
+async function fetchProfileReadmeWallet(
+  login: string,
+  observedAt: string,
+  chain: WalletChain,
+  token: string | undefined,
+  fetchImpl: FetchLike,
+): Promise<WalletProof | null> {
+  const options = { token };
   const repository = `${login}/${login}`;
   const readmeResponse = await apiJson(
     `/repos/${encodeURIComponent(login)}/${encodeURIComponent(login)}/readme`,

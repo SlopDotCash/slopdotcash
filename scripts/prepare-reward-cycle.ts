@@ -14,10 +14,9 @@ import { findProject, type ProjectId } from "../src/lib/projects.mjs";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import type { WalletProof } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
-import type { PriorCycleAccrual } from "./prior-cycle-accrual";
 import {
   loadPriorCycleAccrual,
-  loadUnsafeDestinationHistory,
+  type PriorCycleAccrual,
 } from "./prior-cycle-accrual";
 import {
   ExistingFileError,
@@ -150,22 +149,79 @@ async function writeImmutableBytes(path: string, bytes: Buffer): Promise<void> {
   }
 }
 
+/**
+ * One wallet lookup per scored or carried actor. A scored actor is looked up
+ * by its snapshot login, a carried actor (prior accrual, no score in this
+ * project) by its prior-manifest login. Each lookup carries the README proof
+ * that the reviewed prior manifest froze for the actor id, so a scored actor
+ * that was carried or scored before keeps that exact proof after a rename,
+ * and no row gains a new README proof (readme-proof-binding.ts).
+ */
+export function walletObservationRequests(
+  leaders: readonly { actor: { id: string; login: string } }[],
+  priorAccrual: PriorCycleAccrual,
+): {
+  actorId: string;
+  login: string;
+  prior: { readmeProof: WalletProof | null };
+}[] {
+  const proofs = priorAccrual.actorReadmeProofs ?? new Map();
+  const scored = new Set(leaders.map((leader) => leader.actor.id));
+  const prior = (actorId: string) => ({
+    readmeProof: proofs.get(actorId) ?? null,
+  });
+  return [
+    ...leaders.map(({ actor }) => ({
+      actorId: actor.id,
+      login: actor.login,
+      prior: prior(actor.id),
+    })),
+    ...[...priorAccrual.accruedMinor.keys()]
+      .filter((actorId) => !scored.has(actorId))
+      .map((actorId) => {
+        const login = priorAccrual.actorLogins.get(actorId);
+        if (!login)
+          throw new TypeError(`carried actor ${actorId} has no login`);
+        return { actorId, login, prior: prior(actorId) };
+      }),
+  ];
+}
+
+/**
+ * The default wallet observer of the generator. It always passes the frozen
+ * prior README proof, so no row gains a new README proof.
+ */
+export function cycleWalletObserver(options: {
+  chain: "solana" | "base";
+  token?: string;
+  fetch?: typeof fetch;
+}) {
+  return (
+    actorId: string,
+    login: string,
+    observedAt: string,
+    prior?: { readmeProof: WalletProof | null },
+  ) =>
+    fetchPublishedGithubWallet(actorId, login, observedAt, {
+      // Only a claim on the project's settlement network is payable.
+      chain: options.chain,
+      token: options.token,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      ...(prior ? { prior } : {}),
+    });
+}
+
 export async function prepareRewardCycle(
   arguments_: PrepareRewardCycleArguments,
   options: {
     generatedAt?: string;
     githubToken?: string;
-    loadPriorAccrual?: (input: {
-      asOf: string;
-      cycleId: string;
-      cyclesRoot: string;
-      projectId: ProjectId;
-    }) => Promise<PriorCycleAccrual>;
-    loadUnsafeHistory?: typeof loadUnsafeDestinationHistory;
+    loadPriorAccrual?: typeof loadPriorCycleAccrual;
     observeWallet?: (
       actorId: string,
       login: string,
       observedAt: string,
+      prior?: { readmeProof: WalletProof | null },
     ) => Promise<WalletProof | null>;
     write?: (path: string, value: unknown) => Promise<void>;
     writeSnapshot?: (path: string, bytes: Buffer) => Promise<void>;
@@ -222,18 +278,14 @@ export async function prepareRewardCycle(
     accruedMinor: new Map<string, string>(),
   };
   if (project.reward.kind === "monthly-pool") {
-    if (
-      project.funding.freshCyclePaymentPolicy?.cycleId === arguments_.cycleId
-    ) {
-      // Fresh principal excludes carry, but cannot revive an unsafe destination.
-      priorAccrual.unsafeDestinationReports = await (
-        options.loadUnsafeHistory ?? loadUnsafeDestinationHistory
-      )(historyInput);
-    } else {
-      priorAccrual = await (options.loadPriorAccrual ?? loadPriorCycleAccrual)(
-        historyInput,
-      );
-    }
+    // Fresh principal excludes carry and every README proof (WAL-01), but it
+    // cannot revive an unsafe destination. Proposal validation loads the
+    // prior cycle in the same mode (sync-cycle-index.ts).
+    priorAccrual = await (options.loadPriorAccrual ?? loadPriorCycleAccrual)({
+      ...historyInput,
+      freshPolicy:
+        project.funding.freshCyclePaymentPolicy?.cycleId === arguments_.cycleId,
+    });
   }
 
   const wallets = new Map<string, WalletProof>();
@@ -243,35 +295,25 @@ export async function prepareRewardCycle(
       arguments_.projectId,
       arguments_.cycleId,
     ).leaders;
-    const actors = new Map(
-      projectLeaders.map((leader) => [leader.actor.id, leader.actor.login]),
-    );
-    for (const [actorId, login] of priorAccrual.actorLogins) {
-      if (!actors.has(actorId)) actors.set(actorId, login);
-    }
+    const requests = walletObservationRequests(projectLeaders, priorAccrual);
     const chain = project.reward.chain;
     if (chain === null) {
       throw new TypeError("Monthly pool has no settlement network");
     }
-    if (actors.size > MAX_WALLET_LOOKUPS) {
+    if (requests.length > MAX_WALLET_LOOKUPS) {
       throw new RangeError(
         "Reward cycle exceeds the bounded wallet lookup limit",
       );
     }
     const observe =
       options.observeWallet ??
-      ((actorId: string, login: string, observedAt: string) =>
-        fetchPublishedGithubWallet(actorId, login, observedAt, {
-          // Only a claim on the project's settlement network is payable.
-          chain,
-          token: options.githubToken,
-        }));
+      cycleWalletObserver({ chain, token: options.githubToken });
     const observations = await mapWithConcurrency(
-      [...actors],
+      requests,
       WALLET_LOOKUP_CONCURRENCY,
-      async ([actorId, login]) => ({
+      async ({ actorId, login, prior }) => ({
         actorId,
-        wallet: await observe(actorId, login, generatedAt),
+        wallet: await observe(actorId, login, generatedAt, prior),
       }),
     );
     for (const observation of observations) {

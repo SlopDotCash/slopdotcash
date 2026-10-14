@@ -41,6 +41,7 @@ import {
   assertExternalContributionShareManifest,
   assertRewardAllocationManifest,
   assertRewardSettlementManifest,
+  type ProfileReadmeWalletProof,
   type RewardAllocationManifest,
   type RewardSettlementManifest,
 } from "../src/lib/rewards";
@@ -56,6 +57,11 @@ import { assertEscrowDecisions } from "./escrow-review";
 import { loadProjectCommitmentRecords } from "./funding-commitment-records";
 import { validateEscrowCycle } from "./prepare-escrow-cycle";
 import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
+import {
+  isFreshPolicyCycle,
+  isReadmeProof,
+  unboundReadmeProofReason,
+} from "./readme-proof-binding";
 import {
   DEFAULT_SOLANA_RPC_URL,
   fetchFinalizedSolanaTransaction,
@@ -158,41 +164,26 @@ async function jsonFile(
   };
 }
 
-export async function verifyProposalAgainstSnapshot(
+type Allocation = RewardAllocationManifest["allocations"][number];
+
+/**
+ * Compares each proposal row with the row regenerated from the frozen inputs.
+ * The login must be the exact login of the regenerated row: the snapshot
+ * login for a scored row, the prior-manifest login for a carried row. A README
+ * proof has no actor id and is bound to that login, so a login that this check
+ * cannot bind to the immutable actor id is never accepted. A README proof is
+ * accepted only when a reviewed record binds it to the actor id
+ * (readme-proof-binding.ts). Else the row stays unclaimed (ACC-01).
+ */
+export function assertAllocationsMatchBaseline(
   proposal: RewardAllocationManifest,
-  snapshot: LeaderboardSnapshot,
-  snapshotDigest: string,
-): Promise<void> {
-  if (!proposal.fundingBasis && proposal.cycleId > LAST_LEGACY_CAP_CYCLE) {
-    throw new TypeError(
-      "New cycle proposals must freeze their committed funding basis",
-    );
-  }
-  const priorAccrual = await loadPriorCycleAccrual({
-    asOf: proposal.generatedAt,
-    cycleId: proposal.cycleId,
-    cyclesRoot: CYCLES_ROOT,
-    projectId: proposal.projectId as ProjectId,
-  });
-  const baseline = createRewardCycleProposal({
-    ...(proposal.fundingBasis
-      ? { fundingBasis: proposal.fundingBasis }
-      : { legacyCapMinor: proposal.capMinor }),
-    cycleId: proposal.cycleId,
-    generatedAt: proposal.generatedAt,
-    projectId: proposal.projectId,
-    snapshot,
-    sourceSnapshotSha256: snapshotDigest,
-    priorAccruedMinor: priorAccrual.accruedMinor,
-    priorActorLogins: priorAccrual.actorLogins,
-    priorUnsafeDestinationReports: priorAccrual.unsafeDestinationReports,
-  });
-  if (baseline.kind !== "reward-allocation") {
-    throw new TypeError("Monthly proposal regenerated as an external share");
-  }
+  baseline: { allocations: readonly Allocation[] },
+  priorReadmeProofs: ReadonlyMap<string, ProfileReadmeWalletProof>,
+): void {
   const byIntent = new Map(
     baseline.allocations.map((allocation) => [allocation.intentId, allocation]),
   );
+  const freshPolicy = isFreshPolicyCycle(proposal.projectId, proposal.cycleId);
   if (proposal.allocations.length !== baseline.allocations.length) {
     throw new TypeError("Reward proposal adds or removes a scored contributor");
   }
@@ -219,7 +210,68 @@ export async function verifyProposalAgainstSnapshot(
         `Reward proposal intent ${allocation.intentId} differs from its frozen snapshot`,
       );
     }
+    // A README proof names a login, not an actor id, and the login of a row
+    // can now belong to another account (rename, then reuse), for scored and
+    // carried rows alike. So a row may hold a README proof only if a reviewed
+    // record outside this proposal binds it to the actor id: the exact proof
+    // of the prior manifest, or a pinned legacy proof. Registry and issue
+    // proofs carry the actor id (assertRewardAllocationManifest).
+    // A fresh-policy cycle accepts no README proof, frozen or pinned (WAL-01).
+    if (isReadmeProof(allocation.wallet)) {
+      const reason = unboundReadmeProofReason({
+        projectId: proposal.projectId,
+        cycleId: proposal.cycleId,
+        actorId: allocation.actor.id,
+        wallet: allocation.wallet,
+        priorProof: priorReadmeProofs.get(allocation.actor.id),
+        freshPolicy,
+      });
+      if (reason)
+        throw new TypeError(
+          `Reward proposal intent ${allocation.intentId}: ${reason}`,
+        );
+    }
   }
+}
+
+export async function verifyProposalAgainstSnapshot(
+  proposal: RewardAllocationManifest,
+  snapshot: LeaderboardSnapshot,
+  snapshotDigest: string,
+): Promise<void> {
+  if (!proposal.fundingBasis && proposal.cycleId > LAST_LEGACY_CAP_CYCLE) {
+    throw new TypeError(
+      "New cycle proposals must freeze their committed funding basis",
+    );
+  }
+  const priorAccrual = await loadPriorCycleAccrual({
+    asOf: proposal.generatedAt,
+    cycleId: proposal.cycleId,
+    cyclesRoot: CYCLES_ROOT,
+    projectId: proposal.projectId as ProjectId,
+    freshPolicy: isFreshPolicyCycle(proposal.projectId, proposal.cycleId),
+  });
+  const baseline = createRewardCycleProposal({
+    ...(proposal.fundingBasis
+      ? { fundingBasis: proposal.fundingBasis }
+      : { legacyCapMinor: proposal.capMinor }),
+    cycleId: proposal.cycleId,
+    generatedAt: proposal.generatedAt,
+    projectId: proposal.projectId,
+    snapshot,
+    sourceSnapshotSha256: snapshotDigest,
+    priorAccruedMinor: priorAccrual.accruedMinor,
+    priorActorLogins: priorAccrual.actorLogins,
+    priorUnsafeDestinationReports: priorAccrual.unsafeDestinationReports,
+  });
+  if (baseline.kind !== "reward-allocation") {
+    throw new TypeError("Monthly proposal regenerated as an external share");
+  }
+  assertAllocationsMatchBaseline(
+    proposal,
+    baseline,
+    priorAccrual.actorReadmeProofs ?? new Map(),
+  );
   if (
     proposal.sourceSnapshotSha256 !== snapshotDigest ||
     proposal.scoringRuleVersion !== snapshot.ruleVersion ||
