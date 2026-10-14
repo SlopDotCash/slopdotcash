@@ -9,7 +9,13 @@
 // wallet observation through proposal validation and the payment import.
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
@@ -204,12 +210,17 @@ function importRun(
     JSON.stringify(proposal),
   );
   const skipped: string[] = [];
-  const sql = walletObservationsSql(
-    root,
-    "Tue 2026-10-13 3:00 AM EEST (UTC+03:00)",
-    (message) => skipped.push(message),
-  );
-  return { sql, skipped };
+  try {
+    const sql = walletObservationsSql(
+      root,
+      "Tue 2026-10-13 3:00 AM EEST (UTC+03:00)",
+      (message) => skipped.push(message),
+    );
+    return { sql, skipped };
+  } finally {
+    // Each repository copy holds the frozen snapshot (about 7 MB).
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 const importSql = (
