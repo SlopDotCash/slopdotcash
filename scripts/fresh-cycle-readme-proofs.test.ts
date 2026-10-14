@@ -9,7 +9,13 @@
 // in the fresh mode. Outside these tests both mocks return the real values.
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -56,7 +62,11 @@ mock.module("./prior-cycle-accrual", () => ({
 }));
 
 const { prepareRewardCycle } = await import("./prepare-reward-cycle");
-const { verifyProposalAgainstSnapshot } = await import("./sync-cycle-index");
+const { assertAllocationsMatchBaseline, verifyProposalAgainstSnapshot } =
+  await import("./sync-cycle-index");
+const { createRewardCycleProposal } = await import("../src/lib/reward-cycle");
+const { walletObservationsSql } = await import("./prepare-payments-import");
+const { LEGACY_README_PROOFS } = await import("./readme-proof-binding");
 
 const CYCLES = resolve(import.meta.dir, "../cycles");
 const CYCLE_DIR = join(CYCLES, "eliza/2026-09");
@@ -232,5 +242,269 @@ describe("fresh-policy cycle: generator and validation (fixture project)", () =>
       expect(row.wallet).toEqual(registry.get(row.actor.id) ?? null);
       if (!registry.has(row.actor.id)) expect(row.state).toBe("unclaimed");
     }
+  }, 30_000);
+});
+
+const FRESH_REASON = (actorId: string) =>
+  `README wallet of ${actorId} is a legacy proof; a fresh-policy cycle accepts only an actor-bound claim`;
+
+/** Sets the fixture project without running the generator. */
+function useFixture(fresh: boolean) {
+  fixture = {
+    fresh,
+    loader: () => Promise.reject(new Error("the loader is not used here")),
+  };
+}
+
+// A legacy pin of eliza/2026-09 whose actor has no registry claim.
+const PIN = (() => {
+  const pin = LEGACY_README_PROOFS.find(
+    (candidate) =>
+      candidate.projectId === "eliza" &&
+      candidate.cycleId === "2026-09" &&
+      readmeOnly.includes(candidate.actorId),
+  );
+  if (!pin) throw new Error("no legacy pin for a README-only actor");
+  return pin;
+})();
+
+/** A copy of `proposal` where the row of `actorId` holds `wallet`. */
+function withWallet(
+  proposal: RewardAllocationManifest,
+  actorId: string,
+  wallet: WalletProof,
+): RewardAllocationManifest {
+  const tampered = structuredClone(proposal);
+  const row = tampered.allocations.find((a) => a.actor.id === actorId);
+  if (!row) throw new Error(`row ${actorId} is missing`);
+  row.wallet = wallet;
+  row.state =
+    BigInt(row.accruedMinor ?? row.suggestedMinor) <
+    BigInt(tampered.minimumTransferMinor ?? "0")
+      ? "held-below-minimum"
+      : "proposed";
+  return tampered;
+}
+
+const validate = (proposal: RewardAllocationManifest) =>
+  verifyProposalAgainstSnapshot(
+    proposal,
+    JSON.parse(SNAPSHOT_BYTES.toString("utf8")),
+    createHash("sha256").update(SNAPSHOT_BYTES).digest("hex"),
+  );
+
+describe("fresh-policy cycle: the generator refuses a README proof itself", () => {
+  test("a loader that returns the frozen proofs still leaves README-only rows unclaimed", async () => {
+    const { proposal, lookups } = await generateAndValidate({
+      leakProofs: true,
+    });
+    // The leaked proofs reach the observer, and the observer returns them.
+    expect(lookups.some((lookup) => lookup.prior)).toBe(true);
+    for (const row of proposal.allocations) {
+      expect(row.wallet).toEqual(registry.get(row.actor.id) ?? null);
+      if (!registry.has(row.actor.id)) expect(row.state).toBe("unclaimed");
+    }
+  }, 30_000);
+
+  test("an above-minimum README-only row is never proposed", () => {
+    const build = () => {
+      const proposal = createRewardCycleProposal({
+        // A funded cycle, so rows reach the minimum transfer.
+        fundingBasis: {
+          ...FROZEN.fundingBasis,
+          cycleId: "2026-09",
+          fundingState: "committed",
+          committedMinor: "5000000000",
+          monthlyCapMinor: "5000000000",
+          // A syntactically valid test instrument; no chain is read.
+          instrumentId: `squads-v4-vault:solana:${WALLET}:0:${WALLET}`,
+        } as NonNullable<RewardAllocationManifest["fundingBasis"]>,
+        cycleId: "2026-09",
+        generatedAt: FROZEN.generatedAt,
+        projectId: "eliza",
+        snapshot: JSON.parse(SNAPSHOT_BYTES.toString("utf8")),
+        sourceSnapshotSha256: createHash("sha256")
+          .update(SNAPSHOT_BYTES)
+          .digest("hex"),
+        wallets: new Map<string, WalletProof>([
+          ...readmeOnly.map((actorId) => {
+            const proof = frozenProofs.get(actorId);
+            if (!proof) throw new Error(`no frozen proof for ${actorId}`);
+            return [actorId, proof] as const;
+          }),
+          ...registry,
+        ]),
+      });
+      if (proposal.kind !== "reward-allocation")
+        throw new TypeError("expected a reward allocation");
+      return proposal;
+    };
+    const minimum = BigInt(FROZEN.minimumTransferMinor ?? "0");
+    const above = (proposal: RewardAllocationManifest) =>
+      proposal.allocations.filter(
+        (row) =>
+          readmeOnly.includes(row.actor.id) &&
+          BigInt(row.accruedMinor ?? row.suggestedMinor) >= minimum,
+      );
+
+    useFixture(true);
+    const fresh = build();
+    expect(above(fresh).length).toBeGreaterThan(0);
+    for (const row of fresh.allocations) {
+      if (readmeOnly.includes(row.actor.id)) {
+        expect(row.wallet).toBeNull();
+        expect(row.state).toBe("unclaimed");
+      }
+      if (row.state === "proposed")
+        expect(row.wallet && "sourceCommit" in row.wallet).toBe(false);
+    }
+    // An actor-bound claim above the minimum is still proposed.
+    expect(
+      fresh.allocations.some(
+        (row) => registry.has(row.actor.id) && row.state === "proposed",
+      ),
+    ).toBe(true);
+
+    // The same inputs in a normal cycle propose the frozen README proofs.
+    useFixture(false);
+    const normal = build();
+    for (const row of above(normal)) {
+      expect(row.state).toBe("proposed");
+      expect(row.wallet).toEqual(frozenProofs.get(row.actor.id) ?? null);
+    }
+  });
+});
+
+describe("fresh-policy cycle: validation rejects a README wallet", () => {
+  test("a pinned legacy proof is rejected in a fresh-policy cycle and accepted in a normal one", async () => {
+    const { proposal: fresh } = await generateAndValidate();
+    await expect(
+      validate(withWallet(fresh, PIN.actorId, PIN.wallet)),
+    ).rejects.toThrow(FRESH_REASON(PIN.actorId));
+
+    const { proposal: normal } = await generateAndValidate({ fresh: false });
+    await validate(withWallet(normal, PIN.actorId, PIN.wallet));
+  }, 60_000);
+
+  test("the exact frozen prior proof is rejected in a fresh-policy cycle", async () => {
+    const { proposal } = await generateAndValidate();
+    const [actorId] = readmeOnly;
+    const proof = frozenProofs.get(actorId);
+    if (!proof) throw new Error("no frozen proof");
+    const tampered = withWallet(proposal, actorId, proof);
+    // In the fresh mode a reviewed prior record does not bind the proof.
+    expect(() =>
+      assertAllocationsMatchBaseline(tampered, proposal, frozenProofs),
+    ).toThrow(FRESH_REASON(actorId));
+    // Through the full validation the fresh loader gives no prior proof.
+    await expect(validate(tampered)).rejects.toThrow(actorId);
+    // In a normal cycle the same frozen proof is bound to the actor id.
+    useFixture(false);
+    assertAllocationsMatchBaseline(tampered, proposal, frozenProofs);
+  }, 30_000);
+});
+
+describe("fresh-policy cycle: the payment import skips a README wallet", () => {
+  // A preparation row, so the import has one README row in every mode.
+  const PREPARATION = {
+    actor: { id: "U_kgDOAA9CPw", login: "prep-actor" },
+    wallet: {
+      address: "Cr8wzyr222pyjHpQorndcZBeUDH8LP1x3MnbcuNSd3zH",
+      chain: "solana",
+      observedAt: new Date(Date.UTC(2026, 8, 1)).toISOString(),
+      sourceCommit: SHA,
+      sourceUrl: `https://github.com/prep-actor/prep-actor/blob/${SHA}/README.md`,
+    },
+  };
+
+  function importRun(proposal: RewardAllocationManifest) {
+    const root = mkdtempSync(join(tmpdir(), "slop-fresh-import-"));
+    try {
+      mkdirSync(join(root, "funding/preparations"), { recursive: true });
+      mkdirSync(join(root, "cycles/eliza/2026-08"), { recursive: true });
+      mkdirSync(join(root, "cycles/eliza/2026-09"), { recursive: true });
+      writeFileSync(
+        join(root, "funding/preparations/fixture.json"),
+        JSON.stringify({ contributors: [PREPARATION] }),
+      );
+      // The reviewed prior manifest froze every proof of the fixture.
+      writeFileSync(
+        join(root, "cycles/eliza/2026-08/allocation.json"),
+        JSON.stringify({
+          allocations: [
+            ...scored.map((row) => ({
+              actor: row.actor,
+              wallet: frozenProofs.get(row.actor.id),
+            })),
+            { actor: CARRIED, wallet: frozenProofs.get(CARRIED.id) },
+          ],
+        }),
+      );
+      writeFileSync(
+        join(root, "cycles/eliza/2026-09/source-snapshot.json"),
+        SNAPSHOT_BYTES,
+      );
+      writeFileSync(
+        join(root, "cycles/eliza/2026-09/proposal.json"),
+        JSON.stringify(proposal),
+      );
+      const skipped: string[] = [];
+      const sql = walletObservationsSql(
+        root,
+        new Date(Date.UTC(2026, 9, 14)).toISOString(),
+        (message) => skipped.push(message),
+      );
+      return { sql, skipped };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  test("frozen and pinned README rows are not imported in a fresh-policy cycle", async () => {
+    // The README rows that a normal cycle holds: every frozen proof, and the
+    // legacy pin on its actor.
+    const { proposal: normal } = await generateAndValidate({ fresh: false });
+    const proposal = withWallet(normal, PIN.actorId, PIN.wallet);
+    const readmeRows = proposal.allocations.filter(
+      (row) => row.wallet && "sourceCommit" in row.wallet,
+    );
+    expect(readmeRows.length).toBeGreaterThan(1);
+
+    useFixture(true);
+    const fresh = importRun(proposal);
+    expect(fresh.sql).not.toContain(WALLET);
+    expect(fresh.sql).not.toContain(PIN.wallet.address);
+    expect(fresh.skipped).toHaveLength(readmeRows.length);
+    for (const row of readmeRows)
+      expect(fresh.skipped.join("\n")).toContain(FRESH_REASON(row.actor.id));
+    // The rest of the import still runs (PAY-07).
+    expect(fresh.sql).toContain(PREPARATION.wallet.address);
+
+    // A normal cycle imports the same rows.
+    useFixture(false);
+    const normalRun = importRun(proposal);
+    expect(normalRun.skipped).toEqual([]);
+    expect(normalRun.sql).toContain(WALLET);
+    expect(normalRun.sql).toContain(PIN.wallet.address);
+  }, 60_000);
+});
+
+describe("normal cycle: frozen README proofs are unchanged", () => {
+  test("README-only rows keep the frozen proof and the carry is kept", async () => {
+    const { proposal, lookups, loaderCalls } = await generateAndValidate({
+      fresh: false,
+    });
+    expect(loaderCalls).toEqual([false, false]);
+    for (const lookup of lookups)
+      expect(lookup.prior).toEqual(frozenProofs.get(lookup.actorId));
+    const carriedRow = proposal.allocations.find(
+      (row) => row.actor.id === CARRIED.id,
+    );
+    expect(carriedRow?.accruedMinor).toBe("3000000");
+    expect(carriedRow?.wallet).toEqual(frozenProofs.get(CARRIED.id));
+    for (const row of proposal.allocations)
+      expect(row.wallet).toEqual(
+        registry.get(row.actor.id) ?? frozenProofs.get(row.actor.id) ?? null,
+      );
   }, 30_000);
 });
