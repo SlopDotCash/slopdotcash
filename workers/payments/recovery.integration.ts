@@ -473,7 +473,7 @@ try {
   resetAttempts();
   requests.length = 0;
   checkContext(
-    await reportedFailure(false, { ...env, BASE_PAYMENT_EXECUTOR: undefined }),
+    await reportedFailure(false, { ...env, EVM_PAYMENT_EXECUTOR: undefined }),
     "executor-binding",
   );
   assert.deepEqual(rows(), expectedRows(baseAttempts));
