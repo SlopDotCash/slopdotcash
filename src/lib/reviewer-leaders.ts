@@ -7,6 +7,7 @@
 
 import {
   assignLeaderboardRanks,
+  compareRankedEntries,
   type GitHubActor,
   type ScoreEvent,
 } from "./leaderboard";
@@ -16,16 +17,6 @@ export interface ReviewerLeader {
   actor: GitHubActor;
   reviewThirds: number;
   reviewEventCount: number;
-}
-
-function compareActors(left: GitHubActor, right: GitHubActor): number {
-  const leftLogin = left.login.toLowerCase();
-  const rightLogin = right.login.toLowerCase();
-  return (
-    leftLogin.localeCompare(rightLogin) ||
-    left.login.localeCompare(right.login) ||
-    left.id.localeCompare(right.id)
-  );
 }
 
 /** Formats an integer third count as a score with at most two decimals. */
@@ -67,18 +58,14 @@ export function selectReviewerLeaders(
   // analysis data; it must not split a tie in the primary review score.
   const ranked = [...byActor.values()]
     .filter((entry) => entry.reviewThirds > 0)
-    .sort(
-      (left, right) =>
-        right.reviewThirds - left.reviewThirds ||
-        compareActors(left.actor, right.actor),
-    )
     .map((entry) => ({
       rank: 0,
       scoreThirds: entry.reviewThirds,
       actor: entry.actor,
       reviewThirds: entry.reviewThirds,
       reviewEventCount: entry.reviewEventCount,
-    }));
+    }))
+    .sort(compareRankedEntries);
   assignLeaderboardRanks(ranked);
   return ranked.map((entry) => ({
     rank: entry.rank,

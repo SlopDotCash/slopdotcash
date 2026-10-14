@@ -74,6 +74,20 @@ describe("selectReviewerLeaders ranks", () => {
     ]);
   });
 
+  it("orders tied reviewers by actor ID, not by login", () => {
+    // Login order (alice < zoe) disagrees with actor-ID order (1001 < 2002).
+    const zoe = actor("1001", "zoe");
+    const aliceById = actor("2002", "alice");
+    const leaders = selectReviewerLeaders([
+      reviewEvent(aliceById, 30),
+      reviewEvent(zoe, 30),
+    ]);
+    expect(leaders.map((leader) => [leader.actor.login, leader.rank])).toEqual([
+      ["zoe", 1],
+      ["alice", 1],
+    ]);
+  });
+
   it("keeps sequential ranks for distinct review scores", () => {
     const leaders = selectReviewerLeaders([
       reviewEvent(alice, 30),
