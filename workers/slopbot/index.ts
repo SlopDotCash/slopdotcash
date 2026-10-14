@@ -144,7 +144,14 @@ export default {
       return new Response("duplicate delivery", { status: 202 });
     }
     const payload = JSON.parse(body) as Payload;
-    await handleInstallation(env, event, payload);
+    try {
+      await handleInstallation(env, event, payload);
+    } catch (error) {
+      // The delivery claim must not strand the lifecycle event: release it
+      // so a redelivery can record the installation state (BOT-01).
+      await store.releaseDelivery(env.SLOPBOT_DB, deliveryId);
+      throw error;
+    }
     const job = jobFor(event, deliveryId, payload, env.SLOPBOT_APP_USER_ID);
     if (job !== null) await env.SLOPBOT_QUEUE.send(job);
     return new Response(job === null ? "ignored" : "queued", { status: 202 });

@@ -26,6 +26,13 @@ export async function recordDelivery(
   return (result.meta?.changes ?? 0) === 1;
 }
 
+export async function releaseDelivery(db: D1Database, deliveryId: string) {
+  await db
+    .prepare("DELETE FROM slopbot_deliveries WHERE delivery_id = ?")
+    .bind(deliveryId)
+    .run();
+}
+
 export async function upsertInstallation(
   db: D1Database,
   installation: {
