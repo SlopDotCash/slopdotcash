@@ -36,6 +36,7 @@ import {
   assertSquadsVaultUsdcState,
   deriveVaultUsdcTokenAccount,
   SQUADS_PERMISSION_INITIATE,
+  squadsMemberCountOffset,
   type VerifiedSquadsCreatorSeat,
 } from "./squads-funding";
 
@@ -356,10 +357,13 @@ export async function verifyFundingReadiness(input: {
       );
       // Existing funding verifier requires voting. New execution readiness also
       // requires proposer and executor capability across the reviewed members.
+      // The rent-collector option moves the member vector, so read the
+      // permission masks at the offset the identity check just validated.
       const raw = (observation.value as { data: string[] }[])[0].data[0];
       const config = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+      const membersStart = squadsMemberCountOffset(config) + 4;
       if (
-        ((config[164] | config[197]) & 7) !== 7 ||
+        ((config[membersStart + 32] | config[membersStart + 65]) & 7) !== 7 ||
         config.slice(74, 78).some((b) => b !== 0)
       )
         block(

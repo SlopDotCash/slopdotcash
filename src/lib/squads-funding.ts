@@ -293,6 +293,20 @@ function squadsMultisigBytes(accountValue: unknown): Uint8Array {
   return bytes;
 }
 
+/** Returns the byte offset of the Squads v4 member-vector length.
+ *
+ * The rent collector is an `Option<Pubkey>`. Borsh writes one tag byte and
+ * writes a key only when the option is set. The account allocation always
+ * reserves those 32 bytes, so an unset collector leaves zero padding at the end
+ * of the account instead of moving the members back. The member vector
+ * therefore moves forward by 32 bytes only when the collector is set. */
+export function squadsMemberCountOffset(bytes: Uint8Array): number {
+  const rentCollectorTag = bytes[94];
+  if (rentCollectorTag !== 0 && rentCollectorTag !== 1)
+    throw new TypeError("Squads multisig rent collector is not canonical");
+  return 96 + 32 * rentCollectorTag;
+}
+
 /** Validates the Squads-owned multisig account and the declared vault PDA. */
 export async function assertSquadsVaultIdentity(
   accountValue: unknown,
@@ -346,7 +360,8 @@ export async function assertSquadsVaultIdentity(
       "committed Squads multisig must have no config authority",
     );
   const threshold = view.getUint16(72, true);
-  const memberCount = view.getUint32(128, true);
+  const memberCountOffset = squadsMemberCountOffset(bytes);
+  const memberCount = view.getUint32(memberCountOffset, true);
   if (
     threshold !== 2 ||
     memberCount !== 2 ||
@@ -355,12 +370,13 @@ export async function assertSquadsVaultIdentity(
     throw new TypeError(
       "committed Squads vault must use an exact 2-of-2 multisig",
     );
-  const firstMember = bytes.slice(132, 164);
-  const secondMember = bytes.slice(165, 197);
+  const membersStart = memberCountOffset + 4;
+  const firstMember = bytes.slice(membersStart, membersStart + 32);
+  const secondMember = bytes.slice(membersStart + 33, membersStart + 65);
   const expectedFunder = decodeBase58(funderMember);
   const expectedSteward = decodeBase58(stewardMember);
-  const firstPermissions = bytes[164];
-  const secondPermissions = bytes[197];
+  const firstPermissions = bytes[membersStart + 32];
+  const secondPermissions = bytes[membersStart + 65];
   if (
     firstMember.every((byte) => byte === 0) ||
     secondMember.every((byte) => byte === 0) ||
@@ -438,13 +454,7 @@ export async function assertSquadsProjectVaultIdentity(
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (!bytes.slice(40, 72).every((byte) => byte === 0))
     throw new TypeError("project vault must have no config authority");
-  // The rent collector is a Borsh option: one tag byte, then a key only when
-  // set. The account keeps its full allocation, so an unset collector leaves
-  // 32 zero bytes after the last member.
-  const rentCollectorTag = bytes[94];
-  if (rentCollectorTag !== 0 && rentCollectorTag !== 1)
-    throw new TypeError("Squads multisig rent collector is not canonical");
-  const memberCountOffset = 96 + 32 * rentCollectorTag;
+  const memberCountOffset = squadsMemberCountOffset(bytes);
   const threshold = view.getUint16(72, true);
   const memberCount = view.getUint32(memberCountOffset, true);
   const membersEnd = memberCountOffset + 4 + 33 * 3;
@@ -539,10 +549,7 @@ export async function assertSquadsCreatorSeat(
     );
   const bytes = squadsMultisigBytes(accountValue);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const rentCollectorTag = bytes[94];
-  if (rentCollectorTag !== 0 && rentCollectorTag !== 1)
-    throw new TypeError("Squads multisig rent collector is not canonical");
-  const memberCountOffset = 96 + 32 * rentCollectorTag;
+  const memberCountOffset = squadsMemberCountOffset(bytes);
   const threshold = view.getUint16(72, true);
   const memberCount = view.getUint32(memberCountOffset, true);
   if (
