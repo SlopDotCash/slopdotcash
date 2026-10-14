@@ -16,7 +16,6 @@ import type { WalletProof } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
 import type { PriorCycleAccrual } from "./prior-cycle-accrual";
 import {
-  carriedPriorWallets,
   loadPriorCycleAccrual,
   loadUnsafeDestinationHistory,
 } from "./prior-cycle-accrual";
@@ -153,9 +152,11 @@ async function writeImmutableBytes(path: string, bytes: Buffer): Promise<void> {
 
 /**
  * One wallet lookup per scored or carried actor. A scored actor is looked up
- * by its snapshot login. A carried actor (prior accrual, no score) carries the
- * wallet that the reviewed prior manifest froze for it: it may keep only that
- * README proof or gain an actor-bound registry claim, as validation requires.
+ * by its snapshot login, a carried actor (prior accrual, no score in this
+ * project) by its prior-manifest login. Each lookup carries the README proof
+ * that the reviewed prior manifest froze for the actor id, so a scored actor
+ * that was carried or scored before keeps that exact proof after a rename,
+ * and no row gains a new README proof (readme-proof-binding.ts).
  */
 export function walletObservationRequests(
   leaders: readonly { actor: { id: string; login: string } }[],
@@ -163,20 +164,52 @@ export function walletObservationRequests(
 ): {
   actorId: string;
   login: string;
-  carried?: { priorWallet: WalletProof | null };
+  prior: { readmeProof: WalletProof | null };
 }[] {
-  const carried = carriedPriorWallets(
-    priorAccrual,
-    new Set(leaders.map((leader) => leader.actor.id)),
-  );
+  const proofs = priorAccrual.actorReadmeProofs ?? new Map();
+  const scored = new Set(leaders.map((leader) => leader.actor.id));
+  const prior = (actorId: string) => ({
+    readmeProof: proofs.get(actorId) ?? null,
+  });
   return [
-    ...leaders.map(({ actor }) => ({ actorId: actor.id, login: actor.login })),
-    ...[...carried].map(([actorId, priorWallet]) => {
-      const login = priorAccrual.actorLogins.get(actorId);
-      if (!login) throw new TypeError(`carried actor ${actorId} has no login`);
-      return { actorId, login, carried: { priorWallet } };
-    }),
+    ...leaders.map(({ actor }) => ({
+      actorId: actor.id,
+      login: actor.login,
+      prior: prior(actor.id),
+    })),
+    ...[...priorAccrual.accruedMinor.keys()]
+      .filter((actorId) => !scored.has(actorId))
+      .map((actorId) => {
+        const login = priorAccrual.actorLogins.get(actorId);
+        if (!login)
+          throw new TypeError(`carried actor ${actorId} has no login`);
+        return { actorId, login, prior: prior(actorId) };
+      }),
   ];
+}
+
+/**
+ * The default wallet observer of the generator. It always passes the frozen
+ * prior README proof, so no row gains a new README proof.
+ */
+export function cycleWalletObserver(options: {
+  chain: "solana" | "base";
+  token?: string;
+  fetch?: typeof fetch;
+}) {
+  return (
+    actorId: string,
+    login: string,
+    observedAt: string,
+    prior?: { readmeProof: WalletProof | null },
+  ) =>
+    fetchPublishedGithubWallet(actorId, login, observedAt, {
+      // Only a claim on the project's settlement network is payable.
+      chain: options.chain,
+      token: options.token,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      ...(prior ? { prior } : {}),
+    });
 }
 
 export async function prepareRewardCycle(
@@ -195,7 +228,7 @@ export async function prepareRewardCycle(
       actorId: string,
       login: string,
       observedAt: string,
-      carried?: { priorWallet: WalletProof | null },
+      prior?: { readmeProof: WalletProof | null },
     ) => Promise<WalletProof | null>;
     write?: (path: string, value: unknown) => Promise<void>;
     writeSnapshot?: (path: string, bytes: Buffer) => Promise<void>;
@@ -285,26 +318,13 @@ export async function prepareRewardCycle(
     }
     const observe =
       options.observeWallet ??
-      ((
-        actorId: string,
-        login: string,
-        observedAt: string,
-        carried?: { priorWallet: WalletProof | null },
-      ) =>
-        fetchPublishedGithubWallet(actorId, login, observedAt, {
-          // Only a claim on the project's settlement network is payable.
-          chain,
-          token: options.githubToken,
-          ...(carried ? { carried } : {}),
-        }));
+      cycleWalletObserver({ chain, token: options.githubToken });
     const observations = await mapWithConcurrency(
       requests,
       WALLET_LOOKUP_CONCURRENCY,
-      async ({ actorId, login, carried }) => ({
+      async ({ actorId, login, prior }) => ({
         actorId,
-        wallet: carried
-          ? await observe(actorId, login, generatedAt, carried)
-          : await observe(actorId, login, generatedAt),
+        wallet: await observe(actorId, login, generatedAt, prior),
       }),
     );
     for (const observation of observations) {

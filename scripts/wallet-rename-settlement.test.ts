@@ -1,13 +1,12 @@
 // A renamed actor must keep its earnings and its claim, must not stop the
 // cycle, and no other account may receive its award (PRD ACC-01,
 // docs/base-solana-payout-plan.md "Rename account and preserve earnings").
-// A README proof has no actor id. A scored row binds it to the snapshot login
-// of this cycle. A carried row (prior accrual, no score) has only the login of
-// the prior manifest, and that login can now belong to another account. So a
-// carried row may keep only the README proof that the reviewed prior manifest
-// froze for the same actor id, or use an actor-bound registry claim. These
-// tests run the wallet observation through proposal validation and the
-// payment import.
+// A README proof has no actor id, and the login of any row (the snapshot login
+// of a scored row, the prior-manifest login of a carried row) can belong to
+// another account after a rename. So any row may keep only the README proof
+// that the reviewed prior manifest froze for the same actor id (or a pinned
+// legacy proof), or use an actor-bound registry claim. These tests run the
+// wallet observation through proposal validation and the payment import.
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,8 +20,14 @@ import {
 } from "../src/lib/rewards";
 import { fetchPublishedGithubWallet } from "./github-wallets";
 import { walletObservationsSql } from "./prepare-payments-import";
-import { walletObservationRequests } from "./prepare-reward-cycle";
-import { carriedPriorWallets } from "./prior-cycle-accrual";
+import {
+  cycleWalletObserver,
+  walletObservationRequests,
+} from "./prepare-reward-cycle";
+import {
+  LEGACY_README_PROOFS,
+  priorReadmeProofs,
+} from "./readme-proof-binding";
 import { assertAllocationsMatchBaseline } from "./sync-cycle-index";
 
 // A frozen monthly-pool cycle is the base; one carried accrual is added.
@@ -108,8 +113,24 @@ function world(options: {
   return { fetchImpl: fetchImpl as unknown as typeof fetch, requests };
 }
 
-/** Regenerates the frozen cycle with one carried accrual for actor 123456. */
-function propose(wallet: WalletProof | null): RewardAllocationManifest {
+interface ExtraActor {
+  actorId: string;
+  login: string;
+  accruedMinor: string;
+}
+
+/**
+ * Regenerates the frozen cycle with one carried accrual for actor 123456 (and
+ * `extra` carried accruals). `wallets` sets or replaces observed wallets.
+ */
+function propose(
+  wallet: WalletProof | null,
+  options: {
+    extra?: ExtraActor[];
+    wallets?: [string, WalletProof][];
+  } = {},
+): RewardAllocationManifest {
+  const extra = options.extra ?? [];
   const proposal = createRewardCycleProposal({
     ...(FROZEN.fundingBasis
       ? { fundingBasis: FROZEN.fundingBasis }
@@ -121,15 +142,22 @@ function propose(wallet: WalletProof | null): RewardAllocationManifest {
     sourceSnapshotSha256: createHash("sha256")
       .update(SNAPSHOT_BYTES)
       .digest("hex"),
-    priorAccruedMinor: new Map([[NODE, CARRIED_MINOR]]),
+    priorAccruedMinor: new Map([
+      [NODE, CARRIED_MINOR],
+      ...extra.map((actor) => [actor.actorId, actor.accruedMinor] as const),
+    ]),
     // The prior manifest recorded the login the actor had then.
-    priorActorLogins: new Map([[NODE, "alice"]]),
+    priorActorLogins: new Map([
+      [NODE, "alice"],
+      ...extra.map((actor) => [actor.actorId, actor.login] as const),
+    ]),
     // Every other recipient keeps the wallet frozen in the cycle.
     wallets: new Map([
       ...FROZEN.allocations.flatMap((row) =>
         row.wallet ? [[row.actor.id, row.wallet] as const] : [],
       ),
       ...(wallet ? [[NODE, wallet] as const] : []),
+      ...(options.wallets ?? []),
     ]),
   });
   if (proposal.kind !== "reward-allocation")
@@ -137,14 +165,21 @@ function propose(wallet: WalletProof | null): RewardAllocationManifest {
   return proposal;
 }
 
+interface PriorRow {
+  actor: { id: string; login: string };
+  wallet: WalletProof | null;
+}
+
 /**
  * Runs the payment import over a repository that holds `proposal`, its frozen
- * source snapshot, and a prior manifest that records actor 123456 as "alice".
+ * source snapshot, and a prior manifest that records actor 123456 as "alice"
+ * (plus `extraPrior` rows). Returns the SQL and the rows it did not import.
  */
-function importSql(
+function importRun(
   proposal: unknown,
   priorWallet: WalletProof | null = null,
-): string {
+  extraPrior: PriorRow[] = [],
+): { sql: string; skipped: string[] } {
   const root = mkdtempSync(join(tmpdir(), "slop-676-"));
   mkdirSync(join(root, "funding/preparations"), { recursive: true });
   mkdirSync(join(root, "cycles/eliza/2026-08"), { recursive: true });
@@ -155,6 +190,7 @@ function importSql(
     JSON.stringify({
       allocations: [
         { actor: { id: NODE, login: "alice" }, wallet: priorWallet },
+        ...extraPrior,
       ],
     }),
   );
@@ -166,7 +202,34 @@ function importSql(
     join(root, "cycles/eliza/2026-09/proposal.json"),
     JSON.stringify(proposal),
   );
-  return walletObservationsSql(root, "Tue 2026-10-13 3:00 AM EEST (UTC+03:00)");
+  const skipped: string[] = [];
+  const sql = walletObservationsSql(
+    root,
+    "Tue 2026-10-13 3:00 AM EEST (UTC+03:00)",
+    (message) => skipped.push(message),
+  );
+  return { sql, skipped };
+}
+
+const importSql = (
+  proposal: unknown,
+  priorWallet: WalletProof | null = null,
+  extraPrior: PriorRow[] = [],
+) => importRun(proposal, priorWallet, extraPrior).sql;
+
+/** The import does not emit `address` and reports `reason` for the row. */
+function expectNotImported(
+  proposal: unknown,
+  priorWallet: WalletProof | null,
+  address: string,
+  reason: string,
+  extraPrior: PriorRow[] = [],
+) {
+  const { sql, skipped } = importRun(proposal, priorWallet, extraPrior);
+  expect(sql).not.toContain(address);
+  expect(skipped.join("\n")).toContain(reason);
+  // Every other README row of the cycle is still imported (PAY-07).
+  expect(sql).toContain("INSERT INTO wallet_observations");
 }
 
 const carried = (proposal: RewardAllocationManifest) => {
@@ -180,25 +243,32 @@ const observe = (login: string, fetchImpl: typeof fetch) =>
     fetch: fetchImpl,
   });
 
-/** The observation of the carried actor 123456, as the generator runs it. */
+/** The observation of actor 123456 ("alice"), as the generator runs it. */
 const observeCarried = (
   fetchImpl: typeof fetch,
   priorWallet: WalletProof | null,
 ) =>
   fetchPublishedGithubWallet(NODE, "alice", FROZEN.generatedAt, {
     fetch: fetchImpl,
-    carried: { priorWallet },
+    prior: { readmeProof: priorWallet },
   });
 
 /** Validation of `proposal` against the honest regeneration. */
 const validate = (
   proposal: RewardAllocationManifest,
   priorWallet: WalletProof | null = null,
+  extraPrior: PriorRow[] = [],
+  baseline: RewardAllocationManifest = propose(null),
 ) =>
   assertAllocationsMatchBaseline(
     proposal,
-    propose(null),
-    new Map([[NODE, priorWallet]]),
+    baseline,
+    priorReadmeProofs({
+      allocations: [
+        { actor: { id: NODE, login: "alice" }, wallet: priorWallet },
+        ...extraPrior,
+      ],
+    }),
   );
 
 /** The README proof that the reviewed prior manifest froze for "alice". */
@@ -237,8 +307,10 @@ function retarget(
   return tampered;
 }
 
-const ADDS_README = "adds a README wallet to a carried row";
-const IMPORT_NOT_FROZEN = `README wallet of carried actor ${NODE} is not its frozen prior proof`;
+const NEW_README = (actorId: string) =>
+  `README wallet of ${actorId} is new; only an actor-bound claim or a frozen prior proof is accepted`;
+const NOT_FROZEN = (actorId: string) =>
+  `README wallet of ${actorId} is not the proof that the prior manifest froze for it`;
 
 describe("a reused frozen login never redirects a carried award", () => {
   // Review of #676 at 3618c36: actor 123456 renamed from "alice"; account
@@ -253,30 +325,42 @@ describe("a reused frozen login never redirects a carried award", () => {
     row.wallet = readmeProof("alice", NEW_ACCOUNT_WALLET);
     row.state = "proposed";
     expect(row.actor).toEqual({ id: NODE, login: "alice" });
-    expect(() => validate(tampered, null)).toThrow(ADDS_README);
-    expect(() => importSql(tampered, null)).toThrow(IMPORT_NOT_FROZEN);
+    expect(() => validate(tampered, null)).toThrow(NEW_README(NODE));
+    expectNotImported(tampered, null, NEW_ACCOUNT_WALLET, NEW_README(NODE));
   });
 
   test("a carried row with a frozen proof cannot swap the address", () => {
     const tampered = propose(FROZEN_PROOF);
     carried(tampered).wallet = { ...FROZEN_PROOF, address: ATTACKER_WALLET };
-    expect(() => validate(tampered, FROZEN_PROOF)).toThrow(ADDS_README);
-    expect(() => importSql(tampered, FROZEN_PROOF)).toThrow(IMPORT_NOT_FROZEN);
+    expect(() => validate(tampered, FROZEN_PROOF)).toThrow(NOT_FROZEN(NODE));
+    expectNotImported(
+      tampered,
+      FROZEN_PROOF,
+      ATTACKER_WALLET,
+      NOT_FROZEN(NODE),
+    );
   });
 
   test("a carried row with a frozen proof cannot swap in a new README commit", () => {
     const tampered = propose(FROZEN_PROOF);
     carried(tampered).wallet = readmeProof("alice", NEW_ACCOUNT_WALLET);
-    expect(() => validate(tampered, FROZEN_PROOF)).toThrow(ADDS_README);
-    expect(() => importSql(tampered, FROZEN_PROOF)).toThrow(IMPORT_NOT_FROZEN);
+    expect(() => validate(tampered, FROZEN_PROOF)).toThrow(NOT_FROZEN(NODE));
+    expectNotImported(
+      tampered,
+      FROZEN_PROOF,
+      NEW_ACCOUNT_WALLET,
+      NOT_FROZEN(NODE),
+    );
   });
 
   test("an honest newly published README on a carried row is also refused", () => {
     // Offline, this is the same bytes as the reviewer's case with the actor's
     // own address: nothing binds the README owner to the actor id.
     const tampered = propose(readmeProof("alice", ACTOR_WALLET));
-    expect(() => validate(tampered, null)).toThrow(ADDS_README);
-    expect(() => importSql(tampered, null)).toThrow(IMPORT_NOT_FROZEN);
+    expect(() => validate(tampered, null)).toThrow(NEW_README(NODE));
+    const { sql, skipped } = importRun(tampered, null);
+    expect(sql).not.toContain(`'${NODE}'`);
+    expect(skipped.join("\n")).toContain(NEW_README(NODE));
   });
 
   test("proposed without any wallet is refused", () => {
@@ -308,9 +392,10 @@ describe("a reused frozen login never redirects a carried award", () => {
     expect(importSql(proposal, FROZEN_PROOF)).not.toContain("'123456'");
   });
 
-  test("the carried set is the prior accrual minus scored actors", () => {
+  test("every lookup, scored or carried, carries the frozen prior README proof", () => {
     const leader = FROZEN.allocations.find((row) => row.score > 0);
     if (!leader) throw new Error("no scored row");
+    const leaderProof = readmeProof(leader.actor.login, ACTOR_WALLET);
     const prior = {
       actorLogins: new Map([
         [NODE, "alice"],
@@ -320,18 +405,20 @@ describe("a reused frozen login never redirects a carried award", () => {
         [NODE, CARRIED_MINOR],
         [leader.actor.id, "1"],
       ]),
-      actorWallets: new Map([[NODE, FROZEN_PROOF]]),
+      actorReadmeProofs: new Map([
+        [NODE, FROZEN_PROOF],
+        [leader.actor.id, leaderProof],
+      ]),
     };
-    const map = carriedPriorWallets(prior, new Set([leader.actor.id]));
-    expect([...map]).toEqual([[NODE, FROZEN_PROOF]]);
     expect(walletObservationRequests([{ actor: leader.actor }], prior)).toEqual(
       [
-        { actorId: leader.actor.id, login: leader.actor.login },
         {
-          actorId: NODE,
-          login: "alice",
-          carried: { priorWallet: FROZEN_PROOF },
+          actorId: leader.actor.id,
+          login: leader.actor.login,
+          // Review at 4242238 (P2): a scored actor lost its frozen proof here.
+          prior: { readmeProof: leaderProof },
         },
+        { actorId: NODE, login: "alice", prior: { readmeProof: FROZEN_PROOF } },
       ],
     );
   });
@@ -437,7 +524,7 @@ describe("carried actor with an unchanged login", () => {
 });
 
 describe("scored rows and changed logins", () => {
-  test("a scored row keeps the README fallback under its snapshot login", async () => {
+  test("without the generator's prior option (funding preparations), the live README is read", async () => {
     const { fetchImpl } = world({ current: "alice", registry: false });
     expect(await observe("alice", fetchImpl)).toMatchObject({
       address: ACTOR_WALLET,
@@ -454,7 +541,10 @@ describe("scored rows and changed logins", () => {
       expect(() => validate(tampered, null)).toThrow(
         "differs from its frozen snapshot",
       );
-      expect(() => importSql(tampered)).toThrow(
+      expectNotImported(
+        tampered,
+        null,
+        ATTACKER_WALLET,
         `README wallet login ${login} is not the frozen login of ${NODE}`,
       );
     });
@@ -473,7 +563,10 @@ describe("scored rows and changed logins", () => {
     expect(() => validate(tampered, null)).toThrow(
       "differs from its frozen snapshot",
     );
-    expect(() => importSql(tampered)).toThrow(
+    expectNotImported(
+      tampered,
+      null,
+      ATTACKER_WALLET,
       `README wallet login mallory is not the frozen login of ${leader.actor.id}`,
     );
   });
@@ -525,5 +618,234 @@ describe("scored rows and changed logins", () => {
         "GitHub wallet actor identity changed",
       );
     }
+  });
+});
+
+// Review of #676 at 4242238 (powermsn 5511384508).
+const unclaimedLeader = () => {
+  const row = propose(null).allocations.find(
+    (allocation) => allocation.score > 0 && allocation.state === "unclaimed",
+  );
+  if (!row) throw new Error("no unclaimed scored row");
+  return row;
+};
+
+describe("scored rows: the same README binding as carried rows", () => {
+  // High: the actor renamed after the snapshot and another account took the
+  // snapshot login. The edit keeps the frozen actor id and snapshot login and
+  // adds the new owner's README under that login.
+  test("the reviewer's case: same-login README added to an unclaimed scored row", () => {
+    const victim = unclaimedLeader();
+    const tampered = propose(null);
+    const row = tampered.allocations.find(
+      (allocation) => allocation.intentId === victim.intentId,
+    );
+    if (!row) throw new Error("row is missing");
+    row.wallet = readmeProof(victim.actor.login, NEW_ACCOUNT_WALLET);
+    row.state = "proposed";
+    expect(row.actor).toEqual(victim.actor);
+    expect(() => assertRewardAllocationManifest(tampered)).not.toThrow();
+    expect(() => validate(tampered)).toThrow(NEW_README(victim.actor.id));
+    expectNotImported(
+      tampered,
+      null,
+      NEW_ACCOUNT_WALLET,
+      NEW_README(victim.actor.id),
+    );
+  });
+
+  test("a scored row keeps the exact frozen prior proof", () => {
+    const leader = unclaimedLeader();
+    const proof = readmeProof(leader.actor.login, ACTOR_WALLET);
+    const priorRows = [{ actor: leader.actor, wallet: proof }];
+    const proposal = propose(null, { wallets: [[leader.actor.id, proof]] });
+    expect(() => validate(proposal, null, priorRows)).not.toThrow();
+    expect(importSql(proposal, null, priorRows)).toContain(ACTOR_WALLET);
+  });
+
+  test("a scored row with a frozen prior proof cannot swap in another README", () => {
+    const leader = unclaimedLeader();
+    const proof = readmeProof(leader.actor.login, ACTOR_WALLET);
+    const priorRows = [{ actor: leader.actor, wallet: proof }];
+    const proposal = propose(null, {
+      wallets: [[leader.actor.id, { ...proof, address: NEW_ACCOUNT_WALLET }]],
+    });
+    expect(() => validate(proposal, null, priorRows)).toThrow(
+      NOT_FROZEN(leader.actor.id),
+    );
+    expectNotImported(
+      proposal,
+      null,
+      NEW_ACCOUNT_WALLET,
+      NOT_FROZEN(leader.actor.id),
+      priorRows,
+    );
+  });
+
+  test("the generator reads no new README for a scored actor, even with an unchanged login", async () => {
+    const { fetchImpl, requests } = world({
+      current: "alice",
+      registry: false,
+    });
+    // The default observer of prepareRewardCycle, with the lookup that
+    // walletObservationRequests builds for a scored actor with no prior proof.
+    const observeDefault = cycleWalletObserver({
+      chain: "solana",
+      fetch: fetchImpl,
+    });
+    expect(
+      await observeDefault(NODE, "alice", FROZEN.generatedAt, {
+        readmeProof: null,
+      }),
+    ).toBeNull();
+    expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
+  });
+
+  test("a pinned legacy proof is bound to its actor id, not to its login", () => {
+    // A carried actor whose stale recorded login equals the login of a pinned
+    // proof cannot take that pinned proof.
+    const [pin] = LEGACY_README_PROOFS.filter(
+      (entry) => entry.projectId === "eliza" && entry.cycleId === "2026-09",
+    );
+    const login = /github\.com\/([^/]+)\//u.exec(pin.wallet.sourceUrl)?.[1];
+    if (!login) throw new Error("pin has no login");
+    const OTHER = "U_kgDOAAAAAQ";
+    const extra = [{ actorId: OTHER, login, accruedMinor: CARRIED_MINOR }];
+    const proposal = propose(null, { extra, wallets: [[OTHER, pin.wallet]] });
+    expect(() =>
+      validate(proposal, null, [], propose(null, { extra })),
+    ).toThrow(NEW_README(OTHER));
+  });
+
+  test("legacy proofs are pinned: each existing one passes, a moved or edited one does not", () => {
+    expect(LEGACY_README_PROOFS).toHaveLength(7);
+    // Every README row merged before this rule is pinned, and validation of
+    // the merged cycle accepts it (cycles:check runs the real cycles).
+    const pinned = LEGACY_README_PROOFS.filter(
+      (pin) => pin.projectId === "eliza" && pin.cycleId === "2026-09",
+    );
+    expect(pinned).toHaveLength(4);
+    expect(() => validate(propose(null))).not.toThrow();
+    const [pin] = pinned;
+    // The same proof on another actor of the cycle.
+    const leader = unclaimedLeader();
+    const moved = propose(null, {
+      wallets: [
+        [
+          leader.actor.id,
+          {
+            ...pin.wallet,
+            sourceUrl: pin.wallet.sourceUrl.replaceAll(
+              /github\.com\/[^/]+\/[^/]+\//gu,
+              `github.com/${leader.actor.login}/${leader.actor.login}/`,
+            ),
+          },
+        ],
+      ],
+    });
+    expect(() => validate(moved)).toThrow(NEW_README(leader.actor.id));
+    // The pinned row with another address.
+    const edited = propose(null, {
+      wallets: [[pin.actorId, { ...pin.wallet, address: ATTACKER_WALLET }]],
+    });
+    expect(() => validate(edited)).toThrow(NEW_README(pin.actorId));
+  });
+});
+
+describe("a renamed actor who scores again keeps the frozen README proof (P2)", () => {
+  test("the frozen proof is kept and the new owner of the old login is not read", async () => {
+    // Actor 123456 was "alice" in the prior manifest and in this snapshot;
+    // it renamed after the snapshot, and account 999999 took "alice".
+    const { fetchImpl, requests } = world({
+      current: "alice-new",
+      registry: false,
+    });
+    expect(await observeCarried(fetchImpl, FROZEN_PROOF)).toEqual(FROZEN_PROOF);
+    expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
+  });
+
+  test("a scored-again row with the kept proof passes validation and import", () => {
+    const leader = unclaimedLeader();
+    const proof = readmeProof(leader.actor.login, ACTOR_WALLET);
+    const priorRows = [{ actor: leader.actor, wallet: proof }];
+    const proposal = propose(null, { wallets: [[leader.actor.id, proof]] });
+    const row = proposal.allocations.find(
+      (allocation) => allocation.actor.id === leader.actor.id,
+    );
+    expect(row?.wallet).toEqual(proof);
+    expect(row?.state).not.toBe("unclaimed");
+    expect(() => validate(proposal, null, priorRows)).not.toThrow();
+    const { sql, skipped } = importRun(proposal, null, priorRows);
+    expect(skipped).toEqual([]);
+    expect(sql).toContain(ACTOR_WALLET);
+  });
+
+  test("a frozen proof under a login other than the snapshot login is not reused", async () => {
+    // Renamed before the snapshot: the row login is the new login, so the
+    // old-login proof cannot be bound to the row; the row stays unclaimed.
+    const { fetchImpl, requests } = world({
+      current: "alice-new",
+      registry: false,
+    });
+    const wallet = await fetchPublishedGithubWallet(
+      NODE,
+      "alice-new",
+      FROZEN.generatedAt,
+      { fetch: fetchImpl, prior: { readmeProof: FROZEN_PROOF } },
+    );
+    expect(wallet).toBeNull();
+    expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
+  });
+});
+
+describe("cross-project: a leader of another project only is carried here (P1)", () => {
+  // U_kgDOEtGEfg is a leader of asi in this snapshot, not of eliza. In eliza
+  // it is carried with its prior-manifest login, which differs from the
+  // global snapshot login after a rename.
+  const OTHER = "U_kgDOEtGEfg";
+  const OLD_LOGIN = "tokenmaxxor-old";
+  const proof = readmeProof(OLD_LOGIN, ACTOR_WALLET);
+  const extra = [
+    { actorId: OTHER, login: OLD_LOGIN, accruedMinor: CARRIED_MINOR },
+  ];
+  const priorRows = [{ actor: { id: OTHER, login: OLD_LOGIN }, wallet: proof }];
+
+  test("the global leader list does not change the carried login", () => {
+    const snapshot = JSON.parse(SNAPSHOT_BYTES.toString("utf8"));
+    expect(
+      snapshot.leaders.some(
+        (leader: { actor: { id: string } }) => leader.actor.id === OTHER,
+      ),
+    ).toBe(true);
+    const proposal = propose(null, { extra, wallets: [[OTHER, proof]] });
+    const row = proposal.allocations.find(
+      (allocation) => allocation.actor.id === OTHER,
+    );
+    expect(row).toMatchObject({
+      actor: { id: OTHER, login: OLD_LOGIN },
+      state: "proposed",
+      wallet: proof,
+    });
+    expect(() =>
+      validate(proposal, null, priorRows, propose(null, { extra })),
+    ).not.toThrow();
+    const { sql, skipped } = importRun(proposal, null, priorRows);
+    expect(skipped).toEqual([]);
+    expect(sql).toContain(`'${OTHER}','${OLD_LOGIN}'`);
+  });
+
+  test("one bad row is skipped; every other row is still imported (PAY-07)", () => {
+    const proposal = propose(null, {
+      extra,
+      wallets: [[OTHER, { ...proof, address: ATTACKER_WALLET }]],
+    });
+    const { sql, skipped } = importRun(proposal, null, priorRows);
+    expect(sql).not.toContain(ATTACKER_WALLET);
+    expect(skipped).toHaveLength(1);
+    // The pinned legacy rows of the cycle are imported.
+    for (const pin of LEGACY_README_PROOFS.filter(
+      (entry) => entry.projectId === "eliza" && entry.cycleId === "2026-09",
+    ))
+      expect(sql).toContain(pin.wallet.address);
   });
 });

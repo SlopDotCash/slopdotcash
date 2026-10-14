@@ -41,9 +41,9 @@ import {
   assertExternalContributionShareManifest,
   assertRewardAllocationManifest,
   assertRewardSettlementManifest,
+  type ProfileReadmeWalletProof,
   type RewardAllocationManifest,
   type RewardSettlementManifest,
-  type WalletProof,
 } from "../src/lib/rewards";
 import {
   assertNetworkSettlementExecutionPlan,
@@ -56,10 +56,11 @@ import {
 import { assertEscrowDecisions } from "./escrow-review";
 import { loadProjectCommitmentRecords } from "./funding-commitment-records";
 import { validateEscrowCycle } from "./prepare-escrow-cycle";
+import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
 import {
-  carriedPriorWallets,
-  loadPriorCycleAccrual,
-} from "./prior-cycle-accrual";
+  isReadmeProof,
+  unboundReadmeProofReason,
+} from "./readme-proof-binding";
 import {
   DEFAULT_SOLANA_RPC_URL,
   fetchFinalizedSolanaTransaction,
@@ -169,13 +170,14 @@ type Allocation = RewardAllocationManifest["allocations"][number];
  * The login must be the exact login of the regenerated row: the snapshot
  * login for a scored row, the prior-manifest login for a carried row. A README
  * proof has no actor id and is bound to that login, so a login that this check
- * cannot bind to the immutable actor id is never accepted. After a rename
- * without a registry claim, the carried row stays unclaimed (ACC-01).
+ * cannot bind to the immutable actor id is never accepted. A README proof is
+ * accepted only when a reviewed record binds it to the actor id
+ * (readme-proof-binding.ts). Else the row stays unclaimed (ACC-01).
  */
 export function assertAllocationsMatchBaseline(
   proposal: RewardAllocationManifest,
   baseline: { allocations: readonly Allocation[] },
-  carriedPriorWallets: ReadonlyMap<string, WalletProof | null>,
+  priorReadmeProofs: ReadonlyMap<string, ProfileReadmeWalletProof>,
 ): void {
   const byIntent = new Map(
     baseline.allocations.map((allocation) => [allocation.intentId, allocation]),
@@ -206,27 +208,24 @@ export function assertAllocationsMatchBaseline(
         `Reward proposal intent ${allocation.intentId} differs from its frozen snapshot`,
       );
     }
-    // A carried row has no score in this cycle. Its login comes from the prior
-    // manifest and can now belong to another account, so a README proof that
-    // matches the login is not bound to the actor id. The row may keep only
-    // the README proof that the reviewed prior manifest froze for the same
-    // actor id. Registry and issue proofs carry the actor id and are checked
-    // by assertRewardAllocationManifest. Otherwise the row stays unclaimed.
-    if (
-      carriedPriorWallets.has(allocation.actor.id) &&
-      allocation.wallet &&
-      "sourceCommit" in allocation.wallet
-    ) {
-      const prior = carriedPriorWallets.get(allocation.actor.id) ?? null;
-      if (
-        !prior ||
-        !("sourceCommit" in prior) ||
-        canonical(allocation.wallet) !== canonical(prior)
-      ) {
+    // A README proof names a login, not an actor id, and the login of a row
+    // can now belong to another account (rename, then reuse), for scored and
+    // carried rows alike. So a row may hold a README proof only if a reviewed
+    // record outside this proposal binds it to the actor id: the exact proof
+    // of the prior manifest, or a pinned legacy proof. Registry and issue
+    // proofs carry the actor id (assertRewardAllocationManifest).
+    if (isReadmeProof(allocation.wallet)) {
+      const reason = unboundReadmeProofReason({
+        projectId: proposal.projectId,
+        cycleId: proposal.cycleId,
+        actorId: allocation.actor.id,
+        wallet: allocation.wallet,
+        priorProof: priorReadmeProofs.get(allocation.actor.id),
+      });
+      if (reason)
         throw new TypeError(
-          `Reward proposal intent ${allocation.intentId} adds a README wallet to a carried row; only an actor-bound claim or the frozen prior proof is accepted`,
+          `Reward proposal intent ${allocation.intentId}: ${reason}`,
         );
-      }
     }
   }
 }
@@ -266,16 +265,7 @@ export async function verifyProposalAgainstSnapshot(
   assertAllocationsMatchBaseline(
     proposal,
     baseline,
-    carriedPriorWallets(
-      priorAccrual,
-      new Set(
-        createProjectView(
-          snapshot,
-          proposal.projectId,
-          proposal.cycleId,
-        ).leaders.map((leader) => leader.actor.id),
-      ),
-    ),
+    priorAccrual.actorReadmeProofs ?? new Map(),
   );
   if (
     proposal.sourceSnapshotSha256 !== snapshotDigest ||

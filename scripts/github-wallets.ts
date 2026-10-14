@@ -305,11 +305,13 @@ export async function fetchPublishedGithubWallet(
     fetch?: FetchLike;
     token?: string;
     /**
-     * Set for a carried actor (no score in this cycle, only a prior accrual).
-     * `priorWallet` is the wallet that the reviewed prior manifest froze for
-     * the actor, or null. A carried row may not gain a new README proof.
+     * Set by the reward cycle generator for every actor, scored or carried.
+     * `readmeProof` is the README proof that the reviewed prior manifest froze
+     * for the actor id, or null. A cycle row may not gain a new README proof
+     * (readme-proof-binding.ts). Unset: the live README is read (legacy
+     * funding preparations only).
      */
-    carried?: { priorWallet: WalletProof | null };
+    prior?: { readmeProof: WalletProof | null };
   } = {},
 ): Promise<WalletProof | null> {
   const chain = options.chain ?? "solana";
@@ -354,9 +356,9 @@ export async function fetchPublishedGithubWallet(
     fetchImpl,
   );
   if (registryWallet) return registryWallet;
-  if (options.carried) {
-    return carriedReadmeWallet(
-      options.carried.priorWallet,
+  if (options.prior) {
+    return boundReadmeWallet(
+      options.prior.readmeProof,
       recordedLogin,
       login,
       chain,
@@ -388,17 +390,20 @@ export async function fetchPublishedGithubWallet(
 }
 
 /**
- * The README wallet of a carried actor. The verifier binds a README proof on a
- * carried row only to the proof that the reviewed prior manifest froze for the
- * same actor id, because the frozen login can now belong to another account.
- * So no new README proof is returned:
- * - no frozen README proof: null (the row stays unclaimed; registry claim).
+ * The README wallet of a cycle row (scored or carried). The verifier accepts a
+ * README proof only if it is byte-equal to the proof that the reviewed prior
+ * manifest froze for the same actor id, because the recorded login can now
+ * belong to another account and offline nothing else binds a README to the
+ * actor id. So no new README proof is returned:
+ * - no frozen README proof, or one under another login: null (the row stays
+ *   unclaimed; the actor can use the actor-bound registry).
  * - unchanged login: the README is read again; the frozen proof is kept only
  *   if the README still publishes the same address, else null.
- * - renamed actor: the frozen proof is kept (ACC-01: a rename keeps claims).
- *   The README of whoever now holds the old login is never read.
+ * - renamed after the recorded login: the frozen proof is kept (ACC-01: a
+ *   rename keeps claims). The README of whoever now holds the old login is
+ *   never read.
  */
-export async function carriedReadmeWallet(
+export async function boundReadmeWallet(
   priorWallet: WalletProof | null,
   recordedLogin: string,
   currentLogin: string,

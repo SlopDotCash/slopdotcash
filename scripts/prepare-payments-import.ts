@@ -12,12 +12,17 @@ import { join } from "node:path";
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
 import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { createProjectView } from "../src/lib/project-view";
+import type { ProfileReadmeWalletProof } from "../src/lib/rewards";
 import { isWalletAddress } from "../src/lib/wallets";
 import {
   checkDirectPaymentDisclosures,
   type Disclosure,
 } from "./check-direct-payment-disclosures";
 import { previousCycleId } from "./prior-cycle-accrual";
+import {
+  priorReadmeProofs,
+  unboundReadmeProofReason,
+} from "./readme-proof-binding";
 
 const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
@@ -90,42 +95,29 @@ interface FrozenWallet {
   sourceUrl: string;
 }
 
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (typeof value === "object" && value !== null) {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
 interface FrozenCycleBindings {
   /** The login that the frozen inputs record for each actor id. */
   logins: Map<string, string>;
-  /** Actor ids scored in this cycle (project leaders of the snapshot). */
-  scored: Set<string>;
-  /** The wallet that the prior cycle manifest froze for each actor id. */
-  priorWallets: Map<string, unknown>;
+  /** The README proof that the prior cycle manifest froze for each actor id. */
+  priorProofs: Map<string, ProfileReadmeWalletProof>;
 }
 
 /**
- * Returns what the frozen inputs of a cycle bind to each actor id: the
- * snapshot login for a scored actor, else the login in the prior cycle
- * manifest (allocation.json, else proposal.json) for a carried actor, and the
- * wallet of the prior manifest. Proposal validation regenerates rows from the
- * same inputs. A README proof has no actor id, so the import binds it only to
- * these values, never to a login or proof that the proposal itself states
- * (ACC-01).
+ * Returns what the frozen inputs of a cycle bind to each actor id: the login
+ * of a project leader in this cycle's project view (a scored actor), else the
+ * login in the prior cycle manifest (allocation.json, else proposal.json; a
+ * carried actor), and the README proof of the prior manifest. Proposal
+ * validation regenerates rows from the same inputs and the same project view,
+ * so an actor that is a leader only in another project keeps its prior login.
+ * A README proof has no actor id, so the import binds it only to these
+ * values, never to a login or proof that the proposal itself states (ACC-01).
  */
 function frozenCycleBindings(root: string, path: string): FrozenCycleBindings {
   const match = /^cycles\/([^/]+)\/(\d{4}-\d{2})\/proposal\.json$/u.exec(path);
   if (!match) throw new Error(`${path}: not a cycle proposal path`);
   const [, projectId, cycleId] = match;
   const logins = new Map<string, string>();
-  const priorWallets = new Map<string, unknown>();
-  const scored = new Set<string>();
+  let priorProofs = new Map<string, ProfileReadmeWalletProof>();
   const priorDirectory = join(
     root,
     "cycles",
@@ -142,10 +134,9 @@ function frozenCycleBindings(root: string, path: string): FrozenCycleBindings {
         wallet?: unknown;
       }[];
     };
-    for (const { actor, wallet } of prior.allocations ?? []) {
+    for (const { actor } of prior.allocations ?? [])
       logins.set(actor.id, actor.login);
-      priorWallets.set(actor.id, wallet ?? null);
-    }
+    priorProofs = priorReadmeProofs(prior);
   }
   const snapshotPath = join(
     root,
@@ -156,25 +147,21 @@ function frozenCycleBindings(root: string, path: string): FrozenCycleBindings {
   );
   if (existsSync(snapshotPath)) {
     const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
-    // A scored actor takes the snapshot login, as in proposal validation.
-    for (const { actor } of (
-      snapshot as {
-        leaders?: { actor: { id: string; login: string } }[];
-      }
-    ).leaders ?? [])
-      logins.set(actor.id, actor.login);
     assertLeaderboardSnapshot(snapshot);
-    for (const leader of createProjectView(snapshot, projectId, cycleId)
+    // A scored actor takes the login of the project view, as in proposal
+    // validation. A leader of another project only is not scored here.
+    for (const { actor } of createProjectView(snapshot, projectId, cycleId)
       .leaders)
-      scored.add(leader.actor.id);
+      logins.set(actor.id, actor.login);
   }
-  return { logins, scored, priorWallets };
+  return { logins, priorProofs };
 }
 
 /** Legacy README observations; registry-sourced wallets are already in D1. */
 export function walletObservationsSql(
   root: string,
   importedAt: string,
+  report: (message: string) => void = (message) => console.warn(message),
 ): string {
   const files = [
     ...readdirSync(join(root, "funding/preparations"))
@@ -214,21 +201,24 @@ export function walletObservationsSql(
       if (!wallet?.sourceCommit) continue;
       if (path.startsWith("cycles/")) {
         frozen ??= frozenCycleBindings(root, path);
-        if (frozen.logins.get(actor.id) !== actor.login)
-          throw new Error(
-            `${path}: README wallet login ${actor.login} is not the frozen login of ${actor.id}`,
-          );
-        // A carried row (no score in this cycle) may keep only the README
-        // proof that the prior manifest froze for the same actor id: its
-        // login can now belong to another account.
-        if (
-          !frozen.scored.has(actor.id) &&
-          canonical(frozen.priorWallets.get(actor.id) ?? null) !==
-            canonical(wallet)
-        )
-          throw new Error(
-            `${path}: README wallet of carried actor ${actor.id} is not its frozen prior proof`,
-          );
+        const [, projectId, cycleId] = path.split("/");
+        // An unbound README proof is not imported. It is skipped and reported,
+        // so one bad row does not stop the import of all others (PAY-07).
+        // Proposal validation rejects the same row.
+        const reason =
+          frozen.logins.get(actor.id) !== actor.login
+            ? `README wallet login ${actor.login} is not the frozen login of ${actor.id}`
+            : unboundReadmeProofReason({
+                projectId,
+                cycleId,
+                actorId: actor.id,
+                wallet: wallet as ProfileReadmeWalletProof,
+                priorProof: frozen.priorProofs.get(actor.id),
+              });
+        if (reason) {
+          report(`${path}: ${reason}; not imported`);
+          continue;
+        }
       }
       const readme = new RegExp(
         `^https://github\\.com/([^/]+)/\\1/blob/${wallet.sourceCommit}/README\\.md$`,
