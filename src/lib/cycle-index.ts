@@ -261,7 +261,7 @@ function contributorWallet(
   value: unknown,
   field: string,
   actorId: string,
-  login: string,
+  _login: string,
 ): CycleWalletProof | null {
   if (value === null) return null;
   const wallet = record(value, field);
@@ -296,10 +296,17 @@ function contributorWallet(
       `${field}.sourceCommit`,
       /^[0-9a-f]{40}$/u,
     );
-    const expectedPath = `/${login}/${login}/blob/${sourceCommit}/README.md`;
+    // The owner is the row login or, after a rename, the login of the frozen
+    // prior proof that cycle validation bound to the actor id (ACC-01).
+    const readmeOwner =
+      /^\/([A-Za-z0-9-]{1,39})\/\1\/blob\/[0-9a-f]{40}\/README\.md$/iu.exec(
+        parsed.pathname,
+      )?.[1];
     if (
       commonUrlInvalid ||
-      parsed.pathname.toLowerCase() !== expectedPath.toLowerCase()
+      !readmeOwner ||
+      parsed.pathname.toLowerCase() !==
+        `/${readmeOwner}/${readmeOwner}/blob/${sourceCommit}/README.md`.toLowerCase()
     ) {
       throw new TypeError(`${field}.sourceUrl is not immutable profile proof`);
     }

@@ -394,18 +394,21 @@ export async function fetchPublishedGithubWallet(
  * README proof only if it is byte-equal to the proof that the reviewed prior
  * manifest froze for the same actor id, because the recorded login can now
  * belong to another account and offline nothing else binds a README to the
- * actor id. So no new README proof is returned:
- * - no frozen README proof, or one under another login: null (the row stays
- *   unclaimed; the actor can use the actor-bound registry).
- * - unchanged login: the README is read again; the frozen proof is kept only
- *   if the README still publishes the same address, else null.
- * - renamed after the recorded login: the frozen proof is kept (ACC-01: a
- *   rename keeps claims). The README of whoever now holds the old login is
- *   never read.
+ * actor id. The frozen proof is bound to the immutable actor id by that
+ * manifest, so its login is only a display alias (ACC-01). So no new README
+ * proof is returned:
+ * - no frozen README proof: null (the row stays unclaimed; the actor can use
+ *   the actor-bound registry).
+ * - the frozen proof names the current login of the actor id: the README is
+ *   read again; the frozen proof is kept only if the README still publishes
+ *   the same address, else null.
+ * - the frozen proof names another login (the actor renamed, before or after
+ *   the snapshot): the frozen proof is kept (ACC-01: a rename keeps claims).
+ *   The README of whoever now holds the old login is never read.
  */
 export async function boundReadmeWallet(
   priorWallet: WalletProof | null,
-  recordedLogin: string,
+  _recordedLogin: string,
   currentLogin: string,
   chain: WalletChain,
   readCurrent: (login: string) => Promise<WalletProof | null>,
@@ -419,8 +422,10 @@ export async function boundReadmeWallet(
   const proofLogin = /^https:\/\/github\.com\/([^/]+)\/\1\/blob\//iu.exec(
     priorWallet.sourceUrl,
   )?.[1];
-  if (proofLogin?.toLowerCase() !== recordedLogin.toLowerCase()) return null;
-  if (currentLogin.toLowerCase() !== recordedLogin.toLowerCase())
+  if (!proofLogin) return null;
+  // currentLogin is read through the immutable numeric id, so only a README
+  // under that login is the actor's own README now.
+  if (proofLogin.toLowerCase() !== currentLogin.toLowerCase())
     return priorWallet;
   const current = await readCurrent(currentLogin);
   return current &&

@@ -227,7 +227,12 @@ export function walletObservationsSql(
       const githubUserId = githubUserIdFromNodeId(actor.id);
       if (
         !readme ||
-        readme[1].toLowerCase() !== actor.login.toLowerCase() ||
+        // A cycle row passed the binding above: its README proof is the exact
+        // proof that the reviewed prior manifest (or a pin) bound to this
+        // actor id, so after a rename its login may differ from actor.login
+        // (ACC-01). A preparation row has no such binding.
+        (!path.startsWith("cycles/") &&
+          readme[1].toLowerCase() !== actor.login.toLowerCase()) ||
         !/^[0-9a-f]{40}$/u.test(wallet.sourceCommit) ||
         !githubUserId ||
         !isWalletAddress(wallet.chain, wallet.address) ||

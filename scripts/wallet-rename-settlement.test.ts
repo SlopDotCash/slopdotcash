@@ -583,11 +583,13 @@ describe("scored rows and changed logins", () => {
     );
   });
 
-  test("a README proof is still bound to the recorded login", () => {
-    // A current-login README on a row that keeps the stale login.
-    expect(() => propose(readmeProof("alice-new", ACTOR_WALLET))).toThrow(
-      "must be the actor's immutable GitHub profile README",
-    );
+  test("a README proof under another login is bound only by a frozen prior proof", () => {
+    // A current-login README on a row that keeps the stale login. The manifest
+    // treats the login as an alias, so cycle validation and the import bind
+    // the proof to the actor id: no frozen proof, so it is rejected.
+    const tampered = propose(readmeProof("alice-new", ACTOR_WALLET));
+    expect(() => validate(tampered, null)).toThrow(NEW_README(NODE));
+    expectNotImported(tampered, null, ACTOR_WALLET, NEW_README(NODE));
   });
 
   test("a registry claim for a different actor id is rejected", async () => {
@@ -792,9 +794,11 @@ describe("a renamed actor who scores again keeps the frozen README proof (P2)", 
     expect(sql).toContain(ACTOR_WALLET);
   });
 
-  test("a frozen proof under a login other than the snapshot login is not reused", async () => {
-    // Renamed before the snapshot: the row login is the new login, so the
-    // old-login proof cannot be bound to the row; the row stays unclaimed.
+  test("renamed before the snapshot: the frozen proof is kept and no README is read", async () => {
+    // Review of #676 at 6df7bbf (P2): actor 123456 was "alice" in the prior
+    // manifest and renamed to "alice-new" before this snapshot, so the row
+    // login is "alice-new". The frozen proof is bound to the actor id by the
+    // prior manifest; its login is a display alias.
     const { fetchImpl, requests } = world({
       current: "alice-new",
       registry: false,
@@ -805,7 +809,8 @@ describe("a renamed actor who scores again keeps the frozen README proof (P2)", 
       FROZEN.generatedAt,
       { fetch: fetchImpl, prior: { readmeProof: FROZEN_PROOF } },
     );
-    expect(wallet).toBeNull();
+    expect(wallet).toEqual(FROZEN_PROOF);
+    // Neither the old login (now account 999999) nor the new login is read.
     expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
   });
 });
