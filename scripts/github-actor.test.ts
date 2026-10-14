@@ -16,6 +16,18 @@ describe("githubUserIdFromNodeId canonical spellings", () => {
     expect(githubUserIdFromNodeId("MDQ6VXNlcjE0NTg0NS==")).toBeNull();
   });
 
+  it("rejects current spellings that re-encode the ID at another MessagePack width", () => {
+    // Canonical uint32 spelling of GitHub ID 254897651.
+    expect(githubUserIdFromNodeId("U_kgDODzFt8w")).toBe("254897651");
+    // The same ID re-encoded as a uint64 (review on PR #726).
+    expect(githubUserIdFromNodeId("U_kgDPAAAAAA8xbfM")).toBeNull();
+    // ID 1 at every non-canonical width: fixint, uint8, uint16, uint64.
+    expect(githubUserIdFromNodeId("U_kgAB")).toBeNull();
+    expect(githubUserIdFromNodeId("U_kgDMAQ")).toBeNull();
+    expect(githubUserIdFromNodeId("U_kgDNAAE")).toBeNull();
+    expect(githubUserIdFromNodeId("U_kgDPAAAAAAAAAAE")).toBeNull();
+  });
+
   it("rejects current spellings with padding, trailing bits, or the standard alphabet", () => {
     expect(githubUserIdFromNodeId("U_kgDOAAAAAQ==")).toBeNull();
     expect(githubUserIdFromNodeId("U_kgDOAAAAAR")).toBeNull();
