@@ -5,7 +5,11 @@
  * never changes scoring, shares, or payouts.
  */
 
-import type { GitHubActor, ScoreEvent } from "./leaderboard";
+import {
+  assignLeaderboardRanks,
+  type GitHubActor,
+  type ScoreEvent,
+} from "./leaderboard";
 
 export interface ReviewerLeader {
   rank: number;
@@ -58,13 +62,28 @@ export function selectReviewerLeaders(
     current.reviewEventCount += 1;
     byActor.set(event.actor.id, current);
   }
-  return [...byActor.values()]
+  // LDR-03: equal primary values receive equal ranks, and stable actor-ID
+  // ordering only stabilizes display. The review event count is secondary
+  // analysis data; it must not split a tie in the primary review score.
+  const ranked = [...byActor.values()]
     .filter((entry) => entry.reviewThirds > 0)
     .sort(
       (left, right) =>
         right.reviewThirds - left.reviewThirds ||
-        right.reviewEventCount - left.reviewEventCount ||
         compareActors(left.actor, right.actor),
     )
-    .map((entry, index) => ({ rank: index + 1, ...entry }));
+    .map((entry) => ({
+      rank: 0,
+      scoreThirds: entry.reviewThirds,
+      actor: entry.actor,
+      reviewThirds: entry.reviewThirds,
+      reviewEventCount: entry.reviewEventCount,
+    }));
+  assignLeaderboardRanks(ranked);
+  return ranked.map((entry) => ({
+    rank: entry.rank,
+    actor: entry.actor,
+    reviewThirds: entry.reviewThirds,
+    reviewEventCount: entry.reviewEventCount,
+  }));
 }
