@@ -1046,3 +1046,75 @@ describe("a fresh-policy cycle keeps the frozen prior README proofs", () => {
     expect(prior.actorReadmeProofs).toEqual(priorReadmeProofs(FROZEN));
   });
 });
+
+describe("a renamed actor's README change applies to the next cycle (P3 at d62cf23)", () => {
+  // Review of #676 at d62cf23 (P3): after a rename the frozen proof was kept
+  // without a read of the actor's own README, so a change or a removal never
+  // took effect (WAL-03, cycles/README.md). The README under the current login
+  // of the actor id is read; the README under the old login (now account
+  // 999999) is never read.
+  const oldLoginRead = (requests: string[]) =>
+    requests.some((url) => url.startsWith(`${API}/repos/alice/`));
+
+  for (const recordedLogin of ["alice", "alice-new"]) {
+    test(`row login "${recordedLogin}": another address in the README: unclaimed`, async () => {
+      const { fetchImpl, requests } = world({
+        current: "alice-new",
+        registry: false,
+        actorReadme: ATTACKER_WALLET,
+      });
+      const wallet = await fetchPublishedGithubWallet(
+        NODE,
+        recordedLogin,
+        FROZEN.generatedAt,
+        { fetch: fetchImpl, prior: { readmeProof: FROZEN_PROOF } },
+      );
+      expect(wallet).toBeNull();
+      expect(oldLoginRead(requests)).toBe(false);
+    });
+
+    test(`row login "${recordedLogin}": the README is gone: unclaimed`, async () => {
+      const { fetchImpl, requests } = world({
+        current: "alice-new",
+        registry: false,
+        actorReadme: null,
+      });
+      const wallet = await fetchPublishedGithubWallet(
+        NODE,
+        recordedLogin,
+        FROZEN.generatedAt,
+        { fetch: fetchImpl, prior: { readmeProof: FROZEN_PROOF } },
+      );
+      expect(wallet).toBeNull();
+      expect(oldLoginRead(requests)).toBe(false);
+    });
+
+    test(`row login "${recordedLogin}": the README still publishes it: the frozen proof is kept`, async () => {
+      const { fetchImpl, requests } = world({
+        current: "alice-new",
+        registry: false,
+      });
+      const wallet = await fetchPublishedGithubWallet(
+        NODE,
+        recordedLogin,
+        FROZEN.generatedAt,
+        { fetch: fetchImpl, prior: { readmeProof: FROZEN_PROOF } },
+      );
+      expect(wallet).toEqual(FROZEN_PROOF);
+      expect(
+        requests.some((url) => url.startsWith(`${API}/repos/alice-new/`)),
+      ).toBe(true);
+      expect(oldLoginRead(requests)).toBe(false);
+    });
+  }
+
+  test("the withdrawn row stays unclaimed through validation and import", () => {
+    const proposal = propose(null);
+    expect(carried(proposal)).toMatchObject({
+      state: "unclaimed",
+      wallet: null,
+    });
+    expect(() => validate(proposal, FROZEN_PROOF)).not.toThrow();
+    expect(importSql(proposal, FROZEN_PROOF)).not.toContain(ACTOR_WALLET);
+  });
+});
