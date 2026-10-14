@@ -242,9 +242,10 @@ export async function loadPriorCycleAccrual(input: {
   cyclesRoot: string;
   projectId: ProjectId;
   /**
-   * A fresh-cycle payment policy imports no accrued principal. The reviewed
-   * prior README proofs and unsafe destination history still apply, so they
-   * are loaded without the monetary readiness checks.
+   * A fresh-cycle payment policy imports no accrued principal and no README
+   * proof: legacy records do not authorize a new payout protocol (PRD WAL-01,
+   * section 23). The unsafe destination history still applies, so it is
+   * loaded without the monetary readiness checks.
    */
   freshPolicy?: boolean;
 }): Promise<PriorCycleAccrual> {
@@ -294,9 +295,11 @@ export async function loadPriorCycleAccrual(input: {
     );
   }
   if (input.freshPolicy) {
+    // No frozen README proof becomes a fresh-policy destination. A row needs
+    // an actor-bound claim, else it stays unclaimed (readme-proof-binding.ts).
     return {
       actorLogins: new Map(),
-      actorReadmeProofs,
+      actorReadmeProofs: new Map(),
       accruedMinor: new Map(),
       unsafeDestinationReports,
     };

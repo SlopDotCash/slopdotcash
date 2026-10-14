@@ -278,9 +278,9 @@ export async function prepareRewardCycle(
     accruedMinor: new Map<string, string>(),
   };
   if (project.reward.kind === "monthly-pool") {
-    // Fresh principal excludes carry, but it cannot revive an unsafe
-    // destination, and it keeps the frozen prior README proofs exactly as
-    // proposal validation does (sync-cycle-index.ts).
+    // Fresh principal excludes carry and every README proof (WAL-01), but it
+    // cannot revive an unsafe destination. Proposal validation loads the
+    // prior cycle in the same mode (sync-cycle-index.ts).
     priorAccrual = await (options.loadPriorAccrual ?? loadPriorCycleAccrual)({
       ...historyInput,
       freshPolicy:

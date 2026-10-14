@@ -1031,19 +1031,22 @@ describe("cross-project: a leader of another project only is carried here (P1)",
   });
 });
 
-describe("a fresh-policy cycle keeps the frozen prior README proofs", () => {
-  test("generation and validation load the proofs without the carry", async () => {
-    const prior = await loadPriorCycleAccrual({
+describe("a fresh-policy cycle loads no README proof (WAL-01)", () => {
+  test("the fresh mode loads no carry and no frozen README proof", async () => {
+    const input = {
       asOf: "2026-11-01T00:00:00.000Z",
       cycleId: "2026-10",
       cyclesRoot: join(import.meta.dir, "../cycles"),
-      projectId: "eliza",
-      freshPolicy: true,
-    });
-    expect(prior.accruedMinor.size).toBe(0);
-    expect(prior.actorLogins.size).toBe(0);
-    expect(prior.actorReadmeProofs?.size).toBeGreaterThan(0);
-    expect(prior.actorReadmeProofs).toEqual(priorReadmeProofs(FROZEN));
+      projectId: "eliza" as const,
+    };
+    const fresh = await loadPriorCycleAccrual({ ...input, freshPolicy: true });
+    expect(fresh.accruedMinor.size).toBe(0);
+    expect(fresh.actorLogins.size).toBe(0);
+    expect(fresh.actorReadmeProofs?.size ?? 0).toBe(0);
+    // A normal cycle still loads the frozen proofs of the prior manifest.
+    const normal = await loadPriorCycleAccrual(input);
+    expect(normal.actorReadmeProofs?.size).toBeGreaterThan(0);
+    expect(normal.actorReadmeProofs).toEqual(priorReadmeProofs(FROZEN));
   });
 });
 

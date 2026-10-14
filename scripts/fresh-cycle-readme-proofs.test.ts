@@ -1,11 +1,12 @@
-// A fresh-policy cycle imports no carry, but generation and proposal
-// validation must still load the README proofs that the reviewed prior
-// manifest froze for each actor id (review of #676 at 6df7bbf). No checked-in
-// project has an active freshCyclePaymentPolicy, so this file adds a
-// test-only fixture: the eliza definition with a policy for 2026-09, and a
-// prior-cycle loader that returns carry unless the caller asks for the fresh
-// mode, as loadPriorCycleAccrual does. Outside these tests both mocks return
-// the real values.
+// A fresh-policy cycle imports no carry and no legacy README proof: legacy
+// records do not automatically authorize a new payout protocol (PRD WAL-01,
+// section 23). A README-only row stays unclaimed; an actor-bound registry
+// claim is still a destination. A normal cycle keeps the frozen README proofs.
+// No checked-in project has an active freshCyclePaymentPolicy, so this file
+// adds a test-only fixture: the eliza definition with a policy for 2026-09
+// (when `fresh` is set), and a prior-cycle loader with the contract of
+// loadPriorCycleAccrual: carry and frozen proofs in the normal mode, neither
+// in the fresh mode. Outside these tests both mocks return the real values.
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -30,6 +31,7 @@ type LoaderInput = Parameters<typeof realLoadPriorCycleAccrual>[0];
 type PriorAccrual = Awaited<ReturnType<typeof realLoadPriorCycleAccrual>>;
 
 let fixture: {
+  fresh: boolean;
   loader: (input: LoaderInput) => Promise<PriorAccrual>;
 } | null = null;
 
@@ -37,7 +39,7 @@ mock.module("../src/lib/projects.mjs", () => ({
   ...realProjects,
   findProject: (value: unknown) => {
     const project = realFindProject(value as string);
-    if (!fixture || project?.id !== "eliza") return project;
+    if (!fixture?.fresh || project?.id !== "eliza") return project;
     return {
       ...project,
       funding: {
@@ -125,24 +127,45 @@ const frozenProofs = new Map<string, ProfileReadmeWalletProof>([
   ...scored.map((row) => [row.actor.id, proofFor(row.actor.login)] as const),
   [CARRIED.id, proofFor(CARRIED.login)],
 ]);
+// The actor-bound registry claims are the registry wallets that the frozen
+// cycle holds. Every other scored actor has only its frozen README proof.
+const registry = new Map<string, WalletProof>(
+  scored.flatMap((row) =>
+    row.wallet && "sourceClaimId" in row.wallet
+      ? [[row.actor.id, row.wallet] as const]
+      : [],
+  ),
+);
+const readmeOnly = scored
+  .map((row) => row.actor.id)
+  .filter((actorId) => !registry.has(actorId));
 
 afterEach(() => {
   fixture = null;
 });
 
-/** Runs the generator and then proposal validation on the fixture. */
-async function generateAndValidate() {
+/**
+ * Runs the generator and then proposal validation on the fixture. `fresh`
+ * gives the project its fresh-cycle policy. `leakProofs` makes the loader
+ * return the frozen proofs also in the fresh mode, so the generator itself
+ * must refuse them.
+ */
+async function generateAndValidate(
+  options: { fresh?: boolean; leakProofs?: boolean } = {},
+) {
   const loaderCalls: (boolean | undefined)[] = [];
   fixture = {
-    // The same contract as loadPriorCycleAccrual: the fresh mode returns the
-    // frozen proofs only; otherwise the accrual of the carried actor is added.
+    fresh: options.fresh ?? true,
+    // The same contract as loadPriorCycleAccrual: the fresh mode returns no
+    // carry and no README proof; the normal mode returns the frozen proofs
+    // and the accrual of the carried actor.
     loader: async (input) => {
       loaderCalls.push(input.freshPolicy);
       return input.freshPolicy
         ? {
             actorLogins: new Map(),
             accruedMinor: new Map(),
-            actorReadmeProofs: frozenProofs,
+            actorReadmeProofs: options.leakProofs ? frozenProofs : new Map(),
             unsafeDestinationReports: new Map(),
           }
         : {
@@ -164,10 +187,12 @@ async function generateAndValidate() {
     },
     {
       generatedAt: FROZEN.generatedAt,
-      // The bound observer keeps the frozen proof; it reads no README.
+      // The observer returns the actor-bound registry claim, else the
+      // frozen README proof it is given (as fetchPublishedGithubWallet does
+      // when that README still publishes it); it reads no new README.
       observeWallet: async (actorId, _login, _observedAt, prior) => {
         lookups.push({ actorId, prior: prior?.readmeProof });
-        return prior?.readmeProof ?? null;
+        return registry.get(actorId) ?? prior?.readmeProof ?? null;
       },
       write: async () => {},
       writeSnapshot: async () => {},
@@ -182,7 +207,7 @@ async function generateAndValidate() {
 }
 
 describe("fresh-policy cycle: generator and validation (fixture project)", () => {
-  test("every scored row keeps its frozen README proof, with no carry", async () => {
+  test("a README-only row is unclaimed; an actor-bound claim is kept", async () => {
     const { proposal, lookups, loaderCalls } = await generateAndValidate();
     // The generator and the validation both load the prior cycle in the
     // fresh mode.
@@ -196,14 +221,16 @@ describe("fresh-policy cycle: generator and validation (fixture project)", () =>
           row.actor.id === CARRIED.id || row.actor.login === CARRIED.login,
       ),
     ).toBe(false);
-    // Each lookup of a scored actor carries its frozen proof, and each scored
-    // row holds it.
+    // No lookup of a scored actor carries a README proof.
     expect(lookups).toHaveLength(scored.length);
-    for (const lookup of lookups)
-      expect(lookup.prior).toEqual(frozenProofs.get(lookup.actorId));
+    for (const lookup of lookups) expect(lookup.prior ?? null).toBeNull();
     expect(FROZEN.carriedMinor).toBe("0");
     expect(proposal.allocations).toHaveLength(scored.length);
-    for (const row of proposal.allocations)
-      expect(row.wallet).toEqual(frozenProofs.get(row.actor.id) ?? null);
+    expect(registry.size).toBeGreaterThan(0);
+    expect(readmeOnly.length).toBeGreaterThan(0);
+    for (const row of proposal.allocations) {
+      expect(row.wallet).toEqual(registry.get(row.actor.id) ?? null);
+      if (!registry.has(row.actor.id)) expect(row.state).toBe("unclaimed");
+    }
   }, 30_000);
 });

@@ -20,6 +20,7 @@ import {
 } from "./check-direct-payment-disclosures";
 import { previousCycleId } from "./prior-cycle-accrual";
 import {
+  isFreshPolicyCycle,
   priorReadmeProofs,
   unboundReadmeProofReason,
 } from "./readme-proof-binding";
@@ -204,9 +205,11 @@ export function walletObservationsSql(
         const [, projectId, cycleId] = path.split("/");
         // An unbound README proof is not imported. It is skipped and reported,
         // so one bad row does not stop the import of all others (PAY-07).
-        // Proposal validation rejects the same row.
+        // Proposal validation rejects the same row. A fresh-policy cycle
+        // accepts no README proof (WAL-01).
+        const freshPolicy = isFreshPolicyCycle(projectId, cycleId);
         const reason =
-          frozen.logins.get(actor.id) !== actor.login
+          !freshPolicy && frozen.logins.get(actor.id) !== actor.login
             ? `README wallet login ${actor.login} is not the frozen login of ${actor.id}`
             : unboundReadmeProofReason({
                 projectId,
@@ -214,6 +217,7 @@ export function walletObservationsSql(
                 actorId: actor.id,
                 wallet: wallet as ProfileReadmeWalletProof,
                 priorProof: frozen.priorProofs.get(actor.id),
+                freshPolicy,
               });
         if (reason) {
           report(`${path}: ${reason}; not imported`);

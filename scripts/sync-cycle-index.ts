@@ -58,6 +58,7 @@ import { loadProjectCommitmentRecords } from "./funding-commitment-records";
 import { validateEscrowCycle } from "./prepare-escrow-cycle";
 import { loadPriorCycleAccrual } from "./prior-cycle-accrual";
 import {
+  isFreshPolicyCycle,
   isReadmeProof,
   unboundReadmeProofReason,
 } from "./readme-proof-binding";
@@ -182,6 +183,7 @@ export function assertAllocationsMatchBaseline(
   const byIntent = new Map(
     baseline.allocations.map((allocation) => [allocation.intentId, allocation]),
   );
+  const freshPolicy = isFreshPolicyCycle(proposal.projectId, proposal.cycleId);
   if (proposal.allocations.length !== baseline.allocations.length) {
     throw new TypeError("Reward proposal adds or removes a scored contributor");
   }
@@ -214,6 +216,7 @@ export function assertAllocationsMatchBaseline(
     // record outside this proposal binds it to the actor id: the exact proof
     // of the prior manifest, or a pinned legacy proof. Registry and issue
     // proofs carry the actor id (assertRewardAllocationManifest).
+    // A fresh-policy cycle accepts no README proof, frozen or pinned (WAL-01).
     if (isReadmeProof(allocation.wallet)) {
       const reason = unboundReadmeProofReason({
         projectId: proposal.projectId,
@@ -221,6 +224,7 @@ export function assertAllocationsMatchBaseline(
         actorId: allocation.actor.id,
         wallet: allocation.wallet,
         priorProof: priorReadmeProofs.get(allocation.actor.id),
+        freshPolicy,
       });
       if (reason)
         throw new TypeError(
@@ -245,9 +249,7 @@ export async function verifyProposalAgainstSnapshot(
     cycleId: proposal.cycleId,
     cyclesRoot: CYCLES_ROOT,
     projectId: proposal.projectId as ProjectId,
-    freshPolicy:
-      findProject(proposal.projectId)?.funding.freshCyclePaymentPolicy
-        ?.cycleId === proposal.cycleId,
+    freshPolicy: isFreshPolicyCycle(proposal.projectId, proposal.cycleId),
   });
   const baseline = createRewardCycleProposal({
     ...(proposal.fundingBasis

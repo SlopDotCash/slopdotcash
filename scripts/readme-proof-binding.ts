@@ -17,8 +17,24 @@
  * `sourceActorId === actor.id`, checked by assertRewardAllocationManifest).
  * The rule is the same for scored and carried rows (PRD ACC-01, WAL-01).
  * Proposal generation, proposal validation and the payment import use it.
+ *
+ * A cycle with an active fresh-cycle payment policy accepts no README proof,
+ * frozen or pinned. Legacy records stay historical evidence and do not
+ * automatically authorize a new payout protocol (PRD WAL-01, section 23), so
+ * a fresh-policy row needs an actor-bound claim, else it stays unclaimed.
  */
+import { findProject } from "../src/lib/projects.mjs";
 import type { ProfileReadmeWalletProof } from "../src/lib/rewards";
+
+/** True when the project has an active fresh-cycle payment policy for the cycle. */
+export function isFreshPolicyCycle(
+  projectId: string,
+  cycleId: string,
+): boolean {
+  return (
+    findProject(projectId)?.funding.freshCyclePaymentPolicy?.cycleId === cycleId
+  );
+}
 
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -154,7 +170,8 @@ export function priorReadmeProofs(manifest: {
 
 /**
  * Returns null when the README proof of this row is bound to its actor id,
- * else the reason why it is not.
+ * else the reason why it is not. In a fresh-policy cycle no README proof is
+ * bound (WAL-01).
  */
 export function unboundReadmeProofReason(input: {
   projectId: string;
@@ -162,7 +179,10 @@ export function unboundReadmeProofReason(input: {
   actorId: string;
   wallet: ProfileReadmeWalletProof;
   priorProof: ProfileReadmeWalletProof | null | undefined;
+  freshPolicy?: boolean;
 }): string | null {
+  if (input.freshPolicy)
+    return `README wallet of ${input.actorId} is a legacy proof; a fresh-policy cycle accepts only an actor-bound claim`;
   const bytes = canonicalJson(input.wallet);
   if (input.priorProof && canonicalJson(input.priorProof) === bytes)
     return null;

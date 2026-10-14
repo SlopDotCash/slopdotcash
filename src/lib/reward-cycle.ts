@@ -51,11 +51,18 @@ export interface CreateRewardCycleProposalInput {
   >;
 }
 
+/**
+ * The wallet of a row, or null (unclaimed). In a fresh-policy cycle a legacy
+ * profile README proof is never a destination: legacy records do not
+ * automatically authorize a new payout protocol (PRD WAL-01, section 23).
+ */
 function resolvedWallet(
   input: CreateRewardCycleProposalInput,
   actorId: string,
+  freshPolicy: boolean,
 ): WalletProof | null {
   const wallet = input.wallets?.get(actorId) ?? null;
+  if (wallet && freshPolicy && "sourceCommit" in wallet) return null;
   return wallet &&
     (input.priorUnsafeDestinationReports?.get(actorId) ?? []).every((report) =>
       isSafeSuccessorWallet(wallet, report),
@@ -216,8 +223,10 @@ export function createRewardCycleProposal(
     throw new TypeError(
       "Escrow awards use the v2 gross allocation workflow; legacy Solana plans cannot reserve them",
     );
+  const freshPolicy =
+    project?.funding.freshCyclePaymentPolicy?.cycleId === input.cycleId;
   if (
-    project?.funding.freshCyclePaymentPolicy?.cycleId === input.cycleId &&
+    freshPolicy &&
     (input.legacyCapMinor !== undefined ||
       [...(input.priorAccruedMinor?.values() ?? [])].some(
         (v) => BigInt(v) !== 0n,
@@ -371,7 +380,7 @@ export function createRewardCycleProposal(
     sourceSnapshotSha256: input.sourceSnapshotSha256,
     allocations: view.leaders
       .map((leader, index) => {
-        const wallet = resolvedWallet(input, leader.actor.id);
+        const wallet = resolvedWallet(input, leader.actor.id, freshPolicy);
         const sharedPoolMinor =
           BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
           BigInt(leader.projectedMinor ?? "0");
@@ -428,7 +437,7 @@ export function createRewardCycleProposal(
               `carried accrual for ${actorId} has no prior login; pass priorActorLogins from the prior manifest`,
             );
           }
-          const wallet = resolvedWallet(input, actorId);
+          const wallet = resolvedWallet(input, actorId, freshPolicy);
           const index = view.leaders.length + offset;
           return {
             intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(actorId)}`,
