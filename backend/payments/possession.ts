@@ -6,6 +6,7 @@ import {
   evmBindingDigest,
 } from "../../contracts/evm/adapter";
 import { chainFamily, isEscrowChain } from "../../src/lib/escrow-policy.mjs";
+import { decodeSolanaSignature } from "../../src/lib/solana-signature";
 import { solanaAddressBytes } from "../../src/lib/wallets";
 
 function hex(bytes: Uint8Array) {
@@ -92,8 +93,11 @@ export function verifyPaymentWalletSignature(
 ): boolean {
   try {
     if (chain === "solana") {
-      if (!/^[A-Za-z0-9+/]{86}==$/.test(signature)) return false;
-      const bytes = Uint8Array.from(atob(signature), (c) => c.charCodeAt(0));
+      // The shared decoder binds the exact canonical string before the
+      // signature is stored as a payment authorization; this caller's
+      // contract stays false on every non-canonical form.
+      const bytes = decodeSolanaSignature(signature);
+      if (bytes === null) return false;
       return ed25519.verify(
         bytes,
         new TextEncoder().encode(message),

@@ -7,6 +7,7 @@
  */
 
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { decodeSolanaSignature } from "./solana-signature";
 import { isSolanaAddress, solanaAddressBytes } from "./wallets";
 
 export const WALLET_POSSESSION_KIND = "slop-wallet-possession" as const;
@@ -20,8 +21,6 @@ export const WALLET_POSSESSION_AUDIENCE = "slop.cash" as const;
  */
 export const WALLET_POSSESSION_LIFETIME_MS = 15 * 60_000;
 
-/** Ed25519 detached signatures are exactly 64 bytes, padded base64. */
-const SIGNATURE_PATTERN = /^[A-Za-z0-9+/]{86}==$/u;
 const CHALLENGE_ID_PATTERN = /^[0-9a-f]{32}$/u;
 const CLAIM_ID_PATTERN = /^[0-9a-zA-Z_-]{1,64}$/u;
 const ACTOR_ID_PATTERN = /^\d{1,20}$/u;
@@ -186,18 +185,13 @@ export function walletPossessionMessage(
 }
 
 function decodeSignature(signature: unknown): Uint8Array {
-  if (typeof signature !== "string" || !SIGNATURE_PATTERN.test(signature)) {
+  // The pattern in the shared decoder fixes the decoded length at exactly
+  // 64 bytes, so one rejection message covers every non-canonical form.
+  const bytes = decodeSolanaSignature(signature);
+  if (bytes === null) {
     throw new TypeError(
       "Wallet possession signature must be 64 bytes of canonical padded base64",
     );
-  }
-  const binary = atob(signature);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  if (bytes.length !== 64) {
-    throw new TypeError("Wallet possession signature must be exactly 64 bytes");
   }
   return bytes;
 }
