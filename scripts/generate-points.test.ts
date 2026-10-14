@@ -255,3 +255,112 @@ describe("retained review history corrections", () => {
     expect(latestPoints(journal).get(award.key)?.award.amount).toBe(30);
   });
 });
+
+/** An evaluator award event as loadEvaluatorAwardEvents returns it: the
+ * manifest supplies no workUnitId, so awardForScore records the manifest id. */
+function evaluatorEvent(): ScoreEvent {
+  return {
+    id: "award_gg100_review_24433",
+    actor: {
+      id: "U_kgDOCzOt4w",
+      login: "GG100-eng",
+      avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+      url: "https://github.com/GG100-eng",
+      kind: "User",
+    },
+    category: "evaluated-contribution",
+    points: 4,
+    occurredAt: "2026-08-22T12:55:00.000Z",
+    repository: "elizaOS/eliza",
+    source: {
+      id: "PRR_kwDOMT5cIs8AAAABKglAuA",
+      kind: "review",
+      number: 24433,
+      title: "evaluated review",
+      url: "https://github.com/elizaOS/eliza/pull/24433#pullrequestreview-5000216760",
+    },
+    reason: "Maintainer-evaluated contribution.",
+  } as ScoreEvent;
+}
+
+/** The leaderboard generator's v2 ledger copy of the same event: it adds
+ * integer thirds and derives wu_<project>_<source id> for the work unit. */
+function ledgerCopy(event: ScoreEvent): ScoreEvent {
+  return {
+    ...event,
+    points: 4,
+    scoreThirds: 12,
+    workUnitId: "wu_eliza_prr_kwdomt5cis8aaaabkglaua",
+  } as ScoreEvent;
+}
+
+function run(
+  journal: PointsJournal,
+  ledger: ScoreEvent[],
+  snapshotDigest: string,
+  retained: PointAward[],
+  at: string,
+): PointsJournal {
+  // Production order in generatePoints: each run reads a freshly generated
+  // public/data/leaderboard.json (new digest), then the retained batch.
+  const snapshot = {
+    ...snapshotListing(ledger[0] ?? evaluatorEvent()),
+    ledger,
+  } as LeaderboardSnapshot;
+  return applyRetainedHistoryBatch(
+    applyPointsSnapshot(journal, snapshot, snapshotDigest, at),
+    retained,
+    DIGEST,
+    at,
+  );
+}
+
+describe("snapshots never rewrite batch-owned retained awards", () => {
+  it("appends nothing on later runs when the snapshot copy differs from the retained award", () => {
+    const event = evaluatorEvent();
+    const award = awardForScore(event);
+    expect(awardForScore(ledgerCopy(event)).amount).toBe(award.amount);
+    let journal = run(
+      emptyPointsJournal(T0),
+      [ledgerCopy(event)],
+      "1".repeat(64),
+      [award],
+      T0,
+    );
+    const settled = journal.revisions.length;
+    expect(latestPoints(journal).get(award.key)?.award).toEqual(award);
+    journal = run(journal, [ledgerCopy(event)], "2".repeat(64), [award], T1);
+    journal = run(journal, [ledgerCopy(event)], "3".repeat(64), [award], T2);
+    expect(journal.revisions.length).toBe(settled);
+    expect(latestPoints(journal).get(award.key)?.award).toEqual(award);
+    expect(pointMembers(journal)[0]?.total).toBe(120);
+  });
+
+  it("does not zero a batch-owned retained award that the snapshot ledger omits", () => {
+    const event = evaluatorEvent();
+    const award = awardForScore(event);
+    // e.g. the generator drops it as a second credit for an already credited
+    // work unit. The window covers the award and every project repository.
+    let journal = run(emptyPointsJournal(T0), [], "1".repeat(64), [award], T0);
+    const settled = journal.revisions.length;
+    journal = run(journal, [], "2".repeat(64), [award], T1);
+    journal = run(journal, [], "3".repeat(64), [award], T2);
+    expect(journal.revisions.length).toBe(settled);
+    expect(journal.revisions.every((r) => r.award.amount === 120)).toBe(true);
+  });
+
+  it("still lets a snapshot take over once the retained batch has zeroed the award", () => {
+    const event = evaluatorEvent();
+    const award = awardForScore(event);
+    let journal = run(emptyPointsJournal(T0), [], "1".repeat(64), [award], T0);
+    journal = run(journal, [], "2".repeat(64), [], T1);
+    expect(latestPoints(journal).get(award.key)?.award.amount).toBe(0);
+    journal = run(journal, [ledgerCopy(event)], "3".repeat(64), [], T2);
+    const owned = latestPoints(journal).get(award.key);
+    expect(owned?.award.amount).toBe(120);
+    expect(owned?.sourceDigest).toBe("3".repeat(64));
+    const settled = journal.revisions.length;
+    journal = run(journal, [ledgerCopy(event)], "4".repeat(64), [], T3);
+    expect(journal.revisions.length).toBe(settled);
+  });
+});

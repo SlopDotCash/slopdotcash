@@ -276,15 +276,42 @@ export function appendPointAwards(
   assertPointsJournal(output);
   return output;
 }
+/**
+ * Keys of positive retained-history awards (substantive reviews and
+ * evaluator awards) whose latest revision was appended by the retained
+ * batch: the batch rule with a digest that no snapshot recorded in the
+ * coverage. The retained files are the only source for these awards.
+ */
+export function retainedBatchOwnedKeys(journal: PointsJournal): Set<string> {
+  const coverage = new Set(journal.coverage.map((c) => c.digest));
+  const keys = new Set<string>();
+  for (const revision of latestPoints(journal).values()) {
+    const award = revision.award;
+    if (
+      award.amount > 0 &&
+      (award.category === "substantive-review" ||
+        award.category === "evaluated-contribution") &&
+      revision.sourceRule === "slop-score-v2" &&
+      !coverage.has(revision.sourceDigest)
+    )
+      keys.add(award.key);
+  }
+  return keys;
+}
 export function applyPointsSnapshot(
   journal: PointsJournal,
   snapshot: LeaderboardSnapshot,
   digest: string,
   recordedAt: string,
 ): PointsJournal {
+  // A snapshot ledger only carries a downstream copy of a retained award
+  // (re-derived work unit, possibly dropped as a repeat work unit), so it
+  // neither rewrites nor zeroes one the retained batch owns.
+  const batchOwned = retainedBatchOwnedKeys(journal);
   const awards = snapshot.ledger
     .filter((e) => e.actor.kind === "User")
-    .map(awardForScore);
+    .map(awardForScore)
+    .filter((a) => !batchOwned.has(a.key));
   const keys = new Set(awards.map((a) => a.key));
   const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
   // A complete newer census can correct a formerly accepted source. Never infer
@@ -295,6 +322,7 @@ export function applyPointsSnapshot(
     if (
       a.category !== "payout-received" &&
       a.amount &&
+      !batchOwned.has(a.key) &&
       !keys.has(a.key) &&
       a.occurredAt >= snapshot.window.from &&
       a.occurredAt < snapshot.window.to &&
