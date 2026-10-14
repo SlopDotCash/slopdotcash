@@ -204,7 +204,6 @@ async function registryJson(
           await retryDelay(attempt);
           continue;
         }
-        if (response.status === 404) return null;
         if (!response.ok) {
           throw new TerminalWalletLookupError(
             `Slop wallet registry failed with HTTP ${response.status}`,
