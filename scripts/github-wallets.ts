@@ -399,11 +399,11 @@ export async function fetchPublishedGithubWallet(
  * proof is returned:
  * - no frozen README proof: null (the row stays unclaimed; the actor can use
  *   the actor-bound registry).
- * - the frozen proof names the current login of the actor id: the README is
- *   read again; the frozen proof is kept only if the README still publishes
- *   the same address, else null.
- * - the frozen proof names another login (the actor renamed, before or after
- *   the snapshot): the frozen proof is kept (ACC-01: a rename keeps claims).
+ * - a frozen README proof: the README under the current login of the actor id
+ *   is read again, also when the frozen proof names another login (the actor
+ *   renamed, before or after the snapshot). The frozen proof is kept only if
+ *   that README still publishes the same address (ACC-01: a rename keeps
+ *   claims), else null, so a README change applies to the next cycle (WAL-03).
  *   The README of whoever now holds the old login is never read.
  */
 export async function boundReadmeWallet(
@@ -425,8 +425,6 @@ export async function boundReadmeWallet(
   if (!proofLogin) return null;
   // currentLogin is read through the immutable numeric id, so only a README
   // under that login is the actor's own README now.
-  if (proofLogin.toLowerCase() !== currentLogin.toLowerCase())
-    return priorWallet;
   const current = await readCurrent(currentLogin);
   return current &&
     current.chain === priorWallet.chain &&

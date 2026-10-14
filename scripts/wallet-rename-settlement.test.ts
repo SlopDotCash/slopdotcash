@@ -448,7 +448,8 @@ describe("renamed carried actor: the claim survives, through proposal and import
     });
     const wallet = await observeCarried(fetchImpl, FROZEN_PROOF);
     expect(wallet).toEqual(FROZEN_PROOF);
-    expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
+    // Only the actor's own README (under its current login) is read.
+    expect(requests.some((url) => url.includes("/repos/alice/"))).toBe(false);
     const proposal = propose(wallet);
     expect(carried(proposal)).toMatchObject({
       actor: { id: NODE, login: "alice" },
@@ -779,7 +780,7 @@ describe("a renamed actor who scores again keeps the frozen README proof (P2)", 
       registry: false,
     });
     expect(await observeCarried(fetchImpl, FROZEN_PROOF)).toEqual(FROZEN_PROOF);
-    expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
+    expect(requests.some((url) => url.includes("/repos/alice/"))).toBe(false);
   });
 
   test("a scored-again row with the kept proof passes validation and import", () => {
@@ -798,7 +799,7 @@ describe("a renamed actor who scores again keeps the frozen README proof (P2)", 
     expect(sql).toContain(ACTOR_WALLET);
   });
 
-  test("renamed before the snapshot: the frozen proof is kept and no README is read", async () => {
+  test("renamed before the snapshot: the frozen proof is kept and the old login is not read", async () => {
     // Review of #676 at 6df7bbf (P2): actor 123456 was "alice" in the prior
     // manifest and renamed to "alice-new" before this snapshot, so the row
     // login is "alice-new". The frozen proof is bound to the actor id by the
@@ -814,8 +815,9 @@ describe("a renamed actor who scores again keeps the frozen README proof (P2)", 
       { fetch: fetchImpl, prior: { readmeProof: FROZEN_PROOF } },
     );
     expect(wallet).toEqual(FROZEN_PROOF);
-    // Neither the old login (now account 999999) nor the new login is read.
-    expect(requests.some((url) => url.includes("/repos/"))).toBe(false);
+    // The old login (now account 999999) is not read; the README under the
+    // new login still publishes the frozen address (P3 at d62cf23).
+    expect(requests.some((url) => url.includes("/repos/alice/"))).toBe(false);
   });
 });
 
