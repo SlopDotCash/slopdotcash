@@ -55,7 +55,10 @@ export async function recoverUncertainAttempts(
   const row = await env.PAYMENTS_DB.prepare(
     "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('unknown','prepared') AND a.transaction_id IS NULL AND o.state='reserved'",
   ).first<{ items: string }>();
-  const failures: unknown[] = [];
+  const failures: Error[] = [];
+  // A 503 applies to this service for this run, not to every queued record.
+  const unavailableServices = new Set<object>();
+  const missingChains = new Set<string>();
   for (const attempt of JSON.parse(row?.items ?? "[]") as {
     idempotencyKey: string;
     obligationId: string;
@@ -63,13 +66,21 @@ export async function recoverUncertainAttempts(
     vault: string;
     chain: string;
   }[]) {
+    let phase = "executor-binding";
+    let httpStatus: number | undefined;
     try {
       const service =
         chainFamily(attempt.chain) === "evm"
           ? env.EVM_PAYMENT_EXECUTOR
           : env.SOLANA_PAYMENT_EXECUTOR;
-      if (!service) throw new Error("Attempt status service unavailable");
+      if (!service) {
+        if (missingChains.has(attempt.chain)) continue;
+        missingChains.add(attempt.chain);
+        throw new Error("Attempt status service unavailable");
+      }
+      if (unavailableServices.has(service)) continue;
       const { chain: _chain, ...identity } = attempt;
+      phase = "attempt-status";
       const response = await service.fetch(
         new Request("https://payments-executor.internal/v1/attempt-status", {
           method: "POST",
@@ -77,15 +88,20 @@ export async function recoverUncertainAttempts(
           body: JSON.stringify(identity),
         }),
       );
+      httpStatus = response.status;
+      if (response.status === 503) unavailableServices.add(service);
       if (!response.ok) throw new Error("Attempt status reconciliation failed");
       const status = (await response.json()) as { transactionId: unknown };
       if (status.transactionId === null) {
+        phase = "successor-claim";
+        httpStatus = undefined;
         const successor = await env.PAYMENTS_DB.prepare(
           "SELECT w.id FROM payment_attempts a JOIN wallet_claims old ON old.id=a.claim_id JOIN wallet_claims w ON w.github_user_id=old.github_user_id AND w.chain=old.chain JOIN payment_wallet_authorizations consent ON consent.claim_id=w.id WHERE a.id=? AND w.id!=old.id AND NOT EXISTS(SELECT 1 FROM wallet_claims next WHERE next.supersedes_claim_id=w.id)",
         )
           .bind(attempt.idempotencyKey)
           .first<{ id: string }>();
         if (!successor) continue;
+        phase = "cancel-unsubmitted";
         const cancellation = await service.fetch(
           new Request(
             "https://payments-executor.internal/v1/cancel-unsubmitted",
@@ -96,6 +112,8 @@ export async function recoverUncertainAttempts(
             },
           ),
         );
+        httpStatus = cancellation.status;
+        if (cancellation.status === 503) unavailableServices.add(service);
         if (!cancellation.ok)
           throw new Error("Unsigned attempt retirement failed");
         const outcome = (await cancellation.json()) as {
@@ -103,6 +121,8 @@ export async function recoverUncertainAttempts(
           transactionId: unknown;
         };
         if (outcome.retired === true && outcome.transactionId === null) {
+          phase = "retire-attempt";
+          httpStatus = undefined;
           await env.PAYMENTS_DB.batch([
             env.PAYMENTS_DB.prepare(
               "INSERT INTO payment_attempt_failures VALUES(?,NULL,?,?) ON CONFLICT(attempt_id) DO NOTHING",
@@ -129,6 +149,8 @@ export async function recoverUncertainAttempts(
       }
       if (typeof status.transactionId !== "string" || !status.transactionId)
         throw new Error("Invalid attempt transaction identity");
+      phase = "restore-transaction";
+      httpStatus = undefined;
       await env.PAYMENTS_DB.batch([
         env.PAYMENTS_DB.prepare(
           "UPDATE payment_attempts SET transaction_id=?,state='submitted' WHERE id=? AND transaction_id IS NULL AND state IN ('unknown','prepared')",
@@ -138,11 +160,26 @@ export async function recoverUncertainAttempts(
         ).bind(new Date().toISOString(), attempt.obligationId),
       ]);
     } catch (error) {
-      failures.push(error);
+      failures.push(
+        new Error(
+          `Payment attempt recovery failed ${JSON.stringify({
+            attemptId: attempt.idempotencyKey,
+            obligationId: attempt.obligationId,
+            chain: attempt.chain,
+            network: attempt.network,
+            phase,
+            httpStatus,
+          })}; Keep the obligation reserved; resolve the reported failure and retry the same attempt.`,
+          { cause: error },
+        ),
+      );
     }
   }
   if (failures.length)
-    throw new AggregateError(failures, "Payment attempt recovery failures");
+    throw new AggregateError(
+      failures,
+      `Payment attempt recovery failures (${failures.length}): ${failures[0].message}`,
+    );
 }
 function executor(env: PaymentsWorkerEnvironment): PaymentExecutor {
   return {
@@ -314,8 +351,10 @@ export default {
         failures.push(error);
       }
     }
+    const recoverAttempts = () => recoverUncertainAttempts(env);
+    let recoveryFailure: AggregateError | undefined;
     for (const step of [
-      () => recoverUncertainAttempts(env),
+      recoverAttempts,
       () =>
         reconcileFailedAttempts(
           env.PAYMENTS_DB,
@@ -332,10 +371,17 @@ export default {
         await step();
       } catch (error) {
         failures.push(error);
+        if (step === recoverAttempts && error instanceof AggregateError)
+          recoveryFailure = error;
       }
     }
     if (failures.length)
-      throw new AggregateError(failures, "Payment worker failures");
+      throw new AggregateError(
+        failures,
+        recoveryFailure
+          ? `Payment worker failures: ${recoveryFailure.message}`
+          : "Payment worker failures",
+      );
   },
   async queue(
     batch: {
