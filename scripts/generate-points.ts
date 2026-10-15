@@ -17,6 +17,7 @@ import {
   type PointsJournal,
   pointMembers,
   pointRevisionId,
+  retainedBatchOwnedKeys,
 } from "../src/lib/points";
 import { syncCycleIndex } from "./sync-cycle-index";
 
@@ -194,18 +195,11 @@ export function retainedHistoryCorrections(
   currentAwards: PointAward[],
 ): PointAward[] {
   const currentKeys = new Set(currentAwards.map((a) => a.key));
-  const coverageDigests = new Set(journal.coverage.map((c) => c.digest));
+  const latest = latestPoints(journal);
   const corrections: PointAward[] = [];
-  for (const revision of latestPoints(journal).values()) {
-    const award = revision.award;
-    if (
-      award.amount > 0 &&
-      (award.category === "substantive-review" ||
-        award.category === "evaluated-contribution") &&
-      !currentKeys.has(award.key) &&
-      revision.sourceRule === "slop-score-v2" &&
-      !coverageDigests.has(revision.sourceDigest)
-    )
+  for (const key of retainedBatchOwnedKeys(journal)) {
+    const award = latest.get(key)?.award;
+    if (award && !currentKeys.has(key))
       corrections.push({ ...award, amount: 0 });
   }
   return corrections;
