@@ -1577,6 +1577,11 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       attempt <= MAX_GRAPHQL_REQUEST_ATTEMPTS;
       attempt += 1
     ) {
+      // Only a GraphQL request is admitted through the window pre-check, which
+      // waits for a quota reset when the window is spent. A REST comparison page
+      // must not take that path: it records its cost after the response instead,
+      // so a spent budget fails closed there rather than parking the run for up
+      // to an hour per page.
       if (!restPath) await this.ensureBudget(1);
       this.#requestCount += 1;
       const controller = new AbortController();
@@ -1679,7 +1684,36 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       const errors = envelope.errors.map(sanitizeGraphqlError).join("; ");
       throw new Error(`${apiLabel} rejected the leaderboard query: ${errors}`);
     }
-    if (restPath) return envelope;
+    if (restPath) {
+      // A REST comparison is billed by GitHub like any other request, so it
+      // must spend the same fixed generation budget as a GraphQL request.
+      // Accounting only the GraphQL cost let the commit-comparison pagination
+      // (SCR-04, above the 250-commit listing limit) consume quota that no
+      // check could see: the snapshot could far exceed MAX_GENERATION_COST
+      // while every recorded counter stayed inside it.
+      this.#consumedCost += 1;
+      const previousRateLimit = this.#rateLimit;
+      const restRemaining = previousRateLimit?.remaining ?? null;
+      this.#windowConsumedCost = Math.max(
+        this.#windowConsumedCost + 1,
+        this.#startingRemaining === null || restRemaining === null
+          ? 0
+          : this.#startingRemaining - restRemaining,
+      );
+      if (previousRateLimit !== null) {
+        this.#rateLimit = {
+          ...previousRateLimit,
+          consumedDuringRun: this.#consumedCost,
+        };
+      }
+      const restEffectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
+      if (this.#windowConsumedCost > restEffectiveMaxGenerationCost) {
+        throw new Error(
+          `${apiLabel} safety budget exceeded (${this.#windowConsumedCost}/${restEffectiveMaxGenerationCost} points consumed in the current window, ${restRemaining ?? "unknown"} remaining; reserve ${this.#minimumRateLimitReserve})`,
+        );
+      }
+      return envelope;
+    }
     const data = asRecord(envelope.data, "GitHub GraphQL response.data");
     const rateLimit = parseRateLimit(data.rateLimit);
     this.#startingRemaining =
