@@ -38,6 +38,7 @@ import {
   type PullRequestRecord,
   type PullRequestReview,
   pullRequestTextSources,
+  type ReviewExclusion,
   SCORE_WINDOW_DAYS,
   type ScoreEvent,
   selectUniqueVerifiedEvidence,
@@ -285,6 +286,7 @@ export interface GenerateOptions {
   evidenceRetryDelayMs?: number;
   evaluatedContributions?: ScoreEvent[];
   retainedReviewEvents?: ScoreEvent[];
+  retainedReviewExclusions?: ReviewExclusion[];
   retainedReviewAttributions?: ModelAttribution[];
 }
 
