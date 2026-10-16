@@ -766,6 +766,12 @@ async function runReview(
         ? ""
         : await sha256Hex(`${fresh.title}\n${fresh.body ?? ""}`));
     const freshInstall = await store.installation(db, job.installationId);
+    if (freshPull?.draft) {
+      await store.finishReview(db, reviewKey, "skipped", {
+        skipReason: "pull request became draft before closure",
+      });
+      return "pull request became draft before closure";
+    }
     if (
       fresh === null ||
       fresh.state !== "open" ||
