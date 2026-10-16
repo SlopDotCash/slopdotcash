@@ -14,7 +14,6 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
-import { parsePreCensusReviewRecoveries } from "../src/lib/pre-census-review-recovery";
 import {
   assertPublishableLeaderboardSnapshot,
   canonicalActorAvatarUrl,
@@ -45,6 +44,7 @@ import {
   VERIFICATION_WINDOW_DAYS,
   type VerifiedEvidenceArtifact,
 } from "../src/lib/leaderboard";
+import { parsePreCensusReviewRecoveries } from "../src/lib/pre-census-review-recovery";
 import {
   TARGET_REPOSITORIES,
   type TargetRepository,
