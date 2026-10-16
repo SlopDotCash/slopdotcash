@@ -20,6 +20,7 @@ import {
   authorExemption,
   type Exemption,
   GitHubClient,
+  GitHubError,
   sha256Hex,
 } from "./github";
 import {
@@ -551,20 +552,29 @@ async function upsertComment(
       `/repos/${job.owner}/${job.repo}/issues/comments/${existing}`,
       { body },
     );
-    if (updated.status !== 404) return;
+    if (updated.status === 200 && updated.data !== null) return;
+    if (updated.status !== 404)
+      throw new GitHubError(
+        updated.status,
+        "GitHub did not confirm the comment update",
+      );
   }
   const created = await context.github.request<{ id: number }>(
     "POST",
     `/repos/${job.owner}/${job.repo}/issues/${job.number}/comments`,
     { body },
   );
-  if (created.data !== null)
-    await store.saveCommentId(
-      db,
-      context.issue.node_id,
-      job.repositoryId,
-      created.data.id,
+  if (created.status !== 201 || created.data === null)
+    throw new GitHubError(
+      created.status,
+      "GitHub did not confirm the comment creation",
     );
+  await store.saveCommentId(
+    db,
+    context.issue.node_id,
+    job.repositoryId,
+    created.data.id,
+  );
 }
 
 export async function reviewItem(
@@ -797,13 +807,18 @@ async function runReview(
     "comment",
     category,
   );
-  await context.github.request(
+  const labeled = await context.github.request(
     "POST",
     `/repos/${job.owner}/${job.repo}/issues/${job.number}/labels`,
     {
       labels: [`slopbot: ${category.replaceAll("_", " ")}`],
     },
   );
+  if (labeled.status !== 200 || labeled.data === null)
+    throw new GitHubError(
+      labeled.status,
+      "GitHub did not confirm the label addition",
+    );
   await store.recordAction(
     db,
     reviewKey,
