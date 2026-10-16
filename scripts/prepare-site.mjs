@@ -127,6 +127,9 @@ function listRegularSkillFiles(root, prefix = "") {
 }
 
 mkdirSync(publicRoot, { recursive: true });
+// Rebuild generated project endpoints from the current registry. A reused
+// checkout must not keep publishing skills for deleted or retired projects.
+rmSync(join(publicRoot, "projects"), { force: true, recursive: true });
 // Retire the deployment-bound intake timer from existing build directories.
 rmSync(join(publicRoot, "data", "private-intake-attestation.json"), {
   force: true,
