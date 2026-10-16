@@ -1,7 +1,8 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -9,8 +10,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 
+// These cases run real Git and runtime subprocesses. Windows process startup
+// can exceed Bun's five-second unit-test default without a guard failure.
+if (process.platform === "win32") setDefaultTimeout(60_000);
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -62,11 +66,16 @@ function fixture() {
   mkdirSync(bin);
   const historyPath = join(root, "history.json");
   const callsPath = join(root, "calls");
-  writeFileSync(
-    join(bin, "gh"),
-    `#!${process.execPath}\nconst fs=require('node:fs');\nif(process.env.FAIL_HISTORY)process.exit(1);\nconst path=process.argv[3];\nif(!/^repos\\/SlopDotCash\\/slopdotcash\\/deployments\\?environment=slop-staging&per_page=100&page=\\d+$/.test(path))process.exit(2);\nfs.appendFileSync(process.env.HISTORY_CALLS,path+'\\n');\nconst pages=JSON.parse(fs.readFileSync(process.env.HISTORY_PATH,'utf8'));\nprocess.stdout.write(JSON.stringify(pages[Number(path.split('page=').pop())-1]??[]));\n`,
-  );
-  chmodSync(join(bin, "gh"), 0o755);
+  const stub = `const fs=require('node:fs');\nif(process.env.FAIL_HISTORY)process.exit(1);\nconst path=process.argv.at(-1);\nif(!/^repos\\/SlopDotCash\\/slopdotcash\\/deployments\\?environment=slop-staging&per_page=100&page=\\d+$/.test(path))process.exit(2);\nfs.appendFileSync(process.env.HISTORY_CALLS,path+'\\n');\nconst pages=JSON.parse(fs.readFileSync(process.env.HISTORY_PATH,'utf8'));\nprocess.stdout.write(JSON.stringify(pages[Number(path.split('page=').pop())-1]??[]));\n`;
+  if (process.platform === "win32") {
+    // execFileSync needs a native executable on Windows. The pinned test
+    // runtime executes the local `api` script for `gh api <path>`.
+    copyFileSync(process.execPath, join(bin, "gh.exe"));
+    writeFileSync(join(checkout, "api"), stub);
+  } else {
+    writeFileSync(join(bin, "gh"), `#!${process.execPath}\n${stub}`);
+    chmodSync(join(bin, "gh"), 0o755);
+  }
   const deployment = (sha: string) => ({
     sha,
     environment: "slop-staging",
@@ -82,7 +91,7 @@ function fixture() {
         cwd: checkout,
         encoding: "utf8",
         env: {
-          PATH: `${bin}:${process.env.PATH}`,
+          PATH: `${bin}${delimiter}${process.env.PATH}`,
           GIT_CONFIG_NOSYSTEM: "1",
           GITHUB_REPOSITORY: "SlopDotCash/slopdotcash",
           GITHUB_REF: "refs/heads/development",
