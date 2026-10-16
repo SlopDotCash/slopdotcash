@@ -299,6 +299,9 @@ async function duplicateOf(
   context: Context,
   contentDigest: string,
 ): Promise<Verdict | null> {
+  // Equal excerpts do not establish identical submissions when a patch or
+  // part of the file list is unavailable.
+  if (context.diffTruncated) return null;
   const prior = await env.SLOPBOT_DB.prepare(
     `SELECT item_number, item_kind FROM slopbot_reviews WHERE repository_id = ? AND author_id = ? AND content_digest = ?
        AND item_node_id != ? ORDER BY created_at DESC LIMIT 1`,
@@ -322,9 +325,9 @@ async function duplicateOf(
         )
       : null;
   if (prior.item_kind === "pull_request" && otherPull === null) return null;
-  const { diff } =
+  const { diff, truncated } =
     otherPull === null
-      ? { diff: "" }
+      ? { diff: "", truncated: false }
       : await pullDiff(
           context.github,
           job.owner,
@@ -334,7 +337,10 @@ async function duplicateOf(
         );
   // The stored digest identifies a historical candidate, not its current
   // contents. An edited open original must not make this item a duplicate.
-  if (reviewedItemText(other, otherPull, diff) !== context.itemText)
+  if (
+    truncated ||
+    reviewedItemText(other, otherPull, diff) !== context.itemText
+  )
     return null;
   return {
     category: "duplicate",
