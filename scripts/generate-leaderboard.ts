@@ -14,6 +14,7 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
+import { parsePreCensusReviewRecoveries } from "../src/lib/pre-census-review-recovery";
 import {
   assertPublishableLeaderboardSnapshot,
   canonicalActorAvatarUrl,
@@ -92,6 +93,10 @@ const ACCEPTED_REVIEW_HISTORY_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../data/accepted-review-history.json",
 );
+const PRE_CENSUS_REVIEW_RECOVERY_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../data/pre-census-review-recovery.json",
+);
 
 function loadAcceptedReviewHistory(): {
   events: ScoreEvent[];
@@ -113,6 +118,12 @@ function loadAcceptedReviewHistory(): {
     throw new TypeError("accepted review history manifest is invalid");
   }
   return value as { events: ScoreEvent[]; attributions: ModelAttribution[] };
+}
+
+function loadPreCensusReviewRecoveries() {
+  return parsePreCensusReviewRecoveries(
+    JSON.parse(readFileSync(PRE_CENSUS_REVIEW_RECOVERY_PATH, "utf8")),
+  );
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -4025,11 +4036,16 @@ function progressLine(progress: GenerationProgress): string {
 if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
   const acceptedReviewHistory = loadAcceptedReviewHistory();
+  const preCensusReviewRecovery = loadPreCensusReviewRecoveries();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
     evaluatedContributions: loadEvaluatorAwardEvents(),
-    retainedReviewEvents: acceptedReviewHistory.events,
+    retainedReviewEvents: [
+      ...acceptedReviewHistory.events,
+      ...preCensusReviewRecovery.events,
+    ],
+    retainedReviewExclusions: preCensusReviewRecovery.exclusions,
     retainedReviewAttributions: acceptedReviewHistory.attributions,
     onProgress: (progress) => {
       const phaseChanged = progress.phase !== lastProgressPhase;

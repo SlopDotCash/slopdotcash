@@ -3598,6 +3598,13 @@ function createSnapshotWithReviewCutoff(
   const currentScoreSources = new Set(
     ledger.map((event) => `${event.repository}\0${event.source.id}`),
   );
+  const currentOutcomeKeys = new Set(
+    mergedPullRequestOutcomes.map(
+      (pullRequest) =>
+        `${repositoryIdFromUrl(pullRequest.url)}\0${pullRequest.number}`,
+    ),
+  );
+  const retainedReviewParentKeys = new Set<string>();
   const retainedAttributionCandidates = new Map<string, ModelAttribution>();
   for (const [index, event] of [...(input.retainedReviewEvents ?? [])]
     .sort(
@@ -3627,10 +3634,13 @@ function createSnapshotWithReviewCutoff(
       );
     }
     const occurredAt = parseIsoTime(event.occurredAt);
+    const parentKey = `${event.repository}\0${event.source.number}`;
     if (
       occurredAt < parseIsoTime(input.windowFrom) ||
       occurredAt >= windowTo ||
       outcomeIds.has(parentPullRequestId) ||
+      currentOutcomeKeys.has(parentKey) ||
+      retainedReviewParentKeys.has(parentKey) ||
       currentLedgerIds.has(event.id) ||
       currentScoreSources.has(`${event.repository}\0${event.source.id}`)
     ) {
@@ -3644,12 +3654,35 @@ function createSnapshotWithReviewCutoff(
     if (addScore(entries, ledger, retained)) {
       currentLedgerIds.add(retained.id);
       currentScoreSources.add(`${retained.repository}\0${retained.source.id}`);
+      retainedReviewParentKeys.add(parentKey);
       const candidates = (input.retainedReviewAttributions ?? []).filter(
         (attribution) => attribution.sourceId === retained.source.id,
       );
       if (candidates.length === 1) {
         retainedAttributionCandidates.set(retained.id, candidates[0]);
       }
+    }
+  }
+  for (const [index, exclusion] of (input.retainedReviewExclusions ?? []).entries()) {
+    assertReviewExclusionValue(
+      exclusion,
+      `retainedReviewExclusions[${index}]`,
+      TARGET_REPOSITORIES.map((repository) => repository.id),
+    )
+    const parentKey = `${exclusion.repository}\0${exclusion.pullRequestNumber}`;
+    if (currentOutcomeKeys.has(parentKey) || retainedReviewParentKeys.has(parentKey)) {
+      continue;
+    }
+    if (
+      !reviewExclusions.some(
+        (candidate) =>
+          candidate.id === exclusion.id ||
+          (candidate.repository === exclusion.repository &&
+            candidate.url === exclusion.url),
+      )
+    ) {
+      reviewExclusions.push(exclusion);
+      retainedReviewParentKeys.add(parentKey);
     }
   }
 

@@ -588,6 +588,8 @@ export interface LeaderboardInput {
    * are replayed, so live GitHub remains authoritative whenever it exists.
    */
   retainedReviewEvents?: ScoreEvent[];
+  /** Digest-bound reviews that qualified after merge but before first census. */
+  retainedReviewExclusions?: ReviewExclusion[];
   /** Signed attributions recovered from the same accepted snapshot. */
   retainedReviewAttributions?: ModelAttribution[];
   verifyRunReceipt?: (value: unknown) => ProjectRunReceipt;
