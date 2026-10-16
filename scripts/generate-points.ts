@@ -151,7 +151,9 @@ export function pointsSql(journal: PointsJournal): string {
       `INSERT INTO points_staging(batch_id,sequence,payload) VALUES(${quote(digest)},${sequence},${quote(JSON.stringify(r))}) ON CONFLICT(batch_id,sequence) DO NOTHING;`,
   );
   statements.push(
-    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) VALUES(${quote(digest)},${quote(journal.generatedAt)},${quote(JSON.stringify(journal.coverage))},${journal.revisions.length}) ON CONFLICT(digest) DO NOTHING;`,
+    // Skip the insert before its BEFORE trigger runs. A known older batch is
+    // an idempotent replay, not a new candidate with a shorter history.
+    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},${quote(JSON.stringify(journal.coverage))},${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     // Replayed batches skip the AFTER INSERT trigger that normally clears staging.
     `DELETE FROM points_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
   );
