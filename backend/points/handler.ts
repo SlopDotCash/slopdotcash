@@ -266,7 +266,7 @@ export async function handlePointsApi(
         return json(400, { error: "invalid_cursor" });
       const batch = await deps.db
         .prepare(
-          "SELECT generated_at,coverage,revision_count,digest FROM points_batches ORDER BY generated_at DESC,digest DESC LIMIT 1",
+          "SELECT generated_at,coverage,revision_count,digest FROM points_batches ORDER BY revision_count DESC,generated_at DESC,digest DESC LIMIT 1",
         )
         .first<{
           generated_at: string;
