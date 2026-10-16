@@ -3663,14 +3663,19 @@ function createSnapshotWithReviewCutoff(
       }
     }
   }
-  for (const [index, exclusion] of (input.retainedReviewExclusions ?? []).entries()) {
+  for (const [index, exclusion] of (
+    input.retainedReviewExclusions ?? []
+  ).entries()) {
     assertReviewExclusionValue(
       exclusion,
       `retainedReviewExclusions[${index}]`,
       TARGET_REPOSITORIES.map((repository) => repository.id),
-    )
+    );
     const parentKey = `${exclusion.repository}\0${exclusion.pullRequestNumber}`;
-    if (currentOutcomeKeys.has(parentKey) || retainedReviewParentKeys.has(parentKey)) {
+    if (
+      currentOutcomeKeys.has(parentKey) ||
+      retainedReviewParentKeys.has(parentKey)
+    ) {
       continue;
     }
     if (
