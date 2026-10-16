@@ -3,7 +3,9 @@
  * Generator-level tests for the retained review history batch in
  * generate-points.ts: corrections, removals, replay, and rejection.
  */
+import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
 import type { LeaderboardSnapshot } from "../src/lib/leaderboard";
 import type { ScoreEvent } from "../src/lib/leaderboard-types";
 import {
@@ -18,6 +20,7 @@ import {
 } from "../src/lib/points";
 import {
   applyRetainedHistoryBatch,
+  pointsSql,
   retainedHistoryCorrections,
 } from "./generate-points";
 
@@ -25,6 +28,52 @@ const DIGEST = "a".repeat(64);
 const T0 = "2026-10-01T00:00:00.000Z";
 const T1 = "2026-10-02T00:00:00.000Z";
 const T2 = "2026-10-03T00:00:00.000Z";
+
+it("replays an already completed older import without rolling back newer points", () => {
+  const db = new Database(":memory:");
+  for (const path of readdirSync("migrations")
+    .filter((path) => path.endsWith(".sql"))
+    .sort())
+    db.exec(readFileSync(`migrations/${path}`, "utf8"));
+  const before = seedJournal(awardForScore(reviewEvent(3)));
+  const after = appendPointAwards(
+    before,
+    [awardForScore(reviewEvent(1))],
+    DIGEST,
+    "slop-score-v2",
+    T1,
+  );
+  const apply = (journal: PointsJournal) => {
+    db.transaction(() => {
+      for (const statement of pointsSql(journal).trim().split("\n"))
+        db.exec(statement);
+    })();
+  };
+  const rows = () =>
+    db.query("SELECT id,payload FROM points_revisions ORDER BY rowid").all();
+  try {
+    apply(before);
+    apply(after);
+    const permanent = rows();
+    expect(permanent).toHaveLength(2);
+    expect(() => apply(before)).not.toThrow();
+    expect(() => apply(after)).not.toThrow();
+    expect(rows()).toEqual(permanent);
+    expect(db.query("SELECT COUNT(*) AS n FROM points_batches").get()).toEqual({
+      n: 2,
+    });
+    expect(db.query("SELECT COUNT(*) AS n FROM points_staging").get()).toEqual({
+      n: 0,
+    });
+    // A previously unseen shorter batch must still fail the full-history gate.
+    expect(() => apply({ ...before, generatedAt: T2 })).toThrow(
+      "divergent points batch",
+    );
+    expect(rows()).toEqual(permanent);
+  } finally {
+    db.close();
+  }
+});
 
 function reviewEvent(scoreThirds: number): ScoreEvent {
   return {
