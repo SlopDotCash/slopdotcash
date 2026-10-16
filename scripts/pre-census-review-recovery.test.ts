@@ -99,3 +99,90 @@ test("rejects duplicate pull requests and uncausal review heads", () => {
     }),
   ).toThrow("changed accepted outcome");
 });
+
+test("normalizes repository case and registry aliases to the canonical id", () => {
+  const mixed = recovery();
+  const canonical = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [
+      {
+        ...mixed,
+        repository: "slopdotcash/slopDOTcash",
+        pullRequestUrl: "https://github.com/slopdotcash/slopdotcash/pull/730",
+        review: {
+          ...mixed.review,
+          url: "https://github.com/slopdotcash/slopdotcash/pull/730#pullrequestreview-5514965110",
+        },
+      },
+    ],
+  });
+  expect(canonical.events[0]?.repository).toBe("SlopDotCash/slopdotcash");
+
+  const alias = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [
+      {
+        ...mixed,
+        repository: "SlopDotCash/asi",
+        pullRequestNumber: 5,
+        pullRequestUrl: "https://github.com/SlopDotCash/asi/pull/5",
+        review: {
+          ...mixed.review,
+          id: "5514965120",
+          url: "https://github.com/SlopDotCash/asi/pull/5#pullrequestreview-5514965120",
+        },
+        lifecycleReviewIds: ["5514965120"],
+      },
+    ],
+  });
+  expect(alias.events[0]?.repository).toBe("elizaOS/asi");
+
+  const excluded = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [
+      { ...mixed, decision: "exclude", exclusionReason: "post-merge" },
+    ],
+  });
+  expect(excluded.exclusions[0]?.repository).toBe("SlopDotCash/slopdotcash");
+
+  expect(() =>
+    parsePreCensusReviewRecoveries({
+      schemaVersion: "1",
+      recoveries: [
+        mixed,
+        { ...mixed, id: "recovery-2", repository: "slopdotcash/slopdotcash" },
+      ],
+    }),
+  ).toThrow("one decision per pull request");
+});
+
+test("rejects a URL that belongs to another repository", () => {
+  const differentPullRequestUrl = recovery();
+  expect(() =>
+    parsePreCensusReviewRecoveries({
+      schemaVersion: "1",
+      recoveries: [
+        {
+          ...differentPullRequestUrl,
+          pullRequestUrl: "https://github.com/elizaOS/eliza/pull/730",
+        },
+      ],
+    }),
+  ).toThrow("must belong to");
+
+  const differentReviewUrl = recovery();
+  expect(() =>
+    parsePreCensusReviewRecoveries({
+      schemaVersion: "1",
+      recoveries: [
+        {
+          ...differentReviewUrl,
+          review: {
+            ...differentReviewUrl.review,
+            url: "https://github.com/elizaOS/eliza/pull/730#pullrequestreview-5514965110",
+          },
+        },
+      ],
+    }),
+  ).toThrow("must belong to");
+});

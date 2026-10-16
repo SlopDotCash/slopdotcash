@@ -4,7 +4,10 @@ import type {
   ReviewExclusionReason,
   ScoreEvent,
 } from "./leaderboard-types";
-import { findRegisteredRepositoryById } from "./repositories.mjs";
+import {
+  findRegisteredRepository,
+  findRegisteredRepositoryById,
+} from "./repositories.mjs";
 
 const RECOVERY_DECISIONS = ["award", "exclude"] as const;
 const RECOVERY_EXCLUSION_REASONS = [
@@ -200,6 +203,13 @@ function urlValue(value: unknown, path: string, pattern: RegExp): string {
   return result;
 }
 
+function githubRepositoryId(url: string): string | null {
+  const segments = new URL(url).pathname.split("/").filter(Boolean);
+  const owner = segments[0] ?? "";
+  const name = segments[1] ?? "";
+  return findRegisteredRepository(owner, name)?.id ?? null;
+}
+
 function parseRecovery(value: unknown, index: number): PreCensusReviewRecovery {
   const path = `preCensusRecoveries[${index}]`;
   const input = record(value, path);
@@ -229,10 +239,12 @@ function parseRecovery(value: unknown, index: number): PreCensusReviewRecovery {
   ) {
     throw new TypeError(`${path} has unexpected or missing fields`);
   }
-  const repository = stringValue(input.repository, `${path}.repository`);
-  if (!findRegisteredRepositoryById(repository)) {
+  const rawRepository = stringValue(input.repository, `${path}.repository`);
+  const registeredRepository = findRegisteredRepositoryById(rawRepository);
+  if (!registeredRepository) {
     throw new TypeError(`${path}.repository is not registered`);
   }
+  const repository = registeredRepository.id;
   const pullRequestNumber = positiveInteger(
     input.pullRequestNumber,
     `${path}.pullRequestNumber`,
@@ -245,6 +257,9 @@ function parseRecovery(value: unknown, index: number): PreCensusReviewRecovery {
       "u",
     ),
   );
+  if (githubRepositoryId(pullRequestUrl) !== repository) {
+    throw new TypeError(`${path}.pullRequestUrl must belong to ${repository}`);
+  }
   const reviewedHeadOid = shaValue(
     input.reviewedHeadOid,
     `${path}.reviewedHeadOid`,
@@ -295,6 +310,9 @@ function parseRecovery(value: unknown, index: number): PreCensusReviewRecovery {
       "u",
     ),
   );
+  if (githubRepositoryId(reviewUrl) !== repository) {
+    throw new TypeError(`${path}.review.url must belong to ${repository}`);
+  }
   const lifecycleReviewIds = input.lifecycleReviewIds;
   if (
     !Array.isArray(lifecycleReviewIds) ||
