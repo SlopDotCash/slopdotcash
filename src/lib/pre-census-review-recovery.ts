@@ -399,9 +399,7 @@ function recoveryWorkUnitId(recovery: PreCensusReviewRecovery): string {
   const repository = recovery.repository
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/gu, "_");
-  const actor = recovery.actor.id
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/gu, "_");
+  const actor = recovery.actor.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_");
   return `wu_${repository}_pr_${recovery.pullRequestNumber}_review_${actor}`;
 }
 

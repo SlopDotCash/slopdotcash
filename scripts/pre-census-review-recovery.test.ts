@@ -67,7 +67,9 @@ test("materializes one bounded pre-census award", () => {
       decisionUrl: "https://github.com/SlopDotCash/slopdotcash/issues/797",
     },
   });
-  expect(result.events[0]?.workUnitId).toMatch(/^wu_[a-z0-9][a-z0-9_-]{2,255}$/u);
+  expect(result.events[0]?.workUnitId).toMatch(
+    /^wu_[a-z0-9][a-z0-9_-]{2,255}$/u,
+  );
 });
 
 test("publishes an explicit exclusion without creating score", () => {
@@ -275,9 +277,9 @@ test("a restored award passes full publication validation", () => {
     "wu_slopdotcash_slopdotcash_pr_730_review_u_recovery",
   );
   expect(restored?.scoreThirds).toBe(1);
-  expect(snapshot.leaders.some((leader) => leader.actor.id === "U_recovery")).toBe(
-    true,
-  );
+  expect(
+    snapshot.leaders.some((leader) => leader.actor.id === "U_recovery"),
+  ).toBe(true);
 });
 
 test("a restored exclusion reaches the published snapshot", () => {
