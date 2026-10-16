@@ -3969,6 +3969,7 @@ export async function generateLeaderboardFromGitHub(
       actualNow,
     ),
     retainedReviewEvents: options.retainedReviewEvents,
+    retainedReviewExclusions: options.retainedReviewExclusions,
     retainedReviewAttributions: options.retainedReviewAttributions,
     verifyRunReceipt: verifyRunReceiptSignature,
   });

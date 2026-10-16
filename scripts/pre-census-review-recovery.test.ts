@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
+import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import type { LeaderboardInput } from "../src/lib/leaderboard-types";
 import { parsePreCensusReviewRecoveries } from "../src/lib/pre-census-review-recovery";
+import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 
 const actor = {
   id: "U_recovery",
@@ -55,6 +58,7 @@ test("materializes one bounded pre-census award", () => {
     category: "substantive-review",
     scoreThirds: 1,
     points: 1 / 3,
+    workUnitId: "wu_slopdotcash_slopdotcash_pr_730_review_u_recovery",
     source: {
       id: "5514965110",
       number: 730,
@@ -63,6 +67,7 @@ test("materializes one bounded pre-census award", () => {
       decisionUrl: "https://github.com/SlopDotCash/slopdotcash/issues/797",
     },
   });
+  expect(result.events[0]?.workUnitId).toMatch(/^wu_[a-z0-9][a-z0-9_-]{2,255}$/u);
 });
 
 test("publishes an explicit exclusion without creating score", () => {
@@ -185,4 +190,110 @@ test("rejects a URL that belongs to another repository", () => {
       ],
     }),
   ).toThrow("must belong to");
+});
+
+/**
+ * The smallest publication-shaped input: no census records, one 35-day window.
+ * Recovers the exact production path that consumes the manifest through
+ * ``createLeaderboardSnapshot``, including ``assertPublishableLeaderboardSnapshot``.
+ */
+function emptyLeaderboardInput(): LeaderboardInput {
+  const generatedAt = "2026-10-16T00:00:00.000Z";
+  const windowFrom = "2026-09-11T00:00:00.000Z";
+  return {
+    generatedAt,
+    windowFrom,
+    windowTo: generatedAt,
+    sourceUpdatedAt: "2026-10-15T00:00:00.000Z",
+    source: {
+      provider: "github-graphql",
+      fetchedAt: generatedAt,
+      cutoffAt: generatedAt,
+      repositoryId: "R_recovery_fixture",
+      repositories: TARGET_REPOSITORIES.map((repository) => ({
+        id: repository.id,
+        repositoryId:
+          repository.role === "primary"
+            ? "R_recovery_fixture"
+            : `R_recovery_fixture_${repository.name.replaceAll("-", "_")}`,
+      })),
+      requestCount: 1,
+      searchSliceCount: 1,
+      rateLimit: {
+        cost: 1,
+        limit: 5000,
+        remaining: 4999,
+        resetAt: "2026-10-16T01:00:00.000Z",
+      },
+      counts: {
+        mergedPullRequests: 0,
+        detailedMergedPullRequests: 0,
+        closedIssues: 0,
+        detailedClosedIssues: 0,
+        resolvedIssues: 0,
+        openIssues: 0,
+        openPullRequests: 0,
+      },
+      verificationWindow: {
+        days: 35,
+        from: windowFrom,
+        to: generatedAt,
+      },
+      evidenceVerification: {
+        status: "complete",
+        sourceCount: 0,
+        artifactCount: 0,
+        maxSources: 64,
+        maxArtifacts: 64,
+      },
+    },
+    mergedPullRequestOutcomes: [],
+    mergedPullRequests: [],
+    detailEligibleMergedPullRequestIds: [],
+    closedIssueCount: 0,
+    resolvedIssues: [],
+    openIssues: [],
+    openPullRequests: [],
+    verificationWindowFrom: windowFrom,
+    verifiedEvidence: [],
+  };
+}
+
+test("a restored award passes full publication validation", () => {
+  const parsed = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [recovery()],
+  });
+  const snapshot = createLeaderboardSnapshot({
+    ...emptyLeaderboardInput(),
+    retainedReviewEvents: parsed.events,
+  });
+  const restored = snapshot.ledger.find(
+    (event) => event.source.id === "5514965110",
+  );
+  expect(restored?.workUnitId).toBe(
+    "wu_slopdotcash_slopdotcash_pr_730_review_u_recovery",
+  );
+  expect(restored?.scoreThirds).toBe(1);
+  expect(snapshot.leaders.some((leader) => leader.actor.id === "U_recovery")).toBe(
+    true,
+  );
+});
+
+test("a restored exclusion reaches the published snapshot", () => {
+  const parsed = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [recovery("exclude")],
+  });
+  const snapshot = createLeaderboardSnapshot({
+    ...emptyLeaderboardInput(),
+    retainedReviewExclusions: parsed.exclusions,
+  });
+  expect(snapshot.ledger).toEqual([]);
+  expect(snapshot.reviewExclusions).toEqual([
+    expect.objectContaining({
+      reviewId: "5514965110",
+      reason: "pull-request-review-awarded",
+    }),
+  ]);
 });

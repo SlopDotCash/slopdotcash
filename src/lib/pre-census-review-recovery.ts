@@ -390,6 +390,21 @@ function recoveryPullRequestId(recovery: PreCensusReviewRecovery): string {
   return `PR_PRE_CENSUS_${slug}_${recovery.pullRequestNumber}`;
 }
 
+/**
+ * V2 score events only validate with a lowercase ``wu_`` work unit. Mirrors the
+ * merge convention ``wu_<repository>_pr_<number>`` plus the reviewer suffix so a
+ * recovered review stays one work unit per pull request and actor.
+ */
+function recoveryWorkUnitId(recovery: PreCensusReviewRecovery): string {
+  const repository = recovery.repository
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, "_");
+  const actor = recovery.actor.id
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, "_");
+  return `wu_${repository}_pr_${recovery.pullRequestNumber}_review_${actor}`;
+}
+
 function eventForRecovery(recovery: PreCensusReviewRecovery): ScoreEvent {
   const pullRequestId = recoveryPullRequestId(recovery);
   return {
@@ -410,7 +425,7 @@ function eventForRecovery(recovery: PreCensusReviewRecovery): ScoreEvent {
     reason:
       "Recovered pre-census CHANGES_REQUESTED review whose accepted change is bound to the merged head.",
     continuity: recovery.continuity,
-    workUnitId: `${pullRequestId}_review_${recovery.actor.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
+    workUnitId: recoveryWorkUnitId(recovery),
   };
 }
 
