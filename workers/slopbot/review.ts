@@ -573,6 +573,11 @@ export async function reviewItem(
 ): Promise<string> {
   const db = env.SLOPBOT_DB;
   const install = await store.installation(db, job.installationId);
+  const installationActive =
+    install !== null &&
+    install.removed_at === null &&
+    install.suspended_at === null;
+  if (!installationActive) return "installation removed or suspended";
   const context = await loadContext(env, job);
   if (context === null) return "item or repository not readable";
   const { issue, pull, repo, config } = context;
@@ -608,10 +613,7 @@ export async function reviewItem(
   }
   const routing = route({
     config: config.config,
-    installationActive:
-      install !== null &&
-      install.removed_at === null &&
-      install.suspended_at === null,
+    installationActive,
     repositoryPrivate: repo.private,
     itemKind: job.itemKind,
     itemOpen: issue.state === "open",
