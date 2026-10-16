@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test"
-import { parsePreCensusReviewRecoveries } from "../src/lib/pre-census-review-recovery"
+import { expect, test } from "bun:test";
+import { parsePreCensusReviewRecoveries } from "../src/lib/pre-census-review-recovery";
 
 const actor = {
   id: "U_recovery",
@@ -7,7 +7,7 @@ const actor = {
   avatarUrl: "https://avatars.githubusercontent.com/u/1?v=1",
   url: "https://github.com/reviewer",
   kind: "User",
-}
+};
 
 function recovery(decision = "award") {
   return {
@@ -34,20 +34,23 @@ function recovery(decision = "award") {
     },
     lifecycleReviewIds: ["5514965110", "5514965111"],
     continuity: {
-      sourceSnapshotSha256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      sourceSnapshotSha256:
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       decisionUrl: "https://github.com/SlopDotCash/slopdotcash/issues/797",
     },
-    ...(decision === "exclude" ? { exclusionReason: "pull-request-review-awarded" } : {}),
-  }
+    ...(decision === "exclude"
+      ? { exclusionReason: "pull-request-review-awarded" }
+      : {}),
+  };
 }
 
 test("materializes one bounded pre-census award", () => {
   const result = parsePreCensusReviewRecoveries({
     schemaVersion: "1",
     recoveries: [recovery()],
-  })
-  expect(result.events).toHaveLength(1)
-  expect(result.exclusions).toHaveLength(0)
+  });
+  expect(result.events).toHaveLength(1);
+  expect(result.exclusions).toHaveLength(0);
   expect(result.events[0]).toMatchObject({
     category: "substantive-review",
     scoreThirds: 1,
@@ -59,29 +62,29 @@ test("materializes one bounded pre-census award", () => {
     continuity: {
       decisionUrl: "https://github.com/SlopDotCash/slopdotcash/issues/797",
     },
-  })
-})
+  });
+});
 
 test("publishes an explicit exclusion without creating score", () => {
   const result = parsePreCensusReviewRecoveries({
     schemaVersion: "1",
     recoveries: [recovery("exclude")],
-  })
-  expect(result.events).toEqual([])
+  });
+  expect(result.events).toEqual([]);
   expect(result.exclusions[0]).toMatchObject({
     reviewId: "5514965110",
     reason: "pull-request-review-awarded",
-  })
-})
+  });
+});
 
 test("rejects duplicate pull requests and uncausal review heads", () => {
-  const first = recovery()
+  const first = recovery();
   expect(() =>
     parsePreCensusReviewRecoveries({
       schemaVersion: "1",
       recoveries: [first, { ...first, id: "recovery-2" }],
     }),
-  ).toThrow("one decision per pull request")
+  ).toThrow("one decision per pull request");
 
   expect(() =>
     parsePreCensusReviewRecoveries({
@@ -94,5 +97,5 @@ test("rejects duplicate pull requests and uncausal review heads", () => {
         },
       ],
     }),
-  ).toThrow("changed accepted outcome")
-})
+  ).toThrow("changed accepted outcome");
+});
