@@ -105,7 +105,7 @@ export async function handlePointsApi(
         return response;
       }
     }
-    if (route.startsWith("/x/")) return handleX(request, deps, now);
+    if (route.startsWith("/x/")) return await handleX(request, deps, now);
     if (route === "/people" && request.method === "GET") {
       const after = url.searchParams.get("after") ?? "";
       if (after && !/^[A-Za-z0-9_=-]{4,256}$/.test(after))
