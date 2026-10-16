@@ -291,7 +291,7 @@ function parseRecovery(value: unknown, index: number): PreCensusReviewRecovery {
     review.url,
     `${path}.review.url`,
     new RegExp(
-      `^https://github\\.com/[^/]+/[^/]+/pull/${pullRequestNumber}#(?:pullrequestreview|discussion_r)[0-9]+$`,
+      `^https://github\\.com/[^/]+/[^/]+/pull/${pullRequestNumber}#(?:pullrequestreview-[0-9]+|discussion_r[0-9]+)$`,
       "u",
     ),
   );
