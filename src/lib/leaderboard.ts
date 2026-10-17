@@ -3606,7 +3606,23 @@ function createSnapshotWithReviewCutoff(
   );
   const retainedReviewParentKeys = new Set<string>();
   const retainedAttributionCandidates = new Map<string, ModelAttribution>();
-  for (const [index, event] of [...(input.retainedReviewEvents ?? [])]
+  // A retained review's credit is cutoff-dependent; the payment pass replays
+  // the separately reconstructed variant for every source that has one.
+  const retainedPaymentVariants = input.retainedReviewPaymentEvents ?? [];
+  const retainedReviewEvents =
+    reviewCutoff === PAYMENT_REVIEW_POLICY_AT &&
+    retainedPaymentVariants.length > 0
+      ? [
+          ...(input.retainedReviewEvents ?? []).filter(
+            (event) =>
+              !retainedPaymentVariants.some(
+                (variant) => variant.id === event.id,
+              ),
+          ),
+          ...retainedPaymentVariants,
+        ]
+      : (input.retainedReviewEvents ?? []);
+  for (const [index, event] of [...retainedReviewEvents]
     .sort(
       (left, right) =>
         parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||

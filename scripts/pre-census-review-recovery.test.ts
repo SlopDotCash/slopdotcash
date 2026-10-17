@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import {
+  createLeaderboardSnapshot,
+  paymentReviewSnapshot,
+} from "../src/lib/leaderboard";
 import type { LeaderboardInput } from "../src/lib/leaderboard-types";
 import { parsePreCensusReviewRecoveries } from "../src/lib/pre-census-review-recovery";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
@@ -82,6 +85,89 @@ test("publishes an explicit exclusion without creating score", () => {
     reviewId: "5514965110",
     reason: "pull-request-review-awarded",
   });
+});
+
+test("accepts an inline-only change request and still rejects empty evidence", () => {
+  const inlineOnly = recovery();
+  const parsed = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [
+      {
+        ...inlineOnly,
+        review: { ...inlineOnly.review, body: "", inlineCommentCount: 1 },
+      },
+    ],
+  });
+  expect(parsed.events).toHaveLength(1);
+  expect(parsed.events[0]?.points).toBe(1 / 3);
+
+  expect(() =>
+    parsePreCensusReviewRecoveries({
+      schemaVersion: "1",
+      recoveries: [
+        {
+          ...inlineOnly,
+          review: { ...inlineOnly.review, body: "", inlineCommentCount: 0 },
+        },
+      ],
+    }),
+  ).toThrow("substantive review evidence");
+
+  expect(() =>
+    parsePreCensusReviewRecoveries({
+      schemaVersion: "1",
+      recoveries: [
+        { ...inlineOnly, review: { ...inlineOnly.review, body: null } },
+      ],
+    }),
+  ).toThrow("body must be a string");
+});
+
+test("restores the pre-release payment weight on the payment pass", () => {
+  const fixture = recovery();
+  const parsed = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [
+      {
+        ...fixture,
+        mergedAt: "2026-10-08T16:00:00Z",
+        review: { ...fixture.review, submittedAt: "2026-10-08T08:00:00Z" },
+      },
+    ],
+  });
+  expect(parsed.events[0]).toMatchObject({ points: 1 / 3, scoreThirds: 1 });
+  expect(parsed.paymentEvents[0]).toMatchObject({ points: 3 });
+  expect(parsed.paymentEvents[0]?.scoreThirds).toBeUndefined();
+
+  const snapshot = createLeaderboardSnapshot({
+    ...emptyLeaderboardInput(),
+    retainedReviewEvents: parsed.events,
+    retainedReviewPaymentEvents: parsed.paymentEvents,
+  });
+  const published = snapshot.ledger.find(
+    (event) => event.source.id === "5514965110",
+  );
+  expect(published?.scoreThirds).toBe(1);
+  const paid = paymentReviewSnapshot(snapshot).ledger.find(
+    (event) => event.source.id === "5514965110",
+  );
+  expect(paid?.scoreThirds ?? Math.round((paid?.points ?? 0) * 3)).toBe(3);
+});
+
+test("restores standard credit for a pre-October recovery in both passes", () => {
+  const fixture = recovery();
+  const parsed = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [
+      {
+        ...fixture,
+        mergedAt: "2026-09-20T16:00:00Z",
+        review: { ...fixture.review, submittedAt: "2026-09-20T08:00:00Z" },
+      },
+    ],
+  });
+  expect(parsed.events[0]).toMatchObject({ points: 3 });
+  expect(parsed.paymentEvents[0]).toMatchObject({ points: 3 });
 });
 
 test("rejects duplicate pull requests and uncausal review heads", () => {
@@ -261,6 +347,110 @@ function emptyLeaderboardInput(): LeaderboardInput {
   };
 }
 
+test("matches the ordinary path award for a pre-release review", () => {
+  const ordinaryAuthor = {
+    id: "U_author",
+    login: "author",
+    avatarUrl: "https://avatars.githubusercontent.com/u/2?v=1",
+    url: "https://github.com/author",
+    kind: "User" as const,
+  };
+  const ordinaryReviewer = {
+    id: "U_reviewer",
+    login: "reviewer",
+    avatarUrl: "https://avatars.githubusercontent.com/u/3?v=1",
+    url: "https://github.com/reviewer",
+    kind: "User" as const,
+  };
+  const input = emptyLeaderboardInput();
+  const ordinary = createLeaderboardSnapshot({
+    ...input,
+    source: {
+      ...input.source,
+      counts: { ...input.source.counts, mergedPullRequests: 1 },
+    },
+    mergedPullRequestOutcomes: [
+      {
+        id: "PR_ordinary_control",
+        number: 900,
+        title: "fix: ordinary control",
+        url: "https://github.com/SlopDotCash/slopdotcash/pull/900",
+        body: "",
+        createdAt: "2026-10-08T07:00:00Z",
+        updatedAt: "2026-10-08T16:00:00Z",
+        mergedAt: "2026-10-08T16:00:00Z",
+        author: ordinaryAuthor,
+        additions: 1,
+        deletions: 0,
+        baseRefName: "development",
+        commits: null,
+      },
+    ],
+    reviewedMergedPullRequests: [
+      {
+        id: "PR_ordinary_control",
+        number: 900,
+        title: "fix: ordinary control",
+        url: "https://github.com/SlopDotCash/slopdotcash/pull/900",
+        body: "",
+        createdAt: "2026-10-08T07:00:00Z",
+        updatedAt: "2026-10-08T16:00:00Z",
+        lastEditedAt: null,
+        editor: null,
+        mergedAt: "2026-10-08T16:00:00Z",
+        headRefOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        author: ordinaryAuthor,
+        comments: [],
+        reviews: [
+          {
+            id: "5514965999",
+            body: "The replay guard needs an executable regression and a positive control.",
+            state: "CHANGES_REQUESTED",
+            submittedAt: "2026-10-08T08:00:00Z",
+            url: "https://github.com/SlopDotCash/slopdotcash/pull/900#pullrequestreview-5514965999",
+            author: ordinaryReviewer,
+            inlineCommentCount: 0,
+            commitId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        ],
+      },
+    ],
+  });
+
+  const fixture = recovery();
+  const parsed = parsePreCensusReviewRecoveries({
+    schemaVersion: "1",
+    recoveries: [
+      {
+        ...fixture,
+        mergedAt: "2026-10-08T16:00:00Z",
+        review: { ...fixture.review, submittedAt: "2026-10-08T08:00:00Z" },
+      },
+    ],
+  });
+  const recovered = createLeaderboardSnapshot({
+    ...emptyLeaderboardInput(),
+    retainedReviewEvents: parsed.events,
+    retainedReviewPaymentEvents: parsed.paymentEvents,
+  });
+
+  const awardThirds = (
+    snapshot: ReturnType<typeof createLeaderboardSnapshot>,
+    reviewId: string,
+  ) => {
+    const event = snapshot.ledger.find(
+      (candidate) =>
+        candidate.category === "substantive-review" &&
+        candidate.source.id === reviewId,
+    );
+    return event?.scoreThirds ?? Math.round((event?.points ?? 0) * 3);
+  };
+  expect(awardThirds(ordinary, "5514965999")).toBe(1);
+  expect(awardThirds(paymentReviewSnapshot(ordinary), "5514965999")).toBe(3);
+  expect(awardThirds(recovered, "5514965110")).toBe(1);
+  expect(awardThirds(paymentReviewSnapshot(recovered), "5514965110")).toBe(3);
+});
+
 test("a restored award passes full publication validation", () => {
   const parsed = parsePreCensusReviewRecoveries({
     schemaVersion: "1",
@@ -269,6 +459,7 @@ test("a restored award passes full publication validation", () => {
   const snapshot = createLeaderboardSnapshot({
     ...emptyLeaderboardInput(),
     retainedReviewEvents: parsed.events,
+    retainedReviewPaymentEvents: parsed.paymentEvents,
   });
   const restored = snapshot.ledger.find(
     (event) => event.source.id === "5514965110",

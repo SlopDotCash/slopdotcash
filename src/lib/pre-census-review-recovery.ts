@@ -1,3 +1,7 @@
+import {
+  OUTCOME_FIRST_POLICY_AT,
+  PAYMENT_REVIEW_POLICY_AT,
+} from "./leaderboard";
 import type {
   GitHubActor,
   ReviewExclusion,
@@ -57,6 +61,11 @@ export interface PreCensusReviewRecovery {
 export interface ParsedPreCensusReviewRecovery {
   recoveries: PreCensusReviewRecovery[];
   events: ScoreEvent[];
+  /**
+   * The same awards reconstructed against the production-release payment
+   * cutoff: standard credit before it, triage credit at or after it.
+   */
+  paymentEvents: ScoreEvent[];
   exclusions: ReviewExclusion[];
 }
 
@@ -83,6 +92,13 @@ function exactKeys(
 function stringValue(value: unknown, path: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new TypeError(`${path} must be a non-empty string`);
+  }
+  return value;
+}
+
+function textValue(value: unknown, path: string): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`${path} must be a string`);
   }
   return value;
 }
@@ -154,7 +170,7 @@ function reviewValue(value: unknown, path: string) {
     ],
     path,
   );
-  const body = stringValue(review.body, `${path}.body`);
+  const body = textValue(review.body, `${path}.body`);
   const inlineCommentCount = review.inlineCommentCount;
   if (
     typeof inlineCommentCount !== "number" ||
@@ -403,14 +419,22 @@ function recoveryWorkUnitId(recovery: PreCensusReviewRecovery): string {
   return `wu_${repository}_pr_${recovery.pullRequestNumber}_review_${actor}`;
 }
 
-function eventForRecovery(recovery: PreCensusReviewRecovery): ScoreEvent {
+/**
+ * Replays the ordinary review award for one cutoff: a review submitted before
+ * it keeps standard credit, and a later one only ever earns triage credit.
+ */
+function eventForRecovery(
+  recovery: PreCensusReviewRecovery,
+  reviewCutoff: string,
+): ScoreEvent {
   const pullRequestId = recoveryPullRequestId(recovery);
+  const standardCredit =
+    Date.parse(recovery.review.submittedAt) < Date.parse(reviewCutoff);
   return {
     id: `${pullRequestId}:reviewer:${recovery.actor.id}`,
     actor: recovery.actor,
     category: "substantive-review",
-    points: 1 / 3,
-    scoreThirds: 1,
+    ...(standardCredit ? { points: 3 } : { points: 1 / 3, scoreThirds: 1 }),
     occurredAt: recovery.review.submittedAt,
     repository: recovery.repository,
     source: {
@@ -468,11 +492,15 @@ export function parsePreCensusReviewRecoveries(
       "pre-census recovery manifest must have one decision per pull request",
     );
   }
-  const events = recoveries
-    .filter((recovery) => recovery.decision === "award")
-    .map(eventForRecovery);
+  const awards = recoveries.filter((recovery) => recovery.decision === "award");
+  const events = awards.map((recovery) =>
+    eventForRecovery(recovery, OUTCOME_FIRST_POLICY_AT),
+  );
+  const paymentEvents = awards.map((recovery) =>
+    eventForRecovery(recovery, PAYMENT_REVIEW_POLICY_AT),
+  );
   const exclusions = recoveries
     .filter((recovery) => recovery.decision === "exclude")
     .map(exclusionForRecovery);
-  return { recoveries, events, exclusions };
+  return { recoveries, events, paymentEvents, exclusions };
 }

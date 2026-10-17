@@ -286,6 +286,7 @@ export interface GenerateOptions {
   evidenceRetryDelayMs?: number;
   evaluatedContributions?: ScoreEvent[];
   retainedReviewEvents?: ScoreEvent[];
+  retainedReviewPaymentEvents?: ScoreEvent[];
   retainedReviewExclusions?: ReviewExclusion[];
   retainedReviewAttributions?: ModelAttribution[];
 }
@@ -3969,6 +3970,7 @@ export async function generateLeaderboardFromGitHub(
       actualNow,
     ),
     retainedReviewEvents: options.retainedReviewEvents,
+    retainedReviewPaymentEvents: options.retainedReviewPaymentEvents,
     retainedReviewExclusions: options.retainedReviewExclusions,
     retainedReviewAttributions: options.retainedReviewAttributions,
     verifyRunReceipt: verifyRunReceiptSignature,
@@ -4048,6 +4050,7 @@ if (import.meta.main) {
       ...acceptedReviewHistory.events,
       ...preCensusReviewRecovery.events,
     ],
+    retainedReviewPaymentEvents: preCensusReviewRecovery.paymentEvents,
     retainedReviewExclusions: preCensusReviewRecovery.exclusions,
     retainedReviewAttributions: acceptedReviewHistory.attributions,
     onProgress: (progress) => {
