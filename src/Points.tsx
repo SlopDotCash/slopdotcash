@@ -217,6 +217,15 @@ export function PointsProvider({
 const currentPath = () =>
   `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
+/** The signed-in GitHub login, for pages that only need to know who is here. */
+export function useSignedInLogin(): {
+  login: string | null;
+  session: "loading" | "ready" | "error";
+} {
+  const { me, session } = useContext(Context);
+  return { login: me?.actor.login ?? null, session };
+}
+
 export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
   const { state, me, session, setMe, requestPoints, refresh } =
     useContext(Context);

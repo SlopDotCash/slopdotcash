@@ -7,9 +7,11 @@ import { fundingAssetForNetwork } from "./lib/funding-address.mjs";
 import {
   boundedText,
   immutableProposalTermsUrl,
+  listOwnedRepositories,
   lookupGitHubRepository,
   monthlyPoolValue,
   normalizeRepositoryInput,
+  type OwnedRepository,
   ROOT_PUBLISHED_TEMPLATE,
   safeProposalHttpsUrl,
   slugify,
@@ -17,6 +19,7 @@ import {
 } from "./lib/project-proposal";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { useSignedInLogin } from "./Points";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = {
   base: "Base",
@@ -25,6 +28,10 @@ const SETTLEMENT_CHAIN_NAMES: Record<string, string> = {
 };
 const PROJECT_PROPOSAL_ROOT = `${SOURCE_REPOSITORY}/new/development`;
 const PROPOSAL_DRAFT_KEY = "slop:project-proposal:v1";
+const LOGIN_HREF = `/login?next=${encodeURIComponent("/projects/new")}`;
+/** PRJ-03 default, shown as editable text the maintainer can replace. */
+const DEFAULT_CRITERIA =
+  "Merged pull requests that fix a reproduced bug or deliver a change the maintainers asked for, with tests or other evidence that the result works.";
 const REQUIREMENTS_URL = `${SOURCE_REPOSITORY}/issues/333`;
 const SETUP_STEPS = [
   "Repository",
@@ -135,6 +142,22 @@ const FIELD_LABELS: Partial<Record<ProposalField, string>> = {
   monthlyPool: "Monthly pool target",
   monthlyReviewBudget: "Monthly review budget",
 };
+
+const TERMS_FIELDS = new Set<string>([
+  "copyrightModel",
+  "legalHolder",
+  "inboundTermsUrl",
+  "inboundCommit",
+  "inboundDigest",
+  "inboundVersion",
+  "inboundAcceptance",
+  "assignmentAssignee",
+  "assignmentUrl",
+  "assignmentDigest",
+  "assignmentVersion",
+  "assignmentSignedAt",
+]);
+const isTermsField = (field: string) => TERMS_FIELDS.has(field);
 
 const GIT_SHA = /^[0-9a-f]{40}$/u;
 const FILE_DIGEST = /^[0-9a-f]{64}$/u;
@@ -397,6 +420,112 @@ function ErrorSummary({
   );
 }
 
+/**
+ * After GitHub sign-in, lists the repositories the account owns so the
+ * maintainer picks one instead of typing owner/name. Manual entry stays
+ * available for organization repositories and signed-out visitors.
+ */
+function RepositoryPicker({
+  selected,
+  onChoose,
+}: {
+  selected: string;
+  onChoose: (repository: string) => void;
+}) {
+  const { login, session } = useSignedInLogin();
+  const [list, setList] = useState<
+    | { status: "loading" }
+    | { status: "ready"; repositories: OwnedRepository[] }
+    | { status: "error"; message: string }
+  >({ status: "loading" });
+  useEffect(() => {
+    if (!login) return;
+    const controller = new AbortController();
+    setList({ status: "loading" });
+    void listOwnedRepositories(login, controller.signal).then(
+      (repositories) => {
+        if (!controller.signal.aborted)
+          setList({ status: "ready", repositories });
+      },
+      (error: unknown) => {
+        if (!controller.signal.aborted)
+          setList({
+            status: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Your repositories could not be loaded.",
+          });
+      },
+    );
+    return () => controller.abort();
+  }, [login]);
+  if (session === "loading")
+    return (
+      <p className="repository-picker-status" role="status">
+        Checking whether you are signed in…
+      </p>
+    );
+  if (!login)
+    return (
+      <div className="repository-picker-signin">
+        <a className="button secondary-button" href={LOGIN_HREF}>
+          Sign in with GitHub
+        </a>
+        <p className="repository-picker-status">
+          {session === "error" ? "We couldn’t check your session. " : ""}
+          Sign in to choose from your repositories, or enter one below.
+        </p>
+      </div>
+    );
+  if (list.status === "loading")
+    return (
+      <p className="repository-picker-status" role="status">
+        Loading your repositories…
+      </p>
+    );
+  if (list.status === "error")
+    return (
+      <p className="repository-picker-status field-error" role="status">
+        {list.message} Enter the repository below.
+      </p>
+    );
+  if (list.repositories.length === 0)
+    return (
+      <p className="repository-picker-status" role="status">
+        @{login} owns no public repositories. For an organization repository,
+        enter it below.
+      </p>
+    );
+  const value = list.repositories.some((entry) => entry.repository === selected)
+    ? selected
+    : "";
+  return (
+    <div className="form-field">
+      <label htmlFor="field-ownedRepository">Your repositories</label>
+      <select
+        aria-describedby="field-ownedRepository-hint"
+        id="field-ownedRepository"
+        onChange={(event) => {
+          if (event.target.value) onChoose(event.target.value);
+        }}
+        value={value}
+      >
+        <option value="">Choose a repository</option>
+        {list.repositories.map((entry) => (
+          <option key={entry.repository} value={entry.repository}>
+            {entry.repository}
+          </option>
+        ))}
+      </select>
+      <small className="field-hint" id="field-ownedRepository-hint">
+        Signed in as @{login}. Choosing one looks it up on GitHub. For an
+        organization repository, enter it below.
+      </small>
+    </div>
+  );
+}
+
 function downloadText(value: string, name: string, type: string) {
   const url = URL.createObjectURL(new Blob([value], { type }));
   const link = document.createElement("a");
@@ -438,6 +567,17 @@ export default function ProjectProposalPage() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const lookupController = useRef<AbortController | null>(null);
+  const suggestedText = useRef({
+    name: "",
+    headline: "",
+    goal: "",
+    criteria: "",
+  });
+  const [termsOpen, setTermsOpen] = useState(
+    () =>
+      proposal.copyrightModel !== "unknown" ||
+      proposal.inboundMode !== "unknown",
+  );
   const copy = useCopyStatus();
   useEffect(() => {
     try {
@@ -717,14 +857,15 @@ ${manifestText}`;
       field !== "stewardName"
     )
       setFactsOpen(true);
+    if (isTermsField(field)) setTermsOpen(true);
     setStep(owner);
     window.setTimeout(() => document.getElementById(`field-${field}`)?.focus());
   }
-  async function runLookup() {
+  async function runLookup(chosen?: string) {
     lookupController.current?.abort();
     const controller = new AbortController();
     lookupController.current = controller;
-    const repository = normalizeRepositoryInput(p.repository);
+    const repository = normalizeRepositoryInput(chosen ?? p.repository);
     if (!validRepositoryPath(repository)) {
       setAttempted((current) => current.map((v, i) => v || i === 0));
       setLookup({
@@ -737,8 +878,28 @@ ${manifestText}`;
     try {
       const facts = await lookupGitHubRepository(repository, controller.signal);
       if (controller.signal.aborted) return;
+      const description = facts.description ?? "";
+      const suggested = {
+        name: facts.repository.split("/")[1] ?? "",
+        headline: boundedText(description, 8, 120) ? description : "",
+        goal: boundedText(description, 24, 600) ? description : "",
+        criteria: DEFAULT_CRITERIA,
+      };
+      // Replace a suggestion from an earlier repository, never the
+      // maintainer's own words.
+      const previous = suggestedText.current;
+      const fill = (field: keyof typeof suggested, value: string) =>
+        value === "" || value === previous[field] ? suggested[field] : value;
+      suggestedText.current = suggested;
+      const suggestion = suggested.headline
+        ? "a suggested name and description"
+        : "a suggested name";
       setProposal((current) => ({
         ...current,
+        name: fill("name", current.name),
+        headline: fill("headline", current.headline),
+        goal: fill("goal", current.goal),
+        criteria: fill("criteria", current.criteria),
         repository: facts.repository,
         repositoryNumericId: facts.numericId,
         repositoryNodeId: facts.nodeId,
@@ -759,8 +920,8 @@ ${manifestText}`;
         state: "done",
         message:
           facts.license.state === "verified"
-            ? `Found ${facts.repository}. IDs, default branch, owner and ${facts.license.spdx} license facts are filled in. Check them before you continue.`
-            : `Found ${facts.repository}. IDs, default branch and owner are filled in. License stays unknown: ${facts.license.reason}`,
+            ? `Found ${facts.repository}. IDs, default branch, owner and ${facts.license.spdx} license facts are filled in, with ${suggestion}. Check them before you continue.`
+            : `Found ${facts.repository}. IDs, default branch and owner are filled in, with ${suggestion}. License stays unknown: ${facts.license.reason}`,
       });
     } catch (error: unknown) {
       if (controller.signal.aborted) return;
@@ -774,6 +935,8 @@ ${manifestText}`;
   function clearDraft() {
     lookupController.current?.abort();
     setProposal(EMPTY_PROPOSAL);
+    suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
+    setTermsOpen(false);
     setAttempted(SETUP_STEPS.map(() => false));
     setLookup({ state: "idle", message: "" });
     setConfirmClear(false);
@@ -856,6 +1019,13 @@ ${manifestText}`;
         </h2>
         {step === 0 ? (
           <>
+            <RepositoryPicker
+              onChoose={(repository) => {
+                set("repository")(repository);
+                void runLookup(repository);
+              }}
+              selected={p.repository}
+            />
             <div className="lookup-row">
               <TextField
                 error={shown("repository")}
@@ -1047,10 +1217,15 @@ ${manifestText}`;
               placeholder="What accepted GitHub outcomes qualify?"
               value={p.criteria}
             />
-            <fieldset>
-              <legend>Ownership and contribution terms</legend>
+            <details
+              className="proposal-advanced"
+              onToggle={(event) => setTermsOpen(event.currentTarget.open)}
+              open={termsOpen || Object.keys(currentErrors).some(isTermsField)}
+            >
+              <summary>Ownership and contribution terms (optional)</summary>
               <p className="field-hint">
-                Unknown is a valid answer. Do not guess.
+                Unknown is a valid answer. Leave these as Unknown unless you
+                know them. Do not guess.
               </p>
               <SelectField
                 error={shown("copyrightModel")}
@@ -1168,7 +1343,7 @@ ${manifestText}`;
                   />
                 </>
               ) : null}
-            </fieldset>
+            </details>
           </>
         ) : null}
         {step === 2 ? (
@@ -1314,8 +1489,11 @@ ${manifestText}`;
                   Continue on GitHub <ArrowRight aria-hidden="true" />
                 </a>
                 <p>
-                  GitHub opens a new file with this manifest. Commit it to a
-                  branch and open a pull request into development.
+                  GitHub opens this manifest as a new file in the Slop
+                  repository. If you cannot write to it, GitHub makes a fork for
+                  you. Commit the file, then open the pull request GitHub
+                  offers. The project is listed, paused, once a maintainer
+                  reviews and merges it.
                 </p>
                 {draftNote}
                 <div className="handoff-alternatives">

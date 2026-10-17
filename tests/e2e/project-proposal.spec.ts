@@ -5,15 +5,25 @@
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+
+const deployment = deploymentOrigins(
+  deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+);
 
 const LICENSE_TEXT = "MIT License\n\nCopyright (c) Example Research\n";
 const COMMIT = "c".repeat(40);
 
 async function routeGitHub(
   page: Page,
-  { repository = 200, licensePath = "LICENSE" } = {},
+  {
+    repository = 200,
+    licensePath = "LICENSE",
+    description = null as string | null,
+  } = {},
   beforeRepository?: () => Promise<void>,
 ) {
   await page.route("https://api.github.com/**", async (route) => {
@@ -28,6 +38,7 @@ async function routeGitHub(
                 id: 123456789,
                 node_id: "R_fixture",
                 full_name: "example/open-protein",
+                description,
                 private: false,
                 default_branch: "trunk",
                 owner: {
@@ -121,12 +132,18 @@ test("drafts a project through the setup steps and hands it to GitHub", async ({
     "Found example/open-protein",
   );
   await page.getByRole("button", { name: "Next: Contribution rules" }).click();
+  // The lookup suggests a name and editable default criteria (PRJ-03). With no
+  // repository description, only the description and goal stay empty.
+  await expect(page.getByLabel("Project name")).toHaveValue("open-protein");
+  await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
+    /^Merged pull requests that fix a reproduced bug/u,
+  );
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   const summary = page.locator(".form-error-summary");
-  await expect(summary).toContainText("Fix 4 fields to continue");
+  await expect(summary).toContainText("Fix 2 fields to continue");
   await expect(summary).toBeFocused();
-  await summary.getByRole("button", { name: "Project name" }).click();
-  await expect(page.getByLabel("Project name")).toBeFocused();
+  await summary.getByRole("button", { name: "Short description" }).click();
+  await expect(page.getByLabel("Short description")).toBeFocused();
   await page.getByLabel("Project name").fill("Open Protein");
   await page
     .getByLabel("Short description")
@@ -401,4 +418,133 @@ test("Robinhood Chain drafts a USDG escrow manifest", async ({ page }) => {
     ).violations,
   ).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test("a signed-in maintainer picks an owned repository and gets suggested text", async ({
+  page,
+}) => {
+  const errors = observe(page);
+  const description =
+    "Reproducible protein-folding benchmarks for open research labs.";
+  await routeGitHub(page, { description });
+  // Only the public repository list for the signed-in login is a new fixture.
+  await page.route(
+    "https://api.github.com/users/example/repos?**",
+    async (route) => {
+      const url = new URL(route.request().url());
+      expect(url.searchParams.get("type")).toBe("owner");
+      expect(route.request().headers().authorization).toBeUndefined();
+      await route.fulfill({
+        json: [
+          {
+            full_name: "example/open-protein",
+            description,
+            private: false,
+            fork: false,
+            archived: false,
+          },
+          {
+            full_name: "example/forked-tool",
+            description: null,
+            private: false,
+            fork: true,
+            archived: false,
+          },
+          {
+            full_name: "example/old-notes",
+            description: null,
+            private: false,
+            fork: false,
+            archived: true,
+          },
+        ],
+      });
+    },
+  );
+  let signedIn = false;
+  await page.route(`${deployment.site}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/v1/points/me") {
+      if (signedIn)
+        await route.fulfill({
+          json: {
+            actor: { id: "MDQ6VXNlcjk4NzY1NDMyMQ==", login: "example" },
+            joinedAt: "2026-10-01T00:00:00.000Z",
+            public: false,
+            welcome: 5,
+            socialPoints: 0,
+          },
+        });
+      else await route.fulfill({ status: 401, json: {} });
+      return;
+    }
+    if (url.pathname.startsWith("/api/")) {
+      await route.fulfill({ status: 404, json: {} });
+      return;
+    }
+    await route.fulfill({
+      path: join(
+        process.cwd(),
+        "dist",
+        route.request().resourceType() === "document"
+          ? "index.html"
+          : url.pathname,
+      ),
+    });
+  });
+
+  // Signed out, the page offers GitHub sign-in that returns here.
+  await page.goto(`${deployment.site}/projects/new`);
+  await expect(
+    page.getByRole("link", { name: "Sign in with GitHub", exact: true }),
+  ).toHaveAttribute("href", "/login?next=%2Fprojects%2Fnew");
+  await expect(page.getByLabel("Your repositories")).toHaveCount(0);
+
+  signedIn = true;
+  await page.reload();
+  const picker = page.getByLabel("Your repositories");
+  await expect(picker.locator("option")).toHaveText([
+    "Choose a repository",
+    "example/open-protein",
+  ]);
+  await picker.selectOption("example/open-protein");
+  await expect(page.locator(".lookup-status")).toContainText(
+    "Found example/open-protein",
+  );
+  await expect(page.getByLabel("Public GitHub repository")).toHaveValue(
+    "example/open-protein",
+  );
+  await expect(page.locator(".proposal-facts")).toContainText("123456789");
+  await page.getByRole("button", { name: "Next: Contribution rules" }).click();
+  await expect(page.getByLabel("Project name")).toHaveValue("open-protein");
+  await expect(page.getByLabel("Short description")).toHaveValue(description);
+  await expect(page.getByLabel("Goal")).toHaveValue(description);
+  // Ownership terms stay Unknown and folded away unless the maintainer opens them.
+  const terms = page.locator("details", {
+    has: page.getByText("Ownership and contribution terms (optional)"),
+  });
+  await expect(terms).not.toHaveAttribute("open", "");
+  await expect(page.getByLabel("Copyright model")).toHaveValue("unknown");
+  // The maintainer's own words survive a later lookup of the same repository.
+  await page.getByLabel("Project name").fill("Open Protein");
+  await page.getByRole("button", { name: "1 Repository" }).click();
+  await page.getByRole("button", { name: "Look up on GitHub" }).click();
+  await expect(page.locator(".lookup-status")).toContainText(
+    "Found example/open-protein",
+  );
+  await page.getByRole("button", { name: "Next: Contribution rules" }).click();
+  await expect(page.getByLabel("Project name")).toHaveValue("Open Protein");
+  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await expect(page.getByLabel("Payout network")).toBeVisible();
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  // The signed-out session check is a real 401, which Chromium logs.
+  expect(
+    errors.filter((message) => !message.includes("status of 401")),
+  ).toEqual([]);
 });

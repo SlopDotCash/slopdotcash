@@ -3988,7 +3988,8 @@ small {
 .field-hint,
 .proposal-note,
 .fee-preview,
-.lookup-status {
+.lookup-status,
+.repository-picker-status {
   margin: 0;
   color: var(--muted);
   font-size: 14px;
@@ -4010,6 +4011,13 @@ small {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
+}
+
+.repository-picker-signin {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: center;
 }
 
 .lookup-row > .button {

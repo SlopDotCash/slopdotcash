@@ -119,6 +119,8 @@ export function monthlyPoolValue(value: string): {
 
 export interface RepositoryLookup {
   repository: string;
+  /** The repository's own GitHub description, or null when it has none. */
+  description: string | null;
   numericId: string;
   nodeId: string;
   defaultBranch: string;
@@ -149,6 +151,68 @@ async function githubJson(path: string, signal: AbortSignal) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("GitHub returned an unexpected response.");
   return value as Record<string, unknown>;
+}
+
+function repositoryDescription(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.replace(/\s+/gu, " ").trim();
+  return text.length > 0 && text.length <= 600 ? text : null;
+}
+
+export interface OwnedRepository {
+  repository: string;
+  description: string | null;
+}
+
+/**
+ * Lists the public, non-fork, non-archived repositories a GitHub account
+ * owns, most recently pushed first. Reads GitHub without credentials, so it
+ * shows what anyone can see; organization repositories are entered by name.
+ */
+export async function listOwnedRepositories(
+  login: string,
+  signal: AbortSignal,
+): Promise<OwnedRepository[]> {
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u.test(login))
+    throw new Error("The signed-in GitHub login is not valid.");
+  const response = await fetchWithDeadline(
+    `https://api.github.com/users/${login}/repos?type=owner&sort=pushed&per_page=100`,
+    {
+      credentials: "omit",
+      headers: { Accept: "application/vnd.github+json" },
+      signal,
+    },
+  );
+  if (response.status === 403 || response.status === 429)
+    throw new Error(
+      "GitHub limited lookups from this network. Enter the repository by name.",
+    );
+  if (!response.ok) throw new Error(`GitHub returned ${response.status}.`);
+  const value = await readBoundedJson(
+    response,
+    2 * 1024 * 1024,
+    "GitHub repositories",
+  );
+  if (!Array.isArray(value))
+    throw new Error("GitHub returned an unexpected response.");
+  return value.flatMap((entry: unknown) => {
+    if (!entry || typeof entry !== "object") return [];
+    const repo = entry as Record<string, unknown>;
+    if (
+      repo.private !== false ||
+      repo.fork !== false ||
+      repo.archived !== false ||
+      typeof repo.full_name !== "string" ||
+      !validRepositoryPath(repo.full_name)
+    )
+      return [];
+    return [
+      {
+        repository: repo.full_name,
+        description: repositoryDescription(repo.description),
+      },
+    ];
+  });
 }
 
 function unknownLicense(
@@ -186,6 +250,7 @@ export async function lookupGitHubRepository(
     throw new Error("GitHub returned incomplete repository facts.");
   const facts: Omit<RepositoryLookup, "license"> = {
     repository: repo.full_name,
+    description: repositoryDescription(repo.description),
     numericId: String(repo.id),
     nodeId: repo.node_id,
     defaultBranch: repo.default_branch,
