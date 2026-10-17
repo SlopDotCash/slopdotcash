@@ -23,6 +23,7 @@ import { packageSkillArtifact } from "./package-skill-artifact.mjs";
 import { readIdentityRecord } from "./protocol-identity.mjs";
 import { renderInstallGuide } from "./render-install-guide.mjs";
 import { pythonCommand } from "./skill-python.mjs";
+import { skillSourceMatchesCommit } from "./skill-source-matches-commit.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = packageRoot;
@@ -251,31 +252,12 @@ try {
 } catch {
   // error-policy:J3 an absent committed source is an explicit working-tree state.
 }
-const committedSkillFiles = execFileSync(
-  "git",
-  ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", skillRepositoryPath],
-  {
-    cwd: repositoryRoot,
-    encoding: "utf8",
-  },
-)
-  .split("\0")
-  .filter(Boolean)
-  .map((path) => relative(skillRepositoryPath, path).replaceAll("\\", "/"))
-  .sort();
-const sourceMatchesCommit =
-  committedSkillFiles.length === trackedSkillFiles.length &&
-  committedSkillFiles.every(
-    (path, index) =>
-      path === trackedSkillFiles[index] &&
-      readFileSync(join(skillRoot, path)).equals(
-        execFileSync("git", ["show", `HEAD:${skillRepositoryPath}/${path}`], {
-          cwd: repositoryRoot,
-          encoding: null,
-          maxBuffer: 16 * 1024 * 1024,
-        }),
-      ),
-  );
+const sourceMatchesCommit = skillSourceMatchesCommit(
+  repositoryRoot,
+  commit,
+  skillRepositoryPath,
+  trackedSkillFiles,
+);
 const sourceRevisionStatus = sourceMatchesCommit ? "committed" : "working-tree";
 const guideRendererPaths = [
   "scripts/render-install-guide.mjs",
@@ -629,28 +611,12 @@ function publishAdditionalProject({
     path,
     sha256: sha256(readFileSync(join(additionalSkillRoot, path))),
   }));
-  const committedFiles = execFileSync(
-    "git",
-    ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", skillRepositoryPath],
-    { cwd: repositoryRoot, encoding: "utf8" },
-  )
-    .split("\0")
-    .filter(Boolean)
-    .map((path) => relative(skillRepositoryPath, path).replaceAll("\\", "/"))
-    .sort();
-  const sourceMatchesCommit =
-    committedFiles.length === trackedFiles.length &&
-    committedFiles.every(
-      (path, index) =>
-        path === trackedFiles[index] &&
-        readFileSync(join(additionalSkillRoot, path)).equals(
-          execFileSync("git", ["show", `HEAD:${skillRepositoryPath}/${path}`], {
-            cwd: repositoryRoot,
-            encoding: null,
-            maxBuffer: 16 * 1024 * 1024,
-          }),
-        ),
-    );
+  const sourceMatchesCommit = skillSourceMatchesCommit(
+    repositoryRoot,
+    commit,
+    skillRepositoryPath,
+    trackedFiles,
+  );
   const revisionStatus = sourceMatchesCommit ? "committed" : "working-tree";
   const skillBytes = readFileSync(additionalSkillSource);
   const archive = packageSkillArtifact({
