@@ -58,6 +58,7 @@
     "src/lib/squads-execution-verifier.ts",
     "src/lib/squads-batch-handoff.ts",
     "src/lib/leaderboard.ts",
+    "src/lib/pre-census-review-recovery.ts",
     "src/lib/model-identity.ts",
     "src/lib/install-command.ts",
     "src/lib/project-view.ts",

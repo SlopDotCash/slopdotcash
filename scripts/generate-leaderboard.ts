@@ -37,12 +37,14 @@ import {
   type PullRequestRecord,
   type PullRequestReview,
   pullRequestTextSources,
+  type ReviewExclusion,
   SCORE_WINDOW_DAYS,
   type ScoreEvent,
   selectUniqueVerifiedEvidence,
   VERIFICATION_WINDOW_DAYS,
   type VerifiedEvidenceArtifact,
 } from "../src/lib/leaderboard";
+import { parsePreCensusReviewRecoveries } from "../src/lib/pre-census-review-recovery";
 import {
   TARGET_REPOSITORIES,
   type TargetRepository,
@@ -92,6 +94,10 @@ const ACCEPTED_REVIEW_HISTORY_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../data/accepted-review-history.json",
 );
+const PRE_CENSUS_REVIEW_RECOVERY_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../data/pre-census-review-recovery.json",
+);
 
 function loadAcceptedReviewHistory(): {
   events: ScoreEvent[];
@@ -113,6 +119,12 @@ function loadAcceptedReviewHistory(): {
     throw new TypeError("accepted review history manifest is invalid");
   }
   return value as { events: ScoreEvent[]; attributions: ModelAttribution[] };
+}
+
+function loadPreCensusReviewRecoveries() {
+  return parsePreCensusReviewRecoveries(
+    JSON.parse(readFileSync(PRE_CENSUS_REVIEW_RECOVERY_PATH, "utf8")),
+  );
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -274,6 +286,8 @@ export interface GenerateOptions {
   evidenceRetryDelayMs?: number;
   evaluatedContributions?: ScoreEvent[];
   retainedReviewEvents?: ScoreEvent[];
+  retainedReviewPaymentEvents?: ScoreEvent[];
+  retainedReviewExclusions?: ReviewExclusion[];
   retainedReviewAttributions?: ModelAttribution[];
 }
 
@@ -3956,6 +3970,8 @@ export async function generateLeaderboardFromGitHub(
       actualNow,
     ),
     retainedReviewEvents: options.retainedReviewEvents,
+    retainedReviewPaymentEvents: options.retainedReviewPaymentEvents,
+    retainedReviewExclusions: options.retainedReviewExclusions,
     retainedReviewAttributions: options.retainedReviewAttributions,
     verifyRunReceipt: verifyRunReceiptSignature,
   });
@@ -4025,11 +4041,17 @@ function progressLine(progress: GenerationProgress): string {
 if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
   const acceptedReviewHistory = loadAcceptedReviewHistory();
+  const preCensusReviewRecovery = loadPreCensusReviewRecoveries();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
     evaluatedContributions: loadEvaluatorAwardEvents(),
-    retainedReviewEvents: acceptedReviewHistory.events,
+    retainedReviewEvents: [
+      ...acceptedReviewHistory.events,
+      ...preCensusReviewRecovery.events,
+    ],
+    retainedReviewPaymentEvents: preCensusReviewRecovery.paymentEvents,
+    retainedReviewExclusions: preCensusReviewRecovery.exclusions,
     retainedReviewAttributions: acceptedReviewHistory.attributions,
     onProgress: (progress) => {
       const phaseChanged = progress.phase !== lastProgressPhase;
