@@ -412,6 +412,57 @@ function Notice() {
     </p>
   );
 }
+/** Current membership identity, shared with the profile's history and wallet lookup. */
+export function useProfileMembership(login: string, enabled = true) {
+  const { me, session } = useContext(Context);
+  const normalizedLogin = login.toLowerCase();
+  const [lookup, setLookup] = useState<{
+    login: string;
+    status: "loading" | "unavailable" | "absent" | "ready";
+    member: Membership | null;
+  }>({ login: normalizedLogin, status: "loading", member: null });
+  useEffect(() => {
+    if (!enabled) return;
+    const c = new AbortController();
+    const update = (
+      status: typeof lookup.status,
+      value: Membership | null = null,
+    ) => {
+      if (!c.signal.aborted)
+        setLookup({ login: normalizedLogin, status, member: value });
+    };
+    update("loading");
+    if (!productOrigin()) {
+      update("unavailable");
+      return () => c.abort();
+    }
+    void fetch(`/api/v1/points/member?login=${encodeURIComponent(login)}`, {
+      signal: c.signal,
+    })
+      .then(async (r) => {
+        if (r.status === 404) {
+          update("absent");
+          return;
+        }
+        if (!r.ok) throw new Error("unavailable");
+        const value = await readBoundedJson(r, 16384, "member");
+        update(value ? "ready" : "absent", value ? member(value) : null);
+      })
+      .catch(() => update("unavailable"));
+    return () => c.abort();
+  }, [enabled, login, normalizedLogin]);
+  const signedInActor = session === "ready" ? me?.actor : undefined;
+  const own =
+    signedInActor?.login.toLowerCase() === normalizedLogin ? me : null;
+  const current = lookup.login === normalizedLogin ? lookup : null;
+  return {
+    own,
+    signedInActor,
+    joined: current?.member ?? null,
+    joinStatus: current?.status ?? "loading",
+  };
+}
+
 export function ProfilePoints({
   work,
   actorId,
@@ -421,6 +472,8 @@ export function ProfilePoints({
   recordsLoading = false,
   showIdentity = false,
   notFoundWhenUnrecorded = false,
+  profileCensus,
+  profileMembership,
 }: {
   login: string;
   work?: readonly ScoreEvent[];
@@ -431,9 +484,12 @@ export function ProfilePoints({
   actorId?: string;
   /** The caller found no score record, so no points record means no contributor. */
   notFoundWhenUnrecorded?: boolean;
+  profileCensus?: ReturnType<typeof useProfiles>;
+  profileMembership?: ReturnType<typeof useProfileMembership>;
 }) {
-  const { state, me } = useContext(Context);
-  const census = useProfiles();
+  const { state } = useContext(Context);
+  const localCensus = useProfiles(!profileCensus);
+  const census = profileCensus ?? localCensus;
   const censusMatches =
     census.state.status === "ready"
       ? census.state.index.people.filter((p) =>
@@ -443,42 +499,17 @@ export function ProfilePoints({
         )
       : [];
   const recorded = censusMatches.length === 1 ? censusMatches[0] : undefined;
-  const [joined, setJoined] = useState<Membership | null>(null);
-  const [joinStatus, setJoinStatus] = useState("loading");
-  useEffect(() => {
-    const c = new AbortController();
-    setJoined(null);
-    setJoinStatus("loading");
-    if (!productOrigin()) {
-      setJoinStatus("unavailable");
-      return () => c.abort();
-    }
-    void fetch(`/api/v1/points/member?login=${encodeURIComponent(login)}`, {
-      signal: c.signal,
-    })
-      .then(async (r) => {
-        if (r.status === 404) {
-          setJoinStatus("absent");
-          return;
-        }
-        if (!r.ok) throw new Error("unavailable");
-        const m = await readBoundedJson(r, 16384, "member");
-        setJoined(m ? member(m) : null);
-        setJoinStatus(m ? "ready" : "absent");
-      })
-      .catch(() => {
-        if (!c.signal.aborted) setJoinStatus("unavailable");
-      });
-    return () => c.abort();
-  }, [login]);
-  const own = me?.actor.login.toLowerCase() === login.toLowerCase() ? me : null;
+  const localMembership = useProfileMembership(login, !profileMembership);
+  const { own, joined, joinStatus } = profileMembership ?? localMembership;
   const named =
     state.status === "ready"
       ? state.members.filter(
           (m) => m.actor.login.toLowerCase() === login.toLowerCase(),
         )
       : [];
-  const membership = own ?? joined;
+  const membership =
+    own ??
+    (joined?.actor.login.toLowerCase() === login.toLowerCase() ? joined : null);
   const identity =
     !actorId || membership?.actor.id === actorId ? membership : null;
   const resolvedActorId = actorId ?? identity?.actor.id ?? recorded?.id;

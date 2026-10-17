@@ -40,9 +40,12 @@ type State =
   | { status: "loading" }
   | { status: "error" }
   | { status: "ready"; index: ProfileIndex };
-export function useProfiles(): { state: State; retry: () => void } {
+export function useProfiles(enabled = true): {
+  state: State;
+  retry: () => void;
+} {
   const [state, retry] = usePublicResource(
-    true,
+    enabled,
     loadProfiles,
     "Profiles unavailable",
     15_000,

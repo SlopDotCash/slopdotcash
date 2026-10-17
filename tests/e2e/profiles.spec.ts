@@ -4,6 +4,7 @@ import {
   type CensusRequest,
   collectProfileIssues,
 } from "../../scripts/profile-issue-census";
+import { githubUserIdFromNodeId } from "../../src/lib/github-actor";
 import {
   assertProfiles,
   type ProfileIndex,
@@ -30,6 +31,15 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
     )
       failures.push(r.url());
   });
+  const walletRequests: string[] = [];
+  const expectedWalletRequests = [
+    "/api/v1/wallet-claims/actors/1234567/current",
+  ];
+  // This census/issue-history check must not depend on a remote payout service.
+  await page.route("**/api/v1/wallet-claims/actors/*/current", (route) => {
+    walletRequests.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ json: null });
+  });
   const now = new Date().toISOString();
   await page.route("**/data/profiles.json", (r) =>
     r.fulfill({
@@ -44,7 +54,7 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
         })),
         people: [
           {
-            id: "U_profile_only",
+            id: "MDQ6VXNlcjEyMzQ1Njc=",
             login: "profile-only-contributor",
             avatarUrl: "https://avatars.githubusercontent.com/u/1234567",
             repositories: [
@@ -162,6 +172,12 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
     throw Error("The reviewed census must include a reopened issue");
   const actor = census.people.find((person) => person.id === reopened.authorId);
   if (!actor) throw Error("The issue author must have a profile");
+  const walletActorId = githubUserIdFromNodeId(actor.id);
+  if (!walletActorId)
+    throw Error("The issue author must have a GitHub actor ID");
+  expectedWalletRequests.push(
+    `/api/v1/wallet-claims/actors/${walletActorId}/current`,
+  );
   const lastReopen = [...reopened.events]
     .reverse()
     .find((event) => event.kind === "reopened");
@@ -207,6 +223,7 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
     path: info.outputPath("issue-outcomes.png"),
     fullPage: true,
   });
+  expect(walletRequests).toEqual(expectedWalletRequests);
   expect(errors).toEqual([]);
   expect(failures).toEqual([]);
 });
