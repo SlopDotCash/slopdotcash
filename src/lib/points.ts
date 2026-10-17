@@ -431,7 +431,6 @@ export function pointMembers(
       a.projectId,
       a.actor.id,
       a.category,
-      a.occurredAt.slice(0, 7),
       a.category === "substantive-review"
         ? (reviewIdentity ?? a.sourceUrl.split("#")[0])
         : a.workUnitId,
