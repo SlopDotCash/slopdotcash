@@ -3,6 +3,7 @@ import {
   assertRewardAllocationManifest,
   MINIMUM_TRANSFER_MINOR,
   REVIEW_WINDOW_DAYS,
+  type RewardAllocation,
   type RewardAllocationManifest,
 } from "./rewards";
 
@@ -120,6 +121,45 @@ export async function fundingReviewProposalSha256(
   ).join("");
 }
 
+/**
+ * The amount fields of a row whose reviewed total is `amountMinor`. A retained
+ * review-budget line keeps its amount unless the row is excluded, and the
+ * shared-pool line takes the rest. cycles:check applies the same rule to the
+ * frozen row when it accepts a reviewed amount.
+ */
+export function reviewedAllocationAmounts(
+  row: Pick<RewardAllocation, "accruedMinor" | "lines">,
+  amountMinor: string,
+  excluded: boolean,
+): Pick<RewardAllocation, "accruedMinor" | "lines" | "suggestedMinor"> {
+  const amount = BigInt(amountMinor);
+  const reviewMinor = excluded
+    ? 0n
+    : BigInt(row.lines?.reviewBudget.suggestedMinor ?? "0");
+  if (amount < reviewMinor)
+    throw new RangeError(
+      "Included amount cannot reduce the separate review-budget line",
+    );
+  return {
+    suggestedMinor: amountMinor,
+    ...(row.accruedMinor === undefined ? {} : { accruedMinor: amountMinor }),
+    ...(row.lines
+      ? {
+          lines: {
+            sharedPool: {
+              ...row.lines.sharedPool,
+              suggestedMinor: (amount - reviewMinor).toString(),
+            },
+            reviewBudget: {
+              ...row.lines.reviewBudget,
+              suggestedMinor: reviewMinor.toString(),
+            },
+          },
+        }
+      : {}),
+  };
+}
+
 /** The clock is execution context, deliberately not a user-controlled JSON field. */
 export async function applyFundingReviewSubmission(
   source: Uint8Array,
@@ -197,19 +237,9 @@ export async function applyFundingReviewSubmission(
       );
     if (amountChanged) material = true;
     const amount = BigInt(adjustment.amountMinor);
-    const reviewMinor = excluded
-      ? 0n
-      : BigInt(row.lines?.reviewBudget.suggestedMinor ?? "0");
-    if (amount < reviewMinor)
-      throw new RangeError(
-        "Included amount cannot reduce the separate review-budget line",
-      );
     return {
       ...row,
-      suggestedMinor: adjustment.amountMinor,
-      ...(row.accruedMinor === undefined
-        ? {}
-        : { accruedMinor: adjustment.amountMinor }),
+      ...reviewedAllocationAmounts(row, adjustment.amountMinor, excluded),
       adjustmentReason: adjustment.reason,
       state: excluded
         ? ("excluded" as const)
@@ -219,20 +249,6 @@ export async function applyFundingReviewSubmission(
               amount < BigInt(MINIMUM_TRANSFER_MINOR)
             ? ("held-below-minimum" as const)
             : ("proposed" as const),
-      ...(row.lines
-        ? {
-            lines: {
-              sharedPool: {
-                ...row.lines.sharedPool,
-                suggestedMinor: (amount - reviewMinor).toString(),
-              },
-              reviewBudget: {
-                ...row.lines.reviewBudget,
-                suggestedMinor: reviewMinor.toString(),
-              },
-            },
-          }
-        : {}),
     };
   });
   const sharedTotal = allocations.reduce(

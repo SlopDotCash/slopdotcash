@@ -24,6 +24,7 @@ import {
   type CycleIndex,
   type CycleIndexEntry,
 } from "../src/lib/cycle-index";
+import { reviewedAllocationAmounts } from "../src/lib/funding-review-submission";
 import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
@@ -165,6 +166,46 @@ async function jsonFile(
 
 type Allocation = RewardAllocationManifest["allocations"][number];
 
+/** The fields of a row that a funding review may change. */
+function amounts(allocation: Allocation): string {
+  return canonical({
+    accruedMinor: allocation.accruedMinor ?? null,
+    lines: allocation.lines ?? null,
+    suggestedMinor: allocation.suggestedMinor,
+  });
+}
+
+/**
+ * During the public review a creator may exclude, reduce or increase a row
+ * (cycles/README.md). The funding review writes the new total with a public
+ * reason, an excluded row at zero, and lines derived by
+ * reviewedAllocationAmounts. A row whose amounts differ from the frozen
+ * regeneration is accepted only in that shape.
+ */
+function isReviewedAmount(allocation: Allocation, expected: Allocation) {
+  const excluded = allocation.state === "excluded";
+  if (
+    !allocation.adjustmentReason ||
+    (excluded && allocation.suggestedMinor !== "0")
+  )
+    return false;
+  try {
+    return (
+      amounts(allocation) ===
+      amounts({
+        ...expected,
+        ...reviewedAllocationAmounts(
+          expected,
+          allocation.suggestedMinor,
+          excluded,
+        ),
+      })
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Compares each proposal row with the row regenerated from the frozen inputs.
  * The login must be the exact login of the regenerated row: the snapshot
@@ -173,34 +214,36 @@ type Allocation = RewardAllocationManifest["allocations"][number];
  * cannot bind to the immutable actor id is never accepted. A README proof is
  * accepted only when a reviewed record binds it to the actor id
  * (readme-proof-binding.ts). Else the row stays unclaimed (ACC-01).
+ * Returns whether a row holds an amount changed by the public review.
  */
 export function assertAllocationsMatchBaseline(
   proposal: RewardAllocationManifest,
   baseline: { allocations: readonly Allocation[] },
   priorReadmeProofs: ReadonlyMap<string, ProfileReadmeWalletProof>,
-): void {
+): boolean {
   const byIntent = new Map(
     baseline.allocations.map((allocation) => [allocation.intentId, allocation]),
   );
   if (proposal.allocations.length !== baseline.allocations.length) {
     throw new TypeError("Reward proposal adds or removes a scored contributor");
   }
+  let reviewed = false;
   for (const allocation of proposal.allocations) {
     const expected = byIntent.get(allocation.intentId);
+    const frozenAmounts =
+      expected !== undefined && amounts(allocation) === amounts(expected);
     if (
       !expected ||
       allocation.actor.id !== expected.actor.id ||
       allocation.actor.login !== expected.actor.login ||
       allocation.score !== expected.score ||
-      allocation.suggestedMinor !== expected.suggestedMinor ||
-      allocation.accruedMinor !== expected.accruedMinor ||
+      (!frozenAmounts && !isReviewedAmount(allocation, expected)) ||
       (expected.unsafeDestinationReports ?? []).some(
         (report) =>
           !(allocation.unsafeDestinationReports ?? []).some(
             (candidate) => canonical(candidate) === canonical(report),
           ),
       ) ||
-      canonical(allocation.lines) !== canonical(expected.lines) ||
       canonical(allocation.evidenceEventIds) !==
         canonical(expected.evidenceEventIds)
     ) {
@@ -208,6 +251,7 @@ export function assertAllocationsMatchBaseline(
         `Reward proposal intent ${allocation.intentId} differs from its frozen snapshot`,
       );
     }
+    if (!frozenAmounts) reviewed = true;
     // A README proof names a login, not an actor id, and the login of a row
     // can now belong to another account (rename, then reuse), for scored and
     // carried rows alike. So a row may hold a README proof only if a reviewed
@@ -228,6 +272,46 @@ export function assertAllocationsMatchBaseline(
         );
     }
   }
+  return reviewed;
+}
+
+/**
+ * Totals of a proposal that holds reviewed amounts.
+ * assertRewardAllocationManifest already reconciles the totals and line totals
+ * with the rows, so this checks what the funding review enforces besides: the
+ * shared pool stays within the cap plus carry, the line caps stay frozen, and
+ * the review window restarted after generation, because an amount change
+ * resets the review.
+ */
+function isReviewedTotal(
+  proposal: RewardAllocationManifest,
+  baseline: RewardAllocationManifest,
+): boolean {
+  const frozenLines = (manifest: RewardAllocationManifest) =>
+    manifest.rewardLines
+      ? canonical({
+          reviewBudget: {
+            ...manifest.rewardLines.reviewBudget,
+            suggestedMinor: null,
+          },
+          sharedPool: {
+            ...manifest.rewardLines.sharedPool,
+            suggestedMinor: null,
+          },
+        })
+      : null;
+  const sharedMinor = proposal.allocations.reduce(
+    (sum, row) =>
+      sum + BigInt(row.lines?.sharedPool.suggestedMinor ?? row.suggestedMinor),
+    0n,
+  );
+  return (
+    sharedMinor <=
+      BigInt(proposal.capMinor) + BigInt(proposal.carriedMinor ?? "0") &&
+    frozenLines(proposal) === frozenLines(baseline) &&
+    Date.parse(proposal.review.lastMaterialChangeAt) >
+      Date.parse(baseline.review.lastMaterialChangeAt)
+  );
 }
 
 export async function verifyProposalAgainstSnapshot(
@@ -266,7 +350,7 @@ export async function verifyProposalAgainstSnapshot(
   if (baseline.kind !== "reward-allocation") {
     throw new TypeError("Monthly proposal regenerated as an external share");
   }
-  assertAllocationsMatchBaseline(
+  const reviewed = assertAllocationsMatchBaseline(
     proposal,
     baseline,
     priorAccrual.actorReadmeProofs ?? new Map(),
@@ -278,8 +362,10 @@ export async function verifyProposalAgainstSnapshot(
     proposal.contributionWindow.to !== baseline.contributionWindow.to ||
     proposal.capMinor !== baseline.capMinor ||
     proposal.carriedMinor !== baseline.carriedMinor ||
-    canonical(proposal.rewardLines) !== canonical(baseline.rewardLines) ||
-    proposal.totals.suggestedMinor !== baseline.totals.suggestedMinor
+    (reviewed
+      ? !isReviewedTotal(proposal, baseline)
+      : canonical(proposal.rewardLines) !== canonical(baseline.rewardLines) ||
+        proposal.totals.suggestedMinor !== baseline.totals.suggestedMinor)
   ) {
     throw new TypeError(
       "Reward proposal metadata differs from its frozen snapshot",

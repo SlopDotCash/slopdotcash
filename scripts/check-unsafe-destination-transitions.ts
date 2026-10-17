@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertExternalContributionShareManifest,
   assertRewardAllocationManifest,
+  type RewardAllocationManifest,
   type UnsafeDestinationReport,
 } from "../src/lib/rewards";
 import { verifyUnsafeDestinationReport } from "./unsafe-destination-hold";
@@ -112,6 +113,14 @@ function readManifest(root: string, oid: string, budget: { bytes: number }) {
     value.kind === "external-contribution-share"
     ? assertExternalContributionShareManifest(value)
     : assertRewardAllocationManifest(value);
+}
+
+function suggestedAmounts(manifest: RewardAllocationManifest): string {
+  return JSON.stringify(
+    manifest.allocations
+      .map((row) => `${row.intentId}:${row.suggestedMinor}`)
+      .sort(),
+  );
 }
 
 /** All executable modules come from this checker revision, never the PR tree. */
@@ -223,6 +232,18 @@ function inspectUnsafeDestinationTransitions(
       }
     }
     if (before?.kind !== "reward-allocation") continue;
+    // Every amount change restarts the 14-day public review (cycles/README.md).
+    // cycles:check sees only the frozen regeneration, so the accepted proposal
+    // proves that the window restarted after its last change. The manifest
+    // check keeps endsAt 14 days after lastMaterialChangeAt.
+    if (
+      suggestedAmounts(after) !== suggestedAmounts(before) &&
+      Date.parse(after.review.lastMaterialChangeAt) <=
+        Date.parse(before.review.lastMaterialChangeAt)
+    )
+      throw new TypeError(
+        "A changed cycle amount must restart its public review after the accepted proposal's last change",
+      );
     for (const previous of before.allocations) {
       if (!previous.unsafeDestinationReports && !previous.hold) continue;
       const next = after.allocations.find(
