@@ -11,7 +11,7 @@ import {
   assertAllocationFundingBasis,
   LAST_LEGACY_CAP_CYCLE,
 } from "./allocation-funding";
-import { findProject } from "./projects.mjs";
+import { findHistoricalProject } from "./projects.mjs";
 import {
   isWalletAddress,
   isWalletChain,
@@ -437,7 +437,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     `${field}.projectId`,
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u,
   );
-  const project = findProject(projectId);
+  const project = findHistoricalProject(projectId);
   if (!project) throw new TypeError(`${field}.projectId is unknown`);
   const cycleId = text(
     entry.cycleId,

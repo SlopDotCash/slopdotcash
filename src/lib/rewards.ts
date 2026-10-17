@@ -17,7 +17,7 @@ import {
   fundingAssetForNetwork,
   isSolanaTransactionId,
 } from "./funding-address.mjs";
-import { findProject } from "./projects.mjs";
+import { findHistoricalProject } from "./projects.mjs";
 import {
   isWalletAddress,
   isWalletChain,
@@ -1057,7 +1057,7 @@ export function assertRewardAllocationManifest(
     throw new TypeError("allocation manifest protocol header is invalid");
   }
   const chain = manifest.chain;
-  const project = findProject(manifest.projectId);
+  const project = findHistoricalProject(manifest.projectId);
   if (project?.reward.kind !== "monthly-pool") {
     throw new TypeError("allocation manifest project has no monthly pool");
   }
@@ -1466,7 +1466,7 @@ export function assertExternalContributionShareManifest(
   ) {
     throw new TypeError("share manifest protocol header is invalid");
   }
-  const project = findProject(manifest.projectId);
+  const project = findHistoricalProject(manifest.projectId);
   if (project?.reward.kind !== "external-prize-share") {
     throw new TypeError("share manifest project has no external opportunity");
   }

@@ -14,7 +14,7 @@ import {
 import { fundingAssetForNetwork } from "./funding-address.mjs";
 import type { LeaderboardSnapshot } from "./leaderboard";
 import { createPaymentProjectView } from "./project-view";
-import type { ProjectId } from "./projects.mjs";
+import type { ProjectDefinition, ProjectId } from "./projects.mjs";
 import { findProject } from "./projects.mjs";
 import {
   assertExternalContributionShareManifest,
@@ -39,6 +39,8 @@ export interface CreateRewardCycleProposalInput {
   cycleId: string;
   generatedAt: string;
   projectId: ProjectId;
+  /** Reconstruction only: retained policy for a retired project's frozen cycle. */
+  archivedProject?: ProjectDefinition;
   relatedPartyActorIds?: ReadonlySet<string>;
   snapshot: LeaderboardSnapshot;
   sourceSnapshotSha256: string;
@@ -208,7 +210,7 @@ export function ensureCompleteCycle(
 export function createRewardCycleProposal(
   input: CreateRewardCycleProposalInput,
 ): RewardCycleProposal {
-  const project = findProject(input.projectId);
+  const project = input.archivedProject ?? findProject(input.projectId);
   if (project?.escrow && input.cycleId >= project.escrow.effectiveCycle)
     throw new TypeError(
       "Escrow awards use the v2 gross allocation workflow; legacy Solana plans cannot reserve them",
@@ -249,6 +251,7 @@ export function createRewardCycleProposal(
           committedMinor: input.legacyCapMinor,
           monthlyCapMinor: input.legacyCapMinor,
         },
+    input.archivedProject,
   );
   ensureCompleteCycle(input, view);
 

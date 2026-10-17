@@ -14,7 +14,7 @@ import {
   assertProjectCommitmentLedger,
   type ProjectCommitmentRecord,
 } from "../src/lib/funding-commitment";
-import { findProject } from "../src/lib/projects.mjs";
+import { findHistoricalProject } from "../src/lib/projects.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_RECORD_BYTES = 64 * 1024;
@@ -54,7 +54,7 @@ export async function loadProjectCommitmentRecords(
   projectId: string,
   repositoryRoot = REPOSITORY_ROOT,
 ): Promise<readonly ProjectCommitmentRecord[]> {
-  const project = findProject(projectId);
+  const project = findHistoricalProject(projectId);
   if (!project) throw new TypeError(`Unknown project ${projectId}`);
   const instruments = assertFundingCommitments(
     project.funding.commitments ?? [],

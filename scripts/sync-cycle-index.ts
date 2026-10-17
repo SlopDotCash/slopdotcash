@@ -34,7 +34,7 @@ import {
   type ProjectVaultWindupRecord,
 } from "../src/lib/project-vault-windup";
 import { createProjectView } from "../src/lib/project-view";
-import { findProject, type ProjectId } from "../src/lib/projects.mjs";
+import { findHistoricalProject, type ProjectId } from "../src/lib/projects.mjs";
 import { createRewardCycleProposal } from "../src/lib/reward-cycle";
 import { finalizeRewardAllocation } from "../src/lib/reward-finalization";
 import {
@@ -246,10 +246,11 @@ export async function verifyProposalAgainstSnapshot(
     cyclesRoot: CYCLES_ROOT,
     projectId: proposal.projectId as ProjectId,
     freshPolicy:
-      findProject(proposal.projectId)?.funding.freshCyclePaymentPolicy
+      findHistoricalProject(proposal.projectId)?.funding.freshCyclePaymentPolicy
         ?.cycleId === proposal.cycleId,
   });
   const baseline = createRewardCycleProposal({
+    archivedProject: findHistoricalProject(proposal.projectId) ?? undefined,
     ...(proposal.fundingBasis
       ? { fundingBasis: proposal.fundingBasis }
       : { legacyCapMinor: proposal.capMinor }),
@@ -330,10 +331,13 @@ async function buildCycle(
   assertLeaderboardSnapshot(snapshotFile.value);
   const snapshot = snapshotFile.value;
   const exactScores = new Map(
-    createProjectView(snapshot, projectId, cycleId).leaders.map((leader) => [
-      leader.actor.id,
-      leader.scoreThirds,
-    ]),
+    createProjectView(
+      snapshot,
+      projectId,
+      cycleId,
+      undefined,
+      findHistoricalProject(projectId) ?? undefined,
+    ).leaders.map((leader) => [leader.actor.id, leader.scoreThirds]),
   );
   const rawProposal = proposalFile.value as { kind?: unknown };
   const files = new Map(
@@ -360,6 +364,7 @@ async function buildCycle(
       throw new TypeError("External share does not match its cycle path");
     }
     const expected = createRewardCycleProposal({
+      archivedProject: findHistoricalProject(projectId) ?? undefined,
       cycleId,
       generatedAt: proposal.generatedAt,
       projectId,
@@ -691,7 +696,7 @@ export async function validateCycleTransition(
   cycleId: string,
   options: { allowPendingTransactionEvidence?: boolean } = {},
 ): Promise<CycleIndexEntry> {
-  if (!findProject(projectId)) {
+  if (!findHistoricalProject(projectId)) {
     throw new TypeError(`Unknown project: ${projectId}`);
   }
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
@@ -730,7 +735,7 @@ async function collectCycles(
     if (
       !projectEntry.isDirectory() ||
       projectEntry.isSymbolicLink() ||
-      !findProject(projectEntry.name)
+      !findHistoricalProject(projectEntry.name)
     ) {
       throw new TypeError(
         `cycles/${projectEntry.name} is not a registered project directory`,
