@@ -3,12 +3,12 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-function rebuildCycles(retired: boolean) {
+function rebuildCycles(retired: boolean, ids = ["asi", "delta-star"]) {
   const script = `
     import assert from "node:assert/strict";
     import { readFile } from "node:fs/promises";
     import { RAW_PROJECT_DEFINITIONS } from "./src/lib/project-registry.generated.mjs";
-    const ids = ["asi", "delta-star"];
+    const ids = ${JSON.stringify(ids)};
     if (${retired}) {
       for (const id of ids) {
         const project = RAW_PROJECT_DEFINITIONS.find((project) => project.id === id);
@@ -54,6 +54,66 @@ function rebuildCycles(retired: boolean) {
 test("retiring projects preserves frozen monthly and external cycles without reopening intake", () => {
   expect(rebuildCycles(true)).toEqual(rebuildCycles(false));
 }, 30_000);
+
+test("retiring the primary project preserves every frozen cycle", () => {
+  expect(rebuildCycles(true, ["eliza"])).toEqual(rebuildCycles(false));
+}, 30_000);
+
+test("retiring all projects with frozen cycles preserves their original inventory", () => {
+  expect(rebuildCycles(true, ["eliza", "asi", "delta-star"])).toEqual(
+    rebuildCycles(false),
+  );
+}, 30_000);
+
+test("a retired primary snapshot keeps strict identity and publication boundaries", () => {
+  const script = `
+    import assert from "node:assert/strict";
+    import { readFile } from "node:fs/promises";
+    import { RAW_PROJECT_DEFINITIONS } from "./src/lib/project-registry.generated.mjs";
+    const project = RAW_PROJECT_DEFINITIONS.find((project) => project.id === "eliza");
+    project.status = "paused";
+    project.listingTier = "retired";
+    const { assertLeaderboardSnapshot, assertPublishableLeaderboardSnapshot, assignLeaderboardRanks, compareRankedEntries } = await import("./src/lib/leaderboard.ts");
+    const { PRIMARY_REPOSITORY } = await import("./src/lib/repositories.mjs");
+    const snapshot = JSON.parse(await readFile("cycles/eliza/2026-09/source-snapshot.json", "utf8"));
+    assert.notEqual(snapshot.repository, PRIMARY_REPOSITORY.id);
+    assertLeaderboardSnapshot(snapshot);
+    const publication = structuredClone(snapshot);
+    assignLeaderboardRanks(publication.leaders.sort(compareRankedEntries));
+    assert.throws(() => assertPublishableLeaderboardSnapshot(publication, Date.parse(publication.generatedAt)), /complete target repository registry/);
+
+    const wrongHeader = structuredClone(snapshot);
+    wrongHeader.repository = PRIMARY_REPOSITORY.id;
+    assert.throws(() => assertLeaderboardSnapshot(wrongHeader), /primary repository/);
+
+    for (const index of [0, 1]) {
+      const wrongRole = structuredClone(snapshot);
+      wrongRole.repositories[index].role = index === 0 ? "member" : "primary";
+      assert.throws(() => assertLeaderboardSnapshot(wrongRole), /role does not match/);
+    }
+    const unknown = structuredClone(snapshot);
+    unknown.repository = unknown.repositories[0].id = "unknown/repository";
+    assert.throws(() => assertLeaderboardSnapshot(unknown), /repository registry order/);
+
+    const wrongOrder = structuredClone(snapshot);
+    [wrongOrder.repositories[0], wrongOrder.repositories[1]] = [wrongOrder.repositories[1], wrongOrder.repositories[0]];
+    wrongOrder.repository = wrongOrder.repositories[0].id;
+    wrongOrder.repositories[0].role = "primary";
+    wrongOrder.repositories[1].role = "member";
+    assert.throws(() => assertLeaderboardSnapshot(wrongOrder), /repository registry order/);
+
+    const wrongMetadata = structuredClone(snapshot);
+    wrongMetadata.repositories[0].integrationBranch = "unregistered-branch";
+    assert.throws(() => assertLeaderboardSnapshot(wrongMetadata), /integrationBranch does not match/);
+  `;
+  const result = Bun.spawnSync([process.execPath, "--eval", script], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(result.stderr.toString()).toBe("");
+  expect(result.exitCode).toBe(0);
+});
 
 test("retiring a project preserves its original receipt signature and signing bytes", () => {
   const results = [false, true].map((retired) => {
