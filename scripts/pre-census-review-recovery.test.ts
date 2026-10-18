@@ -121,6 +121,22 @@ test("accepts an inline-only change request and still rejects empty evidence", (
       ],
     }),
   ).toThrow("body must be a string");
+
+  expect(() =>
+    parsePreCensusReviewRecoveries({
+      schemaVersion: "1",
+      recoveries: [
+        {
+          ...inlineOnly,
+          review: {
+            ...inlineOnly.review,
+            body: "####################",
+            inlineCommentCount: 0,
+          },
+        },
+      ],
+    }),
+  ).toThrow("substantive review evidence");
 });
 
 test("restores the pre-release payment weight on the payment pass", () => {

@@ -181,10 +181,11 @@ function reviewValue(value: unknown, path: string) {
       `${path}.inlineCommentCount must be a non-negative integer`,
     );
   }
-  if (
-    body.replace(/<!--[\s\S]*?-->/g, "").trim().length < 20 &&
-    inlineCommentCount === 0
-  ) {
+  const substantiveBody = body
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/[#*_>`~[\]()!-]/g, "")
+    .trim();
+  if (substantiveBody.length < 20 && inlineCommentCount === 0) {
     throw new TypeError(`${path} must retain substantive review evidence`);
   }
   if (review.state !== "CHANGES_REQUESTED") {
