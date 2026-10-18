@@ -5373,9 +5373,6 @@ export function assertLeaderboardSnapshot(
       `snapshot.schemaVersion must be ${LEADERBOARD_SCHEMA_VERSION}`,
     );
   }
-  if (snapshot.repository !== LEADERBOARD_REPOSITORY) {
-    throw new Error(`snapshot.repository must be ${LEADERBOARD_REPOSITORY}`);
-  }
   if (
     !Array.isArray(snapshot.repositories) ||
     snapshot.repositories.length === 0
@@ -5394,7 +5391,7 @@ export function assertLeaderboardSnapshot(
     );
     if (
       registeredIndex <= previousRepositoryIndex ||
-      (index === 0 && published.id !== PRIMARY_REPOSITORY.id)
+      (index === 0 && published.id !== snapshot.repository)
     ) {
       throw new Error(
         `${path}.id must follow the target repository registry order and include the primary repository`,
@@ -5402,6 +5399,8 @@ export function assertLeaderboardSnapshot(
     }
     previousRepositoryIndex = registeredIndex;
     const registered = REGISTERED_REPOSITORIES[registeredIndex];
+    // Retirement can promote another current primary; frozen roles stay positional.
+    const role = index === 0 ? "primary" : "member";
     repositoryIds.push(registered.id);
     for (const key of [
       "id",
@@ -5414,7 +5413,8 @@ export function assertLeaderboardSnapshot(
       "projectId",
       "role",
     ] as const) {
-      if (published[key] !== registered[key]) {
+      const expected = key === "role" ? role : registered[key];
+      if (published[key] !== expected) {
         throw new Error(
           `${path}.${key} does not match the target repository registry`,
         );
