@@ -85,12 +85,16 @@ revision digest. The installer fetches the revision from
 `/api/v1/project-revisions/:id/:revision`, checks the digest, renders the same
 bytes in Python, and refuses any difference (PRD SKL-03/04).
 
-The public site is a static build. Trusted CI runs `bun run projects:sync`
-when the repository variable `SLOP_PROJECT_REGISTRY_SOURCE` is `d1`. Every
-listing, approval, and revision dispatches `deploy.yml` on `SLOP_PUBLISH_REF`
-when the `SLOP_PUBLISH_TOKEN` secret (a token with Actions write access) is
-set; production still waits for its protected-environment approval. Without
-the token, the six-hourly scheduled build publishes the change. Staging builds read
-`https://staging.slop.cash`. `bun run projects:check` proves the committed
-snapshot is canonical and that every active project names skills in this tree.
+The public site is a static build. Every non-PR deploy runs `bun run
+projects:sync` against its own origin (`https://slop.cash` or
+`https://staging.slop.cash`) and embeds that snapshot; an origin that does not
+serve the registry API yet keeps the committed snapshot. The build publishes
+the revisions it used at `/data/project-revisions.json`. Every 10 minutes
+`.github/workflows/registry-publish.yml` compares that file with the live
+`/api/v1/project-revisions` and, when they differ and no deploy is running,
+dispatches `deploy.yml` with the built-in `GITHUB_TOKEN`. No secret or
+repository variable is needed. GitHub runs scheduled workflows from the
+default branch (`development`), which dispatches both environments.
+Production still waits for its protected-environment approval.
+`bun run projects:check` proves the committed snapshot is canonical and that every active project names skills in this tree.
 A paused project without skill folders is listed but publishes no skill.

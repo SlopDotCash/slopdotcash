@@ -290,6 +290,24 @@ writeFileSync(
   join(publicRoot, "llms.txt"),
   `# Slop\n\n> Make money shipping open source. Pick important public work, ship an accepted result, and build a contributor record on GitHub.\n\n## Agent onboarding\n\n- [Slop bootstrap skill](${publicSiteOrigin}/SKILL.md): Inspect and install the repository-specific contribution skill. SHA-256: ${bootstrapSkillDigest}.\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n\nThe bootstrap source revision is ${commit} (${bootstrapRevisionStatus}). It never authorizes wallet creation, background upload, raw prompt, transcript, source, credential, or private-key disclosure.\n`,
 );
+// The registry watcher compares this with the live registry and starts a
+// rebuild when an approved revision is newer than the deployed site.
+mkdirSync(join(publicRoot, "data"), { recursive: true });
+writeFileSync(
+  join(publicRoot, "data", "project-revisions.json"),
+  `${JSON.stringify(
+    JSON.parse(
+      readFileSync(
+        join(repositoryRoot, "src/lib/project-revisions.generated.json"),
+        "utf8",
+      ),
+    ).map(({ projectId, revision, manifestSha256 }) => ({
+      projectId,
+      revision,
+      manifestSha256,
+    })),
+  )}\n`,
+);
 const projectDiscoveryRoot = join(publicRoot, ".well-known", "slop");
 rmSync(projectDiscoveryRoot, { force: true, recursive: true });
 mkdirSync(projectDiscoveryRoot, { recursive: true });

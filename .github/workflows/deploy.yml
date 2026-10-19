@@ -132,10 +132,10 @@ jobs:
 
       - name: Snapshot the D1 project registry
         # Projects are applied for and approved on slop.cash; D1 is the only
-        # registry and its API enforces every policy transition. Trusted runs
-        # rebuild from it once the operator sets the repository variable after
-        # the registry API is first deployed.
-        if: github.event_name != 'pull_request' && vars.SLOP_PROJECT_REGISTRY_SOURCE == 'd1'
+        # registry and its API enforces every policy transition. Every trusted
+        # run rebuilds from it. Before an environment first serves the API, the
+        # sync keeps the committed snapshot and says so.
+        if: github.event_name != 'pull_request'
         env:
           SLOP_API_ORIGIN: ${{ env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash' }}
         run: bun run projects:sync

@@ -118,6 +118,9 @@ export function renderProjectRevisions(revisions, definitions) {
   return `${JSON.stringify(rows, null, 2)}\n`;
 }
 
+/** The target origin predates the registry API; its first deploy adds it. */
+export class RegistryNotDeployedError extends Error {}
+
 async function fetchJson(url) {
   const parsed = new URL(url);
   if (
@@ -131,6 +134,14 @@ async function fetchJson(url) {
     redirect: "error",
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
+  // Every registry API response carries its contract header. A 404 without
+  // it means the environment does not run the registry API yet.
+  if (
+    response.status === 404 &&
+    !response.headers.has("x-slop-project-api-contract")
+  ) {
+    throw new RegistryNotDeployedError(parsed.origin);
+  }
   if (!response.ok) {
     throw new Error(`${parsed.pathname} returned HTTP ${response.status}`);
   }
@@ -182,9 +193,21 @@ export async function syncProjectRegistry(checkOnly = false) {
     }
     return false;
   }
-  const { projects, revisions } = await fetchProjectRegistry(
-    process.env.SLOP_API_ORIGIN || DEFAULT_API_ORIGIN,
-  );
+  const origin = process.env.SLOP_API_ORIGIN || DEFAULT_API_ORIGIN;
+  let registry;
+  try {
+    registry = await fetchProjectRegistry(origin);
+  } catch (error) {
+    // Only the first rollout reaches this: the build that deploys the API
+    // cannot read it yet, so it publishes the committed snapshot. Once the
+    // API answers, every failure fails the build.
+    if (!(error instanceof RegistryNotDeployedError)) throw error;
+    process.stdout.write(
+      `::notice::${origin} does not serve the project registry API yet; publishing the committed snapshot\n`,
+    );
+    return false;
+  }
+  const { projects, revisions } = registry;
   const rendered = await renderProjectRegistry(projects);
   const renderedRevisions = renderProjectRevisions(
     revisions,
@@ -202,11 +225,13 @@ if (import.meta.main) {
       throw new TypeError("Usage: sync-project-registry.mjs [--check]");
     }
     const checkOnly = values[0] === "--check";
-    await syncProjectRegistry(checkOnly);
+    const synchronized = await syncProjectRegistry(checkOnly);
     process.stdout.write(
       checkOnly
         ? "[Slop] project registry snapshot is valid\n"
-        : "[Slop] synchronized project registry from D1\n",
+        : synchronized
+          ? "[Slop] synchronized project registry from D1\n"
+          : "[Slop] kept the committed project registry snapshot\n",
     );
   } catch (error) {
     // error-policy:J1 generator process boundary.

@@ -45,8 +45,6 @@ export type ProjectApiDependencies = {
     manifest: ProjectDefinition,
     actor: GithubActor,
   ) => Promise<RepositoryControl>;
-  /** Starts the trusted site build; resolves false when it is not configured. */
-  requestPublication: () => Promise<boolean>;
 };
 
 type ApiError = Error & { status?: number; code?: string };
@@ -307,16 +305,6 @@ async function requireAdmin(
   return session;
 }
 
-/** Publication never blocks a stored registry change. */
-async function requestPublication(deps: ProjectApiDependencies) {
-  try {
-    return (await deps.requestPublication()) ? "requested" : "not-configured";
-  } catch {
-    console.error("project registry publication request failed");
-    return "failed";
-  }
-}
-
 async function repositoryControl(
   deps: ProjectApiDependencies,
   manifest: ProjectDefinition,
@@ -524,7 +512,6 @@ async function decideApplication(
   if (updated === null) fail(500, "internal_error", "Application vanished");
   return json(200, {
     application: publicApplication(updated),
-    publication: decision === "approve" ? await requestPublication(deps) : null,
   });
 }
 
@@ -600,7 +587,6 @@ async function replaceProjectManifest(
   if (updated === null) fail(500, "internal_error", "Project vanished");
   return json(200, {
     project: adminProject(updated),
-    publication: await requestPublication(deps),
   });
 }
 

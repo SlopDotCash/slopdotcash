@@ -38,9 +38,6 @@ type Env = {
   SLOP_GITHUB_API_ORIGIN?: string;
   /** Optional read-only GitHub token for repository ownership checks. */
   SLOP_GITHUB_READ_TOKEN?: string;
-  /** Token allowed to dispatch deploy.yml, and the branch it builds. */
-  SLOP_PUBLISH_TOKEN?: string;
-  SLOP_PUBLISH_REF?: string;
   /** Admin email Worker; absent where no notifier is deployed. */
   SLOP_NOTIFY?: { fetch(request: Request): Promise<Response> };
   ASSETS?: { fetch(request: Request): Promise<Response> };
@@ -283,28 +280,6 @@ async function repositoryControl(
   throw new Error(`GitHub returned ${membership.status}`);
 }
 
-/** Dispatches the checked-in deploy workflow, which snapshots the registry. */
-async function requestPublication(env: Env): Promise<boolean> {
-  const ref = env.SLOP_PUBLISH_REF;
-  if (!env.SLOP_PUBLISH_TOKEN || (ref !== "main" && ref !== "development"))
-    return false;
-  const response = await fetch(
-    `https://api.github.com/repos/${SKILL_SOURCE_REPOSITORY}/actions/workflows/deploy.yml/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        ...githubHeaders(env.SLOP_PUBLISH_TOKEN),
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ ref }),
-      signal: AbortSignal.timeout(10_000),
-    },
-  );
-  if (response.status !== 204)
-    throw new Error(`GitHub returned ${response.status}`);
-  return true;
-}
-
 export async function onRequest(context: PagesContext): Promise<Response> {
   const projectResponse = await handleProjectApi(context.request, {
     persistence: new CloudflareProjectPersistence(context.env.SLOP_DB),
@@ -321,7 +296,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     skillPublished,
     repositoryControl: (manifest, actor) =>
       repositoryControl(manifest, actor, context.env),
-    requestPublication: () => requestPublication(context.env),
   });
   if (projectResponse !== null) return projectResponse;
   if (new URL(context.request.url).pathname.startsWith("/api/v1/payments/"))

@@ -1,0 +1,81 @@
+name: Publish project registry changes
+
+# Projects are added and changed on slop.cash, so no push follows a registry
+# change. Every 10 minutes this compares each environment's live registry
+# with the revisions its deployed site was built from, and starts the
+# checked-in deploy workflow when they differ. It needs no extra secret:
+# GITHUB_TOKEN may dispatch workflows in this repository. Production still
+# waits for its protected-environment approval.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: registry-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Rebuild ${{ matrix.ref }} on registry change
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - origin: https://slop.cash
+            ref: main
+          - origin: https://staging.slop.cash
+            ref: development
+    steps:
+      - name: Compare the live registry with the deployed site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGIN: ${{ matrix.origin }}
+          REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          live="$RUNNER_TEMP/live.json"
+          deployed="$RUNNER_TEMP/deployed.json"
+          if ! curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --max-time 30 --max-filesize 8388608 \
+            "$ORIGIN/api/v1/project-revisions" --output "$live"; then
+            echo "::notice::$ORIGIN does not serve the project registry API yet."
+            exit 0
+          fi
+          # A site built before this file existed has published no revision.
+          curl --fail --silent --proto '=https' --tlsv1.2 --max-time 30 \
+            --max-filesize 8388608 \
+            "$ORIGIN/data/project-revisions.json" --output "$deployed" \
+            || echo '[]' > "$deployed"
+          changed="$(node - "$live" "$deployed" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const live = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const deployed = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          if (live?.schemaVersion !== "1" || !Array.isArray(live.revisions) || !Array.isArray(deployed))
+            throw new TypeError("registry revision lists have an unexpected shape");
+          const key = (entry) => `${entry.projectId}@${entry.revision}:${entry.manifestSha256}`;
+          const want = live.revisions.map(key).sort().join("\n");
+          const have = deployed.map(key).sort().join("\n");
+          process.stdout.write(want === have ? "no" : "yes");
+          NODE
+          )"
+          if [ "$changed" != "yes" ]; then
+            echo "$ORIGIN already publishes every approved revision."
+            exit 0
+          fi
+          active="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml \
+            --branch "$REF" --limit 20 --json status \
+            --jq '[.[] | select(.status != "completed")] | length')"
+          if [ "$active" != "0" ]; then
+            echo "A $REF deploy is already running; it snapshots the registry."
+            exit 0
+          fi
+          gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"
+          echo "Started a $REF deploy to publish the registry change."

@@ -451,12 +451,12 @@ function ProjectEditor({
     }
     setBusy(true);
     setError(null);
-    projectApiRequest<{ publication: string }>(
+    projectApiRequest(
       "PUT",
       `admin/projects/${encodeURIComponent(project.id)}/manifest`,
       { manifest, expectedRevision: project.revision, reason },
     ).then(
-      (body) => onSaved(PUBLICATION_NOTES[body.publication] ?? "Saved."),
+      () => onSaved(SAVED_NOTE),
       (caught: unknown) => {
         setBusy(false);
         setError(errorMessage(caught));
@@ -498,12 +498,9 @@ function ProjectEditor({
   );
 }
 
-const PUBLICATION_NOTES: Record<string, string> = {
-  requested: "Saved. A site rebuild was requested.",
-  "not-configured": "Saved. The next scheduled build publishes it.",
-  failed:
-    "Saved. The rebuild request failed; the next scheduled build publishes it.",
-};
+/** The registry watcher rebuilds the site after every saved change. */
+const SAVED_NOTE =
+  "Saved. The site rebuilds automatically within about 15 minutes.";
 
 /** Delisting keeps history: the project becomes paused and retired. */
 function DelistButton({
@@ -521,7 +518,7 @@ function DelistButton({
   const delist = () => {
     setBusy(true);
     setError(null);
-    projectApiRequest<{ publication: string }>(
+    projectApiRequest(
       "PUT",
       `admin/projects/${encodeURIComponent(project.id)}/manifest`,
       {
@@ -534,7 +531,7 @@ function DelistButton({
         reason: "Delisted by an admin",
       },
     ).then(
-      (body) => onDone(PUBLICATION_NOTES[body.publication] ?? "Saved."),
+      () => onDone(SAVED_NOTE),
       (caught: unknown) => {
         setBusy(false);
         setError(errorMessage(caught));
@@ -594,8 +591,8 @@ function ProjectsSection() {
       <p className="admin-status">
         Approved projects start paused and collect nothing until an admin makes
         them active. Slop generates each project's skills from its approved
-        revision; preview them before activation. Each change requests a site
-        rebuild.
+        revision; preview them before activation. The site rebuilds
+        automatically after each change.
       </p>
       {note ? (
         <p className="admin-status" role="status">
