@@ -460,6 +460,159 @@ def remote_skill_bytes(revision):
     return result
 
 
+# Generated project skills (PRD SKL-03/04): the trust root is the pair
+# (template revision on main, approved D1 revision digest). This renderer is
+# the byte-for-byte mirror of src/lib/project-skill.mjs; change both together.
+project_skill_templates = {
+    "skills/project-contributor-template": "contributor",
+    "skills/project-reviewer-template": "reviewer",
+}
+contribution_fields = (
+    "approvedScope",
+    "contributionGuide",
+    "supportedTasks",
+    "requiredTests",
+    "reviewExpectations",
+    "securityContact",
+    "closurePolicy",
+    "maintainerNotes",
+)
+project_id_pattern = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?")
+repository_id_pattern = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+branch_pattern = re.compile(r"[A-Za-z0-9._/-]{1,255}")
+max_manifest_bytes = 1_048_576
+
+
+def generated_skill_role():
+    return project_skill_templates.get(skill_repository_path)
+
+
+def generated_skill_name(role, project_id):
+    if role == "contributor":
+        return f"contribute-to-{project_id}"
+    return f"review-{project_id}-contributions"
+
+
+def require_registry_binding(binding, project_id):
+    if (
+        not isinstance(binding, dict)
+        or set(binding) != {"projectId", "revision", "manifestSha256"}
+        or binding.get("projectId") != project_id
+        or not isinstance(binding.get("revision"), int)
+        or isinstance(binding.get("revision"), bool)
+        or not 0 < binding["revision"] < 1_000_000_000
+        or not isinstance(binding.get("manifestSha256"), str)
+        or not digest_pattern.fullmatch(binding["manifestSha256"])
+    ):
+        raise ValueError("generated skill registry binding is invalid")
+    return binding
+
+
+def registry_manifest(binding):
+    url = (
+        f"{registry_origin}/api/v1/project-revisions/"
+        f"{binding['projectId']}/{binding['revision']}"
+    )
+    record = decode_json(
+        fetch_bytes(url, 2 * max_manifest_bytes, registry_origin),
+        "project registry revision",
+    )
+    if (
+        not isinstance(record, dict)
+        or set(record) != {"schemaVersion", "projectId", "revision", "manifestSha256", "manifestText"}
+        or record.get("schemaVersion") != "1"
+        or record.get("projectId") != binding["projectId"]
+        or record.get("revision") != binding["revision"]
+        or record.get("manifestSha256") != binding["manifestSha256"]
+        or not isinstance(record.get("manifestText"), str)
+    ):
+        raise ValueError("project registry revision has the wrong identity")
+    text = record["manifestText"].encode("utf-8")
+    if len(text) > max_manifest_bytes:
+        raise ValueError("project registry revision exceeds its size bound")
+    if hashlib.sha256(text).hexdigest() != binding["manifestSha256"]:
+        raise ValueError("project registry revision bytes disagree with their approved digest")
+    manifest = decode_json(text, "project registry manifest")
+    if not isinstance(manifest, dict) or manifest.get("id") != binding["projectId"]:
+        raise ValueError("project registry manifest names another project")
+    return manifest
+
+
+def render_project_skill(role, template_files, manifest, binding):
+    skill = manifest.get("skill" if role == "contributor" else "reviewSkill")
+    repositories = manifest.get("repositories")
+    contribution = manifest.get("contribution")
+    repository_record = repositories[0] if isinstance(repositories, list) and repositories else None
+    project_id = manifest.get("id")
+    if (
+        not isinstance(skill, dict)
+        or skill.get("sourcePath") != skill_repository_path
+        or not isinstance(project_id, str)
+        or not project_id_pattern.fullmatch(project_id)
+        or skill.get("id") != generated_skill_name(role, project_id)
+        or not isinstance(repository_record, dict)
+        or not isinstance(repository_record.get("id"), str)
+        or not repository_id_pattern.fullmatch(repository_record["id"])
+        or not isinstance(repository_record.get("integrationBranch"), str)
+        or not branch_pattern.fullmatch(repository_record["integrationBranch"])
+        or not isinstance(contribution, dict)
+    ):
+        raise ValueError("project registry manifest cannot render this skill")
+    if "SKILL.md" not in template_files or "project.json" in template_files:
+        raise ValueError("canonical skill template has an invalid identity")
+    text = template_files["SKILL.md"].decode("utf-8")
+    for token, value in (
+        ("{{SLOP_SKILL_NAME}}", skill["id"]),
+        ("{{SLOP_PROJECT_ID}}", project_id),
+        ("{{SLOP_REPOSITORY}}", repository_record["id"]),
+        ("{{SLOP_INTEGRATION_BRANCH}}", repository_record["integrationBranch"]),
+    ):
+        text = text.replace(token, value)
+    if "{{SLOP_" in text:
+        raise ValueError("canonical skill template has an unknown placeholder")
+    fields = {}
+    for field in contribution_fields:
+        value = contribution.get(field)
+        if not isinstance(value, str):
+            raise ValueError(f"project contribution field {field} is invalid")
+        fields[field] = value
+    project = {
+        "schemaVersion": "1",
+        "projectId": project_id,
+        "repositoryId": repository_record["id"],
+        "skillName": skill["id"],
+        "skillSourcePath": skill_repository_path,
+        "publicOrigin": f"https://slop.cash/projects/{project_id}",
+        "policyAuthority": "https://slop.cash",
+        "usageAdapters": {"codex": "codex", "claude-code": "claude", "grok-build": "grok"},
+        "registry": {
+            "revision": binding["revision"],
+            "manifestSha256": binding["manifestSha256"],
+        },
+        "contribution": fields,
+    }
+    rendered = dict(template_files)
+    rendered["SKILL.md"] = text.encode("utf-8")
+    rendered["project.json"] = (
+        json.dumps(project, indent=2, ensure_ascii=False) + "\\n"
+    ).encode("utf-8")
+    return dict(sorted(rendered.items()))
+
+
+def expected_skill_bytes(revision, binding):
+    """Returns (expected installed files, canonical template files)."""
+    template_files = remote_skill_bytes(revision)
+    role = generated_skill_role()
+    if role is None:
+        if binding is not None:
+            raise ValueError("a committed project skill cannot carry a registry binding")
+        return template_files, template_files
+    if binding is None:
+        raise ValueError("a generated project skill needs its registry binding")
+    manifest = registry_manifest(binding)
+    return render_project_skill(role, template_files, manifest, binding), template_files
+
+
 def compare_is_ancestor(old_revision, new_revision):
     # Without paging, GitHub returns up to 250 commits and 300 file patches,
     # which exceeds max_api_bytes on a long range and refuses a valid update.
@@ -496,14 +649,20 @@ export function pythonRuntimeProbe(requiresHttpsTrust) {
 
 /** Run the same source authorization without installing or changing a version. */
 export function createSkillAuthorizationProgram(testAuthority) {
-  const authority = testAuthority ?? {
+  const authority = {
     apiOrigin: "https://api.github.com",
     rawOrigin: "https://raw.githubusercontent.com",
+    registryOrigin: "https://slop.cash",
+    ...testAuthority,
   };
   if (testAuthority !== undefined) {
+    const keys = Object.keys(testAuthority ?? {})
+      .sort()
+      .join(",");
     if (
       !testAuthority ||
-      Object.keys(testAuthority).sort().join(",") !== "apiOrigin,rawOrigin" ||
+      (keys !== "apiOrigin,rawOrigin" &&
+        keys !== "apiOrigin,rawOrigin,registryOrigin") ||
       Object.values(testAuthority).some((value) => {
         const url = new URL(value);
         return url.protocol !== "file:" || url.search || url.hash;
@@ -532,6 +691,7 @@ from pathlib import PurePosixPath
 request = json.load(sys.stdin)
 api_origin = ${JSON.stringify(authority.apiOrigin.replace(/\/$/u, ""))}
 raw_origin = ${JSON.stringify(authority.rawOrigin.replace(/\/$/u, ""))}
+registry_origin = ${JSON.stringify(authority.registryOrigin.replace(/\/$/u, ""))}
 skill_repository_path = request["sourcePath"]
 request_timeout_seconds = 60
 ${SKILL_AUTHORITY_PYTHON}
@@ -540,14 +700,16 @@ try:
     revision = require_sha(request["revision"], "installed revision")
     canonical_relative_path(skill_repository_path, "canonical source path")
     files = {path: base64.b64decode(contents, validate=True) for path, contents in request["files"].items()}
-    entries = list_remote_skill_files(revision)
-    if sorted(files) != sorted(entries):
-        raise ValueError("installed tree differs from its immutable GitHub source")
+    binding = request.get("registry")
+    if binding is not None:
+        require_registry_binding(binding, binding.get("projectId") if isinstance(binding, dict) else None)
+    expected, template_files = expected_skill_bytes(revision, binding)
+    if sorted(files) != sorted(expected):
+        raise ValueError("installed tree differs from its immutable source")
     for path, contents in files.items():
-        entry = entries[path]
-        if len(contents) != entry["size"] or git_blob_digest(contents) != entry.get("sha"):
-            raise ValueError("installed bytes differ from their immutable GitHub source")
-    authorization = authorize_revision(revision, files)
+        if contents != expected[path]:
+            raise ValueError("installed bytes differ from their immutable source")
+    authorization = authorize_revision(revision, template_files)
     print(json.dumps({"revision": revision, "authorization": authorization}))
 except (ValueError, KeyError, TypeError) as error:
     print(str(error), file=sys.stderr)

@@ -9,6 +9,9 @@ PAYMENTS_ALLOWED_ORIGIN = "https://staging.slop.cash"
 # GitHub numeric actor IDs allowed to review project applications: lalalune
 # and drew-dot-com. Admin email recipients live in workers/notify.
 ADMIN_GITHUB_IDS = "18633264,202660855"
+# Branch whose deploy.yml run publishes a registry change. The dispatch token
+# is the SLOP_PUBLISH_TOKEN secret; without it, the scheduled build publishes.
+SLOP_PUBLISH_REF = "development"
 
 [[d1_databases]]
 binding = "SLOP_DB"

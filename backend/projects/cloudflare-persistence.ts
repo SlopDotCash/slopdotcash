@@ -55,12 +55,13 @@ type ApplicationRow = {
   decided_by_github_id: string | null;
   decided_by_github_login: string | null;
   decision_reason: string | null;
+  github_check: string | null;
 };
 
 const PROJECT_COLUMNS =
   "id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id";
 const APPLICATION_COLUMNS =
-  "id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, decided_at, decided_by_github_id, decided_by_github_login, decision_reason";
+  "id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, decided_at, decided_by_github_id, decided_by_github_login, decision_reason, github_check";
 
 function projectFromRow(row: ProjectRow): ProjectRecord {
   return {
@@ -100,6 +101,7 @@ function applicationFromRow(row: ApplicationRow): ProjectApplication {
             githubLogin: row.decided_by_github_login,
           },
     decisionReason: row.decision_reason,
+    githubCheck: row.github_check,
   };
 }
 
@@ -155,6 +157,22 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
     }));
   }
 
+  async getRevisionText(
+    projectId: string,
+    revision: number,
+  ): Promise<{ manifestText: string; manifestSha256: string } | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT manifest, manifest_sha256 FROM project_revisions
+          WHERE project_id = ? AND revision = ?`,
+      )
+      .bind(projectId, revision)
+      .first<{ manifest: string; manifest_sha256: string }>();
+    return row === null
+      ? null
+      : { manifestText: row.manifest, manifestSha256: row.manifest_sha256 };
+  }
+
   async getApplication(id: string): Promise<ProjectApplication | null> {
     const row = await this.db
       .prepare(
@@ -202,6 +220,20 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
     return row?.count ?? 0;
   }
 
+  async countApplicationsSince(
+    githubId: string,
+    since: string,
+  ): Promise<number> {
+    const row = await this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM project_applications
+          WHERE applicant_github_id = ? AND submitted_at >= ?`,
+      )
+      .bind(githubId, since)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
   async createApplication(
     application: ProjectApplication & { manifestText: string },
   ): Promise<"created" | "conflict"> {
@@ -211,8 +243,8 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           `INSERT INTO project_applications (
              id, project_id, repository_key, manifest, manifest_sha256,
              acceptance_criteria, applicant_github_id, applicant_github_login,
-             submitted_at, status, admin_notification
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending')`,
+             submitted_at, status, admin_notification, github_check
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?)`,
         )
         .bind(
           application.id,
@@ -224,6 +256,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           application.applicant.githubId,
           application.applicant.githubLogin,
           application.submittedAt,
+          application.githubCheck,
         )
         .run();
       return "created";

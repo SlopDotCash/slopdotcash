@@ -27,9 +27,19 @@ const registryPersistTo = process.env.SLOP_E2E_PERSIST_TO;
 const registryAdmins = process.env.SLOP_E2E_ADMIN_GITHUB_IDS;
 if (registryAdmins !== undefined && !/^[1-9][0-9]*$/u.test(registryAdmins))
   throw new Error("SLOP_E2E_ADMIN_GITHUB_IDS must be one GitHub actor ID");
+const registryGitHub = process.env.SLOP_E2E_GITHUB_API_ORIGIN;
+if (
+  registryGitHub !== undefined &&
+  !/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/u.test(registryGitHub)
+)
+  throw new Error("SLOP_E2E_GITHUB_API_ORIGIN must be a loopback origin");
 const registryArguments = registryPersistTo
   ? ` --persist-to ${JSON.stringify(registryPersistTo)}${
       registryAdmins ? ` --binding ADMIN_GITHUB_IDS=${registryAdmins}` : ""
+    }${
+      registryGitHub
+        ? ` --binding SLOP_GITHUB_API_ORIGIN=${registryGitHub}`
+        : ""
     }`
   : "";
 const outputName = process.env.SLOP_E2E_OUTPUT ?? localServer;

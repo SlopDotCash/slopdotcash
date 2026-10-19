@@ -25,7 +25,14 @@ export function renderInstallGuide({
     fail("client must be codex, claude-code, or manual");
   }
   if (!SKILL_PATTERN.test(skillName)) fail("skill name is invalid");
-  if (skillRepositoryPath !== `skills/${skillName}`) {
+  // A generated project skill names its canonical template; the installer
+  // command below validates that pairing.
+  if (
+    skillRepositoryPath !== `skills/${skillName}` &&
+    !/^skills\/project-(contributor|reviewer)-template$/u.test(
+      skillRepositoryPath,
+    )
+  ) {
     fail("skill source path must match its name");
   }
   if (!ORIGIN_PATTERN.test(artifactOrigin)) {

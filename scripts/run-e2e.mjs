@@ -22,6 +22,10 @@ import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  E2E_OWNER,
+  startGitHubApiFixture,
+} from "../tests/github-api-fixture.mjs";
 import { childEnvironment } from "./child-environment.mjs";
 import { prepareE2eFixture } from "./prepare-e2e-fixture.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
@@ -109,6 +113,7 @@ function prepareRegistryDatabase() {
   const sessions = {
     admin: { token: sessionToken(), githubId: E2E_ADMIN_GITHUB_ID },
     applicant: { token: sessionToken(), githubId: "900000002" },
+    owner: { token: sessionToken(), githubId: E2E_OWNER.githubId },
   };
   const expires = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
   const sql = Object.entries(sessions)
@@ -134,21 +139,29 @@ function prepareRegistryDatabase() {
       SLOP_E2E_ADMIN_GITHUB_IDS: E2E_ADMIN_GITHUB_ID,
       SLOP_E2E_ADMIN_TOKEN: sessions.admin.token,
       SLOP_E2E_APPLICANT_TOKEN: sessions.applicant.token,
+      SLOP_E2E_OWNER_TOKEN: sessions.owner.token,
     },
   };
 }
 
 async function runRegistryPhase() {
   const database = prepareRegistryDatabase();
+  const githubPort = basePort + 3;
+  const github = await startGitHubApiFixture(githubPort);
   try {
     return await runPhase(
       "registry",
       "pages",
       String(basePort + 2),
       ["--grep", "@registry", ...extraArgs],
-      { ...database.env, SLOP_E2E_OUTPUT: "registry" },
+      {
+        ...database.env,
+        SLOP_E2E_GITHUB_API_ORIGIN: `http://127.0.0.1:${githubPort}`,
+        SLOP_E2E_OUTPUT: "registry",
+      },
     );
   } finally {
+    github.close();
     rmSync(database.persistTo, { force: true, recursive: true });
   }
 }

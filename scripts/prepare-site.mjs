@@ -11,13 +11,21 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GENERATED_SKILL_TEMPLATES } from "../src/lib/install-command.ts";
+import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
+import {
+  renderProjectSkill,
+  usesGeneratedSkills,
+} from "../src/lib/project-skill.mjs";
 import { PROJECTS } from "../src/lib/projects.mjs";
 import { packageSkillArtifact } from "./package-skill-artifact.mjs";
 import { readIdentityRecord } from "./protocol-identity.mjs";
@@ -45,6 +53,20 @@ const ACCEPTED_SKILL_REVISIONS = [
  * tree. It is listed, but publishes no skill until both folders exist; the
  * registry snapshot check requires them before a project can be active.
  */
+// install-command.ts inlines the template paths for the bootstrap renderer
+// contract; the build refuses to publish if the two copies ever differ.
+if (
+  JSON.stringify(GENERATED_SKILL_TEMPLATES) !==
+  JSON.stringify(PROJECT_SKILL_TEMPLATES)
+)
+  throw new TypeError("[Slop] generated skill template paths have drifted");
+
+function generatedSkill(project, role) {
+  return usesGeneratedSkills(project)
+    ? { role, project, binding: registryBinding(project) }
+    : undefined;
+}
+
 function publishesSkills(project) {
   return [project.skill.sourcePath, project.reviewSkill.sourcePath].every(
     (path) => existsSync(join(repositoryRoot, path, "SKILL.md")),
@@ -597,14 +619,34 @@ function publishRootProject(rootPublishedProject) {
   );
 }
 
+/** The approved registry revision whose manifest is the published project. */
+function registryBinding(project) {
+  const revisions = JSON.parse(
+    readFileSync(
+      join(repositoryRoot, "src/lib/project-revisions.generated.json"),
+      "utf8",
+    ),
+  ).filter((entry) => entry.projectId === project.id);
+  const newest = revisions.at(-1);
+  if (!newest || sha256(JSON.stringify(project)) !== newest.manifestSha256)
+    throw new TypeError(
+      `[Slop] ${project.id} has no approved registry revision for its manifest`,
+    );
+  return {
+    projectId: project.id,
+    revision: newest.revision,
+    manifestSha256: newest.manifestSha256,
+  };
+}
+
 function publishAdditionalProject({
   id,
   name,
   publicationPrefix = "",
   skillRepositoryPath,
+  generated,
 }) {
-  const additionalSkillRoot = join(repositoryRoot, skillRepositoryPath);
-  const additionalSkillSource = join(additionalSkillRoot, "SKILL.md");
+  const templateRoot = join(repositoryRoot, skillRepositoryPath);
   const sourcePath = `${skillRepositoryPath}/SKILL.md`;
   const projectRoot = join(publicRoot, "projects", id);
   const projectDownloads = join(projectRoot, "downloads");
@@ -620,7 +662,7 @@ function publishAdditionalProject({
     .filter(Boolean)
     .map((path) => relative(skillRepositoryPath, path).replaceAll("\\", "/"))
     .sort();
-  const actualFiles = listRegularSkillFiles(additionalSkillRoot).sort();
+  const actualFiles = listRegularSkillFiles(templateRoot).sort();
   if (
     trackedFiles.length === 0 ||
     trackedFiles.includes("PROVENANCE.json") ||
@@ -636,7 +678,31 @@ function publishAdditionalProject({
       `[Slop] ${name} source must be a bounded, tracked, exact file tree`,
     );
   }
-  const fileManifest = trackedFiles.map((path) => ({
+  // A generated skill renders from its canonical template and the project's
+  // approved registry revision (PRD SKL-03); the archive packs the result.
+  let additionalSkillRoot = templateRoot;
+  let renderedFiles = trackedFiles;
+  if (generated) {
+    const rendered = renderProjectSkill({
+      role: generated.role,
+      templateFiles: Object.fromEntries(
+        trackedFiles.map((path) => [
+          path,
+          readFileSync(join(templateRoot, path)),
+        ]),
+      ),
+      manifest: generated.project,
+      registry: generated.binding,
+    });
+    additionalSkillRoot = mkdtempSync(join(tmpdir(), `${name}-render-`));
+    for (const [path, contents] of Object.entries(rendered)) {
+      mkdirSync(dirname(join(additionalSkillRoot, path)), { recursive: true });
+      writeFileSync(join(additionalSkillRoot, path), contents);
+    }
+    renderedFiles = Object.keys(rendered);
+  }
+  const additionalSkillSource = join(additionalSkillRoot, "SKILL.md");
+  const fileManifest = renderedFiles.map((path) => ({
     path,
     sha256: sha256(readFileSync(join(additionalSkillRoot, path))),
   }));
@@ -661,13 +727,15 @@ function publishAdditionalProject({
       revisionStatus,
       source: { path: sourcePath, sha256: sha256(skillBytes) },
       files: fileManifest,
+      ...(generated ? { registry: generated.binding } : {}),
     },
   });
 
   const archiveDigest = sha256(archive);
-  const references = trackedFiles
+  const references = renderedFiles
     .filter((path) => path.startsWith("references/") && path.endsWith(".md"))
     .map((path) => readFileSync(join(additionalSkillRoot, path), "utf8"));
+  if (generated) rmSync(additionalSkillRoot, { force: true, recursive: true });
   writeFileSync(join(projectRoot, `${publicationPrefix}skill.md`), skillBytes);
   writeFileSync(
     join(projectRoot, `${publicationPrefix}mission.md`),
@@ -758,6 +826,16 @@ function publishAdditionalProject({
       canonicalPath: skillRepositoryPath,
       releaseCandidateLabel: "slop-release-candidate",
       acceptedRevisions: ACCEPTED_SKILL_REVISIONS,
+      ...(generated
+        ? {
+            // The trust root is (template revision on main, this digest);
+            // the maintainer-authored fields come from Slop's registry.
+            registry: {
+              ...generated.binding,
+              url: `${publicSiteOrigin}/api/v1/project-revisions/${id}/${generated.binding.revision}`,
+            },
+          }
+        : {}),
     },
     provenance: {
       status: "self-reported",
@@ -824,6 +902,7 @@ for (const project of PROJECTS) {
         id: project.id,
         name: project.skill.id,
         skillRepositoryPath: project.skill.sourcePath,
+        generated: generatedSkill(project, "contributor"),
       });
     }
     publishAdditionalProject({
@@ -831,6 +910,7 @@ for (const project of PROJECTS) {
       name: project.reviewSkill.id,
       publicationPrefix: "review-",
       skillRepositoryPath: project.reviewSkill.sourcePath,
+      generated: generatedSkill(project, "reviewer"),
     });
   } else if (project.status === "active") {
     throw new TypeError(

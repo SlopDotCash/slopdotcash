@@ -1,27 +1,40 @@
 /**
  * Runs the D1 project registry end to end on the shipped build: the real
- * Pages Functions, a fresh local D1 with every migration, and two seeded
- * site sessions. scripts/run-e2e.mjs creates both sessions; only the GitHub
- * repository lookup is a fixture, so the run does not depend on its rate limit.
+ * Pages Functions, a fresh local D1 with every migration, and three seeded
+ * site sessions. scripts/run-e2e.mjs creates the sessions and serves the
+ * loopback GitHub API fixture; the browser's GitHub lookup is mocked from the
+ * same facts, so the run never depends on GitHub's rate limit.
  */
+import { createHash } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { fixtureRepository } from "../github-api-fixture.mjs";
 
 const APPLICANT_TOKEN = process.env.SLOP_E2E_APPLICANT_TOKEN ?? "";
 const ADMIN_TOKEN = process.env.SLOP_E2E_ADMIN_TOKEN ?? "";
+const OWNER_TOKEN = process.env.SLOP_E2E_OWNER_TOKEN ?? "";
 
 test.describe.configure({ mode: "serial" });
 
 /**
- * Every viewport shares one D1, so each submits its own repository and
- * project id instead of assuming the registry it finds is empty.
+ * Every viewport shares one D1, so each uses its own repositories and project
+ * ids instead of assuming the registry it finds is empty. The organization
+ * repository cannot prove control; the user repository belongs to e2e-owner.
  */
-function fixtureProject() {
+function fixtureProjects() {
   const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const words = suffix.replaceAll("-", " ");
   return {
-    repository: `example/open-registry-${suffix}`,
-    id: `open-registry-${suffix}`,
-    name: `Open Registry ${suffix.replaceAll("-", " ")}`,
+    queued: {
+      repository: `example/open-registry-${suffix}`,
+      id: `open-registry-${suffix}`,
+      name: `Open Registry ${words}`,
+    },
+    owned: {
+      repository: `e2e-owner/owned-registry-${suffix}`,
+      id: `owned-registry-${suffix}`,
+      name: `Owned Registry ${words}`,
+    },
   };
 }
 
@@ -61,32 +74,19 @@ async function expectAccessible(page: Page) {
 }
 
 async function routeGitHub(page: Page) {
-  const { repository } = fixtureProject();
   await page.route("https://api.github.com/**", (route) => {
-    const url = new URL(route.request().url());
-    if (url.pathname === `/repos/${repository}`)
-      return route.fulfill({
-        json: {
-          id: 123456700 + repository.length,
-          node_id: `R_${repository.replaceAll(/[^A-Za-z0-9]/gu, "_")}`,
-          full_name: repository,
-          description: "An open registry for reproducible research tools.",
-          private: false,
-          default_branch: "main",
-          owner: {
-            login: "example",
-            id: 987654320,
-            node_id: "O_registry",
-            type: "Organization",
-          },
-        },
-      });
-    return route.fulfill({ status: 404, json: { message: "Not Found" } });
+    const path = new URL(route.request().url()).pathname;
+    const match = /^\/repos\/([^/]+\/[^/]+)$/u.exec(path);
+    return match
+      ? route.fulfill({ json: fixtureRepository(match[1]) })
+      : route.fulfill({ status: 404, json: { message: "Not Found" } });
   });
 }
 
-async function draftApplication(page: Page) {
-  const project = fixtureProject();
+async function draftApplication(
+  page: Page,
+  project: { repository: string; name: string },
+) {
   await routeGitHub(page);
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page.getByLabel("Public GitHub repository").fill(project.repository);
@@ -103,6 +103,11 @@ async function draftApplication(page: Page) {
   await expect(
     page.getByRole("article", { name: "Listing preview" }),
   ).toContainText("$1,000 · unfunded pledge");
+}
+
+async function listedProject(page: Page, id: string) {
+  const body = await (await page.request.get("/api/v1/projects")).json();
+  return body.projects.find((entry: { id: string }) => entry.id === id);
 }
 
 test("the shipped build lists no project @registry", async ({ page }) => {
@@ -124,7 +129,7 @@ test("a signed-out visitor must sign in before submitting @registry", async ({
   page,
 }) => {
   const errors = observe(page);
-  await draftApplication(page);
+  await draftApplication(page, fixtureProjects().queued);
   await expect(
     page.getByRole("link", { name: "Sign in with GitHub to submit" }),
   ).toHaveAttribute("href", /\/login\?next=%2Fprojects%2Fnew$/u);
@@ -140,15 +145,15 @@ test("a signed-out visitor must sign in before submitting @registry", async ({
   expect(errors).toEqual([]);
 });
 
-test("a maintainer submits and an admin approves it as paused @registry", async ({
+test("an unproven application waits for an admin, who lists it paused @registry", async ({
   browser,
 }) => {
-  const project = fixtureProject();
+  const project = fixtureProjects().queued;
   const applicantContext = await browser.newContext();
   const applicant = await applicantContext.newPage();
   const applicantErrors = observe(applicant);
   await signIn(applicant, APPLICANT_TOKEN);
-  await draftApplication(applicant);
+  await draftApplication(applicant, project);
   await applicant.getByRole("button", { name: /Submit for review/u }).click();
   const receipt = applicant.getByRole("status").filter({
     hasText: "Application submitted",
@@ -156,8 +161,12 @@ test("a maintainer submits and an admin approves it as paused @registry", async 
   await expect(receipt).toContainText(
     `${project.name} is waiting for admin review`,
   );
+  await expect(receipt).toContainText(
+    "GitHub check: Not proven: @e2e-applicant is not a public member of example",
+  );
   await expect(receipt).toContainText("submitted by @e2e-applicant");
   await expectAccessible(applicant);
+  expect(await listedProject(applicant, project.id)).toBeUndefined();
 
   // An applicant is not an admin, so the review queue stays closed.
   await applicant.goto("/admin", { waitUntil: "networkidle" });
@@ -184,13 +193,19 @@ test("a maintainer submits and an admin approves it as paused @registry", async 
   });
   await expect(listedCard).toContainText("paused");
   await expect(listedCard).toContainText("1 · updated");
+  await expect(listedCard).toContainText("Generated from revision 1");
 
-  const listed = await (await admin.request.get("/api/v1/projects")).json();
-  expect(
-    listed.projects.find((entry: { id: string }) => entry.id === project.id),
-  ).toMatchObject({
+  expect(await listedProject(admin, project.id)).toMatchObject({
     status: "paused",
+    listingTier: "community",
+    skill: {
+      id: `contribute-to-${project.id}`,
+      sourcePath: "skills/project-contributor-template",
+    },
     reward: { monthlyCapMinor: "1000000000", paymentMode: "disabled" },
+    contribution: {
+      approvedScope: expect.stringMatching(/^Merged pull requests/u),
+    },
   });
   const history = await (
     await admin.request.get("/api/v1/project-revisions")
@@ -200,6 +215,134 @@ test("a maintainer submits and an admin approves it as paused @registry", async 
       (entry: { projectId: string }) => entry.projectId === project.id,
     ),
   ).toMatchObject([{ revision: 1 }]);
+  expect(adminErrors).toEqual([]);
+  await adminContext.close();
+});
+
+test("an owner's proof and generated skills reach the admin, who lists and delists it @registry", async ({
+  browser,
+}) => {
+  const project = fixtureProjects().owned;
+  const ownerContext = await browser.newContext();
+  const owner = await ownerContext.newPage();
+  const ownerErrors = observe(owner);
+  await signIn(owner, OWNER_TOKEN);
+  await draftApplication(owner, project);
+  await owner.getByRole("button", { name: /Submit for review/u }).click();
+  const receipt = owner.getByRole("status").filter({
+    hasText: "Application submitted",
+  });
+  await expect(receipt).toContainText(
+    `GitHub check: Proven: @e2e-owner owns ${project.repository}`,
+  );
+  await expectAccessible(owner);
+  // Every application waits for an admin, even a proven owner's (PRJ-02).
+  expect(await listedProject(owner, project.id)).toBeUndefined();
+  const mine = await (
+    await owner.request.get("/api/v1/project-applications/mine", {
+      headers: { cookie: `__Host-slop_points=${OWNER_TOKEN}` },
+    })
+  ).json();
+  const listed = mine.applications.find(
+    (entry: { projectId: string }) => entry.projectId === project.id,
+  ).manifest;
+
+  // Facts that GitHub does not confirm are refused, never listed.
+  // The request API keeps the expected 422 out of the page console.
+  const forgedResponse = await owner.request.post(
+    "/api/v1/project-applications",
+    {
+      // The request client sends no Secure cookie over local http.
+      headers: {
+        origin: new URL(owner.url()).origin,
+        cookie: `__Host-slop_points=${OWNER_TOKEN}`,
+      },
+      data: {
+        manifest: {
+          ...listed,
+          id: `${project.id}-forged`,
+          slug: `${project.id}-forged`,
+          skill: {
+            ...listed.skill,
+            publicPath: `/projects/${project.id}-forged/skill.md`,
+          },
+          repositories: [
+            {
+              ...listed.repositories[0],
+              id: `${project.repository}-forged`,
+              displayName: `${project.repository}-forged`,
+              githubUrl: `https://github.com/${project.repository}-forged`,
+            },
+          ],
+          links: {
+            ...listed.links,
+            repository: `https://github.com/${project.repository}-forged`,
+          },
+        },
+      },
+    },
+  );
+  const forged = {
+    status: forgedResponse.status(),
+    body: await forgedResponse.json(),
+  };
+  expect(forged).toMatchObject({
+    status: 422,
+    body: { error: "invalid_manifest" },
+  });
+  expect(ownerErrors).toEqual([]);
+  await ownerContext.close();
+
+  const adminContext = await browser.newContext();
+  const admin = await adminContext.newPage();
+  const adminErrors = observe(admin);
+  await signIn(admin, ADMIN_TOKEN);
+  await admin.goto("/admin", { waitUntil: "networkidle" });
+  const application = admin.locator(".admin-card", {
+    hasText: project.repository,
+  });
+  await expect(application).toContainText(
+    `Proven: @e2e-owner owns ${project.repository}`,
+  );
+  // The admin reviews the exact generated skill before approving it.
+  await application
+    .getByText("Preview generated contributor skill", { exact: true })
+    .click();
+  await expect(
+    application.getByLabel("Contributor skill SKILL.md"),
+  ).toHaveValue(new RegExp(`# Contribute to ${project.repository}`, "u"));
+  await expect(
+    application.getByLabel("Contributor skill project.json"),
+  ).toHaveValue(/"approvedScope": "Merged pull requests/u);
+  await expectAccessible(admin);
+  await application
+    .getByRole("button", { name: "Approve as paused project" })
+    .click();
+  const card = admin.locator(".admin-card", {
+    has: admin.getByText(project.id, { exact: true }),
+  });
+  await expect(card).toContainText("Generated from revision 1");
+
+  // The installer's trust root: the exact approved bytes and their digest.
+  const revision = await (
+    await admin.request.get(`/api/v1/project-revisions/${project.id}/1`)
+  ).json();
+  expect(createHash("sha256").update(revision.manifestText).digest("hex")).toBe(
+    revision.manifestSha256,
+  );
+  expect(JSON.parse(revision.manifestText)).toMatchObject({
+    id: project.id,
+    skill: { sourcePath: "skills/project-contributor-template" },
+  });
+
+  await card.getByRole("button", { name: "Delist", exact: true }).click();
+  await card.getByRole("button", { name: "Delist project" }).click();
+  await expect(admin.getByRole("status")).toContainText("Saved.");
+  await expect(card).toContainText("Delisted.");
+  expect(await listedProject(admin, project.id)).toMatchObject({
+    status: "paused",
+    listingTier: "retired",
+  });
   expect(adminErrors).toEqual([]);
   await adminContext.close();
 });

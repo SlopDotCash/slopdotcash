@@ -99,10 +99,7 @@ test("drafts a project through the setup steps and submits it for review", async
   await routeGitHub(page);
   // The registry API itself runs in the @registry lane; here it is a fixture
   // so the wizard's submission can be checked byte for byte.
-  let submitted: {
-    manifest: Record<string, unknown>;
-    acceptanceCriteria: string;
-  } | null = null;
+  let submitted: { manifest: Record<string, unknown> } | null = null;
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
       json: {
@@ -124,7 +121,8 @@ test("drafts a project through the setup steps and submits it for review", async
           projectId: "open-protein",
           repository: "example/open-protein",
           manifest: submitted?.manifest,
-          acceptanceCriteria: submitted?.acceptanceCriteria,
+          manifestSha256: "a".repeat(64),
+          acceptanceCriteria: "Accepted pull requests with verified tests.",
           applicant: { githubId: "4242", githubLogin: "example-maintainer" },
           submittedAt: "2026-10-18T00:00:00.000Z",
           status: "pending",
@@ -133,6 +131,8 @@ test("drafts a project through the setup steps and submits it for review", async
           decidedAt: null,
           decidedBy: null,
           decisionReason: null,
+          githubCheck:
+            "Not proven: @example-maintainer is not a public member of example",
         },
       },
     });
@@ -301,11 +301,22 @@ test("drafts a project through the setup steps and submits it for review", async
     "Application app_fixture0001 · submitted by @example-maintainer",
   );
   expect(submitted).toMatchObject({
-    acceptanceCriteria: "Accepted pull requests with verified tests.",
     manifest: {
       id: "open-protein",
       status: "paused",
       listingTier: "community",
+      skill: {
+        id: "contribute-to-open-protein",
+        sourcePath: "skills/project-contributor-template",
+      },
+      reviewSkill: {
+        id: "review-open-protein-contributions",
+        sourcePath: "skills/project-reviewer-template",
+      },
+      contribution: {
+        approvedScope: "Accepted pull requests with verified tests.",
+        maintainerNotes: "",
+      },
     },
   });
 

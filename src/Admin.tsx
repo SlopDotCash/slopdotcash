@@ -13,6 +13,8 @@ import {
   useRef,
   useState,
 } from "react";
+import contributorTemplate from "../skills/project-contributor-template/SKILL.md?raw";
+import reviewerTemplate from "../skills/project-reviewer-template/SKILL.md?raw";
 import {
   type AdminProject,
   type ProjectApplication,
@@ -20,6 +22,11 @@ import {
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
+import {
+  renderProjectSkill,
+  usesGeneratedSkills,
+} from "./lib/project-skill.mjs";
+import type { ProjectDefinition } from "./lib/projects.mjs";
 import { loginHref } from "./Points";
 
 function errorMessage(error: unknown): string {
@@ -134,6 +141,78 @@ const selectApplications = (body: { applications: ProjectApplication[] }) =>
   body.applications;
 const selectProjects = (body: { projects: AdminProject[] }) => body.projects;
 
+const decoder = new TextDecoder();
+
+/**
+ * Shows the exact generated SKILL.md and project.json an admin approves
+ * (PRD PRJ-02). The shared scripts come unchanged from the template.
+ */
+function GeneratedSkillPreview({
+  manifest,
+  registry,
+}: {
+  manifest: ProjectDefinition;
+  registry: { revision: number; manifestSha256: string };
+}) {
+  if (!usesGeneratedSkills(manifest))
+    return (
+      <p className="admin-status">
+        This project uses committed skills at {manifest.skill.sourcePath}.
+      </p>
+    );
+  let previews: { role: string; files: Record<string, Uint8Array> }[];
+  try {
+    previews = [
+      {
+        role: "Contributor skill",
+        files: renderProjectSkill({
+          role: "contributor",
+          templateFiles: { "SKILL.md": contributorTemplate },
+          manifest,
+          registry,
+        }),
+      },
+      {
+        role: "Reviewer skill",
+        files: renderProjectSkill({
+          role: "reviewer",
+          templateFiles: { "SKILL.md": reviewerTemplate },
+          manifest,
+          registry,
+        }),
+      },
+    ];
+  } catch (caught) {
+    return (
+      <p className="form-error" role="alert">
+        <CircleAlert aria-hidden="true" /> {errorMessage(caught)}
+      </p>
+    );
+  }
+  return (
+    <>
+      {previews.map(({ role, files }) => (
+        <details key={role}>
+          <summary>Preview generated {role.toLowerCase()}</summary>
+          {Object.entries(files).map(([path, contents]) => (
+            <div key={path}>
+              <h4>{path}</h4>
+              {/* A read-only text area keeps long code keyboard-scrollable. */}
+              <textarea
+                aria-label={`${role} ${path}`}
+                className="admin-code"
+                readOnly
+                spellCheck={false}
+                value={decoder.decode(contents)}
+              />
+            </div>
+          ))}
+        </details>
+      ))}
+    </>
+  );
+}
+
 function ApplicationCard({
   application,
   onDecided,
@@ -211,6 +290,10 @@ function ApplicationCard({
           <dd>{formatTime(application.submittedAt)} UTC</dd>
         </div>
         <div>
+          <dt>GitHub check</dt>
+          <dd>{application.githubCheck ?? "Not recorded"}</dd>
+        </div>
+        <div>
           <dt>Admin email</dt>
           <dd>
             {application.adminNotification === "sent"
@@ -237,8 +320,19 @@ function ApplicationCard({
       <p className="admin-criteria">{application.acceptanceCriteria}</p>
       <details>
         <summary>Submitted manifest</summary>
-        <pre>{JSON.stringify(manifest, null, 2)}</pre>
+        <textarea
+          aria-label="Submitted manifest"
+          className="admin-code"
+          readOnly
+          spellCheck={false}
+          value={JSON.stringify(manifest, null, 2)}
+        />
       </details>
+      {/* Approval appends this manifest as revision 1. */}
+      <GeneratedSkillPreview
+        manifest={manifest}
+        registry={{ revision: 1, manifestSha256: application.manifestSha256 }}
+      />
       {application.status === "pending" ? (
         <div className="admin-actions">
           <label>
@@ -338,7 +432,7 @@ function ProjectEditor({
   onSaved,
 }: {
   project: AdminProject;
-  onSaved: () => void;
+  onSaved: (note: string) => void;
 }) {
   const [text, setText] = useState(() =>
     JSON.stringify(project.manifest, null, 2),
@@ -357,14 +451,17 @@ function ProjectEditor({
     }
     setBusy(true);
     setError(null);
-    projectApiRequest(
+    projectApiRequest<{ publication: string }>(
       "PUT",
       `admin/projects/${encodeURIComponent(project.id)}/manifest`,
       { manifest, expectedRevision: project.revision, reason },
-    ).then(onSaved, (caught: unknown) => {
-      setBusy(false);
-      setError(errorMessage(caught));
-    });
+    ).then(
+      (body) => onSaved(PUBLICATION_NOTES[body.publication] ?? "Saved."),
+      (caught: unknown) => {
+        setBusy(false);
+        setError(errorMessage(caught));
+      },
+    );
   };
   return (
     <form className="admin-editor" onSubmit={save}>
@@ -401,19 +498,110 @@ function ProjectEditor({
   );
 }
 
+const PUBLICATION_NOTES: Record<string, string> = {
+  requested: "Saved. A site rebuild was requested.",
+  "not-configured": "Saved. The next scheduled build publishes it.",
+  failed:
+    "Saved. The rebuild request failed; the next scheduled build publishes it.",
+};
+
+/** Delisting keeps history: the project becomes paused and retired. */
+function DelistButton({
+  project,
+  onDone,
+}: {
+  project: AdminProject;
+  onDone: (note: string) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (project.manifest.listingTier === "retired")
+    return <p className="admin-status">Delisted.</p>;
+  const delist = () => {
+    setBusy(true);
+    setError(null);
+    projectApiRequest<{ publication: string }>(
+      "PUT",
+      `admin/projects/${encodeURIComponent(project.id)}/manifest`,
+      {
+        manifest: {
+          ...project.manifest,
+          status: "paused",
+          listingTier: "retired",
+        },
+        expectedRevision: project.revision,
+        reason: "Delisted by an admin",
+      },
+    ).then(
+      (body) => onDone(PUBLICATION_NOTES[body.publication] ?? "Saved."),
+      (caught: unknown) => {
+        setBusy(false);
+        setError(errorMessage(caught));
+      },
+    );
+  };
+  return (
+    <div className="admin-actions">
+      {error ? (
+        <p className="form-error" role="alert">
+          <CircleAlert aria-hidden="true" /> {error}
+        </p>
+      ) : null}
+      {confirming ? (
+        <div>
+          <span>Hide this project from every page and list?</span>
+          <button
+            className="button danger-button"
+            disabled={busy}
+            onClick={delist}
+            type="button"
+          >
+            {busy ? "Delisting…" : "Delist project"}
+          </button>
+          <button
+            className="button ghost-button"
+            onClick={() => setConfirming(false)}
+            type="button"
+          >
+            Keep listed
+          </button>
+        </div>
+      ) : (
+        <div>
+          <button
+            className="button ghost-button"
+            onClick={() => setConfirming(true)}
+            type="button"
+          >
+            Delist
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProjectsSection() {
   const [state, reload] = useAdminData("admin/projects", selectProjects);
   const [editing, setEditing] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   return (
     <section aria-labelledby="admin-projects" className="admin-section">
       <div className="admin-section-heading">
         <h2 id="admin-projects">Projects</h2>
       </div>
       <p className="admin-status">
-        Approved projects start paused. The public site lists registry changes
-        after the next build. A project can open only after its reviewed
-        contributor and reviewer skills are on the development branch.
+        Approved projects start paused and collect nothing until an admin makes
+        them active. Slop generates each project's skills from its approved
+        revision; preview them before activation. Each change requests a site
+        rebuild.
       </p>
+      {note ? (
+        <p className="admin-status" role="status">
+          {note}
+        </p>
+      ) : null}
       {state.status !== "ready" ? (
         <LoadNotice label="projects" retry={reload} state={state} />
       ) : state.value.length === 0 ? (
@@ -442,15 +630,24 @@ function ProjectsSection() {
               <div>
                 <dt>Skills</dt>
                 <dd>
-                  {project.manifest.skill.sourcePath} ·{" "}
-                  {project.manifest.reviewSkill.sourcePath}
+                  {usesGeneratedSkills(project.manifest)
+                    ? `Generated from revision ${project.revision}`
+                    : `${project.manifest.skill.sourcePath} · ${project.manifest.reviewSkill.sourcePath}`}
                 </dd>
               </div>
             </dl>
+            <GeneratedSkillPreview
+              manifest={project.manifest}
+              registry={{
+                revision: project.revision,
+                manifestSha256: project.manifestSha256,
+              }}
+            />
             {editing === project.id ? (
               <ProjectEditor
-                onSaved={() => {
+                onSaved={(saved) => {
                   setEditing(null);
+                  setNote(saved);
                   reload();
                 }}
                 project={project}
@@ -464,6 +661,13 @@ function ProjectsSection() {
                 Edit manifest
               </button>
             )}
+            <DelistButton
+              onDone={(saved) => {
+                setNote(saved);
+                reload();
+              }}
+              project={project}
+            />
           </article>
         ))
       )}

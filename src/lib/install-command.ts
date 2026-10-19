@@ -14,6 +14,8 @@ import {
 interface TestAuthorityOrigins {
   apiOrigin: string;
   rawOrigin: string;
+  /** Project registry origin for generated skills; defaults to the artifact origin. */
+  registryOrigin?: string;
   /**
    * Test-only per-attempt download timeout. Production always uses the
    * default; this exists so a deterministic test can reproduce a response
@@ -27,6 +29,17 @@ interface InstallCommandOptions {
   skillRepositoryPath: string;
   testAuthority?: TestAuthorityOrigins;
 }
+
+/**
+ * Canonical generated-skill templates (PRD SKL-03), equal to
+ * PROJECT_SKILL_TEMPLATES in project-schema.mjs. Kept inline because the
+ * bootstrap skill fetches only this file, the guide renderer, and the shared
+ * authority module to rebuild an install guide.
+ */
+export const GENERATED_SKILL_TEMPLATES = {
+  contributor: "skills/project-contributor-template",
+  reviewer: "skills/project-reviewer-template",
+} as const;
 
 const PRODUCTION_API_ORIGIN = "https://api.github.com";
 const PRODUCTION_RAW_ORIGIN = "https://raw.githubusercontent.com";
@@ -63,21 +76,35 @@ function validateTestOrigin(name: string, origin: string): void {
   }
 }
 
-function resolveAuthorityOrigins(options: InstallCommandOptions): {
+function resolveAuthorityOrigins(
+  options: InstallCommandOptions,
+  artifactOrigin: string,
+): {
   apiOrigin: string;
   rawOrigin: string;
+  registryOrigin: string;
 } {
+  // The site that serves a generated skill publishes its approved revision.
+  const siteOrigin = new URL(artifactOrigin);
+  const registryOrigin =
+    siteOrigin.protocol === "file:" ? "" : siteOrigin.origin;
   if (!options.testAuthority) {
     return {
       apiOrigin: PRODUCTION_API_ORIGIN,
       rawOrigin: PRODUCTION_RAW_ORIGIN,
+      registryOrigin,
     };
   }
   validateTestOrigin("apiOrigin", options.testAuthority.apiOrigin);
   validateTestOrigin("rawOrigin", options.testAuthority.rawOrigin);
+  if (options.testAuthority.registryOrigin !== undefined)
+    validateTestOrigin("registryOrigin", options.testAuthority.registryOrigin);
   return {
     apiOrigin: options.testAuthority.apiOrigin.replace(/\/$/u, ""),
     rawOrigin: options.testAuthority.rawOrigin.replace(/\/$/u, ""),
+    registryOrigin: (
+      options.testAuthority.registryOrigin ?? registryOrigin
+    ).replace(/\/$/u, ""),
   };
 }
 
@@ -98,7 +125,7 @@ export function createInstallCommand(
   options: InstallCommandOptions,
 ): string {
   const artifactOrigin = validateArtifactOrigin(origin);
-  const authority = resolveAuthorityOrigins(options);
+  const authority = resolveAuthorityOrigins(options, artifactOrigin);
   const requestTimeoutSeconds = resolveRequestTimeoutSeconds(options);
   const requiresHttpsTrust = [
     artifactOrigin,
@@ -113,9 +140,21 @@ export function createInstallCommand(
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(skillName)) {
     throw new TypeError("[Slop] skill name must be canonical kebab-case");
   }
+  // A generated project skill names its canonical template (PRD SKL-03).
+  const template = Object.entries(GENERATED_SKILL_TEMPLATES).find(
+    ([, path]) => path === skillRepositoryPath,
+  )?.[0];
   if (
     !/^skills\/[a-z0-9][a-z0-9-]{0,63}$/u.test(skillRepositoryPath) ||
-    skillRepositoryPath !== `skills/${skillName}`
+    (template === undefined && skillRepositoryPath !== `skills/${skillName}`) ||
+    (template === "contributor" &&
+      !/^contribute-to-[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u.test(
+        skillName,
+      )) ||
+    (template === "reviewer" &&
+      !/^review-[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?-contributions$/u.test(
+        skillName,
+      ))
   ) {
     throw new TypeError(
       "[Slop] skill repository path must match the canonical skill name",
@@ -139,7 +178,7 @@ export function createInstallCommand(
     exit 1
   fi
   trap 'exit 1' HUP INT TERM
-  "$PYTHON_BIN" - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} ${shellQuote(String(requestTimeoutSeconds))} <<'PY'
+  "$PYTHON_BIN" - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} ${shellQuote(String(requestTimeoutSeconds))} ${shellQuote(authority.registryOrigin)} <<'PY'
 import binascii
 import ctypes
 import hashlib
@@ -165,7 +204,7 @@ import zipfile
 import zlib
 from pathlib import Path, PurePosixPath
 
-artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path, request_timeout_argument = sys.argv[1:]
+artifact_origin, api_origin, raw_origin, skills_root, operation, rollback_revision, skill_name, skill_repository_path, request_timeout_argument, registry_origin = sys.argv[1:]
 legacy_repository = "elizaOS/slopdotcash"
 source_path = f"{skill_repository_path}/SKILL.md"
 target_path = os.path.join(skills_root, skill_name)
@@ -188,14 +227,51 @@ local_signature = 0x04034B50
 
 ${SKILL_AUTHORITY_PYTHON}
 
+version_key_pattern = re.compile(r"[0-9a-f]{40}(?:-r[1-9][0-9]{0,8})?")
+
+
+def expected_project_id():
+    role = generated_skill_role()
+    if role == "contributor":
+        return skill_name[len("contribute-to-"):]
+    if role == "reviewer":
+        return skill_name[len("review-"):-len("-contributions")]
+    return None
+
+
+def version_key(revision, binding):
+    # A generated skill's bytes depend on the template revision and the
+    # approved registry revision, so both name its immutable version.
+    return revision if binding is None else f"{revision}-r{binding['revision']}"
+
+
+def require_version_key(value, context):
+    if not isinstance(value, str) or not version_key_pattern.fullmatch(value):
+        raise ValueError(f"{context} is not a skill version")
+    return value
+
+
+def provenance_binding(provenance):
+    if generated_skill_role() is None:
+        if isinstance(provenance, dict) and "registry" in provenance:
+            raise ValueError("a committed project skill cannot carry a registry binding")
+        return None
+    binding = provenance.get("registry") if isinstance(provenance, dict) else None
+    return require_registry_binding(binding, expected_project_id())
+
 
 def validate_provenance(
-    provenance, revision, canonical_files, expected_repository=repository
+    provenance, revision, canonical_files, expected_repository=repository, binding=None
 ):
-    if not isinstance(provenance, dict) or set(provenance) != {
+    expected_keys = {
         "schemaVersion", "name", "repository", "revision", "revisionStatus", "source", "files"
-    }:
+    }
+    if binding is not None:
+        expected_keys.add("registry")
+    if not isinstance(provenance, dict) or set(provenance) != expected_keys:
         raise ValueError("skill provenance has an invalid schema")
+    if binding is not None and provenance.get("registry") != binding:
+        raise ValueError("skill provenance names another registry revision")
     if (
         provenance.get("schemaVersion") != "1"
         or provenance.get("name") != skill_name
@@ -227,13 +303,13 @@ def validate_provenance(
         raise ValueError("skill provenance file manifest is incomplete")
     for path, contents in canonical_files.items():
         if hashlib.sha256(contents).hexdigest() != manifest[path]:
-            raise ValueError("skill provenance digest disagrees with GitHub source bytes")
+            raise ValueError("skill provenance digest disagrees with its canonical source bytes")
     if source.get("sha256") != hashlib.sha256(canonical_files["SKILL.md"]).hexdigest():
-        raise ValueError("skill source digest disagrees with GitHub source bytes")
+        raise ValueError("skill source digest disagrees with its canonical source bytes")
 
 
 def canonical_provenance_bytes(
-    revision, canonical_files, repository_identity=repository
+    revision, canonical_files, repository_identity=repository, binding=None
 ):
     provenance = {
         "schemaVersion": "1",
@@ -250,6 +326,12 @@ def canonical_provenance_bytes(
             for path, contents in sorted(canonical_files.items())
         ],
     }
+    if binding is not None:
+        provenance["registry"] = {
+            "projectId": binding["projectId"],
+            "revision": binding["revision"],
+            "manifestSha256": binding["manifestSha256"],
+        }
     return (json.dumps(provenance, indent=2) + "\\n").encode("utf-8")
 
 
@@ -427,19 +509,22 @@ def extract_archive(archive_contents, extraction_root):
     )
     if f"{skill_prefix}{provenance_name}" not in {entry.orig_filename for entry in entries}:
         raise ValueError("archive provenance is missing")
-    canonical_files = remote_skill_bytes(revision)
-    authorization = authorize_revision(revision, canonical_files)
+    binding = provenance_binding(provenance)
+    canonical_files, template_files = expected_skill_bytes(revision, binding)
+    authorization = authorize_revision(revision, template_files)
     if packaged_paths != sorted(canonical_files):
-        raise ValueError("archive files do not exactly match GitHub's canonical skill file list")
-    validate_provenance(provenance, revision, canonical_files)
+        raise ValueError("archive files do not exactly match the canonical skill file list")
+    validate_provenance(provenance, revision, canonical_files, repository, binding)
     with open(provenance_path, "rb") as provenance_file:
-        if provenance_file.read() != canonical_provenance_bytes(revision, canonical_files):
+        if provenance_file.read() != canonical_provenance_bytes(
+            revision, canonical_files, repository, binding
+        ):
             raise ValueError("archive provenance bytes are not canonical")
     for path, contents in canonical_files.items():
         with open(os.path.join(staged_skill, *PurePosixPath(path).parts), "rb") as packaged_file:
             if packaged_file.read() != contents:
-                raise ValueError("archive file bytes disagree with GitHub's immutable source")
-    return staged_skill, revision, canonical_files, authorization
+                raise ValueError("archive file bytes disagree with their immutable source")
+    return staged_skill, revision, canonical_files, authorization, binding, template_files
 
 
 def is_candidate_to_merged_transition(
@@ -530,12 +615,19 @@ def list_local_tree(root):
     return sorted(files), sorted(directories)
 
 
-def verify_local_version(path, revision, canonical_files=None):
+def verify_local_version(path, key, canonical_files=None):
     metadata = os.lstat(path)
     if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
         raise ValueError("retained skill version is not a real directory")
-    files = canonical_files if canonical_files is not None else remote_skill_bytes(revision)
+    revision = require_sha(require_version_key(key, "skill version")[:40], "skill version revision")
     provenance_contents, provenance = read_provenance(path)
+    binding = provenance_binding(provenance)
+    if version_key(revision, binding) != key:
+        raise ValueError("retained skill version names another registry revision")
+    if canonical_files is not None:
+        files, template_files = canonical_files, None
+    else:
+        files, template_files = expected_skill_bytes(revision, binding)
     installed_repository = (
         provenance.get("repository") if isinstance(provenance, dict) else None
     )
@@ -545,7 +637,7 @@ def verify_local_version(path, revision, canonical_files=None):
         path, revision, installed_repository
     )
     validate_provenance(
-        provenance, revision, files, installed_repository
+        provenance, revision, files, installed_repository, binding
     )
     expected_paths = sorted([*files, provenance_name, authorization_receipt_name])
     expected_directories = sorted({
@@ -561,14 +653,14 @@ def verify_local_version(path, revision, canonical_files=None):
     if local_files != expected_paths or local_directories != expected_directories:
         raise ValueError("installed skill has modified, missing, or extra files")
     if provenance_contents != canonical_provenance_bytes(
-        revision, files, installed_repository
+        revision, files, installed_repository, binding
     ):
         raise ValueError("installed skill provenance bytes are not canonical")
     for relative_path, expected in files.items():
         with open(os.path.join(path, *PurePosixPath(relative_path).parts), "rb") as source:
             if source.read() != expected:
-                raise ValueError("installed skill differs from GitHub's immutable source")
-    return files, authorization
+                raise ValueError("installed skill differs from its immutable source")
+    return files, authorization, template_files
 
 
 def current_install():
@@ -580,7 +672,7 @@ def current_install():
     parts = Path(link).parts
     if len(parts) != 2 or parts[0] != versions_name:
         raise ValueError("existing skill target points outside the managed version store")
-    revision = require_sha(parts[1], "installed skill link revision")
+    revision = require_version_key(parts[1], "installed skill link version")
     version_path = os.path.join(versions_root, revision)
     if not os.path.exists(target_path):
         raise ValueError("existing skill target is a broken symlink")
@@ -703,40 +795,63 @@ def install_or_update():
 
     work_root = tempfile.mkdtemp(prefix=f".{skill_name}-stage-", dir=skills_root)
     try:
-        staged_skill, revision, canonical_files, authorization = extract_archive(
+        (
+            staged_skill,
+            revision,
+            canonical_files,
+            authorization,
+            binding,
+            template_files,
+        ) = extract_archive(
             archive_contents,
             os.path.join(work_root, "extracted"),
         )
+        key = version_key(revision, binding)
         installed = current_install()
         if installed is not None:
-            old_revision, old_path = installed
-            old_files = canonical_files if old_revision == revision else None
-            old_files, old_authorization = verify_local_version(
-                old_path, old_revision, old_files
+            old_key, old_path = installed
+            old_files = canonical_files if old_key == key else None
+            old_files, old_authorization, _ = verify_local_version(
+                old_path, old_key, old_files
             )
-            if old_revision == revision:
-                authorize_revision(revision, canonical_files)
-                print(f"{skill_name} is already verified at {revision}; no changes made.")
+            if old_key == key:
+                authorize_revision(revision, template_files)
+                print(f"{skill_name} is already verified at {key}; no changes made.")
                 return
             if old_files == canonical_files:
-                authorize_revision(revision, canonical_files)
+                authorize_revision(revision, template_files)
                 print(
-                    f"{skill_name} already has the current verified canonical bytes at {old_revision}; no changes made."
+                    f"{skill_name} already has the current verified canonical bytes at {old_key}; no changes made."
                 )
                 return
-            if not compare_is_ancestor(
-                old_revision, revision
-            ) and not is_candidate_to_merged_transition(
-                old_revision,
-                old_authorization,
-                revision,
-                authorization,
+            old_revision = old_key[:40]
+            # A generated skill may also move to a newer registry revision of
+            # the same template; it never moves back to an older one.
+            old_registry = int(old_key.split("-r")[1]) if "-r" in old_key else None
+            new_registry = binding["revision"] if binding is not None else None
+            template_forward = (
+                old_revision == revision
+                or compare_is_ancestor(old_revision, revision)
+                or is_candidate_to_merged_transition(
+                    old_revision,
+                    old_authorization,
+                    revision,
+                    authorization,
+                )
+            )
+            if (
+                not template_forward
+                or (
+                    old_registry is not None
+                    and new_registry is not None
+                    and new_registry < old_registry
+                )
             ):
                 raise ValueError("refusing downgrade or divergent skill update")
 
         # Recheck mutable GitHub authority after every download and comparison,
         # immediately before a new immutable version can become activatable.
-        authorization = authorize_revision(revision, canonical_files)
+        authorization = authorize_revision(revision, template_files)
         with open(
             os.path.join(staged_skill, authorization_receipt_name),
             "xb",
@@ -744,26 +859,26 @@ def install_or_update():
             receipt_file.write(
                 canonical_authorization_receipt_bytes(revision, authorization)
             )
-        version_path = os.path.join(versions_root, revision)
+        version_path = os.path.join(versions_root, key)
         if os.path.lexists(version_path):
-            verify_local_version(version_path, revision, canonical_files)
+            verify_local_version(version_path, key, canonical_files)
         else:
             os.replace(staged_skill, version_path)
-        activate(revision)
+        activate(key)
         activated = current_install()
         if activated is None:
             raise ValueError("activated skill target is missing")
-        if activated[0] != revision:
+        if activated[0] != key:
             raise ValueError("activated skill target has the wrong revision")
-        verify_local_version(activated[1], revision, canonical_files)
+        verify_local_version(activated[1], key, canonical_files)
         action = "Installed" if installed is None else "Updated"
-        print(f"{action} {skill_name} at verified revision {revision}.")
+        print(f"{action} {skill_name} at verified revision {key}.")
     finally:
         shutil.rmtree(work_root)
 
 
 def rollback():
-    revision = require_sha(rollback_revision, "requested rollback revision")
+    revision = require_version_key(rollback_revision, "requested rollback revision")
     installed = current_install()
     if installed is None:
         raise ValueError("cannot roll back a skill that is not installed")
@@ -772,10 +887,10 @@ def rollback():
     retained_path = os.path.join(versions_root, revision)
     if not os.path.lexists(retained_path):
         raise ValueError("requested rollback revision is not retained locally")
-    retained_files, _ = verify_local_version(retained_path, revision)
+    retained_files, _, retained_templates = verify_local_version(retained_path, revision)
     # Receipts preserve entry-time authority for forward transitions; every
     # explicit rollback target must still pass mutable GitHub policy now.
-    authorize_revision(revision, retained_files)
+    authorize_revision(revision[:40], retained_templates)
     if revision == current_revision:
         print(f"{skill_name} is already verified at {revision}; no changes made.")
         return

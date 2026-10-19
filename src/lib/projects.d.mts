@@ -1,4 +1,5 @@
 import type { EscrowPolicy } from "./escrow-policy.mjs";
+import type { ContributionField } from "./project-schema.mjs";
 /** Types for the public project and reward-policy registry. */
 
 import type { FundingCommitmentInstrument } from "./funding-instruments.mjs";
@@ -208,6 +209,8 @@ export interface ProjectDefinition {
       readonly ipTerms: string;
     } | null;
   };
+  /** Maintainer-authored fields that generate the project skills (SKL-03). */
+  readonly contribution?: Readonly<Record<ContributionField, string>>;
   readonly repositories: readonly {
     readonly id: string;
     readonly aliases?: readonly string[];

@@ -2,17 +2,20 @@ import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs"
 import {
   assertProjectDefinition,
   assertProjectRegistry,
+  PROJECT_SKILL_TEMPLATES,
 } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { readJsonObject, sha256Hex } from "../trace/validation";
 import {
   type ApplicationStatus,
   type GithubActor,
+  MAX_DAILY_SUBMISSIONS_PER_APPLICANT,
   MAX_PENDING_APPLICATIONS_PER_APPLICANT,
   PROJECT_API_CONTRACT_VERSION,
   type ProjectApplication,
   type ProjectPersistence,
   type ProjectRecord,
+  type RepositoryControl,
   type WebSession,
 } from "./contracts";
 
@@ -37,6 +40,13 @@ export type ProjectApiDependencies = {
   notifyAdmins: (notice: AdminApplicationNotice) => Promise<boolean>;
   /** Resolves whether a skill directory exists on the reviewed development branch. */
   skillPublished: (sourcePath: string) => Promise<boolean>;
+  /** Asks GitHub whether the applicant controls the manifest's repository. */
+  repositoryControl: (
+    manifest: ProjectDefinition,
+    actor: GithubActor,
+  ) => Promise<RepositoryControl>;
+  /** Starts the trusted site build; resolves false when it is not configured. */
+  requestPublication: () => Promise<boolean>;
 };
 
 type ApiError = Error & { status?: number; code?: string };
@@ -137,6 +147,11 @@ function assertApplicationManifest(manifest: ProjectDefinition): void {
     [
       manifest.skill.publishAtRoot === false,
       "Only an admin can publish a project skill at the site root",
+    ],
+    [
+      manifest.skill.sourcePath === PROJECT_SKILL_TEMPLATES.contributor &&
+        manifest.reviewSkill.sourcePath === PROJECT_SKILL_TEMPLATES.reviewer,
+      "New projects use generated skills from the canonical templates",
     ],
     [
       manifest.authority.state === "unverified" &&
@@ -240,6 +255,7 @@ function publicApplication(
     projectId: application.projectId,
     repository: application.manifest.repositories[0]?.id ?? null,
     manifest: application.manifest,
+    manifestSha256: application.manifestSha256,
     acceptanceCriteria: application.acceptanceCriteria,
     applicant: application.applicant,
     submittedAt: application.submittedAt,
@@ -249,6 +265,7 @@ function publicApplication(
     decidedAt: application.decidedAt,
     decidedBy: application.decidedBy,
     decisionReason: application.decisionReason,
+    githubCheck: application.githubCheck,
   };
 }
 
@@ -290,21 +307,42 @@ async function requireAdmin(
   return session;
 }
 
+/** Publication never blocks a stored registry change. */
+async function requestPublication(deps: ProjectApiDependencies) {
+  try {
+    return (await deps.requestPublication()) ? "requested" : "not-configured";
+  } catch {
+    console.error("project registry publication request failed");
+    return "failed";
+  }
+}
+
+async function repositoryControl(
+  deps: ProjectApiDependencies,
+  manifest: ProjectDefinition,
+  actor: GithubActor,
+): Promise<RepositoryControl> {
+  try {
+    return await deps.repositoryControl(manifest, actor);
+  } catch {
+    // An unavailable lookup never lists a project; an admin decides instead.
+    return { state: "unproven", reason: "GitHub could not be checked" };
+  }
+}
+
 async function submitApplication(
   request: Request,
   deps: ProjectApiDependencies,
 ): Promise<Response> {
   const session = await requireSession(request, deps);
   const body = await readJsonObject(request);
-  exactKeys(body, ["manifest", "acceptanceCriteria"]);
+  exactKeys(body, ["manifest"]);
   const { manifest, text } = canonicalManifest(body.manifest);
   assertApplicationManifest(manifest);
-  const acceptanceCriteria = boundedText(
-    body.acceptanceCriteria,
-    "acceptanceCriteria",
-    6,
-    1000,
-  );
+  const actor = {
+    githubId: session.githubId,
+    githubLogin: session.githubLogin,
+  };
   if (
     (await deps.persistence.countPendingApplications(session.githubId)) >=
     MAX_PENDING_APPLICATIONS_PER_APPLICANT
@@ -315,7 +353,23 @@ async function submitApplication(
       `You already have ${MAX_PENDING_APPLICATIONS_PER_APPLICANT} applications awaiting review`,
     );
   }
+  const dayAgo = new Date(deps.now().getTime() - 24 * 60 * 60 * 1000);
+  if (
+    (await deps.persistence.countApplicationsSince(
+      session.githubId,
+      dayAgo.toISOString(),
+    )) >= MAX_DAILY_SUBMISSIONS_PER_APPLICANT
+  ) {
+    fail(
+      429,
+      "too_many_submissions",
+      `You can submit ${MAX_DAILY_SUBMISSIONS_PER_APPLICANT} projects per day`,
+    );
+  }
   assertRegistryWith(await deps.persistence.listProjects(), manifest);
+  const control = await repositoryControl(deps, manifest, actor);
+  if (control.state === "mismatch")
+    fail(422, "invalid_manifest", control.reason);
   const repository = manifest.repositories[0].id;
   const application: ProjectApplication & { manifestText: string } = {
     id: `app_${deps.randomId().replaceAll("-", "")}`,
@@ -324,8 +378,11 @@ async function submitApplication(
     manifest,
     manifestText: text,
     manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
-    acceptanceCriteria,
-    applicant: { githubId: session.githubId, githubLogin: session.githubLogin },
+    acceptanceCriteria: (manifest.contribution?.approvedScope ?? "").slice(
+      0,
+      1000,
+    ),
+    applicant: actor,
     submittedAt: deps.now().toISOString(),
     status: "pending",
     adminNotification: "pending",
@@ -333,6 +390,12 @@ async function submitApplication(
     decidedAt: null,
     decidedBy: null,
     decisionReason: null,
+    // Every application waits for an admin; the check informs that review.
+    githubCheck:
+      `${control.state === "proven" ? "Proven" : "Not proven"}: ${control.reason}`.slice(
+        0,
+        300,
+      ),
   };
   if ((await deps.persistence.createApplication(application)) === "conflict") {
     fail(
@@ -357,19 +420,15 @@ async function submitApplication(
     // admins in the review queue instead of failing the submission.
     console.error("project application admin notification failed");
   }
-  const notifiedAt = deps.now().toISOString();
-  const outcome = notified ? "sent" : "failed";
   await deps.persistence.recordAdminNotification(
     application.id,
-    outcome,
-    notifiedAt,
+    notified ? "sent" : "failed",
+    deps.now().toISOString(),
   );
+  const stored = await deps.persistence.getApplication(application.id);
+  if (stored === null) fail(500, "internal_error", "Application vanished");
   return json(201, {
-    application: publicApplication({
-      ...application,
-      adminNotification: outcome,
-      adminNotificationAt: notifiedAt,
-    }),
+    application: publicApplication(stored),
   });
 }
 
@@ -463,7 +522,10 @@ async function decideApplication(
   }
   const updated = await deps.persistence.getApplication(applicationId);
   if (updated === null) fail(500, "internal_error", "Application vanished");
-  return json(200, { application: publicApplication(updated) });
+  return json(200, {
+    application: publicApplication(updated),
+    publication: decision === "approve" ? await requestPublication(deps) : null,
+  });
 }
 
 async function listAdminProjects(
@@ -536,7 +598,10 @@ async function replaceProjectManifest(
   }
   const updated = await deps.persistence.getProject(projectId);
   if (updated === null) fail(500, "internal_error", "Project vanished");
-  return json(200, { project: adminProject(updated) });
+  return json(200, {
+    project: adminProject(updated),
+    publication: await requestPublication(deps),
+  });
 }
 
 async function listPublicProjects(
@@ -550,6 +615,37 @@ async function listPublicProjects(
       projects: projects.map((project) => project.manifest),
     },
     "public, max-age=60",
+  );
+}
+
+/**
+ * One approved revision with its exact stored bytes. A generated skill's
+ * installer hashes these bytes against the digest bound in its provenance.
+ */
+async function getPublicRevision(
+  deps: ProjectApiDependencies,
+  projectId: string,
+  revisionText: string,
+): Promise<Response> {
+  const revision = Number(revisionText);
+  if (
+    !PROJECT_ID.test(projectId) ||
+    !/^[1-9][0-9]{0,8}$/u.test(revisionText) ||
+    !Number.isSafeInteger(revision)
+  )
+    fail(404, "not_found", "Revision not found");
+  const stored = await deps.persistence.getRevisionText(projectId, revision);
+  if (stored === null) fail(404, "not_found", "Revision not found");
+  return json(
+    200,
+    {
+      schemaVersion: "1",
+      projectId,
+      revision,
+      manifestSha256: stored.manifestSha256,
+      manifestText: stored.manifestText,
+    },
+    "public, max-age=31536000, immutable",
   );
 }
 
@@ -600,6 +696,12 @@ export async function handleProjectApi(
     ) {
       fail(403, "origin_forbidden", "Requests must come from this site");
     }
+    if (
+      request.method === "GET" &&
+      parts[0] === "project-revisions" &&
+      parts.length === 3
+    )
+      return await getPublicRevision(deps, parts[1], parts[2]);
     switch (route) {
       case "GET projects":
         return await listPublicProjects(deps);

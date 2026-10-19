@@ -1109,6 +1109,17 @@ export function authorizeSkill(
         revision: provenance.revision,
         sourcePath: PROJECT.skillSourcePath,
         files,
+        // A generated skill re-renders from its template and this approved
+        // registry revision before it is authorized again.
+        ...(PROJECT.registry
+          ? {
+              registry: {
+                projectId: PROJECT.projectId,
+                revision: PROJECT.registry.revision,
+                manifestSha256: PROJECT.registry.manifestSha256,
+              },
+            }
+          : {}),
       }),
       encoding: "utf8",
       maxBuffer: 1024 * 1024,

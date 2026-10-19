@@ -19,6 +19,8 @@ export interface AuthorityRevision {
 }
 
 export interface AuthorityFixtureOptions {
+  /** Canonical source tree; generated skills name their template. */
+  skillPath?: string;
   comparisons?: Record<string, unknown>;
   developHead: string;
   revisions: Record<string, AuthorityRevision>;
@@ -56,6 +58,7 @@ function normalizedFiles(
 function contentsResponses(
   revision: string,
   files: Record<string, Buffer>,
+  SKILL_PATH: string,
 ): Record<string, unknown> {
   const directories = new Map<string, Map<string, ContentsEntry>>();
   directories.set("", new Map());
@@ -109,6 +112,7 @@ export function createInstallAuthorityFixture(
   root: string,
   options: AuthorityFixtureOptions,
 ): { apiOrigin: string; rawOrigin: string } {
+  const skillPath = options.skillPath ?? SKILL_PATH;
   const apiRoot = join(root, "api");
   const rawRoot = join(root, "raw");
   mkdirSync(apiRoot, { recursive: true });
@@ -140,7 +144,7 @@ export function createInstallAuthorityFixture(
       `/repos/${REPOSITORY}/contents/protocol/skill-revocations.json?ref=${revision}`
     ] = { encoding: "base64", content: Buffer.from("[]").toString("base64") };
     const files = normalizedFiles(configuration.files);
-    Object.assign(responses, contentsResponses(revision, files));
+    Object.assign(responses, contentsResponses(revision, files, skillPath));
     responses[
       `/repos/${REPOSITORY}/commits/${revision}/pulls?page=1&per_page=100`
     ] = configuration.pulls ?? [];
@@ -149,7 +153,7 @@ export function createInstallAuthorityFixture(
         rawRoot,
         ...REPOSITORY.split("/"),
         revision,
-        SKILL_PATH,
+        ...skillPath.split("/"),
         ...relativePath.split("/"),
       );
       mkdirSync(dirname(destination), { recursive: true });

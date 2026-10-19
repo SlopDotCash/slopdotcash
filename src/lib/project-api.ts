@@ -17,6 +17,8 @@ export interface ProjectApplication {
   projectId: string;
   repository: string | null;
   manifest: ProjectDefinition;
+  /** Approval appends this exact manifest as revision 1 with this digest. */
+  manifestSha256: string;
   acceptanceCriteria: string;
   applicant: { githubId: string; githubLogin: string };
   submittedAt: string;
@@ -26,6 +28,8 @@ export interface ProjectApplication {
   decidedAt: string | null;
   decidedBy: { githubId: string; githubLogin: string } | null;
   decisionReason: string | null;
+  /** What public GitHub facts showed about the applicant's control. */
+  githubCheck: string | null;
 }
 
 export interface AdminProject {
@@ -117,12 +121,8 @@ export async function currentProjectSession(): Promise<ProjectSession | null> {
 
 export function submitProjectApplication(
   manifest: ProjectDefinition,
-  acceptanceCriteria: string,
 ): Promise<{ application: ProjectApplication }> {
-  return projectApiRequest("POST", "project-applications", {
-    manifest,
-    acceptanceCriteria,
-  });
+  return projectApiRequest("POST", "project-applications", { manifest });
 }
 
 export type ProjectSessionState =

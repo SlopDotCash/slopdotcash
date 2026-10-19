@@ -8,7 +8,8 @@ and private trace APIs.
 
 ## Tables
 
-Migration `0019_project_registry.sql` creates:
+Migrations `0019_project_registry.sql` and
+`0020_project_application_github_check.sql` create:
 
 - `project_applications`: submitted manifests, applicant GitHub identity,
   review status, decision, and admin email outcome. One pending application
@@ -29,8 +30,9 @@ points and profiles still validate.
 |---|---|---|
 | `GET /api/v1/projects` | public | Current manifests |
 | `GET /api/v1/project-revisions` | public | Full revision history with SHA-256 digests |
+| `GET /api/v1/project-revisions/:id/:revision` | public | One approved revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
-| `POST /api/v1/project-applications` | session | Submits an application and emails the admins |
+| `POST /api/v1/project-applications` | session | Submits a manifest, records the GitHub check, and emails the admins |
 | `GET /api/v1/project-applications/mine` | session | The applicant's own applications |
 | `GET /api/v1/admin/project-applications?status=` | admin | Review queue |
 | `POST /api/v1/admin/project-applications/:id/approve` | admin | Lists the project as paused (optional `reason`) |
@@ -51,8 +53,19 @@ Deeper `/api/v1/projects/:id/...` paths belong to the private trace API.
   Admin status is checked on every request, never stored.
 - An application must be a paused, unverified, unfunded community project with
   payments disabled, no funding addresses or commitments, no escrow deployment,
-  and no root skill publication. Authority, terms, money, listing tier, and
-  activation are added only by admin revisions.
+  no root skill publication, generated skills from the canonical templates,
+  and the maintainer-authored `contribution` fields. Authority, terms, money,
+  listing tier, and activation are added only by admin revisions.
+- The API reads public GitHub facts once per submission
+  (`SLOP_GITHUB_READ_TOKEN` is optional). The repository id, node id, name,
+  and owner must match the manifest, or the application is refused. Whether
+  the applicant owns the user repository, or is a public member of the owning
+  organization, is stored as `githubCheck` for the admin. Every application
+  waits for an admin (PRD PRJ-02). One account may submit 5 projects per day
+  and keep 3 waiting.
+- `/admin` previews the exact generated contributor and reviewer skills before
+  an admin approves or activates a revision.
+- An admin delists a project by appending a paused, `retired` revision.
 - Every revision must pass `assertProjectPolicyTransition`, the review-budget
   rule, and the registry uniqueness checks. A revision that makes a project
   active requires both skill folders on `SlopDotCash/slopdotcash`
@@ -64,9 +77,20 @@ Deeper `/api/v1/projects/:id/...` paths belong to the private trace API.
 
 ## Publication
 
+Generated skills: `scripts/prepare-site.mjs` renders each project's skills
+from `skills/project-contributor-template`, `skills/project-reviewer-template`
+and the newest approved revision with `src/lib/project-skill.mjs`. The
+archive's `PROVENANCE.json` binds the template revision and the registry
+revision digest. The installer fetches the revision from
+`/api/v1/project-revisions/:id/:revision`, checks the digest, renders the same
+bytes in Python, and refuses any difference (PRD SKL-03/04).
+
 The public site is a static build. Trusted CI runs `bun run projects:sync`
-when the repository variable `SLOP_PROJECT_REGISTRY_SOURCE` is `d1`, so a
-registry change appears after the next build. Staging builds read
+when the repository variable `SLOP_PROJECT_REGISTRY_SOURCE` is `d1`. Every
+listing, approval, and revision dispatches `deploy.yml` on `SLOP_PUBLISH_REF`
+when the `SLOP_PUBLISH_TOKEN` secret (a token with Actions write access) is
+set; production still waits for its protected-environment approval. Without
+the token, the six-hourly scheduled build publishes the change. Staging builds read
 `https://staging.slop.cash`. `bun run projects:check` proves the committed
 snapshot is canonical and that every active project names skills in this tree.
 A paused project without skill folders is listed but publishes no skill.
