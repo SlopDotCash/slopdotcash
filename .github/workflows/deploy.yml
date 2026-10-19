@@ -422,8 +422,10 @@ jobs:
           started_at="$(node -e 'process.stdout.write(String(Date.now()))')"
           ./node_modules/.bin/wrangler d1 migrations apply slop-staging --remote --config wrangler.staging.toml
           bun scripts/prepare-payments-import.ts "$RUNNER_TEMP/payments-import.sql"
-          ./node_modules/.bin/wrangler d1 execute slop-staging --remote --config wrangler.staging.toml \
-            --file "$RUNNER_TEMP/payments-import.sql"
+          if [ -s "$RUNNER_TEMP/payments-import.sql" ]; then
+            ./node_modules/.bin/wrangler d1 execute slop-staging --remote --config wrangler.staging.toml \
+              --file "$RUNNER_TEMP/payments-import.sql"
+          fi
           ./node_modules/.bin/wrangler deploy --config workers/identity/wrangler.staging.toml
           node scripts/configure-staging-secrets.mjs
           # Pages requires the standard config filename in its working directory.
@@ -745,9 +747,11 @@ jobs:
             --remote --config workers/identity/wrangler.toml \
             --file "$RUNNER_TEMP/points-import.sql"
           bun scripts/prepare-payments-import.ts "$RUNNER_TEMP/payments-import.sql"
-          ./node_modules/.bin/wrangler d1 execute slop-private \
-            --remote --config workers/identity/wrangler.toml \
-            --file "$RUNNER_TEMP/payments-import.sql"
+          if [ -s "$RUNNER_TEMP/payments-import.sql" ]; then
+            ./node_modules/.bin/wrangler d1 execute slop-private \
+              --remote --config workers/identity/wrangler.toml \
+              --file "$RUNNER_TEMP/payments-import.sql"
+          fi
           node scripts/renew-private-intake.mjs || echo "::warning::Optional trace intake renewal failed; ordinary contribution remains available."
           schema_response="$RUNNER_TEMP/slop-private-schema.json"
           ./node_modules/.bin/wrangler d1 execute slop-private \

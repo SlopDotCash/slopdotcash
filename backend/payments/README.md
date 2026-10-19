@@ -112,7 +112,9 @@ Migration `0014` adds `payment_direct_transfers`: transfers that a project
 creator sent outside escrow, imported from the reviewed `disclosures/*.json`
 records. Each deploy runs `scripts/prepare-payments-import.ts` after the
 migrations. It writes nothing unless every disclosure reproduces from its
-frozen preparation. Rows are permanent, and a disclosure that contradicts an
+frozen preparation. The D1 registry move deleted the disclosure, preparation
+and cycle files. The rows imported before that stay in D1, and the import now
+writes an empty file that the deploy skips. Rows are permanent, and a disclosure that contradicts an
 imported transaction fails the import. Direct transfers never become an
 obligation or `state=paid`, and project totals never add them to verified
 payouts. `GET /me` returns them as `directTransfers`.

@@ -33,10 +33,13 @@ const CHAINS: Record<string, "solana" | "base"> = {
 export function directPaymentsSql(root: string, importedAt: string): string {
   const failures = checkDirectPaymentDisclosures(root);
   if (failures.length) throw new Error(failures.join("\n"));
-  const statements: string[] = [];
-  for (const name of readdirSync(join(root, "disclosures"))
+  const names = readdirSync(join(root, "disclosures"))
     .filter((n) => n.endsWith(".json"))
-    .sort()) {
+    .sort();
+  // The registry move deleted the disclosures; their rows stay in D1.
+  if (!names.length) return "";
+  const statements: string[] = [];
+  for (const name of names) {
     const path = `disclosures/${name}`;
     const d = JSON.parse(
       readFileSync(join(root, path), "utf8"),
@@ -163,11 +166,16 @@ export function walletObservationsSql(
   importedAt: string,
   report: (message: string) => void = (message) => console.warn(message),
 ): string {
+  const sourceDirectory = (path: string) =>
+    existsSync(join(root, path)) ? readdirSync(join(root, path)) : [];
   const files = [
-    ...readdirSync(join(root, "funding/preparations"))
+    ...sourceDirectory("funding/preparations")
       .filter((n) => n.endsWith(".json"))
       .map((n) => `funding/preparations/${n}`),
-    ...readdirSync(join(root, "cycles"), { withFileTypes: true })
+    ...(existsSync(join(root, "cycles"))
+      ? readdirSync(join(root, "cycles"), { withFileTypes: true })
+      : []
+    )
       .filter((d) => d.isDirectory())
       .flatMap((d) =>
         readdirSync(join(root, "cycles", d.name)).map(
@@ -252,6 +260,8 @@ export function walletObservationsSql(
       });
     }
   }
+  // The registry move deleted these sources; their rows stay in D1.
+  if (!files.length) return "";
   if (!rows.length) throw new Error("no README wallet observations");
   // The earliest observation of each README commit is kept.
   return `${rows
