@@ -211,46 +211,60 @@ function githubApiOrigin(env: Env): string {
     : "https://api.github.com";
 }
 
-async function repositoryControl(
+export async function repositoryControl(
   manifest: ProjectDefinition,
   actor: { githubId: string; githubLogin: string },
   env: Env,
 ): Promise<RepositoryControl> {
   const api = githubApiOrigin(env);
   const token = env.SLOP_GITHUB_READ_TOKEN;
+  // Every repository in the application must be a public repository of the
+  // steward. Approval lists all of them, so an unchecked second repository
+  // would let an applicant claim a repository that is not theirs.
+  let owner: { id?: unknown; login?: unknown; type?: unknown } | undefined;
+  for (const [index, repository] of manifest.repositories.entries()) {
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository.id))
+      return { state: "mismatch", reason: "Repository must be owner/name" };
+    const response = await fetch(`${api}/repos/${repository.id}`, {
+      headers: githubHeaders(token),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status === 404)
+      return {
+        state: "mismatch",
+        reason:
+          index === 0
+            ? "GitHub has no public repository with that name"
+            : `GitHub has no public repository named ${repository.id}`,
+      };
+    if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
+    const facts = (await readBoundedJson(response, 512 * 1024)) as {
+      id?: unknown;
+      node_id?: unknown;
+      full_name?: unknown;
+      private?: unknown;
+      owner?: { id?: unknown; login?: unknown; type?: unknown };
+    };
+    if (
+      (index === 0 &&
+        (String(facts.id) !== manifest.authority.repositoryId ||
+          facts.node_id !== manifest.authority.repositoryNodeId)) ||
+      String(facts.full_name).toLowerCase() !== repository.id.toLowerCase() ||
+      facts.private !== false ||
+      String(facts.owner?.id) !== manifest.steward.github.actorId
+    )
+      return {
+        state: "mismatch",
+        reason:
+          index === 0
+            ? "Repository or steward facts do not match GitHub"
+            : `${repository.id} is not a public repository of the steward`,
+      };
+    owner = facts.owner;
+  }
   const repository = manifest.repositories[0];
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository.id))
-    return { state: "mismatch", reason: "Repository must be owner/name" };
-  const response = await fetch(`${api}/repos/${repository.id}`, {
-    headers: githubHeaders(token),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (response.status === 404)
-    return {
-      state: "mismatch",
-      reason: "GitHub has no public repository with that name",
-    };
-  if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
-  const facts = (await readBoundedJson(response, 512 * 1024)) as {
-    id?: unknown;
-    node_id?: unknown;
-    full_name?: unknown;
-    private?: unknown;
-    owner?: { id?: unknown; login?: unknown; type?: unknown };
-  };
-  if (
-    String(facts.id) !== manifest.authority.repositoryId ||
-    facts.node_id !== manifest.authority.repositoryNodeId ||
-    String(facts.full_name).toLowerCase() !== repository.id.toLowerCase() ||
-    facts.private !== false ||
-    String(facts.owner?.id) !== manifest.steward.github.actorId
-  )
-    return {
-      state: "mismatch",
-      reason: "Repository or steward facts do not match GitHub",
-    };
-  if (facts.owner?.type === "User")
-    return String(facts.owner.id) === actor.githubId
+  if (owner?.type === "User")
+    return String(owner.id) === actor.githubId
       ? {
           state: "proven",
           reason: `@${actor.githubLogin} owns ${repository.id}`,
@@ -260,18 +274,18 @@ async function repositoryControl(
           reason: `@${actor.githubLogin} does not own ${repository.id}`,
         };
   const membership = await fetch(
-    `${api}/orgs/${encodeURIComponent(String(facts.owner?.login))}/public_members/${encodeURIComponent(actor.githubLogin)}`,
+    `${api}/orgs/${encodeURIComponent(String(owner?.login))}/public_members/${encodeURIComponent(actor.githubLogin)}`,
     { headers: githubHeaders(token), signal: AbortSignal.timeout(10_000) },
   );
   if (membership.status === 204)
     return {
       state: "proven",
-      reason: `@${actor.githubLogin} is a public member of ${String(facts.owner?.login)}`,
+      reason: `@${actor.githubLogin} is a public member of ${String(owner?.login)}`,
     };
   if (membership.status === 404)
     return {
       state: "unproven",
-      reason: `@${actor.githubLogin} is not a public member of ${String(facts.owner?.login)}`,
+      reason: `@${actor.githubLogin} is not a public member of ${String(owner?.login)}`,
     };
   throw new Error(`GitHub returned ${membership.status}`);
 }
