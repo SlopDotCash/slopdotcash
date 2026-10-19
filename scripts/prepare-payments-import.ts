@@ -6,6 +6,7 @@
  * refuses to write anything unless every disclosure reproduces from its
  * frozen preparation, and the database refuses a row that contradicts an
  * earlier import. It reads no chain and authorizes no payment or wallet.
+ * With no records it writes an empty file, and the deploy skips the import.
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -83,7 +84,9 @@ export function directPaymentsSql(root: string, importedAt: string): string {
       );
     }
   }
-  if (!statements.length) throw new Error("no observed direct transfers");
+  // No disclosure is valid input: the import only appends and updates, so
+  // rows imported by earlier deploys stay in D1.
+  if (!statements.length) return "";
   return `${statements.join("\n")}\n`;
 }
 
@@ -252,7 +255,7 @@ export function walletObservationsSql(
       });
     }
   }
-  if (!rows.length) throw new Error("no README wallet observations");
+  if (!rows.length) return "";
   // The earliest observation of each README commit is kept.
   return `${rows
     .sort((a, b) => a.observedAt.localeCompare(b.observedAt))
