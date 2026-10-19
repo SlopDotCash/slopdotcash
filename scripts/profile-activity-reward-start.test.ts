@@ -16,7 +16,7 @@ import { findProject } from "../src/lib/projects.mjs";
 const root = resolve(import.meta.dir, "..");
 const snapshot = JSON.parse(
   readFileSync(
-    resolve(root, "cycles/eliza/2026-07/source-snapshot.json"),
+    resolve(root, "tests/fixtures/history/cycles/eliza/2026-07/source-snapshot.json"),
     "utf8",
   ),
 ) as LeaderboardSnapshot;
