@@ -20,6 +20,8 @@ import {
   keccak256,
   type PublicClient,
   parseEventLogs,
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Limits, NetworkConfig } from "./config";
@@ -444,9 +446,16 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
 
     async status(row: ConversionRow): Promise<SendStatus> {
       const hash = row.txId as Hex;
+      // Only a definite "not found" answer means absence. A failed lookup
+      // (rate limit, outage) must not be read as absence: the nonce rule below
+      // would then mark this row's own mined swap as failed, and the terminal
+      // record can never be corrected.
       const receipt = await client
         .getTransactionReceipt({ hash })
-        .catch(() => null);
+        .catch((error: unknown) => {
+          if (error instanceof TransactionReceiptNotFoundError) return null;
+          throw error;
+        });
       if (receipt) {
         const finalized = await client.getBlock({ blockTag: "finalized" });
         if (receipt.blockNumber > finalized.number) return { kind: "pending" };
@@ -464,7 +473,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           .reduce((sum, log) => sum + log.args.value, 0n);
         return { kind: "finalized", amountOut };
       }
-      const pending = await client.getTransaction({ hash }).catch(() => null);
+      const pending = await client
+        .getTransaction({ hash })
+        .catch((error: unknown) => {
+          if (error instanceof TransactionNotFoundError) return null;
+          throw error;
+        });
       if (pending) return { kind: "pending" };
       // Our nonce consumed in a finalized block by another transaction means
       // this send can never land.

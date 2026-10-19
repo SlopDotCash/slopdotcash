@@ -11,6 +11,7 @@ import {
   runNetwork,
   type SendStatus,
 } from "./core";
+import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
 import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, projectRewardTokens } from "./store";
@@ -484,5 +485,145 @@ describe("D1 contract", () => {
         ),
       ),
     ).toBe("failed. URL: <url>");
+  });
+});
+
+describe("EVM status lookup", () => {
+  const TX = `0x${"ab".repeat(32)}`;
+  const NOW = new Date("2026-10-19T12:00:00.000Z");
+
+  type Rpc = Record<string, (params: unknown[]) => unknown>;
+
+  /** A JSON-RPC endpoint answering from `handlers`; other methods are rate limited. */
+  function rpcFetch(handlers: Rpc): typeof fetch {
+    const fetcher = (async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        id: number;
+        method: string;
+        params: unknown[];
+      };
+      const handler = handlers[body.method];
+      if (!handler) return new Response("rate limited", { status: 429 });
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: handler(body.params),
+      });
+    }) as unknown as typeof fetch;
+    return fetcher;
+  }
+
+  function statusHarness(handlers: Rpc) {
+    const config = parseConfig({
+      FEE_CONVERTER_MODE: "live",
+      FEE_CONVERTER_NETWORKS: "base",
+      FEE_WALLET_BASE: WALLET,
+    });
+    const network = config.networks[0];
+    const fetcher = rpcFetch(handlers);
+    const client = createEvmClient({
+      config: network,
+      limits: config.limits,
+      kyberClientId: "test",
+      fetch: fetcher,
+      sleep: async () => {},
+      now: () => NOW,
+    });
+    const { db, sqlite } = sqliteD1();
+    const store = new D1ConversionStore(db);
+    const events: string[] = [];
+    const deps: RunDependencies = {
+      mode: "live",
+      limits: config.limits,
+      store,
+      now: () => NOW,
+      randomId: () => "run-0002",
+      projectTokens: async () => [],
+      client: () => client,
+      log: (entry) => events.push(String(entry.event)),
+    };
+    const row: ConversionRow = {
+      id: "row-0001",
+      runId: "run-0001",
+      network: "base",
+      mode: "live",
+      feeWallet: WALLET,
+      token: TOKEN,
+      targetToken: network.definition.stablecoin,
+      amountIn: "20000000",
+      route: "kyberswap",
+      quoteAmountOut: "20000000",
+      minAmountOut: "19800000",
+      quoteValueMicro: 20_000_000,
+      priceImpactBps: 10,
+      quote: "{}",
+      approvalTxId: null,
+      txId: TX,
+      rawTx: "0xraw",
+      evmNonce: 7,
+      expiresAt: Math.floor(Date.parse("2026-10-19T12:15:00.000Z") / 1000),
+      amountOut: null,
+      tokenBalanceBefore: "20000000",
+      targetBalanceBefore: "0",
+      targetBalanceAfter: null,
+      state: "submitted",
+      reason: null,
+      createdAt: "2026-10-19T11:50:00.000Z",
+      updatedAt: "2026-10-19T11:50:00.000Z",
+      submittedAt: "2026-10-19T11:50:00.000Z",
+      finalizedAt: null,
+    };
+    const stored = () =>
+      sqlite
+        .query(
+          "SELECT state, reason FROM fee_conversions WHERE id = 'row-0001'",
+        )
+        .get() as { state: string; reason: string | null };
+    return { network, client, store, deps, row, events, stored };
+  }
+
+  // The wallet's finalized nonce is past the row's nonce in both cases: that is
+  // what the row's own mined swap looks like from the nonce alone.
+  const FINALIZED_NONCE = "0x8";
+
+  test("a failed receipt lookup keeps the swap submitted and inside the caps", async () => {
+    const h = statusHarness({
+      eth_chainId: () => "0x2105",
+      eth_getTransactionCount: () => FINALIZED_NONCE,
+    });
+    await h.store.insert(h.row);
+    const before = await h.store.liveValueSince(
+      "base",
+      "2026-10-19T00:00:00.000Z",
+    );
+    await expect(h.client.status(h.row)).rejects.toThrow();
+    const result = await runNetwork(h.network, h.deps);
+    expect(result.reconciled).toBe(0);
+    expect(h.stored()).toEqual({ state: "submitted", reason: null });
+    expect(h.events).toContain("fee_conversion_reconcile_error");
+    expect(
+      await h.store.liveValueSince("base", "2026-10-19T00:00:00.000Z"),
+    ).toBe(before);
+    expect(before).toBe(20_000_000n);
+  });
+
+  test("a transaction the chain does not know with a used nonce is failed", async () => {
+    const h = statusHarness({
+      eth_chainId: () => "0x2105",
+      eth_getTransactionReceipt: () => null,
+      eth_getTransactionByHash: () => null,
+      eth_getTransactionCount: () => FINALIZED_NONCE,
+    });
+    await h.store.insert(h.row);
+    expect(await h.client.status(h.row)).toEqual({
+      kind: "failed",
+      reason: "nonce used by another transaction",
+    });
+    const result = await runNetwork(h.network, h.deps);
+    expect(result.reconciled).toBe(1);
+    expect(h.stored()).toEqual({
+      state: "failed",
+      reason: "nonce used by another transaction",
+    });
   });
 });
