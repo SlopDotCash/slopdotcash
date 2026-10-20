@@ -115,7 +115,28 @@ export async function reconcileFailedAttempts(
           attempt.transactionId,
           { commitment: "finalized", maxSupportedTransactionVersion: 0 },
         ])) as { slot: number; meta: { err: unknown } } | null;
-        if (!tx?.meta?.err) continue;
+        if (!tx) {
+          // A signature the cluster does not know at any commitment was dropped,
+          // and nothing else would retry it. Return the same attempt to dispatch:
+          // the executor rebroadcasts its journaled bytes, and signs a replacement
+          // only after finalized blockhash expiry. Absence is not failure proof,
+          // so no failure is recorded and the attempt is kept.
+          const status = (await rpc(url, "getSignatureStatuses", [
+            [attempt.transactionId],
+            { searchTransactionHistory: true },
+          ])) as { value?: unknown[] } | null;
+          if (!Array.isArray(status?.value) || status.value.length !== 1)
+            throw new Error("Invalid signature status response");
+          if (status.value[0] !== null) continue;
+          await db
+            .prepare(
+              "UPDATE payment_outbox SET state='ready',updated_at=?,lease_token=NULL,lease_until=NULL WHERE obligation_id=? AND state='submitted' AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved')",
+            )
+            .bind(now.toISOString(), attempt.obligationId, attempt.obligationId)
+            .run();
+          continue;
+        }
+        if (!tx.meta?.err) continue;
         proof = {
           chain: "solana",
           transactionId: attempt.transactionId,
