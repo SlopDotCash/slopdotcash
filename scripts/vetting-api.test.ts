@@ -704,6 +704,216 @@ test("missing storage pauses acquisition while harmless queue registration remai
   ).toBe(503);
 });
 
+test("retained closure accepts a captured archive whose members stay inside it", async () => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import(
+    "node:fs/promises"
+  );
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { crc32 } = await import("node:zlib");
+  const { assembleEvidence } = await import("../workers/vetting/assembly");
+  const sha = (value: Uint8Array | string) =>
+    createHash("sha256").update(value).digest("hex");
+  await listPausedProject();
+  const id = await queueScan();
+  const row = sqlite
+    .query(
+      "SELECT id AS assessmentId,project_id AS projectId,revision,manifest_sha256 AS manifestSha256,commit_sha AS commitSha,template_sha256 AS templateSha256 FROM vetting_assessments WHERE id=?",
+    )
+    .get(id) as Record<string, unknown>;
+  const revision = await projects.getRevisionText("open-registry", 1);
+  if (revision === null) throw new Error("revision was not listed");
+  const { manifestText } = revision;
+  // A stored (uncompressed) ZIP with one member, as a repository may contain.
+  const member = Buffer.from("print('fixture member')\n");
+  const name = Buffer.from("member.py");
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt32LE(crc32(member), 14);
+  local.writeUInt32LE(member.length, 18);
+  local.writeUInt32LE(member.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt32LE(crc32(member), 16);
+  central.writeUInt32LE(member.length, 20);
+  central.writeUInt32LE(member.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  const centralOffset = local.length + name.length + member.length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length + name.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  const zip = Buffer.concat([local, name, member, central, name, end]);
+  const root = await mkdtemp(join(tmpdir(), "slop-closure-"));
+  try {
+    const acquisition = join(root, "acquisition");
+    const vm = join(root, "vm");
+    const out = join(root, "out");
+    for (const dir of [join(acquisition, "objects"), vm, out])
+      await mkdir(dir, { recursive: true });
+    await writeFile(join(acquisition, "objects", sha(zip)), zip);
+    const source = Buffer.from(
+      JSON.stringify({
+        schema: "slop-source-inventory-v1",
+        repository: "example/open-registry",
+        commitSha: HEAD,
+        treeSha: "c".repeat(40),
+        state: "quarantined",
+        records: [
+          {
+            path: "fixtures/bundle.zip",
+            gitSha: "d".repeat(40),
+            type: "blob",
+            mode: "100644",
+            sha256: sha(zip),
+            bytes: zip.length,
+            state: "quarantined",
+          },
+        ],
+        visibilityGaps: ["runtime-and-model-review-not-performed"],
+      }),
+    );
+    await writeFile(join(acquisition, "inventory.json"), source);
+    const queue = Buffer.from(
+      JSON.stringify({
+        schema: "slop-queued-inputs-v1",
+        assessment: row,
+        sourceInventorySha256: sha(source),
+        manifestText,
+        inputs: [],
+        state: "quarantined",
+        visibilityGaps: ["secure-runtime-and-model-review-not-performed"],
+      }),
+    );
+    await writeFile(join(acquisition, "queued-inputs.json"), queue);
+    // The record shape artifacts.py emits for a ZIP with one member. The
+    // isolated analyzer cannot write files, so member bytes exist only inside the ZIP.
+    const inventory = Buffer.from(
+      JSON.stringify({
+        schema: "slop-artifact-inventory-v1",
+        state: "quarantined",
+        records: [
+          {
+            sha256: sha(zip),
+            parentSha256: null,
+            path: "input",
+            bytes: zip.length,
+            kind: "zip",
+            state: "quarantined",
+          },
+          {
+            sha256: sha(member),
+            parentSha256: sha(zip),
+            path: "member.py",
+            bytes: member.length,
+            kind: "script",
+            state: "quarantined",
+          },
+        ],
+        visibilityGaps: [],
+      }),
+    );
+    const inventoryPath = join(root, `${sha(zip)}.json`);
+    await writeFile(inventoryPath, inventory);
+    const serial = Buffer.from("boot\nfixture serial\n");
+    const overlay = Buffer.from("fixture overlay bytes");
+    const diskMap = Buffer.from("[]");
+    await writeFile(join(vm, "serial.log"), serial);
+    await writeFile(join(vm, "overlay.qcow2"), overlay);
+    await writeFile(join(vm, "disk-map.json"), diskMap);
+    const vmEvidence = Buffer.from(
+      JSON.stringify({
+        schema: "slop-offline-vm-evidence-v1",
+        state: "incomplete",
+        network: "no-network-device",
+        exitCode: 0,
+        serialSha256: sha(serial),
+        overlaySha256: sha(overlay),
+        diskMapSha256: sha(diskMap),
+        visibilityGaps: ["complete-runtime-collector-not-attached"],
+      }),
+    );
+    await writeFile(join(vm, "evidence.json"), vmEvidence);
+    const assembled = await assembleEvidence({
+      acquisitionDirectory: acquisition,
+      queuedInputsSha256: sha(queue),
+      artifactInventories: [
+        {
+          sourceSha256: sha(zip),
+          path: inventoryPath,
+          sha256: sha(inventory),
+        },
+      ],
+      vmEvidence: { directory: vm, sha256: sha(vmEvidence) },
+      outputDirectory: out,
+    });
+    const manifestBytes = await readFile(
+      join(assembled.directory, "manifest.json"),
+    );
+    const reviewBytes = await readFile(
+      join(assembled.directory, "review-input.json"),
+    );
+    // Retain exactly the canonical captured files, as the documented workflow does.
+    const bodies = new Map<string, Buffer>();
+    for (const body of [
+      manifestBytes,
+      reviewBytes,
+      queue,
+      source,
+      zip,
+      inventory,
+      vmEvidence,
+      serial,
+      overlay,
+      diskMap,
+    ])
+      bodies.set(sha(body), body);
+    const manifest = JSON.parse(manifestBytes.toString("utf8"));
+    for (const file of manifest.files)
+      expect(bodies.has(file.sha256)).toBe(true);
+    const runId = "retained-archive";
+    const path = `/api/v1/vetting/evidence/${id}/${runId}`;
+    const send = async (method: string, route: string, body: string | Buffer) =>
+      retained.evidence.handle(await retained.request(method, route, body));
+    expect(
+      (
+        await send(
+          "POST",
+          path,
+          JSON.stringify({
+            assemblySha256: assembled.manifestSha256,
+            traceSha256: sha(serial),
+            objects: [...bodies].map(([digest, body]) => ({
+              sha256: digest,
+              sizeBytes: body.length,
+              kind:
+                digest === sha(serial)
+                  ? "trace"
+                  : digest === assembled.manifestSha256
+                    ? "manifest"
+                    : "artifact",
+              label: `Captured ${digest.slice(0, 12)}`,
+              contentType: "application/octet-stream",
+            })),
+          }),
+        )
+      )?.status,
+    ).toBe(201);
+    for (const [digest, body] of bodies)
+      expect((await send("PUT", `${path}/${digest}`, body))?.status).toBe(200);
+    const closure = await retained.evidence.assemblyClosure(id, runId);
+    expect(closure.retained).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
 test("large retained evidence uses bounded chunks, immutable completion and actor-bound native downloads", async () => {
   await listPausedProject();
   const id = await queueScan(),
