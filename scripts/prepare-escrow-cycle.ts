@@ -12,7 +12,7 @@ import {
   allocateIntegerTotal,
   createPaymentProjectView,
 } from "../src/lib/project-view";
-import { findProject } from "../src/lib/projects.mjs";
+import { findHistoricalProject, findProject } from "../src/lib/projects.mjs";
 import {
   additiveReviewBudgetWeights,
   allocateReviewBudgetMinor,
@@ -109,7 +109,12 @@ export function buildEscrowCycle(
   const project = assertProjectDefinition(
     JSON.parse(policyBytes.toString("utf8")),
   );
-  if (project.id !== input.projectId || !findProject(input.projectId))
+  // A committed cycle stays valid after its project is retired or restricted:
+  // its archived revision is the policy, so it resolves in immutable history.
+  if (
+    project.id !== input.projectId ||
+    !findHistoricalProject(input.projectId)
+  )
     throw new Error("Archived project is not canonical");
   if (
     !project?.escrow ||
