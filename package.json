@@ -52,7 +52,7 @@
     "profiles:generate": "bun scripts/generate-profiles.ts --live",
     "verify:contracts": "bun run brand:check && bun run projects:check && bun run skills:check && bun run evaluations:check && bun run disclosures:check && bun run quality:check && bun run protocol:check",
     "test:scripts": "bun test ./scripts",
-    "verify:code": "bun run typecheck && bun run lint:check && bun run test:scripts && bun run test:slopbot && bun run test:notify && bun run test:fee-converter && bun test ./scripts/staging-payments.test.ts ./backend/notifications ./backend/security",
+    "verify:code": "bun run typecheck && bun run lint:check && bun run test:scripts && bun run test:slopbot && bun run test:notify && bun run test:fee-converter && bun test ./scripts/staging-payments.test.ts ./backend/notifications ./backend/security ./workers/vetting/acquire.test.ts",
     "payments:deployments": "bun scripts/prepare-payment-deployments.ts",
     "payments:readiness": "bun scripts/check-payout-readiness.ts",
     "test:contracts:evm": "bun contracts/evm/adapter.integration.ts",
