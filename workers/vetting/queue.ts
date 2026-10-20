@@ -262,7 +262,7 @@ export async function acquireQueuedAssessment(
     !Array.isArray(index.acceptedRevisions) ||
     index.acceptedRevisions.length > 64 ||
     index.acceptedRevisions.some(
-      (revision) => typeof revision !== "string" || revision.length > 128,
+      (revision) => typeof revision !== "string" || revision.length > 1024,
     )
   )
     throw new Error("Invalid accepted template revisions");

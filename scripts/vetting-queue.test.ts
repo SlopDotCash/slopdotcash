@@ -16,6 +16,7 @@ import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-per
 import { handleProjectApi } from "../backend/projects/handler";
 import { handleVettingApi } from "../backend/vetting/handler";
 import { CloudflareVettingPersistence } from "../backend/vetting/persistence";
+import { ACCEPTED_SKILL_REVISIONS } from "../src/lib/project-skill-publication.mjs";
 import { REWARD_ASSET_NETWORKS } from "../src/lib/reward-asset.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
@@ -42,7 +43,8 @@ const templateInputs = {
     files: [{ path: "SKILL.md", sha256: digest(templateText) }],
   },
   rendererSources: [{ path: "src/render.mjs", sha256: digest(rendererText) }],
-  acceptedRevisions: ["1"],
+  // The deployed index publishes these exact strings (scripts/prepare-site.mjs).
+  acceptedRevisions: [...ACCEPTED_SKILL_REVISIONS],
 };
 const templateSha256 = digest(JSON.stringify(templateInputs));
 let root: string;
