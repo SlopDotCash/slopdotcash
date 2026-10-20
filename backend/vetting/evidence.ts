@@ -530,12 +530,18 @@ export class VettingEvidence {
         file.role.startsWith("dependency-artifact:"),
     )) {
       const record = await read(file.sha256);
-      if (!Array.isArray(record.records))
+      if (!Array.isArray(record.records) || !record.records.length)
         fail(409, "assembly_incomplete", "Artifact lineage is missing");
-      for (const value of record.records) {
+      // The inspected object is retained. Nested members exist only inside
+      // that retained container; no component writes them as separate files.
+      const lineage = new Set<unknown>();
+      for (const [index, value] of record.records.entries()) {
         const entry = assemblyRecord(value);
-        required(entry.sha256, entry.bytes);
-        if (entry.parentSha256) required(entry.parentSha256);
+        if (index === 0 && entry.parentSha256 === null)
+          required(entry.sha256, entry.bytes);
+        else if (index === 0 || !lineage.has(entry.parentSha256))
+          fail(409, "assembly_incomplete", "Artifact lineage is missing");
+        lineage.add(entry.sha256);
       }
     }
     const review = await read(assembly.reviewInputSha256);
