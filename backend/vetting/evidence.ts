@@ -949,6 +949,9 @@ export class VettingEvidence {
               controller.close();
               return;
             }
+            // Current session and operator authorization gate every part.
+            if ((await this.operator(request)).githubId !== actor.githubId)
+              fail(403, "forbidden", "Download actor changed");
             const part = chunks?.[index];
             const bytes = part
               ? await verifiedPart(

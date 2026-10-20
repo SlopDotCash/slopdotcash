@@ -978,3 +978,106 @@ test("large retained evidence uses bounded chunks, immutable completion and acto
   );
   expect((await grant()).status).toBe(404);
 }, 60_000);
+
+test("a native download stops serving parts once the operator session is revoked", async () => {
+  await listPausedProject();
+  const id = await queueScan(),
+    runId = "revoked-download";
+  const bytes = Buffer.alloc(EVIDENCE_CHUNK_BYTES + 1024, 83);
+  const hash = (value: Uint8Array) =>
+    createHash("sha256").update(value).digest("hex");
+  const digest = hash(bytes);
+  const parts = [
+    bytes.subarray(0, EVIDENCE_CHUNK_BYTES),
+    bytes.subarray(EVIDENCE_CHUNK_BYTES),
+  ];
+  const chunks = parts.map((part, index) => ({
+    index,
+    sha256: hash(part),
+    sizeBytes: part.length,
+  }));
+  const policy = JSON.parse(retained.evidence.deps.policy!);
+  policy.maxObjectBytes = 16 * 1024 * 1024;
+  retained.evidence.deps.policy = JSON.stringify(policy);
+  retained.evidence.deps.signed = (request, maximum) =>
+    signedVettingRequest(
+      request,
+      { resultPublicKeys: keys.publicKey, now: () => NOW },
+      maximum,
+    );
+  const servicePath = `/api/v1/vetting/evidence/${id}/${runId}`;
+  const send = async (
+    method: string,
+    path: string,
+    body: string | Uint8Array,
+  ) =>
+    (await retained.evidence.handle(
+      new Request(`${ORIGIN}${path}`, {
+        method,
+        headers: await signedVettingHeaders(
+          keys.privateKey,
+          keys.raw,
+          method,
+          path,
+          body,
+          NOW,
+        ),
+        body: body as BodyInit,
+      }),
+    ))!;
+  const manifest = JSON.stringify({
+    traceSha256: digest,
+    objects: [
+      {
+        sha256: digest,
+        sizeBytes: bytes.length,
+        kind: "trace",
+        label: "Retained synthetic overlay",
+        contentType: "application/octet-stream",
+        chunks,
+      },
+    ],
+  });
+  expect((await send("POST", servicePath, manifest)).status).toBe(201);
+  for (const [index, part] of parts.entries())
+    expect(
+      (await send("PUT", `${servicePath}/${digest}/chunks/${index}`, part))
+        .status,
+    ).toBe(200);
+  expect(
+    (await send("POST", `${servicePath}/${digest}/finalize`, "{}")).status,
+  ).toBe(200);
+  const base = `/api/v1/operator/vetting-evidence/${id}/${runId}/${digest}`;
+  const granted = (await retained.evidence.handle(
+    new Request(`${ORIGIN}${base}/download-grant`, {
+      method: "POST",
+      headers: {
+        "x-test-operator": "900000003",
+        origin: ORIGIN,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ reason: "Inspect retained overlay bytes" }),
+    }),
+  ))!;
+  expect(granted.status).toBe(201);
+  const download = (await retained.evidence.handle(
+    new Request(`${ORIGIN}${base}/download`, {
+      headers: {
+        "x-test-operator": "900000003",
+        "sec-fetch-site": "same-origin",
+        cookie: granted.headers.get("set-cookie")!.split(";")[0],
+      },
+    }),
+  ))!;
+  expect(download.status).toBe(200);
+  const reader = download.body!.getReader();
+  expect((await reader.read()).value?.length).toBe(EVIDENCE_CHUNK_BYTES);
+  // The operator signs out (their session row is deleted) mid-transfer.
+  retained.evidence.deps.session = async () => null;
+  await expect(reader.read()).rejects.toThrow("Sign in with GitHub");
+  const audit = sqlite
+    .query("SELECT action FROM vetting_evidence_audit WHERE run_id=?")
+    .all(runId) as { action: string }[];
+  expect(audit.map((row) => row.action)).toContain("download-failed");
+  expect(audit.map((row) => row.action)).not.toContain("download-finished");
+}, 60_000);
