@@ -89,7 +89,11 @@ returns `409 capacity_exhausted` and writes nothing. Every reserving path
 (`decide`, related-party `approve`, and `reserve-award`) uses one guard in the
 reservation insert: while an earlier confirmed case waits for capacity or
 for its related-party review, a later decision or approval reserves nothing
-and its award is `capacity-exhausted`, so it waits its turn.
+and its award is `capacity-exhausted`, so it waits its turn. An earlier
+confirmed case that waits for capacity also holds its root cause, even while
+its appeal is open: a later report of the same root cause gets `409
+root_cause_reserved` and is recorded as a duplicate, because it could never
+reserve once the earlier case does.
 
 A reporter may appeal an exhausted award: the shortage is a financial
 exception, not a reason to relabel the finding (SEC-12). The appeal carries the

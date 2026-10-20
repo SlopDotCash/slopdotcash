@@ -1618,12 +1618,7 @@ async function planDecision(
   }
   if (relatedParty) {
     // Nothing is reserved until an independent reviewer approves it.
-    await assertRootCauseFree(
-      deps,
-      row.project_id,
-      row.id,
-      rootCauseKey as string,
-    );
+    await assertRootCauseFree(deps, row, rootCauseKey as string);
     set.award_state = "pending";
     set.related_party_review = "pending";
     return change;
@@ -1649,20 +1644,43 @@ async function planDecision(
 const ROOT_CAUSE_PENDING_REVIEW =
   "SELECT 1 FROM security_cases o WHERE o.project_id = ? AND o.id <> ? AND o.root_cause_key = ? AND o.receipt_state = 'confirmed' AND o.award_state = 'pending' AND o.related_party_review = 'pending'";
 
+/**
+ * A confirmed case of the same project and root cause, received before the
+ * given one, that waits for capacity (also while its appeal is open). It
+ * holds the root cause like a pending review: once it reserves, a later case
+ * of that root cause could never reserve, so the later report is refused as
+ * a duplicate instead of waiting forever (SEC-04, SEC-06). Binds: project id,
+ * case id, root cause key, received at, received at, case id.
+ */
+const ROOT_CAUSE_EARLIER_WAITING =
+  "SELECT 1 FROM security_cases w WHERE w.project_id = ? AND w.id <> ? AND w.root_cause_key = ? AND w.award_state = 'capacity-exhausted' AND (w.receipt_state = 'confirmed' OR (w.receipt_state = 'disputed' AND w.appeal_from_state = 'confirmed')) AND (w.received_at < ? OR (w.received_at = ? AND w.id < ?))";
+
 async function assertRootCauseFree(
   deps: SecurityApiDependencies,
-  projectId: string,
-  caseId: string,
+  row: Pick<CaseRow, "project_id" | "id" | "received_at">,
   rootCauseKey: string,
 ): Promise<void> {
+  const { project_id: projectId, id: caseId, received_at: receivedAt } = row;
   // One root cause reserves once; the unique index and the reservation
   // insert guard also stop a race.
   if (
     (await deps.db
       .prepare(
-        `SELECT 1 AS taken FROM security_award_reservations WHERE project_id = ? AND root_cause_key = ? UNION ALL ${ROOT_CAUSE_PENDING_REVIEW} LIMIT 1`,
+        `SELECT 1 AS taken FROM security_award_reservations WHERE project_id = ? AND root_cause_key = ? UNION ALL ${ROOT_CAUSE_PENDING_REVIEW} UNION ALL ${ROOT_CAUSE_EARLIER_WAITING} LIMIT 1`,
       )
-      .bind(projectId, rootCauseKey, projectId, caseId, rootCauseKey)
+      .bind(
+        projectId,
+        rootCauseKey,
+        projectId,
+        caseId,
+        rootCauseKey,
+        projectId,
+        caseId,
+        rootCauseKey,
+        receivedAt,
+        receivedAt,
+        caseId,
+      )
       .first<{ taken: number }>()) !== null
   )
     fail(
@@ -1707,7 +1725,7 @@ async function reservationChange(
   const rootCauseKey = row.root_cause_key;
   if (terms === null || rootCauseKey === null)
     fail(409, "action_not_allowed", "The case has no paid terms to reserve");
-  await assertRootCauseFree(deps, row.project_id, row.id, rootCauseKey);
+  await assertRootCauseFree(deps, row, rootCauseKey);
   // Capacity comes from the current program revision, so an owner can raise
   // it by revision; the frozen terms keep the receipt-time amount.
   const program = await currentProgram(deps, row.project_id);

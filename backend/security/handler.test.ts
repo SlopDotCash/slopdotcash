@@ -542,6 +542,44 @@ describe("security cases", () => {
     ]);
   });
 
+  test("a finding that waits for capacity holds its root cause", async () => {
+    const env = open(OPEN_PROGRAM);
+    const { act, decide, record, raiseCapacity } = awardSteps(env);
+    const funded = await record("2026-10-19T09:10:00.000Z");
+    const first = await record("2026-10-19T09:20:00.000Z");
+    const later = await record("2026-10-19T09:30:00.000Z");
+    expect((await decide(funded.id, "vault-drain")).body.case.awardState).toBe(
+      "reserved",
+    );
+    expect((await decide(first.id, "oracle-skew")).body.case.awardState).toBe(
+      "capacity-exhausted",
+    );
+    // The earlier receipt will reserve this root cause once capacity exists,
+    // so a later report of it is a duplicate now. Confirming it would leave
+    // a finding that can never reserve and offer finance a `reserve-award`
+    // that always fails (SEC-04, SEC-06).
+    const duplicate = await decide(later.id, "oracle-skew");
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.error).toBe("root_cause_reserved");
+    const pending = await env.call(
+      MAINTAINER,
+      "GET",
+      `security-cases/${later.id}`,
+    );
+    expect(pending.body.case.allowedActions).toContain("decide");
+    // The earlier receipt still reserves its own root cause.
+    raiseCapacity();
+    const reserved = await act(FINANCE, first.id, {
+      action: "reserve-award",
+      reason: "Capacity raised by revision; earliest receipt first.",
+    });
+    expect(reserved.status).toBe(200);
+    expect(reserved.body.case.awardState).toBe("reserved");
+    expect((await decide(later.id, "oracle-skew")).body.error).toBe(
+      "root_cause_reserved",
+    );
+  });
+
   test("a finding that waits for capacity can still be appealed", async () => {
     const env = open(OPEN_PROGRAM);
     const { sqlite } = env;
@@ -583,13 +621,13 @@ describe("security cases", () => {
       `security-case:${waiting.id}:2`,
     ]);
     expect(inbox(MAINTAINER, waiting.id)).toEqual([]);
-    // The appeal keeps the funding place of the earliest receipt: a later
-    // report on the same root cause reserves nothing while it is disputed, so
-    // it waits for capacity too (SEC-04).
+    // The appeal keeps the funding place and the root cause of the earliest
+    // receipt: a later report on the same root cause is a duplicate, even
+    // after capacity is raised (SEC-04).
     raiseCapacity();
     const laterDecided = await decide(laterSameCause.id, "oracle-skew");
-    expect(laterDecided.status).toBe(200);
-    expect(laterDecided.body.case.awardState).toBe("capacity-exhausted");
+    expect(laterDecided.status).toBe(409);
+    expect(laterDecided.body.error).toBe("root_cause_reserved");
     // The independent reviewer can now open the case and resolve the dispute
     // (SEC-04, SEC-18).
     const waitingForReview = await env.call(
