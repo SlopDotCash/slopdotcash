@@ -121,7 +121,7 @@ export function ProfileActivity({
       ? id
       : githubUserIdFromNodeId(id)
     : null;
-  const [directState] = useDirectTransfers(
+  const [directState, retryPayments] = useDirectTransfers(
     githubUserId ? { githubUserId } : null,
   );
   const direct =
@@ -134,7 +134,16 @@ export function ProfileActivity({
             `/projects/${encodeURIComponent(t.projectId)}/funding`,
           name: `${findProject(t.projectId)?.name ?? t.projectId} · ${formatCycleMonth(t.contributionMonth)}`,
         }))
-      : [];
+      : null;
+  const paymentTotal =
+    payments && direct
+      ? dollars([...payments, ...direct].reduce((n, r) => n + r.amount, 0n))
+      : null;
+  const paymentStatus =
+    directState.status === "loading" &&
+    (githubUserId || state.status === "loading")
+      ? "Loading…"
+      : "Unavailable";
   return (
     <section className="profile-activity" aria-label="Contributor profile">
       {showIdentity ? (
@@ -150,18 +159,18 @@ export function ProfileActivity({
       <div className="profile-totals">
         {summary}
         <div>
-          <strong>
-            {payments
-              ? dollars(
-                  [...payments, ...direct].reduce((n, r) => n + r.amount, 0n),
-                )
-              : !id && state.status === "loading"
-                ? "Loading…"
-                : "Unavailable"}
-          </strong>
+          <strong>{paymentTotal ?? paymentStatus}</strong>
           <span>paid · USDC</span>
         </div>
       </div>
+      {directState.status === "error" ? (
+        <p role="status">
+          Direct payment records are unavailable.{" "}
+          <button type="button" onClick={retryPayments}>
+            Retry payment records
+          </button>
+        </p>
+      ) : null}
       {state.status === "error" ? (
         <p role="status">
           PR counts are unavailable.{" "}
@@ -176,7 +185,11 @@ export function ProfileActivity({
       ) : null}
       {revisions ? <PointsRevisionHistory revisions={revisions} /> : null}
       {children}
-      <PayoutList payments={payments ?? []} direct={direct} />
+      <PayoutList
+        payments={payments ?? []}
+        direct={direct ?? []}
+        total={paymentTotal === null ? paymentStatus : `${paymentTotal} USDC`}
+      />
       <ProfileTimeline work={work} awards={awards} />
       {state.status === "ready" && id ? (
         <IssueOutcomes key={id} index={state.index} actorId={id} />
@@ -278,9 +291,11 @@ type Payout = {
 function PayoutList({
   payments,
   direct,
+  total,
 }: {
   payments: Payout[];
   direct: Payout[];
+  total: string;
 }) {
   const rows = [
     ...payments.map((payment) => ({ ...payment, kind: "Verified settlement" })),
@@ -295,9 +310,7 @@ function PayoutList({
     <section className="profile-card" aria-label="Payouts">
       <div className="profile-card-heading">
         <h2>Payouts</h2>
-        <span>
-          {dollars(rows.reduce((total, row) => total + row.amount, 0n))} USDC
-        </span>
+        <span>{total}</span>
       </div>
       <ul className="payout-list">
         {rows.map((row) => (

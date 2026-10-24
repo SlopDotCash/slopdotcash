@@ -342,6 +342,147 @@ async function serveProfileSite(page: Page) {
   return site;
 }
 
+test("profile payment totals stay unavailable until direct records recover", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { current } = await profileRecords(page);
+  let available = false;
+  const errors: string[] = [];
+  const failedResponses: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("response", (response) => {
+    if (response.status() >= 400)
+      failedResponses.push(`${response.status()} ${response.url()}`);
+  });
+  page.on("console", (message) => {
+    if (message.type() === "error" && !message.text().includes("status of 503"))
+      errors.push(message.text());
+  });
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route("**/api/v1/payments/actors/1/direct-transfers", (route) =>
+    available
+      ? route.fulfill({
+          json: {
+            totalMicro: "2000000",
+            transfers: [
+              {
+                projectId: "slopdotcash",
+                githubUserId: "1",
+                login: current.login,
+                amountMicro: "2000000",
+                contributionMonth: "2026-10",
+                network: "base-sepolia",
+                chain: "base",
+                recipient: "synthetic-recipient",
+                transactionId: `0x${"a".repeat(64)}`,
+                blockTime: "2026-10-16T12:00:00.000Z",
+              },
+            ],
+          },
+        })
+      : route.fulfill({ status: 503, body: "Payment records unavailable" }),
+  );
+  await page.goto(`${site}/contributors/${current.login}`, {
+    waitUntil: "networkidle",
+  });
+  const profile = page.getByRole("region", { name: "Contributor profile" });
+  const paid = profile
+    .locator(".profile-totals > div")
+    .filter({ hasText: "paid · USDC" })
+    .locator("strong");
+  const payouts = profile.getByRole("region", { name: "Payouts", exact: true });
+  await expect(
+    payouts.getByText("Verified settlement", { exact: false }),
+  ).toBeVisible();
+  await profile.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: info.outputPath("profile-payment-outage.png"),
+  });
+  await expect(paid).toHaveText("Unavailable");
+  await expect(payouts.locator(".profile-card-heading > span")).toHaveText(
+    "Unavailable",
+  );
+  expect(failedResponses).toEqual([
+    `503 ${site}/api/v1/payments/actors/1/direct-transfers`,
+  ]);
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  available = true;
+  failedResponses.length = 0;
+  const retry = profile.getByRole("button", { name: "Retry payment records" });
+  await retry.focus();
+  await page.keyboard.press("Enter");
+  await expect(paid).toHaveText("$3");
+  await expect(payouts.locator(".profile-card-heading > span")).toHaveText(
+    "$3 USDC",
+  );
+  await expect(
+    payouts.getByText("Direct transfer", { exact: false }),
+  ).toBeVisible();
+  await expect(retry).toHaveCount(0);
+  await page.screenshot({
+    path: info.outputPath("profile-payment-recovered.png"),
+  });
+  expect(errors).toEqual([]);
+  expect(failedResponses).toEqual([]);
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+});
+
+test("profile payment totals wait for a completed empty direct history", async ({
+  page,
+}) => {
+  const site = await serveProfileSite(page);
+  const { current } = await profileRecords(page);
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    "**/api/v1/payments/actors/1/direct-transfers",
+    async (route) => {
+      await pending;
+      await route.fulfill({ json: { transfers: [], totalMicro: "0" } });
+    },
+  );
+  await page.goto(`${site}/contributors/${current.login}`);
+  const profile = page.getByRole("region", { name: "Contributor profile" });
+  const paid = profile
+    .locator(".profile-totals > div")
+    .filter({ hasText: "paid · USDC" })
+    .locator("strong");
+  const total = profile
+    .getByRole("region", { name: "Payouts", exact: true })
+    .locator(".profile-card-heading > span");
+  try {
+    await expect(paid).toHaveText("Loading…");
+    await expect(total).toHaveText("Loading…");
+  } finally {
+    release();
+  }
+  await expect(paid).toHaveText("$1");
+  await expect(total).toHaveText("$1 USDC");
+  await expect(
+    profile.getByRole("button", { name: "Retry payment records" }),
+  ).toHaveCount(0);
+});
+
 for (const staleMembership of [false, true]) {
   test(
     staleMembership
