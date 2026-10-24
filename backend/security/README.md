@@ -7,10 +7,16 @@ are not.
 ## Program terms
 
 A project opts in with the optional `securityBounty` section of its D1
-manifest (`src/lib/security-bounty.mjs`). An application may include it only
-as `pending-approval` with `pledged` funding. Admins open, pause or close the
-program by appending a manifest revision on `/admin`. A program cannot be
-removed, because its approvers govern restricted case access after closure.
+manifest (`src/lib/security-bounty.mjs`). New terms start paused with pledged
+funding and no unverified vault. Owners edit terms, open, pause or close the
+program in project settings. Each change uses the existing project revision
+route and checks current GitHub authority through Slopbot. Opening requires
+available funds from a current finalized snapshot of the separate, reviewed
+bounty vault. The server sets funding evidence; an owner cannot supply it.
+New vault registration is a separate verification boundary. This editor does
+not deploy a vault or accept client-supplied contract trust metadata.
+A program cannot be removed. Existing cases retain their receipt terms and
+funded obligations remain available after a pause or closure.
 
 - `amount.grossMinor` is the published gross award per finding, in integer
   minor units divisible by four, so the 75/25 researcher/Slop split is exact.

@@ -24,8 +24,10 @@ import {
   rewardAssetChoice,
   sameRewardAsset,
 } from "../../src/lib/reward-asset.mjs";
+import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import { type ApiError, fail } from "../api-error";
 import { pathParts } from "../api-path";
+import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readJsonObject, sha256Hex } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
 import {
@@ -119,6 +121,11 @@ export type ProjectApiDependencies = {
   repositoryAccess?: RepositoryAccessReader;
   /** Queues a malicious-code scan of a project's current revision. */
   requestScan?: ScanRequester;
+  /** Finalized funds in a reviewed, separate bounty vault. Never client evidence. */
+  securityProgramFunds?: (
+    projectId: string,
+    program: SecurityBountyTerms,
+  ) => ReturnType<typeof readSecurityProgramFunds>;
 };
 
 const APPLICATION_ID = /^app_[A-Za-z0-9_-]{8,72}$/u;
@@ -263,9 +270,12 @@ function assertNewProjectManifest(
     ],
     [
       manifest.securityBounty === undefined ||
-        (manifest.securityBounty.status === "pending-approval" &&
-          manifest.securityBounty.funding.state === "pledged"),
-      "A security bounty program starts pending approval with pledged funding",
+        (["paused", "pending-approval"].includes(
+          manifest.securityBounty.status,
+        ) &&
+          manifest.securityBounty.funding.state === "pledged" &&
+          (manifest.securityBounty.settlement?.deployments.length ?? 0) === 0),
+      "A security bounty program starts paused with pledged funding and no unverified vault",
     ],
   ];
   for (const [valid, message] of rules) {
@@ -280,6 +290,79 @@ function fundingCommitments(manifest: ProjectDefinition): unknown[] {
 
 function sameValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+/** Owner terms affect later receipts. Existing cases retain their receipt terms. */
+async function ownerSecurityProgram(
+  previous: ProjectDefinition,
+  next: ProjectDefinition,
+  status: SecurityBountyTerms["status"] | undefined,
+  deps: ProjectApiDependencies,
+): Promise<ProjectDefinition> {
+  const before = previous.securityBounty;
+  const after = next.securityBounty;
+  if (after === undefined) {
+    if (before !== undefined)
+      fail(
+        422,
+        "security_program_required",
+        "Close the bounty program instead of deleting it; existing reports and awards remain available",
+      );
+    return next;
+  }
+  if (!sameValue(before?.settlement, after.settlement))
+    fail(
+      422,
+      "security_vault_restricted",
+      "Keep the verified bounty vault; a new vault needs verified registration",
+    );
+  if (
+    before?.settlement &&
+    !sameValue(
+      {
+        currency: before.amount.currency,
+        decimals: before.amount.decimals,
+        network: before.amount.network,
+      },
+      {
+        currency: after.amount.currency,
+        decimals: after.amount.decimals,
+        network: after.amount.network,
+      },
+    )
+  )
+    fail(
+      422,
+      "security_asset_restricted",
+      "A funded bounty program keeps its network and asset",
+    );
+  const funds = await deps.securityProgramFunds?.(next.id, after);
+  if (status === "open" && (!funds || BigInt(funds.availableMinor) <= 0n))
+    fail(
+      422,
+      "security_funding_unavailable",
+      "Opening requires available funds in a verified bounty vault with a current finalized balance",
+    );
+  return {
+    ...next,
+    securityBounty: {
+      ...after,
+      status: status ?? after.status,
+      funding:
+        funds && BigInt(funds.availableMinor) > 0n
+          ? {
+              state: "verified-available",
+              evidence: `Finalized bounty vault balance for ${next.id} at ${funds.snapshotAt}`,
+              verifiedAt: funds.snapshotAt,
+            }
+          : // Pausing does not revoke the recorded funding proof. Award reads
+            // still require a fresh snapshot, even after a closed program's
+            // balances recover. Existing reports can then receive an award.
+            before?.settlement
+            ? before.funding
+            : { state: "pledged" },
+    },
+  };
 }
 
 /** Every UTC month from the reward start through `last`, in order. */
@@ -326,14 +409,11 @@ function prospectiveFinancialChange(
       "financial_change_restricted",
       "A separate review budget is not offered; review credit comes from the shared scoring policy",
     );
-  if (
-    !sameValue(previous.funding, next.funding) ||
-    !sameValue(previous.securityBounty, next.securityBounty)
-  )
+  if (!sameValue(previous.funding, next.funding))
     fail(
       422,
       "financial_change_restricted",
-      "Funding routes and security bounty programs do not change through owner self-service",
+      "Funding routes do not change through owner self-service",
     );
   // This API does not read chain state, so it cannot verify that a vault
   // record names a vault from the reviewed factory or program with the
@@ -1071,7 +1151,33 @@ async function publishOwnerRevision(
     const { cycleCaps: _oldCaps, ...reward } = prepared.reward;
     prepared = { ...prepared, reward };
   }
-  const { manifest: submitted } = canonicalManifest(prepared);
+  const programChanged = !sameValue(
+    current.manifest.securityBounty,
+    prepared.securityBounty,
+  );
+  const requestedProgramStatus = prepared.securityBounty?.status;
+  if (programChanged && prepared.securityBounty)
+    prepared = {
+      ...prepared,
+      securityBounty: {
+        ...prepared.securityBounty,
+        // Validate all terms before using them in a funding lookup. The server
+        // alone sets verified funding and then permits an open program.
+        status:
+          requestedProgramStatus === "open"
+            ? "paused"
+            : prepared.securityBounty.status,
+        funding: { state: "pledged" },
+      },
+    };
+  let { manifest: submitted } = canonicalManifest(prepared);
+  if (programChanged)
+    submitted = await ownerSecurityProgram(
+      current.manifest,
+      submitted,
+      requestedProgramStatus,
+      deps,
+    );
   if (submitted.id !== projectId)
     fail(422, "invalid_manifest", "Project id cannot change");
   const changes = classifyRevisionChanges(current.manifest, submitted);
@@ -1104,7 +1210,7 @@ async function publishOwnerRevision(
       ? `skill inputs (${changes.executable.join(", ")}) need a new scan`
       : null,
     changes.financial.length > 0
-      ? `financial policy (${changes.financial.join(", ")}) applies from the next UTC cycle`
+      ? `financial policy (${changes.financial.join(", ")}) published; monthly amounts apply from the next UTC cycle and bounty terms apply to later reports`
       : null,
   ]
     .filter((part) => part !== null)

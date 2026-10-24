@@ -58,6 +58,7 @@ import {
   type IntakeConfig,
 } from "../../../backend/security/intake-grant";
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
+import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import {
@@ -566,6 +567,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     );
   const projectDependencies: ProjectApiDependencies = {
     persistence: projectPersistence,
+    securityProgramFunds: (projectId, program) =>
+      readSecurityProgramFunds(
+        { db: context.env.SLOP_DB, now: () => new Date() },
+        projectId,
+        program,
+      ),
     vettingClearance: (
       projectId,
       manifest,

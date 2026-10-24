@@ -14,6 +14,7 @@ import {
   type Page,
   test,
 } from "@playwright/test";
+import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import {
   E2E_SECURITY_ACCOUNTS,
   fixtureRepository,
@@ -221,10 +222,27 @@ async function listProject(
     { method: "PUT" },
   );
   expect(installed.status).toBe(204);
+  const program = manifest.securityBounty as SecurityBountyTerms | undefined;
   const applied = await api(request, "POST", "projects", applicantToken, {
-    manifest,
+    manifest: program?.settlement
+      ? {
+          ...manifest,
+          securityBounty: {
+            ...program,
+            settlement: { ...program.settlement, deployments: [] },
+          },
+        }
+      : manifest,
   });
   expect(applied.status, JSON.stringify(applied.body)).toBe(201);
+  if (program?.settlement) {
+    // Fixture trust root only. An owner cannot self-attest a deployed vault.
+    const registered = await revise(request, id, (current) => ({
+      ...current,
+      securityBounty: program,
+    }));
+    expect(registered.status, JSON.stringify(registered.body)).toBe(200);
+  }
 }
 
 async function adminProject(request: APIRequestContext, id: string) {
@@ -440,6 +458,121 @@ async function setIntake(
   expect(response.status()).toBe(204);
 }
 
+test("owners publish and control bounty programs with verified funding @registry", async ({
+  browser,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const id = `owner-bounty-${suffix}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  const context = await browser.newContext({
+    viewport: test.info().project.use.viewport,
+    recordVideo: { dir: test.info().outputPath("owner-bounty-video") },
+  });
+  const page = await context.newPage();
+  const errors = observe(page);
+  try {
+    await signIn(page, TOKENS.security);
+    await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Set bounty terms" }).click();
+    await page.getByLabel("Published gross award (USDC)").fill("100");
+    await page.getByLabel(`Source commit (${repository})`).fill("a".repeat(40));
+    const values = {
+      "Covered assets": "Vault deposits",
+      "Test rules": "Test on local forks only.",
+      "Severity guide": "Assess impact on covered funds.",
+      "Loss of funds": "Unauthorized loss of covered funds.",
+      "When funds run out": "New awards wait for available funds.",
+      Disputes: "Ask Slop for a private review.",
+      Disclosure: "Contact the maintainer before disclosure.",
+      "Researcher protection":
+        "Good-faith testing within these rules is authorized.",
+    };
+    for (const [label, value] of Object.entries(values))
+      await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole("button", { name: "Publish bounty terms" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision" }),
+    ).toBeVisible();
+    let stored = await adminProject(request, id);
+    expect((stored.manifest.securityBounty as { status: string }).status).toBe(
+      "paused",
+    );
+    // Program settings cannot self-attest funds or register a contract.
+    const unsupported = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS.security,
+      {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          securityBounty: {
+            ...(stored.manifest.securityBounty as object),
+            status: "open",
+          },
+        },
+      },
+    );
+    expect(unsupported.status).toBe(422);
+    expect(unsupported.body.error).toBe("security_funding_unavailable");
+    const reviewed = bountyTerms(repository).settlement;
+    expect(
+      (
+        await revise(request, id, (manifest) => ({
+          ...manifest,
+          securityBounty: {
+            ...(manifest.securityBounty as object),
+            settlement: reviewed,
+          },
+        }))
+      ).status,
+    ).toBe(200);
+    await vaultSnapshot(id, bountyDeployment(repository), "200000000");
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Edit bounty settings" }).click();
+    await page.getByLabel("Status", { exact: true }).selectOption("open");
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("owner-bounty-settings.png"),
+      fullPage: true,
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.getByRole("button", { name: "Publish bounty terms" }).click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision" }),
+    ).toBeVisible();
+    stored = await adminProject(request, id);
+    expect(stored.manifest.securityBounty).toMatchObject({
+      status: "open",
+      funding: { state: "verified-available" },
+      split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+    });
+    await page.getByRole("button", { name: "Edit bounty settings" }).click();
+    await page.getByLabel("Status", { exact: true }).selectOption("closed");
+    await page.getByRole("button", { name: "Publish bounty terms" }).click();
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: `Published revision ${stored.revision + 1}.` }),
+    ).toBeVisible();
+    expect(
+      (await adminProject(request, id)).manifest.securityBounty,
+    ).toMatchObject({ status: "closed" });
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
 test("private security bounty programs keep cases restricted from intake to award @registry", async ({
   browser,
   request,
@@ -542,7 +675,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       (revisions.body.revisions as { projectId: string }[]).filter(
         (entry) => entry.projectId === a.id,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 
   const opened = await adminProject(request, a.id);
