@@ -35,6 +35,33 @@ export const PROJECT_SKILL_TEMPLATES = Object.freeze({
 export const MAX_PROJECT_ID_LENGTH = 43;
 const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u;
 
+/**
+ * Funding terms a project records once, at creation. Owner self-service never
+ * changes `project.funding`, so each project and every one of its revisions
+ * keeps the terms it was created with.
+ *
+ * Projects created before 24 October 2026 record the direct-wallet wording
+ * with a 1% fee (2% once an escrow block is adopted). Every project created
+ * from that date records the project-vault wording with the ordinary 2% fee,
+ * vault or not (PRD section 11, owner decision of 24 October 2026, D3).
+ */
+export const DIRECT_FUNDING_DISCLOSURE =
+  "Funds go directly to the project wallet. Slop does not hold or recover funds.";
+export const VAULT_FUNDING_DISCLOSURE =
+  "Funds are committed in the project vault. Slop holds no payment keys.";
+
+/**
+ * The platform fee, in basis points, a reward policy must record for its
+ * project's funding terms. External prize shares keep their 10% platform
+ * share.
+ */
+export function projectFeeBasisPoints({ kind, escrow, disclosure }) {
+  if (kind === "external-prize-share") return 1000;
+  return escrow !== undefined || disclosure === VAULT_FUNDING_DISCLOSURE
+    ? 200
+    : 100;
+}
+
 /** Maintainer-authored fields, in render order, that generate project skills. */
 export const CONTRIBUTION_FIELDS = Object.freeze([
   "approvedScope",
@@ -956,6 +983,7 @@ function validateReward(
   {
     allowLegacyExternalPrizeFee = false,
     escrow = undefined,
+    fundingDisclosure = undefined,
     rewardAsset = undefined,
   } = {},
 ) {
@@ -1012,8 +1040,11 @@ function validateReward(
   }
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
-  const expectedFeeBasisPoints =
-    reward.kind === "external-prize-share" ? 1000 : escrow ? 200 : 100;
+  const expectedFeeBasisPoints = projectFeeBasisPoints({
+    kind: reward.kind,
+    escrow,
+    disclosure: fundingDisclosure,
+  });
   const hasLegacyExternalPrizeFee =
     allowLegacyExternalPrizeFee &&
     reward.kind === "external-prize-share" &&
@@ -1143,8 +1174,8 @@ function validateFunding(value, projectId) {
   if (
     funding.mode !== "direct-noncustodial" ||
     funding.recordsPath !== `funding/${projectId}` ||
-    funding.disclosure !==
-      "Funds go directly to the project wallet. Slop does not hold or recover funds."
+    (funding.disclosure !== DIRECT_FUNDING_DISCLOSURE &&
+      funding.disclosure !== VAULT_FUNDING_DISCLOSURE)
   ) {
     throw new TypeError("project.funding non-custodial policy is invalid");
   }
@@ -1289,6 +1320,7 @@ function validateProjectDefinition(
   validateReward(project.reward, "project.reward", {
     allowLegacyExternalPrizeFee,
     escrow: project.escrow,
+    fundingDisclosure: project.funding?.disclosure,
     rewardAsset: project.rewardAsset,
   });
   validateFunding(project.funding, id);

@@ -430,6 +430,12 @@ test("drafts a project through the setup steps and creates it without an admin",
       committedMinor: "0",
       paymentMode: "disabled",
       fundingState: "pledged",
+      // PRD section 11, owner decision of 24 October 2026 (D3).
+      feeBasisPoints: 200,
+    },
+    funding: {
+      disclosure:
+        "Funds are committed in the project vault. Slop holds no payment keys.",
     },
     terms: {
       repositoryLicense: {

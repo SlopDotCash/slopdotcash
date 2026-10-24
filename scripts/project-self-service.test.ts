@@ -29,7 +29,12 @@ import {
 } from "../backend/trace/handler";
 import { vettedContentSha256 } from "../backend/vetting/persistence";
 import type { RepositoryAccess } from "../src/lib/project-contracts";
+import { rewardFields } from "../src/lib/project-proposal";
 import { classifyRevisionChanges } from "../src/lib/project-revision-changes";
+import {
+  DIRECT_FUNDING_DISCLOSURE,
+  VAULT_FUNDING_DISCLOSURE,
+} from "../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import type { VettingClearance } from "../src/lib/vetting-contracts";
@@ -234,6 +239,71 @@ test("creation requires the Slopbot installation, then queues the first scan and
     },
     activatedRevision: null,
   });
+});
+
+test("every new project records project-vault custody with the 2% fee, vault or not", async () => {
+  // PRD section 11, owner decision of 24 October 2026 (D3).
+  const { call, persistence } = registry();
+  const { rewardAsset: _asset, ...base } = applicationManifest(
+    "open-registry",
+    "example/open-registry",
+  );
+  const unfunded = {
+    ...base,
+    ...rewardFields(
+      {
+        mode: "none",
+        network: "base",
+        assetKind: "stablecoin",
+        tokenAddress: "",
+        tokenSymbol: "",
+        monthlyAmount: "",
+      },
+      new Date(NOW),
+      VAULT_FUNDING_DISCLOSURE,
+    ),
+  } as Record<string, unknown> & {
+    reward: Record<string, unknown>;
+    funding: Record<string, unknown>;
+  };
+  expect(unfunded).not.toHaveProperty("escrow");
+  expect(unfunded.reward.feeBasisPoints).toBe(200);
+  const post = (manifest: unknown) =>
+    call("POST", "projects", OWNER, { manifest });
+  // The pre-decision terms stay valid for history but not for a new project.
+  const historical = await post({
+    ...unfunded,
+    reward: { ...unfunded.reward, feeBasisPoints: 100 },
+    funding: { ...unfunded.funding, disclosure: DIRECT_FUNDING_DISCLOSURE },
+  });
+  expect(historical.status).toBe(422);
+  expect(historical.body).toEqual({
+    error: "invalid_manifest",
+    message:
+      "New projects record project-vault custody with the ordinary 2% fee",
+  });
+  // The fee is bound to the recorded disclosure in both directions.
+  for (const [disclosure, feeBasisPoints] of [
+    [VAULT_FUNDING_DISCLOSURE, 100],
+    [DIRECT_FUNDING_DISCLOSURE, 200],
+  ] as const) {
+    const mismatched = await post({
+      ...unfunded,
+      reward: { ...unfunded.reward, feeBasisPoints },
+      funding: { ...unfunded.funding, disclosure },
+    });
+    expect(mismatched.status).toBe(422);
+    expect(mismatched.body).toEqual({
+      error: "invalid_manifest",
+      message: "project.reward cycle or fee policy is invalid",
+    });
+  }
+  expect(await persistence.listProjects()).toEqual([]);
+  const created = await post(unfunded);
+  expect(created.status).toBe(201);
+  const stored = await persistence.getProject("open-registry");
+  expect(stored?.manifest.reward.feeBasisPoints).toBe(200);
+  expect(stored?.manifest.funding.disclosure).toBe(VAULT_FUNDING_DISCLOSURE);
 });
 
 test("setup activates a project only with installation write access and a clean scan", async () => {
@@ -644,9 +714,19 @@ test("a payout exclusion starts with the next UTC month on every revision path",
 
 test("an application stored before self-service setup publishes once, by its applicant", async () => {
   const { persistence, sqlite, call, state } = registry();
-  // Submission stored the verified reward asset with the manifest.
+  // Submission stored the verified reward asset and the funding terms of its
+  // time, the 1% fee with direct-wallet wording, which it keeps.
+  const submitted = applicationManifest(
+    "open-registry",
+    "example/open-registry",
+  ) as { reward: object; funding: object };
   const manifest = JSON.stringify(
     applicationManifest("open-registry", "example/open-registry", {
+      reward: { ...submitted.reward, feeBasisPoints: 100 },
+      funding: {
+        ...submitted.funding,
+        disclosure: DIRECT_FUNDING_DISCLOSURE,
+      },
       rewardAsset: {
         network: "ethereum",
         kind: "stablecoin",
@@ -694,6 +774,10 @@ test("an application stored before self-service setup publishes once, by its app
     revision: 1,
     sourceApplicationId: "app_storedapplication1",
   });
+  const publishedManifest = (await persistence.getProject("open-registry"))
+    ?.manifest;
+  expect(publishedManifest?.reward.feeBasisPoints).toBe(100);
+  expect(publishedManifest?.funding.disclosure).toBe(DIRECT_FUNDING_DISCLOSURE);
   expect(state.scans).toEqual([
     "open-registry@1: First scan after publishing a stored application",
   ]);

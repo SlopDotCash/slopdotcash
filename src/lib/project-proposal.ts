@@ -10,6 +10,8 @@ import {
   formatMonthlyCapDisplay,
   MAX_MONTHLY_CAP_MINOR,
   MAX_PROJECT_ID_LENGTH,
+  projectFeeBasisPoints,
+  VAULT_FUNDING_DISCLOSURE,
 } from "./project-schema.mjs";
 import { REWARD_ASSET_NETWORKS } from "./reward-asset.mjs";
 
@@ -129,17 +131,35 @@ export type FundingChoice = {
 };
 
 /**
+ * The funding terms every new project records: project-vault custody with the
+ * ordinary 2% fee, whether or not it has a vault yet (PRD section 11, owner
+ * decision of 24 October 2026, D3). Owner revisions never change them.
+ */
+export function newProjectFunding(slug: string): Record<string, unknown> {
+  return {
+    mode: "direct-noncustodial",
+    disclosure: VAULT_FUNDING_DISCLOSURE,
+    recordsPath: `funding/${slug}`,
+    addresses: [],
+  };
+}
+
+/**
  * The reward, asset and vault fields of a manifest for a funding choice. No
  * monthly funding keeps the unfunded pool with no reward asset and no vault,
  * so the network and asset are chosen only when the owner adds funding; a
  * vault's network cannot change once set. A monthly amount names one network
  * and one asset, with the vault policy of that network when it has one. The
  * server verifies the asset, reads its decimals and stores the amount, sent
- * separately as `monthlyAmount`, in the asset's base units.
+ * separately as `monthlyAmount`, in the asset's base units. The fee follows
+ * the project's recorded funding disclosure: a new draft passes
+ * `VAULT_FUNDING_DISCLOSURE`, and a revision passes the disclosure its
+ * project was created with, so historical projects keep their terms.
  */
 export function rewardFields(
   choice: FundingChoice,
   now: Date,
+  disclosure: string,
 ): Record<string, unknown> {
   if (choice.mode === "none")
     return {
@@ -153,7 +173,11 @@ export function rewardFields(
         monthlyCapDisplay: formatMonthlyCapDisplay("0"),
         committedMinor: "0",
         paymentMode: "disabled",
-        feeBasisPoints: 100,
+        feeBasisPoints: projectFeeBasisPoints({
+          kind: "monthly-pool",
+          escrow: undefined,
+          disclosure,
+        }),
         unusedFunds: "rollover-without-cap-increase",
         fundingState: "pledged",
       },
@@ -206,7 +230,11 @@ export function rewardFields(
       monthlyCapDisplay: amount.display,
       committedMinor: "0",
       paymentMode: "disabled",
-      feeBasisPoints: escrow ? 200 : 100,
+      feeBasisPoints: projectFeeBasisPoints({
+        kind: "monthly-pool",
+        escrow: escrow ? choice.network : undefined,
+        disclosure,
+      }),
       unusedFunds: "rollover-without-cap-increase",
       fundingState: "pledged",
     },

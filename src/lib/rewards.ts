@@ -142,7 +142,8 @@ export interface RewardAllocationManifest {
   capMinor: string;
   carriedMinor?: string;
   minimumTransferMinor?: typeof MINIMUM_TRANSFER_MINOR;
-  feeBasisPoints: typeof PLATFORM_FEE_BASIS_POINTS;
+  /** The fee the project recorded: 1% for historical terms, 2% from 24 October 2026. */
+  feeBasisPoints: typeof PLATFORM_FEE_BASIS_POINTS | 200;
   scoringRuleVersion: string;
   sourceSnapshotSha256: string;
   allocations: RewardAllocation[];
@@ -1055,7 +1056,8 @@ export function assertRewardAllocationManifest(
   if (approvedAt && Date.parse(approvedAt) < Date.parse(endsAt)) {
     throw new TypeError("allocation was approved before review ended");
   }
-  if (manifest.feeBasisPoints !== project.reward.feeBasisPoints) {
+  const feeBasisPoints = project.reward.feeBasisPoints;
+  if (manifest.feeBasisPoints !== feeBasisPoints || feeBasisPoints === 1000) {
     throw new TypeError("allocation fee differs from project policy");
   }
   const capMinor = minor(manifest.capMinor, "allocation manifest.capMinor");
@@ -1340,7 +1342,7 @@ export function assertRewardAllocationManifest(
           minimumTransferMinor: MINIMUM_TRANSFER_MINOR,
         }
       : {}),
-    feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
+    feeBasisPoints,
     scoringRuleVersion: text(
       manifest.scoringRuleVersion,
       "allocation manifest.scoringRuleVersion",

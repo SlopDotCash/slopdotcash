@@ -500,6 +500,7 @@ describe("project registry API", () => {
         monthlyAmount: "1000",
       },
       deps.now(),
+      current.manifest.funding.disclosure,
     );
     const changedAsset = await call(
       "PUT",

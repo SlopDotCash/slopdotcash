@@ -128,14 +128,14 @@ export function applicationManifest(
       monthlyCapDisplay: "$1,000",
       committedMinor: "0",
       paymentMode: "disabled",
-      feeBasisPoints: 100,
+      feeBasisPoints: 200,
       unusedFunds: "rollover-without-cap-increase",
       fundingState: "pledged",
     },
     funding: {
       mode: "direct-noncustodial",
       disclosure:
-        "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+        "Funds are committed in the project vault. Slop holds no payment keys.",
       recordsPath: `funding/${id}`,
       addresses: [],
     },

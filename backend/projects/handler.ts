@@ -15,6 +15,7 @@ import {
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
+  VAULT_FUNDING_DISCLOSURE,
 } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
@@ -196,7 +197,10 @@ function canonicalManifest(value: unknown): {
  * and one repository, whose scan binds one integration branch. Listing tier,
  * repository receipt authority, terms activation, vaults and payments arrive
  * through later revisions. Applications stored before self-service setup may
- * still carry the pledged review budget they were submitted with.
+ * still carry the pledged review budget and the funding terms they were
+ * submitted with. Every project created through setup records project-vault
+ * custody with the ordinary 2% fee, which the schema binds to that disclosure
+ * (PRD section 11, owner decision of 24 October 2026, D3).
  */
 function assertNewProjectManifest(
   manifest: ProjectDefinition,
@@ -207,6 +211,11 @@ function assertNewProjectManifest(
     reward.kind === "monthly-pool" ? reward.reviewBudget : undefined;
   const rules: [boolean, string][] = [
     [manifest.status === "paused", "New projects must start paused"],
+    [
+      storedApplication ||
+        manifest.funding.disclosure === VAULT_FUNDING_DISCLOSURE,
+      "New projects record project-vault custody with the ordinary 2% fee",
+    ],
     [
       manifest.listingTier === "community",
       "New projects are listed in the community tier",

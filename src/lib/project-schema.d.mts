@@ -18,6 +18,13 @@ export type ContributionField =
   | "securityContact"
   | "closurePolicy"
   | "maintainerNotes";
+export declare const DIRECT_FUNDING_DISCLOSURE: "Funds go directly to the project wallet. Slop does not hold or recover funds.";
+export declare const VAULT_FUNDING_DISCLOSURE: "Funds are committed in the project vault. Slop holds no payment keys.";
+export declare function projectFeeBasisPoints(policy: {
+  kind: "monthly-pool" | "external-prize-share";
+  escrow: unknown;
+  disclosure: string | undefined;
+}): 100 | 200 | 1000;
 export declare function formatMonthlyCapDisplay(value: string): string;
 export declare function formatAssetAmount(
   value: string,

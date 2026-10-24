@@ -34,6 +34,7 @@ import {
   listOwnedRepositories,
   lookupGitHubRepository,
   monthlyPoolValue,
+  newProjectFunding,
   normalizeRepositoryInput,
   rewardFields,
   safeProposalHttpsUrl,
@@ -45,6 +46,7 @@ import {
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
+  VAULT_FUNDING_DISCLOSURE,
 } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
@@ -1120,14 +1122,8 @@ export default function ProjectProposalPage() {
       },
       // Optional funding: none, or one asset on one network with its vault
       // policy. The server verifies the asset and stores its decimals.
-      ...rewardFields(funding, now),
-      funding: {
-        mode: "direct-noncustodial",
-        disclosure:
-          "Funds go directly to the project wallet. Slop does not hold or recover funds.",
-        recordsPath: `funding/${slug}`,
-        addresses: [],
-      },
+      ...rewardFields(funding, now, VAULT_FUNDING_DISCLOSURE),
+      funding: newProjectFunding(slug),
       modelPolicy: {
         mode: "open-declared",
         disclosureRequired: true,
@@ -2166,7 +2162,11 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         // The asset, network and vault stay; only the amount changes.
         fundingFields = { reward: { ...source.reward, ...cap } };
       } else {
-        const fields = rewardFields(choice, new Date());
+        const fields = rewardFields(
+          choice,
+          new Date(),
+          source.funding.disclosure,
+        );
         fundingFields = {
           ...fields,
           reward: {

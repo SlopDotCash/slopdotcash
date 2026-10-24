@@ -12,7 +12,9 @@ export type RewardKind = "monthly-pool" | "external-prize-share";
 
 export interface ProjectFundingPolicy {
   readonly mode: "direct-noncustodial";
-  readonly disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.";
+  readonly disclosure:
+    | "Funds go directly to the project wallet. Slop does not hold or recover funds."
+    | "Funds are committed in the project vault. Slop holds no payment keys.";
   readonly recordsPath: string;
   readonly addresses: readonly {
     readonly network: "base" | "bitcoin" | "ethereum" | "solana";
