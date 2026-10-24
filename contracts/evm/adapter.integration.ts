@@ -180,17 +180,50 @@ try {
         from,
         to: factory,
         gas: "0x7a1200",
-        data: buildCreateVaultCalldata({ projectId, asset, payoutPolicy }),
+        data: buildCreateVaultCalldata({
+          projectId,
+          asset,
+          payoutPolicy,
+          ...(payoutPolicy
+            ? {}
+            : {
+                monthlyCap: "50000000",
+                ...(from === donor ? { automaticMonthly: false } : {}),
+              }),
+        }),
       },
     ]);
     await rpc("anvil_mine", ["0x1"]);
     return vaultOf(asset, payoutPolicy, from);
   };
+  assert.throws(
+    () => buildCreateVaultCalldata({ projectId, asset: token }),
+    /monthly cap is required/,
+    "ordinary creation requires the owner's cap",
+  );
   const vault = await createVault(token);
   // Any account creates its own vault for the same project; it never replaces the owner's.
   const donorVault = await createVault(token, undefined, donor);
   assert.notEqual(donorVault, vault);
   assert.equal(await vaultOf(token), vault);
+  const monthlyField = (address: string, signature: string) =>
+    execFileSync("cast", ["call", address, signature, "--rpc-url", rpcUrl], {
+      encoding: "utf8",
+    }).trim();
+  assert.equal(
+    monthlyField(vault, "monthlyEnabled()(bool)"),
+    "true",
+    "creation enables the owner's monthly cap",
+  );
+  assert.equal(
+    BigInt(monthlyField(vault, "monthlyCap()(uint128)").split(" ")[0]),
+    50000000n,
+  );
+  assert.equal(
+    monthlyField(donorVault, "monthlyEnabled()(bool)"),
+    "false",
+    "creation preserves explicit opt-out",
+  );
   const id = evmAwardId(31337n, vault, source);
   assert.notEqual(
     evmAwardId(46630n, vault, source),
@@ -756,10 +789,14 @@ try {
   await send(token, "mint(address,uint256)", [owner, "100000000"]);
   await send(token, "approve(address,uint256)", [vault, "100000000"]);
   await send(vault, "deposit(uint128)", ["100000000"]);
+  await send(vault, "setMonthlyCommitment(uint128,bool)", [
+    "50000000",
+    "false",
+  ]);
   await assert.rejects(
     simulate(vault, monthly, donor),
     new RegExp(selector("MonthlyDisabled()")),
-    "monthly commitments are off until the owner turns them on",
+    "the owner can opt out after creation",
   );
   await send(vault, "setMonthlyCommitment(uint128,bool)", ["50000000", "true"]);
   await assert.rejects(

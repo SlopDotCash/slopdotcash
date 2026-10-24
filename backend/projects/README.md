@@ -50,6 +50,8 @@ points and profiles still validate.
 | `GET /api/v1/project-revisions` | public, edge cached | Full revision history with SHA-256 digests |
 | `GET /api/v1/project-account-bans` | public, edge cached | GitHub ID and earliest start time of each active account ban, for the score generator; no reason, evidence, project or login |
 | `GET /api/v1/project-github/owned-repositories` | session | The signed-in maintainer's public repositories |
+| `GET /api/v1/project-vaults/:id` | session, current authority | Lists served setup networks and the current revision |
+| `POST /api/v1/project-vaults/:id` | session, current authority, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction |
 | `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` |
 | `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
@@ -138,7 +140,7 @@ and listing tier, then classifies the change (`src/lib/project-revision-changes.
   budget can be added. An owner revision never adds or changes an
   `escrow.deployments` record: this API reads no chain state, so it cannot
   verify the vault, and the funding page offers a deposit for every recorded
-  vault. A reviewed admin revision records a verified vault.
+  vault. Owners use the separate vault setup route below.
 
 `reward.payoutExclusions` lists owners, funded employees and related parties
 who receive no payout (PRD section 7). Each entry names the immutable GitHub
@@ -391,3 +393,30 @@ restrictions, and exact scan clearance before activation. No owner session or
 admin action is needed for this check. A failed readiness check leaves the
 project paused and returns an explicit retry state; the owner can retry from
 the setup page. A scan result alone never grants repository authority.
+
+### Owner vault setup
+
+The funding page creates and registers an ordinary EVM vault, then uses the
+existing deposit controls. The owner confirms a current wallet through the
+payment wallet-claim route. Slop checks current GitHub authority and derives
+the project digest, asset and cap from the current registry revision. The
+wallet signs the exact creation; the server never signs or broadcasts.
+
+Setup lists served networks with a factory record in D1. Before creation,
+Slop verifies that factory's current code and compatibility. Registration
+verifies the exact finalized transaction, project
+digest, owner, asset, purpose, code and monthly setting before appending one
+revision. Retry returns the registered vault. An unknown send stays pending
+until the owner recovers its transaction hash; it never sends again by itself.
+Default monthly payment and explicit opt-out use the atomic creation builder.
+
+If the monthly amount changes while creation is pending, registration checks
+that transaction against its original immutable revision. The current asset
+and vault policy must still match. Registration keeps the current project
+amount and shows both amounts. The owner can then apply the current amount
+through the existing automatic payment control.
+
+The creation verifier shares purpose handling with bounty vaults, but this
+route only onboards ordinary vaults. Solana website creation and private-vault
+onboarding require their own completed end-to-end acceptance. Mainnet setup
+also requires the separately approved factory upgrade and network activation.

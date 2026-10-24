@@ -24,6 +24,7 @@ import {
   rewardAssetChoice,
   sameRewardAsset,
 } from "../../src/lib/reward-asset.mjs";
+import type { VaultSetupInput } from "../../src/lib/vault-setup";
 import { type ApiError, fail } from "../api-error";
 import { pathParts } from "../api-path";
 import { readJsonObject, sha256Hex } from "../trace/validation";
@@ -81,9 +82,11 @@ import {
   setupAuthority,
 } from "./setup";
 import { TokenMetadataError, type TokenMetadataReader } from "./token-metadata";
+import { attachOrdinaryVault, type OwnerVaultSetup } from "./vault-setup";
 
 export type ProjectApiDependencies = {
   persistence: ProjectPersistence;
+  vaultSetup?: OwnerVaultSetup;
   adminGithubIds: ReadonlySet<string>;
   /** GitHub actor IDs with the project moderation role (PRD ADM-05, ADM-06). */
   moderatorGithubIds: ReadonlySet<string>;
@@ -338,8 +341,8 @@ function prospectiveFinancialChange(
   // This API does not read chain state, so it cannot verify that a vault
   // record names a vault from the reviewed factory or program with the
   // project's owner, asset and purpose. A sponsor deposits to every recorded
-  // vault, so an owner revision never adds or changes one; a reviewed admin
-  // revision records a verified vault.
+  // vault, so an ordinary manifest edit never adds or changes one. The
+  // separate owner vault-setup route verifies chain state before appending it.
   if (
     !sameValue(
       previous.escrow?.deployments ?? [],
@@ -349,7 +352,7 @@ function prospectiveFinancialChange(
     fail(
       422,
       "financial_change_restricted",
-      "Vault records do not change through owner self-service; a reviewed admin revision records a verified vault",
+      "Use vault setup to register a verified owner vault; a manifest edit cannot change vault records",
     );
   const funded =
     before.fundingState === "committed" ||
@@ -985,6 +988,156 @@ async function createProject(
   });
 }
 
+/** Only verified server-derived deployments can bypass the ordinary manifest editor. */
+async function ownerVault(
+  request: Request,
+  deps: ProjectApiDependencies,
+  projectId: string,
+): Promise<Response> {
+  const actor = actorOf(await requireSession(request, deps));
+  const current = await deps.persistence.getProject(projectId);
+  if (!current) fail(404, "not_found", "Project not found");
+  const enforcements = await deps.persistence.listEnforcements();
+  assertMaintainerNotBanned(current.manifest, actor, enforcements);
+  if (publicRestrictionOf(current, enforcements).state !== "clear")
+    fail(
+      409,
+      "project_restricted",
+      "Request reinstatement before setting up a vault.",
+    );
+  requireAuthority(await currentAuthority(deps, current.manifest, actor));
+  if (!deps.vaultSetup)
+    fail(
+      503,
+      "vault_setup_unavailable",
+      "Vault setup is unavailable on this deployment.",
+    );
+  if (request.method === "GET")
+    return json(200, {
+      revision: current.revision,
+      networks: await deps.vaultSetup.networks(current),
+    });
+  const body = await readJsonObject(request);
+  exactKeys(
+    body,
+    ["step", "expectedRevision", "network", "claimId", "automatic"],
+    ["transactionId"],
+  );
+  if (
+    !["review", "register"].includes(String(body.step)) ||
+    typeof body.network !== "string" ||
+    typeof body.claimId !== "string" ||
+    body.claimId.length > 150 ||
+    typeof body.automatic !== "boolean"
+  )
+    fail(400, "invalid_request", "Invalid vault setup request");
+  const input = body as unknown as VaultSetupInput;
+  if (body.step === "register" && typeof body.transactionId === "string") {
+    const existing = current.manifest.escrow?.deployments.find(
+      (d) =>
+        d.network === input.network &&
+        d.deploymentTransaction === body.transactionId,
+    );
+    if (existing)
+      return json(200, {
+        status: "registered",
+        deployment: existing,
+        project: current.manifest,
+        revision: current.revision,
+      });
+  }
+  const expectedRevision = positiveInteger(
+    body.expectedRevision,
+    "expectedRevision",
+  );
+  if (expectedRevision !== current.revision && body.step === "review")
+    fail(
+      409,
+      "stale_revision",
+      "The project changed. Reload and review the current policy.",
+    );
+  if (current.manifest.escrow?.deployments.length)
+    fail(
+      409,
+      "vault_already_registered",
+      "This project already has a registered vault.",
+    );
+  if (body.step === "review")
+    return json(200, {
+      review: await deps.vaultSetup.review(current, actor, input),
+    });
+  if (
+    typeof body.transactionId !== "string" ||
+    !/^0x[0-9a-fA-F]{64}$/.test(body.transactionId)
+  )
+    fail(400, "invalid_request", "Enter the vault creation transaction hash.");
+  // A wallet send may outlive an owner edit. Verify its exact creation intent
+  // from immutable server history, while attaching only to compatible current policy.
+  let creation = current;
+  if (expectedRevision !== current.revision) {
+    const stored = await deps.persistence.getRevisionText(
+      projectId,
+      expectedRevision,
+    );
+    if (!stored)
+      fail(
+        409,
+        "stale_revision",
+        "The reviewed project revision is not available.",
+      );
+    const { manifest } = canonicalManifest(JSON.parse(stored.manifestText));
+    if (
+      manifest.id !== current.id ||
+      manifest.reward.kind !== current.manifest.reward.kind ||
+      manifest.reward.chain !== current.manifest.reward.chain ||
+      !sameValue(manifest.escrow, current.manifest.escrow) ||
+      !(
+        sameValue(manifest.rewardAsset, current.manifest.rewardAsset) ||
+        sameRewardAsset(manifest.rewardAsset, current.manifest.rewardAsset)
+      )
+    )
+      fail(
+        409,
+        "vault_policy_changed",
+        "The project asset or vault policy changed. Restore the reviewed policy before registering this creation transaction.",
+      );
+    creation = {
+      ...current,
+      revision: expectedRevision,
+      status: manifest.status,
+      manifest,
+      manifestSha256: stored.manifestSha256,
+    };
+  }
+  const deployment = await deps.vaultSetup.register(
+    creation,
+    actor,
+    input,
+    body.transactionId,
+  );
+  if (!deployment) return json(200, { status: "pending" });
+  const updated = await appendRevision(request, deps, {
+    current,
+    actor,
+    manifest: attachOrdinaryVault(current.manifest, deployment),
+    ownerParticipation: true,
+    reason:
+      "Owner registered a finalized vault verified against the reviewed factory and project policy.",
+  });
+  return json(200, {
+    status: "registered",
+    deployment,
+    project: updated.manifest,
+    revision: updated.revision,
+    ...(creation.manifest.reward.monthlyCapMinor !==
+    updated.manifest.reward.monthlyCapMinor
+      ? {
+          notice: `Creation used a monthly cap of ${creation.manifest.reward.monthlyCapDisplay}. The project now uses ${updated.manifest.reward.monthlyCapDisplay}. Use the automatic payment controls below to apply the new cap.`,
+        }
+      : {}),
+  });
+}
+
 /**
  * Publishes an owner's revision at once (PRD section 4). Presentation
  * changes publish as they are; a change to the skill inputs pauses an active
@@ -1115,6 +1268,7 @@ async function publishOwnerRevision(
     reason: `Owner update by @${actor.githubLogin}: ${summary}.${note ? ` ${note}` : ""}`,
     actor,
     applicationId: stored?.applicationId,
+    ownerParticipation: true,
   });
   const scanRequest =
     changes.executable.length > 0
@@ -1368,6 +1522,8 @@ async function appendRevision(
     reason: string;
     actor: GithubActor;
     applicationId?: string;
+    /** Recheck owner eligibility within the guarded enforcement snapshot. */
+    ownerParticipation?: true;
   },
 ): Promise<ProjectRecord> {
   const { current, actor } = input;
@@ -1377,6 +1533,8 @@ async function appendRevision(
   // guarded append below a conflict, so no write uses stale restrictions.
   const enforcementGeneration = await deps.persistence.enforcementGeneration();
   const enforcements = await deps.persistence.listEnforcements();
+  if (input.ownerParticipation)
+    assertMaintainerNotBanned(current.manifest, actor, enforcements);
   const restriction = projectRestriction(projectId, enforcements);
   // A new revision cannot lift a Quarantine or a Ban (PRD ADM-06).
   if (restriction.state !== "clear" && !enforcedManifest(manifest)) {
@@ -2180,6 +2338,7 @@ function isProjectRoute(parts: string[]): boolean {
   return (
     // Deeper /projects/:id/... paths belong to the trace API.
     (parts[0] === "projects" && parts.length <= 2) ||
+    parts[0] === "project-vaults" ||
     parts[0] === "project-github" ||
     parts[0] === "project-revisions" ||
     parts[0] === "project-session" ||
@@ -2202,6 +2361,7 @@ export async function handleProjectApi(
       (parts[0] === "admin" && index === 2) ||
       (parts[0] === "projects" && index === 1) ||
       (parts[0] === "project-setup" && index === 1) ||
+      (parts[0] === "project-vaults" && index === 1) ||
       (parts[0] === "project-applications" && index === 1 && parts.length === 3)
         ? ":id"
         : parts[0] === "project-github" &&
@@ -2271,6 +2431,9 @@ export async function handleProjectApi(
         return await createProject(request, deps);
       case "PUT projects/:id":
         return await publishOwnerRevision(request, deps, parts[1]);
+      case "GET project-vaults/:id":
+      case "POST project-vaults/:id":
+        return await ownerVault(request, deps, parts[1]);
       case "GET project-setup":
         return await listSetup(request, deps);
       case "POST project-setup/:id/check":
@@ -2313,7 +2476,9 @@ export async function handleProjectApi(
           ? error.code
           : "internal_error",
       message:
-        (status >= 500 && !(caught instanceof GithubLookupError)) ||
+        (status >= 500 &&
+          !(caught instanceof GithubLookupError) &&
+          error.code !== "vault_setup_unavailable") ||
         typeof error.message !== "string"
           ? "Internal error"
           : error.message,

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { AutomaticMonthlyPayment } from "./AutomaticMonthlyPayment";
 import { readBoundedJson } from "./lib/browser-json";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
+import type { VaultConnection } from "./lib/evm-vault-actions";
 import { CHAIN_NAMES, networkLabel } from "./lib/network-names";
 import {
   formatAssetAmount,
@@ -9,6 +11,7 @@ import {
   type VaultSnapshot,
 } from "./lib/payments/contracts";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { OwnerVaultSetup } from "./OwnerVaultSetup";
 import { formatDateTime } from "./Presentation";
 import { VaultActions } from "./VaultActions";
 
@@ -173,7 +176,16 @@ export function vaultSnapshotStale(
   return Date.now() - Date.parse(snapshot.observedAt) > staleAfterMs;
 }
 
-export function EscrowFunding({ project }: { project: ProjectDefinition }) {
+export function EscrowFunding({
+  project,
+  onRegistered,
+}: {
+  project: ProjectDefinition;
+  onRegistered: (project: ProjectDefinition) => void;
+}) {
+  const [registrationNotice, setRegistrationNotice] = useState("");
+  const [connectedWallet, setConnectedWallet] =
+    useState<VaultConnection | null>(null);
   const [revision, setRevision] = useState(0);
   const totals = useVaultTotals(project, revision);
   const deployed = totals.status !== "none";
@@ -190,22 +202,21 @@ export function EscrowFunding({ project }: { project: ProjectDefinition }) {
           ` Withdrawing unused funds costs ${withdrawalFee}%.`}
       </p>
       {!deployed ? (
-        <p>
-          This project has no vault yet. Deposits and payments are not possible
-          until a project revision records the owner&apos;s vault.
-        </p>
+        <OwnerVaultSetup
+          project={project}
+          onRegistered={(updated, wallet, notice) => {
+            onRegistered(updated);
+            setConnectedWallet(wallet);
+            setRegistrationNotice(notice ?? "");
+          }}
+        />
       ) : (
         <>
+          {registrationNotice && <p role="status">{registrationNotice}</p>}
           <p>
             Use the deposit action below to fund this project. Direct token
             transfers are not credited.
           </p>
-          {project.reward.paymentMode !== "enabled" ? (
-            <p role="note">
-              Payments are disabled for this project. No award is paid from the
-              vault until payments are enabled.
-            </p>
-          ) : null}
           {totals.status === "error" ? (
             <p role="alert">{totals.message}</p>
           ) : totals.status !== "ready" ? (
@@ -224,10 +235,21 @@ export function EscrowFunding({ project }: { project: ProjectDefinition }) {
               />
             ))
           )}
+          {project.reward.kind === "monthly-pool"
+            ? project.escrow?.deployments.map((deployment) => (
+                <AutomaticMonthlyPayment
+                  key={`monthly:${deployment.network}:${deployment.vault}`}
+                  project={project}
+                  deployment={deployment}
+                  onFinalized={() => setRevision((value) => value + 1)}
+                />
+              ))
+            : null}
           {project.escrow?.deployments.map((deployment) => (
             <VaultActions
               key={`${deployment.network}:${deployment.vault}`}
               deployment={deployment}
+              connectedWallet={connectedWallet ?? undefined}
               projectId={project.id}
               onFinalized={() => setRevision((value) => value + 1)}
             />

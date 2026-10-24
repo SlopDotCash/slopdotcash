@@ -58,7 +58,7 @@
     "test:contracts:evm": "bun contracts/evm/adapter.integration.ts",
     "test:security-payments": "bun backend/security/payments.integration.ts",
     "test:payments": "bun run test:security-payments && bun backend/payments/evm.integration.ts && bun workers/payments/recovery.integration.ts && bun workers/payments/reconcile.integration.ts && bun workers/payments/registry.integration.ts",
-    "test:escrow-policy": "bun test workers/payments/escrow-policy.test.ts workers/payments/reconcile.test.ts src/lib/funding-address.test.ts src/lib/project-schema.robinhood.test.ts backend/payments/migrations.test.ts workers/payment-executor/wallet-rotation.test.ts contracts/evm/scripts.test.ts src/lib/payments/contracts.test.ts src/lib/payments/monthly-allocation.test.ts backend/payments/monthly.test.ts",
+    "test:escrow-policy": "bun test workers/payments/escrow-policy.test.ts workers/payments/reconcile.test.ts src/lib/funding-address.test.ts src/lib/project-schema.robinhood.test.ts backend/payments/migrations.test.ts workers/payment-executor/wallet-rotation.test.ts contracts/evm/scripts.test.ts src/lib/payments/contracts.test.ts src/lib/payments/monthly-allocation.test.ts backend/payments/monthly.test.ts src/lib/monthly-commitment-actions.test.ts contracts/solana/monthly-commitment.test.ts",
     "build:contracts:solana": "bash contracts/solana/scripts/build-local.sh",
     "test:contracts:solana": "bash contracts/solana/scripts/test-e2e.sh",
     "escrow:acceptance": "bun scripts/escrow-acceptance.ts",

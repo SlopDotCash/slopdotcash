@@ -45,6 +45,7 @@ import {
 } from "../../../backend/projects/setup";
 import { assetTemplateSource } from "../../../backend/projects/skill-publication";
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
+import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
 import {
@@ -566,6 +567,17 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     );
   const projectDependencies: ProjectApiDependencies = {
     persistence: projectPersistence,
+    vaultSetup: ownerVaultSetupService({
+      db: context.env.SLOP_DB,
+      projects: () => projectPersistence.listProjects(),
+      networks: () => parsePaymentNetworks(context.env.PAYMENT_NETWORKS),
+      rpcUrl: (network) => {
+        const value = JSON.parse(context.env.PAYMENT_RPC_URLS ?? "{}")[network];
+        if (typeof value !== "string" || new URL(value).protocol !== "https:")
+          throw new Error("Vault setup RPC unavailable");
+        return value;
+      },
+    }),
     vettingClearance: (
       projectId,
       manifest,

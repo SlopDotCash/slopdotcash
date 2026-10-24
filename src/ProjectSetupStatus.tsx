@@ -248,32 +248,9 @@ export function ProjectSetupStatusPanel({
                           .network as keyof typeof REWARD_ASSET_NETWORKS
                       ]?.name ?? setup.funding.network}
                     </span>
-                    <span className="setup-funding-badges">
-                      <StatusBadge
-                        label={
-                          setup.funding.state === "committed"
-                            ? "Funded"
-                            : "Deposit needed"
-                        }
-                        tone={
-                          setup.funding.state === "committed"
-                            ? "ready"
-                            : "pending"
-                        }
-                      />
-                      <StatusBadge
-                        label={
-                          setup.funding.payments === "enabled"
-                            ? "Payments on"
-                            : "Payments off"
-                        }
-                        tone={
-                          setup.funding.payments === "enabled"
-                            ? "ready"
-                            : "pending"
-                        }
-                      />
-                    </span>
+                    <Link href={`/projects/${setup.slug}/funding`}>
+                      View vault funds and automatic payment
+                    </Link>
                   </>
                 )}
               </dd>

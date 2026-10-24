@@ -195,9 +195,17 @@ separate donor-class funds.
 
 ## Bounded monthly commitment
 
-The owner calls `set_monthly_commitment(cap, enabled)` on an ordinary project.
-It is off with a zero cap after `initialize`, "on" needs a positive cap, and
-the owner can turn it off at any time (the opt-out). A period is a calendar UTC
+For ordinary project creation, `scripts/owner-plan.mjs` requires `monthlyCap`
+in asset base units. It defaults `automaticMonthly` to true; false records an
+owner opt-out. The unsigned transaction contains `initialize` followed by
+`set_monthly_commitment` with the same owner signer, so both succeed or neither
+does. This uses the current program and needs no program upgrade. Private
+bounty initialization does not accept monthly settings.
+
+The owner can later call `set_monthly_commitment(cap, enabled)` on an ordinary
+project. "On" needs a positive cap; turning it off preserves existing awards.
+Legacy callers that send `initialize` alone retain their earlier off/zero
+initial state. A period is a calendar UTC
 month written as `YYYYMM`. Its window opens 72 hours after the month ends, at
 00:00 UTC on the 4th, and closes when the next month's window opens, so only one
 period is open at a time.

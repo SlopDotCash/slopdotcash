@@ -9,7 +9,10 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { hasParticipationBan } from "../backend/projects/account-bans";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
-import type { RepositoryControl } from "../backend/projects/contracts";
+import type {
+  ProjectEnforcement,
+  RepositoryControl,
+} from "../backend/projects/contracts";
 import {
   handleProjectApi,
   type ProjectApiDependencies,
@@ -28,6 +31,7 @@ import {
   type TraceApiDependencies,
 } from "../backend/trace/handler";
 import { vettedContentSha256 } from "../backend/vetting/persistence";
+import type { EscrowDeployment } from "../src/lib/escrow-policy.mjs";
 import type { RepositoryAccess } from "../src/lib/project-contracts";
 import { classifyRevisionChanges } from "../src/lib/project-revision-changes";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
@@ -43,6 +47,27 @@ const ADMIN = "900000001";
 const OWNER = "900000002";
 const OTHER = "900000003";
 const NOW = "2026-10-19T12:00:00.000Z";
+
+const TEST_VAULT: EscrowDeployment = {
+  network: "ethereum" as const,
+  vault: "0x1000000000000000000000000000000000000001",
+  programId: null,
+  upgradeAuthority: null,
+  projectPda: null,
+  networkDomain: null,
+  asset: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+  owner: "0x2000000000000000000000000000000000000002",
+  identityAuthority: "0x3000000000000000000000000000000000000003",
+  feeRecipient: "0x4000000000000000000000000000000000000004",
+  deploymentTransaction: `0x${"ab".repeat(32)}`,
+  sourceCommit: "0123456789abcdef0123456789abcdef01234567",
+  codeSha256: "ab".repeat(32),
+  bindingDelaySeconds: "60",
+  rotationDelaySeconds: null,
+  factory: "0x5000000000000000000000000000000000000005",
+  factoryCodeSha256: "cd".repeat(32),
+  registrar: "0x6000000000000000000000000000000000000006",
+};
 
 const CLEARED: VettingClearance = {
   state: "cleared",
@@ -468,28 +493,7 @@ test("an owner revision cannot record a vault; a reviewed admin revision can", a
       feeBasisPoints: 200,
       withdrawalFeeBasisPoints: 200,
       feeMode: "deduct-from-gross",
-      deployments: [
-        {
-          network: "ethereum" as const,
-          vault: "0x1000000000000000000000000000000000000001",
-          programId: null,
-          upgradeAuthority: null,
-          projectPda: null,
-          networkDomain: null,
-          asset: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-          owner: "0x2000000000000000000000000000000000000002",
-          identityAuthority: "0x3000000000000000000000000000000000000003",
-          feeRecipient: "0x4000000000000000000000000000000000000004",
-          deploymentTransaction: `0x${"ab".repeat(32)}`,
-          sourceCommit: "0123456789abcdef0123456789abcdef01234567",
-          codeSha256: "ab".repeat(32),
-          bindingDelaySeconds: "60",
-          rotationDelaySeconds: null,
-          factory: "0x5000000000000000000000000000000000000005",
-          factoryCodeSha256: "cd".repeat(32),
-          registrar: "0x6000000000000000000000000000000000000006",
-        },
-      ],
+      deployments: [TEST_VAULT],
     },
   };
   const owner = await call("PUT", "projects/open-registry", OWNER, {
@@ -500,7 +504,7 @@ test("an owner revision cannot record a vault; a reviewed admin revision can", a
   expect(owner.body).toEqual({
     error: "financial_change_restricted",
     message:
-      "Vault records do not change through owner self-service; a reviewed admin revision records a verified vault",
+      "Use vault setup to register a verified owner vault; a manifest edit cannot change vault records",
   });
   expect((await persistence.getProject("open-registry"))?.manifest.escrow).toBe(
     undefined,
@@ -1148,3 +1152,149 @@ test("account-reinstatement upgrade preserves prior releases and separates futur
     sqlite.close();
   }
 });
+
+test.each(["vault verification", "owner update"])(
+  "a ban issued during %s blocks the owner revision",
+  async (flow) => {
+    const t = registry();
+    await t.create("vault-target", "example/vault-target");
+    const banSource = applicationManifest(
+      "ban-source",
+      "example/ban-source",
+    ) as unknown as ProjectDefinition;
+    await t.call("POST", "projects", OTHER, {
+      manifest: {
+        ...banSource,
+        authority: {
+          ...banSource.authority,
+          repositoryId: "987654322",
+          repositoryNodeId: "R_different",
+        },
+      },
+    });
+    const target = await t.persistence.getProject("vault-target");
+    const source = await t.persistence.getProject("ban-source");
+    if (!target || !source) throw new Error("Projects required");
+    expect(
+      (
+        await t.call("PUT", "admin/projects/vault-target/manifest", ADMIN, {
+          expectedRevision: target.revision,
+          reason: "Set the approved monthly vault policy",
+          manifest: {
+            ...target.manifest,
+            reward: { ...target.manifest.reward, feeBasisPoints: 200 },
+            escrow: {
+              schemaVersion: "1",
+              effectiveCycle: "2026-11",
+              chain: "ethereum",
+              feeBasisPoints: 200,
+              withdrawalFeeBasisPoints: 200,
+              feeMode: "deduct-from-gross",
+              deployments: [],
+            },
+          },
+        })
+      ).status,
+    ).toBe(200);
+    let start!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const verified = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    t.deps.vaultSetup = {
+      networks: async () => ["ethereum"],
+      review: async () => {
+        throw new Error("Not used");
+      },
+      register: async () => {
+        start();
+        await verified;
+        return TEST_VAULT;
+      },
+    };
+    const prepared = await t.persistence.getProject(target.id);
+    if (!prepared) throw new Error("Project required");
+    if (flow === "owner update")
+      t.deps.repositoryAccess = async () => {
+        start();
+        await verified;
+        return t.state.access;
+      };
+    const registration =
+      flow === "owner update"
+        ? t.call("PUT", `projects/${target.id}`, OWNER, {
+            manifest: {
+              ...prepared.manifest,
+              headline: "A useful updated project summary.",
+            },
+            expectedRevision: prepared.revision,
+          })
+        : t.call("POST", "project-vaults/vault-target", OWNER, {
+            step: "register",
+            expectedRevision: 2,
+            network: "ethereum",
+            claimId: "verified-owner-wallet",
+            automatic: true,
+            transactionId: TEST_VAULT.deploymentTransaction,
+          });
+    await started;
+    const scan: ProjectEnforcement = {
+      id: "enf_vault_race_scan",
+      projectId: source.id,
+      sequence: 1,
+      action: "ban",
+      stateAfter: "banned",
+      appealAfter: "none",
+      reason: "Confirmed malicious code",
+      evidenceReference: "private-fixture",
+      repositoryGithubId: "987654322",
+      repositoryKeys: ["example/ban-source"],
+      actor: null,
+      actorRole: "vetting-service",
+      decisionSource: "standing-rule",
+      systemIssuer: {
+        kind: "vetting-service",
+        keySha256: "a".repeat(64),
+        assessmentId: "vet_fixture",
+        policyVersion: "fixture",
+        rule: "confirmed-malicious",
+      },
+      beforeRevision: source.revision,
+      beforeManifestSha256: source.manifestSha256,
+      afterRevision: null,
+      afterManifestSha256: null,
+      result: "revision_pending",
+      createdAt: NOW,
+    };
+    expect(await t.persistence.appendEnforcement(scan, null, [])).toBe(
+      "recorded",
+    );
+    expect(
+      await t.persistence.appendEnforcement(
+        {
+          ...scan,
+          id: "enf_vault_race_moderator",
+          sequence: 2,
+          actor: { githubId: ADMIN, githubLogin: "admin" },
+          actorRole: "project-moderator",
+          decisionSource: "admin-panel",
+          systemIssuer: undefined,
+          maintainerBans: [{ githubId: OWNER, githubLogin: "owner" }],
+        },
+        null,
+        [],
+      ),
+    ).toBe("recorded");
+    finish();
+    const result = await registration;
+    expect(result.status).toBe(403);
+    expect(result.body.error).toBe("maintainer_banned");
+    expect((await t.persistence.getProject(target.id))?.revision).toBe(2);
+    expect(
+      (await t.persistence.getProject(target.id))?.manifest.escrow?.deployments,
+    ).toEqual([]);
+  },
+);
