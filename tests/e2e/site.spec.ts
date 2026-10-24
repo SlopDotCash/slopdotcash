@@ -1000,6 +1000,8 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
               nextSequence: 1,
               revisionPending: false,
               moderation: "unconfigured",
+              decisionRequired: false,
+              bannedMaintainers: [],
               records: [],
             },
           },
