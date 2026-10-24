@@ -271,3 +271,83 @@ test("global standings still accept project, sort and contributor filters", asyn
     ).violations,
   ).toEqual([]);
 });
+
+test("compact project standings isolate direct-transfer reads and expose retry when sorted by Money received", async ({
+  page,
+}, info) => {
+  let slopAvailable = false;
+  const requestedProjects: string[] = [];
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await fixtures(page);
+  await page.route(
+    "**/api/v1/payments/projects/*/direct-transfers",
+    (route) => {
+      const projectId = new URL(route.request().url()).pathname.split("/")[5];
+      requestedProjects.push(projectId);
+      if (projectId !== "slopdotcash" || !slopAvailable)
+        return route.fulfill({
+          status: 503,
+          body: "Payment source unavailable",
+        });
+      return route.fulfill({
+        json: {
+          totalMicro: contributors.slopdotcash.amount,
+          transfers: [
+            {
+              projectId: "slopdotcash",
+              githubUserId: contributors.slopdotcash.id,
+              login: contributors.slopdotcash.login,
+              amountMicro: contributors.slopdotcash.amount,
+              contributionMonth: "2026-10",
+              network: "base-sepolia",
+              chain: "base",
+              recipient: "synthetic-recipient",
+              transactionId: "synthetic-slopdotcash",
+              blockTime: instant,
+            },
+          ],
+        },
+      });
+    },
+  );
+  await page.goto(`${site}/projects/slopdotcash?sort=money&period=lifetime`);
+  const standings = page.getByRole("region", {
+    name: "Contributor standings",
+    exact: true,
+  });
+  await expect(
+    standings.getByText("Payment records unavailable."),
+  ).toBeVisible();
+  const retry = standings.getByRole("button", {
+    name: "Retry payment records",
+    exact: true,
+  });
+  await expect(retry).toBeVisible();
+  await expect(standings.locator("tbody tr")).toHaveCount(0);
+  expect([...new Set(requestedProjects)]).toEqual(["slopdotcash"]);
+  await standings.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: info.outputPath("project-standings-payments-unavailable.png"),
+  });
+  slopAvailable = true;
+  requestedProjects.length = 0;
+  await retry.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    standings.getByRole("row").filter({ hasText: "synthetic-slop" }),
+  ).toContainText("$222.22");
+  await expect(retry).toHaveCount(0);
+  expect([...new Set(requestedProjects)]).toEqual(["slopdotcash"]);
+  expect(errors).toEqual([]);
+  await page.screenshot({
+    path: info.outputPath("project-standings-payments-recovered.png"),
+  });
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+});
