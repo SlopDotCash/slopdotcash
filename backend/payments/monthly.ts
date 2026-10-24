@@ -948,6 +948,13 @@ export function monthlyOwnerService(deps: {
           // The proposal's own manifest revision fixes the month's exclusions.
           payoutExcludedGithubUserIds(base.manifest, period),
         );
+        if (
+          base.manifest.reward.chain === "solana" &&
+          BigInt(change.grossBase) > (1n << 64n) - 1n
+        )
+          throw new MonthlyAllocationError(
+            "The amount exceeds the Solana token range.",
+          );
       } catch (error) {
         if (error instanceof MonthlyAllocationError)
           throw new MonthlyPaymentError(

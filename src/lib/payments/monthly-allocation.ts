@@ -5,11 +5,10 @@
  * the only input to award reservation. No public reason or adjustment history
  * exists. Amounts are integer base units of the project asset.
  */
+import { isBaseUnits } from "../escrow-policy.mjs";
 import { sha256Hex } from "../sha256";
 
-const UINT64_MAX = (1n << 64n) - 1n;
 const PERIOD = /^\d{4}-(?:0[1-9]|1[0-2])$/;
-const BASE_UNITS = /^(0|[1-9][0-9]{0,19})$/;
 const ACTOR = /^[1-9][0-9]{0,19}$/;
 
 export interface MonthlySchedule {
@@ -142,13 +141,11 @@ export function assertAllocationChange(
   change: { githubUserId: string; grossBase: string; actorId: string },
   excludedGithubUserIds: ReadonlySet<string> = new Set(),
 ): void {
-  if (!ACTOR.test(change.githubUserId) || !BASE_UNITS.test(change.grossBase))
+  if (!ACTOR.test(change.githubUserId) || !isBaseUnits(change.grossBase))
     throw new MonthlyAllocationError(
       "Enter a whole number of token base units.",
     );
   const amount = BigInt(change.grossBase);
-  if (amount > UINT64_MAX)
-    throw new MonthlyAllocationError("The amount exceeds the supported range.");
   if (change.githubUserId === change.actorId)
     throw new MonthlyAllocationError("You cannot change your own allocation.");
   if (amount > 0n && excludedGithubUserIds.has(change.githubUserId))

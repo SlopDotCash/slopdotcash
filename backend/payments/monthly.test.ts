@@ -95,10 +95,16 @@ let clock = afterCutoff;
 
 async function setupFixture(
   selected: Record<string, string | null> = deployment,
+  unit = 1n,
+  applyAmountRange = true,
 ) {
   ({ db, sqlite } = sqliteD1(
     readdirSync("migrations")
       .filter((name) => name.endsWith(".sql"))
+      .filter(
+        (name) =>
+          applyAmountRange || name !== "0081_monthly_asset_amount_range.sql",
+      )
       .sort(),
   ));
   const manifest = JSON.parse(
@@ -107,6 +113,21 @@ async function setupFixture(
   manifest.reward.feeBasisPoints = 200;
   const chain = selected.network?.startsWith("solana") ? "solana" : "base";
   manifest.reward.chain = chain;
+  if (unit > 1n) {
+    manifest.reward.currency = "TOKEN";
+    manifest.reward.monthlyCapMinor = (1000n * unit).toString();
+    manifest.reward.monthlyCapDisplay = "1,000 TOKEN";
+    manifest.rewardAsset = {
+      network: chain,
+      kind: "token",
+      address: selected.asset,
+      symbol: "TOKEN",
+      decimals: 18,
+      chainId: chain === "solana" ? null : "8453",
+      cluster: chain === "solana" ? "mainnet-beta" : null,
+      verifiedAt: "2026-10-01T00:00:00.000Z",
+    };
+  }
   manifest.escrow = {
     schemaVersion: "1",
     effectiveCycle: "2026-11",
@@ -152,18 +173,18 @@ async function setupFixture(
             manifest: text,
             manifestSha256: digest,
             sourceSnapshotSha256: "5".repeat(64),
-            capBase: "1000",
+            capBase: (1000n * unit).toString(),
             rows: [
               {
                 githubUserId: A,
                 login: "first",
-                grossBase: "600",
+                grossBase: (600n * unit).toString(),
                 sourceDigest: escrowAwardOrigin(project.id, "2026-11", A),
               },
               {
                 githubUserId: B,
                 login: "second",
-                grossBase: "400",
+                grossBase: (400n * unit).toString(),
                 sourceDigest: escrowAwardOrigin(project.id, "2026-11", B),
               },
             ],
@@ -202,13 +223,17 @@ const owner = () =>
     now: () => clock,
   });
 const actor = { githubId: OWNER, githubLogin: "owner" };
-function vault(free: string, observedAt = afterCutoff.toISOString()) {
+function vault(
+  free: string,
+  observedAt = afterCutoff.toISOString(),
+  decimals = 6,
+) {
   const escrow = project.manifest.escrow;
   const selected = escrow?.deployments[0];
   if (!escrow || !selected) throw new Error("Missing fixture deployment");
   sqlite
     .prepare(
-      "INSERT INTO vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES(?,?,?,?,?,6,'5000','0','0','0','0','0',?,'0','0','0','0','100',?,?) ON CONFLICT(project_id,network,vault) DO UPDATE SET free_balance=excluded.free_balance,observed_at=excluded.observed_at,block_number=CAST(CAST(block_number AS INTEGER)+1 AS TEXT)",
+      "INSERT INTO vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES(?,?,?,?,?,?,?,'0','0','0','0','0',?,'0','0','0','0','100',?,?) ON CONFLICT(project_id,network,vault) DO UPDATE SET free_balance=excluded.free_balance,observed_at=excluded.observed_at,block_number=CAST(CAST(block_number AS INTEGER)+1 AS TEXT)",
     )
     .run(
       project.id,
@@ -216,6 +241,8 @@ function vault(free: string, observedAt = afterCutoff.toISOString()) {
       escrow.chain,
       selected.vault,
       selected.asset,
+      decimals,
+      BigInt(free) > 5000n ? free : "5000",
       free,
       observedAt,
       observedAt,
@@ -233,6 +260,169 @@ async function rejects(promise: Promise<unknown>, code: string) {
 }
 
 describe("monthly coordinator", () => {
+  test("Solana still refuses an owner allocation above its token range before storing it", async () => {
+    sqlite.close();
+    await setupFixture(solanaDeployment, 10n ** 18n);
+    clock = beforeCutoff;
+    await expect(
+      owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: (300n * 10n ** 18n).toString(),
+        expectedSequence: 0,
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_allocation",
+      message: "The amount exceeds the Solana token range.",
+    });
+    expect(count("monthly_allocation_changes")).toBe(0);
+  });
+
+  test("the amount-range migration preserves funded months, exclusions and authorization history", async () => {
+    sqlite.close();
+    await setupFixture(deployment, 1n, false);
+    clock = beforeCutoff;
+    await owner().changeAllocation(project.id, "2026-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+    });
+    seedParticipationBan(
+      sqlite,
+      { githubId: B, githubLogin: "second" },
+      actor,
+      beforeCutoff.toISOString(),
+    );
+    vault("600");
+    await coordinate(afterCutoff);
+    expect(count("monthly_payment_obligations")).toBe(1);
+    expect(count("monthly_payment_exclusions")).toBe(1);
+    sqlite
+      .prepare(
+        "INSERT INTO monthly_payment_authorizations SELECT project_id,period,network,snapshot_sha256,?,? FROM monthly_payment_runs",
+      )
+      .run('{"fixture":"migration-preservation"}', afterCutoff.toISOString());
+    sqlite
+      .prepare(
+        "INSERT INTO monthly_payment_execution SELECT project_id,period,network,?,0 FROM monthly_payment_authorizations",
+      )
+      .run(afterCutoff.toISOString());
+    const tables = [
+      "monthly_reward_bases",
+      "monthly_reward_base_rows",
+      "monthly_allocation_changes",
+      "monthly_payment_runs",
+      "monthly_payment_obligations",
+      "monthly_payment_exclusions",
+      "monthly_payment_authorizations",
+      "monthly_payment_execution",
+    ];
+    const records = () =>
+      tables.map((table) =>
+        sqlite.prepare(`SELECT * FROM ${table} ORDER BY 1,2,3`).all(),
+      );
+    const before = records();
+    sqlite.exec("PRAGMA foreign_keys=ON; BEGIN");
+    try {
+      sqlite.exec(
+        readFileSync("migrations/0081_monthly_asset_amount_range.sql", "utf8"),
+      );
+      expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      sqlite.exec("COMMIT");
+    } catch (error) {
+      sqlite.exec("ROLLBACK");
+      throw error;
+    }
+    expect(records()).toEqual(before);
+    expect(sqlite.prepare("PRAGMA foreign_keys").get()).toEqual({
+      foreign_keys: 1,
+    });
+    expect(() =>
+      sqlite.exec("UPDATE monthly_payment_runs SET snapshot='{}'"),
+    ).toThrow("frozen");
+    expect(() =>
+      sqlite.exec("DELETE FROM monthly_payment_obligations"),
+    ).toThrow("permanent");
+    expect((await coordinate(afterCutoff)).created).toEqual([]);
+  });
+
+  test("an 18-decimal token month keeps exact amounts through an owner edit, freeze and attestation", async () => {
+    sqlite.close();
+    const unit = 10n ** 18n;
+    await setupFixture(
+      { ...deployment, asset: "0x7000000000000000000000000000000000000007" },
+      unit,
+    );
+    clock = beforeCutoff;
+    const changed = await owner().changeAllocation(
+      project.id,
+      "2026-11",
+      actor,
+      {
+        githubUserId: B,
+        grossBase: (300n * unit).toString(),
+        expectedSequence: 0,
+      },
+    );
+    expect(changed.proposal?.allocations.map((row) => row.grossBase)).toEqual([
+      (600n * unit).toString(),
+      (300n * unit).toString(),
+    ]);
+    await rejects(
+      owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: (401n * unit).toString(),
+        expectedSequence: 1,
+      }),
+      "invalid_allocation",
+    );
+    vault((900n * unit).toString(), afterCutoff.toISOString(), 18);
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
+    expect((await coordinate(afterCutoff)).created).toEqual([]);
+    expect(count("monthly_payment_obligations")).toBe(2);
+    if (!schedule) throw new Error("Fixture schedule missing");
+    const { digest } = sqlite
+      .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
+      .get() as { digest: string };
+    const plan = await prepareMonthlyAttestation(
+      {
+        db,
+        ...projects(),
+        networks: [deployment.network],
+        schedule,
+        now: afterCutoff,
+      },
+      {
+        projectId: project.id,
+        period: "2026-11",
+        network: "base-sepolia",
+        snapshotSha256: digest,
+      },
+    );
+    expect(plan.totalGrossBase).toBe((900n * unit).toString());
+    expect(plan.entries.map((row) => row.grossMicro)).toEqual([
+      (600n * unit).toString(),
+      (300n * unit).toString(),
+    ]);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT gross_base,fee_base FROM monthly_payment_obligations ORDER BY github_user_id",
+        )
+        .all(),
+    ).toEqual([
+      {
+        gross_base: (600n * unit).toString(),
+        fee_base: (12n * unit).toString(),
+      },
+      {
+        gross_base: (300n * unit).toString(),
+        fee_base: (6n * unit).toString(),
+      },
+    ]);
+  });
+
   for (const action of ["allocation", "setting", "finalize"] as const) {
     for (const racing of [false, true]) {
       test(`a ${racing ? "concurrent" : "current"} owner ban refuses monthly ${action}`, async () => {
