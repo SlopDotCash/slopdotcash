@@ -1065,3 +1065,24 @@ for (const category of ["spam", "duplicate"] as const)
       expect(run.labels).not.toContain("slopbot: moderator");
     });
   });
+
+test("a scam notice write failure is recovered after GitHub has closed the item", async () => {
+  await closedItem(async (run) => {
+    run.model("scam", 0.97);
+    run.sql(`CREATE TEMP TRIGGER fail_scam_notice BEFORE INSERT ON notifications
+      WHEN NEW.kind = 'slopbot_scam_review'
+      BEGIN SELECT RAISE(FAIL, 'simulated notice write failure'); END`);
+    await expect(run.review()).rejects.toThrow(
+      "simulated notice write failure",
+    );
+    expect(run.sql(SCAM_NOTICES)).toHaveLength(0);
+    expect(run.labels).toContain("slopbot: moderator");
+    const githubWrites = [...run.writes];
+    run.sql("DROP TRIGGER fail_scam_notice");
+    await run.review();
+    expect(run.sql(SCAM_NOTICES)).toHaveLength(1);
+    await run.review();
+    expect(run.sql(SCAM_NOTICES)).toHaveLength(1);
+    expect(run.writes).toEqual(githubWrites);
+  });
+});

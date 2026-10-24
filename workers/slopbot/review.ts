@@ -803,6 +803,30 @@ async function upsertComment(
   );
 }
 
+async function notifyScamReviewForPenalty(
+  env: ReviewEnv,
+  job: Extract<Job, { kind: "review" }>,
+  issue: Context["issue"],
+  penalty: Penalty | null,
+): Promise<void> {
+  if (penalty?.moderator_review !== 1) return;
+  const at = new Date().toISOString();
+  const notices = [...moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS)].map(
+    (recipient) =>
+      notifySlopbotScamReview(env.SLOPBOT_DB, {
+        itemNodeId: issue.node_id,
+        authorLogin: issue.user.login,
+        owner: job.owner,
+        repo: job.repo,
+        itemKind: job.itemKind,
+        number: job.number,
+        recipient,
+        at,
+      }),
+  );
+  if (notices.length > 0) await env.SLOPBOT_DB.batch(notices);
+}
+
 export async function reviewItem(
   env: ReviewEnv,
   job: Extract<Job, { kind: "review" }>,
@@ -820,6 +844,16 @@ export async function reviewItem(
   const context = await loadContext(env, job, registration);
   if (context === null) return "item or repository not readable";
   const { issue, pull, repo, config } = context;
+  // GitHub may already be closed when a prior notice write failed. Recover
+  // from the committed active penalty before the completed/closed-item exits.
+  // The notice's event key makes both ordinary retries and replays idempotent.
+  if (issue.state === "closed")
+    await notifyScamReviewForPenalty(
+      env,
+      job,
+      issue,
+      await activePenalty(db, issue.node_id),
+    );
   const reviewKey = await sha256Hex(
     [
       issue.node_id,
@@ -1059,9 +1093,11 @@ async function runReview(
             (await stillMayClose(env, job, context, verdict, false))
           ) {
             await db
-              .prepare(`INSERT OR IGNORE INTO slopbot_quality_shadow
+              .prepare(
+                `INSERT OR IGNORE INTO slopbot_quality_shadow
               (review_key, repository_id, item_node_id, revision, policy_digest, profile_sha256, verifier_key, defect_id, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              )
               .bind(
                 reviewKey,
                 job.repositoryId,
@@ -1321,26 +1357,6 @@ async function runReview(
           closedAt: new Date(),
         })
       : null;
-    // D4: the same malicious result asks each configured moderator, once, to
-    // review the author's account in the Slop Inbox.
-    if (penalty?.moderator_review === 1) {
-      const at = new Date().toISOString();
-      const moderators = [
-        ...moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
-      ].map((recipient) =>
-        notifySlopbotScamReview(db, {
-          itemNodeId: issue.node_id,
-          authorLogin: issue.user.login,
-          owner: job.owner,
-          repo: job.repo,
-          itemKind: job.itemKind,
-          number: job.number,
-          recipient,
-          at,
-        }),
-      );
-      if (moderators.length > 0) await db.batch(moderators);
-    }
     await upsertComment(
       env,
       job,
@@ -1359,6 +1375,7 @@ async function runReview(
     // The account review for a malicious result (D7) is visible to moderators.
     if (penalty?.moderator_review === 1)
       await addLabels(env, job, context.github, [MODERATOR_LABEL]);
+    await notifyScamReviewForPenalty(env, job, issue, penalty);
   }
   await store.finishReview(db, reviewKey, claimToken, "completed", {
     verdict,
@@ -1396,8 +1413,10 @@ export async function qualityQualified(
     env.SLOPBOT_QUALITY_PROFILE_SHA256 !== proof.profile
   )
     return false;
-  const shadow = await env.SLOPBOT_DB.prepare(`SELECT MIN(created_at) AS started
-    FROM slopbot_quality_shadow WHERE repository_id = ? AND profile_sha256 = ? AND verifier_key = ?`)
+  const shadow = await env.SLOPBOT_DB.prepare(
+    `SELECT MIN(created_at) AS started
+    FROM slopbot_quality_shadow WHERE repository_id = ? AND profile_sha256 = ? AND verifier_key = ?`,
+  )
     .bind(job.repositoryId, proof.profile, env.SLOPBOT_QUALITY_VERIFIER_KEY)
     .first<{ started: string | null }>();
   if (
