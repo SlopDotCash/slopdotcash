@@ -390,12 +390,13 @@ for (const staleMembership of [false, true]) {
         expect(walletRequests).toEqual([]);
         return;
       }
+      // A historical welcome award is discontinued and never counted.
       await expect(
         page
           .getByText("total points", { exact: true })
           .locator("..")
           .locator("strong"),
-      ).toHaveText("5");
+      ).toHaveText("0");
       await expect(
         page.getByRole("heading", { name: "Past cycles" }),
       ).toHaveCount(0);
@@ -498,12 +499,13 @@ for (const scenario of [
             "Closed cycles and ledger events outside those cycles",
           ),
         ).toHaveCount(0);
+        // A historical welcome award is discontinued and never counted.
         await expect(
           page
             .getByText("total points", { exact: true })
             .locator("..")
             .locator("strong"),
-        ).toHaveText("5");
+        ).toHaveText("0");
         expect(walletRequests).toEqual([
           "/api/v1/wallet-claims/actors/2/current",
         ]);

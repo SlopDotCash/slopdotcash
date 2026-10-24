@@ -71,6 +71,7 @@ interface Membership {
   actor: { id: string; login: string };
   joinedAt: string;
   public: boolean;
+  /** Discontinued participation award history (D2); never counted. */
   welcome: number;
   socialPoints?: number;
 }
@@ -159,7 +160,7 @@ function member(value: unknown): Membership {
     !m ||
     typeof m.actor?.id !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(m.actor.login) ||
-    m.welcome !== 5 ||
+    ![0, 5].includes(m.welcome) ||
     (m.socialPoints !== undefined && ![0, 10].includes(m.socialPoints)) ||
     typeof m.public !== "boolean" ||
     !Number.isFinite(Date.parse(m.joinedAt))
@@ -293,9 +294,7 @@ export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
   }, [open]);
   const total =
     state.status === "ready" && me
-      ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0) +
-        me.welcome +
-        (me.socialPoints ?? 0)
+      ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0)
       : null;
   const signedIn = me !== null;
   useEffect(() => {
@@ -634,11 +633,7 @@ export function ProfilePoints({
             <div>
               <strong>
                 {state.status === "ready" && (m || identity || recorded)
-                  ? (
-                      (m?.total ?? 0) +
-                      (identity?.welcome ?? 0) +
-                      (identity?.socialPoints ?? 0)
-                    ).toLocaleString()
+                  ? (m?.total ?? 0).toLocaleString()
                   : state.status === "loading"
                     ? "Loading…"
                     : "Unavailable"}
@@ -725,7 +720,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       setMessage(
         reopen
           ? "Your account is open again. Connections and activity email stay off until you turn them on."
-          : "You’re signed in. Your welcome points are recorded.",
+          : "You’re signed in.",
       );
     } catch (e) {
       if (c.signal.aborted) return;
@@ -1108,18 +1103,15 @@ function AccountSessions() {
   );
 }
 
-/** Categories from protocol/points-v1.md: activity, points, earned standings. */
-const POINT_CATEGORIES: readonly (readonly [string, string, boolean])[] = [
+/** Categories from protocol/points-v1.md: activity and points. */
+const POINT_CATEGORIES: readonly (readonly [string, string])[] = [
   [
     "Accepted work: micro, small, medium, large, XL, exceptional",
     "10 · 30 · 90 · 240 · 450 · 750",
-    true,
   ],
-  ["Reviews: triage, standard, deep, specialist", "10 · 30 · 90 · 240", true],
-  ["Historical merged PR before scoring records", "10 each", true],
-  ["Finalized payout cycle", "25 per project and month", true],
-  ["Join with GitHub", "5 once", false],
-  ["First X connection", "10 once", false],
+  ["Reviews: triage, standard, deep, specialist", "10 · 30 · 90 · 240"],
+  ["Historical merged PR before scoring records", "10 each"],
+  ["Finalized payout cycle", "25 per project and month"],
 ];
 export function PointsPage() {
   return (
@@ -1142,11 +1134,10 @@ export function PointsPage() {
           ))}
         </ul>
         <p className="points-meta">
-          Joining and connection bonuses do not count in earned-point standings.
-          Only accepted-work points count toward payouts; welcome, social, and
-          payment-recognition bonuses do not. Money received records verified
-          payments separately. Points persist across months, and corrections
-          stay in the history.
+          Joining and connecting accounts earn no points. Only accepted-work
+          points count toward payouts; payout-recognition points do not. Money
+          received records verified payments separately. Points persist across
+          months, and corrections stay in the history.
         </p>
         <a href="/protocol/points-v1.md">Read the points rules</a> ·{" "}
         <a href="/#projects">Find a project</a> ·{" "}
@@ -1969,7 +1960,7 @@ function validPerson(p: Person) {
   if (
     !/^[A-Za-z0-9_=-]{4,256}$/.test(p.actor?.id) ||
     !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(p.actor.login) ||
-    p.welcome !== 5 ||
+    ![0, 5].includes(p.welcome) ||
     ![0, 10].includes(p.socialPoints)
   )
     throw new Error("Invalid community member");
@@ -2117,9 +2108,6 @@ function People() {
                     project.authority.state === "verified" &&
                     project.steward.github.nodeId === p.id,
                 );
-                const participation = p.member
-                  ? p.member.welcome + p.member.socialPoints
-                  : 0;
                 return (
                   <li key={p.id}>
                     <a href={`/contributors/${encodeURIComponent(p.login)}`}>
@@ -2135,7 +2123,7 @@ function People() {
                     <span>
                       {earned === null
                         ? "Points unavailable"
-                        : `${(earned + participation).toLocaleString()} pts`}
+                        : `${earned.toLocaleString()} pts`}
                     </span>
                     {p.member ? <small>Public member</small> : null}
                     {steward.length ? (

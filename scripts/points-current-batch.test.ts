@@ -132,7 +132,7 @@ test("member lookups fail closed when a stale public login collides with a priva
       actor: { id: "MDQ6VXNlcjE=", login: "alice" },
       joinedAt: "2026-10-01T00:00:00.000Z",
       public: true,
-      welcome: 5,
+      welcome: 0,
       socialPoints: 0,
     });
 
@@ -158,7 +158,7 @@ test("member lookups fail closed when a stale public login collides with a priva
       actor: { id: "MDQ6VXNlcjE=", login: "alice2" },
       joinedAt: "2026-10-01T00:00:00.000Z",
       public: true,
-      welcome: 5,
+      welcome: 0,
       socialPoints: 0,
     });
   } finally {

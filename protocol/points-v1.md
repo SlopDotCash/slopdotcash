@@ -16,7 +16,9 @@ connection awards are discontinued for everyone. Joining and connecting X earn
 no points. Awards recorded before that date stay in the append-only journal
 unchanged, but no displayed total, balance, standing, or ranking counts them.
 Never delete, rewrite, or reissue them. Descriptions of those awards below are
-historical.
+historical. Migration `0080_points_participation_discontinued.sql` makes new
+memberships record no welcome award and has the database refuse any new
+welcome or X connection award.
 
 ## Earning and history
 

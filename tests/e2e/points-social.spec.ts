@@ -7,7 +7,7 @@ const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
 
-test("social membership preserves past points and connection privacy without new awards", async ({
+test("social membership keeps discontinued participation awards out of totals and preserves connection privacy", async ({
   page,
 }, info) => {
   const errors: string[] = [];
@@ -24,6 +24,7 @@ test("social membership preserves past points and connection privacy without new
     actor: { id: "U_social_member", login: "social-member" },
     joinedAt: "2026-09-21T12:00:00.000Z",
     public: true,
+    // Discontinued participation awards (D2) stay recorded but never count.
     welcome: 5,
     socialPoints: 10,
   };
@@ -158,6 +159,11 @@ test("social membership preserves past points and connection privacy without new
     },
   );
   await page.goto(`${site}/points`);
+  // Joining and connecting accounts earn nothing; only work categories remain.
+  const rules = page.getByRole("list", { name: "Point categories" });
+  await expect(rules.getByRole("listitem")).toHaveCount(4);
+  await expect(rules).not.toContainText("Join with GitHub");
+  await expect(rules).not.toContainText("First X connection");
   const accountButton = page.getByRole("button", {
     name: "Your account",
     exact: true,
@@ -174,7 +180,7 @@ test("social membership preserves past points and connection privacy without new
   await expect(
     accountPanel.getByText("@social-member", { exact: true }),
   ).toBeVisible();
-  await expect(accountPanel.getByText("15 pts", { exact: true })).toBeVisible();
+  await expect(accountPanel.getByText("0 pts", { exact: true })).toBeVisible();
   await expect(
     accountPanel.getByRole("link", { name: "View profile" }),
   ).toHaveAttribute("href", "/contributors/social-member");
@@ -278,7 +284,7 @@ test("social membership preserves past points and connection privacy without new
   await expect(
     community.getByRole("link", { name: "Telegram · @social_member_tg" }),
   ).toHaveCount(0);
-  await expect(community.getByText("15 pts", { exact: true })).toBeVisible();
+  await expect(community.getByText("0 pts", { exact: true })).toBeVisible();
   await community
     .getByRole("link", { name: "social-member", exact: true })
     .click();
@@ -287,7 +293,7 @@ test("social membership preserves past points and connection privacy without new
       .getByText("total points", { exact: true })
       .locator("..")
       .locator("strong"),
-  ).toHaveText("15");
+  ).toHaveText("0");
   expect(errors).toEqual([]);
   expect(failures).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
@@ -66,10 +67,7 @@ for (const [next, expected] of [
   ["//evil.example/steal", `${deployment.site}/contributors/return-member`],
   ["earnings", `${deployment.site}/earnings`],
 ]) {
-  test(`login returns ${next} to a safe destination`, async ({
-    page,
-    baseURL,
-  }) => {
+  test(`login returns ${next} to a safe destination`, async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     const expiresAt = new Date(
@@ -82,7 +80,7 @@ for (const [next, expected] of [
       actor: { id: "U_return_member", login: "return-member" },
       joinedAt: "2026-10-01T00:00:00.000Z",
       public: false,
-      welcome: 5,
+      welcome: 0,
       socialPoints: 0,
     };
     await page.context().route(`${deployment.identity}/**`, async (route) => {
@@ -136,10 +134,17 @@ for (const [next, expected] of [
         await route.fulfill({ status: 404, json: {} });
         return;
       }
-      const response = await route.fetch({
-        url: `${baseURL}${url.pathname}${url.search}`,
+      // Serve the same built bytes directly. An extra HTTP proxy can reset
+      // asset requests that remain in flight when the return route navigates.
+      await route.fulfill({
+        path: join(
+          process.cwd(),
+          "dist",
+          route.request().resourceType() === "document"
+            ? "index.html"
+            : url.pathname,
+        ),
       });
-      await route.fulfill({ response });
     });
     await page.goto(`/login?next=${encodeURIComponent(next)}`);
     await page

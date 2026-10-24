@@ -28,7 +28,9 @@ async function setup(beforeMailMigration = false) {
   const { db: source, sqlite } = sqliteD1(
     readdirSync("migrations")
       // Defer mail activation and the later inbox rebuilds; the rollout
-      // test applies them in order after creating pre-pilot history.
+      // test applies them in order after creating pre-pilot history. The
+      // 0080 membership rebuild needs 0063's closure column and is not part
+      // of the inbox rollout, so it is left out with it.
       .filter(
         (p) =>
           p.endsWith(".sql") &&
@@ -37,7 +39,8 @@ async function setup(beforeMailMigration = false) {
               p.startsWith("0030") ||
               p.startsWith("0063") ||
               p.startsWith("0065") ||
-              p.startsWith("0079")
+              p.startsWith("0079") ||
+              p.startsWith("0080_points")
             )),
       )
       .sort(),

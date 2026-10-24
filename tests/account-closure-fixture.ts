@@ -1,5 +1,5 @@
 /** Synthetic account records shared by API and browser acceptance checks. */
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../workers/identity/crypto";
 import { applicationManifest } from "./project-application-manifest";
@@ -19,11 +19,16 @@ export async function seedAccountClosure(
   withObligations = true,
 ) {
   const NOW = now;
-  const { db, sqlite } = sqliteD1(
-    readdirSync(new URL("../migrations", import.meta.url))
-      .filter((name) => name.endsWith(".sql"))
-      .sort(),
+  const migrations = readdirSync(new URL("../migrations", import.meta.url))
+    .filter((name) => name.endsWith(".sql"))
+    .sort();
+  // Both members joined before participation points were discontinued, so
+  // they carry a historical welcome award and this member a historical X
+  // connection award; the later migrations must keep both untouched.
+  const discontinued = migrations.indexOf(
+    "0080_points_participation_discontinued.sql",
   );
+  const { db, sqlite } = sqliteD1(migrations.slice(0, discontinued));
   const tokens = {
     me: "m".repeat(48),
     meOther: "n".repeat(48),
@@ -35,6 +40,17 @@ export async function seedAccountClosure(
         "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1)",
       )
       .run(member.actor, member.github, member.login, NOW);
+  sqlite.exec(`
+    INSERT INTO points_x_claims VALUES ('77','${ME.actor}','${NOW}');
+    INSERT INTO points_x_awards VALUES ('${ME.actor}','77','${NOW}',10);
+  `);
+  for (const migration of migrations.slice(discontinued))
+    sqlite.exec(
+      readFileSync(
+        new URL(`../migrations/${migration}`, import.meta.url),
+        "utf8",
+      ),
+    );
   for (const [token, actor] of [
     [tokens.me, ME.actor],
     [tokens.meOther, ME.actor],
@@ -66,8 +82,6 @@ export async function seedAccountClosure(
     ),
   ).replaceAll("'", "''");
   sqlite.exec(`
-    INSERT INTO points_x_claims VALUES ('77','${ME.actor}','${NOW}');
-    INSERT INTO points_x_awards VALUES ('${ME.actor}','77','${NOW}',10);
     INSERT INTO points_x_links VALUES ('${ME.actor}','77','closing_x','${NOW}',1);
     INSERT INTO points_x_flows VALUES ('state','browser','session','${ME.actor}','v','iv','2026-10-23T12:10:00.000Z',1,'pending');
     INSERT INTO points_telegram_claims VALUES ('88','${ME.actor}','${NOW}');
