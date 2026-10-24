@@ -1029,7 +1029,14 @@ group pending; it does not assign zero or split that group. Failures retain a
 retry state without provider exception bodies. Validated results are retained before publication, so a restart can reuse them
 without another model call.
 
-Required operator settings have no defaults:
+Required operator settings have no defaults. Set the following GitHub Actions
+variables in the protected production environment. The release validates them
+as one group and supplies them to the same Worker version as its producer SHA.
+All three empty leaves value inference disabled; partial or malformed settings
+stop the release before deployment. The attempt reserve must cover the complete
+model route, and the start timestamp must follow the subscription-only backfill.
+No setting here changes payout approval or enables closures.
+
 `SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD`,
 `SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD`, `SLOPBOT_VALUE_START_AT`, the existing
 model credential, and the deployed `SLOPBOT_PRODUCER_REVISION`. The start date

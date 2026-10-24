@@ -673,6 +673,35 @@ jobs:
           }
           NODE
 
+      - name: Validate optional Slopbot value scoring settings
+        env:
+          SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: ${{ vars.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD }}
+          SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: ${{ vars.SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD }}
+          SLOPBOT_VALUE_START_AT: ${{ vars.SLOPBOT_VALUE_START_AT }}
+        run: |
+          node - "$RUNNER_TEMP/slopbot-value-args" <<'NODE'
+          const { writeFileSync } = require("node:fs");
+          const names = [
+            "SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD",
+            "SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD",
+            "SLOPBOT_VALUE_START_AT",
+          ];
+          const values = names.map((name) => process.env[name] ?? "");
+          if (values.every((value) => value === "")) {
+            writeFileSync(process.argv[2], "");
+            process.exit(0);
+          }
+          const [monthly, reserve, start] = values;
+          const positiveAmount = (value) => /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
+          if ((monthly !== "alerts-only" && !positiveAmount(monthly)) ||
+              !positiveAmount(reserve) ||
+              (monthly !== "alerts-only" && Number(reserve) > Number(monthly)) ||
+              !Number.isFinite(Date.parse(start)) || new Date(start).toISOString() !== start) {
+            throw new Error("Set all three Slopbot value settings: alerts-only or a positive monthly allowance, a positive route reserve, and a canonical UTC start timestamp.");
+          }
+          writeFileSync(process.argv[2], names.map((name, i) => `--var=${name}:${values[i]}`).join("\n") + "\n");
+          NODE
+
       - name: Deploy private identity and Cloudflare Pages
         id: pages-deploy
         env:
@@ -1163,9 +1192,11 @@ jobs:
           NODE
 
           slopbot_upload="$RUNNER_TEMP/slopbot-upload.log"
+          mapfile -t slopbot_value_args < "$RUNNER_TEMP/slopbot-value-args"
           ./node_modules/.bin/wrangler versions upload \
             --config workers/slopbot/wrangler.toml \
             --var="SLOPBOT_PRODUCER_REVISION:$GITHUB_SHA" \
+            "${slopbot_value_args[@]}" \
             --minify \
             --tag="$GITHUB_SHA" \
             --message="slop.cash release $GITHUB_SHA" 2>&1 | tee "$slopbot_upload"
