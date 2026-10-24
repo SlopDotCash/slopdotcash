@@ -69,6 +69,7 @@ export const EVM_ESCROW_EVENT_SIGNATURES = Object.freeze({
   Paid: "Paid(bytes32,uint64,address,uint64,uint128,uint128,uint128)",
   UnusedWithdrawn: "UnusedWithdrawn(address,uint128,uint128,uint128)",
   FeesClaimed: "FeesClaimed(address,uint128)",
+  MonthlyCommitmentSet: "MonthlyCommitmentSet(uint128,bool)",
   VaultCreated: "VaultCreated(bytes32,address,address,address,uint8,uint8)",
   IdentityAuthorityRotationProposed:
     "IdentityAuthorityRotationProposed(address,address,uint64)",
@@ -778,6 +779,80 @@ export function buildClaimFeesCalldata() {
 /** Owner-only: refunds free funds to the refund destination less the 2% fee, floor(gross / 50). */
 export function buildWithdrawCalldata(grossMicro: string | bigint) {
   return `0x${selector("withdrawUnused(uint128)")}${amountWord(grossMicro)}`;
+}
+/** The owner's monthly commitment setting: a uint128 cap and the on/off flag. */
+export interface EvmMonthlyCommitment {
+  cap: string;
+  enabled: boolean;
+}
+function monthlyCommitmentWords(cap: string | bigint, enabled: boolean) {
+  const value =
+    typeof cap === "bigint"
+      ? cap
+      : /^(0|[1-9][0-9]*)$/.test(cap)
+        ? BigInt(cap)
+        : -1n;
+  if (value < 0n || value > U128)
+    throw new Error("The monthly cap must be 0 to uint128 max base units");
+  if (enabled && value === 0n)
+    throw new Error("Turning on monthly commitments needs a positive cap");
+  return `${value.toString(16).padStart(64, "0")}${(enabled ? 1n : 0n).toString(16).padStart(64, "0")}`;
+}
+/** Owner-only on an ordinary vault: sets the monthly cap (token base units) and turns the
+ * signed monthly commitment on or off. The contract rejects "on" with a zero cap. */
+export function buildSetMonthlyCommitmentCalldata(
+  cap: string | bigint,
+  enabled: boolean,
+) {
+  return `0x${selector("setMonthlyCommitment(uint128,bool)")}${monthlyCommitmentWords(cap, enabled)}`;
+}
+/** Reads monthlyCap() and monthlyEnabled() together at the latest finalized block. */
+export async function readEvmMonthlyCommitment(
+  config: EvmVaultTotalsConfig,
+): Promise<EvmMonthlyCommitment & { blockNumber: string; blockTime: string }> {
+  if (!ADDRESS.test(config.vault)) throw new Error("Invalid vault");
+  if (quantity(await rpc(config, "eth_chainId", [])) !== config.chainId)
+    throw new Error("Wrong chain");
+  const block = object(
+    await rpc(config, "eth_getBlockByNumber", ["finalized", false]),
+  );
+  const blockNumber = quantity(block.number);
+  const blockTag = `0x${blockNumber.toString(16)}`;
+  const cap = uint128(
+    (await getter(config, config.vault, "monthlyCap()", blockTag)).slice(2),
+  );
+  const flag = await getter(config, config.vault, "monthlyEnabled()", blockTag);
+  if (flag !== `0x${"0".repeat(64)}` && flag !== `0x${"0".repeat(63)}1`)
+    throw new Error("Malformed monthly commitment state");
+  return {
+    cap: cap.toString(),
+    enabled: flag.endsWith("1"),
+    blockNumber: blockNumber.toString(),
+    blockTime: new Date(Number(quantity(block.timestamp)) * 1000).toISOString(),
+  };
+}
+/** Reconcile an owner's monthly commitment setting against its finalized vault event. */
+export async function verifyMonthlyCommitmentSet(
+  config: EvmEscrowConfig,
+  transactionId: string,
+  eventIndex: number,
+  expected: EvmMonthlyCommitment,
+) {
+  const { log, blockId, transactionHash } = await finalizedLog(
+    config,
+    transactionId,
+    eventIndex,
+  );
+  if (
+    !Array.isArray(log.topics) ||
+    log.topics.length !== 1 ||
+    hash(log.topics[0]) !== EVM_ESCROW_EVENT_TOPICS.MonthlyCommitmentSet ||
+    typeof log.data !== "string" ||
+    log.data.toLowerCase() !==
+      `0x${monthlyCommitmentWords(expected.cap, expected.enabled)}`
+  )
+    throw new Error("The finalized vault event does not match this setting");
+  return { transactionId: transactionHash, blockId, ...expected };
 }
 /** Reconcile a user's deposit or free-fund withdrawal against its finalized vault event. */
 export async function verifyVaultFundingAction(

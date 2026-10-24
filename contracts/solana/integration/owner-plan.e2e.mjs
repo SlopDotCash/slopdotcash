@@ -144,9 +144,9 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
     network: "solana-localnet",
     mint: deployment.asset,
   };
-  async function fundingApi(body) {
+  async function fundingApi(body, endpoint = "solana-funding") {
     const request = new Request(
-      "https://slop.cash/api/v1/payments/projects/owner-plan-project/solana-funding",
+      `https://slop.cash/api/v1/payments/projects/owner-plan-project/${endpoint}`,
       {
         method: "POST",
         headers: {
@@ -238,6 +238,54 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
   );
   deployment.feeRecipient = pinned;
   await execute("initialize", { projectDigest });
+  // Exercise the browser's monthly-setting API against the actual SPL program.
+  const monthlyEndpoint = "solana-monthly-commitment";
+  for (const enabled of [true, false]) {
+    const target = { cap: "60000000", enabled };
+    const intent = { ...target, wallet: owner.publicKey.toBase58() };
+    const { plan } = await fundingApi(
+      { step: "review", ...intent },
+      monthlyEndpoint,
+    );
+    assert.notEqual(plan.transaction, null);
+    const transaction = Transaction.from(
+      Buffer.from(plan.transaction.transaction, "base64"),
+    );
+    assert.equal(
+      transaction.signatures.every((s) => s.signature === null),
+      true,
+    );
+    transaction.sign(owner);
+    const signature = await provider.connection.sendRawTransaction(
+      transaction.serialize(),
+      { skipPreflight: false, maxRetries: 0 },
+    );
+    await provider.connection.confirmTransaction(signature, "finalized");
+    assert.equal(
+      (
+        await fundingApi(
+          {
+            step: "check",
+            ...intent,
+            blockhash: plan.transaction.blockhash,
+            transactionId: signature,
+          },
+          monthlyEndpoint,
+        )
+      ).status,
+      "finalized",
+    );
+    assert.deepEqual(
+      (await fundingApi({ step: "read" }, monthlyEndpoint)).setting.current,
+      target,
+    );
+    assert.equal(
+      (await fundingApi({ step: "review", ...intent }, monthlyEndpoint)).plan
+        .transaction,
+      null,
+      "the finalized setting needs no second signature",
+    );
+  }
   await execute("deposit", { grossMicro: "60000000" });
   // Any depositor can fund the project from its own token account.
   const donor = Keypair.generate();
