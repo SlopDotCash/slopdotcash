@@ -181,6 +181,32 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         address feeRecipient_,
         uint64 bindingDelay_
     ) external initializer {
+        _initialize(projectId_, token_, owner_, purpose_, feeRecipient_, bindingDelay_);
+    }
+
+    /// @notice Atomic ordinary-vault setup with the owner's cap and explicit opt-out.
+    function initializeWithMonthlyCommitment(
+        bytes32 projectId_,
+        IERC20 token_,
+        address owner_,
+        Purpose purpose_,
+        address feeRecipient_,
+        uint64 bindingDelay_,
+        uint128 monthlyCap_,
+        bool monthlyEnabled_
+    ) external initializer {
+        _initialize(projectId_, token_, owner_, purpose_, feeRecipient_, bindingDelay_);
+        _setMonthlyCommitment(monthlyCap_, monthlyEnabled_);
+    }
+
+    function _initialize(
+        bytes32 projectId_,
+        IERC20 token_,
+        address owner_,
+        Purpose purpose_,
+        address feeRecipient_,
+        uint64 bindingDelay_
+    ) private {
         EscrowFactory factory_ = EscrowFactory(msg.sender);
         address identityAuthority_ = factory_.identityAuthority();
         // Free funds are refunded only to the owner, whoever deposited them.
@@ -377,6 +403,10 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// @notice The owner sets the monthly cap and turns monthly commitments on or off. While they are off,
     /// nobody can commit a monthly allocation; awards already committed stay committed.
     function setMonthlyCommitment(uint128 cap, bool enabled) external onlyOwner {
+        _setMonthlyCommitment(cap, enabled);
+    }
+
+    function _setMonthlyCommitment(uint128 cap, bool enabled) private {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (enabled && cap == 0) revert InvalidInput();
         monthlyCap = cap;
@@ -694,18 +724,41 @@ contract EscrowFactory is Initializable, UUPSUpgradeable {
         return keccak256(abi.encode(owner, projectId, token, purpose));
     }
 
-    /// @notice Permissionless: creates the caller's own vault for a project, token and purpose.
+    /// @notice Compatibility entry point: monthly commitments stay off until the owner configures them.
     function create(bytes32 projectId, IERC20 token, Purpose purpose) external returns (address vault) {
-        bytes32 key = vaultKey(msg.sender, projectId, token, purpose);
-        if (vaults[key] != address(0)) revert DuplicateVault();
-        vault = address(
-            new ERC1967Proxy{salt: key}(
-                vaultImplementation,
-                abi.encodeCall(
-                    ProjectEscrow.initialize, (projectId, token, msg.sender, purpose, feeRecipient, bindingDelay)
-                )
+        return _create(
+            projectId,
+            token,
+            purpose,
+            abi.encodeCall(
+                ProjectEscrow.initialize, (projectId, token, msg.sender, purpose, feeRecipient, bindingDelay)
             )
         );
+    }
+
+    /// @notice Creates the caller's ordinary vault and sets its monthly policy in the same transaction.
+    function createWithMonthlyCommitment(bytes32 projectId, IERC20 token, uint128 cap, bool enabled)
+        external
+        returns (address vault)
+    {
+        return _create(
+            projectId,
+            token,
+            Purpose.Ordinary,
+            abi.encodeCall(
+                ProjectEscrow.initializeWithMonthlyCommitment,
+                (projectId, token, msg.sender, Purpose.Ordinary, feeRecipient, bindingDelay, cap, enabled)
+            )
+        );
+    }
+
+    function _create(bytes32 projectId, IERC20 token, Purpose purpose, bytes memory initialization)
+        private
+        returns (address vault)
+    {
+        bytes32 key = vaultKey(msg.sender, projectId, token, purpose);
+        if (vaults[key] != address(0)) revert DuplicateVault();
+        vault = address(new ERC1967Proxy{salt: key}(vaultImplementation, initialization));
         ProjectEscrow created = ProjectEscrow(vault);
         vaults[key] = vault;
         emit VaultCreated(projectId, address(token), vault, msg.sender, purpose, created.decimals());

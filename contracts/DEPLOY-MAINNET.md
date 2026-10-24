@@ -192,10 +192,44 @@ KEY=$(cast call "$FACTORY" 'vaultKey(address,bytes32,address,uint8)(bytes32)' \
 VAULT=$(cast call "$FACTORY" 'vaults(bytes32)(address)' "$KEY" --rpc-url "$RPC")
 ```
 
+For a new ordinary vault under PRD decision D1, use the reviewed factory and
+vault implementation that support atomic monthly setup. The older deployments
+listed above do not gain this method from a source merge. After a reviewed
+operator upgrade, replace the creation call above with:
+
+```sh
+cast send "$FACTORY" 'createWithMonthlyCommitment(bytes32,address,uint128,bool)' \
+  "$PROJECT_ID" "$TOKEN" "$MONTHLY_CAP_BASE_UNITS" true \
+  --rpc-url "$RPC" --account slop-mainnet-owner
+```
+
+The owner chooses `MONTHLY_CAP_BASE_UNITS`; false instead of true opts out.
+Read `monthlyCap()` and `monthlyEnabled()` from the created vault at the same
+finalized block as its other acceptance reads. The legacy creation call is
+for compatibility and private bounty vaults; it does not enable the default.
+
+For an existing factory, the operator first deploys and verifies the reviewed
+replacement factory and vault implementations. Prepare and simulate this
+unsigned factory upgrade, which also selects the implementation for future
+vaults in the same transaction:
+
+```sh
+SET_VAULT_DATA=$(cast calldata 'setVaultImplementation(address)' "$NEW_VAULT_IMPLEMENTATION")
+UPGRADE_DATA=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_FACTORY_IMPLEMENTATION" "$SET_VAULT_DATA")
+cast call "$FACTORY" "$UPGRADE_DATA" --from "$UPGRADE_AUTHORITY" --rpc-url "$RPC"
+```
+
+Only the operator signs and submits the reviewed payload. After finality,
+verify the implementation slots, code hashes, selected vault implementation,
+roles and existing vault mapping. Append the new factory evidence to affected
+registry records before resuming verification. This does not upgrade existing
+vaults or change their caps, switches, balances, bindings or awards.
+
 Before you create a vault, check that the token is a standard ERC-20 with
 exact transfers: no fee on transfer, no rebasing. Read `decimals()` and record
 it. After creation, verify the vault source like the factory (the constructor
-arguments are the vault implementation and encoded `initialize` call), record its runtime code SHA-256 as `codeSha256`, and run
+arguments are the vault implementation and the encoded initializer used for
+creation), record its runtime code SHA-256 as `codeSha256`, and run
 `verifyEvmDeployment` from `contracts/evm/adapter.ts` against the manifest
 before activation.
 

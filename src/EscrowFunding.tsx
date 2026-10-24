@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AutomaticMonthlyPayment } from "./AutomaticMonthlyPayment";
 import { readBoundedJson } from "./lib/browser-json";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { CHAIN_NAMES, networkLabel } from "./lib/network-names";
@@ -224,6 +225,16 @@ export function EscrowFunding({ project }: { project: ProjectDefinition }) {
               />
             ))
           )}
+          {project.reward.kind === "monthly-pool"
+            ? project.escrow?.deployments.map((deployment) => (
+                <AutomaticMonthlyPayment
+                  key={`monthly:${deployment.network}:${deployment.vault}`}
+                  project={project}
+                  deployment={deployment}
+                  onFinalized={() => setRevision((value) => value + 1)}
+                />
+              ))
+            : null}
           {project.escrow?.deployments.map((deployment) => (
             <VaultActions
               key={`${deployment.network}:${deployment.vault}`}
