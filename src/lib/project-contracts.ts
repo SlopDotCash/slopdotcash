@@ -1,4 +1,5 @@
 import type { ProjectDefinition } from "./projects.mjs";
+import type { VettingClearance } from "./vetting-contracts";
 
 export type GithubActor = { githubId: string; githubLogin: string };
 
@@ -167,6 +168,91 @@ export interface EnforcementPreview {
     listingTierAfter: ProjectDefinition["listingTier"];
   };
 }
+
+/** The registered Slopbot GitHub App (`workers/slopbot/README.md`). */
+export const SLOPBOT_INSTALL_URL =
+  "https://github.com/apps/slopdotcash/installations/new";
+
+/**
+ * What the Slopbot installation reports for one repository and one GitHub
+ * account. `permission` is GitHub's base access level, which maps maintain to
+ * write; `roleName` is the role GitHub names, for display only.
+ */
+export type RepositoryAccess =
+  | { installation: "missing" }
+  | { installation: "suspended"; installationId: number }
+  | {
+      installation: "installed";
+      installationId: number;
+      permission: "admin" | "write" | "read" | "none";
+      roleName: string | null;
+    };
+
+/** Current GitHub authority of the signed-in account over a repository. */
+export type SetupAuthority =
+  | {
+      state: "verified";
+      /**
+       * `installation`: the Slopbot installation read write, maintain or
+       * admin access. `public-github-facts`: the account owns the user
+       * repository or is a public member of its organization; activation
+       * still needs the installation check.
+       */
+      basis: "installation" | "public-github-facts";
+      message: string;
+    }
+  | { state: "denied"; message: string }
+  | { state: "retry"; message: string };
+
+export type SetupNextAction =
+  | "retry_authority"
+  | "ask_maintainer"
+  | "install_slopbot"
+  | "retry_installation"
+  | "wait_for_scan"
+  | "retry_scan"
+  | "request_scan"
+  | "restricted"
+  | "none";
+
+/**
+ * One setup status for a project (PRD section 4): the result, the single
+ * next action and every check, with funding reported separately because a
+ * project works without it.
+ */
+export type ProjectSetupStatus = {
+  projectId: string;
+  name: string;
+  slug: string;
+  revision: number;
+  status: ProjectDefinition["status"];
+  state: "ready" | "action_required" | "waiting" | "retry" | "restricted";
+  nextAction: { kind: SetupNextAction; message: string; href: string | null };
+  checks: {
+    authority: SetupAuthority;
+    installation: {
+      state: "installed" | "missing" | "suspended" | "retry";
+      message: string;
+    };
+    scan: {
+      state: VettingClearance["state"] | "unavailable";
+      message: string;
+    };
+  };
+  funding:
+    | { mode: "none" }
+    | {
+        mode: "monthly";
+        network: string;
+        symbol: string;
+        monthlyAmountMinor: string;
+        state: "pledged" | "committed";
+        payments: "enabled" | "disabled";
+      };
+  /** Set when this check appended the activation revision. */
+  activatedRevision: number | null;
+  checkedAt: string;
+};
 
 export type ProjectApplicationNotice = {
   applicationId: string;

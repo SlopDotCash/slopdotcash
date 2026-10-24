@@ -8,6 +8,10 @@ import { verifyWebhookSignature } from "./github";
 import * as store from "./persistence";
 import { QUALITY_MARKER } from "./quality";
 import { registeredRepository } from "./registry";
+import {
+  handleRepositoryAccess,
+  REPOSITORY_ACCESS_URL,
+} from "./repository-access";
 import { recordHumanSignal, reviewItem } from "./review";
 import { dispatchSpendAlert } from "./spend-alerts";
 import {
@@ -257,6 +261,12 @@ export default {
         );
       }
     }
+    if (
+      request.method === "GET" &&
+      url.origin === new URL(REPOSITORY_ACCESS_URL).origin &&
+      url.pathname === new URL(REPOSITORY_ACCESS_URL).pathname
+    )
+      return handleRepositoryAccess(request, env);
     if (request.method !== "POST" || url.pathname !== "/github/webhook") {
       return new Response("not found", { status: 404 });
     }

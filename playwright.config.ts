@@ -32,6 +32,12 @@ if (
   !/^slop-notify-e2e-[0-9]{4,5}$/u.test(registryNotify)
 )
   throw new Error("Invalid local notification Worker name");
+const registrySlopbot = process.env.SLOP_E2E_SLOPBOT_SERVICE;
+if (
+  registrySlopbot !== undefined &&
+  !/^slopbot-e2e-[0-9]{4,5}$/u.test(registrySlopbot)
+)
+  throw new Error("Invalid local Slopbot Worker name");
 const registryPersistTo = process.env.SLOP_E2E_PERSIST_TO;
 const registryAdmins = process.env.SLOP_E2E_ADMIN_GITHUB_IDS;
 const registryModerators = process.env.SLOP_E2E_MODERATOR_GITHUB_IDS;
@@ -82,7 +88,9 @@ const registryArguments = registryPersistTo
       registryVettingKey
         ? ` --binding VETTING_RESULT_PUBLIC_KEYS=${registryVettingKey} --r2 VETTING_EVIDENCE --binding 'VETTING_EVIDENCE_POLICY=${JSON.stringify({ ...localEvidencePolicy(new Date()), maxObjectBytes: 32 * 1024 * 1024 }).replaceAll("'", "'\\''")}'`
         : ""
-    }${registryNotify ? ` --service SLOP_NOTIFY=${registryNotify}` : ""}${registryIntake}`
+    }${registryNotify ? ` --service SLOP_NOTIFY=${registryNotify}` : ""}${
+      registrySlopbot ? ` --service SLOPBOT=${registrySlopbot}` : ""
+    }${registryIntake}`
   : "";
 const outputName = process.env.SLOP_E2E_OUTPUT ?? localServer;
 

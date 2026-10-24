@@ -16,31 +16,29 @@ const INSERT = `INSERT INTO notifications (
 )`;
 const ONCE = "ON CONFLICT (event_key, recipient_github_id) DO NOTHING";
 
-/** An admin decision on a project application reaches the applicant. */
-export function notifyApplicationDecision<S>(
-  db: Preparer<S>,
-  applicationId: string,
-  decidedAt: string,
-): S {
-  return db
-    .prepare(
-      `${INSERT}
-       SELECT 'project-application:' || id || ':' || status,
-              applicant_github_id, 'application_' || status, project_id,
-              decision_reason,
-              CASE status WHEN 'approved' THEN '/projects/' || project_id
-                          ELSE '/projects/new' END,
-              decided_at, ?
-         FROM project_applications
-        WHERE id = ? AND status IN ('approved', 'rejected') AND decided_at = ?
-       ${ONCE}`,
-    )
-    .bind(decidedAt, applicationId, decidedAt);
-}
+/**
+ * The account that listed a project: the applicant of an approved
+ * application, or the creator of revision 1 of a self-service project.
+ */
+const LISTED_BY = (
+  projectId: string,
+) => `SELECT a.applicant_github_id AS recipient
+             FROM projects p
+             JOIN project_applications a ON a.id = p.source_application_id
+            WHERE p.id = ${projectId}
+           UNION
+           SELECT first.actor_github_id
+             FROM projects p
+             JOIN project_revisions first
+               ON first.project_id = p.id AND first.revision = 1
+            WHERE p.id = ${projectId} AND p.source_application_id IS NULL
+              AND first.actor_github_id IS NOT NULL`;
 
 /**
- * A later manifest revision reaches the applicant who listed the project and
- * its GitHub steward. Revision 1 is the approval, which has its own event.
+ * A later manifest revision reaches the account that listed the project (its
+ * applicant, or its self-service creator) and its GitHub steward, never the
+ * account that made the revision. Revision 1 lists the project; its creator
+ * made it, so it sends no notice.
  */
 export function notifyProjectRevision<S>(
   db: Preparer<S>,
@@ -57,10 +55,7 @@ export function notifyProjectRevision<S>(
               '/projects/' || r.project_id, r.created_at, ?4
          FROM project_revisions r
          JOIN (
-           SELECT a.applicant_github_id AS recipient
-             FROM projects p
-             JOIN project_applications a ON a.id = p.source_application_id
-            WHERE p.id = ?1
+           ${LISTED_BY("?1")}
            UNION
            SELECT json_extract(manifest, '$.steward.github.actorId')
              FROM project_revisions
@@ -69,6 +64,7 @@ export function notifyProjectRevision<S>(
          )
         WHERE r.project_id = ?1 AND r.revision = ?2 AND r.revision > 1
           AND r.manifest_sha256 = ?3 AND r.created_at = ?4
+          AND recipient IS NOT r.actor_github_id
           AND recipient GLOB '[1-9]*' AND recipient NOT GLOB '*[^0-9]*'
        ${ONCE}`,
     )
@@ -208,10 +204,7 @@ export function notifyProjectEnforcement<S>(
               e.created_at, e.created_at
          FROM project_enforcements e
          JOIN (
-           SELECT a.applicant_github_id AS recipient
-             FROM projects p
-             JOIN project_applications a ON a.id = p.source_application_id
-            WHERE p.id = (SELECT project_id FROM project_enforcements WHERE id = ?1)
+           ${LISTED_BY("(SELECT project_id FROM project_enforcements WHERE id = ?1)")}
            UNION
            SELECT json_extract(manifest, '$.steward.github.actorId')
              FROM projects

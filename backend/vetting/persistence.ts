@@ -5,6 +5,7 @@
  */
 
 import { canonicalJson } from "../../src/lib/canonical-json";
+import { executableManifestContent } from "../../src/lib/project-revision-changes";
 import type {
   AssessmentState,
   AssessmentSummary,
@@ -109,14 +110,16 @@ function fromRow(row: AssessmentRow): VettingAssessment {
 }
 
 /**
- * The executable content of a manifest: its key-sorted canonical JSON with
- * the status fixed to paused. Activating a cleared paused revision keeps the
- * digest, whatever key order the editor sent; any other change needs a
- * fresh scan.
+ * The executable content of a manifest: the key-sorted canonical JSON of its
+ * scanned fields (`executableManifestContent`). Activation, listing,
+ * presentation and financial edits keep the digest, whatever key order the
+ * editor sent; a change to the source or the skill inputs needs a fresh scan.
  */
 export async function vettedContentSha256(manifest: object): Promise<string> {
   return sha256Hex(
-    new TextEncoder().encode(canonicalJson({ ...manifest, status: "paused" })),
+    new TextEncoder().encode(
+      canonicalJson(executableManifestContent(manifest)),
+    ),
   );
 }
 

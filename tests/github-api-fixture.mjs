@@ -10,6 +10,8 @@
  * intake App's OAuth authorization and code exchange, `/user`, the App
  * installation check, and private vulnerability reports. Advisories live in
  * memory only and are never logged; `/__fixture` routes toggle faults.
+ * The Slopbot App's installation and permission reads live under
+ * `/__slopbot`, so their state never mixes with the intake App's.
  */
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -33,8 +35,13 @@ export const E2E_SECURITY_ACCOUNTS = Object.freeze({
 /** Deterministic public facts for a fixture repository. */
 export function fixtureRepository(fullName) {
   const [ownerLogin, name] = fullName.split("/");
-  const owner =
-    ownerLogin === E2E_OWNER.login
+  const memberId =
+    ownerLogin === "e2e-applicant"
+      ? "900000002"
+      : E2E_SECURITY_ACCOUNTS[ownerLogin.replace(/^e2e-/, "")];
+  const owner = memberId
+    ? { login: ownerLogin, id: Number(memberId), type: "User" }
+    : ownerLogin === E2E_OWNER.login
       ? { login: E2E_OWNER.login, id: Number(E2E_OWNER.githubId), type: "User" }
       : {
           login: E2E_ORGANIZATION.login,
@@ -266,13 +273,103 @@ async function handlePrivateIntake(state, request, response, url) {
   return send(404, { message: "Not Found" });
 }
 
+/**
+ * The Slopbot GitHub App's view, reached only by the local Slopbot Worker
+ * under `/__slopbot`. Slopbot starts uninstalled everywhere. When installed,
+ * a repository owner has admin access and anyone else has no access, unless
+ * a `/__fixture/slopbot` route sets the state.
+ */
+function handleSlopbotApp(state, request, response, path) {
+  const send = (status, body) => {
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(body === undefined ? "" : JSON.stringify(body));
+    return true;
+  };
+  const installControl =
+    /^\/__fixture\/slopbot\/([^/]+\/[^/]+)\/(installed|suspended|missing)$/u.exec(
+      path,
+    );
+  if (request.method === "PUT" && installControl) {
+    const key = installControl[1].toLowerCase();
+    if (installControl[2] === "missing") state.installations.delete(key);
+    else state.installations.set(key, installControl[2]);
+    return send(204);
+  }
+  const permissionControl =
+    /^\/__fixture\/slopbot\/([^/]+\/[^/]+)\/permission\/([^/]+)\/(admin|write|read|none)$/u.exec(
+      path,
+    );
+  if (request.method === "PUT" && permissionControl) {
+    state.permissions.set(
+      `${permissionControl[1]}#${permissionControl[2]}`.toLowerCase(),
+      permissionControl[3],
+    );
+    return send(204);
+  }
+  if (!path.startsWith("/__slopbot/")) return false;
+  const route = path.slice("/__slopbot".length);
+  const bearer = (request.headers.authorization ?? "").replace(/^Bearer /u, "");
+  const installation = /^\/repos\/([^/]+\/[^/]+)\/installation$/u.exec(route);
+  if (request.method === "GET" && installation) {
+    // The App authenticates as itself with a signed JWT here.
+    if (bearer.split(".").length !== 3)
+      return send(401, { message: "A JSON web token is required" });
+    const found = state.installations.get(installation[1].toLowerCase());
+    return found === undefined
+      ? send(404, { message: "Not Found" })
+      : send(200, {
+          id: 5151,
+          suspended_at: found === "suspended" ? "2026-10-01T00:00:00Z" : null,
+        });
+  }
+  if (
+    request.method === "POST" &&
+    route === "/app/installations/5151/access_tokens"
+  )
+    return bearer.split(".").length === 3
+      ? send(201, { token: state.token })
+      : send(401, { message: "A JSON web token is required" });
+  if (bearer !== state.token) return send(401, { message: "Bad credentials" });
+  const repository = /^\/repos\/([^/]+\/[^/]+)$/u.exec(route);
+  if (request.method === "GET" && repository)
+    return send(200, fixtureRepository(repository[1]));
+  const permission =
+    /^\/repos\/([^/]+\/[^/]+)\/collaborators\/([^/]+)\/permission$/u.exec(
+      route,
+    );
+  if (request.method === "GET" && permission) {
+    const [full, login] = [permission[1], permission[2]];
+    const level =
+      state.permissions.get(`${full}#${login}`.toLowerCase()) ??
+      (full.split("/")[0].toLowerCase() === login.toLowerCase()
+        ? "admin"
+        : "none");
+    // GitHub names the account it read, by its permanent ID.
+    const account = fixtureRepository(`${login}/account`).owner;
+    return level === "none" || account.type !== "User"
+      ? send(404, { message: "Not Found" })
+      : send(200, {
+          permission: level,
+          role_name: level,
+          user: { id: account.id, login: account.login },
+        });
+  }
+  return send(404, { message: "Not Found" });
+}
+
 export function startGitHubApiFixture(port) {
   // Private vulnerability reporting per repository; on unless a test sets it.
   const intake = new Map();
   const privateIntake = privateIntakeFixture();
+  const slopbot = {
+    installations: new Map(),
+    permissions: new Map(),
+    token: "ghs_slopbotfixtureinstallationtoken",
+  };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
+    if (handleSlopbotApp(slopbot, request, response, path)) return;
     try {
       if (await handlePrivateIntake(privateIntake, request, response, url))
         return;
@@ -353,7 +450,12 @@ export function startGitHubApiFixture(port) {
         return;
       }
       const [owner] = repository[1].split("/");
-      if (owner === E2E_OWNER.login || owner === E2E_ORGANIZATION.login) {
+      if (
+        owner === E2E_OWNER.login ||
+        owner === E2E_ORGANIZATION.login ||
+        owner === "e2e-applicant" ||
+        Object.hasOwn(E2E_SECURITY_ACCOUNTS, owner.replace(/^e2e-/, ""))
+      ) {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(fixtureRepository(repository[1])));
         return;

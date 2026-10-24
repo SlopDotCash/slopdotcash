@@ -131,8 +131,8 @@ export function InboxPage() {
     <main className="shell route-main inbox-page">
       <h1>Inbox</h1>
       <p>
-        Decisions on your project applications, changes to your projects,
-        awards, payments and payout wallets.
+        Changes to your projects, restrictions and appeals, awards, payments and
+        payout wallets.
       </p>
       {state.status === "loading" ? (
         <p role="status">Loading your inbox…</p>

@@ -687,19 +687,20 @@ test("makes the public project draft boundary unmistakable", async ({
   ).toHaveAttribute("href", "/projects/eliza/funding");
   await expect(page.getByLabel("Draft total, USDC")).toHaveCount(0);
   await expect(
-    page.getByRole("link", { name: "Sign in to submit changes" }),
+    page.getByRole("link", { name: "Sign in to publish changes" }),
   ).toHaveAttribute("href", /\/login\?next=%2Fprojects%2Feliza%2Fmanage$/u);
   await page.getByLabel("Short description").fill("Eliza-only draft");
   await page
-    .getByLabel("Reason for the change")
+    .getByLabel("Revision note")
     .fill("Clarify the project focus for contributors.");
   const changes = page.getByRole("region", { name: "Changes" });
   await expect(changes).toContainText("Eliza-only draft");
   await expect(changes).toContainText(
     PROJECTS.find((project) => project.id === "eliza")?.headline ?? "",
   );
+  await expect(changes).toContainText("Publishes now: Short description.");
   await expect(
-    page.getByRole("button", { name: "Submit changes for review" }),
+    page.getByRole("button", { name: "Publish changes" }),
   ).toHaveCount(0);
   await page.evaluate(() => {
     window.history.pushState({}, "", "/projects/asi/manage");
@@ -723,7 +724,7 @@ test("makes the public project draft boundary unmistakable", async ({
   ).toEqual([]);
 });
 
-test("reviews criteria changes and stops a stale maintainer draft", async ({
+test("publishes criteria changes directly and stops a stale maintainer draft", async ({
   page,
 }) => {
   const registered = PROJECTS.find((entry) => entry.id === "eliza");
@@ -747,8 +748,60 @@ test("reviews criteria changes and stops a stale maintainer draft", async ({
     }),
   );
   let revision = 1;
-  await page.route("**/api/v1/projects/eliza", (route) =>
-    route.fulfill({ json: { revision, project } }),
+  let submission: {
+    expectedRevision: number;
+    manifest: { contribution: { approvedScope: string } };
+  } | null = null;
+  const setup = {
+    projectId: "eliza",
+    name: project.name,
+    slug: project.slug,
+    revision: 3,
+    status: "paused",
+    state: "waiting",
+    nextAction: {
+      kind: "wait_for_scan",
+      message: "The security scan is queued. Nothing is needed from you.",
+      href: null,
+    },
+    checks: {
+      authority: {
+        state: "verified",
+        basis: "installation",
+        message: "@example has maintain access to elizaOS/eliza.",
+      },
+      installation: {
+        state: "installed",
+        message: "Slopbot is installed on elizaOS/eliza.",
+      },
+      scan: {
+        state: "queued",
+        message: "The security scan is queued. Nothing is needed from you.",
+      },
+    },
+    funding: { mode: "none" },
+    activatedRevision: null,
+    checkedAt: "2026-10-23T00:00:00.000Z",
+  };
+  await page.route("**/api/v1/projects/eliza*", (route) => {
+    if (route.request().method() === "PUT") {
+      submission = route.request().postDataJSON();
+      return route.fulfill({
+        json: {
+          project: { id: "eliza", revision: 3, status: "paused" },
+          changes: {
+            presentation: [],
+            executable: ["contribution"],
+            financial: [],
+          },
+          setup,
+        },
+      });
+    }
+    return route.fulfill({ json: { revision, project } });
+  });
+  await page.route("**/api/v1/project-setup/eliza/check", (route) =>
+    route.fulfill({ json: { setup } }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
@@ -757,17 +810,6 @@ test("reviews criteria changes and stops a stale maintainer draft", async ({
       },
     }),
   );
-  let submission: {
-    expectedRevision: number;
-    manifest: { contribution: { approvedScope: string } };
-  } | null = null;
-  await page.route("**/api/v1/project-applications", (route) => {
-    submission = route.request().postDataJSON();
-    return route.fulfill({
-      status: 201,
-      json: { application: { id: "app_criteria" } },
-    });
-  });
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
@@ -776,7 +818,7 @@ test("reviews criteria changes and stops a stale maintainer draft", async ({
     "Fix reproducible defects and provide the affected workflow evidence.";
   await page.getByLabel("Acceptance criteria").fill(scope);
   await page
-    .getByLabel("Reason for the change")
+    .getByLabel("Revision note")
     .fill("Clarify acceptance evidence for maintainers.");
   await expect(page.getByRole("region", { name: "Changes" })).toContainText(
     scope,
@@ -790,7 +832,7 @@ test("reviews criteria changes and stops a stale maintainer draft", async ({
     "saved against revision 1",
   );
   await expect(
-    page.getByRole("button", { name: "Submit changes for review" }),
+    page.getByRole("button", { name: "Publish changes" }),
   ).toBeDisabled();
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
   await page
@@ -838,9 +880,15 @@ test("reviews criteria changes and stops a stale maintainer draft", async ({
   await review.screenshot({
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
-  await page.getByRole("button", { name: "Submit changes for review" }).click();
+  await expect(page.getByRole("region", { name: "Changes" })).toContainText(
+    "Needs a new security scan: Contribution rules.",
+  );
+  await page.getByRole("button", { name: "Publish changes" }).click();
+  await expect(page.getByText("Published revision 3.")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Submitted", exact: true }),
+    page.getByRole("heading", {
+      name: "Setup status: Waiting for the security scan",
+    }),
   ).toBeVisible();
   expect(submission).toMatchObject({
     expectedRevision: 2,
@@ -931,9 +979,6 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
         session: { githubId: "4242", githubLogin: "example", admin: true },
       },
     }),
-  );
-  await page.route("**/api/v1/admin/project-applications?*", (route) =>
-    route.fulfill({ json: { applications: [] } }),
   );
   await page.route("**/api/v1/admin/projects", (route) =>
     route.fulfill({
@@ -1246,6 +1291,11 @@ test("shows an explicit error for invalid data and retries", async ({
   await page.getByRole("button", { name: /Retry/u }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(attempts).toBe(failedAttempts + 1);
+  // The frozen fixture is older than eight hours: a retained snapshot shows
+  // its stale label instead of passing as current (owner decision D2).
+  await expect(
+    page.getByRole("status").filter({ hasText: "Scores may be outdated" }),
+  ).toBeVisible();
 });
 
 // 320 CSS px covers reflow; 200% text enlargement is a deterministic

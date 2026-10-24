@@ -1,15 +1,13 @@
-import {
-  type DeploymentTier,
-  deploymentOrigins,
-} from "../../src/lib/deployment";
 import type {
-  ProjectApplicationNotice as AdminApplicationNotice,
   EnforcementPreview,
   ProjectEnforcementState,
+  ProjectSetupStatus,
   PublicProjectApplication,
+  SetupAuthority,
 } from "../../src/lib/project-contracts";
 import { validRepositoryPath } from "../../src/lib/project-contracts";
 import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
+import { classifyRevisionChanges } from "../../src/lib/project-revision-changes";
 import {
   assertProjectDefinition,
   assertProjectRegistry,
@@ -28,11 +26,9 @@ import { pathParts } from "../api-path";
 import { readJsonObject, sha256Hex } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
 import {
-  type ApplicationStatus,
   type EnforcementAction,
   type EnforcementActorRole,
   type GithubActor,
-  MAX_PENDING_APPLICATIONS_PER_APPLICANT,
   PROJECT_API_CONTRACT_VERSION,
   type ProjectApplication,
   type ProjectEnforcement,
@@ -68,12 +64,18 @@ import {
   lookupGitHubRepository,
   validGithubLogin,
 } from "./github-lookup";
+import {
+  type AccessCheck,
+  projectSetupStatus,
+  type RepositoryAccessReader,
+  readRepositoryAccess,
+  type ScanRequest,
+  type ScanRequester,
+  setupAuthority,
+} from "./setup";
 import { TokenMetadataError, type TokenMetadataReader } from "./token-metadata";
 
-export type { ProjectApplicationNotice as AdminApplicationNotice } from "../../src/lib/project-contracts";
-
 export type ProjectApiDependencies = {
-  tier?: DeploymentTier;
   persistence: ProjectPersistence;
   adminGithubIds: ReadonlySet<string>;
   /** GitHub actor IDs with the project moderation role (PRD ADM-05, ADM-06). */
@@ -82,8 +84,6 @@ export type ProjectApiDependencies = {
   randomId: () => string;
   /** Resolves the GitHub account behind the site sign-in session cookie. */
   sessionActor: (request: Request) => Promise<GithubActor | null>;
-  /** Resolves true only when every admin was emailed. */
-  notifyAdmins: (notice: AdminApplicationNotice) => Promise<boolean>;
   /** Reads a reward token's decimals from chain once, at submission or change. */
   readTokenMetadata: TokenMetadataReader;
   /** Public GitHub reads for the setup form, with an optional server token. */
@@ -101,11 +101,18 @@ export type ProjectApiDependencies = {
     throughRevision: number,
     forReinstatement?: boolean,
   ) => Promise<VettingClearance>;
-  /** Asks GitHub whether the applicant controls the manifest's repository. */
+  /** Public GitHub facts: repository identity and the account's control. */
   repositoryControl: (
     manifest: ProjectDefinition,
     actor: GithubActor,
   ) => Promise<RepositoryControl>;
+  /**
+   * The Slopbot installation and the account's exact repository permission.
+   * Absent where Slopbot is not connected; setup then reports a retry.
+   */
+  repositoryAccess?: RepositoryAccessReader;
+  /** Queues a malicious-code scan of a project's current revision. */
+  requestScan?: ScanRequester;
 };
 
 const APPLICATION_ID = /^app_[A-Za-z0-9_-]{8,72}$/u;
@@ -179,11 +186,16 @@ function canonicalManifest(value: unknown): {
 }
 
 /**
- * A new application may only describe an unverified, paused, unfunded
- * community project. Authority, terms, listing tier, skills, and money arrive
- * later through admin revisions.
+ * A new project starts paused, unverified and unfunded, with generated skills
+ * and one repository, whose scan binds one integration branch. Listing tier,
+ * repository receipt authority, terms activation, vaults and payments arrive
+ * through later revisions. Applications stored before self-service setup may
+ * still carry the pledged review budget they were submitted with.
  */
-function assertApplicationManifest(manifest: ProjectDefinition): void {
+function assertNewProjectManifest(
+  manifest: ProjectDefinition,
+  { storedApplication = false }: { storedApplication?: boolean } = {},
+): void {
   const reward = manifest.reward;
   const reviewBudget =
     reward.kind === "monthly-pool" ? reward.reviewBudget : undefined;
@@ -194,8 +206,12 @@ function assertApplicationManifest(manifest: ProjectDefinition): void {
       "New projects are listed in the community tier",
     ],
     [
+      storedApplication || manifest.repositories.length === 1,
+      "A new project lists exactly one repository",
+    ],
+    [
       manifest.skill.publishAtRoot === false,
-      "Only an admin can publish a project skill at the site root",
+      "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md",
     ],
     [
       manifest.skill.sourcePath === PROJECT_SKILL_TEMPLATES.contributor &&
@@ -203,30 +219,39 @@ function assertApplicationManifest(manifest: ProjectDefinition): void {
       "New projects use generated skills from the canonical templates",
     ],
     [
+      publishesGeneratedSkills(manifest),
+      "Complete the contribution rules that generate the project skills",
+    ],
+    [
       manifest.authority.state === "unverified" &&
         manifest.authority.proof === null,
-      "Repository authority is verified after approval",
+      "Repository receipt authority is added in a later revision with its proof",
     ],
     [
       manifest.terms.receiptPolicy.state === "pending-authority-activation",
-      "Receipt policy activates only after authority verification",
+      "Receipt policy activates only after repository receipt authority",
     ],
-    [manifest.terms.externalPrize === null, "External prizes need admin setup"],
+    [
+      manifest.terms.externalPrize === null,
+      "External prizes are not offered through self-service setup",
+    ],
     [
       reward.kind === "monthly-pool" &&
         reward.paymentMode === "disabled" &&
         reward.committedMinor === "0" &&
         reward.fundingState === "pledged" &&
         (reviewBudget === undefined ||
-          (reviewBudget.paymentMode === "disabled" &&
+          (storedApplication &&
+            reviewBudget.paymentMode === "disabled" &&
             reviewBudget.committedMinor === "0" &&
             reviewBudget.fundingState === "pledged")),
-      "Applications may only pledge a monthly pool with payments disabled",
+      "A new project may only pledge a monthly amount with payments disabled; a separate review budget is not offered",
     ],
     [
       (manifest.funding.addresses ?? []).length === 0 &&
+        fundingCommitments(manifest).length === 0 &&
         (manifest.escrow?.deployments ?? []).length === 0,
-      "Funding addresses and escrow deployments need admin verification",
+      "Vault deployments and funding routes are added after setup",
     ],
     [
       manifest.securityBounty === undefined ||
@@ -238,6 +263,105 @@ function assertApplicationManifest(manifest: ProjectDefinition): void {
   for (const [valid, message] of rules) {
     if (!valid) fail(422, "invalid_manifest", message);
   }
+}
+
+/** Historical commitment records; the schema keeps them for old revisions. */
+function fundingCommitments(manifest: ProjectDefinition): unknown[] {
+  return (manifest.funding as { commitments?: unknown[] }).commitments ?? [];
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+/**
+ * Applies an owner's financial change prospectively (PRD section 4:
+ * "Economic changes are prospective"). The monthly amount, and for an
+ * unfunded project its network and asset, may change. The open UTC cycle
+ * keeps its previous amount through the existing `cycleCaps` override, so the
+ * new amount starts with the next cycle. Funded money keeps its network,
+ * asset, vault and routes, and no separate review budget can be added.
+ */
+function prospectiveFinancialChange(
+  previous: ProjectDefinition,
+  next: ProjectDefinition,
+  now: Date,
+): ProjectDefinition {
+  const before = previous.reward;
+  const after = next.reward;
+  if (before.kind !== "monthly-pool" || after.kind !== "monthly-pool")
+    fail(
+      422,
+      "financial_change_restricted",
+      "Only a monthly reward changes through owner self-service",
+    );
+  if (!sameValue(before.reviewBudget, after.reviewBudget))
+    fail(
+      422,
+      "financial_change_restricted",
+      "A separate review budget is not offered; review credit comes from the shared scoring policy",
+    );
+  if (
+    !sameValue(previous.funding, next.funding) ||
+    !sameValue(previous.securityBounty, next.securityBounty)
+  )
+    fail(
+      422,
+      "financial_change_restricted",
+      "Funding routes and security bounty programs do not change through owner self-service",
+    );
+  const funded =
+    before.fundingState === "committed" ||
+    BigInt(before.committedMinor) > 0n ||
+    before.paymentMode === "enabled" ||
+    (previous.escrow?.deployments ?? []).length > 0 ||
+    (previous.funding.addresses ?? []).length > 0 ||
+    fundingCommitments(previous).length > 0;
+  if (
+    funded &&
+    (!sameValue(previous.rewardAsset, next.rewardAsset) ||
+      !sameValue(previous.escrow, next.escrow))
+  )
+    fail(
+      422,
+      "financial_change_restricted",
+      "A funded project keeps its network, asset and vault",
+    );
+  const fixed = (reward: typeof before) => {
+    const {
+      monthlyCapMinor: _cap,
+      monthlyCapDisplay: _display,
+      cycleCaps: _cycleCaps,
+      chain: _chain,
+      currency: _currency,
+      feeBasisPoints: _fee,
+      ...rest
+    } = reward;
+    return rest;
+  };
+  if (
+    !sameValue(fixed(before), fixed(after)) ||
+    !sameValue(before.cycleCaps, after.cycleCaps)
+  )
+    fail(
+      422,
+      "financial_change_restricted",
+      "Only the monthly amount, network and asset change through owner self-service",
+    );
+  if (before.monthlyCapMinor === after.monthlyCapMinor) return next;
+  const cycleId = now.toISOString().slice(0, 7);
+  const caps = before.cycleCaps ?? [];
+  if (caps.some((cap) => cap.cycleId === cycleId)) return next;
+  return {
+    ...next,
+    reward: {
+      ...after,
+      cycleCaps: [
+        ...caps,
+        { cycleId, monthlyCapMinor: before.monthlyCapMinor },
+      ].sort((left, right) => left.cycleId.localeCompare(right.cycleId)),
+    },
+  };
 }
 
 /**
@@ -445,19 +569,6 @@ async function requireAdmin(
   return session;
 }
 
-async function repositoryControl(
-  deps: ProjectApiDependencies,
-  manifest: ProjectDefinition,
-  actor: GithubActor,
-): Promise<RepositoryControl> {
-  try {
-    return await deps.repositoryControl(manifest, actor);
-  } catch {
-    // An unavailable lookup never lists a project; an admin decides instead.
-    return { state: "unproven", reason: "GitHub could not be checked" };
-  }
-}
-
 /**
  * Resolves the referrer an applicant named (PRJ-05). The login must belong
  * to an account that has signed in to slop.cash, and it cannot be the
@@ -513,162 +624,516 @@ async function resolveReferrer(
   return referrer;
 }
 
-async function submitApplication(
+/**
+ * The account's current authority over the manifest's repository. A
+ * manifest that contradicts GitHub's repository identity is refused; an
+ * unavailable GitHub or Slopbot answer means retry, never an admin task.
+ */
+async function currentAuthority(
+  deps: ProjectApiDependencies,
+  manifest: ProjectDefinition,
+  actor: GithubActor,
+): Promise<{ authority: SetupAuthority; access: AccessCheck }> {
+  let control: RepositoryControl | null;
+  try {
+    control = await deps.repositoryControl(manifest, actor);
+  } catch {
+    control = null;
+  }
+  if (control?.state === "mismatch")
+    fail(422, "invalid_manifest", control.reason);
+  const access = await readRepositoryAccess(
+    deps.repositoryAccess,
+    manifest,
+    actor,
+  );
+  return {
+    authority: setupAuthority(
+      control,
+      access,
+      actor,
+      manifest.repositories[0].id,
+    ),
+    access,
+  };
+}
+
+function requireAuthority(authority: SetupAuthority): void {
+  if (authority.state === "retry")
+    fail(503, "github_unavailable", authority.message);
+  if (authority.state === "denied")
+    fail(403, "authority_required", authority.message);
+}
+
+function actorOf(session: WebSession): GithubActor {
+  return { githubId: session.githubId, githubLogin: session.githubLogin };
+}
+
+async function queueScan(
+  deps: ProjectApiDependencies,
+  project: ProjectRecord,
+  actor: GithubActor,
+  reason: string,
+): Promise<ScanRequest> {
+  if (deps.requestScan === undefined)
+    return {
+      state: "unavailable",
+      message:
+        "The security scan service is not available yet, so the scan cannot be queued. Check again later.",
+    };
+  try {
+    return await deps.requestScan(project, actor, reason);
+  } catch {
+    return {
+      state: "unavailable",
+      message: "The scan could not be queued. Check again.",
+    };
+  }
+}
+
+/**
+ * Runs every setup check for `actor` and acts on the result: it queues a
+ * scan of an unscanned or stale revision, and activates a paused project
+ * whose owner has write access read through Slopbot, whose repository has
+ * Slopbot installed and whose exact content has a clean scan. Activation
+ * changes only the status, so the clearance carries over.
+ */
+async function runSetupCheck(
+  request: Request,
+  deps: ProjectApiDependencies,
+  initial: ProjectRecord,
+  actor: GithubActor,
+  options: {
+    authority?: { authority: SetupAuthority; access: AccessCheck };
+    scanRequest?: ScanRequest | null;
+    requestScan?: boolean;
+  } = {},
+): Promise<ProjectSetupStatus> {
+  let project = initial;
+  const restriction = publicRestrictionOf(
+    project,
+    await deps.persistence.listEnforcements(),
+  );
+  let checked = options.authority;
+  if (checked === undefined) {
+    try {
+      checked = await currentAuthority(deps, project.manifest, actor);
+    } catch (error) {
+      // A repository that no longer matches its manifest is a denial here,
+      // shown with its reason, not a failed status read.
+      const message =
+        typeof error === "object" && error !== null && "message" in error
+          ? String(error.message)
+          : "GitHub repository facts do not match this project";
+      checked = {
+        authority: { state: "denied", message },
+        access: { state: "retry", message },
+      };
+    }
+  }
+  const { authority, access } = checked;
+  const clearance = await deps.vettingClearance(
+    project.id,
+    project.manifest,
+    project.revision,
+  );
+  const open =
+    restriction.state === "clear" &&
+    project.manifest.listingTier !== "retired" &&
+    clearance.state !== "banned";
+  let scanRequest = options.scanRequest ?? null;
+  if (
+    scanRequest === null &&
+    open &&
+    authority.state === "verified" &&
+    (clearance.state === "unscanned" ||
+      clearance.state === "stale" ||
+      (options.requestScan === true && clearance.state === "quarantined"))
+  )
+    scanRequest = await queueScan(
+      deps,
+      project,
+      actor,
+      `Setup check by @${actor.githubLogin}`,
+    );
+  let activatedRevision: number | null = null;
+  if (
+    open &&
+    project.status === "paused" &&
+    authority.state === "verified" &&
+    authority.basis === "installation" &&
+    access.state === "read" &&
+    access.access.installation === "installed" &&
+    clearance.state === "cleared" &&
+    publishesGeneratedSkills(project.manifest)
+  ) {
+    project = await appendRevision(request, deps, {
+      current: project,
+      manifest: { ...project.manifest, status: "active" },
+      reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. Clean scan ${clearance.assessment.id}.`,
+      actor,
+    });
+    activatedRevision = project.revision;
+  }
+  return projectSetupStatus({
+    project,
+    restriction,
+    authority,
+    access,
+    clearance,
+    scanRequest,
+    activatedRevision,
+    checkedAt: deps.now().toISOString(),
+  });
+}
+
+/** Recheck the stored creator's current authority after a clean scan.
+ * The scan signature does not grant project authority. The same live GitHub,
+ * installation, restriction and revision checks used by the owner still run.
+ */
+export async function refreshProjectSetup(
+  request: Request,
+  deps: ProjectApiDependencies,
+  projectId: string,
+): Promise<ProjectSetupStatus | null> {
+  const project = await deps.persistence.getProject(projectId);
+  const creator = await deps.persistence.projectCreator(projectId);
+  if (project === null || creator === null) return null;
+  return runSetupCheck(request, deps, project, creator);
+}
+
+/**
+ * Self-service project creation (PRD section 4). The signed-in owner must
+ * have current authority over the repository; the project is listed paused
+ * at once, its first scan is queued, and the response carries the setup
+ * status with the next action. No admin approves it.
+ */
+async function createProject(
   request: Request,
   deps: ProjectApiDependencies,
 ): Promise<Response> {
   const session = await requireSession(request, deps);
   const body = await readJsonObject(request);
-  exactKeys(body, ["manifest"], ["expectedRevision", "reason", "referrer"]);
-  const proposedId = (body.manifest as { id?: unknown } | null)?.id;
-  const current =
-    body.expectedRevision === undefined
-      ? null
-      : typeof proposedId === "string"
-        ? await deps.persistence.getProject(proposedId)
-        : null;
-  if (
-    body.expectedRevision !== undefined &&
-    (!current || current.revision !== body.expectedRevision)
-  )
-    fail(
-      409,
-      "stale_revision",
-      "Reload the project before proposing an update",
-    );
+  exactKeys(body, ["manifest"], ["referrer"]);
   const { manifest, text } = canonicalManifest(
-    await verifiedRewardAsset(
-      body.manifest,
-      current?.manifest.rewardAsset,
-      deps,
-    ),
+    await verifiedRewardAsset(body.manifest, undefined, deps),
   );
-  if (current) {
-    if (manifest.status !== "paused")
-      fail(
-        422,
-        "invalid_manifest",
-        "Content updates must be reviewed while paused",
-      );
-    if (!sameRepositoryIdentity(current.manifest, manifest))
-      fail(
-        422,
-        "invalid_manifest",
-        "A project update cannot change repository identity",
-      );
-    try {
-      assertProjectPolicyTransition(current.manifest, manifest);
-    } catch (error) {
-      invalidManifest(error);
-    }
-  } else assertApplicationManifest(manifest);
+  assertNewProjectManifest(manifest);
   assertRepositoryUnrestricted(
     manifest,
     await deps.persistence.listEnforcements(),
   );
-  const actor = {
-    githubId: session.githubId,
-    githubLogin: session.githubLogin,
-  };
-  if (current && body.referrer !== undefined)
-    fail(
-      422,
-      "invalid_referrer",
-      "A project update cannot change its referrer.",
-    );
-  const referrer = current
-    ? current.referrer
-    : await resolveReferrer(body.referrer, manifest, actor, deps);
-  if (
-    (await deps.persistence.countPendingApplications(session.githubId)) >=
-    MAX_PENDING_APPLICATIONS_PER_APPLICANT
-  ) {
-    fail(
-      429,
-      "too_many_pending",
-      `You already have ${MAX_PENDING_APPLICATIONS_PER_APPLICANT} applications awaiting review`,
-    );
-  }
+  const actor = actorOf(session);
+  const referrer = await resolveReferrer(body.referrer, manifest, actor, deps);
   assertRegistryWith(await deps.persistence.listProjects(), manifest, {
-    replaces: current !== null,
+    replaces: false,
   });
-  const control = await repositoryControl(deps, manifest, actor);
-  if (control.state === "mismatch" || (current && control.state !== "proven"))
-    fail(422, "invalid_manifest", control.reason);
-  const repository = manifest.repositories[0].id;
-  const application: ProjectApplication & { manifestText: string } = {
-    ...(current
-      ? {
-          expectedRevision: current.revision,
-          changeReason: boundedText(body.reason, "reason", 1, 1000),
-        }
-      : {}),
-    id: `app_${deps.randomId().replaceAll("-", "")}`,
-    projectId: manifest.id,
-    repositoryKey: repository.toLowerCase(),
+  const checked = await currentAuthority(deps, manifest, actor);
+  requireAuthority(checked.authority);
+  const created = await deps.persistence.createProject({
     manifest,
     manifestText: text,
     manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
-    acceptanceCriteria: (manifest.contribution?.approvedScope ?? "").slice(
-      0,
-      1000,
-    ),
-    applicant: actor,
-    submittedAt: deps.now().toISOString(),
-    status: "pending",
-    adminNotification: "pending",
-    adminNotificationAt: null,
-    decidedAt: null,
-    decidedBy: null,
-    decisionReason: null,
-    // Every application waits for an admin; the check informs that review.
-    githubCheck:
-      `${control.state === "proven" ? "Proven" : "Not proven"}: ${control.reason}`.slice(
-        0,
-        300,
-      ),
+    reason: `Created through self-service setup by @${actor.githubLogin}. ${checked.authority.message}`,
+    actor,
+    at: deps.now().toISOString(),
     referrer,
-  };
-  const created = await deps.persistence.createApplication(application);
-  if (created === "too_many_pending") {
-    fail(
-      429,
-      "too_many_pending",
-      `You already have ${MAX_PENDING_APPLICATIONS_PER_APPLICANT} applications awaiting review`,
-    );
-  }
-  if (created === "conflict") {
+  });
+  if (created === "conflict")
     fail(
       409,
-      "application_exists",
-      "This project or repository already has an application awaiting review",
+      "registry_conflict",
+      "The project id or repository is already listed",
     );
-  }
-  let notified = false;
-  try {
-    notified = await deps.notifyAdmins({
-      applicationId: application.id,
-      projectId: application.projectId,
-      projectName: manifest.name,
-      repository,
-      applicantLogin: session.githubLogin,
-      submittedAt: application.submittedAt,
-      reviewUrl: `${deploymentOrigins(deps.tier).site}/admin/applications/${application.id}`,
-    });
-  } catch {
-    // The application is already stored; the failed email stays visible to
-    // admins in the review queue instead of failing the submission.
-    console.error("project application admin notification failed");
-  }
-  await deps.persistence.recordAdminNotification(
-    application.id,
-    notified ? "sent" : "failed",
-    deps.now().toISOString(),
+  await purgeProjectCache(
+    deps.cache,
+    new URL(request.url).origin,
+    manifest.id,
+    skillNames(manifest),
+    await deps.persistence.enforcementGeneration(),
   );
-  const stored = await deps.persistence.getApplication(application.id);
-  if (stored === null) fail(500, "internal_error", "Application vanished");
+  const project = await deps.persistence.getProject(manifest.id);
+  if (project === null) fail(500, "internal_error", "Project vanished");
+  const scanRequest = await queueScan(
+    deps,
+    project,
+    actor,
+    "First scan after self-service setup",
+  );
   return json(201, {
-    application: publicApplication(stored),
+    project: adminProject(project),
+    setup: await runSetupCheck(request, deps, project, actor, {
+      authority: checked,
+      scanRequest,
+    }),
+  });
+}
+
+/**
+ * Publishes an owner's revision at once (PRD section 4). Presentation
+ * changes publish as they are; a change to the skill inputs pauses an active
+ * project and queues a fresh scan, and a clean result reactivates it on the
+ * next setup check; a financial change applies from the next UTC cycle.
+ * Identity, status, listing, steward, authority and terms stay with the
+ * reviewed exception paths. A stale `expectedRevision` fails with 409.
+ */
+async function publishOwnerRevision(
+  request: Request,
+  deps: ProjectApiDependencies,
+  projectId: string,
+  stored?: {
+    body: Record<string, unknown>;
+    applicationId: string;
+    actor: GithubActor;
+  },
+): Promise<Response> {
+  const actor = stored?.actor ?? actorOf(await requireSession(request, deps));
+  if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
+  const body = stored?.body ?? (await readJsonObject(request));
+  exactKeys(body, ["manifest", "expectedRevision"], ["reason"]);
+  const expectedRevision = positiveInteger(
+    body.expectedRevision,
+    "expectedRevision",
+  );
+  const note =
+    body.reason === undefined || body.reason === ""
+      ? null
+      : boundedText(body.reason, "reason", 1, 500);
+  if (
+    typeof body.manifest !== "object" ||
+    body.manifest === null ||
+    Array.isArray(body.manifest)
+  )
+    fail(422, "invalid_manifest", "Project manifest is invalid");
+  const current = await deps.persistence.getProject(projectId);
+  if (current === null) fail(404, "not_found", "Project not found");
+  if (current.revision !== expectedRevision)
+    fail(409, "stale_revision", "The project changed since you loaded it");
+  const restriction = publicRestrictionOf(
+    current,
+    await deps.persistence.listEnforcements(),
+  );
+  if (restriction.state !== "clear")
+    fail(
+      409,
+      "project_restricted",
+      `The project is ${restriction.state}; request reinstatement before changing it`,
+    );
+  // The server decides status and listing; the owner sends content.
+  const { manifest: submitted } = canonicalManifest(
+    await verifiedRewardAsset(
+      {
+        ...(body.manifest as Record<string, unknown>),
+        status: current.manifest.status,
+        listingTier: current.manifest.listingTier,
+      },
+      current.manifest.rewardAsset,
+      deps,
+    ),
+  );
+  if (submitted.id !== projectId)
+    fail(422, "invalid_manifest", "Project id cannot change");
+  const changes = classifyRevisionChanges(current.manifest, submitted);
+  if (changes.restricted.length > 0)
+    fail(
+      422,
+      "owner_field_restricted",
+      `These fields do not change through owner self-service: ${changes.restricted.join(", ")}`,
+    );
+  if (
+    changes.presentation.length +
+      changes.executable.length +
+      changes.financial.length ===
+    0
+  )
+    fail(422, "no_change", "The revision changes nothing");
+  let manifest =
+    changes.financial.length > 0
+      ? prospectiveFinancialChange(current.manifest, submitted, deps.now())
+      : submitted;
+  if (changes.executable.length > 0 && manifest.status === "active")
+    manifest = { ...manifest, status: "paused" };
+  const checked = await currentAuthority(deps, manifest, actor);
+  requireAuthority(checked.authority);
+  const summary = [
+    changes.presentation.length > 0
+      ? `presentation (${changes.presentation.join(", ")}) published`
+      : null,
+    changes.executable.length > 0
+      ? `skill inputs (${changes.executable.join(", ")}) need a new scan`
+      : null,
+    changes.financial.length > 0
+      ? `financial policy (${changes.financial.join(", ")}) applies from the next UTC cycle`
+      : null,
+  ]
+    .filter((part) => part !== null)
+    .join("; ");
+  const updated = await appendRevision(request, deps, {
+    current,
+    manifest,
+    reason: `Owner update by @${actor.githubLogin}: ${summary}.${note ? ` ${note}` : ""}`,
+    actor,
+    applicationId: stored?.applicationId,
+  });
+  const scanRequest =
+    changes.executable.length > 0
+      ? await queueScan(
+          deps,
+          updated,
+          actor,
+          `Owner changed ${changes.executable.join(", ")}`,
+        )
+      : null;
+  const setup = await runSetupCheck(request, deps, updated, actor, {
+    authority: checked,
+    scanRequest,
+  });
+  const published = await deps.persistence.getProject(projectId);
+  if (published === null) fail(500, "internal_error", "Project vanished");
+  return json(200, {
+    project: adminProject(published),
+    changes: {
+      presentation: changes.presentation,
+      executable: changes.executable,
+      financial: changes.financial,
+    },
+    setup,
+  });
+}
+
+/** The signed-in account's projects and the applications it can still publish. */
+async function listSetup(
+  request: Request,
+  deps: ProjectApiDependencies,
+): Promise<Response> {
+  const session = await requireSession(request, deps);
+  const [projects, applications] = await Promise.all([
+    deps.persistence.listOwnedProjects(session.githubId),
+    deps.persistence.listApplicantApplications(session.githubId),
+  ]);
+  return json(200, {
+    projects: projects.map((project) => ({
+      id: project.id,
+      slug: project.manifest.slug,
+      name: project.manifest.name,
+      status: project.status,
+      listingTier: project.manifest.listingTier,
+      revision: project.revision,
+    })),
+    applications: applications
+      .filter((application) => application.status === "pending")
+      .map(publicApplication),
+  });
+}
+
+async function checkSetup(
+  request: Request,
+  deps: ProjectApiDependencies,
+  projectId: string,
+): Promise<Response> {
+  const session = await requireSession(request, deps);
+  if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
+  const body = await readJsonObject(request);
+  exactKeys(body, [], ["requestScan"]);
+  if (body.requestScan !== undefined && typeof body.requestScan !== "boolean")
+    fail(400, "invalid_request", "Invalid requestScan");
+  const project = await deps.persistence.getProject(projectId);
+  if (project === null) fail(404, "not_found", "Project not found");
+  return json(200, {
+    setup: await runSetupCheck(request, deps, project, actorOf(session), {
+      requestScan: body.requestScan === true,
+    }),
+  });
+}
+
+/**
+ * Migrates an application submitted before self-service setup: its own
+ * applicant publishes the stored manifest, without entering it again, after
+ * the same identity, authority, restriction and registry checks a new
+ * project passes. A stored update publishes as an owner revision against its
+ * stored base revision.
+ */
+async function publishPendingApplication(
+  request: Request,
+  deps: ProjectApiDependencies,
+  applicationId: string,
+): Promise<Response> {
+  const session = await requireSession(request, deps);
+  if (!APPLICATION_ID.test(applicationId))
+    fail(404, "not_found", "Application not found");
+  const body = await readJsonObject(request);
+  exactKeys(body, []);
+  const application = await deps.persistence.getApplication(applicationId);
+  if (
+    application === null ||
+    application.applicant.githubId !== session.githubId
+  )
+    fail(404, "not_found", "Application not found");
+  if (application.status !== "pending")
+    fail(
+      409,
+      "already_decided",
+      `Application was already ${application.status}`,
+    );
+  const actor = actorOf(session);
+  if (application.expectedRevision !== undefined)
+    return await publishOwnerRevision(request, deps, application.projectId, {
+      body: {
+        manifest: application.manifest,
+        expectedRevision: application.expectedRevision,
+        ...(application.changeReason
+          ? { reason: application.changeReason.slice(0, 500) }
+          : {}),
+      },
+      applicationId,
+      actor,
+    });
+  canonicalManifest(application.manifest);
+  assertNewProjectManifest(application.manifest, { storedApplication: true });
+  assertRepositoryUnrestricted(
+    application.manifest,
+    await deps.persistence.listEnforcements(),
+  );
+  assertRegistryWith(
+    await deps.persistence.listProjects(),
+    application.manifest,
+    { replaces: false },
+  );
+  const checked = await currentAuthority(deps, application.manifest, actor);
+  requireAuthority(checked.authority);
+  const result = await deps.persistence.publishApplication({
+    applicationId,
+    actor,
+    reason: `Published by its applicant through self-service setup. ${checked.authority.message}`,
+    at: deps.now().toISOString(),
+  });
+  if (result === "conflict")
+    fail(
+      409,
+      "registry_conflict",
+      "The project id or repository is already listed, or the application was published",
+    );
+  await purgeProjectCache(
+    deps.cache,
+    new URL(request.url).origin,
+    application.projectId,
+    skillNames(application.manifest),
+    await deps.persistence.enforcementGeneration(),
+  );
+  const project = await deps.persistence.getProject(application.projectId);
+  if (project === null) fail(500, "internal_error", "Project vanished");
+  const scanRequest = await queueScan(
+    deps,
+    project,
+    actor,
+    "First scan after publishing a stored application",
+  );
+  return json(201, {
+    project: adminProject(project),
+    setup: await runSetupCheck(request, deps, project, actor, {
+      authority: checked,
+      scanRequest,
+    }),
   });
 }
 
@@ -681,139 +1146,6 @@ async function listMyApplications(
     session.githubId,
   );
   return json(200, { applications: applications.map(publicApplication) });
-}
-
-async function listAdminApplications(
-  request: Request,
-  deps: ProjectApiDependencies,
-): Promise<Response> {
-  await requireAdmin(request, deps);
-  const query = new URL(request.url).searchParams;
-  const id = query.get("id");
-  if (id !== null) {
-    if (!APPLICATION_ID.test(id))
-      fail(404, "not_found", "Application not found");
-    const application = await deps.persistence.getApplication(id);
-    if (application === null) fail(404, "not_found", "Application not found");
-    return json(200, { applications: [publicApplication(application)] });
-  }
-  const status = query.get("status") ?? "pending";
-  if (!["pending", "approved", "rejected"].includes(status)) {
-    fail(400, "invalid_request", "Invalid application status");
-  }
-  const applications = await deps.persistence.listApplications(
-    status as ApplicationStatus,
-  );
-  return json(200, { applications: applications.map(publicApplication) });
-}
-
-async function decideApplication(
-  request: Request,
-  deps: ProjectApiDependencies,
-  applicationId: string,
-  decision: "approve" | "reject",
-): Promise<Response> {
-  const session = await requireAdmin(request, deps);
-  if (!APPLICATION_ID.test(applicationId)) {
-    fail(404, "not_found", "Application not found");
-  }
-  const body = await readJsonObject(request);
-  exactKeys(body, decision === "reject" ? ["reason"] : [], ["reason"]);
-  const reason =
-    decision === "reject" || (body.reason !== undefined && body.reason !== "")
-      ? boundedText(body.reason, "reason", 1, 1000)
-      : null;
-  const application = await deps.persistence.getApplication(applicationId);
-  if (application === null) fail(404, "not_found", "Application not found");
-  if (application.status !== "pending") {
-    fail(
-      409,
-      "already_decided",
-      `Application was already ${application.status}`,
-    );
-  }
-  const actor = {
-    githubId: session.githubId,
-    githubLogin: session.githubLogin,
-  };
-  const at = deps.now().toISOString();
-  if (decision === "reject") {
-    const result = await deps.persistence.rejectApplication({
-      applicationId,
-      actor,
-      reason: reason as string,
-      at,
-    });
-    if (result === "conflict") {
-      fail(409, "already_decided", "Application was already decided");
-    }
-  } else if (application.expectedRevision !== undefined) {
-    await replaceProjectManifest(
-      request,
-      deps,
-      application.projectId,
-      {
-        manifest: application.manifest,
-        expectedRevision: application.expectedRevision,
-        reason: application.changeReason,
-      },
-      application.id,
-    );
-  } else {
-    // Re-check against the live registry: another approval may have claimed
-    // the id or repository since this application was submitted.
-    canonicalManifest(application.manifest);
-    assertApplicationManifest(application.manifest);
-    let control: RepositoryControl;
-    try {
-      control = await deps.repositoryControl(
-        application.manifest,
-        application.applicant,
-      );
-    } catch {
-      fail(
-        503,
-        "github_unavailable",
-        "GitHub could not be checked; retry approval later",
-      );
-    }
-    if (control.state === "mismatch")
-      fail(422, "invalid_manifest", control.reason);
-    assertRepositoryUnrestricted(
-      application.manifest,
-      await deps.persistence.listEnforcements(),
-    );
-    assertRegistryWith(
-      await deps.persistence.listProjects(),
-      application.manifest,
-      { replaces: false },
-    );
-    const result = await deps.persistence.approveApplication({
-      applicationId,
-      actor,
-      reason,
-      at,
-    });
-    if (result === "conflict") {
-      fail(
-        409,
-        "registry_conflict",
-        "The project id or repository is already listed, or the application was decided",
-      );
-    }
-    await purgeProjectCache(
-      deps.cache,
-      new URL(request.url).origin,
-      application.projectId,
-      skillNames(application.manifest),
-      await deps.persistence.enforcementGeneration(),
-    );
-  }
-  const updated = await deps.persistence.getApplication(applicationId);
-  if (updated === null) fail(500, "internal_error", "Application vanished");
-  return json(200, {
-    application: publicApplication(updated),
-  });
 }
 
 async function listAdminProjects(
@@ -843,46 +1175,69 @@ async function listAdminProjects(
   });
 }
 
+/** An admin revision: the exception path for fields owners do not change. */
 async function replaceProjectManifest(
   request: Request,
   deps: ProjectApiDependencies,
   projectId: string,
-  submittedBody?: Record<string, unknown>,
-  applicationId?: string,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = submittedBody ?? (await readJsonObject(request));
+  const body = await readJsonObject(request);
   exactKeys(body, ["manifest", "expectedRevision", "reason"]);
-  if (
-    typeof body.expectedRevision !== "number" ||
-    !Number.isSafeInteger(body.expectedRevision) ||
-    body.expectedRevision < 1
-  ) {
-    fail(400, "invalid_request", "Invalid expectedRevision");
-  }
+  const expectedRevision = positiveInteger(
+    body.expectedRevision,
+    "expectedRevision",
+  );
   const reason = boundedText(body.reason, "reason", 1, 1000);
-  const projects = await deps.persistence.listProjects();
-  const current = projects.find((project) => project.id === projectId);
-  if (current === undefined) fail(404, "not_found", "Project not found");
-  if (current.revision !== body.expectedRevision) {
+  const current = await deps.persistence.getProject(projectId);
+  if (current === null) fail(404, "not_found", "Project not found");
+  if (current.revision !== expectedRevision)
     fail(409, "stale_revision", "The project changed since you loaded it");
-  }
-  // Read the generation first: a record that lands after it makes the
-  // guarded append below a conflict, so no write uses stale restrictions.
-  const enforcementGeneration = await deps.persistence.enforcementGeneration();
-  const enforcements = await deps.persistence.listEnforcements();
-  const restriction = projectRestriction(projectId, enforcements);
-  const { manifest, text } = canonicalManifest(
+  const { manifest } = canonicalManifest(
     await verifiedRewardAsset(
       body.manifest,
       current.manifest.rewardAsset,
       deps,
     ),
   );
-  if (manifest.id !== projectId) {
+  if (manifest.id !== projectId)
     fail(422, "invalid_manifest", "Project id cannot change");
-  }
+  assertReviewBudgetTransition(current.manifest, manifest, deps.now());
+  const updated = await appendRevision(request, deps, {
+    current,
+    manifest,
+    reason,
+    actor: actorOf(session),
+  });
+  return json(200, { project: adminProject(updated) });
+}
+
+/**
+ * Appends one revision after every registry rule: restrictions, policy
+ * transitions, registry uniqueness, generated-skill content and the
+ * clearance gate. Only content a scan cleared may become active, or change
+ * its skill inputs while active (PRD VET-01).
+ */
+async function appendRevision(
+  request: Request,
+  deps: ProjectApiDependencies,
+  input: {
+    current: ProjectRecord;
+    manifest: ProjectDefinition;
+    reason: string;
+    actor: GithubActor;
+    applicationId?: string;
+  },
+): Promise<ProjectRecord> {
+  const { current, actor } = input;
+  const projectId = current.id;
+  const { manifest, text } = canonicalManifest(input.manifest);
+  // Read the generation first: a record that lands after it makes the
+  // guarded append below a conflict, so no write uses stale restrictions.
+  const enforcementGeneration = await deps.persistence.enforcementGeneration();
+  const enforcements = await deps.persistence.listEnforcements();
+  const restriction = projectRestriction(projectId, enforcements);
   // A new revision cannot lift a Quarantine or a Ban (PRD ADM-06).
   if (restriction.state !== "clear" && !enforcedManifest(manifest)) {
     fail(
@@ -909,8 +1264,9 @@ async function replaceProjectManifest(
   } catch (error) {
     invalidManifest(error);
   }
-  assertReviewBudgetTransition(current.manifest, manifest, deps.now());
-  assertRegistryWith(projects, manifest, { replaces: true });
+  assertRegistryWith(await deps.persistence.listProjects(), manifest, {
+    replaces: true,
+  });
   // Project skills are generated from this manifest and the reviewed
   // template, so a project goes live only with complete skill content.
   if (manifest.status === "active" && !publishesGeneratedSkills(manifest)) {
@@ -927,8 +1283,15 @@ async function replaceProjectManifest(
       "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md",
     );
   }
-  // VET-01: only content a secure-VM scan cleared can become active.
-  if (manifest.status === "active") {
+  const changesExecutable =
+    classifyRevisionChanges(current.manifest, manifest).executable.length > 0 ||
+    !sameValue(current.manifest.repositories, manifest.repositories) ||
+    !sameValue(current.manifest.skill, manifest.skill) ||
+    !sameValue(current.manifest.reviewSkill, manifest.reviewSkill);
+  if (
+    manifest.status === "active" &&
+    (current.status !== "active" || changesExecutable)
+  ) {
     const vetting = await deps.vettingClearance(
       projectId,
       manifest,
@@ -938,19 +1301,19 @@ async function replaceProjectManifest(
       fail(
         422,
         "vetting_required",
-        `Security vetting is ${vetting.state}. Only a revision whose exact content passed a clean secure-VM scan of the current integration-branch head and skill template can activate; change nothing but the status of the scanned revision.`,
+        `Security vetting is ${vetting.state}. Only a revision whose skill inputs and source passed a clean scan of the current integration-branch head and skill template can activate.`,
       );
   }
   const result = await deps.persistence.appendProjectRevision(
     {
       projectId,
-      applicationId,
+      applicationId: input.applicationId,
       expectedRevision: current.revision,
       manifest,
       manifestText: text,
       manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
-      reason,
-      actor: { githubId: session.githubId, githubLogin: session.githubLogin },
+      reason: input.reason.slice(0, 1000),
+      actor,
       at: deps.now().toISOString(),
     },
     enforcementGeneration,
@@ -967,9 +1330,7 @@ async function replaceProjectManifest(
   );
   const updated = await deps.persistence.getProject(projectId);
   if (updated === null) fail(500, "internal_error", "Project vanished");
-  return json(200, {
-    project: adminProject(updated),
-  });
+  return updated;
 }
 
 function publicRestriction(
@@ -1119,7 +1480,7 @@ async function enforceProject(
 
 /**
  * ELG-02 appeal path: the project steward named in the manifest, or the
- * applicant whose application listed the project, records a reinstatement
+ * account that listed the project, records a reinstatement
  * request. A moderator who did not place the restriction still decides it.
  */
 async function requestReinstatement(
@@ -1143,16 +1504,14 @@ async function requestReinstatement(
     actorRole: async (project) => {
       if (String(project.manifest.steward.github.actorId) === session.githubId)
         return "project-steward";
-      const application =
-        project.sourceApplicationId === null
-          ? null
-          : await deps.persistence.getApplication(project.sourceApplicationId);
-      if (application?.applicant.githubId === session.githubId)
-        return "project-applicant";
+      // The applicant of an older application, or the account that created
+      // the project through self-service setup.
+      const creator = await deps.persistence.projectCreator(project.id);
+      if (creator?.githubId === session.githubId) return "project-applicant";
       return fail(
         403,
         "forbidden",
-        "Only the project steward or the applicant who listed the project can request reinstatement",
+        "Only the project steward or the account that listed the project can request reinstatement",
       );
     },
     decisionSource: "owner-request",
@@ -1503,10 +1862,10 @@ function isProjectRoute(parts: string[]): boolean {
     parts[0] === "project-github" ||
     parts[0] === "project-revisions" ||
     parts[0] === "project-session" ||
+    parts[0] === "project-setup" ||
     parts[0] === "project-applications" ||
     parts[0] === "project-appeals" ||
-    (parts[0] === "admin" &&
-      (parts[1] === "projects" || parts[1] === "project-applications"))
+    (parts[0] === "admin" && parts[1] === "projects")
   );
 }
 
@@ -1519,7 +1878,9 @@ export async function handleProjectApi(
   const route = `${request.method} ${parts
     .map((part, index) =>
       (parts[0] === "admin" && index === 2) ||
-      (parts[0] === "projects" && index === 1)
+      (parts[0] === "projects" && index === 1) ||
+      (parts[0] === "project-setup" && index === 1) ||
+      (parts[0] === "project-applications" && index === 1 && parts.length === 3)
         ? ":id"
         : parts[0] === "project-github" &&
             parts[1] === "repositories" &&
@@ -1576,16 +1937,18 @@ export async function handleProjectApi(
           session: actor === null ? null : sessionBody(actor, deps),
         });
       }
-      case "POST project-applications":
-        return await submitApplication(request, deps);
+      case "POST projects":
+        return await createProject(request, deps);
+      case "PUT projects/:id":
+        return await publishOwnerRevision(request, deps, parts[1]);
+      case "GET project-setup":
+        return await listSetup(request, deps);
+      case "POST project-setup/:id/check":
+        return await checkSetup(request, deps, parts[1]);
       case "GET project-applications/mine":
         return await listMyApplications(request, deps);
-      case "GET admin/project-applications":
-        return await listAdminApplications(request, deps);
-      case "POST admin/project-applications/:id/approve":
-        return await decideApplication(request, deps, parts[2], "approve");
-      case "POST admin/project-applications/:id/reject":
-        return await decideApplication(request, deps, parts[2], "reject");
+      case "POST project-applications/:id/publish":
+        return await publishPendingApplication(request, deps, parts[1]);
       case "GET admin/projects":
         return await listAdminProjects(request, deps);
       case "PUT admin/projects/:id/manifest":

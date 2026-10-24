@@ -45,106 +45,109 @@ function open() {
 }
 
 describe("notification events", () => {
-  test("application decisions and later revisions notify once each", async () => {
-    const { db, rows } = open();
+  test("self-service listing sends no routine notice; later revisions notify once each", async () => {
+    const { db, sqlite, rows } = open();
     const persistence = new CloudflareProjectPersistence(db);
-    const admin = { githubId: "1", githubLogin: "admin" };
-    for (const id of ["alpha", "beta"]) {
-      const manifest = {
+    const creator = { githubId: APPLICANT, githubLogin: "e2e-applicant" };
+    const manifestOf = (id: string) =>
+      ({
         id,
         status: "paused",
         repositories: [{ id: `example/${id}` }],
         steward: { github: { actorId: STEWARD } },
-      } as unknown as ProjectDefinition;
-      expect(
-        await persistence.createApplication({
-          id: `application-${id}`,
-          projectId: id,
-          repositoryKey: `example/${id}`,
-          manifest,
-          manifestText: JSON.stringify(manifest),
-          manifestSha256: id[0].repeat(64),
-          acceptanceCriteria: "Merged pull requests",
-          applicant: { githubId: APPLICANT, githubLogin: "e2e-applicant" },
-          submittedAt: T,
-          status: "pending",
-          adminNotification: "pending",
-          adminNotificationAt: null,
-          decidedAt: null,
-          decidedBy: null,
-          decisionReason: null,
-          githubCheck: null,
-          referrer: null,
-        }),
-      ).toBe("created");
-    }
-    const approve = {
-      applicationId: "application-alpha",
-      actor: admin,
-      reason: null,
-      at: T,
-    };
-    const reject = {
+      }) as unknown as ProjectDefinition;
+    const alpha = manifestOf("alpha");
+    expect(
+      await persistence.createProject({
+        manifest: alpha,
+        manifestText: JSON.stringify(alpha),
+        manifestSha256: "a".repeat(64),
+        reason: "Created through self-service setup",
+        actor: creator,
+        at: T,
+        referrer: null,
+      }),
+    ).toBe("created");
+    // The same id or repository cannot be listed twice.
+    expect(
+      await persistence.createProject({
+        manifest: alpha,
+        manifestText: JSON.stringify(alpha),
+        manifestSha256: "a".repeat(64),
+        reason: "Created again",
+        actor: creator,
+        at: T,
+        referrer: null,
+      }),
+    ).toBe("conflict");
+    // An application stored before self-service setup is published by its
+    // applicant, once, with no approval notice.
+    const beta = JSON.stringify(manifestOf("beta"));
+    sqlite.exec(
+      `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification)
+         VALUES ('application-beta','beta','example/beta','${beta}','${"b".repeat(64)}','Merged pull requests','${APPLICANT}','e2e-applicant','${EARLY}','pending','pending')`,
+    );
+    const publish = {
       applicationId: "application-beta",
-      actor: admin,
-      reason: "Repository is private",
+      actor: creator,
+      reason: "Published by its applicant",
       at: T,
     };
-    expect(await persistence.approveApplication(approve)).toBe("approved");
-    expect(await persistence.rejectApplication(reject)).toBe("rejected");
-    // A replayed decision finds no pending row and writes nothing.
-    expect(await persistence.approveApplication(approve)).toBe("conflict");
-    expect(await persistence.rejectApplication(reject)).toBe("conflict");
+    expect(await persistence.publishApplication(publish)).toBe("published");
+    expect(await persistence.publishApplication(publish)).toBe("conflict");
+    expect(await persistence.projectCreator("alpha")).toEqual(creator);
+    expect(await persistence.projectCreator("beta")).toEqual(creator);
+    expect(
+      (await persistence.listOwnedProjects(APPLICANT)).map((p) => p.id),
+    ).toEqual(["alpha", "beta"]);
     const project = await persistence.getProject("alpha");
     const next = { ...project?.manifest, revision: 2 } as ProjectDefinition;
-    const revision = {
+    const revision = (actor: { githubId: string; githubLogin: string }) => ({
       projectId: "alpha",
       expectedRevision: 1,
       manifest: next,
       manifestText: JSON.stringify(next),
       manifestSha256: "2".repeat(64),
-      reason: "Activate with generated skills",
-      actor: admin,
+      reason: "Owner update: headline",
+      actor,
       at: R,
-    };
-    expect(await persistence.appendProjectRevision(revision, 0)).toBe(
+    });
+    // The creator's own revision reaches the steward, not the creator.
+    expect(await persistence.appendProjectRevision(revision(creator), 0)).toBe(
       "updated",
     );
     // The same revision cannot be appended twice.
-    expect(await persistence.appendProjectRevision(revision, 0)).toBe(
+    expect(await persistence.appendProjectRevision(revision(creator), 0)).toBe(
       "conflict",
     );
-    expect(rows(APPLICANT)).toEqual([
-      {
-        event_key: "project-application:application-alpha:approved",
-        kind: "application_approved",
-        subject: "alpha",
-        detail: null,
-        action_path: "/projects/alpha",
-        source_at: T,
-        read_at: null,
-      },
-      {
-        event_key: "project-application:application-beta:rejected",
-        kind: "application_rejected",
-        subject: "beta",
-        detail: "Repository is private",
-        action_path: "/projects/new",
-        source_at: T,
-        read_at: null,
-      },
+    expect(rows(APPLICANT)).toEqual([]);
+    expect(rows(STEWARD)).toEqual([
       {
         event_key: "project-revision:alpha:2",
         kind: "project_revision",
         subject: "alpha",
-        detail: "Activate with generated skills",
+        detail: "Owner update: headline",
         action_path: "/projects/alpha",
         source_at: R,
         read_at: null,
       },
     ]);
-    expect(rows(STEWARD).map((row) => row.event_key)).toEqual([
-      "project-revision:alpha:2",
+    // Another account's revision reaches the creator.
+    const third = { ...next, revision: 3 } as ProjectDefinition;
+    expect(
+      await persistence.appendProjectRevision(
+        {
+          ...revision({ githubId: OTHER, githubLogin: "maintainer" }),
+          expectedRevision: 2,
+          manifest: third,
+          manifestText: JSON.stringify(third),
+          manifestSha256: "3".repeat(64),
+        },
+        0,
+      ),
+    ).toBe("updated");
+    expect(rows(APPLICANT).map((row) => row.event_key)).toEqual([
+      "project-revision:alpha:3",
     ]);
   });
 

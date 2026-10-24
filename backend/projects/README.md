@@ -1,10 +1,12 @@
 # Project registry API
 
 The D1 database `slop-private` is the only project inventory. Projects are
-added on slop.cash, not by pull request. This module serves the registry,
-takes applications, and lets admins review them. It runs in the Pages
-Function `functions/api/v1/[[path]].ts` before the payments, points, Slopbot
-and private trace APIs.
+added on slop.cash, not by pull request. This module serves the registry and
+runs self-service setup: owners create projects and publish revisions
+without routine admin approval (PRD section 4). Admins keep the exception
+paths: revisions owners cannot publish, restrictions and disputes. It runs
+in the Pages Function `functions/api/v1/[[path]].ts` before the payments,
+points, Slopbot and private trace APIs.
 
 ## Tables
 
@@ -13,16 +15,17 @@ Migrations `0019_project_registry.sql`,
 `0023_project_enforcements.sql` and
 `0027_project_enforcement_owner_appeals.sql` create:
 
-- `project_applications`: submitted manifests, applicant GitHub identity,
-  the referrer the applicant named (PRJ-05, migration
-  `0055_project_referrer.sql`), review status, decision, and admin email
-  outcome. One pending application per project id and per repository.
+- `project_applications`: applications submitted before self-service setup,
+  with applicant identity, referrer (PRJ-05, migration
+  `0055_project_referrer.sql`), status, decision and admin email outcome.
+  No route creates one now. A pending application is published by its own
+  applicant (see Migration below); decided ones stay as history.
 - `project_revisions`: the append-only manifest history. Triggers refuse
   update and delete.
 - `projects`: the current pointer to the newest revision, plus the referrer
-  copied once from the approved application. Triggers require a matching
-  appended revision for every insert and update, refuse delete, and refuse
-  any change to the referrer.
+  recorded once at creation (or copied from a published application).
+  Triggers require a matching appended revision for every insert and
+  update, refuse delete, and refuse any change to the referrer.
 - `project_repositories`: makes each repository unique across the registry.
 - `project_enforcements`: the append-only ADM-06 record of each Quarantine,
   Ban, reinstatement request and appeal decision, with the ADM-05 audit
@@ -40,18 +43,19 @@ points and profiles still validate.
 |---|---|---|
 | `GET /api/v1/projects` | public, edge cached | Current manifests |
 | `GET /api/v1/projects/:id` | public, edge cached | One current manifest, revision and digest |
+| `POST /api/v1/projects` | session, current authority | Creates a paused project at once (`manifest`, optional `referrer`), queues its first scan and returns the setup status |
+| `PUT /api/v1/projects/:id` | session, current authority | Publishes an owner revision (`manifest`, `expectedRevision`, optional `reason`) and returns the classified changes and setup status |
+| `GET /api/v1/project-setup` | session | The account's projects and its pending stored applications |
+| `POST /api/v1/project-setup/:id/check` | session | Runs every setup check, queues a needed scan, activates a project that passes (optional `requestScan` after an incomplete scan) |
 | `GET /api/v1/project-revisions` | public, edge cached | Full revision history with SHA-256 digests |
 | `GET /api/v1/project-github/owned-repositories` | session | The signed-in maintainer's public repositories |
 | `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` |
-| `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One approved revision's exact stored `manifestText` and digest, for generated-skill installers |
+| `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
-| `POST /api/v1/project-applications` | session | Submits a manifest with an optional `referrer` login, records the GitHub check, and emails the admins |
-| `GET /api/v1/project-applications/mine` | session | The applicant's own applications |
-| `GET /api/v1/admin/project-applications?status=` | admin | Review queue |
-| `POST /api/v1/admin/project-applications/:id/approve` | admin | Lists the project as paused (optional `reason`) |
-| `POST /api/v1/admin/project-applications/:id/reject` | admin | Rejects with a required `reason` |
+| `GET /api/v1/project-applications/mine` | session | The account's stored applications, as history |
+| `POST /api/v1/project-applications/:id/publish` | session, its applicant | Publishes a pending stored application without entering it again |
 | `GET /api/v1/admin/projects` | admin | Registry with revisions |
-| `PUT /api/v1/admin/projects/:id/manifest` | admin | Appends a revision (`manifest`, `expectedRevision`, `reason`) |
+| `PUT /api/v1/admin/projects/:id/manifest` | admin | Appends an exception revision (`manifest`, `expectedRevision`, `reason`) |
 | `POST /api/v1/admin/projects/:id/enforcement-preview` | moderator | Plans an enforcement action and writes nothing |
 | `POST /api/v1/admin/projects/:id/enforcement` | moderator | Records the previewed action (`action`, `reason`, `evidenceReference`, `expectedRevision`, `expectedSequence`) |
 
@@ -76,19 +80,72 @@ serves these public artifacts from the current D1 revision:
 | `/projects/:id/[review-]skill-manifest.json` | Template revision, registry binding, guide renderer and archive routing |
 | `/projects/:id/downloads/<skill>.skill` and `.skill.sha256` | Deterministic skill archive and checksum |
 
-Project updates use `POST /api/v1/project-applications` with `manifest`,
-`expectedRevision`, and a public `reason`. Migration
-`0039_project_update_applications.sql` stores the base revision and reason.
-An update needs proven repository control and cannot change repository identity.
-It stays pending until an admin approves it. Approval appends a paused revision
-and records the application decision in the same D1 transaction. A changed base
-revision returns `409`; the applicant must review the current project and submit
-again. Activation still requires clearance for the new revision.
+## Self-service setup
+
+A project starts without routine admin approval after complete setup,
+current GitHub authority, Slopbot installation and a clean security scan
+(PRD section 4). `backend/projects/setup.ts` derives one status per project:
+the result, one next action, and the authority, installation and scan
+checks. Funding is reported separately; a project works without it.
+
+- **Authority.** The manifest's repository and steward must match GitHub,
+  or the request is refused. When Slopbot is installed on the repository,
+  its installation reads the account's exact base permission
+  (`GET /repos/:owner/:repo/collaborators/:login/permission`); write
+  (which includes maintain) or admin is required. Before installation,
+  public GitHub facts (owner of a user repository, or public member of its
+  organization) let an owner create and edit the paused project.
+  Activation always needs the installation read. A failed GitHub or
+  Slopbot answer is HTTP 503 `github_unavailable` or a `retry` status:
+  try again, never an admin task.
+- **Installation.** The Pages Function asks the Slopbot Worker over the
+  `SLOPBOT` service binding (`https://slopbot.internal/v1/repository-access`,
+  `workers/slopbot/repository-access.ts`). The Worker asks GitHub for the
+  repository's installation with its App JWT and checks the repository id.
+  Without the binding the check reports `retry`.
+- **Scan.** Creation, a changed skill input, and a setup check of an
+  unscanned or stale revision queue a scan through the existing vetting
+  queue (`vettingScanRequester`, the same assessment row and live pin as
+  the operator route). Without the service key the scan is `unavailable`.
+- **Activation.** `POST /api/v1/project-setup/:id/check` appends the active
+  revision, by status alone, when every check passes for the account that
+  runs it. The revision reason records the permission, installation and
+  clean scan. An unrestricted paused project that was not delisted is
+  eligible; a restriction is lifted only by its moderator path.
+
+Owner revisions (`PUT /api/v1/projects/:id`) publish at once against
+`expectedRevision`; a changed base returns `409`. The server keeps status
+and listing tier, then classifies the change (`src/lib/project-revision-changes.ts`):
+
+- presentation (`name`, `eyebrow`, `headline`, `description`, `links`)
+  publishes as it is and keeps the scan clearance;
+- executable content (`contribution`; `repositories`, `skill` and
+  `reviewSkill` never change by owner revision) pauses an active project
+  and queues a new scan; a clean result reactivates it on the next setup
+  check;
+- financial policy applies prospectively: a new monthly amount pins the
+  open UTC cycle to the previous amount through `reward.cycleCaps`, an
+  unfunded project may change its network and asset, a funded project
+  keeps them, and no separate review budget can be added.
+
+Steward, authority, terms, status, listing tier and other fields return
+`422 owner_field_restricted`; they stay with the admin exception path.
+
+### Migration of stored applications
+
+Applications submitted before self-service setup are not re-entered.
+`GET /api/v1/project-setup` lists the account's pending ones, and
+`POST /api/v1/project-applications/:id/publish` publishes one after the
+same identity, authority, restriction and registry checks as a new
+project: a new application becomes revision 1 of a paused project
+(keeping its referrer and any pledged review budget it was submitted
+with), and a stored update publishes as an owner revision against its
+stored base revision. No approval notice is written.
 
 ## Caching
 
 Public reads and artifacts use the Workers Cache API with a 30 second TTL
-(`edge-cache.ts`). An approval or a revision deletes every key of that project
+(`edge-cache.ts`). A creation or a revision deletes every key of that project
 in the writing colo; other colos expire within the TTL. Each public project
 request also reads one enforcement generation counter from D1 and keys the
 cache on it, so a Quarantine or a Ban replaces every cached list, skill and
@@ -153,27 +210,24 @@ rate limit, and caches each answer for five minutes. The browser never calls
   cross-site form cannot submit one.
 - Admins are the GitHub actor IDs in the `ADMIN_GITHUB_IDS` Pages variable.
   Admin status is checked on every request, never stored.
-- An application must be a paused, unverified, unfunded community project with
-  payments disabled, no funding addresses or commitments, no escrow deployment,
-  no root skill publication, generated skills from the canonical templates,
-  and the maintainer-authored `contribution` fields. Authority, terms, money,
-  listing tier, and activation are added only by admin revisions.
-- The API reads public GitHub facts once per submission
+- A new project must be a paused, unverified, unfunded community project
+  with one repository, payments disabled, no funding routes or vault
+  deployments, no root skill publication, generated skills from the
+  canonical templates and complete maintainer-authored `contribution`
+  fields. Repository receipt authority, terms activation, listing tier and
+  money arrive through later revisions.
+- The API reads public GitHub facts on every write
   (`SLOP_GITHUB_READ_TOKEN` is optional). The repository id, node id, name,
-  and owner must match the manifest, or the application is refused. Every
-  other repository and every alias must also be a public GitHub repository,
-  and an alias must be a name of the repository it is listed under. An
-  application names at most 5 repositories and aliases in all, so one
-  submission makes a bounded number of GitHub reads. Whether the applicant
-  owns each user repository, or is a public member of each owning
-  organization, is stored as `githubCheck` for the admin. Every application
-  waits for an admin (PRD PRJ-02). One account may keep 3 applications
-  waiting.
-- `/admin` previews the exact generated contributor and reviewer skills before
-  an admin approves or activates a revision.
-- A revision activates, and its skills and discovery entry are served, only
-  when a secure-VM scan cleared its exact content at the live
-  integration-branch head and skill template input digest. See
+  and owner must match the manifest, or the request is refused. Every
+  other repository and every alias of an older project must also be a
+  public GitHub repository, and an alias must be a name of the repository
+  it is listed under, with at most 5 names in all.
+- `/projects/new` and `/admin` preview the exact generated contributor and
+  reviewer skills.
+- A revision activates, or changes its skill inputs while active, and its
+  skills and discovery entry are served, only when a scan cleared its exact
+  executable content at the live integration-branch head and skill
+  template input digest. See
   `backend/vetting/README.md` (PRD VET-01).
 - An admin delists a project by appending a paused, `retired` revision.
 - Quarantine, Ban project and Request reinstatement (PRD ADM-06) need an admin
@@ -190,13 +244,14 @@ rate limit, and caches each answer for five minutes. The browser never calls
   revision. Every other project still syncs.
 - A restriction binds the GitHub repository id and every repository path. A
   restricted project cannot get a revision that is not paused and retired, and
-  no application for the same repository can be submitted or approved.
+  no project for the same repository can be created or published.
   Another project already listed for the same repository closes on public
   routes with it. Its restriction names the restricted project as
   `sourceProjectId`, and an appeal is filed on that project. The other project
   can only get a paused, retired revision that claims the same repositories.
-- The project steward named in the manifest, or the applicant whose
-  application listed the project, may file the reinstatement request with
+- The project steward named in the manifest, or the account that listed the
+  project (its applicant, or the creator of revision 1), may file the
+  reinstatement request with
   `POST /api/v1/project-appeals` (`projectId`, `reason`,
   `evidenceReference`). The record names the role `project-steward` or
   `project-applicant` and the source `owner-request`
@@ -218,23 +273,21 @@ rate limit, and caches each answer for five minutes. The browser never calls
   the project was listed when the restriction began; it never restores
   featuring, activation or money. A denial keeps the restriction.
 - Each enforcement record adds, in the same D1 batch, one `/inbox` row for the
-  applicant who listed the project and one for its GitHub steward (PRD
+  account that listed the project and one for its GitHub steward (PRD
   NOT-01). A reinstatement request also adds a row for each moderator who
   did not place the restriction. No row carries the reason or the evidence
   reference.
-- Every revision must pass `assertProjectPolicyTransition`, the review-budget
-  rule, and the registry uniqueness checks. A revision that makes a project
+- Every revision must pass `assertProjectPolicyTransition` and the registry
+  uniqueness checks; an admin revision also passes the review-budget rule.
+  A revision that makes a project
   active requires the generated templates and the `contribution` fields. Root
   skill publication is retired.
 - A stale `expectedRevision` fails with HTTP 409 instead of overwriting.
-- The application is stored before the admin email. A failed or missing
-  notifier is recorded as `adminNotification: "failed"` and shown in the admin
-  queue.
 
 ## Publication
 
 The site reads the registry from `GET /api/v1/projects` when a page loads
-(`src/main.tsx`), so an approved project or a saved revision appears within a
+(`src/main.tsx`), so a created project or a saved revision appears within a
 minute, without a build. Every non-PR deploy still runs `bun run
 projects:sync` against its own origin for build-time ingestion, which decides
 which active repositories to collect; an origin that does not serve the
@@ -242,8 +295,9 @@ registry API yet keeps the committed snapshot. `bun run projects:check` proves
 the committed snapshot is canonical and that every active project carries its
 contribution fields.
 
-Approval rechecks a pending new application against the current application rules
-and GitHub repository and alias identities. A changed identity refuses approval.
-An unavailable GitHub check leaves the application pending for a later retry.
-Valid aliases remain allowed; maintainer update applications use their existing
-revision and policy checks.
+A clean scan result reruns setup for the recorded project creator. It reloads
+current GitHub permission and checks the permanent actor ID, installation,
+restrictions, and exact scan clearance before activation. No owner session or
+admin action is needed for this check. A failed readiness check leaves the
+project paused and returns an explicit retry state; the owner can retry from
+the setup page. A scan result alone never grants repository authority.

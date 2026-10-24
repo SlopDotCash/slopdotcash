@@ -32,6 +32,7 @@ import {
   E2E_SECURITY_ACCOUNTS,
   startGitHubApiFixture,
 } from "../tests/github-api-fixture.mjs";
+import { startSlopbotWorkerFixture } from "../tests/slopbot-worker-fixture.mjs";
 import { childEnvironment } from "./child-environment.mjs";
 import { prepareE2eFixture } from "./prepare-e2e-fixture.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
@@ -212,6 +213,11 @@ async function runRegistryPhase() {
     database.persistTo,
     basePort + 4,
   );
+  const slopbot = await startSlopbotWorkerFixture(
+    packageRoot,
+    `http://127.0.0.1:${githubPort}`,
+    basePort + 5,
+  );
   try {
     return await runPhase(
       "registry",
@@ -236,6 +242,7 @@ async function runRegistryPhase() {
           : {}),
         SLOP_E2E_OUTPUT: "registry",
         SLOP_E2E_NOTIFY_SERVICE: notify.name,
+        SLOP_E2E_SLOPBOT_SERVICE: slopbot.name,
         ...(process.env.SLOP_VETTING_OVERLAY_PATH
           ? { SLOP_VETTING_OVERLAY_PATH: process.env.SLOP_VETTING_OVERLAY_PATH }
           : {}),
@@ -244,6 +251,7 @@ async function runRegistryPhase() {
   } finally {
     github.close();
     notify.close();
+    slopbot.close();
     rmSync(database.persistTo, { force: true, recursive: true });
   }
 }

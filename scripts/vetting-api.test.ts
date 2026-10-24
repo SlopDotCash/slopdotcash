@@ -97,7 +97,6 @@ function projectApi(request: Request) {
     randomId: () =>
       `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`,
     sessionActor: async (value) => actorOf(value),
-    notifyAdmins: async () => true,
     repositoryControl: async () => ({ state: "proven", reason: "fixture" }),
     readTokenMetadata: async () => {
       throw new Error("no token reads in this suite");
@@ -162,25 +161,12 @@ async function signed(method: string, path: string, body = "", at = NOW) {
 }
 
 async function listPausedProject() {
-  const submitted = await projectApi(
-    sessionRequest("POST", "project-applications", "applicant", {
+  const created = await projectApi(
+    sessionRequest("POST", "projects", "applicant", {
       manifest: applicationManifest("open-registry", "example/open-registry"),
     }),
   );
-  expect(submitted.status).toBe(201);
-  const { application } = await submitted.json();
-  expect(
-    (
-      await projectApi(
-        sessionRequest(
-          "POST",
-          `admin/project-applications/${application.id}/approve`,
-          "admin",
-          {},
-        ),
-      )
-    ).status,
-  ).toBe(200);
+  expect(created.status).toBe(201);
 }
 
 async function queueScan(): Promise<string> {

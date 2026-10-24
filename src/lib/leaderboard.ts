@@ -43,6 +43,12 @@ import type {
   WorkItemSelection,
 } from "./leaderboard-types";
 import { isRecord } from "./record-validation.mjs";
+import {
+  allocatePullRequestReviewCredit,
+  assertValueScoringPolicy,
+  type QualifyingReview,
+  type ValueScoringPolicy,
+} from "./scoring-policy";
 import { REVIEW_VALUE_THIRDS, VALUE_TIERS } from "./value-assessment";
 
 export type {
@@ -166,6 +172,14 @@ export const SCORE_CAPS = {
   evaluatedContributions: 3,
 } as const;
 export const DETAILED_MERGED_PULL_REQUESTS_PER_MONTH = 5;
+/**
+ * Under the value policy every accepted merge keeps the repository minimum
+ * ("every accepted merge gets positive credit"): an unassessed merge, and a
+ * merge Slopbot assesses at zero, both score one third (owner decision D2).
+ * The maintainer's merge is the acceptance; an assessment can size it but
+ * cannot erase it. The minimum is not an assessed tier.
+ */
+export const MIN_VALUE_MERGE_THIRDS = 1 as const;
 
 /**
  * Provisional score thirds for a v2 merge without a maintainer slop-score
@@ -218,6 +232,8 @@ export const REVIEW_EXCLUSION_REASONS = [
   "reviewer-cycle-cap",
   "unchanged-outcome",
   "pull-request-review-awarded",
+  "review-credit-reviewer-limit",
+  "review-credit-zero-share",
 ] as const;
 
 function exactEvidenceBonusRun(
@@ -1446,11 +1462,15 @@ function requiresExplicitPrizeAcceptance(repositoryId: string): boolean {
 }
 
 export function leaderboardMethodology(
-  provisionalValues = false,
+  valuePolicy?: ValueScoringPolicy,
 ): LeaderboardMethodology {
+  const provisionalValues = valuePolicy !== undefined;
+  const policyStart = valuePolicy
+    ? `From ${valuePolicy.effectiveAt} (${valuePolicy.id}), `
+    : "";
   return {
-    summary: provisionalValues
-      ? "Source-bound Slopbot assessments supply provisional contribution and review value. Valid human ratifications take precedence. Missing, incomplete, stale and unresolved assessments do not receive default credit. Assessed zeroes retain their accepted sources. Integer-third shares preserve the assessed total; payout approval remains separate."
+    summary: valuePolicy
+      ? `${policyStart}Slopbot's source-bound value assessments size each accepted pull request and value its reviews; a valid maintainer ratification is the exception that takes precedence. An accepted merge without a current assessment, or assessed at zero, keeps the one-third minimum. Each pull request's review pool is the sum of the highest assessed bands of its first ${valuePolicy.reviewCredit.maxReviewers} distinct qualifying reviewers, capped at the pull request's assessed size and never less than one third; it is split by band in integer thirds by largest remainder. Work accepted earlier keeps the Slop Score v2 and SCR-05 rules unchanged. Payout approval remains separate.`
       : "Slop Score v2 groups accepted work into logical work units and stores credit in integer thirds. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the score on GitHub. From October 2026 an unratified merge starts at one point, and a formal review scores 1/3 only when the merged code answered its request for changes, once per pull request. Only the actor's aggregate is rounded down at cycle close.",
     scoringRules: [
       {
@@ -1458,7 +1478,7 @@ export function leaderboardMethodology(
         points: "micro 1/3; small 1; medium 3; large 8; XL 15; exceptional 25",
         cap: "uncapped; related or split pull requests share one workUnitId",
         qualification: provisionalValues
-          ? "A complete exact-head assessment or valid human ratification binds the accepted outcome. Provisional credit is shared among verified implementation identities without increasing its total. Overlapping accepted commits require joint work-unit assessment. Missing value remains unresolved."
+          ? `${policyStart}a complete exact-head assessment or valid human ratification binds the accepted outcome. Provisional credit is shared among verified implementation identities without increasing its total. Overlapping accepted commits require joint work-unit assessment. Missing, incomplete, stale, unresolved or zero value keeps the one-third minimum, shared at least one third per credit actor. Earlier merges keep the Score v2 provisional and ratified rules.`
           : "Authored pull request merged during the rolling window. Unratified work merged before 2026-10-01 receives provisional micro credit and later work provisional small credit; other tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 1/3 each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
       },
       {
@@ -1485,9 +1505,11 @@ export function leaderboardMethodology(
         id: "substantive-review",
         points:
           "triage 1/3; standard 1; deep reproduction 3; specialist 8; ratification 1/3",
-        cap: "from 2026-10-01, one ordinary review award per merged pull request; no self-review and no duplicate reviewer credit on one artifact",
-        qualification: provisionalValues
-          ? "Complete source-bound assessments value distinct evidenced review outcomes, including useful validation. Duplicate findings receive no additional award. Valid human decisions and reviewed evaluation awards take precedence. Missing, stale or unresolved assessments do not receive legacy review credit."
+        cap: valuePolicy
+          ? `one pool per pull request: the credited reviewers' bands, capped at the pull request's assessed size, minimum 1/3; at most ${valuePolicy.reviewCredit.maxReviewers} distinct reviewers; one credited record per reviewer`
+          : "from 2026-10-01, one ordinary review award per merged pull request; no self-review and no duplicate reviewer credit on one artifact",
+        qualification: valuePolicy
+          ? `${policyStart}complete source-bound assessments value distinct evidenced review outcomes, including useful validation; a request for changes is not required. Reviews by implementation actors, bots, after merge or closure, and duplicate findings do not qualify. Qualifying reviews are grouped by immutable reviewer ID; reviewers are ordered by their first qualifying review's submission time, then review node ID, and the first ${valuePolicy.reviewCredit.maxReviewers} share the pull request's review pool by their highest assessed band using integer largest remainder, earlier reviewers first on equal remainders. Later reviewers publish review-credit-reviewer-limit. Valid human decisions and reviewed evaluation awards take precedence. Missing, stale or unresolved assessments do not receive legacy review credit. Reviews of pull requests accepted earlier keep the SCR-05 rule.`
           : "Every merged pull request with a formal review is selected through a separate bounded review census, independent of the pull-request author's detail cap. A pre-merge APPROVED or CHANGES_REQUESTED review of human-authored work has substantive text or inline discussion. Before 2026-10-01 such a review scores standard credit. From 2026-10-01 only the latest CHANGES_REQUESTED review on a commit other than the merged head scores, at triage credit; approvals and ignored requests do not. Higher review tiers require maintainer ratification. Excluded formal reviews publish a machine-readable reason.",
       },
       {
@@ -2702,6 +2724,50 @@ function createSnapshotWithReviewCutoff(
   );
   if (closedUnmergedPullRequests.length && input.valueDecisions === undefined)
     throw new Error("Closed unmerged review scoring requires value decisions");
+  if (
+    (input.valuePolicy === undefined) !==
+    (input.valueDecisions === undefined)
+  )
+    throw new Error("Value decisions require their versioned scoring policy");
+  const valuePolicy = input.valuePolicy
+    ? assertValueScoringPolicy(input.valuePolicy)
+    : undefined;
+  if (
+    valuePolicy &&
+    parseIsoTime(valuePolicy.effectiveAt) <
+      parseIsoTime(PAYMENT_REVIEW_POLICY_AT)
+  )
+    throw new Error(
+      "The value policy cannot reinterpret earlier policy periods",
+    );
+  // One versioned policy per accepted source: its merge or closure time
+  // selects the value policy or the unchanged historical rules.
+  const valuePolicyAt = valuePolicy
+    ? parseIsoTime(valuePolicy.effectiveAt)
+    : null;
+  const underValuePolicy = (acceptedAt: string | null | undefined): boolean =>
+    valuePolicyAt !== null &&
+    typeof acceptedAt === "string" &&
+    parseIsoTime(acceptedAt) >= valuePolicyAt;
+  type JointDecision =
+    NonNullable<LeaderboardInput["jointValueDecisions"]> extends ReadonlyMap<
+      string,
+      infer V
+    >
+      ? V
+      : never;
+  // A joint unit whose accepted members span the policy start would score
+  // legacy work again; it yields to the per-source minimum instead.
+  const spansValuePolicyStart = (decision: JointDecision): boolean =>
+    decision.status === "assessed" &&
+    decision.evidence.sources.some((member) => {
+      const acceptedAt =
+        member.evidence.pull.merged_at ??
+        member.evidence.indirectAcceptance?.observedOnBranchAt;
+      return acceptedAt !== undefined && acceptedAt !== null
+        ? !underValuePolicy(acceptedAt)
+        : false;
+    });
   const mergedPullRequestOutcomes = dedupeByNodeId(
     input.mergedPullRequestOutcomes,
   ).sort(
@@ -3052,7 +3118,8 @@ function createSnapshotWithReviewCutoff(
       : never
   >();
   for (const [id, decision] of input.jointValueDecisions ?? []) {
-    if (decision.status !== "assessed") continue;
+    if (decision.status !== "assessed" || spansValuePolicyStart(decision))
+      continue;
     if (
       !decision.record.sources.some((source) => source.pullRequestNodeId === id)
     )
@@ -3119,8 +3186,9 @@ function createSnapshotWithReviewCutoff(
   const creditActorIds = new Map<string, ReadonlySet<string>>();
   for (const pullRequest of mergedPullRequestOutcomes) {
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
+    const valuePolicyApplies = underValuePolicy(pullRequest.mergedAt);
     const ratification =
-      input.valueDecisions !== undefined ||
+      valuePolicyApplies ||
       detailEligibleMergedPullRequestIds.has(pullRequest.id)
         ? scoreRatifications.get(pullRequest.id)
         : undefined;
@@ -3139,15 +3207,24 @@ function createSnapshotWithReviewCutoff(
       pullRequest.id,
       new Set(actors.map((actor) => actor.id)),
     );
-    if (!ratification && input.jointValueDecisions?.has(pullRequest.id))
+    // A joint member is scored by its unit, never by a superseded per-PR record.
+    const joint = valuePolicyApplies
+      ? input.jointValueDecisions?.get(pullRequest.id)
+      : undefined;
+    if (
+      !ratification &&
+      joint?.status === "assessed" &&
+      !spansValuePolicyStart(joint)
+    )
       continue;
-    const valueDecision = input.valueDecisions?.get(pullRequest.id);
+    const valueDecision =
+      valuePolicyApplies && joint === undefined
+        ? input.valueDecisions?.get(pullRequest.id)
+        : undefined;
     const valueRecord =
       !ratification && valueDecision?.status === "assessed"
         ? valueDecision.record
         : null;
-    if (!ratification && input.valueDecisions !== undefined && !valueRecord)
-      continue;
     if (
       valueRecord &&
       (valueRecord.pullRequestNodeId !== pullRequest.id ||
@@ -3204,14 +3281,17 @@ function createSnapshotWithReviewCutoff(
       ratification?.record.scoreThirds ??
       (valueRecord?.assessment.tier !== undefined &&
       valueRecord.assessment.tier !== null
-        ? VALUE_TIERS[valueRecord.assessment.tier]
-        : unratifiedMergeScoreThirds(pullRequest.mergedAt));
+        ? Math.max(
+            MIN_VALUE_MERGE_THIRDS,
+            VALUE_TIERS[valueRecord.assessment.tier],
+          )
+        : valuePolicyApplies
+          ? MIN_VALUE_MERGE_THIRDS
+          : unratifiedMergeScoreThirds(pullRequest.mergedAt));
     const shares = shareScoreThirds(
       totalThirds,
       actors.length,
-      input.valueDecisions !== undefined && (valueRecord || ratification)
-        ? 0
-        : 1,
+      valuePolicyApplies && (valueRecord || ratification) ? 0 : 1,
     );
     if (author) {
       const authorEntry = actorEntry(entries, author);
@@ -3235,8 +3315,10 @@ function createSnapshotWithReviewCutoff(
     const baseReason = ratification
       ? `Maintainer-ratified ${ratification.record.tier} accepted outcome: ${ratification.record.reason}`
       : valueRecord
-        ? `Provisional value assessment (${valueRecord.assessment.tier}): ${valueRecord.assessment.rationale}`
-        : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
+        ? `Provisional value assessment (${valueRecord.assessment.tier}): ${valueRecord.assessment.rationale}${valueRecord.assessment.tier === "none" ? " The accepted merge keeps the one-third minimum." : ""}`
+        : valuePolicyApplies
+          ? "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
+          : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
     for (const [index, actor] of actors.entries()) {
       const isAuthor = actor.id === author?.id;
       const scoreThirds = shares[index] as number;
@@ -3296,7 +3378,8 @@ function createSnapshotWithReviewCutoff(
   }
 
   for (const decision of jointDecisions.values()) {
-    if (decision.status !== "assessed") continue;
+    if (decision.status !== "assessed" || spansValuePolicyStart(decision))
+      continue;
     const claims = new Map(
       decision.evidence.claims.map((claim) => [claim.id, claim]),
     );
@@ -3361,6 +3444,7 @@ function createSnapshotWithReviewCutoff(
       const occurred = parseIsoTime(completedAt);
       if (occurred < parseIsoTime(input.windowFrom) || occurred >= windowTo)
         continue;
+      if (!underValuePolicy(completedAt)) continue;
       if (
         !(completion.indirectAcceptance
           ? closedUnmergedPullRequests.some(
@@ -3413,7 +3497,12 @@ function createSnapshotWithReviewCutoff(
         );
       if (!actors.length)
         throw new Error("Joint implementation has no eligible recipient");
-      const shares = shareScoreThirds(VALUE_TIERS[tier], actors.length, 0);
+      // An accepted unit assessed at zero keeps the minimum (owner decision D2).
+      const shares = shareScoreThirds(
+        Math.max(MIN_VALUE_MERGE_THIRDS, VALUE_TIERS[tier]),
+        actors.length,
+        0,
+      );
       for (const [index, actor] of actors.entries()) {
         const thirds = shares[index] as number;
         addScore(entries, ledger, {
@@ -3569,20 +3658,40 @@ function createSnapshotWithReviewCutoff(
     }
   }
 
-  const awardValueReview = (
+  type ValueReviewCandidate = QualifyingReview<GitHubActor> & {
+    review: PullRequestReview;
+    value: { tier: string; finding: string; outcome: string };
+    /** The pull request's assessed size; it caps the review pool. */
+    assessedSizeThirds: number;
+    decision: {
+      latestDigest: string | null;
+      history: { recorded_at: string }[];
+    };
+  };
+  // Returns the review's assessed value when it qualifies for review credit.
+  // Integrity failures throw; unassessed or zero-valued reviews earn nothing.
+  const valueReviewCandidate = (
     pullRequest: MergedPullRequestReviewRecord,
     review: PullRequestReview,
     closedAt: string,
-  ): void => {
+  ): ValueReviewCandidate | null => {
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
-    if (requiresExplicitPrizeAcceptance(repositoryId)) return;
+    if (requiresExplicitPrizeAcceptance(repositoryId)) return null;
     const joint = input.jointValueDecisions?.get(pullRequest.id);
+    if (joint && spansValuePolicyStart(joint)) return null;
     const decision = joint ?? input.valueDecisions?.get(pullRequest.id);
-    if (decision?.status !== "assessed") return;
-    let value;
+    if (decision?.status !== "assessed") return null;
+    let value:
+      | {
+          tier: keyof typeof REVIEW_VALUE_THIRDS;
+          finding: string;
+          outcome: string;
+        }
+      | undefined;
     let implementationActorNodeIds: string[];
+    let assessedTier: keyof typeof VALUE_TIERS | null;
     if (joint) {
-      if (joint.status !== "assessed") return;
+      if (joint.status !== "assessed") return null;
       const member = joint.record.sources.find(
         (source) => source.pullRequestNodeId === pullRequest.id,
       );
@@ -3605,10 +3714,11 @@ function createSnapshotWithReviewCutoff(
           claim.carrierPullRequestIds.some((id) => scoreRatifications.has(id)),
         )
       )
-        return;
+        return null;
       value = unit.assessment.reviews.find(
         (item) => item.sourceId === review.id,
       );
+      assessedTier = unit.assessment.tier;
       implementationActorNodeIds = [
         ...new Set(claims.flatMap((claim) => claim.implementationActorNodeIds)),
       ];
@@ -3616,7 +3726,7 @@ function createSnapshotWithReviewCutoff(
         implementationActorNodeIds.push(pullRequest.author.id);
     } else {
       const single = input.valueDecisions?.get(pullRequest.id);
-      if (single?.status !== "assessed") return;
+      if (single?.status !== "assessed") return null;
       if (single.record.headSha !== pullRequest.headRefOid)
         throw new Error(
           "Value review decision does not match the current head",
@@ -3624,12 +3734,13 @@ function createSnapshotWithReviewCutoff(
       value = single.assessment.reviews.find(
         (item) => item.sourceId === review.id,
       );
+      assessedTier = single.record.assessment.tier;
       implementationActorNodeIds = single.implementationActorNodeIds;
     }
     if (!value)
       throw new Error("Value decision omitted a collected formal review");
     const thirds = REVIEW_VALUE_THIRDS[value.tier];
-    if (thirds === 0) return;
+    if (thirds === 0) return null;
     if (
       !review.author ||
       isBotActor(review.author) ||
@@ -3644,29 +3755,88 @@ function createSnapshotWithReviewCutoff(
       )
     )
       throw new Error("Value review lost its eligible source identity");
-    const reviewedAt = parseIsoTime(review.submittedAt);
-    if (reviewedAt < parseIsoTime(input.windowFrom) || reviewedAt >= windowTo)
-      return;
-    addScore(entries, ledger, {
-      id: `${pullRequest.id}:value-review:${review.id}`,
+    return {
+      reviewId: review.id,
       actor: review.author,
-      category: "substantive-review",
-      points: thirds / 3,
-      scoreThirds: thirds,
-      workUnitId: `wu_value_review_${review.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
-      scoreDecisionSourceId: `value:${decision.latestDigest}`,
-      scoreDecisionAt: decision.history.at(-1)?.recorded_at,
-      occurredAt: review.submittedAt,
-      repository: repositoryId,
-      source: {
-        id: review.id,
-        kind: "review",
-        number: pullRequest.number,
-        title: pullRequest.title,
-        url: review.url,
-      },
-      reason: `Provisional ${value.tier} review value: ${value.finding} ${value.outcome}`,
-    });
+      submittedAt: review.submittedAt,
+      thirds,
+      review,
+      value,
+      assessedSizeThirds: assessedTier === null ? 0 : VALUE_TIERS[assessedTier],
+      decision,
+    };
+  };
+  // PRD section 7: one explicit allocation per pull request. Credit goes to
+  // the first five distinct qualifying reviewers and conserves the pool.
+  // A reviewer already credited on this artifact (a ratified review record)
+  // takes no second share; the returned reviewers are now credited too.
+  const allocateValueReviews = (
+    pullRequest: MergedPullRequestReviewRecord,
+    candidates: readonly ValueReviewCandidate[],
+    awardedReviewers: ReadonlySet<string> = new Set(),
+  ): string[] => {
+    if (!valuePolicy) return [];
+    const eligible: ValueReviewCandidate[] = [];
+    for (const candidate of candidates) {
+      if (awardedReviewers.has(candidate.actor.id))
+        excludeReview(
+          pullRequest,
+          candidate.review,
+          "already-awarded-reviewer",
+        );
+      else eligible.push(candidate);
+    }
+    if (!eligible.length) return [];
+    const repositoryId = repositoryIdFromUrl(pullRequest.url);
+    const byId = new Map(
+      eligible.map((candidate) => [candidate.reviewId, candidate]),
+    );
+    // A joint member's reviews can sit in several units; the largest assessed
+    // unit is the pull request's size.
+    const allocation = allocatePullRequestReviewCredit(
+      eligible,
+      Math.max(...eligible.map((candidate) => candidate.assessedSizeThirds)),
+    );
+    const exclude = (reviewId: string, reason: ReviewExclusionReason) => {
+      const candidate = byId.get(reviewId);
+      if (candidate) excludeReview(pullRequest, candidate.review, reason);
+    };
+    for (const reviewId of allocation.beyondLimitReviewIds)
+      exclude(reviewId, "review-credit-reviewer-limit");
+    for (const [index, credited] of allocation.credited.entries()) {
+      for (const reviewId of credited.repeatedReviewIds)
+        exclude(reviewId, "already-awarded-reviewer");
+      const candidate = byId.get(credited.source.reviewId);
+      if (!candidate) throw new Error("Review credit lost its source review");
+      if (credited.shareThirds === 0) {
+        exclude(candidate.reviewId, "review-credit-zero-share");
+        continue;
+      }
+      const reviewedAt = parseIsoTime(candidate.submittedAt);
+      if (reviewedAt < parseIsoTime(input.windowFrom) || reviewedAt >= windowTo)
+        continue;
+      addScore(entries, ledger, {
+        id: `${pullRequest.id}:value-review:${candidate.reviewId}`,
+        actor: candidate.actor,
+        category: "substantive-review",
+        points: credited.shareThirds / 3,
+        scoreThirds: credited.shareThirds,
+        workUnitId: `wu_value_review_${candidate.reviewId.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
+        scoreDecisionSourceId: `value:${candidate.decision.latestDigest}`,
+        scoreDecisionAt: candidate.decision.history.at(-1)?.recorded_at,
+        occurredAt: candidate.submittedAt,
+        repository: repositoryId,
+        source: {
+          id: candidate.reviewId,
+          kind: "review",
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: candidate.review.url,
+        },
+        reason: `Provisional ${candidate.value.tier} review value; reviewer ${index + 1} of ${allocation.credited.length} credited, ${credited.shareThirds} of ${allocation.poolThirds} review-credit thirds: ${candidate.value.finding} ${candidate.value.outcome}`,
+      });
+    }
+    return allocation.credited.map((credited) => credited.actor.id);
   };
 
   for (const pullRequest of mergedPullRequests) {
@@ -3767,6 +3937,10 @@ function createSnapshotWithReviewCutoff(
 
     const reviewLedgerStart = ledger.length;
     const ratification = scoreRatifications.get(pullRequest.id);
+    // Under the value policy a maintainer ratification corrects only the
+    // implementation score; review credit stays one value allocation.
+    const valueReviews = underValuePolicy(pullRequest.mergedAt);
+    const valueReviewCandidates: ValueReviewCandidate[] = [];
     const awardedReviewers = new Set<string>();
     // SCR-04: a review by any credit actor of this pull request is a
     // self-review on every review path, not only for its author.
@@ -3919,8 +4093,18 @@ function createSnapshotWithReviewCutoff(
         excludeReview(pullRequest, review, "evaluated-contribution-award");
         continue;
       }
-      if (!ratification && input.valueDecisions !== undefined) {
-        awardValueReview(pullRequest, review, pullRequest.mergedAt);
+      if (valueReviews) {
+        // A ratified outcome credits SCR-04 actors the assessment may not list.
+        if (ratification && isCreditActor(review.author?.id)) {
+          excludeReview(pullRequest, review, "self-review");
+          continue;
+        }
+        const candidate = valueReviewCandidate(
+          pullRequest,
+          review,
+          pullRequest.mergedAt,
+        );
+        if (candidate) valueReviewCandidates.push(candidate);
         continue;
       }
       const exclusionReason =
@@ -3958,6 +4142,12 @@ function createSnapshotWithReviewCutoff(
         excludeReview(pullRequest, review, "unchanged-outcome");
       }
     }
+    for (const reviewerId of allocateValueReviews(
+      pullRequest,
+      valueReviewCandidates,
+      awardedReviewers,
+    ))
+      awardedReviewers.add(reviewerId);
     // SCR-05: the pull request's one review award goes to the latest request
     // for changes that the merged code answered.
     const outcomeReview = outcomeReviews.at(-1);
@@ -4054,7 +4244,10 @@ function createSnapshotWithReviewCutoff(
       parseIsoTime(pull.closedAt) > windowTo
     )
       throw new Error("Closed unmerged review source is outside its census");
+    // Closed, unmerged work earned no review credit before the value policy.
+    if (!underValuePolicy(pull.closedAt)) continue;
     const repositoryId = repositoryIdFromUrl(pull.url);
+    const candidates: ValueReviewCandidate[] = [];
     for (const review of pull.reviews) {
       if (review.author && !isBotActor(review.author))
         actorEntry(entries, review.author).rawActivity.reviews += 1;
@@ -4068,8 +4261,10 @@ function createSnapshotWithReviewCutoff(
         excludeReview(pull, review, "evaluated-contribution-award");
         continue;
       }
-      awardValueReview(pull, review, pull.closedAt);
+      const candidate = valueReviewCandidate(pull, review, pull.closedAt);
+      if (candidate) candidates.push(candidate);
     }
+    allocateValueReviews(pull, candidates);
   }
 
   for (const issue of resolvedIssues) {
@@ -4368,7 +4563,7 @@ function createSnapshotWithReviewCutoff(
       from: input.windowFrom,
       to: input.windowTo,
     },
-    methodology: leaderboardMethodology(input.valueDecisions !== undefined),
+    methodology: leaderboardMethodology(valuePolicy),
     source: {
       ...input.source,
       counts: {
@@ -4397,16 +4592,22 @@ function createSnapshotWithReviewCutoff(
             ...mergedPullRequestOutcomes,
             ...closedUnmergedPullRequests,
           ].map((pull) => {
-            const decision =
-              input.jointValueDecisions?.get(pull.id) ??
-              input.valueDecisions?.get(pull.id);
+            const legacy = !underValuePolicy(
+              pull.mergedAt ?? ("closedAt" in pull ? pull.closedAt : null),
+            );
+            const decision = legacy
+              ? undefined
+              : (input.jointValueDecisions?.get(pull.id) ??
+                input.valueDecisions?.get(pull.id));
             return {
               pullRequestId: pull.id,
               repository: repositoryIdFromUrl(pull.url),
               pullRequestNumber: pull.number,
               status: scoreRatifications.has(pull.id)
                 ? "human-ratified"
-                : (decision?.status ?? "missing"),
+                : legacy
+                  ? "legacy-policy"
+                  : (decision?.status ?? "missing"),
               recordDigest: decision?.latestDigest ?? null,
             };
           }),
@@ -6699,6 +6900,7 @@ export function assertLeaderboardSnapshot(
         row.status,
         [
           "human-ratified",
+          "legacy-policy",
           "missing",
           "incomplete",
           "stale",
@@ -6739,8 +6941,14 @@ export function assertLeaderboardSnapshot(
       const row = snapshot.valueAssessmentCoverage.find((value) =>
         event.id.startsWith(`${value.pullRequestId}:`),
       );
+      // A ratification corrects only the implementation score; the
+      // ratified source's review value still binds its assessment digest.
       if (
-        row?.status !== "assessed" ||
+        !(
+          row?.status === "assessed" ||
+          (row?.status === "human-ratified" &&
+            event.category === "substantive-review")
+        ) ||
         `value:${row.recordDigest}` !== event.scoreDecisionSourceId
       )
         throw new Error(

@@ -9,6 +9,7 @@ import { pathParts } from "../api-path";
  * it unavailable, and no revision can be cleared.
  */
 
+import type { ProjectSetupStatus } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { type ApiError, fail } from "../api-error";
 import type { ProjectPersistence, WebSession } from "../projects/contracts";
@@ -61,6 +62,7 @@ export type VettingApiDependencies = {
   now: () => Date;
   randomId: () => string;
   cache?: EdgeCache;
+  refreshSetup?: (projectId: string) => Promise<ProjectSetupStatus | null>;
 };
 
 function json(status: number, body: Record<string, unknown>): Response {
@@ -428,9 +430,24 @@ async function serviceResult(
     [project.manifest.skill.id, project.manifest.reviewSkill.id],
     await deps.projects.enforcementGeneration(),
   );
+  // Accept the scan even if a separate GitHub readiness check is unavailable.
+  // Report that retry explicitly; the owner can rerun the same setup check.
+  let setup: ProjectSetupStatus | { state: "retry"; message: string } | null =
+    null;
+  if (result.disposition === "clean" && deps.refreshSetup) {
+    try {
+      setup = await deps.refreshSetup(project.id);
+    } catch {
+      setup = {
+        state: "retry",
+        message: "Scan recorded. Project setup must be checked again.",
+      };
+    }
+  }
   const stored = await deps.vetting.getAssessment(result.assessmentId);
   if (stored === null) fail(500, "internal_error", "Assessment vanished");
   return json(200, {
+    setup,
     assessment: {
       ...summarize(stored),
       resultSha256: stored.resultSha256,

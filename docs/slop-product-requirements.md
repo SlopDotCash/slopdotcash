@@ -44,7 +44,7 @@ Projects start without routine admin approval after complete setup, verified Git
 
 Generate each skill from its single template and project revision. Check for updates and install only verified updates from the trusted source. Recheck project restrictions and live GitHub before installation, work selection, execution, and submission. Do not install or work on flagged projects. Respect assignments, reviews, drafts, and claims. Do not invent work for points.
 
-PRs explain the problem, requirement, result, implementation choice, and real evidence. Include Made via @slopdotcash, signed attribution, and exact provider/model/client. Follow the effective trace policy; contributors inspect/redact permitted private uploads. Usage totals never set rewards. Economic changes are prospective; preserve funded awards. Agents should, if they can use computer use or browser use, star and fork the repos they are working on.
+PRs explain the problem, requirement, result, implementation choice, and real evidence. Include Made via @slopdotcash and exact provider/model/client. A signed receipt is optional for an ordinary submission; automatic closure and penalties require the evidence in section 11. Follow the effective trace policy; contributors inspect/redact permitted private uploads. Usage totals never set rewards. Economic changes are prospective; preserve funded awards. Agents should, if they can use computer use or browser use, star and fork the repos they are working on.
 
 ## 5. Slopbot
 
@@ -66,13 +66,13 @@ Support the approved stablecoin, ERC-20, or classic SPL token. Exclude transfer-
 
 Awards: projected, under review, approved, excluded. Payments: underfunded, awaiting wallet, ready, held, submitted, paid. A failed attempt preserves the award and reserve; one recipient's failure cannot block others.
 
-Automatic monthly payment is the default for every project with funds committed in its vault. The owner sets the monthly amount during setup, can change allocations before execution, and can turn the default off. If the owner does not distribute the funds, the automatic monthly process distributes the current allocations. Do not create unfunded obligations or pay twice. The draft's 30-day fallback applies only to projects that use automatic monthly payment; its period model, UTC start event, and cutoff are open owner decisions (section 11) and must be recorded before activation. Private bounty awards remain discretionary.
+Automatic monthly payment is the default for every project with funds committed in its vault. The owner sets the monthly amount during setup, can change allocations before execution, and can turn the default off. If the owner does not distribute the funds, the automatic monthly process distributes the current allocations. Do not create unfunded obligations or pay twice. The period is the calendar UTC month, starting with 2026-11. Owners may change allocations or finalize early until 72 hours after the month ends; the automatic process then freezes the current allocations once. An underfunded month creates no obligations until the whole month is covered. Private bounty awards remain discretionary.
 
 Ordinary award and free-fund withdrawal fee: floor(gross / 50) (2%). A 100 USDC award pays 98 and 2. Project-token awards pay both amounts in that token. No second fee at claim/retry. Preserve historical terms. Private bounties instead use section 8's 75/25 split.
 
 A project-operated or permissionless executor submits payments; Slop operates no payment key/relayer. Payments are stored in a vault/escrow contract to show that they have been committed. Projects are not obligated to commit funds. Wallet binding requires authenticated account evidence and the wallet signature. Neither signature proves both identities. Mark paid only after exact finalized principal, fee, asset, and destination reconciliation; prevent replay.
 
-Automatically sell project-token fees into USDC when the fee wallet receives them. Convert only received fees, never contributor principal or vault funds. Proceeds return to the same fee wallet. Slop owners control the signer; raw private keys are not stored in application environment variables. Use approved routes and bounded slippage. If a route, liquidity, or signer is unavailable, retain the token and show the conversion as pending or failed. This supersedes the earlier Robinhood USDG conversion target; verify a supported USDC asset and route before activation there.
+Automatically sell project-token fees into USDC when the fee wallet receives them. Convert only received fees, never contributor principal or vault funds. Proceeds return to the same fee wallet. Each network uses one dedicated conversion-only key, held as a Worker secret and limited by per-run and daily caps; Slop owners sweep USDC proceeds to cold storage. The key never holds a vault role or touches contributor principal, reserved awards, or vault funds. A remote signer may replace it later. Use approved routes and bounded slippage. If a route, liquidity, or signer is unavailable, retain the token and show the conversion as pending or failed. This supersedes the earlier Robinhood USDG conversion target; verify a supported USDC asset and route before activation there.
 
 ## 7. Scores, discovery, and clear pages
 
@@ -80,13 +80,26 @@ Keep two measures distinct: Slop Score for accepted-work value and earned points
 
 Default rankings to Slop Score. Preserve equal ranks, shareable filters, exact periods, and source coverage. Missing data is not zero.
 
-Share merge credit with verified commit authors. Do not reward the same commit twice. Credit useful reviews separately; a recipient's own review earns no credit. Split review credit among up to the first five distinct qualifying reviewers, not five comments from the same person.
+Share merge credit with verified commit authors. Do not reward the same commit twice. Credit useful reviews separately; a recipient's own review earns no credit. Split review credit among up to the first five distinct qualifying reviewers, not five comments from the same person. Each pull request's review pool is the sum of the credited reviewers' highest review bands, capped at the pull request's own assessed size credit, with a minimum of one third. Shares follow each reviewer's highest band, with largest-remainder integer thirds; ties go to the earlier first qualifying review, then the review node ID. Every accepted merge earns at least one third, including a merge assessed at zero. This policy applies to work accepted from 2026-11-01T00:00:00Z; earlier work keeps its recorded terms.
 
 A useful review can identify a correction or validate the change. A request for changes is not required. Repeated, empty, or duplicate reviews earn no extra credit.
 
 Slopbot determines the value of each PR based on T-shirt sizing and assigns a standardized score.
 
-Record qualifying penalties and reversals once. Reopen, appeal, and retry cannot multiply a debit. Slopbot applies penalties from one published penalty table. The repository owner approves the table once; later changes are prospective. An upheld appeal reverses a penalty once. Penalties include spam, ultra low quality and malicious PRs, as well as PRs that clearly violate the guidelines of the project.
+Record qualifying penalties and reversals once. Reopen, appeal, and retry cannot multiply a debit. Slopbot applies penalties from one published penalty table. The repository owner approves the table once; later changes are prospective. An upheld appeal reverses a penalty once. Penalties include spam, malicious PRs, and PRs that clearly violate the guidelines of the project.
+
+Published penalty table (approved 24 October 2026, in Slop Score thirds):
+
+| Slopbot category | Action | Debit |
+| --- | --- | --- |
+| Spam | Close | 3 |
+| Scam or malicious | Close; moderator reviews the account | 24 |
+| Clear violation of a quoted project rule | Close | 1 |
+| Low quality | Close (closure-eligible authors only) | 0 |
+| Duplicate | Close | 0 |
+| Out of scope | Label | 0 |
+
+A debit reduces only that UTC month's score and never takes it below zero. A debit never changes an approved, scheduled, or paid award. Maintainers and authors outside the closure scope receive no penalty.
 
 Exclude Slopbot from scoring and human rankings.
 
@@ -113,7 +126,7 @@ Use the existing routes and shared controls. These are acceptance requirements, 
 | Person and goal | Shortest complete flow | Required outcome or recovery |
 | --- | --- | --- |
 | Contributor | Home → project → eligible work → skill → GitHub PR → Payouts | Clear scope, safe execution, accepted outcome, final award status, and verified payment; wallet setup uses Account |
-| Researcher | Project security terms → private GitHub report → Security cases → decision → payment | Visible net award and privacy terms; confirmed receipt; next action and deadline; private appeal; no public fallback |
+| Researcher | Project security terms → report through Slop → verified private GitHub receipt → Security cases → decision → payment | Visible net award and privacy terms; confirmed receipt; next action and deadline; private appeal; no public fallback |
 | Maintainer | Add project → four setup steps → Slopbot installation → security scan → automatic activation | Resume draft, preview page and skills, see setup status; owners publish updates, and changed executable content needs fresh clearance |
 | Funder or owner | Project funding → terms and balance → deposit, approve, or withdraw → receipt | Separate available and reserved funds; show asset, gross, fee, net, signer, and finality; reconcile an uncertain send before retry |
 | Member | GitHub login → Account → connections, wallets, sessions → Inbox/Payouts | Preserve return destination and drafts; independent consent; revoke sessions; private recovery and account closure |
@@ -141,7 +154,7 @@ After a confirmed malicious result, the owner can appeal. A moderator decides wh
 
 Any registered user can report. Route exploitable findings privately even when bounty eligibility is uncertain. Never fall back to a public issue. Use GitHub private advisories for technical evidence and restricted Slop records for terms, decisions, appeals, and payments.
 
-Private reporting is automatic: submit through the private GitHub route, verify receipt, analyze the report, and notify the maintainer. Preserve reporter identity and reconcile uncertain submissions before retry. Never publish a report as a fallback. The maintainer or owner decides whether to award a bounty and approves its payout. Critical bugs and potential loss of funds are priorities, not an automatic payout promise. Slopbot triages disputes first; moderators decide escalated disputes. Neither automatic reporting nor dispute handling grants payment authority.
+The researcher submits through Slop. With the researcher's GitHub authorization, Slop sends the report through GitHub's private reporting route. Slop automatically verifies receipt, analyzes the report, and notifies the maintainer. Submission must preserve the researcher's identity. Keep submission credentials private and retain them only as needed to complete or reconcile the submission. Analyze private report text only through a direct model provider under zero data retention, never through a marketplace route. Preserve reporter identity and reconcile uncertain submissions before retry. Never publish a report as a fallback. The maintainer or owner decides whether to award a bounty and approves its payout. Critical bugs and potential loss of funds are priorities, not an automatic payout promise. Slopbot triages disputes first; moderators decide escalated disputes. Neither automatic reporting nor dispute handling grants payment authority.
 
 Use safe evidence of a critical bug or potential loss of funds. Actual loss is not required and must not be induced. Record the first verified qualifying report for each underlying finding. Prevent duplicate reservations. Discretionary approval precedes any award reservation; private bounties do not use the monthly automatic-payment fallback.
 
@@ -175,7 +188,7 @@ Recheck roles and destinations before sending. Verify actual inbox receipt separ
 | Fees | Public awards and free-fund withdrawals: 2%; private bounties: 25%; no stacked fee | Keep historical terms; approve changes prospectively |
 | Wallet recovery | Fresh account and wallet proof; one operator for redirected recovery; the binding delay and owner cancellation protect against a stolen key | Wallet-change delay and funded-award expiry policy |
 | Mainnet | Four approved networks; independent audit before deployment | Exact assets, finality, authority, counsel review, testnet results, and explicit activation |
-| Fee conversion | Automatic conversion of received project-token fees to USDC; separate owner-controlled fee signer; human withdrawals | Routes, limits, custody, and Solana role separation |
+| Fee conversion | Automatic conversion of received project-token fees to USDC; separate owner-controlled fee signer; human withdrawals | Verified USDC routes per network and Solana role separation; limits and custody recorded in section 11 |
 | Slopbot | Required and always free; registered repositories only; size-based PR scoring and useful review credit | Verified closure scope, Slopbot appeal triage with moderator escalation, free-service capacity limits, and production qualification |
 | Private programs | Automatic private reporting; discretionary owner awards; Slopbot-triaged disputes with moderator escalation; 75/25 payment | Published program terms, safe testing, verified reserves after approval, and activation per program |
 | Moderation and evidence | Staging pilot: lalalune (18633264), drew-dot-com (202660855) | Qualify staging, the bounded malicious-code scan in section 8 with an isolated runner for risky artifacts (a universal Linux/KVM runtime is not required), external retention/recovery controls, and production release |
@@ -212,16 +225,24 @@ These are target requirements, not claims that current code or deployed services
 
 Before release, prove self-service setup, malicious-code detection, two-flag pause and skill refusal, automatic reinstatement after a clean scan, moderator decisions on confirmed-malicious results, free registered-repository bot review, scoring without duplicate review credit, monthly payment fallback, discretionary private reporting and settlement, and USDC fee conversion. Include failed, unavailable, and uncertain paths. Verify the exact source and deployed revision, real browser flows, access controls, recovery, and required network evidence. Independent audit and explicit mainnet activation gates remain in force. Maintainers approve completion from evidence; a source merge alone is not completion.
 
-### Open owner decisions
+### Recorded owner decisions (24 October 2026)
 
-These choices are not settled. Agents and implementations must not choose them. Until the owner records a decision in this section, treat each value as required configuration that is absent: fail closed, keep the dependent behavior inactive, and do not change historical scores or awards.
+The owner recorded these values. They apply prospectively and do not change historical scores or awards. Configuration that implements them stays fail-closed until it is set.
 
-| Decision | Open question | Behavior that waits on it |
-| --- | --- | --- |
-| Monthly period model | UTC start event and cutoff; whether the 30-day fallback means a calendar month or elapsed time | Automatic monthly allocation freeze and payment |
-| Review-credit pool | The share of a pull request's credit that goes to useful reviews, and the integer remainder rule among up to five distinct reviewers | Splitting review credit for new work; earlier periods keep their recorded terms |
-| Flag lifetime and resolution | How long a contributor flag counts, and whether flags stop counting after a clean-scan reinstatement, a moderator decision, or withdrawal, so that the same flags do not pause a reinstated project again | Counting flags toward a pause after a reinstatement |
-| Fee conversion timing and dust | The minimum balance worth converting; conversion on each receipt or on a schedule with recovery; the signer connection and network-specific USDC routes. Section 6 says raw private keys are not stored in application environment variables, and AGENTS.md records the per-network fee-wallet key of 18 October 2026; the owner must reconcile these two records | Signing of fee conversions |
-| Attribution for automatic closure | The minimum evidence that proves slop.cash membership and skill use (for example signed attribution or a verified skill marker); a copied marker alone is not proof | Automatic closure; advisory review does not wait |
-| Penalty table | The values in the one published penalty table | Penalties |
-| Escalation criteria | When an appeal or dispute goes from Slopbot triage to a moderator | Moderator escalation |
+| Decision | Recorded value |
+| --- | --- |
+| Monthly period model | Calendar UTC month; first period 2026-11; cutoff 72 hours after the month ends (section 6) |
+| Review-credit pool | Sum of the credited reviewers' highest bands, capped at the pull request's assessed size credit, minimum one third; largest remainder; effective 2026-11-01T00:00:00Z (section 7) |
+| Flag lifetime and resolution | A flag counts for 90 days. A clean-scan reinstatement resolves every flag counted toward that pause; a withdrawn flag stops counting. Only a member whose GitHub account is at least 30 days old and who has at least one accepted Slop contribution may flag; owners and maintainers cannot flag their own project. One flag stays private |
+| Fee conversion timing and dust | Convert on receipt when the value is at least 5 USDC and at least 10 times the gas cost; slippage 1%, price impact 2%, 1,000 USDC per run, 5,000 USDC per day. Capped conversion-only keys (section 6). Robinhood Chain stays pending until a Circle USDC route is verified. Solana live conversion waits for the separate attester role |
+| Attribution for automatic closure | An ordinary submission needs the visible Slop attribution line and the exact provider, model, and client; a signed receipt is optional. Closure and penalties need the author's own authenticated Slop run for that project and a pull-request-opened event that names the exact pull request. A copied marker is never proof |
+| Penalty table | Section 7 table |
+| Escalation criteria | A moderator decides when the appellant or maintainer rejects Slopbot's drafted resolution; the case involves a ban, a confirmed-malicious result, or a private security case; the debit is 24 thirds or more; Slopbot's confidence is below 0.9; or the case is unresolved 7 days after the appeal |
+| Restricted projects | Security-only review on a paused, flagged, or quarantined project may comment and apply the scam label only. Retired projects get no review. Approved funded payouts continue during quarantine or a ban; no new commitments start |
+| Setup | Creating a project requires a Slopbot installation read. Economic changes apply from the next UTC calendar month. Amounts use asset base units. Admins use quarantine to hold a project |
+| Account closure | Closure is reversible through an explicit reopen. Wallets, obligations, settlement records, identity reservations, and private-case records remain |
+| Private bounties | Reserve against the bounty vault's finalized free balance. The researcher submits through Slop, which sends the report privately to GitHub with the researcher’s authorization. Verify receipt through authorized advisory read access. Two authorities, as in section 10. Awards only for cases received while paid terms were published |
+| Contracts before audit | Remove the service charge. Permissionless vault creation by its owner, with separate ordinary and bounty purposes. A bounded monthly commitment that anyone may submit after the cutoff, signed by the identity attester and limited by the owner's monthly cap, one commitment per period, and the owner's opt-out |
+| Scanner and runner | Surplus Opus 5.5 first; GPT-6.1 Sol only for ambiguous or high-risk results. One disposable Cloudflare sandbox per risky artifact, with internet access off and no secrets |
+| Moderators | lalalune (18633264) and drew-dot-com (202660855) |
+| Launch order | The non-money product launches first. Mainnet follows the independent audit, one network at a time: Base, Solana, Ethereum, then Robinhood Chain |

@@ -122,10 +122,58 @@ async function routeGitHub(
   });
 }
 
+/** The setup status the API returns for a project it just created. */
+const CREATED_SETUP = {
+  projectId: "open-protein",
+  name: "Open Protein",
+  slug: "open-protein",
+  revision: 1,
+  status: "paused",
+  state: "action_required",
+  nextAction: {
+    kind: "install_slopbot",
+    message:
+      "Slopbot is not installed on example/open-protein. Install it on this repository; Slopbot is free and required before the project is ready.",
+    href: "https://github.com/apps/slopdotcash/installations/new",
+  },
+  checks: {
+    authority: {
+      state: "verified",
+      basis: "public-github-facts",
+      message: "@example-maintainer is a public member of example.",
+    },
+    installation: {
+      state: "missing",
+      message: "Slopbot is not installed on example/open-protein.",
+    },
+    scan: {
+      state: "queued",
+      message: "The security scan is queued. Nothing is needed from you.",
+    },
+  },
+  funding: { mode: "none" },
+  activatedRevision: null,
+  checkedAt: "2026-10-18T00:00:00.000Z",
+};
+
+/** Answers project creation; every other projects request passes through. */
+async function routeCreation(
+  page: Page,
+  answer: (body: { manifest: Record<string, unknown>; referrer?: string }) => {
+    status: number;
+    json: unknown;
+  },
+) {
+  await page.route("**/api/v1/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill(answer(route.request().postDataJSON()));
+  });
+}
+
 // The preview lane has no Pages Functions; the registry lane tests the API.
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/v1/project-applications/mine?*", (route) =>
-    route.fulfill({ json: { applications: [] } }),
+  await page.route("**/api/v1/project-setup", (route) =>
+    route.fulfill({ json: { projects: [], applications: [] } }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
@@ -155,7 +203,7 @@ function observe(page: Page) {
   return errors;
 }
 
-test("drafts a project through the setup steps and submits it for review", async ({
+test("drafts a project through the setup steps and creates it without an admin", async ({
   context,
   page,
 }) => {
@@ -179,32 +227,19 @@ test("drafts a project through the setup steps and submits it for review", async
       },
     }),
   );
-  await page.route("**/api/v1/project-applications", async (route) => {
-    submitted = route.request().postDataJSON();
-    await route.fulfill({
+  await routeCreation(page, (body) => {
+    submitted = body;
+    return {
       status: 201,
       json: {
-        application: {
-          id: "app_fixture0001",
-          projectId: "open-protein",
-          repository: "example/open-protein",
-          manifest: submitted?.manifest,
-          manifestSha256: "a".repeat(64),
-          acceptanceCriteria: "Accepted pull requests with verified tests.",
-          applicant: { githubId: "4242", githubLogin: "example-maintainer" },
-          submittedAt: "2026-10-18T00:00:00.000Z",
-          status: "pending",
-          adminNotification: "sent",
-          adminNotificationAt: "2026-10-18T00:00:00.000Z",
-          decidedAt: null,
-          decidedBy: null,
-          decisionReason: null,
-          githubCheck:
-            "Not proven: @example-maintainer is not a public member of example",
+        project: {
+          id: "open-protein",
+          revision: 1,
           referrer: { githubId: "4343", githubLogin: "example-referrer" },
         },
+        setup: CREATED_SETUP,
       },
-    });
+    };
   });
   // A referral link names the referrer; the draft keeps it across reloads
   // and the applicant can clear it before submitting (PRJ-05).
@@ -268,11 +303,14 @@ test("drafts a project through the setup steps and submits it for review", async
     .fill("Accepted pull requests with verified tests.");
   await expect(page.getByLabel("Copyright model")).toHaveValue("unknown");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
-  await page.getByLabel("Payout network").selectOption("solana");
-  await page.getByLabel("Monthly pool target, USD").fill("2500");
-  await expect(page.getByLabel("Monthly review budget, USD")).toHaveCount(0);
-  await page.getByLabel("Add a separate review budget").check();
-  await page.getByLabel("Monthly review budget, USD").fill("50");
+  // Funding is optional; asset and vault details follow the choice.
+  await expect(page.getByLabel("No monthly funding")).toBeChecked();
+  await expect(page.getByLabel("Network")).toHaveCount(0);
+  await expect(page.getByLabel(/review budget/iu)).toHaveCount(0);
+  await page.getByLabel("Pay contributors a monthly amount").check();
+  await page.getByLabel("Network").selectOption("solana");
+  await expect(page.getByLabel(/USD$/u)).toHaveCount(0);
+  await page.getByLabel("Monthly amount (USDC)").fill("2500");
   await expect(page.locator(".fee-preview")).toContainText(
     "Payout fee: 2%. Unused-fund withdrawal fee: 2%.",
   );
@@ -281,8 +319,8 @@ test("drafts a project through the setup steps and submits it for review", async
   const preview = page.getByRole("article", { name: "Listing preview" });
   await expect(preview).toContainText("Draft · not listed");
   await expect(preview).toContainText("Open Protein");
-  await expect(preview).toContainText("$2,500 · unfunded pledge");
-  await expect(preview).toContainText("Solana · payments disabled");
+  await expect(preview).toContainText("2,500 USDC on Solana · pledge");
+  await expect(preview).not.toContainText("$");
   await expect(preview).toContainText("MIT");
   await expect(preview).toContainText("Referred by");
   await expect(preview).toContainText("@example-referrer");
@@ -291,7 +329,7 @@ test("drafts a project through the setup steps and submits it for review", async
   ).toBeVisible();
   const manifestDetails = page.locator("details.manifest-preview");
   await expect(manifestDetails).not.toHaveAttribute("open", "");
-  const handoff = page.getByRole("button", { name: /Submit for review/u });
+  const handoff = page.getByRole("button", { name: /Create project/u });
 
   const [download] = await Promise.all([
     page.waitForEvent("download"),
@@ -315,7 +353,6 @@ test("drafts a project through the setup steps and submits it for review", async
       committedMinor: "0",
       paymentMode: "disabled",
       fundingState: "pledged",
-      reviewBudget: { monthlyCapMinor: "50000000", fundingState: "pledged" },
     },
     terms: {
       repositoryLicense: {
@@ -349,12 +386,24 @@ test("drafts a project through the setup steps and submits it for review", async
     ).violations,
   ).toEqual([]);
 
-  // Submission posts the reviewed manifest and criteria, then confirms it.
+  expect(manifest.reward).not.toHaveProperty("reviewBudget");
+  // Creation posts the reviewed manifest and criteria, then shows one setup
+  // status whose next action is the Slopbot installation.
   await handoff.click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Application submitted" }),
-  ).toContainText(
-    "Application app_fixture0001 · submitted by @example-maintainer · referred by @example-referrer",
+    page.getByRole("heading", { name: "Project created" }),
+  ).toBeVisible();
+  await expect(page.locator(".proposal-submitted")).toContainText(
+    "Referred by @example-referrer.",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Setup status: Action needed" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Install Slopbot" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/apps/slopdotcash/installations/new",
   );
   expect(submitted).toMatchObject({
     referrer: "example-referrer",
@@ -506,12 +555,13 @@ test("Robinhood Chain drafts a USDG escrow manifest", async ({ page }) => {
     .getByLabel("Acceptance criteria")
     .fill("Accepted pull requests with verified tests.");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
-  const network = page.getByLabel("Payout network");
+  await page.getByLabel("Pay contributors a monthly amount").check();
+  const network = page.getByLabel("Network");
   await network.selectOption("robinhood");
-  await page.getByLabel("Monthly pool target, USD").fill("1000");
+  await page.getByLabel("Monthly amount (USDG)").fill("1000");
   await page.getByRole("button", { name: "Next: Review" }).click();
   const preview = page.getByRole("article", { name: "Listing preview" });
-  await expect(preview).toContainText("Robinhood Chain · payments disabled");
+  await expect(preview).toContainText("1,000 USDG on Robinhood Chain · pledge");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByRole("button", { name: "Download manifest" }).click(),
@@ -598,8 +648,8 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
       });
       return;
     }
-    if (url.pathname === "/api/v1/project-applications/mine") {
-      await route.fulfill({ json: { applications: [] } });
+    if (url.pathname === "/api/v1/project-setup") {
+      await route.fulfill({ json: { projects: [], applications: [] } });
       return;
     }
     if (url.pathname === "/api/v1/points/me") {
@@ -675,7 +725,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await page.getByRole("button", { name: "Next: Contribution rules" }).click();
   await expect(page.getByLabel("Project name")).toHaveValue("Open Protein");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
-  await expect(page.getByLabel("Payout network")).toBeVisible();
+  await expect(page.getByLabel("No monthly funding")).toBeChecked();
   expect(
     (
       await new AxeBuilder({ page })
@@ -710,35 +760,36 @@ for (const [name, expectedId] of [
         },
       }),
     );
-    // The server adds reviewed stablecoin metadata before schema validation.
+    // Without monthly funding the manifest names no reward asset; with one,
+    // the server adds reviewed stablecoin metadata before validation.
     const validate = (manifest: Record<string, unknown>) => {
       const network = REWARD_ASSET_NETWORKS.base;
-      return assertProjectDefinition({
-        ...manifest,
-        rewardAsset: {
-          ...(manifest.rewardAsset as object),
-          decimals: network.stablecoin.decimals,
-          chainId: network.chainId,
-          cluster: network.cluster,
-          verifiedAt: "2026-10-20T00:00:00.000Z",
-        },
-      });
+      return assertProjectDefinition(
+        manifest.rewardAsset === undefined
+          ? manifest
+          : {
+              ...manifest,
+              rewardAsset: {
+                ...(manifest.rewardAsset as object),
+                decimals: network.stablecoin.decimals,
+                chainId: network.chainId,
+                cluster: network.cluster,
+                verifiedAt: "2026-10-20T00:00:00.000Z",
+              },
+            },
+      );
     };
     let submitted: unknown;
-    await page.route("**/api/v1/project-applications", async (route) => {
-      const manifest = route.request().postDataJSON().manifest;
-      submitted = manifest;
-      validate(manifest);
-      await route.fulfill({
+    await routeCreation(page, (body) => {
+      submitted = body.manifest;
+      validate(body.manifest);
+      return {
         status: 201,
         json: {
-          application: {
-            id: "app_fixture_slug",
-            manifest: submitted,
-            applicant: { githubId: "4242", githubLogin: "example-maintainer" },
-          },
+          project: { id: expectedId, revision: 1, referrer: null },
+          setup: { ...CREATED_SETUP, projectId: expectedId, slug: expectedId },
         },
-      });
+      };
     });
     await page.goto("/projects/new", { waitUntil: "networkidle" });
     await page
@@ -777,10 +828,10 @@ for (const [name, expectedId] of [
       reviewSkill: { id: `review-${expectedId}-contributions` },
     });
     expect(download.suggestedFilename()).toBe(`${expectedId}-project.json`);
-    await page.getByRole("button", { name: "Submit for review" }).click();
+    await page.getByRole("button", { name: "Create project" }).click();
     await expect(
-      page.getByRole("status").filter({ hasText: "Application submitted" }),
-    ).toContainText(name);
+      page.getByRole("heading", { name: "Project created" }),
+    ).toBeVisible();
     expect(submitted).toEqual(manifest);
     expect(errors).toEqual([]);
   });

@@ -24,8 +24,10 @@ R2 binding and an explicit operator-attested policy with inactive defaults.
 
 ## Clearance
 
-The content SHA-256 is the key-sorted canonical JSON of the manifest with
-`status` set to `paused`. A clearance binds three things (VET-07):
+The content SHA-256 is the key-sorted canonical JSON of the manifest's
+executable fields (`id`, `repositories`, `skill`, `reviewSkill`,
+`contribution`; `src/lib/project-revision-changes.ts`). Status, listing,
+presentation and financial edits keep it. A clearance binds three things (VET-07):
 
 - the content SHA-256 of the unbroken run of revisions with the same content;
 - the integration-branch head commit that the queue assigned to the scan;
@@ -44,8 +46,8 @@ Every check reads the live pin: the current head of the manifest's
 template index. Only scans of the same content and of that exact pin count,
 and the newest finished one decides. So an activation revision that changes
 only the status of a cleared revision keeps its clearance. A new commit on the
-integration branch, a change to a template input, or any other manifest change
-needs a new scan before Slop serves the skill.
+integration branch, a change to a template input, or a change to an executable
+field needs a new scan before Slop serves the skill.
 
 A scan covers one repository at one commit. A manifest that names more than
 one repository has no live pin, so its state is `unverified`, an admin cannot

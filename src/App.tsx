@@ -187,7 +187,7 @@ function internalRoute(pathname: string): Route {
     segments[2] === "awards"
   )
     return { kind: "owner-awards", projectId: segments[1] };
-  // The admin email deep-links one application at /admin/applications/<id>.
+  // Admin emails sent before self-service setup link /admin/applications/<id>.
   if (
     segments[0] === "admin" &&
     (segments.length === 1 ||
@@ -635,8 +635,8 @@ function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
     >
       <h3 id="community-projects">Community</h3>
       <p className="project-tier-note">
-        Community-listed after admin review, not featured by Slop. Paused
-        projects are listed but not collected yet.
+        Listed by their owners, not featured by Slop. Paused projects are listed
+        but not collected yet.
       </p>
       <ul className="project-rows">
         {visible.map((project) => (
@@ -707,8 +707,8 @@ function HomePage() {
         </div>
         {featuredProjects.length + listedCommunityProjects.length === 0 ? (
           <p className="project-tier-note">
-            No projects are listed yet. Maintainers add one with GitHub sign-in,
-            and a Slop admin reviews each application.
+            No projects are listed yet. Maintainers add one with GitHub sign-in;
+            it goes live when its setup checks pass.
           </p>
         ) : (
           <>
@@ -1558,13 +1558,13 @@ function HowItWorksPage() {
           <h2 id="maintainer-path">For maintainers</h2>
           <ol className="mechanism-flow">
             <li>
-              <strong>1. Propose a project</strong>
+              <strong>1. Add a project</strong>
               <p>
                 <Link href="/projects/new">
-                  Submit your repository and reward terms
+                  Add your repository and contribution rules
                 </Link>
-                . An admin reviews the application. Approved projects start
-                paused.
+                . Install Slopbot; the project goes live when the security scan
+                passes. No admin approval is needed.
               </p>
             </li>
             <li>
@@ -2235,9 +2235,9 @@ function SponsorsPage({
         <div>
           <h2>Add your own project.</h2>
           <p>
-            Sign in with GitHub and add a project. A Slop admin reviews it, and
-            new projects start paused. Escrow deployments change only through a
-            reviewed admin revision.
+            Sign in with GitHub and add a project. It goes live when you have
+            installed Slopbot and the security scan passes. Escrow deployments
+            change only through a reviewed admin revision.
           </p>
         </div>
         <ul>

@@ -249,13 +249,13 @@ describe("release gates", () => {
     ).toBe("off");
   });
 
-  test("the checked-in configuration leaves the dust threshold to the owner", async () => {
+  test("the checked-in configuration carries the owner's recorded dust threshold and stays off", async () => {
     const toml = await Bun.file(
       new URL("./wrangler.toml", import.meta.url),
     ).text();
     expect(toml).toMatch(/^FEE_CONVERTER_MODE = "off"$/mu);
-    expect(toml).toMatch(/^FEE_CONVERTER_MIN_VALUE_MICRO = ""$/mu);
-    expect(toml).toMatch(/^FEE_CONVERTER_GAS_MULTIPLE = ""$/mu);
+    expect(toml).toMatch(/^FEE_CONVERTER_MIN_VALUE_MICRO = "5000000"$/mu);
+    expect(toml).toMatch(/^FEE_CONVERTER_GAS_MULTIPLE = "10"$/mu);
   });
 });
 

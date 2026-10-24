@@ -198,7 +198,6 @@ beforeAll(async () => {
             now: () => now,
             randomId: () => "unused",
             sessionActor: async () => null,
-            notifyAdmins: async () => false,
             repositoryControl: async () => ({
               state: "unproven",
               reason: "fixture",

@@ -32,13 +32,19 @@ alias only.
     route funds alone, or reach free or reserved funds. Each binding waits the
     reviewed binding delay, and the project owner can cancel it in that time.
     A public timelocked rotation replaces the key, and the attester cannot
-    block it.
+    block it. Owner decision of 24 October 2026: after the reviewed contract
+    change and independent audit, it also signs each funded project's monthly
+    allocation root. The contract limits that commitment to the owner's
+    monthly cap, one commitment per period, and the owner's opt-out; the
+    attester still cannot withdraw, redirect, or pay funds.
   - One fee-wallet hot key per network (PRD TOK-07, MVP-07c, owner decision
     of 18 October 2026). It controls only the network fee wallet. It signs
     only the conversion of fees received in that wallet to USDC, through allowlisted routes, within the slippage limit,
     with output to the same wallet. It holds no vault role and cannot touch
-    vaults, contributor principal, reserved awards or payments. The job runs
-    in dry run until a reviewed activation record enables signing.
+    vaults, contributor principal, reserved awards or payments. Per-run and
+    daily caps bound it, and owners sweep USDC proceeds to cold storage
+    (PRD section 11, 24 October 2026). The job runs in dry run until a
+    reviewed activation record enables signing.
 - Humans create, store and rotate these keys and deploy mainnet contracts.
   Agents never handle key material or deploy to mainnet. The vote-only Squads
   project vault key is removed with Squads.
@@ -192,11 +198,10 @@ a project that flags alone paused; a moderator decides only after a confirmed
 malicious result. Contributor skills must not install or work on flagged
 projects.
 
-Where code in `backend/projects/` still requires admin approval, that step is
-implementation to migrate, not the target product rule. Replace it only through
-a reviewed change, and keep the GitHub repository identity and current
-write/maintain authority checks. Do not bypass deployed checks outside that
-change.
+The owner creates and updates projects through `backend/projects/`. Preserve
+permanent repository and actor IDs when checking current GitHub write/maintain
+authority. A stored application can be published by its applicant through the
+same checks; it does not need an admin decision.
 
 A paused project is registered and listed, but none of its repositories is
 collected, so nothing on them reaches the ledger or the leaderboard. It
@@ -324,9 +329,9 @@ Monthly allocations use integer base units of the project asset and largest
 remainder. Never use floats for money, assume six decimals, or let rollover
 increase a later monthly cap.
 
-A review budget is an optional additive cash line. Review events remain in the
-shared pool unchanged; a committed review line may pay them only on top of that
-treatment, with separate public arithmetic and evidence.
+New project setup uses one monthly pool. Preserve historical committed review
+budgets and their terms; do not offer a second review budget for new projects.
+Review credit follows the canonical scoring policy.
 
 Automatic monthly payment is the PRD default for every project with funds
 committed in its vault. The owner sets the monthly amount during setup, can

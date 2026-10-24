@@ -1,5 +1,6 @@
 import type { readValueDecision } from "../../workers/slopbot/value-consumption";
 import type { consumeWorkUnitHistory } from "../../workers/slopbot/value-work-unit-consumption";
+import type { ValueScoringPolicy } from "./scoring-policy";
 /** Public snapshot contracts. Historical records retain their original semantics. */
 
 import type {
@@ -583,6 +584,8 @@ export interface LeaderboardSnapshot {
 }
 
 export interface LeaderboardInput {
+  /** The versioned policy that value decisions apply under; required with them. */
+  valuePolicy?: ValueScoringPolicy;
   /** GitHub-resolved identities for assessment coauthors absent from ordinary hydration. */
   valueActors?: ReadonlyMap<string, GitHubActor>;
   /** Trusted journal decisions verified against fresh complete source evidence. */

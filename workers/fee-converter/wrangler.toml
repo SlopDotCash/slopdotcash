@@ -29,12 +29,11 @@ FEE_CONVERTER_NETWORKS = ""
 FEE_CONVERTER_ALLOWLIST = ""
 # USDC micro-units (1 USDC = 1000000). Every limit below is required once the
 # mode is not off; the code has no fallback.
-# Dust threshold: OWNER DECISION REQUIRED (PRD section 6 sells fees when they
-# arrive; whether tiny balances may accumulate to avoid gas waste is not
-# decided). Left empty, dry_run and live refuse to start. "0" means convert
-# every received fee regardless of value or gas cost.
-FEE_CONVERTER_MIN_VALUE_MICRO = ""
-FEE_CONVERTER_GAS_MULTIPLE = ""
+# Dust threshold: owner decision of 24 October 2026 (PRD section 11). Balances
+# under 5 USDC, or worth less than 10 times the gas cost, accumulate until they
+# are worth converting.
+FEE_CONVERTER_MIN_VALUE_MICRO = "5000000"
+FEE_CONVERTER_GAS_MULTIPLE = "10"
 FEE_CONVERTER_MAX_SLIPPAGE_BPS = "100"
 FEE_CONVERTER_MAX_PRICE_IMPACT_BPS = "200"
 FEE_CONVERTER_RUN_CAP_MICRO = "1000000000"

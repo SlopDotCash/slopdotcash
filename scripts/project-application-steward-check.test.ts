@@ -1,5 +1,5 @@
-// The steward check of a project application through the production Pages
-// Function: the steward must be the account GitHub reports as the repository
+// The steward check of self-service project creation through the production
+// Pages Function: the steward must be the account GitHub reports as the repository
 // owner, by login and node id, not only by numeric id.
 import { afterEach, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
@@ -71,7 +71,7 @@ async function submit(github: Record<string, unknown>) {
     },
   };
   const response = await onRequest({
-    request: new Request(`${ORIGIN}/api/v1/project-applications`, {
+    request: new Request(`${ORIGIN}/api/v1/projects`, {
       method: "POST",
       headers: {
         origin: ORIGIN,
@@ -83,12 +83,12 @@ async function submit(github: Record<string, unknown>) {
     env: { SLOP_DB: db, ADMIN_GITHUB_IDS: "900000001" } as never,
   });
   const body = (await response.json()) as {
-    application?: { githubCheck: string };
+    setup?: { checks: { authority: { message: string } } };
     error?: string;
     message?: string;
   };
   const stored = sqlite
-    .prepare("SELECT COUNT(*) AS count FROM project_applications")
+    .prepare("SELECT COUNT(*) AS count FROM projects")
     .get() as { count: number };
   return { status: response.status, body, stored: stored.count };
 }
@@ -101,8 +101,8 @@ const MISMATCH = {
 test("the repository owner is accepted as steward, in any login case", async () => {
   const exact = await submit({});
   expect(exact.status).toBe(201);
-  expect(exact.body.application?.githubCheck).toBe(
-    "Proven: @example owns example/open-registry",
+  expect(exact.body.setup?.checks.authority.message).toBe(
+    "@example owns example/open-registry.",
   );
 
   // GitHub logins are case-insensitive.

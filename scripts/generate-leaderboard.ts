@@ -1,5 +1,9 @@
 import { GitHubClient } from "../workers/slopbot/github";
-import { loadValueInputs } from "./value-ingestion";
+import {
+  loadValueInputs,
+  VALUE_FEED_UNAVAILABLE_EXIT_CODE,
+  ValueFeedUnavailableError,
+} from "./value-ingestion";
 /**
  * Collects the rolling contribution ledger and current work queues from the
  * authenticated GitHub GraphQL API. Time slicing, cursor pagination, runtime
@@ -51,6 +55,11 @@ import {
   TARGET_REPOSITORIES,
   type TargetRepository,
 } from "../src/lib/repositories.mjs";
+import {
+  assertValueScoringPolicy,
+  type ValueScoringPolicy,
+  valueScoringPolicy,
+} from "../src/lib/scoring-policy";
 import {
   isTransientArtifactFailure,
   planReferencedArtifacts,
@@ -258,12 +267,14 @@ export interface GenerationProgress {
 }
 
 export interface GenerateOptions {
-  /** Enable the authoritative hosted value feed; failures prevent publication. */
-  valueAssessments?: boolean;
-  valueActors?: LeaderboardInput["valueActors"];
-  valueDecisions?: LeaderboardInput["valueDecisions"];
-  jointValueDecisions?: LeaderboardInput["jointValueDecisions"];
-  valueContextPullRequests?: LeaderboardInput["valueContextPullRequests"];
+  /**
+   * The versioned producer for new work. Defaults to the recorded owner
+   * decision. Value assessments come only from the authoritative hosted feed.
+   * A feed failure prevents this publication instead of falling back to
+   * legacy scoring; an outage exits with VALUE_FEED_UNAVAILABLE_EXIT_CODE so
+   * the release keeps the last published snapshot and retries.
+   */
+  scoringPolicy?: ValueScoringPolicy;
   now?: Date;
   actualNow?: Date;
   onProgress?: (progress: GenerationProgress) => void;
@@ -1716,22 +1727,11 @@ function parseIsoDate(value: Date, path: string): Date {
 export function parseGenerationArguments(
   values: string[],
   currentTime = new Date(),
-): Pick<GenerateOptions, "now" | "valueAssessments"> {
-  const valueFlags = values.filter((value) => value === "--value-assessments");
-  if (valueFlags.length > 1)
-    throw new TypeError("--value-assessments may appear only once");
-  if (valueFlags.length === 1)
-    return {
-      ...parseGenerationArguments(
-        values.filter((value) => value !== "--value-assessments"),
-        currentTime,
-      ),
-      valueAssessments: true,
-    };
+): Pick<GenerateOptions, "now"> {
   if (values.length === 0) return {};
   if (values.length !== 2 || values[0] !== "--cutoff") {
     throw new TypeError(
-      "Usage: generate-leaderboard.ts [--cutoff YYYY-MM-DDTHH:mm:ss.sssZ] [--value-assessments]",
+      "Usage: generate-leaderboard.ts [--cutoff YYYY-MM-DDTHH:mm:ss.sssZ]",
     );
   }
   const cutoffText = values[1];
@@ -3676,6 +3676,19 @@ export async function generateLeaderboardFromGitHub(
   );
   const onProgress = options.onProgress ?? (() => undefined);
   const stats = { searchSliceCount: 0 };
+  // Select the policy before any collection; it binds every accepted source.
+  const scoringPolicy = assertValueScoringPolicy(
+    options.scoringPolicy ?? valueScoringPolicy(),
+  );
+  const valuePolicyFrom = new Date(scoringPolicy.effectiveAt);
+  const underValuePolicy = (acceptedAt: string | null | undefined) =>
+    typeof acceptedAt === "string" &&
+    Date.parse(acceptedAt) >= valuePolicyFrom.getTime();
+  // Closed, unmerged work can earn review value only under the value policy.
+  const closedCensusFrom =
+    valuePolicyFrom.getTime() > windowFrom.getTime()
+      ? valuePolicyFrom
+      : windowFrom;
 
   interface RepositoryCollection {
     closedIssueReferences: NodeReference[];
@@ -3718,11 +3731,11 @@ export async function generateLeaderboardFromGitHub(
       "PullRequest",
       stats,
     );
-    if (options.valueAssessments) {
+    if (closedCensusFrom.getTime() < now.getTime()) {
       const closedReferences = await collectSearchReferences(
         client,
         repository,
-        windowFrom,
+        closedCensusFrom,
         now,
         "closed",
         "is:pr is:closed is:unmerged",
@@ -3810,12 +3823,23 @@ export async function generateLeaderboardFromGitHub(
     const detailedReferenceIds = new Set(
       detailedReferences.map((reference) => reference.id),
     );
-    const reviewedReferences = collection.mergedPullRequestReferences.filter(
-      (reference) =>
-        (options.valueAssessments ||
-          hydrationPlan.hydratedIds.has(reference.id)) &&
-        !detailedReferenceIds.has(reference.id),
+    // Value-policy outcomes need every review state and every human decision;
+    // earlier outcomes keep the legacy review census unchanged.
+    const reviewOnlyReferences = collection.mergedPullRequestReferences.filter(
+      (reference) => !detailedReferenceIds.has(reference.id),
     );
+    const valueReviewedReferences = reviewOnlyReferences.filter((reference) =>
+      underValuePolicy(reference.outcome?.mergedAt),
+    );
+    const legacyReviewedReferences = reviewOnlyReferences.filter(
+      (reference) =>
+        !underValuePolicy(reference.outcome?.mergedAt) &&
+        hydrationPlan.hydratedIds.has(reference.id),
+    );
+    const reviewedReferences = [
+      ...valueReviewedReferences,
+      ...legacyReviewedReferences,
+    ];
     await ensureEstimatedBudget(
       client,
       detailedReferences.length,
@@ -3830,12 +3854,19 @@ export async function generateLeaderboardFromGitHub(
       onProgress,
       "merged-pull-requests",
     );
-    const reviewedPullRequests = await hydrateReviewedMergedPullRequests(
-      client,
-      reviewedReferences,
-      onProgress,
-      options.valueAssessments,
-    );
+    const reviewedPullRequests = [
+      ...(await hydrateReviewedMergedPullRequests(
+        client,
+        valueReviewedReferences,
+        onProgress,
+        true,
+      )),
+      ...(await hydrateReviewedMergedPullRequests(
+        client,
+        legacyReviewedReferences,
+        onProgress,
+      )),
+    ];
     await reconcileHydratedReviewCensus(client, hydrationPlan.reviewCounts, [
       ...detailedPullRequests,
       ...reviewedPullRequests,
@@ -3976,82 +4007,67 @@ export async function generateLeaderboardFromGitHub(
             Date.parse(current) > Date.parse(latest) ? current : latest,
           );
   let valueRestRequests = 0;
-  let valueInputs: Pick<
+  const github = GitHubClient.forToken(options.evidenceToken ?? "");
+  const valueInputs: Pick<
     LeaderboardInput,
     | "valueDecisions"
     | "jointValueDecisions"
     | "valueActors"
     | "valueContextPullRequests"
-  > = {
-    valueDecisions: options.valueDecisions,
-    jointValueDecisions: options.jointValueDecisions,
-    valueContextPullRequests: options.valueContextPullRequests,
-    valueActors: options.valueActors,
-  };
-  if (options.valueAssessments) {
-    if (
-      options.valueDecisions ||
-      options.jointValueDecisions ||
-      options.valueContextPullRequests ||
-      options.valueActors
-    )
-      throw new Error(
-        "Hosted value ingestion cannot mix supplied decisions or actors",
-      );
-    const github = GitHubClient.forToken(options.evidenceToken ?? "");
-    valueInputs = await loadValueInputs(
-      {
-        get: <T>(path: string) => {
-          valueRestRequests += 1;
-          return github.get<T>(path);
-        },
-        fileText: (...args: Parameters<GitHubClient["fileText"]>) => {
-          valueRestRequests += 1;
-          return github.fileText(...args);
-        },
-        graphql: async <T>(query: string, variables: Record<string, unknown>) =>
-          (await client.execute(query, variables as GraphqlVariables)) as T,
+  > = await loadValueInputs(
+    {
+      get: <T>(path: string) => {
+        valueRestRequests += 1;
+        return github.get<T>(path);
       },
-      [...dedupedOutcomes, ...closedUnmergedPullRequests],
-    );
-  }
-  if (options.valueAssessments) {
-    const censusIds = new Set(
-      [...dedupedOutcomes, ...closedUnmergedPullRequests].map(
-        (source) => source.id,
+      fileText: (...args: Parameters<GitHubClient["fileText"]>) => {
+        valueRestRequests += 1;
+        return github.fileText(...args);
+      },
+      graphql: async <T>(query: string, variables: Record<string, unknown>) =>
+        (await client.execute(query, variables as GraphqlVariables)) as T,
+    },
+    [...dedupedOutcomes, ...closedUnmergedPullRequests].filter((source) =>
+      underValuePolicy(
+        source.mergedAt ?? ("closedAt" in source ? source.closedAt : null),
       ),
+    ),
+  );
+  const censusIds = new Set(
+    [...dedupedOutcomes, ...closedUnmergedPullRequests].map(
+      (source) => source.id,
+    ),
+  );
+  const contexts = new Map<string, "merged" | "closed">();
+  for (const decision of valueInputs.jointValueDecisions?.values() ?? []) {
+    if (decision.status !== "assessed") continue;
+    for (const { evidence } of decision.evidence.sources)
+      if (!censusIds.has(evidence.pull.node_id))
+        contexts.set(
+          evidence.pull.node_id,
+          evidence.pull.merged_at ? "merged" : "closed",
+        );
+  }
+  await ensureEstimatedBudget(client, 0, 0, 0, contexts.size);
+  valueInputs.valueContextPullRequests = [];
+  for (const state of ["merged", "closed"] as const) {
+    const references: NodeReference[] = [...contexts]
+      .filter(([, expected]) => expected === state)
+      .map(([id]) => ({
+        id,
+        kind: "PullRequest",
+        outcome: null,
+        openVersion: null,
+      }));
+    valueInputs.valueContextPullRequests.push(
+      ...(await hydrateReviewedMergedPullRequests(
+        client,
+        references,
+        onProgress,
+        true,
+        state,
+      )),
     );
-    const contexts = new Map<string, "merged" | "closed">();
-    for (const decision of valueInputs.jointValueDecisions?.values() ?? []) {
-      if (decision.status !== "assessed") continue;
-      for (const { evidence } of decision.evidence.sources)
-        if (!censusIds.has(evidence.pull.node_id))
-          contexts.set(
-            evidence.pull.node_id,
-            evidence.pull.merged_at ? "merged" : "closed",
-          );
-    }
-    await ensureEstimatedBudget(client, 0, 0, 0, contexts.size);
-    valueInputs.valueContextPullRequests = [];
-    for (const state of ["merged", "closed"] as const) {
-      const references: NodeReference[] = [...contexts]
-        .filter(([, expected]) => expected === state)
-        .map(([id]) => ({
-          id,
-          kind: "PullRequest",
-          outcome: null,
-          openVersion: null,
-        }));
-      valueInputs.valueContextPullRequests.push(
-        ...(await hydrateReviewedMergedPullRequests(
-          client,
-          references,
-          onProgress,
-          true,
-          state,
-        )),
-      );
-    }
   }
   const fetchedAt = new Date().toISOString();
   const rateLimit = client.getRateLimit();
@@ -4091,6 +4107,7 @@ export async function generateLeaderboardFromGitHub(
   };
   const snapshot = createLeaderboardSnapshot({
     ...valueInputs,
+    valuePolicy: scoringPolicy,
     generatedAt: fetchedAt,
     windowFrom: windowFrom.toISOString(),
     windowTo: now.toISOString(),
@@ -4200,6 +4217,13 @@ if (import.meta.main) {
         process.stderr.write(progressLine(progress));
       }
     },
+  }).catch((error: unknown) => {
+    // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
+    if (!(error instanceof ValueFeedUnavailableError)) throw error;
+    process.stderr.write(
+      `[slop.cash] ${error.message} (${String(error.cause)}); no snapshot written\n`,
+    );
+    process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
   });
   process.stdout.write(
     `[slop.cash] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GitHub requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} GraphQL points remaining)\n`,

@@ -7,29 +7,38 @@ import { copyText } from "./lib/copy-text";
 import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
   ESCROW_WITHDRAWAL_FEE_BASIS_POINTS,
-  isEscrowChain,
 } from "./lib/escrow-policy.mjs";
 import {
+  createProject,
+  listProjectSetup,
   type ProjectApplication,
   type ProjectSessionState,
+  type ProjectSummary,
   projectApiRequest,
-  submitProjectApplication,
+  publishProjectRevision,
+  publishStoredApplication,
+  type RevisionResult,
   useProjectSession,
 } from "./lib/project-api";
 import {
   type OwnedRepository,
+  type ProjectSetupStatus,
   validRepositoryPath,
 } from "./lib/project-contracts";
 import {
   boundedText,
+  type FundingChoice,
+  formatMonthlyAmount,
   immutableProposalTermsUrl,
   listOwnedRepositories,
   lookupGitHubRepository,
   monthlyPoolValue,
   normalizeRepositoryInput,
+  rewardFields,
   safeProposalHttpsUrl,
   slugify,
 } from "./lib/project-proposal";
+import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import { PROJECT_SKILL_TEMPLATES } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
@@ -37,8 +46,8 @@ import {
   type RewardAssetNetwork,
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
-import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { loginHref } from "./Points";
+import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = Object.fromEntries(
   Object.entries(REWARD_ASSET_NETWORKS).map(([id, network]) => [
@@ -57,7 +66,6 @@ const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 /** PRJ-03 default, shown as editable text the maintainer can replace. */
 const DEFAULT_CRITERIA =
   "Merged pull requests that fix a reproduced bug or deliver a change the maintainers asked for, with tests or other evidence that the result works.";
-const REQUIREMENTS_URL = `${SOURCE_REPOSITORY}/issues/333`;
 const SETUP_STEPS = [
   "Repository",
   "Contribution rules",
@@ -86,13 +94,12 @@ const EMPTY_PROPOSAL = {
   securityContact: "",
   closurePolicy: "",
   maintainerNotes: "",
-  monthlyPool: "0",
+  fundingMode: "none",
+  monthlyPool: "",
   settlementChain: "base",
   rewardKind: "stablecoin",
   rewardAssetAddress: "",
   rewardAssetSymbol: "",
-  reviewBudgetEnabled: "no",
-  monthlyReviewBudget: "",
   copyrightModel: "unknown",
   legalHolder: "",
   licenseSpdx: "",
@@ -195,7 +202,6 @@ const FIELD_STEP: Partial<Record<ProposalField, number>> = {
   assignmentVersion: 1,
   assignmentSignedAt: 1,
   monthlyPool: 2,
-  monthlyReviewBudget: 2,
   rewardAssetAddress: 2,
   rewardAssetSymbol: 2,
 };
@@ -234,8 +240,7 @@ const FIELD_LABELS: Partial<Record<ProposalField, string>> = {
   assignmentDigest: "Instrument SHA-256",
   assignmentVersion: "Instrument version",
   assignmentSignedAt: "Signed at",
-  monthlyPool: "Monthly pool target",
-  monthlyReviewBudget: "Monthly review budget",
+  monthlyPool: "Monthly amount",
   rewardAssetAddress: "Token address",
   rewardAssetSymbol: "Token symbol",
 };
@@ -362,7 +367,7 @@ function proposalErrors(p: Proposal): FieldErrors {
     if (p.assignmentSignedAt.length === 0)
       errors.assignmentSignedAt = "Enter the signing date and time.";
   }
-  if (p.rewardKind === "token") {
+  if (p.fundingMode === "monthly" && p.rewardKind === "token") {
     try {
       rewardAssetChoice(
         p.settlementChain,
@@ -377,14 +382,11 @@ function proposalErrors(p: Proposal): FieldErrors {
       else errors.rewardAssetAddress = message;
     }
   }
-  if (!monthlyPoolValue(p.monthlyPool).valid)
-    errors.monthlyPool =
-      "Enter a dollar amount with up to two decimals, within the schema limit.";
-  if (p.reviewBudgetEnabled === "yes") {
-    const budget = monthlyPoolValue(p.monthlyReviewBudget);
-    if (!budget.valid || BigInt(budget.minor) === 0n)
-      errors.monthlyReviewBudget =
-        "Enter a positive dollar amount, or remove the review budget.";
+  if (p.fundingMode === "monthly") {
+    const amount = monthlyPoolValue(p.monthlyPool);
+    if (!amount.valid || BigInt(amount.minor) === 0n)
+      errors.monthlyPool =
+        "Enter a positive amount with up to two decimals, or choose no monthly funding.";
   }
   return errors;
 }
@@ -717,9 +719,10 @@ function useCopyStatus() {
 
 /**
  * Reads the session only on the review step that needs it. The API decides
- * who may submit, so the button follows its session, not the points profile.
+ * who may create a project, so the button follows its session, not the
+ * points profile.
  */
-function SubmitApplication({
+function SubmitProject({
   onSubmit,
   submitting,
 }: {
@@ -740,7 +743,7 @@ function SubmitApplication({
           onClick={onSubmit}
           type="button"
         >
-          {submitting ? "Submitting…" : "Submit for review"}{" "}
+          {submitting ? "Creating…" : "Create project"}{" "}
           <ArrowRight aria-hidden="true" />
         </button>
       ) : projectSession.status === "checking" ? (
@@ -749,14 +752,149 @@ function SubmitApplication({
         </p>
       ) : (
         <a className="button primary-button" href={loginHref("/projects/new")}>
-          Sign in with GitHub to submit
+          Sign in with GitHub to create the project
         </a>
       )}
       <p>
         {login
-          ? `You submit as @${login}. A Slop admin reviews the application. The project is listed, paused, once an admin approves it.`
-          : "Sign in with GitHub to submit this application. Your draft stays on this device."}
+          ? `You create the project as @${login}. Slop checks your GitHub access to the repository now.`
+          : "Sign in with GitHub to create this project. Your draft stays on this device."}
       </p>
+    </>
+  );
+}
+
+/**
+ * The one optional funding choice: none, or a monthly amount in one asset on
+ * one network. Asset and vault details appear only after choosing an amount.
+ */
+function FundingFields({
+  choice,
+  set,
+  error,
+  networkFixed,
+}: {
+  choice: FundingChoice;
+  set: (field: keyof FundingChoice, value: string) => void;
+  error: (
+    field: "monthlyAmount" | "tokenAddress" | "tokenSymbol",
+  ) => string | undefined;
+  /** A project with a vault keeps its network and asset. */
+  networkFixed: boolean;
+}) {
+  const network =
+    REWARD_ASSET_NETWORKS[choice.network as RewardAssetNetwork] ??
+    REWARD_ASSET_NETWORKS.base;
+  const symbol =
+    choice.assetKind === "token"
+      ? choice.tokenSymbol.trim() || "token"
+      : network.stablecoin.symbol;
+  return (
+    <>
+      <fieldset className="funding-mode">
+        <legend>Monthly funding (optional)</legend>
+        <label className="checkbox-field">
+          <input
+            checked={choice.mode === "none"}
+            name="fundingMode"
+            onChange={() => set("mode", "none")}
+            type="radio"
+          />{" "}
+          No monthly funding
+        </label>
+        <label className="checkbox-field">
+          <input
+            checked={choice.mode === "monthly"}
+            name="fundingMode"
+            onChange={() => set("mode", "monthly")}
+            type="radio"
+          />{" "}
+          Pay contributors a monthly amount
+        </label>
+      </fieldset>
+      {choice.mode === "none" ? (
+        <p className="field-hint">
+          The project works without funding. Contributors still earn Slop Score
+          for accepted work, and you can add a monthly amount later.
+        </p>
+      ) : (
+        <>
+          {networkFixed ? (
+            <p className="field-hint">
+              Paid in {symbol} on {network.name}. A project with a vault keeps
+              its network and asset.
+            </p>
+          ) : (
+            <>
+              <SelectField
+                label="Network"
+                name="settlementChain"
+                onChange={(value) => set("network", value)}
+                options={Object.entries(SETTLEMENT_CHAIN_NAMES)}
+                value={choice.network}
+              />
+              <SelectField
+                label="Asset"
+                name="rewardKind"
+                onChange={(value) => set("assetKind", value)}
+                options={[
+                  [
+                    "stablecoin",
+                    `${network.stablecoin.symbol} (network stablecoin)`,
+                  ],
+                  ["token", "Another token"],
+                ]}
+                value={choice.assetKind}
+              />
+              {choice.assetKind === "token" ? (
+                <>
+                  <TextField
+                    error={error("tokenAddress")}
+                    hint={
+                      network.family === "evm"
+                        ? `The ERC-20 contract address on ${network.name}.`
+                        : "The classic SPL mint address on Solana."
+                    }
+                    label="Token address"
+                    name="rewardAssetAddress"
+                    onChange={(value) => set("tokenAddress", value)}
+                    placeholder={
+                      network.family === "evm" ? "0x…" : "Mint address"
+                    }
+                    value={choice.tokenAddress}
+                  />
+                  <TextField
+                    error={error("tokenSymbol")}
+                    hint="Slop reads the decimals from chain when you save."
+                    label="Token symbol"
+                    name="rewardAssetSymbol"
+                    onChange={(value) => set("tokenSymbol", value)}
+                    value={choice.tokenSymbol}
+                  />
+                </>
+              ) : (
+                <p className="field-hint">
+                  {network.stablecoin.symbol} on {network.name}:{" "}
+                  <code>{network.stablecoin.address}</code>
+                </p>
+              )}
+            </>
+          )}
+          <TextField
+            error={error("monthlyAmount")}
+            hint={`Amount in ${symbol}. It stays a pledge until it is deposited in the project vault. A change applies from the next calendar month (UTC).`}
+            inputMode="decimal"
+            label={`Monthly amount (${symbol})`}
+            name="monthlyPool"
+            onChange={(value) => set("monthlyAmount", value)}
+            value={choice.monthlyAmount}
+          />
+          <p className="fee-preview">
+            Payout fee: {ESCROW_PAYOUT_FEE_BASIS_POINTS / 100}%. Unused-fund
+            withdrawal fee: {ESCROW_WITHDRAWAL_FEE_BASIS_POINTS / 100}%.
+          </p>
+        </>
+      )}
     </>
   );
 }
@@ -860,34 +998,29 @@ export default function ProjectProposalPage() {
     slugify(p.repository.split("/").at(-1) || "") ||
     "new-project";
   const pool = monthlyPoolValue(p.monthlyPool);
-  const includesReviewBudget = p.reviewBudgetEnabled === "yes";
-  const reviewBudget = monthlyPoolValue(p.monthlyReviewBudget);
-  const network =
-    REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork];
-  const escrow = isEscrowChain(p.settlementChain);
-  const asset = useMemo(
-    () =>
-      p.rewardKind === "token"
-        ? {
-            network: p.settlementChain,
-            kind: "token",
-            address: p.rewardAssetAddress.trim(),
-            symbol: p.rewardAssetSymbol.trim(),
-          }
-        : {
-            network: p.settlementChain,
-            kind: "stablecoin",
-            address: network.stablecoin.address,
-            symbol: network.stablecoin.symbol,
-          },
+  const funding: FundingChoice = useMemo(
+    () => ({
+      mode: p.fundingMode === "monthly" ? "monthly" : "none",
+      network: p.settlementChain,
+      assetKind: p.rewardKind === "token" ? "token" : "stablecoin",
+      tokenAddress: p.rewardAssetAddress,
+      tokenSymbol: p.rewardAssetSymbol,
+      monthlyAmount: p.monthlyPool,
+    }),
     [
-      p.rewardKind,
+      p.fundingMode,
       p.settlementChain,
+      p.rewardKind,
       p.rewardAssetAddress,
       p.rewardAssetSymbol,
-      network,
+      p.monthlyPool,
     ],
   );
+  const fundingSymbol =
+    p.rewardKind === "token"
+      ? p.rewardAssetSymbol.trim() || "token"
+      : (REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]
+          ?.stablecoin.symbol ?? "USDC");
   const manifest = useMemo(() => {
     const now = new Date();
     const repository = p.repository || "owner/repository";
@@ -1006,52 +1139,9 @@ export default function ProjectProposalPage() {
           SKILL_RULE_FIELDS.map((field) => [field, p[field].trim()]),
         ) as Record<(typeof SKILL_RULE_FIELDS)[number], string>),
       },
-      // Networks without a reviewed escrow program keep the asset as
-      // display metadata with payments disabled.
-      ...(escrow
-        ? {
-            escrow: {
-              schemaVersion: "1",
-              effectiveCycle: now.toISOString().slice(0, 7),
-              chain: p.settlementChain,
-              feeBasisPoints: 200,
-              withdrawalFeeBasisPoints: 200,
-              feeMode: "deduct-from-gross",
-              deployments: [],
-            },
-          }
-        : {}),
-      // The server verifies the asset and stores its decimals.
-      rewardAsset: asset,
-      reward: {
-        kind: "monthly-pool",
-        currency: asset.symbol,
-        chain: p.settlementChain,
-        rewardStartAt: now.toISOString(),
-        cycle: "calendar-month-utc",
-        monthlyCapMinor: pool.minor,
-        monthlyCapDisplay: pool.display,
-        committedMinor: "0",
-        paymentMode: "disabled",
-        feeBasisPoints: escrow ? 200 : 100,
-        unusedFunds: "rollover-without-cap-increase",
-        fundingState: "pledged",
-        ...(includesReviewBudget
-          ? {
-              reviewBudget: {
-                effectiveAt: new Date(
-                  Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
-                ).toISOString(),
-                monthlyCapMinor: reviewBudget.minor,
-                monthlyCapDisplay: reviewBudget.display,
-                committedMinor: "0",
-                paymentMode: "disabled",
-                unusedFunds: "rollover-without-cap-increase",
-                fundingState: "pledged",
-              },
-            }
-          : {}),
-      },
+      // Optional funding: none, or one asset on one network with its vault
+      // policy. The server verifies the asset and stores its decimals.
+      ...rewardFields(funding, now),
       funding: {
         mode: "direct-noncustodial",
         disclosure:
@@ -1068,21 +1158,17 @@ export default function ProjectProposalPage() {
         issues: `https://github.com/${repository}/issues`,
       },
     };
-  }, [
-    p,
-    slug,
-    pool.display,
-    pool.minor,
-    includesReviewBudget,
-    reviewBudget,
-    escrow,
-    asset,
-  ]);
+  }, [p, slug, funding]);
   const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
   const [submission, setSubmission] = useState<
     | { status: "idle" | "submitting" }
     | { status: "error"; message: string }
-    | { status: "submitted"; application: ProjectApplication }
+    | {
+        status: "submitted";
+        projectId: string;
+        setup: ProjectSetupStatus;
+        referrer: string | null;
+      }
   >({ status: "idle" });
   function clearReferrer() {
     forgetReferrer();
@@ -1090,13 +1176,15 @@ export default function ProjectProposalPage() {
   }
   function submit() {
     setSubmission({ status: "submitting" });
-    submitProjectApplication(
-      manifest as unknown as ProjectDefinition,
-      referrer,
-    ).then(
-      ({ application }) => {
+    createProject(manifest as unknown as ProjectDefinition, referrer).then(
+      ({ project, setup }) => {
         forgetReferrer();
-        setSubmission({ status: "submitted", application });
+        setSubmission({
+          status: "submitted",
+          projectId: project.id,
+          setup,
+          referrer,
+        });
       },
       (error: unknown) =>
         setSubmission({
@@ -1104,7 +1192,7 @@ export default function ProjectProposalPage() {
           message:
             error instanceof Error
               ? error.message
-              : "The application was not submitted.",
+              : "The project was not created.",
         }),
     );
   }
@@ -1261,14 +1349,16 @@ export default function ProjectProposalPage() {
       <section className="proposal-intro">
         <h1>Add a project</h1>
         <p>
-          Submit your project for review. A Slop admin approves it, and it is
-          listed as a paused project. Questions? Email{" "}
+          Create your project without waiting for an admin. Slop checks your
+          GitHub access, you install Slopbot, and an automatic security scan
+          runs. The project goes live when those checks pass. Funding is
+          optional. Questions? Email{" "}
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>.
         </p>
       </section>
-      <ApplicationStatus
+      <OwnerProjects
         refreshKey={
-          submission.status === "submitted" ? submission.application.id : ""
+          submission.status === "submitted" ? submission.projectId : ""
         }
       />
       <nav aria-label="Setup steps">
@@ -1661,104 +1751,36 @@ export default function ProjectProposalPage() {
           </>
         ) : null}
         {step === 2 ? (
-          <>
-            <SelectField
-              label="Payout network"
-              name="settlementChain"
-              onChange={set("settlementChain")}
-              options={Object.entries(SETTLEMENT_CHAIN_NAMES)}
-              value={p.settlementChain}
-            />
-            <SelectField
-              label="Reward asset"
-              name="rewardKind"
-              onChange={set("rewardKind")}
-              options={[
-                [
-                  "stablecoin",
-                  `${network.stablecoin.symbol} (network stablecoin)`,
-                ],
-                ["token", "Another token"],
-              ]}
-              value={p.rewardKind}
-            />
-            {p.rewardKind === "token" ? (
-              <>
-                <TextField
-                  error={shown("rewardAssetAddress")}
-                  hint={
-                    network.family === "evm"
-                      ? `The ERC-20 contract address on ${network.name}.`
-                      : "The classic SPL mint address on Solana."
-                  }
-                  label="Token address"
-                  name="rewardAssetAddress"
-                  onChange={set("rewardAssetAddress")}
-                  placeholder={
-                    network.family === "evm" ? "0x…" : "Mint address"
-                  }
-                  value={p.rewardAssetAddress}
-                />
-                <TextField
-                  error={shown("rewardAssetSymbol")}
-                  hint="Shown on the project page. Slop reads the decimals from chain when you submit."
-                  label="Token symbol"
-                  name="rewardAssetSymbol"
-                  onChange={set("rewardAssetSymbol")}
-                  value={p.rewardAssetSymbol}
-                />
-              </>
-            ) : (
-              <p className="field-hint">
-                {network.stablecoin.symbol} on {network.name}:{" "}
-                <code>{network.stablecoin.address}</code>
-              </p>
-            )}
-            <TextField
-              error={shown("monthlyPool")}
-              hint="A target, not committed money. It stays a pledge until funding is verified."
-              inputMode="decimal"
-              label="Monthly pool target, USD"
-              name="monthlyPool"
-              onChange={set("monthlyPool")}
-              value={p.monthlyPool}
-            />
-            <p className="fee-preview">
-              Payout fee: {ESCROW_PAYOUT_FEE_BASIS_POINTS / 100}%. Unused-fund
-              withdrawal fee: {ESCROW_WITHDRAWAL_FEE_BASIS_POINTS / 100}%.
-            </p>
-            <label className="checkbox-field">
-              <input
-                checked={includesReviewBudget}
-                onChange={(event) =>
-                  set("reviewBudgetEnabled")(
-                    event.target.checked ? "yes" : "no",
-                  )
-                }
-                type="checkbox"
-              />{" "}
-              Add a separate review budget
-            </label>
-            {includesReviewBudget ? (
-              <TextField
-                error={shown("monthlyReviewBudget")}
-                hint="Pays accepted reviews on top of the shared pool. It stays pledged until its own funding is verified."
-                inputMode="decimal"
-                label="Monthly review budget, USD"
-                name="monthlyReviewBudget"
-                onChange={set("monthlyReviewBudget")}
-                placeholder="50.00"
-                value={p.monthlyReviewBudget}
-              />
-            ) : null}
-          </>
+          <FundingFields
+            choice={funding}
+            error={(field) =>
+              shown(
+                field === "monthlyAmount"
+                  ? "monthlyPool"
+                  : field === "tokenAddress"
+                    ? "rewardAssetAddress"
+                    : "rewardAssetSymbol",
+              )
+            }
+            networkFixed={false}
+            set={(field, value) =>
+              set(
+                (
+                  {
+                    mode: "fundingMode",
+                    network: "settlementChain",
+                    assetKind: "rewardKind",
+                    tokenAddress: "rewardAssetAddress",
+                    tokenSymbol: "rewardAssetSymbol",
+                    monthlyAmount: "monthlyPool",
+                  } as const
+                )[field],
+              )(value)
+            }
+          />
         ) : null}
         {step === 3 ? (
           <>
-            <p>
-              Funding starts after approval. A reviewed vault and verified
-              funding authority are required before deposits or payouts.
-            </p>
             <article className="proposal-preview" aria-label="Listing preview">
               <span className="draft-badge">Draft · not listed</span>
               <h3>{p.name || "Unnamed project"}</h3>
@@ -1771,53 +1793,34 @@ export default function ProjectProposalPage() {
                   </dd>
                 </div>
                 <div>
-                  <dt>Status after approval</dt>
-                  <dd>Paused until review and verification</dd>
-                </div>
-                <div>
-                  <dt>Monthly target</dt>
+                  <dt>When created</dt>
                   <dd>
-                    {pool.valid ? pool.display : "Invalid"} · unfunded pledge
-                  </dd>
-                </div>
-                {includesReviewBudget ? (
-                  <div>
-                    <dt>Review budget</dt>
-                    <dd>
-                      {reviewBudget.valid ? reviewBudget.display : "Invalid"} ·
-                      unfunded pledge
-                    </dd>
-                  </div>
-                ) : null}
-                <div>
-                  <dt>Payout network</dt>
-                  <dd>
-                    {SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? "Base"} ·
-                    payments disabled
+                    Paused until Slopbot is installed and the security scan
+                    passes
                   </dd>
                 </div>
                 <div>
-                  <dt>Reward asset</dt>
+                  <dt>Monthly funding</dt>
                   <dd>
-                    {asset.symbol || "Not set"} ·{" "}
-                    {p.rewardKind === "token"
-                      ? "token, decimals read from chain on submit"
-                      : "network stablecoin"}
+                    {p.fundingMode !== "monthly"
+                      ? "None"
+                      : pool.valid
+                        ? `${formatMonthlyAmount(pool.minor, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
+                        : "Invalid"}
                   </dd>
                 </div>
                 <div>
                   <dt>Steward</dt>
                   <dd>
                     {p.stewardName || "Not set"}
-                    {p.stewardLogin ? ` (@${p.stewardLogin})` : ""} · authority
-                    unverified
+                    {p.stewardLogin ? ` (@${p.stewardLogin})` : ""}
                   </dd>
                 </div>
                 {referrer ? (
                   <div>
                     <dt>Referred by</dt>
                     <dd>
-                      @{referrer} · recorded with the application{" "}
+                      @{referrer} · recorded with the project{" "}
                       <button
                         className="text-button"
                         onClick={clearReferrer}
@@ -1842,29 +1845,28 @@ export default function ProjectProposalPage() {
             {valid ? <GeneratedSkillPreview manifest={manifest} draft /> : null}
             <ErrorSummary errors={errors} onSelect={focusField} />
             {submission.status === "submitted" ? (
-              <div className="proposal-submitted" role="status">
-                <h2>Application submitted</h2>
-                <a href="#applications">View application status</a>
+              <div className="proposal-submitted">
+                <h2>Project created</h2>
                 <p>
-                  {submission.application.manifest.name} is waiting for admin
-                  review. After approval it is listed as a paused project, and
-                  Slop generates its contributor and reviewer skills from your
-                  rules. An admin activates the project after reviewing them.
-                </p>
-                {submission.application.githubCheck ? (
-                  <p>GitHub check: {submission.application.githubCheck}</p>
-                ) : null}
-                <p>
-                  Application {submission.application.id} · submitted by @
-                  {submission.application.applicant.githubLogin}
-                  {submission.application.referrer
-                    ? ` · referred by @${submission.application.referrer.githubLogin}`
+                  {p.name || submission.projectId} is listed as a paused
+                  project. Slop generated its contributor and reviewer skills
+                  from your rules. Finish the next action below; the project
+                  goes live by itself when every check passes.
+                  {submission.referrer
+                    ? ` Referred by @${submission.referrer}.`
                     : ""}
                 </p>
+                <ProjectSetupStatusPanel
+                  initial={submission.setup}
+                  projectId={submission.projectId}
+                />
+                <Link href={`/projects/${submission.projectId}/manage`}>
+                  Manage project
+                </Link>
               </div>
             ) : valid ? (
               <div className="handoff-actions">
-                <SubmitApplication
+                <SubmitProject
                   onSubmit={submit}
                   submitting={submission.status === "submitting"}
                 />
@@ -1958,65 +1960,129 @@ export default function ProjectProposalPage() {
   );
 }
 
+const CHANGE_LABELS: Record<string, string> = {
+  name: "Project name",
+  eyebrow: "Eyebrow",
+  headline: "Short description",
+  description: "Goal",
+  links: "Links",
+  contribution: "Contribution rules",
+  reward: "Monthly funding",
+  rewardAsset: "Reward asset",
+  escrow: "Vault network",
+};
+
+const label = (field: string) => CHANGE_LABELS[field] ?? field;
+
+type UpdateDraft = {
+  headline: string;
+  goal: string;
+  criteria: string;
+  note: string;
+  fundingMode: string;
+  network: string;
+  assetKind: string;
+  tokenAddress: string;
+  tokenSymbol: string;
+  monthlyAmount: string;
+} & Record<(typeof SKILL_RULE_FIELDS)[number], string>;
+
+function centsText(minor: string): string {
+  const amount = BigInt(minor);
+  const cents = (amount % 1_000_000n) / 10_000n;
+  return `${amount / 1_000_000n}${cents === 0n ? "" : `.${cents.toString().padStart(2, "0")}`}`;
+}
+
+const DRAFT_FIELDS = [
+  "headline",
+  "goal",
+  "criteria",
+  ...SKILL_RULE_FIELDS,
+  "fundingMode",
+  "network",
+  "assetKind",
+  "tokenAddress",
+  "tokenSymbol",
+  "monthlyAmount",
+  "note",
+] as const;
+
 /**
- * Project updates reuse the setup fields and validation. The page drafts a
- * change against the current D1 revision; an admin publishes the decision.
+ * Owners publish project changes directly (PRD section 4). The page edits the
+ * current D1 revision, keeps the draft on this device, and shows each change
+ * with what it needs: presentation publishes at once, contribution rules need
+ * a new security scan, and a funding change applies from the next calendar
+ * month. A draft saved against an older revision must be confirmed against
+ * the current one, and the server refuses a stale base revision.
  */
 export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   const session = useProjectSession();
-  const [baseRevision, setBaseRevision] = useState<number | null>(null);
-  const [baseProject, setBaseProject] = useState<ProjectDefinition | null>(
-    null,
-  );
-  const [submission, setSubmission] = useState<{
-    state: "idle" | "submitting" | "submitted" | "error";
-    message: string;
-  }>({ state: "idle", message: "" });
+  const [base, setBase] = useState<{
+    revision: number;
+    project: ProjectDefinition;
+  } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [submission, setSubmission] = useState<
+    | { state: "idle" | "publishing" }
+    | { state: "error"; message: string }
+    | { state: "published"; result: RevisionResult }
+  >({ state: "idle" });
   useEffect(() => {
     let active = true;
+    setLoadError(null);
     projectApiRequest<{ revision: number; project: ProjectDefinition }>(
       "GET",
-      `projects/${encodeURIComponent(project.id)}`,
+      `projects/${encodeURIComponent(project.id)}?reload=${reload}`,
     ).then(
       (body) => {
-        if (!active) return;
-        if (
-          body.project.headline !== project.headline ||
-          body.project.description !== project.description ||
-          body.project.contribution?.approvedScope !==
-            project.contribution?.approvedScope
-        ) {
-          setSubmission({
-            state: "error",
-            message: "This project changed. Reload before editing.",
-          });
-        } else {
-          setBaseRevision(body.revision);
-          setBaseProject(body.project);
-        }
+        if (active) setBase({ revision: body.revision, project: body.project });
       },
       (error) => {
         if (active)
-          setSubmission({
-            state: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Cannot read the current revision.",
-          });
+          setLoadError(
+            error instanceof Error
+              ? error.message
+              : "Cannot read the current revision.",
+          );
       },
     );
     return () => {
       active = false;
     };
-  }, [project]);
-  const key = `slop:project-update:v1:${project.id}`;
-  const initial = {
-    headline: project.headline,
-    goal: project.description,
-    criteria: project.contribution?.approvedScope ?? "",
-    reason: "",
+  }, [project.id, reload]);
+  const current = base?.project ?? project;
+  const reward = current.reward;
+  const monthly = reward.kind === "monthly-pool";
+  const capMinor = monthly ? reward.monthlyCapMinor : "0";
+  const hasVault = current.escrow !== undefined;
+  const funded =
+    monthly &&
+    (reward.fundingState === "committed" ||
+      reward.paymentMode === "enabled" ||
+      BigInt(reward.committedMinor) > 0n ||
+      (current.escrow?.deployments.length ?? 0) > 0);
+  const initial: UpdateDraft = {
+    headline: current.headline,
+    goal: current.description,
+    criteria: current.contribution?.approvedScope ?? "",
+    note: "",
+    fundingMode: capMinor === "0" ? "none" : "monthly",
+    network: current.rewardAsset?.network ?? String(reward.chain ?? "base"),
+    assetKind: current.rewardAsset?.kind ?? "stablecoin",
+    tokenAddress:
+      current.rewardAsset?.kind === "token" ? current.rewardAsset.address : "",
+    tokenSymbol:
+      current.rewardAsset?.kind === "token" ? current.rewardAsset.symbol : "",
+    monthlyAmount: capMinor === "0" ? "" : centsText(capMinor),
+    ...(Object.fromEntries(
+      SKILL_RULE_FIELDS.map((field) => [
+        field,
+        current.contribution?.[field] ?? "",
+      ]),
+    ) as Record<(typeof SKILL_RULE_FIELDS)[number], string>),
   };
+  const key = `slop:project-update:v2:${project.id}`;
   const [saved] = useState(() => {
     try {
       const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
@@ -2027,14 +2093,16 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       return null;
     }
   });
-  const [draft, setDraft] = useState(
-    () =>
-      Object.fromEntries(
-        Object.entries(initial).map(([field, fallback]) => [
-          field,
-          typeof saved?.[field] === "string" ? saved[field] : fallback,
-        ]),
-      ) as typeof initial,
+  const [draft, setDraft] = useState<Partial<UpdateDraft> | null>(() =>
+    saved
+      ? Object.fromEntries(
+          DRAFT_FIELDS.filter(
+            (field) =>
+              typeof saved[field] === "string" &&
+              (saved[field] as string).length <= 4_000,
+          ).map((field) => [field, saved[field]]),
+        )
+      : null,
   );
   const [draftRevision, setDraftRevision] = useState<number | null>(
     saved
@@ -2043,93 +2111,242 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         : -1
       : null,
   );
-  const staleDraft =
-    baseRevision !== null &&
-    draftRevision !== null &&
-    draftRevision !== baseRevision;
-  const [attempted, setAttempted] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
-  const copy = useCopyStatus();
   useEffect(() => {
     try {
-      localStorage.setItem(
-        key,
-        JSON.stringify({
-          ...draft,
-          baseRevision: draftRevision ?? baseRevision,
-        }),
-      );
+      if (draft === null) localStorage.removeItem(key);
+      else
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            ...draft,
+            baseRevision: draftRevision ?? base?.revision ?? null,
+          }),
+        );
       setSaveFailed(false);
     } catch {
       setSaveFailed(true);
     }
-  }, [draft, key, draftRevision, baseRevision]);
-  const errors: Record<string, string | undefined> = {
-    headline: lengthError(draft.headline, 8, 120),
-    goal: lengthError(draft.goal, 24, 600),
-    criteria:
-      draft.criteria.trim() === initial.criteria ||
-      (draft.criteria.trim() === "" && !initial.criteria)
-        ? undefined
-        : lengthError(draft.criteria, 6, 1_000),
-    reason: lengthError(draft.reason, 8, 500),
+  }, [draft, key, draftRevision, base?.revision]);
+  const value: UpdateDraft = { ...initial, ...(draft ?? {}) };
+  const staleDraft =
+    base !== null &&
+    draft !== null &&
+    draftRevision !== null &&
+    draftRevision !== base.revision;
+  const [attempted, setAttempted] = useState(false);
+  const set = (field: keyof UpdateDraft) => (next: string) => {
+    if (draft === null) setDraftRevision(base?.revision ?? null);
+    setDraft((existing) => ({ ...(existing ?? {}), [field]: next }));
   };
-  const changes = [
+  const amount = monthlyPoolValue(value.monthlyAmount);
+  const errors: Record<string, string | undefined> = {
+    headline: lengthError(value.headline, 8, 120),
+    goal: lengthError(value.goal, 24, 600),
+    criteria: lengthError(value.criteria, 6, 1_000),
+    note:
+      value.note.trim() === "" ? undefined : lengthError(value.note, 1, 500),
+    monthlyAmount:
+      value.fundingMode === "monthly" &&
+      (!amount.valid || BigInt(amount.minor) === 0n)
+        ? "Enter a positive amount with up to two decimals, or choose no monthly funding."
+        : undefined,
+    ...Object.fromEntries(
+      SKILL_RULE_FIELDS.map((field) => [
+        field,
+        value[field].trim() === ""
+          ? undefined
+          : lengthError(value[field], 1, 2_000),
+      ]),
+    ),
+  };
+  const choice: FundingChoice = {
+    mode: value.fundingMode === "monthly" ? "monthly" : "none",
+    network: value.network,
+    assetKind: value.assetKind === "token" ? "token" : "stablecoin",
+    tokenAddress: value.tokenAddress,
+    tokenSymbol: value.tokenSymbol,
+    monthlyAmount: value.monthlyAmount,
+  };
+  const assetFixed = funded || hasVault;
+  if (
+    choice.mode === "monthly" &&
+    !assetFixed &&
+    choice.assetKind === "token"
+  ) {
+    try {
+      rewardAssetChoice(
+        choice.network,
+        "token",
+        choice.tokenAddress,
+        choice.tokenSymbol,
+      );
+    } catch (error) {
+      errors.tokenAddress =
+        error instanceof Error ? `${error.message}.` : "Check the token.";
+    }
+  }
+  /** The submitted manifest: the current revision with the owner's edits. */
+  const next = ((): ProjectDefinition => {
+    const source = current;
+    let fundingFields: Record<string, unknown> = {};
+    if (source.reward.kind === "monthly-pool") {
+      const cap =
+        choice.mode === "monthly" && amount.valid
+          ? { monthlyCapMinor: amount.minor, monthlyCapDisplay: amount.display }
+          : { monthlyCapMinor: "0", monthlyCapDisplay: "$0" };
+      // The asset and vault change only when the owner chose a new one.
+      const assetTouched =
+        draft !== null &&
+        (["network", "assetKind", "tokenAddress", "tokenSymbol"] as const).some(
+          (field) =>
+            draft[field] !== undefined && draft[field] !== initial[field],
+        );
+      if (assetFixed || choice.mode === "none" || !assetTouched) {
+        // The asset, network and vault stay; only the amount changes.
+        fundingFields = { reward: { ...source.reward, ...cap } };
+      } else {
+        const fields = rewardFields(choice, new Date());
+        fundingFields = {
+          ...fields,
+          reward: {
+            ...source.reward,
+            ...(fields.reward as Record<string, unknown>),
+            rewardStartAt: source.reward.rewardStartAt,
+          },
+        };
+      }
+    }
+    return {
+      ...source,
+      ...fundingFields,
+      headline: value.headline.trim(),
+      description: value.goal.trim(),
+      contribution: {
+        ...(source.contribution ?? {}),
+        approvedScope: value.criteria.trim(),
+        ...Object.fromEntries(
+          SKILL_RULE_FIELDS.map((field) => [field, value[field].trim()]),
+        ),
+      },
+    } as unknown as ProjectDefinition;
+  })();
+  const changes = classifyRevisionChanges(current, next);
+  const changed =
+    changes.presentation.length +
+      changes.executable.length +
+      changes.financial.length >
+    0;
+  const amountText = (minor: string, symbol: string) =>
+    minor === "0" ? "No monthly funding" : formatMonthlyAmount(minor, symbol);
+  const diff = [
     {
       field: "headline",
       label: "Short description",
-      before: initial.headline,
-      after: draft.headline.trim(),
+      before: current.headline,
+      after: next.headline,
     },
     {
       field: "description",
       label: "Goal",
-      before: initial.goal,
-      after: draft.goal.trim(),
+      before: current.description,
+      after: next.description,
     },
     {
-      field: "contribution.approvedScope",
+      field: "approvedScope",
       label: "Acceptance criteria",
-      before: initial.criteria,
-      after: draft.criteria.trim(),
+      before: current.contribution?.approvedScope ?? "",
+      after: next.contribution?.approvedScope ?? "",
     },
+    ...SKILL_RULE_FIELDS.map((field) => ({
+      field,
+      label: SKILL_RULE_LABELS[field].label,
+      before: current.contribution?.[field] ?? "",
+      after: next.contribution?.[field] ?? "",
+    })),
+    ...(current.reward.kind === "monthly-pool" &&
+    next.reward.kind === "monthly-pool"
+      ? [
+          {
+            field: "monthly",
+            label: "Monthly funding",
+            before: amountText(
+              current.reward.monthlyCapMinor,
+              String(current.reward.currency),
+            ),
+            after: amountText(
+              next.reward.monthlyCapMinor,
+              String(next.reward.currency),
+            ),
+          },
+        ]
+      : []),
   ].filter((change) => change.before !== change.after);
-  const hasChange = changes.length > 0;
-  const valid = hasChange && Object.values(errors).every((e) => !e);
+  const valid = Object.values(errors).every((error) => !error);
   const shown = (field: string) => (attempted ? errors[field] : undefined);
-  const brief = `Update ${project.id} through a reviewed admin revision on slop.cash.
-
-Reason: ${draft.reason.trim()}
-
-Manifest changes for ${project.id}:
-${changes.length === 0 ? "- None" : changes.map((change) => `- ${change.field}: ${JSON.stringify(change.before)} -> ${JSON.stringify(change.after)}`).join("\n")}
-${draft.criteria.trim() ? `\nAcceptance criteria for the contributor and reviewer skills:\n${draft.criteria.trim()}\n` : ""}
-Keep the project manifest, contributor skill, reviewer skill, goals, and criteria synchronized. Any model may contribute, but every run must publish its exact provider, model, and client. Signed receipts and permanent operator-private traces are optional; unavailable trace intake must never block ordinary GitHub contribution. This draft is not published and does not change payouts.`;
-  const set = (field: keyof typeof draft) => (value: string) =>
-    setDraft((current) => ({ ...current, [field]: value }));
-  const payoutText =
-    project.reward.kind === "external-prize-share"
-      ? "External award. Slop publishes contribution shares only and cannot draft, approve or pay the award."
-      : project.reward.paymentMode === "enabled"
-        ? "Payouts are enabled. Review allocations in Manage payouts."
-        : "Payouts are disabled in the project manifest.";
+  async function publish() {
+    setAttempted(true);
+    if (!valid || !changed || base === null || staleDraft) return;
+    setSubmission({ state: "publishing" });
+    try {
+      const result = await publishProjectRevision(
+        project.id,
+        next,
+        base.revision,
+        value.note,
+      );
+      setSubmission({ state: "published", result });
+      setDraft(null);
+      setDraftRevision(null);
+      setAttempted(false);
+      setReload((count) => count + 1);
+    } catch (error) {
+      setSubmission({
+        state: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Changes were not published.",
+      });
+    }
+  }
+  const nextMonth = new Date();
+  nextMonth.setUTCDate(1);
+  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+  const nextCycle = nextMonth.toISOString().slice(0, 7);
   return (
     <main className="shell route-main manage-page">
       <p className="breadcrumb">
         <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-        <span>/</span>Edit proposal
+        <span>/</span>Manage project
       </p>
       <div className="manage-intro">
-        <h1>
-          Edit project proposal <span className="draft-badge">Draft</span>
-        </h1>
-        <p>{project.name} · A Slop admin reviews every change.</p>
+        <h1>Manage project</h1>
+        <p>
+          {project.name} · Changes publish when you save. Slop checks your
+          GitHub access to the repository first.
+        </p>
         {project.escrow && (
           <p>
             <Link href={`/projects/${project.slug}/awards`}>Review awards</Link>
           </p>
         )}
       </div>
+      {session.status === "signed-in" ? (
+        <ProjectSetupStatusPanel
+          key={
+            submission.state === "published"
+              ? `revision-${submission.result.project.revision}`
+              : "initial"
+          }
+          initial={
+            submission.state === "published"
+              ? submission.result.setup
+              : undefined
+          }
+          projectId={project.id}
+        />
+      ) : null}
       <form
         className="proposal-form"
         noValidate
@@ -2140,7 +2357,7 @@ Keep the project manifest, contributor skill, reviewer skill, goals, and criteri
           label="Short description"
           name="headline"
           onChange={set("headline")}
-          value={draft.headline}
+          value={value.headline}
         />
         <TextField
           error={shown("goal")}
@@ -2148,26 +2365,73 @@ Keep the project manifest, contributor skill, reviewer skill, goals, and criteri
           multiline
           name="goal"
           onChange={set("goal")}
-          value={draft.goal}
+          value={value.goal}
         />
         <TextField
           error={shown("criteria")}
-          hint="Used by the contributor and reviewer skills."
+          hint="Used by the contributor and reviewer skills. A change needs a new security scan."
           label="Acceptance criteria"
           multiline
           name="criteria"
           onChange={set("criteria")}
           placeholder="What accepted GitHub outcomes qualify?"
-          value={draft.criteria}
+          value={value.criteria}
         />
+        <details
+          className="proposal-skill-rules"
+          open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
+        >
+          <summary>Contributor instructions</summary>
+          <p className="field-hint">
+            These rules generate the project skills. A change needs a new
+            security scan; an active project pauses until it passes.
+          </p>
+          {SKILL_RULE_FIELDS.map((field) => (
+            <TextField
+              error={shown(field)}
+              key={field}
+              label={SKILL_RULE_LABELS[field].label}
+              multiline
+              name={field}
+              onChange={set(field)}
+              placeholder={SKILL_RULE_LABELS[field].placeholder}
+              value={value[field]}
+            />
+          ))}
+        </details>
+        {monthly ? (
+          <FundingFields
+            choice={choice}
+            error={(field) =>
+              shown(
+                field === "monthlyAmount" ? "monthlyAmount" : "tokenAddress",
+              )
+            }
+            networkFixed={assetFixed}
+            set={(field, entry) =>
+              set(
+                (
+                  {
+                    mode: "fundingMode",
+                    network: "network",
+                    assetKind: "assetKind",
+                    tokenAddress: "tokenAddress",
+                    tokenSymbol: "tokenSymbol",
+                    monthlyAmount: "monthlyAmount",
+                  } as const
+                )[field],
+              )(entry)
+            }
+          />
+        ) : null}
         <TextField
-          error={shown("reason")}
-          hint="Explain this change to the admin."
-          label="Reason for the change"
+          error={shown("note")}
+          hint="Optional. Public in the revision history."
+          label="Revision note"
           multiline
-          name="reason"
-          onChange={set("reason")}
-          value={draft.reason}
+          name="note"
+          onChange={set("note")}
+          value={value.note}
         />
         {staleDraft ? (
           <div role="alert" className="form-error">
@@ -2176,59 +2440,83 @@ Keep the project manifest, contributor skill, reviewer skill, goals, and criteri
               {draftRevision === -1
                 ? "an unknown revision"
                 : `revision ${draftRevision}`}
-              . The current revision is {baseRevision}. Review the changes below
-              before continuing.
+              . The current revision is {base?.revision}. Review the changes
+              below before continuing.
             </p>
             <button
               type="button"
               className="button secondary-button"
-              onClick={() => setDraftRevision(baseRevision)}
+              onClick={() => setDraftRevision(base?.revision ?? null)}
             >
               Use this draft with the current revision
             </button>
           </div>
         ) : null}
-        <button
-          type="button"
-          className="button secondary-button"
-          disabled={submission.state === "submitting"}
-          onClick={() => {
-            setDraft(initial);
-            setDraftRevision(baseRevision);
-            setAttempted(false);
-            setSubmission({ state: "idle", message: "" });
-          }}
-        >
-          Discard draft
-        </button>
         <section aria-labelledby="update-changes" className="update-changes">
           <h2 id="update-changes">Changes</h2>
-          {changes.length === 0 ? (
+          {!changed ? (
             <p>No manifest field has changed.</p>
           ) : (
-            changes.map((change) => (
-              <div className="project-change" key={change.field}>
-                <h3>{change.label}</h3>
-                <dl>
-                  <div>
-                    <dt>Current</dt>
-                    <dd>{change.before || "Not set"}</dd>
-                  </div>
-                  <div>
-                    <dt>Proposed</dt>
-                    <dd>{change.after || "Not set"}</dd>
-                  </div>
-                </dl>
-              </div>
-            ))
+            <>
+              <ul>
+                {changes.presentation.length > 0 ? (
+                  <li>
+                    Publishes now: {changes.presentation.map(label).join(", ")}.
+                  </li>
+                ) : null}
+                {changes.executable.length > 0 ? (
+                  <li>
+                    Needs a new security scan:{" "}
+                    {changes.executable.map(label).join(", ")}.{" "}
+                    {current.status === "active"
+                      ? "The project pauses and goes live again when the scan passes."
+                      : "The project goes live when the scan passes."}
+                  </li>
+                ) : null}
+                {changes.financial.length > 0 ? (
+                  <li>
+                    Applies from {nextCycle} (UTC):{" "}
+                    {changes.financial.map(label).join(", ")}. Funded awards
+                    keep their terms.
+                  </li>
+                ) : null}
+              </ul>
+              {diff.map((change) => (
+                <div className="project-change" key={change.field}>
+                  <h3>{change.label}</h3>
+                  <dl>
+                    <div>
+                      <dt>Current</dt>
+                      <dd>{change.before || "Not set"}</dd>
+                    </div>
+                    <div>
+                      <dt>Proposed</dt>
+                      <dd>{change.after || "Not set"}</dd>
+                    </div>
+                  </dl>
+                </div>
+              ))}
+            </>
           )}
         </section>
-        {attempted && !valid ? (
+        {attempted && (!valid || !changed) ? (
           <p className="form-error" role="alert">
-            {hasChange
+            {changed
               ? "Fix the marked fields. Your entries are kept."
-              : "Change at least one field before you continue."}
+              : "Change at least one field before you publish."}
           </p>
+        ) : null}
+        {loadError ? (
+          <div role="alert" className="form-error">
+            <p>{loadError}</p>
+            <button
+              className="button secondary-button"
+              onClick={() => setReload((count) => count + 1)}
+              type="button"
+            >
+              Try again
+            </button>
+          </div>
         ) : null}
         <div className="handoff-actions">
           {session.status !== "signed-in" ? (
@@ -2236,175 +2524,130 @@ Keep the project manifest, contributor skill, reviewer skill, goals, and criteri
               className="button primary-button"
               href={loginHref(`/projects/${project.slug}/manage`)}
             >
-              Sign in to submit changes
+              Sign in to publish changes
             </a>
           ) : (
             <button
               className="button primary-button"
-              type="button"
               disabled={
-                submission.state === "submitting" ||
-                submission.state === "submitted" ||
-                baseRevision === null ||
-                staleDraft
+                submission.state === "publishing" || base === null || staleDraft
               }
-              onClick={async () => {
-                setAttempted(true);
-                if (
-                  !valid ||
-                  staleDraft ||
-                  baseRevision === null ||
-                  baseProject === null
-                )
-                  return;
-                setSubmission({ state: "submitting", message: "" });
-                try {
-                  await projectApiRequest("POST", "project-applications", {
-                    manifest: {
-                      ...baseProject,
-                      status: "paused",
-                      headline: draft.headline.trim(),
-                      description: draft.goal.trim(),
-                      ...(draft.criteria.trim()
-                        ? {
-                            contribution: {
-                              ...baseProject.contribution,
-                              approvedScope: draft.criteria.trim(),
-                            },
-                          }
-                        : {}),
-                    },
-                    expectedRevision: baseRevision,
-                    reason: draft.reason.trim(),
-                  });
-                  setSubmission({
-                    state: "submitted",
-                    message:
-                      "Changes submitted for admin review. Approval creates a paused revision; activation requires a new security review.",
-                  });
-                } catch (error) {
-                  setSubmission({
-                    state: "error",
-                    message:
-                      error instanceof Error
-                        ? error.message
-                        : "Changes were not submitted.",
-                  });
-                }
-              }}
+              onClick={() => void publish()}
+              type="button"
             >
-              {submission.state === "submitting"
-                ? "Submitting…"
-                : submission.state === "submitted"
-                  ? "Submitted"
-                  : "Submit changes for review"}
+              {submission.state === "publishing"
+                ? "Publishing…"
+                : "Publish changes"}
             </button>
           )}
-          {submission.message ? (
-            <p role={submission.state === "error" ? "alert" : "status"}>
-              {submission.message}
+          <button
+            className="button secondary-button"
+            disabled={submission.state === "publishing"}
+            onClick={() => {
+              setDraft(null);
+              setDraftRevision(null);
+              setAttempted(false);
+              setSubmission({ state: "idle" });
+            }}
+            type="button"
+          >
+            Discard draft
+          </button>
+          {submission.state === "error" ? (
+            <p className="form-error" role="alert">
+              {submission.message}{" "}
+              <button
+                className="text-button"
+                onClick={() => setReload((count) => count + 1)}
+                type="button"
+              >
+                Load the current revision
+              </button>
             </p>
-          ) : null}
-          {submission.state === "submitted" ? (
-            <Link href="/projects/new#applications">
-              View application status
-            </Link>
+          ) : submission.state === "published" ? (
+            <p role="status">
+              Published revision {submission.result.project.revision}.
+            </p>
           ) : null}
           <p className="proposal-note">
             {saveFailed
               ? "This browser cannot save the draft."
-              : "Draft saved on this device. Submit it for an admin to review. Approval pauses the project until its changed content passes security review."}
+              : "Draft saved on this device until you publish it."}
           </p>
-          <div className="handoff-alternatives">
-            <span>Other options:</span>
-            <button
-              disabled={!valid}
-              onClick={() => copy.copy("brief", brief)}
-              type="button"
-            >
-              {copy.label(
-                "brief",
-                "Copy change brief",
-                "Brief copied",
-                "Copy unavailable; select the brief",
-              )}
-            </button>
-            <button
-              disabled={!valid}
-              onClick={() =>
-                downloadText(brief, `${project.id}-update.txt`, "text/plain")
-              }
-              type="button"
-            >
-              Download change brief
-            </button>
-          </div>
-          {valid ? (
-            <details
-              className="manifest-preview"
-              open={
-                copy.status?.kind === "brief" && copy.status.state === "error"
-              }
-            >
-              <summary>View change brief</summary>
-              <textarea
-                aria-label="Change brief"
-                readOnly
-                spellCheck={false}
-                value={brief}
-              />
-            </details>
-          ) : null}
         </div>
       </form>
-      <section aria-labelledby="update-payouts" className="owner-section">
-        <h2 id="update-payouts">Payouts</h2>
-        <p className="payout-status">
-          {payoutText}{" "}
-          {project.reward.kind === "monthly-pool" ? (
-            <>
-              <Link href={`/projects/${project.slug}/funding`}>
-                Funding setup
-              </Link>
-              {project.reward.paymentMode === "disabled" ? (
-                <>
-                  {" · "}
-                  <a href={REQUIREMENTS_URL}>View requirements</a>
-                </>
-              ) : null}
-            </>
-          ) : null}
-        </p>
-      </section>
+      {monthly ? (
+        <section aria-labelledby="update-payouts" className="owner-section">
+          <h2 id="update-payouts">Payouts</h2>
+          <p className="payout-status">
+            {reward.paymentMode === "enabled"
+              ? "Payouts are enabled. Review allocations in Manage payouts."
+              : "Payouts are not enabled yet."}{" "}
+            <Link href={`/projects/${project.slug}/funding`}>
+              Funding setup
+            </Link>
+          </p>
+        </section>
+      ) : (
+        <section aria-labelledby="update-payouts" className="owner-section">
+          <h2 id="update-payouts">Payouts</h2>
+          <p className="payout-status">
+            External award. Slop publishes contribution shares only and cannot
+            draft, approve or pay the award.
+          </p>
+        </section>
+      )}
     </main>
   );
 }
 
-function ApplicationStatus({ refreshKey }: { refreshKey: string }) {
+/**
+ * The signed-in account's projects with their setup status, and any
+ * application stored before self-service setup, which its applicant
+ * publishes without entering it again.
+ */
+function OwnerProjects({ refreshKey }: { refreshKey: string }) {
   const session = useProjectSession();
-  const [applications, setApplications] = useState<ProjectApplication[] | null>(
-    null,
-  );
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | {
+        status: "ready";
+        projects: ProjectSummary[];
+        applications: ProjectApplication[];
+      }
+  >({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [open, setOpen] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState<
+    | { id: string; state: "busy" }
+    | { id: string; state: "error"; message: string }
+    | {
+        id: string;
+        state: "done";
+        projectId: string;
+        setup: ProjectSetupStatus;
+      }
+    | null
+  >(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt and a new project trigger an explicit reload.
   useEffect(() => {
     if (session.status !== "signed-in") return;
     let active = true;
-    setError(null);
-    projectApiRequest<{ applications: ProjectApplication[] }>(
-      "GET",
-      `project-applications/mine?refresh=${attempt}&submission=${encodeURIComponent(refreshKey)}`,
-    ).then(
+    setState({ status: "loading" });
+    listProjectSetup().then(
       (body) => {
-        if (active) setApplications(body.applications);
+        if (active) setState({ status: "ready", ...body });
       },
-      (caught) => {
+      (caught: unknown) => {
         if (active)
-          setError(
-            caught instanceof Error
-              ? caught.message
-              : "Applications unavailable",
-          );
+          setState({
+            status: "error",
+            message:
+              caught instanceof Error
+                ? caught.message
+                : "Your projects are unavailable.",
+          });
       },
     );
     return () => {
@@ -2413,34 +2656,95 @@ function ApplicationStatus({ refreshKey }: { refreshKey: string }) {
   }, [session.status, attempt, refreshKey]);
   if (session.status !== "signed-in") return null;
   return (
-    <details id="applications">
-      <summary>Your applications</summary>
-      {error ? (
-        <p role="alert">{error}</p>
-      ) : applications === null ? (
-        <p role="status">Loading applications…</p>
-      ) : applications.length === 0 ? (
-        <p>No applications submitted.</p>
+    <details id="your-projects">
+      <summary>Your projects</summary>
+      {state.status === "error" ? (
+        <p role="alert">{state.message}</p>
+      ) : state.status === "loading" ? (
+        <p role="status">Loading your projects…</p>
+      ) : state.projects.length === 0 && state.applications.length === 0 ? (
+        <p>You have no projects yet.</p>
       ) : (
         <ul>
-          {applications.map((application) => (
+          {state.projects.map((project) => (
+            <li key={project.id}>
+              <strong>{project.name}</strong> · {project.status}
+              {project.listingTier === "retired" ? " · delisted" : ""}{" "}
+              <Link href={`/projects/${project.slug}/manage`}>Manage</Link>{" "}
+              <button
+                className="text-button"
+                onClick={() =>
+                  setOpen((current) =>
+                    current === project.id ? null : project.id,
+                  )
+                }
+                type="button"
+              >
+                {open === project.id ? "Hide setup" : "Check setup"}
+              </button>
+              {open === project.id ? (
+                <ProjectSetupStatusPanel projectId={project.id} />
+              ) : null}
+            </li>
+          ))}
+          {state.applications.map((application) => (
             <li key={application.id}>
-              <strong>{application.manifest.name}</strong> ·{" "}
-              {application.status}
-              {application.decisionReason ? (
-                <p>{application.decisionReason}</p>
-              ) : null}
-              {application.status === "approved" ? (
-                <Link href={`/projects/${application.manifest.slug}`}>
-                  View project
-                </Link>
-              ) : null}
+              <strong>{application.manifest.name}</strong> · submitted{" "}
+              {application.submittedAt.slice(0, 10)} before self-service setup
+              {publishing?.id === application.id &&
+              publishing.state === "done" ? (
+                <ProjectSetupStatusPanel
+                  initial={publishing.setup}
+                  projectId={publishing.projectId}
+                />
+              ) : (
+                <>
+                  {" "}
+                  <button
+                    className="button secondary-button"
+                    disabled={
+                      publishing?.id === application.id &&
+                      publishing.state === "busy"
+                    }
+                    onClick={() => {
+                      setPublishing({ id: application.id, state: "busy" });
+                      publishStoredApplication(application.id).then(
+                        ({ project, setup }) =>
+                          setPublishing({
+                            id: application.id,
+                            state: "done",
+                            projectId: project.id,
+                            setup,
+                          }),
+                        (caught: unknown) =>
+                          setPublishing({
+                            id: application.id,
+                            state: "error",
+                            message:
+                              caught instanceof Error
+                                ? caught.message
+                                : "The application was not published.",
+                          }),
+                      );
+                    }}
+                    type="button"
+                  >
+                    {application.expectedRevision === undefined
+                      ? "Create this project"
+                      : "Publish this change"}
+                  </button>
+                  {publishing?.id === application.id &&
+                  publishing.state === "error" ? (
+                    <p role="alert">{publishing.message}</p>
+                  ) : null}
+                </>
+              )}
             </li>
           ))}
         </ul>
       )}
       <button type="button" onClick={() => setAttempt((value) => value + 1)}>
-        Refresh applications
+        Refresh
       </button>
     </details>
   );

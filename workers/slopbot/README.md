@@ -553,17 +553,21 @@ hosted membership permissions.
 ## Value score projection
 
 The leaderboard generator accepts verified `valueDecisions` and GitHub-resolved
-`valueActors`. When supplied, valid human ratifications take precedence across
-the hydrated source set. Missing, incomplete, stale and unresolved decisions
-receive no default implementation or review award. The snapshot retains a
-coverage row for every accepted source. Assessed zeroes retain their ledger
-source and actor, while integer-third shares preserve the assessed total.
+`valueActors` for outcomes accepted under the `slop-value-v1` policy. Valid
+human ratifications take precedence for the implementation score. Missing,
+incomplete, stale and unresolved decisions receive no review award; their
+accepted merge keeps only the repository's one-third minimum until assessed.
+An accepted merge assessed at zero keeps the same one-third minimum. The
+snapshot retains a coverage row for every accepted source, and integer-third
+shares preserve the scored total.
 
 Positive assessments require exact-head source agreement, hydrated human and
 review decisions, complete implementation identities, and no overlapping
 accepted commits that need joint assessment. Distinct positive review outcomes
-use their assessed tier; duplicate and zero-valued reviews do not multiply
-credit. Existing reviewed evaluator awards keep their precedence.
+share one per-pull-request review pool among the first five distinct reviewers.
+The pool is their summed bands, capped at the pull request's assessed size,
+minimum one third. Duplicate and zero-valued reviews do not multiply credit.
+Existing reviewed evaluator awards keep their precedence.
 
 A local integration passed collected Eliza #34772 through the journal reader
 and real snapshot generator and validator: nine implementation thirds, one
@@ -576,10 +580,14 @@ inputs and frozen cycle files retain their existing behavior.
 
 ## Ingest published assessments
 
-`bun scripts/generate-leaderboard.ts --value-assessments` enables the fixed
-`https://slopbot.slop.cash/v1/value-assessments` feed. It can be combined with
-`--cutoff`. The flag is not enabled in release workflows until the hosted
-publisher and its production records are verified.
+`bun run leaderboard:generate` reads the fixed
+`https://slopbot.slop.cash/v1/value-assessments` feed for every outcome accepted
+under the `slop-value-v1` scoring policy; there is no opt-in flag. Policy
+selection, the recorded owner decision, feed-outage handling and the
+review-credit allocation are in
+[`protocol/scoring-v2.md`](../../protocol/scoring-v2.md#current-producer-slop-value-v1).
+Release workflows run the same command. Hosted publisher operation and its
+production records remain unverified.
 
 The generator rejects redirects, unavailable or invalid pages and changed
 source. An unlinked commit author remains null in the source and adds no credit
@@ -778,6 +786,21 @@ restricting a project stops later work even if selection cleanup is delayed.
 If the App was installed while its webhook was inactive, recover its installation
 delivery after protected deployment; a missing installation row must not be
 invented as proof of a qualified shadow period.
+
+### Repository access for project setup
+
+Self-service project setup (`backend/projects/README.md`) needs Slopbot
+installed on the repository before a project is ready, and reads the owner's
+current permission through the App. The site calls
+`GET https://slopbot.internal/v1/repository-access?repository=OWNER/REPO&repositoryId=ID&login=LOGIN`
+over its `SLOPBOT` service binding only; a public host never matches that
+origin. The Worker asks GitHub for the repository's installation with the App
+JWT, rejects a repository whose id changed, and returns
+`{ installation: "missing" }`, `{ installation: "suspended", installationId }`
+or `{ installation: "installed", installationId, permission, roleName }`
+with GitHub's base permission (maintain reads as write). It returns no token.
+Any GitHub failure is HTTP 503; setup shows it as a retry. Installation
+records in D1 alone never answer this check.
 
 ## Objective quality verification
 

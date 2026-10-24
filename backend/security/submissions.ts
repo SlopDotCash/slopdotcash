@@ -455,6 +455,10 @@ async function createSubmission(
     )
       fail(409, "idempotency_conflict", "That request key was already used");
     const row = await settle(deps, existing);
+    // A replay is a new authorization request: finished submissions refuse
+    // it, like the dedicated authorize route does below.
+    if (row.state === "receipt-verified" || row.state === "abandoned")
+      fail(409, "submission_closed", "This submission is finished");
     const flow = await authorize(row);
     return grantResponse(
       200,

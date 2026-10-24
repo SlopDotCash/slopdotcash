@@ -27,6 +27,22 @@ const HISTORY_ORIGIN = "https://slopbot.slop.cash";
 type Page = Awaited<ReturnType<typeof valueHistory>>;
 type Fetch = typeof fetch;
 
+/**
+ * The hosted value feed did not answer: a transport failure, a timeout, or a
+ * retryable HTTP status. Owner decision D2: the release keeps the last
+ * published snapshot with its stale label and retries on the next run. It
+ * never falls back to legacy scoring. Integrity failures stay plain errors.
+ */
+export class ValueFeedUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super("The hosted value feed is unavailable", { cause });
+    this.name = "ValueFeedUnavailableError";
+  }
+}
+
+/** Process exit status for a value feed outage (EX_TEMPFAIL). */
+export const VALUE_FEED_UNAVAILABLE_EXIT_CODE = 75;
+
 /** The fixed HTTPS origin, not a digest supplied by an arbitrary URL, is the
  * publication authority. Test callers can inject a transport, never a new URL.
  */
@@ -57,18 +73,34 @@ async function fetchHistoryPage(
   url.searchParams.set("pull", String(pull));
   url.searchParams.set("after", String(after));
   if (through !== null) url.searchParams.set("through", String(through));
-  const response = await transport(url, {
-    redirect: "error",
-    cache: "no-store",
-    signal: AbortSignal.timeout(30_000),
-  });
+  let response: Response;
+  try {
+    response = await transport(url, {
+      redirect: "manual",
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    throw new ValueFeedUnavailableError(error);
+  }
+  if (
+    response.status === 408 ||
+    response.status === 429 ||
+    response.status >= 500
+  )
+    throw new ValueFeedUnavailableError(`HTTP ${response.status}`);
   if (response.status !== 200 || response.redirected || !response.body)
     throw new Error("Authoritative value history is unavailable");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
   for (;;) {
-    const result = await reader.read();
+    let result: Awaited<ReturnType<typeof reader.read>>;
+    try {
+      result = await reader.read();
+    } catch (error) {
+      throw new ValueFeedUnavailableError(error);
+    }
     if (result.done) break;
     size += result.value.byteLength;
     if (size > 8 * 1024 * 1024) {

@@ -60,6 +60,26 @@ export async function startNotifyWorkerFixture(root, persistTo, port) {
       observability: { enabled: false },
     }),
   );
+  return {
+    name,
+    close: await startLocalWorker(root, {
+      config,
+      port,
+      label: "notify",
+      extraArgs: ["--persist-to", persistTo],
+      cleanup: () => rmSync(folder, { recursive: true, force: true }),
+    }),
+  };
+}
+
+/**
+ * Starts `wrangler dev` for one local fixture Worker and waits until it
+ * answers. Returns the function that stops it and runs `cleanup`.
+ */
+export async function startLocalWorker(
+  root,
+  { config, port, label, extraArgs = [], cleanup },
+) {
   const worker = spawn(
     process.execPath,
     [
@@ -71,8 +91,7 @@ export async function startNotifyWorkerFixture(root, persistTo, port) {
       String(port),
       "--ip",
       "127.0.0.1",
-      "--persist-to",
-      persistTo,
+      ...extraArgs,
       "--log-level",
       "error",
       "--show-interactive-dev-session=false",
@@ -86,22 +105,22 @@ export async function startNotifyWorkerFixture(root, persistTo, port) {
     });
   const close = () => {
     worker.kill("SIGTERM");
-    rmSync(folder, { recursive: true, force: true });
+    cleanup();
   };
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (worker.exitCode !== null) {
       close();
-      throw new Error(`Local notify Worker failed: ${diagnostic}`);
+      throw new Error(`Local ${label} Worker failed: ${diagnostic}`);
     }
     try {
       const response = await fetch(`http://127.0.0.1:${port}/`, {
         signal: AbortSignal.timeout(500),
       });
-      if (response.status === 404) return { name, close };
+      if (response.status === 404) return close;
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   close();
-  throw new Error(`Local notify Worker did not start: ${diagnostic}`);
+  throw new Error(`Local ${label} Worker did not start: ${diagnostic}`);
 }

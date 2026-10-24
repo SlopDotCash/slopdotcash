@@ -77,7 +77,7 @@ test("a legacy alias is bound to the same historical id", () => {
   ).toThrow("contributor history keeps it under id asi");
 });
 
-/** The application route as /projects/new reaches it, on the real migrations. */
+/** The creation route as /projects/new reaches it, on the real migrations. */
 async function submit(id: string): Promise<{ status: number; body: unknown }> {
   const deps: ProjectApiDependencies = {
     persistence: new CloudflareProjectPersistence(
@@ -89,16 +89,13 @@ async function submit(id: string): Promise<{ status: number; body: unknown }> {
     ),
     adminGithubIds: new Set(["900000001"]),
     moderatorGithubIds: new Set(),
-    vettingClearance: async () => {
-      throw new Error("Application submission must not activate a project");
-    },
+    vettingClearance: async () => ({ state: "unscanned" }),
     now: () => new Date("2026-10-19T12:00:00.000Z"),
     randomId: () => "00000000-0000-4000-8000-000000000001",
     sessionActor: async () => ({
       githubId: "900000002",
       githubLogin: "applicant",
     }),
-    notifyAdmins: async () => true,
     readTokenMetadata: async () => {
       throw new TokenMetadataError("No contract exists at that token address");
     },
@@ -107,12 +104,12 @@ async function submit(id: string): Promise<{ status: number; body: unknown }> {
         Response.json({ message: "Not Found" }, { status: 404 }),
     },
     repositoryControl: async () => ({
-      state: "unproven",
-      reason: "GitHub could not be checked",
+      state: "proven",
+      reason: "@applicant owns the repository",
     }),
   };
   const response = await handleProjectApi(
-    new Request("https://slop.cash/api/v1/project-applications", {
+    new Request("https://slop.cash/api/v1/projects", {
       method: "POST",
       headers: {
         origin: "https://slop.cash",
@@ -128,7 +125,7 @@ async function submit(id: string): Promise<{ status: number; body: unknown }> {
   return { status: response.status, body: await response.json() };
 }
 
-test("an application for a legacy repository must reuse its historical id", async () => {
+test("a project for a legacy repository must reuse its historical id", async () => {
   const conflict = await submit("the-network");
   expect(conflict.status).toBe(409);
   expect(conflict.body).toEqual({

@@ -171,8 +171,8 @@ run. `off` reads none of them.
 | `FEE_CONVERTER_MODE` | `off` | `off`, `dry_run` or `live`. |
 | `FEE_CONVERTER_NETWORKS` | empty | Subset of `base,ethereum,robinhood,solana`. |
 | `FEE_CONVERTER_ALLOWLIST` | empty | JSON object of extra tokens per network. |
-| `FEE_CONVERTER_MIN_VALUE_MICRO` | empty: **owner decision** | Minimum quoted USDC output. `0` converts every fee. |
-| `FEE_CONVERTER_GAS_MULTIPLE` | empty: **owner decision** | Output must be at least this many times the fee estimate. `0` disables the check. |
+| `FEE_CONVERTER_MIN_VALUE_MICRO` | `5000000` (owner decision, 24 October 2026) | Minimum quoted USDC output. `0` converts every fee. |
+| `FEE_CONVERTER_GAS_MULTIPLE` | `10` (owner decision, 24 October 2026) | Output must be at least this many times the fee estimate. `0` disables the check. |
 | `FEE_CONVERTER_MAX_SLIPPAGE_BPS` | `100` | Quote minimum within 1% of the quote. |
 | `FEE_CONVERTER_MAX_PRICE_IMPACT_BPS` | `200` | Price-impact cap (2%). |
 | `FEE_CONVERTER_RUN_CAP_MICRO` | `1000000000` | Per-run, per-network value cap (1,000 USDC). |
@@ -203,11 +203,11 @@ reads a key.
 ## Key custody
 
 AGENTS.md (owner decision of 18 October 2026) approves one fee-wallet hot key
-per network that signs only this conversion. The PRD (section 6) instead says
-Slop owners control the signer and raw private keys are not stored in
-application environment variables, and section 9 lists the signer connection
-as an open decision. This Worker keeps the approved hot-key model until the
-owner resolves that conflict. Signing stays narrow: only `live` mode on a
+per network that signs only this conversion. The owner decision of 24 October
+2026 (PRD sections 6 and 11) confirms that model for launch: one dedicated
+conversion-only key per network, held as a Worker secret, bounded by the
+per-run and daily caps, with owners sweeping USDC proceeds to cold storage. A
+remote signer may replace it later. Signing stays narrow: only `live` mode on a
 network with a verified USDC target loads a key; the key signs only an exact
 approval to the pinned router and the checked swap; errors and logs never
 include it.

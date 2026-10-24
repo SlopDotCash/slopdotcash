@@ -342,6 +342,88 @@ describe("private intake: creation and identity", () => {
     expect(second.body.error).toBe("submission_in_flight");
   });
 
+  test("replaying creation on a finished or abandoned submission refuses instead of re-authorizing", async () => {
+    const t = setup();
+    const key = t.key();
+    const body = { projectId: PROJECT, idempotencyKey: key, origin: "slop" };
+    const created = await t.call(
+      REPORTER,
+      "POST",
+      "security-submissions",
+      body,
+    );
+    expect(created.status).toBe(201);
+    await t.authorize(REPORTER, created.body.authorizeUrl as string);
+    const sent = await t.send(created.body.submission?.id as string, 1);
+    expect(sent.body.submission).toMatchObject({ state: "receipt-verified" });
+    // The dedicated authorize route refuses finished submissions (409
+    // submission_closed); replaying creation must not reopen authorization.
+    // A verified slop report trips the idempotency shape check first (its
+    // advisory is now bound), so cover the finished state with a direct
+    // report and the abandoned state with an idle slop draft.
+    const advisory = t.github.seed(
+      REPO,
+      { id: Number(REPORTER.githubId), login: REPORTER.githubLogin },
+      {
+        summary: "Filed on GitHub",
+        description: `Direct ${SENTINEL}`,
+        severity: "high",
+      },
+      "2026-10-20T08:30:00.000Z",
+    );
+    const dkey = t.key();
+    const dbody = {
+      projectId: PROJECT,
+      idempotencyKey: dkey,
+      origin: "direct",
+      advisory: advisory.ghsa_id,
+    };
+    const dcreated = await t.call(
+      REPORTER,
+      "POST",
+      "security-submissions",
+      dbody,
+    );
+    expect(dcreated.status).toBe(201);
+    await t.authorize(REPORTER, dcreated.body.authorizeUrl as string);
+    const dverified = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${dcreated.body.submission?.id}/verify`,
+      { expectedRevision: 1 },
+    );
+    expect(dverified.body.submission).toMatchObject({
+      state: "receipt-verified",
+    });
+    const dreplay = await t.call(
+      REPORTER,
+      "POST",
+      "security-submissions",
+      dbody,
+    );
+    expect(dreplay.status).toBe(409);
+    expect(dreplay.body.error).toBe("submission_closed");
+    // An abandoned draft must not be re-authorized either.
+    const akey = t.key();
+    const abody = { projectId: PROJECT, idempotencyKey: akey, origin: "slop" };
+    const acreated = await t.call(
+      REPORTER,
+      "POST",
+      "security-submissions",
+      abody,
+    );
+    expect(acreated.status).toBe(201);
+    t.advance(24 * 60 * 60 * 1000 + 1000);
+    const areplay = await t.call(
+      REPORTER,
+      "POST",
+      "security-submissions",
+      abody,
+    );
+    expect(areplay.status).toBe(409);
+    expect(areplay.body.error).toBe("submission_closed");
+  });
+
   test("the repository comes from the program terms, never from the request", async () => {
     const t = setup();
     const injected = await t.create(REPORTER, { repository: "attacker/repo" });

@@ -47,7 +47,7 @@ function base64url(input: ArrayBuffer | string): string {
 
 // GitHub issues PKCS#1 keys; Workers WebCrypto imports PKCS#8 only. The secret
 // must be converted once with `openssl pkcs8 -topk8 -nocrypt` (README).
-async function appJwt(appId: string, pkcs8Pem: string): Promise<string> {
+export async function appJwt(appId: string, pkcs8Pem: string): Promise<string> {
   if (!pkcs8Pem.includes("-----BEGIN PRIVATE KEY-----")) {
     throw new Error("SLOPBOT_APP_PRIVATE_KEY must be a PKCS#8 PEM");
   }

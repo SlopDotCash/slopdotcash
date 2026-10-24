@@ -443,9 +443,12 @@ export function applyPointsSnapshot(
           row.pullRequestNumber === Number(match[3]),
       );
       // A missing valuation is not evidence that an earlier award was wrong.
+      // A legacy-policy source is scored by its unchanged historical rules.
       if (
         !coverage ||
-        !["assessed", "human-ratified"].includes(coverage.status)
+        !["assessed", "human-ratified", "legacy-policy"].includes(
+          coverage.status,
+        )
       )
         continue;
     }

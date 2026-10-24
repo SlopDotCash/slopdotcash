@@ -11,8 +11,8 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 const decoder = new TextDecoder();
 
 /**
- * Shows the exact generated SKILL.md and project.json an admin approves
- * (PRD PRJ-02). The shared scripts come unchanged from the template.
+ * Shows the exact generated SKILL.md and project.json a project revision
+ * publishes (PRD section 4). The shared scripts come unchanged from the template.
  */
 export function GeneratedSkillPreview({
   manifest,

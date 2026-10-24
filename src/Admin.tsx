@@ -1,10 +1,12 @@
 /**
- * The admin review surface for project applications and registry revisions.
- * Authority is decided by the API on every request; this view only hides
- * controls a session cannot use.
+ * The admin surface for registry exceptions: revisions owners cannot publish
+ * themselves, restrictions and security vetting. Owners create and update
+ * their projects through self-service setup, so nothing here approves
+ * routine work. Authority is decided by the API on every request; this view
+ * only hides controls a session cannot use.
  */
 
-import { CircleAlert, ExternalLink, RotateCcw } from "lucide-react";
+import { CircleAlert, RotateCcw } from "lucide-react";
 import {
   type FormEvent,
   type ReactNode,
@@ -19,7 +21,6 @@ import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
 import {
   type AdminProject,
-  type ProjectApplication,
   type ProjectSessionState,
   projectApiRequest,
   useProjectSession,
@@ -133,281 +134,7 @@ function LoadNotice({
   );
 }
 
-const selectApplications = (body: { applications: ProjectApplication[] }) =>
-  body.applications;
 const selectProjects = (body: { projects: AdminProject[] }) => body.projects;
-
-function ApplicationCard({
-  application,
-  onDecided,
-}: {
-  application: ProjectApplication;
-  onDecided: (decision: "approve" | "reject") => void;
-}) {
-  const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const manifest = application.manifest;
-  const repository = application.repository ?? manifest.repositories[0]?.id;
-  const decide = (decision: "approve" | "reject") => {
-    if (decision === "reject" && reason.trim() === "") {
-      setError("Write a reason before you reject. The applicant sees it.");
-      return;
-    }
-    setBusy(decision);
-    setError(null);
-    projectApiRequest(
-      "POST",
-      `admin/project-applications/${encodeURIComponent(application.id)}/${decision}`,
-      reason.trim() === "" ? {} : { reason: reason.trim() },
-    ).then(
-      () => onDecided(decision),
-      (caught: unknown) => {
-        setBusy(null);
-        setError(errorMessage(caught));
-      },
-    );
-  };
-  return (
-    <article className="admin-card" id={`application-${application.id}`}>
-      <header>
-        <h3>{manifest.name}</h3>
-        <span className={`admin-badge admin-badge-${application.status}`}>
-          {application.status}
-        </span>
-      </header>
-      <p>{manifest.description}</p>
-      {application.expectedRevision ? (
-        <p>
-          Update to revision {application.expectedRevision}. Approval pauses the
-          project for security review. Reason: {application.changeReason}
-        </p>
-      ) : null}
-      <dl className="admin-facts">
-        <div>
-          <dt>Repository</dt>
-          <dd>
-            <a
-              href={`https://github.com/${repository}`}
-              rel="noreferrer"
-              target="_blank"
-            >
-              {repository} <ExternalLink aria-hidden="true" />
-            </a>
-          </dd>
-        </div>
-        <div>
-          <dt>Applicant</dt>
-          <dd>
-            <a
-              href={`https://github.com/${application.applicant.githubLogin}`}
-              rel="noreferrer"
-              target="_blank"
-            >
-              @{application.applicant.githubLogin}
-            </a>
-          </dd>
-        </div>
-        <div>
-          <dt>Steward</dt>
-          <dd>
-            {manifest.steward.displayName} (@{manifest.steward.github.login})
-          </dd>
-        </div>
-        <div>
-          <dt>Referred by</dt>
-          <dd>
-            {application.referrer ? (
-              <a
-                href={`https://github.com/${application.referrer.githubLogin}`}
-                rel="noreferrer"
-                target="_blank"
-              >
-                @{application.referrer.githubLogin}
-              </a>
-            ) : (
-              "Nobody named"
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt>Monthly pool</dt>
-          <dd>{manifest.reward.monthlyCapDisplay} pledged</dd>
-        </div>
-        <div>
-          <dt>Submitted</dt>
-          <dd>{formatTime(application.submittedAt)} UTC</dd>
-        </div>
-        <div>
-          <dt>GitHub check</dt>
-          <dd>{application.githubCheck ?? "Not recorded"}</dd>
-        </div>
-        <div>
-          <dt>Admin email</dt>
-          <dd>
-            {application.adminNotification === "sent"
-              ? "Sent"
-              : application.adminNotification === "failed"
-                ? "Failed to send"
-                : "Not sent"}
-          </dd>
-        </div>
-        {application.decidedBy ? (
-          <div>
-            <dt>Decision</dt>
-            <dd>
-              {application.status} by @{application.decidedBy.githubLogin} on{" "}
-              {formatTime(application.decidedAt)} UTC
-              {application.decisionReason
-                ? ` — ${application.decisionReason}`
-                : ""}
-            </dd>
-          </div>
-        ) : null}
-      </dl>
-      <h4>Acceptance criteria</h4>
-      <p className="admin-criteria">{application.acceptanceCriteria}</p>
-      <details>
-        <summary>Submitted manifest</summary>
-        <textarea
-          aria-label="Submitted manifest"
-          className="admin-code"
-          readOnly
-          spellCheck={false}
-          value={JSON.stringify(manifest, null, 2)}
-        />
-      </details>
-      {/* Approval appends this manifest as revision 1. */}
-      <GeneratedSkillPreview
-        manifest={manifest}
-        registry={{
-          revision: (application.expectedRevision ?? 0) + 1,
-          manifestSha256: application.manifestSha256,
-        }}
-      />
-      {application.status === "pending" ? (
-        <div className="admin-actions">
-          <label>
-            Note to the applicant (required to reject)
-            <textarea
-              maxLength={1000}
-              onChange={(event) => setReason(event.target.value)}
-              value={reason}
-            />
-          </label>
-          {error ? (
-            <p className="form-error" role="alert">
-              <CircleAlert aria-hidden="true" /> {error}
-            </p>
-          ) : null}
-          <div>
-            <button
-              className="button primary-button"
-              disabled={busy !== null}
-              onClick={() => decide("approve")}
-              type="button"
-            >
-              {busy === "approve"
-                ? "Approving…"
-                : application.expectedRevision
-                  ? "Approve paused revision"
-                  : "Approve as paused project"}
-            </button>
-            <button
-              className="button secondary-button"
-              disabled={busy !== null}
-              onClick={() => decide("reject")}
-              type="button"
-            >
-              {busy === "reject" ? "Rejecting…" : "Reject"}
-            </button>
-          </div>
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-function applicationIdFromLocation() {
-  return (
-    /^\/admin\/applications\/([A-Za-z0-9_-]+)\/?$/u.exec(
-      window.location.pathname,
-    )?.[1] ?? null
-  );
-}
-
-function ApplicationsSection({
-  onDecided,
-}: {
-  onDecided: (projectId: string | null) => void;
-}) {
-  const [focusedId, setFocusedId] = useState(applicationIdFromLocation);
-  useEffect(() => {
-    const read = () => setFocusedId(applicationIdFromLocation());
-    window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
-  }, []);
-  const [status, setStatus] = useState<"pending" | "approved" | "rejected">(
-    "pending",
-  );
-  const [state, reload] = useAdminData(
-    `admin/project-applications?${focusedId ? `id=${encodeURIComponent(focusedId)}` : `status=${status}`}`,
-    selectApplications,
-  );
-  // The admin email links to /admin/applications/<id>; bring that card into view.
-  useEffect(() => {
-    if (state.status !== "ready") return;
-    if (focusedId && state.value[0]) {
-      setStatus(state.value[0].status);
-      document.getElementById(`application-${focusedId}`)?.scrollIntoView();
-    }
-  }, [state, focusedId]);
-  return (
-    <section aria-labelledby="admin-applications" className="admin-section">
-      <div className="admin-section-heading">
-        <h2 id="admin-applications">Project applications</h2>
-        <fieldset className="admin-tabs">
-          <legend className="visually-hidden">Application status</legend>
-          {(["pending", "approved", "rejected"] as const).map((value) => (
-            <label key={value}>
-              <input
-                checked={status === value}
-                name="application-status"
-                onChange={() => {
-                  setFocusedId(null);
-                  setStatus(value);
-                  window.history.replaceState(
-                    window.history.state,
-                    "",
-                    `/admin${window.location.search}`,
-                  );
-                }}
-                type="radio"
-              />
-              {value[0].toUpperCase() + value.slice(1)}
-            </label>
-          ))}
-        </fieldset>
-      </div>
-      {state.status !== "ready" ? (
-        <LoadNotice label="applications" retry={reload} state={state} />
-      ) : state.value.length === 0 ? (
-        <p className="admin-status">No {status} applications.</p>
-      ) : (
-        state.value.map((application) => (
-          <ApplicationCard
-            application={application}
-            key={application.id}
-            onDecided={(decision) => {
-              reload();
-              onDecided(decision === "approve" ? application.projectId : null);
-            }}
-          />
-        ))
-      )}
-    </section>
-  );
-}
 
 type AssetDraft = {
   network: RewardAssetNetwork;
@@ -1231,15 +958,13 @@ export function AdminPage() {
     setSelectedProject(id);
   };
   const state = useProjectSession();
-  // An approval adds a project, so the registry list reloads after decisions.
-  const [registryVersion, setRegistryVersion] = useState(0);
   const [vettingVersion, setVettingVersion] = useState(0);
   let body: ReactNode;
   if (state.status !== "signed-in") {
     body = (
       <SignInPanel
         next={`${window.location.pathname}${window.location.search}`}
-        purpose="Admins sign in with GitHub to review project applications."
+        purpose="Admins sign in with GitHub to handle registry exceptions."
         state={state}
       />
     );
@@ -1253,14 +978,8 @@ export function AdminPage() {
   } else {
     body = (
       <>
-        <ApplicationsSection
-          onDecided={(id) => {
-            setRegistryVersion((value) => value + 1);
-            selectProject(id);
-          }}
-        />
         <ProjectsSection
-          key={`${registryVersion}-${selectedProject ?? "list"}`}
+          key={selectedProject ?? "list"}
           selectedProject={selectedProject}
           onSelect={selectProject}
           onChanged={() => setVettingVersion((value) => value + 1)}
@@ -1268,7 +987,7 @@ export function AdminPage() {
         {selectedProject ? (
           <VettingSection
             projectId={selectedProject}
-            key={`vetting-${selectedProject}-${registryVersion}-${vettingVersion}`}
+            key={`vetting-${selectedProject}-${vettingVersion}`}
           />
         ) : null}
       </>

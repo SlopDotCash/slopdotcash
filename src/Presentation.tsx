@@ -31,6 +31,15 @@ export function DataNotice({
       </div>
     );
   }
+  // PRD section 9: a release that cannot refresh keeps the last good snapshot.
+  if (stale(state.snapshot)) {
+    return (
+      <p className="data-notice data-stale" role="status">
+        Scores may be outdated · updated{" "}
+        {formatDateTime(state.snapshot.generatedAt)}
+      </p>
+    );
+  }
   return null;
 }
 

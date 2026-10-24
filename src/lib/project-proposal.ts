@@ -1,4 +1,5 @@
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
+import { isEscrowChain } from "./escrow-policy.mjs";
 import {
   type OwnedRepository,
   type RepositoryLookup,
@@ -9,6 +10,7 @@ import {
   MAX_MONTHLY_CAP_MINOR,
   MAX_PROJECT_ID_LENGTH,
 } from "./project-schema.mjs";
+import { REWARD_ASSET_NETWORKS } from "./reward-asset.mjs";
 
 export function safeProposalHttpsUrl(value: string): boolean {
   if (value.length === 0 || value.length > 500) return false;
@@ -99,6 +101,109 @@ export function monthlyPoolValue(value: string): {
     display: formatMonthlyCapDisplay(minor),
     minor,
     valid: true,
+  };
+}
+
+/**
+ * A monthly amount in the reward asset, from the manifest's cent-precise
+ * integer units, without floating point and without a dollar sign: the
+ * asset is the unit (PRD section 6, "never present tokens as dollars").
+ */
+export function formatMonthlyAmount(minor: string, symbol: string): string {
+  const amount = BigInt(minor);
+  const whole = (amount / 1_000_000n)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
+  const cents = (amount % 1_000_000n) / 10_000n;
+  return `${whole}${cents === 0n ? "" : `.${cents.toString().padStart(2, "0")}`} ${symbol}`;
+}
+
+/** The one optional funding choice of project setup. */
+export type FundingChoice = {
+  mode: "none" | "monthly";
+  network: string;
+  assetKind: "stablecoin" | "token";
+  tokenAddress: string;
+  tokenSymbol: string;
+  monthlyAmount: string;
+};
+
+/**
+ * The reward, asset and vault fields of a manifest for a funding choice. No
+ * monthly funding keeps the unfunded pool with no reward asset and no vault,
+ * so the network and asset are chosen only when the owner adds funding; a
+ * vault's network cannot change once set. A monthly amount names one network
+ * and one asset, with the vault policy of that network when it has one. The
+ * server verifies the asset and reads its decimals.
+ */
+export function rewardFields(
+  choice: FundingChoice,
+  now: Date,
+): Record<string, unknown> {
+  if (choice.mode === "none")
+    return {
+      reward: {
+        kind: "monthly-pool",
+        currency: "USDC",
+        chain: "base",
+        rewardStartAt: now.toISOString(),
+        cycle: "calendar-month-utc",
+        monthlyCapMinor: "0",
+        monthlyCapDisplay: formatMonthlyCapDisplay("0"),
+        committedMinor: "0",
+        paymentMode: "disabled",
+        feeBasisPoints: 100,
+        unusedFunds: "rollover-without-cap-increase",
+        fundingState: "pledged",
+      },
+    };
+  const network =
+    REWARD_ASSET_NETWORKS[choice.network as keyof typeof REWARD_ASSET_NETWORKS];
+  const asset =
+    choice.assetKind === "token"
+      ? {
+          network: choice.network,
+          kind: "token",
+          address: choice.tokenAddress.trim(),
+          symbol: choice.tokenSymbol.trim(),
+        }
+      : {
+          network: choice.network,
+          kind: "stablecoin",
+          address: network.stablecoin.address,
+          symbol: network.stablecoin.symbol,
+        };
+  const escrow = isEscrowChain(choice.network);
+  const amount = monthlyPoolValue(choice.monthlyAmount);
+  return {
+    ...(escrow
+      ? {
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: now.toISOString().slice(0, 7),
+            chain: choice.network,
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        }
+      : {}),
+    rewardAsset: asset,
+    reward: {
+      kind: "monthly-pool",
+      currency: asset.symbol,
+      chain: choice.network,
+      rewardStartAt: now.toISOString(),
+      cycle: "calendar-month-utc",
+      monthlyCapMinor: amount.minor,
+      monthlyCapDisplay: amount.display,
+      committedMinor: "0",
+      paymentMode: "disabled",
+      feeBasisPoints: escrow ? 200 : 100,
+      unusedFunds: "rollover-without-cap-increase",
+      fundingState: "pledged",
+    },
   };
 }
 

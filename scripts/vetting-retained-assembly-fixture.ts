@@ -119,7 +119,6 @@ export async function retainedAssemblyFixture(input: {
       randomId: () =>
         `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`,
       sessionActor: async (request) => actorOf(request),
-      notifyAdmins: async () => true,
       repositoryControl: async () => ({
         state: "proven",
         reason: "Synthetic local replay authority",
@@ -150,26 +149,13 @@ export async function retainedAssemblyFixture(input: {
     await rm(root, { recursive: true, force: true });
   };
   try {
-    const submitted = await projectApi(
-      session("project-applications", "applicant", {
+    const created = await projectApi(
+      session("projects", "applicant", {
         manifest: applicationManifest("retained-replay", source.repository),
       }),
     );
-    assert.ok(submitted);
-    assert.equal(submitted.status, 201);
-    const { application } = await submitted.json();
-    assert.equal(
-      (
-        await projectApi(
-          session(
-            `admin/project-applications/${application.id}/approve`,
-            "admin",
-            {},
-          ),
-        )
-      )?.status,
-      200,
-    );
+    assert.ok(created);
+    assert.equal(created.status, 201);
     const queued = await vettingApi(
       session("admin/vetting/assessments", "admin", {
         projectId: "retained-replay",

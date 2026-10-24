@@ -7,6 +7,8 @@ PUBLIC_SITE_URL = "https://slop.cash"
 # GitHub numeric actor IDs allowed to review project applications: lalalune
 # and drew-dot-com. Admin email recipients live in workers/notify.
 ADMIN_GITHUB_IDS = "18633264,202660855"
+# Production moderators (PRD section 11, owner decision of 24 October 2026).
+PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
 
 [[d1_databases]]
 binding = "SLOP_DB"

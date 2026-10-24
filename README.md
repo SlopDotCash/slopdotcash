@@ -60,16 +60,17 @@ flowchart LR
 
 ## Add your open-source project
 
-Sign in with GitHub and submit your project at
-[`slop.cash/projects/new`](https://slop.cash/projects/new). The form builds a
-validated project manifest and stores the application. A Slop admin reviews it
-at `/admin`; approval lists the project as paused. Nothing becomes active from
-the form alone. No pull request adds or updates a project: every change is an
-append-only revision in the D1 registry that an admin approves. Slop generates
-the contributor and reviewer skills from that revision and one canonical
-generic template.
+Sign in with GitHub and create your project at
+[`slop.cash/projects/new`](https://slop.cash/projects/new). The form checks your
+GitHub authority, creates a paused project, and queues its first security scan.
+The setup status shows the next action. Slopbot installation and a clean scan
+are required before activation; funding is optional. Owners publish updates
+as permanent D1 revisions. Admins handle restrictions and disputes.
 
-The application and its admin revisions must establish:
+Slop generates contributor and reviewer skills from the project revision and
+one canonical template. No pull request adds or updates a project.
+
+Project setup records:
 
 - a public GitHub repository and immutable repository identity;
 - a verified GitHub steward, without implying legal ownership or capacity;

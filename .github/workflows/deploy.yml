@@ -158,7 +158,34 @@ jobs:
               --connect-timeout 10 --max-time 60 --max-filesize 8388608 \
               "$profile_origin/data/profiles.json" --output "$previous_profiles"
           fi
-          bun run leaderboard:generate
+          # Selects the versioned value scoring policy for new work. Exit 75
+          # means the hosted value feed is unavailable (owner decision D2):
+          # retry once, then keep the last published snapshot, which shows its
+          # stale label, and let the next scheduled release retry. There is no
+          # legacy fallback. Every other failure stops the release.
+          feed_status=0
+          for attempt in 1 2; do
+            feed_status=0
+            bun run leaderboard:generate || feed_status=$?
+            if [ "$feed_status" -ne 75 ]; then
+              break
+            fi
+            if [ "$attempt" -eq 1 ]; then
+              echo "::warning::Hosted value feed unavailable; retrying in 60 seconds."
+              sleep 60
+            fi
+          done
+          if [ "$feed_status" -eq 75 ]; then
+            echo "::warning::Hosted value feed still unavailable; keeping the last published leaderboard snapshot."
+            mkdir -p public/data
+            curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 60 --max-filesize 26214400 \
+              "$profile_origin/data/leaderboard.json" \
+              --output public/data/leaderboard.json
+            test -s public/data/leaderboard.json
+          elif [ "$feed_status" -ne 0 ]; then
+            exit "$feed_status"
+          fi
           # Preserve previously observed issue history, including records
           # no longer accessible. Both source inventories must reconcile.
           for attempt in 1 2; do

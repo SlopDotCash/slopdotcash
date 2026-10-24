@@ -8,6 +8,7 @@ import { fetchWithDeadline } from "./browser-json";
 import type {
   PublicProjectApplication as ProjectApplication,
   WebSession as ProjectSession,
+  ProjectSetupStatus,
 } from "./project-contracts";
 import type { ProjectDefinition } from "./projects.mjs";
 
@@ -17,6 +18,7 @@ export type {
   EnforcementPreview,
   ProjectEnforcement as ProjectEnforcementRecord,
   ProjectEnforcementState,
+  ProjectSetupStatus,
   PublicProjectApplication as ProjectApplication,
   WebSession as ProjectSession,
 } from "./project-contracts";
@@ -100,13 +102,81 @@ export async function currentProjectSession(): Promise<ProjectSession | null> {
   ).session;
 }
 
-export function submitProjectApplication(
+export type ProjectSummary = {
+  id: string;
+  slug: string;
+  name: string;
+  status: ProjectDefinition["status"];
+  listingTier: ProjectDefinition["listingTier"];
+  revision: number;
+};
+
+/** Creates the project at once; the response carries its setup status. */
+export function createProject(
   manifest: ProjectDefinition,
   referrer: string | null,
-): Promise<{ application: ProjectApplication }> {
-  return projectApiRequest("POST", "project-applications", {
+): Promise<{
+  project: { id: string; revision: number; referrer: unknown };
+  setup: ProjectSetupStatus;
+}> {
+  return projectApiRequest("POST", "projects", {
     manifest,
     ...(referrer === null ? {} : { referrer }),
+  });
+}
+
+/** Runs the setup checks; a passing project activates as part of the check. */
+export function checkProjectSetup(
+  projectId: string,
+  requestScan = false,
+): Promise<{ setup: ProjectSetupStatus }> {
+  return projectApiRequest(
+    "POST",
+    `project-setup/${encodeURIComponent(projectId)}/check`,
+    requestScan ? { requestScan: true } : {},
+  );
+}
+
+/** The signed-in account's projects and its stored applications. */
+export function listProjectSetup(): Promise<{
+  projects: ProjectSummary[];
+  applications: ProjectApplication[];
+}> {
+  return projectApiRequest("GET", "project-setup");
+}
+
+/** Publishes an application stored before self-service setup. */
+export function publishStoredApplication(
+  applicationId: string,
+): Promise<{ project: { id: string }; setup: ProjectSetupStatus }> {
+  return projectApiRequest(
+    "POST",
+    `project-applications/${encodeURIComponent(applicationId)}/publish`,
+    {},
+  );
+}
+
+export type RevisionResult = {
+  project: { id: string; revision: number; status: string };
+  changes: {
+    presentation: string[];
+    executable: string[];
+    financial: string[];
+  };
+  setup: ProjectSetupStatus;
+};
+
+/** Publishes an owner revision against the revision the owner read. */
+export function publishProjectRevision(
+  projectId: string,
+  manifest: ProjectDefinition,
+  expectedRevision: number,
+  note: string,
+): Promise<RevisionResult> {
+  return projectApiRequest("PUT", `projects/${encodeURIComponent(projectId)}`, {
+    manifest,
+    expectedRevision,
+    ...(note.trim() ? { reason: note.trim() } : {}),
   });
 }
 
