@@ -527,3 +527,106 @@ for (const scenario of [
     }
   });
 }
+
+test("contributor profile preserves unavailable payment total on direct-transfer 503 and recovers on retry", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { current } = await profileRecords(page);
+  let available = false;
+  const errors: string[] = [];
+  const failures: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("response", (response) => {
+    if (response.status() >= 400)
+      failures.push(`${response.status()} ${response.url()}`);
+  });
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/api/v1/payments/actors/1/direct-transfers", (route) => {
+    if (!available)
+      return route.fulfill({
+        status: 503,
+        body: "Payment source unavailable",
+      });
+    return route.fulfill({
+      json: {
+        totalMicro: "222220000",
+        transfers: [
+          {
+            projectId: "slopdotcash",
+            githubUserId: "1",
+            login: current.login,
+            amountMicro: "222220000",
+            contributionMonth: "2026-10",
+            network: "base-sepolia",
+            chain: "base",
+            recipient: "synthetic-recipient",
+            transactionId: "synthetic-slopdotcash",
+            blockTime: "2026-10-16T12:00:00.000Z",
+          },
+        ],
+      },
+    });
+  });
+  await page.goto(`${site}/contributors/${current.login}`);
+  const paidStat = page
+    .locator(".profile-totals div", {
+      has: page.getByText("paid · USDC", { exact: true }),
+    })
+    .locator("strong");
+  await expect(paidStat).toHaveText("Unavailable");
+  await expect(
+    page.getByText("Payment records unavailable.", { exact: true }),
+  ).toBeVisible();
+  const retry = page.getByRole("button", {
+    name: "Retry payment records",
+    exact: true,
+  });
+  await expect(retry).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Payouts", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Past cycles", exact: true }),
+  ).toBeVisible();
+  expect(failures.length).toBeGreaterThan(0);
+  expect(
+    failures.every(
+      (failure) =>
+        failure.startsWith("503 ") &&
+        failure.endsWith("/api/v1/payments/actors/1/direct-transfers"),
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("profile-payments-unavailable.png"),
+  });
+
+  available = true;
+  failures.length = 0;
+  await retry.focus();
+  await page.keyboard.press("Enter");
+  await expect(paidStat).toHaveText("$223.22");
+  await expect(page.getByText("Payment records unavailable.")).toHaveCount(0);
+  await expect(retry).toHaveCount(0);
+  const payouts = page.getByRole("region", { name: "Payouts", exact: true });
+  await expect(payouts).toContainText("$223.22 USDC");
+  await expect(payouts).toContainText("$222.22");
+  await expect(payouts).toContainText("$1");
+  expect(errors).toEqual([]);
+  expect(failures).toEqual([]);
+  await page.screenshot({
+    path: info.outputPath("profile-payments-recovered.png"),
+  });
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+});

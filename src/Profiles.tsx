@@ -123,20 +123,20 @@ export function ProfileActivity({
       ? id
       : githubUserIdFromNodeId(id)
     : null;
-  const [directState] = useDirectTransfers(
+  const [directState, retryDirect] = useDirectTransfers(
     githubUserId ? { githubUserId } : null,
   );
   const direct =
-    directState.status === "ready"
-      ? directState.transfers.map((t) => ({
+    !githubUserId || directState.status !== "ready"
+      ? null
+      : directState.transfers.map((t) => ({
           date: t.blockTime,
           amount: BigInt(t.amountMicro),
           href:
             transactionUrl(t.network, t.transactionId) ??
             `/projects/${encodeURIComponent(t.projectId)}/funding`,
           name: `${findProject(t.projectId)?.name ?? t.projectId} · ${formatCycleMonth(t.contributionMonth)}`,
-        }))
-      : [];
+        }));
   return (
     <section className="profile-activity" aria-label="Contributor profile">
       {showIdentity ? (
@@ -153,17 +153,28 @@ export function ProfileActivity({
         {summary}
         <div>
           <strong>
-            {payments
+            {payments && direct
               ? dollars(
                   [...payments, ...direct].reduce((n, r) => n + r.amount, 0n),
                 )
-              : !id && state.status === "loading"
+              : (!id && state.status === "loading") ||
+                  (Boolean(githubUserId) && directState.status === "loading")
                 ? "Loading…"
                 : "Unavailable"}
           </strong>
           <span>paid · USDC</span>
         </div>
       </div>
+      {githubUserId && directState.status === "error" ? (
+        <p role="status">
+          <span>Payment records unavailable.</span>{" "}
+          <button type="button" onClick={retryDirect}>
+            Retry payment records
+          </button>
+        </p>
+      ) : githubUserId && directState.status === "loading" ? (
+        <p role="status">Loading payment records…</p>
+      ) : null}
       {state.status === "error" ? (
         <p role="status">
           PR counts are unavailable.{" "}
@@ -178,7 +189,9 @@ export function ProfileActivity({
       ) : null}
       {revisions ? <PointsRevisionHistory revisions={revisions} /> : null}
       {children}
-      <PayoutList payments={payments ?? []} direct={direct} />
+      {payments && direct ? (
+        <PayoutList payments={payments} direct={direct} />
+      ) : null}
       <ProfileTimeline
         work={work}
         awards={awards}
