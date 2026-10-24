@@ -2,7 +2,6 @@
  * a digest alone never authenticates records copied from an arbitrary host.
  */
 import {
-  findRegisteredRepositoryById,
   REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
@@ -35,18 +34,24 @@ export async function readValueDecision(
   db: D1Database,
   evidence: ValueEvidence,
   policy: { sha: string; text: string },
+  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
 ) {
   return readValueDecisionFromHistory(
     (after) =>
       valueHistory(
         db,
-        findRegisteredRepositoryById(evidence.repository)?.id ??
-          evidence.repository,
+        repositories.find((entry) =>
+          [entry.id, ...entry.aliases].some(
+            (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
+          ),
+        )?.id ?? evidence.repository,
         evidence.pull.number,
         after,
       ),
     evidence,
     policy,
+    undefined,
+    repositories,
   );
 }
 

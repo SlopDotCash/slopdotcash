@@ -1,10 +1,11 @@
 import {
+  collectTargetRepositories,
   REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
-import { requireRegisteredRepository } from "./registry";
+import { registeredProject, requireRegisteredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
 import { latestValueRecord } from "./value-journal";
 import {
@@ -97,6 +98,10 @@ export async function publishWorkUnitAssessment(
     )
   )
     throw new Error("Joint publication job does not match a source member");
+  const project = await registeredProject(env.SLOPBOT_DB, job);
+  if (!project)
+    throw new Error("Repository is not active in the Slop project registry");
+  const repositories = collectTargetRepositories([project]);
   for (const { evidence: source } of evidence.sources) {
     const [owner, repo] = source.repository.split("/");
     await requireRegisteredRepository(env.SLOPBOT_DB, {
@@ -115,7 +120,12 @@ export async function publishWorkUnitAssessment(
     github,
     evidence.sources.map((source) => source.evidence),
   );
-  const current = await verifyCurrentWorkUnitSource(github, evidence, result);
+  const current = await verifyCurrentWorkUnitSource(
+    github,
+    evidence,
+    result,
+    repositories,
+  );
   const prepared = await prepareWorkUnitRecord(
     result,
     current,
@@ -123,6 +133,7 @@ export async function publishWorkUnitAssessment(
     supersedes,
     legacyPredecessors,
     revisionReason,
+    [project],
   );
   const replay = await env.SLOPBOT_DB.prepare(
     "SELECT assessment_key FROM slopbot_work_unit_journal WHERE assessment_key = ?",

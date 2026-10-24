@@ -2,13 +2,14 @@
 // identity and deployed producer revision; neither comes from model output.
 
 import {
+  collectTargetRepositories,
   REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
 import { type D1Database, installation } from "./persistence";
-import { requireRegisteredRepository } from "./registry";
+import { registeredProject, requireRegisteredRepository } from "./registry";
 import { loadPolicy, type ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
 import { collectValueContext, valueContextSelections } from "./value-context";
@@ -129,7 +130,10 @@ export async function publishValueAssessment(
     job.number !== evidence.pull.number
   )
     throw new Error("Value publication job does not match its source");
-  await requireRegisteredRepository(env.SLOPBOT_DB, job);
+  const project = await registeredProject(env.SLOPBOT_DB, job);
+  if (!project)
+    throw new Error("Repository is not active in the Slop project registry");
+  const repositories = collectTargetRepositories([project]);
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
   // A public repository read alone does not prove installation membership.
   // Verify the token-scoped repository list before reading public source.
@@ -139,7 +143,12 @@ export async function publishValueAssessment(
     job.installationId,
   );
   await assertValueInstallationRepositories(github, [evidence]);
-  const current = await verifyCurrentValueSource(github, evidence, result);
+  const current = await verifyCurrentValueSource(
+    github,
+    evidence,
+    result,
+    repositories,
+  );
   const prepared = await prepareValueRecord(
     result,
     current.evidence,
@@ -147,11 +156,13 @@ export async function publishValueAssessment(
     producerRevision,
     supersedes,
     revisionReason,
+    [project],
   );
   const decision = await readValueDecision(
     env.SLOPBOT_DB,
     current.evidence,
     current.policy,
+    repositories,
   );
   const replay = await env.SLOPBOT_DB.prepare(
     "SELECT assessment_key FROM slopbot_value_journal WHERE assessment_key = ?",

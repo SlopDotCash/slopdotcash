@@ -1,6 +1,6 @@
-import { findRegisteredRepositoryById } from "../../src/lib/repositories.mjs";
+import { collectTargetRepositories } from "../../src/lib/repositories.mjs";
 import { GitHubClient } from "./github";
-import { registeredRepository } from "./registry";
+import { registeredProject, registeredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
 import { collectValueEvidence } from "./value-evidence";
@@ -63,8 +63,9 @@ export async function consumeValueRequest(
     return outcome;
   };
   try {
-    if (!(await registeredRepository(db, job)))
-      return await finish("authority");
+    const project = await registeredProject(db, job);
+    if (!project) return await finish("authority");
+    const repositories = collectTargetRepositories([project]);
     await assertValueInstallation(db, job.installationId);
     const alertsOnly =
       env.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD === "alerts-only";
@@ -84,7 +85,11 @@ export async function consumeValueRequest(
       !env.SURPLUS_API_KEY
     )
       return await finish("budget");
-    const repository = findRegisteredRepositoryById(`${job.owner}/${job.repo}`);
+    const repository = repositories.find((entry) =>
+      [entry.id, ...entry.aliases].some(
+        (id) => id.toLowerCase() === `${job.owner}/${job.repo}`.toLowerCase(),
+      ),
+    );
     if (!repository) return await finish("authority");
     const github = await GitHubClient.forInstallation(
       env.SLOPBOT_APP_ID,
@@ -146,6 +151,7 @@ export async function consumeValueRequest(
         return true;
       },
       start,
+      repositories,
     );
     if (!sources) return await finish("source-incomplete");
     evidence = sources[0].evidence;
@@ -180,7 +186,9 @@ export async function consumeValueRequest(
       return true;
     };
     const decisions = await Promise.all(
-      sources.map((s) => readValueDecision(db, s.evidence, s.policy)),
+      sources.map((s) =>
+        readValueDecision(db, s.evidence, s.policy, repositories),
+      ),
     );
     const previousGroups = await Promise.all(
       sources.map((s) =>
@@ -192,7 +200,7 @@ export async function consumeValueRequest(
       ),
     );
     if (sources.length > 1 || previousGroups.some(Boolean)) {
-      const joint = await prepareWorkUnitEvidence(sources);
+      const joint = await prepareWorkUnitEvidence(sources, repositories);
       if (joint.limitations.length) return await finish("source-incomplete");
       const legacy = new Map(
         sources.map((s, i) => [
@@ -218,8 +226,14 @@ export async function consumeValueRequest(
             repositoryNodeId: source.evidence.repositoryNodeId,
             pullRequestNodeId: source.evidence.pull.node_id,
           },
+          repositories,
         );
-        const decision = await consumeWorkUnitHistory(history, sources, legacy);
+        const decision = await consumeWorkUnitHistory(
+          history,
+          sources,
+          legacy,
+          repositories,
+        );
         if (decision.status === "assessed" || decision.status === "unresolved")
           return await finish("current", true);
       }
