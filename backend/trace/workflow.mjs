@@ -72,7 +72,7 @@ export default { fetch(request, env, ctx) {
   runtime = new Miniflare(options());
   await runtime.ready;
   let db = await runtime.getD1Database("SLOP_DB");
-  const bucket = await runtime.getR2Bucket("PRIVATE_TRACES");
+  let bucket = await runtime.getR2Bucket("PRIVATE_TRACES");
   for (const migration of (await readdir("migrations"))
     .filter((name) => name.endsWith(".sql"))
     .sort()) {
@@ -283,6 +283,7 @@ export default { fetch(request, env, ctx) {
   assert.equal((await create()).status, 403);
   await runtime.setOptions(options());
   db = await runtime.getD1Database("SLOP_DB");
+  bucket = await runtime.getR2Bucket("PRIVATE_TRACES");
   const tokenHash = hash(operator.split("=")[1]);
   await db
     .prepare("UPDATE points_sessions SET expires_at=? WHERE token_hash=?")
