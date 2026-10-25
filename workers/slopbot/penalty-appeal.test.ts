@@ -746,11 +746,11 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       };
     };
 
-    // October earns 3 thirds; November earns the 1-third merge minimum.
+    // Both unassessed merges earn the 1-third minimum under the value policy.
     expect(standing(await publish())).toEqual({
-      scoreThirds: 4,
+      scoreThirds: 2,
       penaltyThirds: 0,
-      october: 3,
+      october: 1,
       november: 1,
       novemberPenalty: 0,
     });
@@ -776,9 +776,9 @@ test("a recorded debit reaches the published score once and an upheld appeal res
     ]);
     // The 3-third debit stops at November's 1 third; October is untouched.
     const penalized = {
-      scoreThirds: 3,
+      scoreThirds: 1,
       penaltyThirds: 1,
-      october: 3,
+      october: 1,
       november: 0,
       novemberPenalty: 1,
     };
@@ -800,9 +800,9 @@ test("a recorded debit reaches the published score once and an upheld appeal res
     const restored = await publish();
     expect(restored.penalties).toEqual([]);
     expect(standing(restored)).toEqual({
-      scoreThirds: 4,
+      scoreThirds: 2,
       penaltyThirds: 0,
-      october: 3,
+      october: 1,
       november: 1,
       novemberPenalty: 0,
     });
