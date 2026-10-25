@@ -11,12 +11,15 @@ second public metric. Preserve historical settlements and funded obligations.
 
 ## Discontinued participation awards
 
-From 24 October 2026 (PRD section 11, owner decision D2), welcome and X
-connection awards are discontinued for everyone. Joining and connecting X earn
-no points. Awards recorded before that date stay in the append-only journal
-unchanged, but no displayed total, balance, standing, or ranking counts them.
-Never delete, rewrite, or reissue them. Descriptions of those awards below are
-historical.
+From 24 October 2026 (PRD section 11, Participation points; owner decision of
+that date), welcome and X connection awards end for everyone. Joining and
+connecting X earn no points. Awards recorded before that date stay unchanged.
+Never delete, rewrite, or reissue them. They count where they counted before
+(profile and community total points) and stay out of earned-point standings
+and payouts. The legacy `points_members.welcome` column keeps its fixed value;
+the points API reports a welcome award only for a membership whose immutable
+`joined_at` is before 2026-10-24T00:00:00.000Z, and 0 otherwise. Descriptions
+of those awards below are historical.
 
 ## Earning and history
 
@@ -60,7 +63,7 @@ process; never put private security evidence in a public appeal.
 ## Display
 
 Recorded totals persist between months, subject to explicit corrections.
-Recorded totals exclude historical welcome and X connection awards. Monthly earned-point standings use UTC occurrence dates, include verified payout points,
+Monthly earned-point standings use UTC occurrence dates, include verified payout points, and exclude historical welcome and X connection points,
 and give equal totals equal ranks. Newcomer standings use the first recorded
 earning event within the last 30 days. Badges recognize the first
 accepted contribution, first qualifying review, and work in three projects.

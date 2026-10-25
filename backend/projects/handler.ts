@@ -884,6 +884,7 @@ async function runSetupCheck(
     project = await appendRevision(request, deps, {
       current: project,
       manifest: { ...project.manifest, status: "active" },
+      ownerParticipation: true,
       reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? "Grandfathered before security scans" : `Clean scan ${clearance.assessment.id}`}.`,
       actor,
     });
@@ -1368,6 +1369,8 @@ async function appendRevision(
     reason: string;
     actor: GithubActor;
     applicationId?: string;
+    /** Recheck owner eligibility within the guarded enforcement snapshot. */
+    ownerParticipation?: true;
   },
 ): Promise<ProjectRecord> {
   const { current, actor } = input;
@@ -1377,6 +1380,8 @@ async function appendRevision(
   // guarded append below a conflict, so no write uses stale restrictions.
   const enforcementGeneration = await deps.persistence.enforcementGeneration();
   const enforcements = await deps.persistence.listEnforcements();
+  if (input.ownerParticipation)
+    assertMaintainerNotBanned(current.manifest, actor, enforcements);
   const restriction = projectRestriction(projectId, enforcements);
   // A new revision cannot lift a Quarantine or a Ban (PRD ADM-06).
   if (restriction.state !== "clear" && !enforcedManifest(manifest)) {
