@@ -3843,7 +3843,16 @@ function createSnapshotWithReviewCutoff(
     if (!value)
       throw new Error("Value decision omitted a collected formal review");
     const thirds = REVIEW_VALUE_THIRDS[value.tier];
-    if (thirds === 0) return null;
+    if (thirds === 0) {
+      // An assessed tier-none review earns nothing, but the ruling must
+      // still be published: the exclusion is the only channel the points
+      // layer may use to zero a formerly credited review whose submission
+      // predates the new window. Both caller loops (merged and closed
+      // unmerged) route through this candidate, so publishing here covers
+      // each of them.
+      excludeReview(pullRequest, review, "review-credit-zero-share");
+      return null;
+    }
     if (
       !review.author ||
       isBotActor(review.author) ||
