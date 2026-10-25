@@ -3,6 +3,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { encodeFunctionData, parseAbi } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
@@ -12,6 +15,9 @@ import type { MonthlyAttestationPlan } from "../../backend/payments/monthly-atte
 import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
 import { storeVaultSnapshot } from "../../backend/payments/vault-snapshots";
 import { CloudflareProjectPersistence } from "../../backend/projects/cloudflare-persistence";
+import { onRequest } from "../../functions/api/v1/[[path]]";
+import { runKeeper } from "../../scripts/payment-keeper/keeper";
+import { openKeeperStore } from "../../scripts/payment-keeper/store";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
@@ -182,6 +188,8 @@ function journal() {
   return { records, store };
 }
 
+let keeperApi: ReturnType<typeof Bun.serve> | undefined;
+let keeperStore: ReturnType<typeof openKeeperStore> | undefined;
 try {
   for (let i = 0; ; ++i) {
     try {
@@ -387,6 +395,55 @@ try {
   );
   const legacyAuthorization = await readPublished();
   assert.equal(legacyAuthorization.plan.evmReservation, undefined);
+  const keeperPath = join(
+    mkdtempSync(join(tmpdir(), "slop-monthly-keeper-")),
+    "keeper.sqlite",
+  );
+  keeperStore = openKeeperStore(keeperPath);
+  keeperApi = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      return onRequest({
+        request: new Request(
+          `https://slop.cash${new URL(request.url).pathname}`,
+        ),
+        env: {
+          SLOP_DB: fixture.db,
+          PAYMENT_NETWORKS: JSON.stringify([network]),
+        },
+      } as never);
+    },
+  });
+  const keeperTick = async (execute = false, at = now, perRun = 1) => {
+    assert(keeperStore && keeperApi);
+    return runKeeper(
+      {
+        apiOrigin: keeperApi.url.origin,
+        network,
+        projectIds: [projectId],
+        signer: gas.address,
+        rpcUrl,
+        perRun,
+        gas: {
+          perTransaction: "10000000000000000",
+          perDay: "100000000000000000",
+          additionalFeeReserve: "0",
+        },
+      },
+      { store: keeperStore, evmSigner: gas, now: at, localChain: {} },
+      execute,
+    );
+  };
+  const keeperKey = `authorization:${projectId}:${vault}:${period}`;
+  const retainPublished = async (expected: MonthlyAuthorization) => {
+    const result = await keeperTick();
+    assert(!result.some((item) => item.error), JSON.stringify(result));
+    assert.deepEqual(await keeperStore?.journal.get(keeperKey), expected);
+    keeperStore?.close();
+    keeperStore = openKeeperStore(keeperPath);
+  };
+  await retainPublished(legacyAuthorization);
   const permanentAuthorization = fixture.sqlite
     .prepare("SELECT authorization FROM monthly_payment_authorizations")
     .get();
@@ -490,6 +547,7 @@ try {
   );
   const firstAuthorization = await readPublished();
   assert.deepEqual(firstAuthorization.legacyAuthorization, legacyAuthorization);
+  await retainPublished(firstAuthorization);
   await assert.rejects(
     prepareEvmMonthlyReservation(config, period, allocationDigest, [
       entries[0],
@@ -581,6 +639,21 @@ try {
   );
   const authorization = await readPublished();
   assert.equal(authorization.plan.messageHex, nextDigest.slice(2));
+  await retainPublished(authorization);
+  assert.deepEqual(
+    await keeperStore.journal.get(
+      `${keeperKey}:attempt:${legacyAuthorization.plan.messageHex}`,
+    ),
+    legacyAuthorization,
+  );
+  assert.equal(
+    keeperStore.db
+      .query<{ n: number }, [string]>(
+        "SELECT count(*) n FROM journal WHERE key LIKE ?",
+      )
+      .get(`${keeperKey}:attempt:%`)?.n,
+    3,
+  );
   assert.deepEqual(
     fixture.sqlite
       .prepare("SELECT authorization FROM monthly_payment_authorizations")
@@ -664,6 +737,40 @@ try {
     "combined snapshot includes both awards and the pending month",
   );
   assert.equal(BigInt(await value(vault, "pendingMonthlyGross()")), 98000000n);
+  if (process.env.SLOP_MONTHLY_EVIDENCE_DIR) {
+    await storeVaultSnapshot(
+      fixture.db,
+      { projectId, network, chain: "base", vault, asset: token },
+      totals,
+      now.toISOString(),
+    );
+    const response = await handlePaymentsApi(
+      new Request(
+        `https://slop.cash/api/v1/payments/projects/${projectId}/vault`,
+      ),
+      { db: fixture.db },
+    );
+    assert.equal(response.status, 200);
+    mkdirSync(process.env.SLOP_MONTHLY_EVIDENCE_DIR, { recursive: true });
+    writeFileSync(
+      join(
+        process.env.SLOP_MONTHLY_EVIDENCE_DIR,
+        "monthly-reserve-totals.json",
+      ),
+      JSON.stringify(
+        {
+          totals,
+          vaultResponse: await response.json(),
+          project: (await fixture.getProject(projectId))?.manifest,
+          config,
+          provenance:
+            "Actual local Anvil vault and migrated SQLite; public fixture accounts only",
+        },
+        null,
+        2,
+      ),
+    );
+  }
   await assert.rejects(
     prepareEvmMonthlyReservation(config, period, allocationDigest, entries),
     EvmMonthlyAlreadyAdmitted,
@@ -756,9 +863,21 @@ try {
     gas.address,
     false,
   );
-  const firstLeaf = await submitEvmMonthly(env, authorization, false, 1);
-  assert.equal(firstLeaf.complete, false);
+  const firstLeaf = await keeperTick(true, new Date("2027-01-04T00:00:01Z"));
+  assert(
+    firstLeaf.some(
+      (item) =>
+        item.operation === `monthly:${period}` &&
+        item.state === "execution-checked",
+    ),
+    JSON.stringify(firstLeaf),
+  );
   await finalized();
+  assert.equal(
+    BigInt(await value(vault, "pendingMonthlyGross()")),
+    97000000n,
+    "keeper resumes one admitted leaf after Off and admission expiry",
+  );
   await send(
     vault,
     buildCommitMonthlyLeafCalldata(period, next.entries[0], 0, tree.proofs[0]),
@@ -1112,6 +1231,8 @@ try {
         oldAwardFee: payment.feeMicro,
         preUpgradeWalletSignature: "accepted",
         uncertainLegacyAdmission: "same-transaction-finalized-winner",
+        keeper:
+          "public HTTP, durable V1-to-V2 and later attempt cache, restart, one leaf after Off/window",
         simultaneousPendingMonth: "refused",
         allFundedMonth: "sealed-with-no-leaves",
         manualRace: "rejected-before-reserve",
@@ -1124,6 +1245,8 @@ try {
     ),
   );
 } finally {
+  keeperApi?.stop(true);
+  keeperStore?.close();
   anvil.kill("SIGTERM");
   await new Promise<void>((resolve) => {
     if (anvil.exitCode !== null) resolve();

@@ -59,7 +59,7 @@ export interface KeeperConfiguration {
   signer: string;
   rpcUrl: string;
   gas: GasBudget;
-  /** Maximum award checks per vault per run; failures rotate on the next run. */
+  /** Maximum award checks per vault and examined EVM leaves per month per run. */
   perRun: number;
 }
 type Deployment = PaymentDeploymentRecord & {
