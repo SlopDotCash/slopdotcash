@@ -282,7 +282,7 @@ function validateEscrowPolicy(value, feeBasisPoints) {
     !isEscrowChain(value.chain) ||
     value.feeBasisPoints !== feeBasisPoints ||
     // Escrow v2 (PRD section 6): the unused-fund withdrawal fee equals the
-    // 2% payout fee, floor(gross / 50) per withdrawal (#907). The contracts
+    // 2% payout fee, ceil(gross / 50) per withdrawal (#907). The contracts
     // enforce both.
     value.withdrawalFeeBasisPoints !== ESCROW_WITHDRAWAL_FEE_BASIS_POINTS ||
     value.feeMode !== "deduct-from-gross" ||
