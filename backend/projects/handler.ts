@@ -6,7 +6,10 @@ import type {
   PublicProjectApplication,
   SetupAuthority,
 } from "../../src/lib/project-contracts";
-import { validRepositoryPath } from "../../src/lib/project-contracts";
+import {
+  type RepositoryIdentity,
+  validRepositoryPath,
+} from "../../src/lib/project-contracts";
 import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
 import { classifyRevisionChanges } from "../../src/lib/project-revision-changes";
 import {
@@ -117,6 +120,7 @@ export type ProjectApiDependencies = {
   /** Public GitHub facts: the manifest matches its repositories and steward. */
   repositoryControl: (
     manifest: ProjectDefinition,
+    repository?: RepositoryIdentity,
   ) => Promise<RepositoryControl>;
   /**
    * The Slopbot installation and the account's exact repository permission.
@@ -745,9 +749,21 @@ async function currentAuthority(
   manifest: ProjectDefinition,
   actor: GithubActor,
 ): Promise<{ authority: SetupAuthority; access: AccessCheck }> {
+  const access = await readRepositoryAccess(
+    deps.repositoryAccess,
+    manifest,
+    actor,
+  );
+  const authority = setupAuthority(access, actor, manifest.repositories[0].id);
+  if (authority.state !== "verified") return { authority, access };
   let control: RepositoryControl;
   try {
-    control = await deps.repositoryControl(manifest);
+    control = await deps.repositoryControl(
+      manifest,
+      access.state === "read" && access.access.installation === "installed"
+        ? access.access.repository
+        : undefined,
+    );
   } catch {
     const message = "GitHub could not be checked. Try again.";
     return {
@@ -757,15 +773,7 @@ async function currentAuthority(
   }
   if (control.state === "mismatch")
     fail(422, "invalid_manifest", control.reason);
-  const access = await readRepositoryAccess(
-    deps.repositoryAccess,
-    manifest,
-    actor,
-  );
-  return {
-    authority: setupAuthority(access, actor, manifest.repositories[0].id),
-    access,
-  };
+  return { authority, access };
 }
 
 /**

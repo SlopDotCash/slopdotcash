@@ -7,7 +7,23 @@
 > SHA-256 digests) alongside the proxy digests. Read ERC-1967 implementation
 > slots at the same finalized block used for verification. Proxy bytecode alone
 > does not prove the approved logic. After an upgrade, review and append a new
-> registry revision before treating the new implementation as accepted.
+> registry revision before treating the new implementation as accepted, and keep
+> the outgoing implementation in its reviewed history so events from before the
+> upgrade still verify. Copy the same `evmUpgrade` (including `history`) into the
+> executor's pinned `PAYMENT_DEPLOYMENTS`; it is compared field by field, and a
+> mismatch makes monthly signing fail closed. Each history entry's
+> `supersededAtBlock` is the block of the LAST proxy upgrade (vault or factory)
+> that leaves that review; events after it from that review are rejected, so a
+> bound set at the first of several upgrades would reject events from proxies
+> not yet upgraded.
+>
+> Pending upgrades (24 October 2026): the mainnet EVM vaults and the Solana
+> program were deployed from `bce5b0df`. Source on `development` rounds the 2%
+> fee up (#1189) and, on Solana, releases a monthly award whose source already
+> holds the identical award (#1175). The payment executor already relies on that
+> Solana release rule. Upgrade the Solana program and record its new
+> `codeSha256` before any Solana project turns on automatic monthly payment;
+> until the upgrade, reconciliation accepts either fee rounding.
 
 # Owner-controlled escrow mainnet deployment
 
