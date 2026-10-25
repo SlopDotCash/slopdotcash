@@ -20,6 +20,7 @@
     "tests/vetting-evidence-fixture.ts",
     "src/lib/payments/**/*.ts",
     "contracts/evm/adapter.ts",
+    "contracts/evm/monthly-reserve.ts",
     "contracts/evm/integration/upgrade.ts",
     "contracts/solana/adapter.ts",
     "contracts/solana/transactions.ts",
