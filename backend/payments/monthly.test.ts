@@ -1401,6 +1401,14 @@ describe("monthly attestation input", () => {
       .prepare("UPDATE monthly_payment_runs SET snapshot=?")
       .run(JSON.stringify(bad));
     await rejects(prepare(), "snapshot_changed");
+    // A rebuilt snapshot must still name an actual immutable project revision.
+    const unknownRevision = JSON.parse(row.snapshot);
+    unknownRevision.manifestSha256 = "f".repeat(64);
+    const text = JSON.stringify(unknownRevision);
+    sqlite
+      .prepare("UPDATE monthly_payment_runs SET snapshot=?,snapshot_sha256=?")
+      .run(text, await sha256Hex(text));
+    await rejects(prepare(), "snapshot_changed");
   });
 });
 
