@@ -1,6 +1,7 @@
 /** Real local upgrade workflow. Faults affect only loopback RPC and generated Anvil state. */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
@@ -75,6 +76,8 @@ let historyUnavailable = false;
 let omitKnownVaults = false;
 let holdStraggler = false;
 let straggler = "";
+let receiptFault: "missing" | "canonical" | null = null;
+let finalityLimit: string | null = null;
 let gateway: ReturnType<typeof Bun.serve> | undefined;
 const results: Record<string, unknown> = {
   mode: before ? "before" : "after",
@@ -193,6 +196,26 @@ try {
           error: { code: -32601, message: "method not available" },
         });
       const body = await raw(query.method, query.params);
+      if (query.method === "eth_getTransactionReceipt" && receiptFault) {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: query.id,
+          result:
+            receiptFault === "missing"
+              ? null
+              : { ...body.result, blockHash: `0x${"00".repeat(32)}` },
+        });
+      }
+      if (
+        query.method === "eth_getBlockByNumber" &&
+        query.params[0] === "finalized" &&
+        finalityLimit
+      )
+        return Response.json({
+          jsonrpc: "2.0",
+          id: query.id,
+          ...(await raw(query.method, [finalityLimit, false])),
+        });
       if (query.method === "eth_sendRawTransaction" && body.result)
         await rpc("anvil_mine", ["0x40"]);
       return Response.json({ jsonrpc: "2.0", id: query.id, ...body });
@@ -475,6 +498,66 @@ try {
     const replay = await Bun.file(join(out, "upgrade/upgrade.json")).json();
     assert.equal(replay.verification.preservationBlock, preservationBlock);
     assert.equal(replay.verification.laterPayments.length, 1);
+    const journalFile = join(out, "upgrade/upgrade.json");
+    const original = await readFile(journalFile);
+    const originalHash = createHash("sha256").update(original).digest("hex");
+    const sidecar = Bun.spawn(
+      [
+        process.execPath,
+        "--no-env-file",
+        "scripts/escrow-acceptance/upgrade-verify.ts",
+        "base-sepolia",
+        journalFile,
+        replay.sourceCommit,
+        originalHash,
+        join(out, "read-only-verification.json"),
+      ],
+      {
+        cwd: root,
+        env: {
+          PATH: process.env.PATH,
+          ESCROW_ACCEPTANCE_RPC_URL: `http://127.0.0.1:${port + 1}`,
+          ESCROW_ACCEPTANCE_FACTORY: factory,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [sidecarOut, sidecarError, sidecarExit] = await Promise.all([
+      new Response(sidecar.stdout).text(),
+      new Response(sidecar.stderr).text(),
+      sidecar.exited,
+    ]);
+    assert.equal(sidecarExit, 0, sidecarError);
+    assert.deepEqual(await readFile(journalFile), original);
+    assert.equal(JSON.parse(sidecarOut).originalPlanUnchanged, true);
+    results.readOnlySidecar = {
+      exit: sidecarExit,
+      originalPlanUnchanged: true,
+      noSigningKey: true,
+    };
+    for (const fault of ["missing", "canonical"] as const) {
+      receiptFault = fault;
+      const refused = await run(
+        "verify",
+        "upgrade",
+        deploymentBlock,
+        `receipt-${fault}`,
+      );
+      assert.equal(refused.exit, fault === "missing" ? 75 : 1, refused.stdout);
+      results[`receipt-${fault}`] = { exit: refused.exit };
+    }
+    receiptFault = null;
+    finalityLimit = toHex(BigInt(preservationBlock) - 1n);
+    const notFinal = await run(
+      "verify",
+      "upgrade",
+      deploymentBlock,
+      "completion-not-final",
+    );
+    assert.equal(notFinal.exit, 75, notFinal.stdout);
+    finalityLimit = null;
+    results.completionNotFinal = { exit: notFinal.exit };
     results.laterPayment = {
       exit: laterPayment.exit,
       preservationBlock,
@@ -525,6 +608,21 @@ try {
     );
     assert.equal(restored.exit, 0, restored.stdout);
     results.restored = { exit: restored.exit };
+    await call(token, "mint", [owner.address, 1n]);
+    await call(token, "approve", [vault, 1n]);
+    await call(vault, "deposit", [1n]);
+    const otherActivity = await run(
+      "verify",
+      "upgrade",
+      deploymentBlock,
+      "other-activity",
+    );
+    assert.equal(otherActivity.exit, 1, otherActivity.stdout);
+    assert.match(
+      otherActivity.stdout,
+      /Later non-payment activity is unqualified/,
+    );
+    results.unrelatedActivity = { exit: otherActivity.exit };
   }
   await Bun.write(
     join(out, "result.json"),
