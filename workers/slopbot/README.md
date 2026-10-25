@@ -953,21 +953,24 @@ including an appeal retry after a failed send, with zero score or cost rows.
 
 ### Valuation budget admission
 
-Migration `0051_slopbot_value_budget.sql` stores immutable attempt reservations
-and reconciliations. Migration `0077_slopbot_alerts_only.sql` preserves those
-records and permits a null monthly allowance for explicit alerts-only approval.
-`reserveValueBudget` requires an approved spending mode and a conservative maximum
-attempt cost. In capped mode, it atomically counts the
-current month's recorded provider costs (or estimates) across installations and
-all unreconciled reservations. Prior-month reservations remain held because an
-unresolved provider request can be charged later. A repeated attempt ID does
-not authorize another call. The scheduled consumer uses these primitives. They do not configure a
-production allowance or impose a provider-side spending cap.
+Migration `0051_slopbot_value_budget.sql` stores immutable attempts and
+reconciliations. `0077_slopbot_alerts_only.sql` added alerts-only mode.
+`0084_slopbot_attempt_accounting.sql` preserves those records and their retained
+inference results. New alerts-only attempts have no numeric reserve. The owner
+approved this simplification on 25 October 2026 (PRD sections 5 and 11).
 
-The consumer must use its unique `value:<UUID>` attempt ID as the cost ledger's
-review key, record every attempted route including failures, and pass the full
-expected call count to reconciliation. Capacity is released only when every
-expected receipt has a provider-reported amount within the reserved maximum.
+`reserveValueBudget` records each attempt once before a provider call. Capped
+mode still requires a positive reserve for the full route. It counts the current
+month's costs and all unreconciled holds, including prior months. Switching to
+capped mode cannot ignore an unresolved alerts-only attempt with unknown cost:
+new capped admission waits for that cost to reconcile.
+
+Use the unique `value:<UUID>` attempt ID as the cost ledger review key. Record
+all route calls, including failures. Reconcile only when the complete expected
+call count has provider-reported costs. Estimates and missing receipts remain
+unknown. Capped reconciliation also requires the cost to fit the original
+reserve. Alerts-only reconciliation has no maximum-cost comparison. Neither
+mode imposes a provider-side spending cap or charges contributors.
 Missing, estimated or over-reservation costs require reconciliation; there is
 no timeout-based release. A denied pre-call guard does not by itself prove that
 an interrupted attempt never sent a request. Existing review calls outside this
@@ -1032,25 +1035,33 @@ group pending; it does not assign zero or split that group. Failures retain a
 retry state without provider exception bodies. Validated results are retained before publication, so a restart can reuse them
 without another model call.
 
-Required operator settings have no defaults. Set the following GitHub Actions
-variables in the protected production environment. The release validates them
-as one group and supplies them to the same Worker version as its producer SHA.
-All three empty leaves value inference disabled; partial or malformed settings
-stop the release before deployment. The attempt reserve must cover the complete
-model route, and the start timestamp must follow the subscription-only backfill.
-No setting here changes payout approval or enables closures.
+Select the spending mode explicitly with the protected production environment
+variable `SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD`. All settings absent leaves
+inference disabled. The release and consumer share `value-settings.ts` validation;
+malformed or incomplete settings stop admission.
 
-`SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD`,
-`SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD`, `SLOPBOT_VALUE_START_AT`, the existing
-model credential, and the deployed `SLOPBOT_PRODUCER_REVISION`. The start date
-separates ongoing API assessment from the subscription-only historical backfill;
-set it after the historical cutoff. No production settings are enabled here.
-Set `SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD=alerts-only` for the owner-approved
-24 October 2026 policy: email every crossed $500 milestone without a monthly hard
-cap. A positive integer instead selects a capped allowance. Missing or malformed
-configuration still stops inference. Both modes retain every attempt and cost;
-alerts-only records a null monthly limit rather than an invented finite cap.
-The attempt reservation must cover the entire permitted model route.
+For the approved policy, set the mode to `alerts-only`. No numeric attempt
+reserve is needed. The checked-in API cutoff is `2026-11-01T00:00:00.000Z` (owner
+decision, 25 October 2026). An optional `SLOPBOT_VALUE_START_AT` can delay this
+cutoff, but cannot include September or October. Those months use the subscription
+assessment and standard journal import path. Existing positive reserve settings
+are accepted in alerts-only mode but do not create a fictional cost ceiling.
+
+A positive monthly amount selects capped mode. It still requires a positive
+`SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD` within that allowance and an explicit
+canonical UTC `SLOPBOT_VALUE_START_AT` on or after 1 November. Neither mode can
+use API assessment for September or October. The release supplies the validated
+settings to the same Worker version as `SLOPBOT_PRODUCER_REVISION` and the existing model
+credential. No source default enables inference, payout approval or closures.
+Email each crossed $500 spending milestone in alerts-only mode. All attempts,
+known costs and unknown costs remain recorded. Migration `0085` queues each new
+failed Surplus request for the existing private notify service. A cron claims
+one pending notice before sending it. The notice includes only its cost-record
+ID, model, fixed failure category and time. A failed primary request still gets
+a notice if the fallback succeeds. Historical failures are not queued again.
+An ambiguous email result stays recorded and is not blindly resent. An email
+outage does not stop the scheduled assessment; the cron still reports the
+notification failure. This source change does not set production variables, deploy a Worker or prove a live assessment.
 
 The consumer replay uses actual SQLite migrations, collector, policy loader,
 model SDK over local HTTP, usage ledger, journal reader and publisher. Captured

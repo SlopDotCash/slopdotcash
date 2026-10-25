@@ -13,7 +13,7 @@ import {
 } from "./value-inference";
 import type { SubscriptionResult } from "./value-producer";
 
-/** Callers must reserve an approved inference budget before invoking this.
+/** Callers must supply the approved spending mode and attempt identity.
  * This function returns a proposal and usage; it cannot publish or approve it.
  */
 export async function assessValue(

@@ -679,6 +679,7 @@ jobs:
         run: |
           node - "$RUNNER_TEMP/slopbot-value-args" <<'NODE'
           const { writeFileSync } = require("node:fs");
+          const { valueSettings } = require("./workers/slopbot/value-settings.ts");
           const names = [
             "SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD",
             "SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD",
@@ -689,15 +690,16 @@ jobs:
             writeFileSync(process.argv[2], "");
             process.exit(0);
           }
-          const [monthly, reserve, start] = values;
-          const positiveAmount = (value) => /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
-          if ((monthly !== "alerts-only" && !positiveAmount(monthly)) ||
-              !positiveAmount(reserve) ||
-              (monthly !== "alerts-only" && Number(reserve) > Number(monthly)) ||
-              !Number.isFinite(Date.parse(start)) || new Date(start).toISOString() !== start) {
-            throw new Error("Set all three Slopbot value settings: alerts-only or a positive monthly allowance, a positive route reserve, and a canonical UTC start timestamp.");
+          const settings = valueSettings(process.env);
+          if (!settings) {
+            throw new Error("Select alerts-only (November API cutoff), or supply a positive monthly allowance, a positive route reserve and a canonical UTC start. September and October cannot enter API assessment.");
           }
-          writeFileSync(process.argv[2], names.map((name, i) => `--var=${name}:${values[i]}`).join("\n") + "\n");
+          const bindings = [
+            [names[0], settings.monthly === null ? "alerts-only" : String(settings.monthly)],
+            [names[2], new Date(settings.start).toISOString()],
+          ];
+          if (settings.maximum !== null) bindings.push([names[1], String(settings.maximum)]);
+          writeFileSync(process.argv[2], bindings.map(([name, value]) => `--var=${name}:${value}`).join("\n") + "\n");
           NODE
 
       - name: Deploy private identity and Cloudflare Pages

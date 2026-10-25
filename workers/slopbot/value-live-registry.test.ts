@@ -10,6 +10,7 @@ import { findRegisteredRepositoryById } from "../../src/lib/repositories.mjs";
 import { REWARD_ASSET_NETWORKS } from "../../src/lib/reward-asset.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
+import worker from "./index";
 import { recordDelivery } from "./persistence";
 import { consumeValueRequest, type ValueConsumerEnv } from "./value-consumer";
 import { recordValueRequest } from "./value-requests";
@@ -37,6 +38,10 @@ for (const change of [
   "restricted",
   "identity",
   "deselected",
+  "september",
+  "october",
+  "early-api-override",
+  "notice-failed",
 ] as const) {
   test(`live registration reaches the consumer; ${change} authority`, async () => {
     const { db, sqlite } = sqliteD1(
@@ -129,8 +134,14 @@ for (const change of [
         });
       if (url.pathname === `/repos/${repository}/pulls/1`)
         return Response.json({
-          state: "open",
-          merged_at: null,
+          state:
+            change === "september" || change === "october" ? "closed" : "open",
+          merged_at:
+            change === "september"
+              ? "2026-09-30T23:59:59Z"
+              : change === "october"
+                ? "2026-10-31T23:59:59Z"
+                : null,
           closed_at: null,
         });
       throw new Error("Unexpected GitHub request");
@@ -143,24 +154,56 @@ for (const change of [
         SLOPBOT_APP_USER_ID: "2",
         SURPLUS_API_KEY: "not-used-before-inference",
         SLOPBOT_PRODUCER_REVISION: "a".repeat(40),
-        SLOPBOT_VALUE_START_AT: at,
         SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only",
-        SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: "1000000",
+        ...(change === "early-api-override"
+          ? { SLOPBOT_VALUE_START_AT: at }
+          : {}),
       };
-      const outcome = await consumeValueRequest(env, job);
+      let outcome: string;
+      if (change === "notice-failed") {
+        sqlite.run(
+          `INSERT INTO slopbot_costs(review_key,installation_id,call_kind,route_step,provider,requested_model,outcome,input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at) VALUES ('notice',1,'triage',1,'surplus','claude-opus-5.5','failed',0,0,0,0,'local',0,0,'estimated','2026-11-01T00:00:00.000Z')`,
+        );
+        const scheduledEnv = {
+          ...env,
+          SLOPBOT_DB: db,
+          SLOPBOT_WEBHOOK_SECRET: "unused",
+          SLOPBOT_QUEUE: { send: async () => {} },
+          SLOP_NOTIFY: {
+            fetch: async () => {
+              throw new Error("mail unavailable");
+            },
+          },
+        };
+        await expect(worker.scheduled({}, scheduledEnv)).rejects.toThrow(
+          "needs attention",
+        );
+        expect(
+          sqlite
+            .query("SELECT outcome FROM slopbot_provider_failure_receipts")
+            .get(),
+        ).toEqual({ outcome: "ambiguous" });
+        await worker.scheduled({}, scheduledEnv);
+        outcome = "open";
+      } else outcome = await consumeValueRequest(env, job);
       expect(outcome).toBe(
-        change === "none"
+        change === "none" || change === "notice-failed"
           ? "open"
-          : change === "deselected"
-            ? "retry"
-            : "authority",
+          : change === "early-api-override"
+            ? "budget"
+            : change === "deselected"
+              ? "retry"
+              : "authority",
       );
       expect(
         sqlite
           .query("SELECT state,outcome FROM slopbot_value_processing")
           .get(),
       ).toEqual({
-        state: change === "none" ? "completed" : "waiting",
+        state:
+          change === "none" || change === "notice-failed"
+            ? "completed"
+            : "waiting",
         outcome,
       });
       if (
