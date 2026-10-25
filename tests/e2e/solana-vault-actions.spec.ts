@@ -1125,14 +1125,7 @@ async function ownerSetupWorkflow(
       await expect(monthly).toHaveValue("on");
       if (!automatic) await monthly.selectOption("off");
     }
-    const browserReviewResponse = page.waitForResponse(
-      (response) =>
-        response.url() === `${origin}/api/v1/project-vaults/${project.id}` &&
-        response.request().method() === "POST" &&
-        response.request().postDataJSON().step === "review",
-    );
     await setup.getByRole("button", { name: "Review vault creation" }).click();
-    const browserReview = (await (await browserReviewResponse).json()).review;
     await expect(
       setup.getByRole("button", { name: "Create vault in wallet" }),
     ).toBeEnabled();
@@ -1142,21 +1135,24 @@ async function ownerSetupWorkflow(
     });
     if (automatic) {
       // A normal owner can leave this review open past the Solana transaction lifetime.
+      // This finalized blockhash is read after the page accepted its review.
+      // Its expiry is an upper bound for the review's earlier blockhash, so
+      // the test does not need Chromium to retain the response body.
+      const expiryBound = await connection.getLatestBlockhash("finalized");
       await expect
         .poll(() => connection.getBlockHeight("confirmed"), {
           timeout: 240_000,
           intervals: [1000],
         })
-        .toBeGreaterThan(browserReview.transaction.lastValidBlockHeight);
+        .toBeGreaterThan(expiryBound.lastValidBlockHeight);
       const validity = await connection.isBlockhashValid(
-        browserReview.transaction.blockhash,
+        expiryBound.blockhash,
         "confirmed",
       );
       expect(validity.value).toBe(false);
       await info.attach("expired-creation-review.json", {
         body: JSON.stringify({
-          blockhash: browserReview.transaction.blockhash,
-          lastValidBlockHeight: browserReview.transaction.lastValidBlockHeight,
+          expiryBound,
           blockHeightBeforeCreate: await connection.getBlockHeight("confirmed"),
           validBeforeCreate: validity.value,
         }),
