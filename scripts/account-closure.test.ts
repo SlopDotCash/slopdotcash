@@ -318,3 +318,41 @@ test("closure needs a signed-in session and a same-origin JSON request, and a re
     sqlite.close();
   }
 });
+
+test("retired Telegram routes reveal no links and preserve historical records", async () => {
+  const { sqlite, tokens, call } = await harness();
+  const history = () =>
+    [
+      "points_telegram_claims",
+      "points_telegram_links",
+      "points_telegram_flows",
+    ].map((table) =>
+      sqlite.query(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+    );
+  try {
+    const before = history();
+    for (const [path, body] of [
+      ["telegram/me", undefined],
+      [`telegram/profile?actor=${ME.actor}`, undefined],
+      ["telegram/start", { public: true }],
+      ["telegram/visibility", { public: true }],
+      ["telegram/disconnect", {}],
+      ["telegram/cancel", {}],
+      ["telegram/webhook", { update_id: 1 }],
+    ] as const) {
+      const response = await call(path, tokens.me, body);
+      expect(response.status).toBe(404);
+    }
+    const people = await call("people", tokens.me);
+    expect(people.status).toBe(200);
+    expect(people.body.people.length).toBeGreaterThan(0);
+    expect(
+      people.body.people.every(
+        (person: unknown) => !Object.hasOwn(person as object, "telegram"),
+      ),
+    ).toBe(true);
+    expect(history()).toEqual(before);
+  } finally {
+    sqlite.close();
+  }
+});

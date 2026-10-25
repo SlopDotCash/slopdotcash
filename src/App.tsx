@@ -119,7 +119,6 @@ const ProjectUpdatePage = lazy(() =>
 
 const SOCIAL_X = "https://x.com/SlopCash";
 const SOCIAL_LINKEDIN = "https://www.linkedin.com/company/slop-cash";
-const SOCIAL_TELEGRAM = "https://t.me/slopcashofficial";
 // Original campaign rotation restored by owner request (24 October 2026).
 const HERO_ACTIONS = [
   "SHIPPING OPEN SOURCE.",
@@ -439,9 +438,6 @@ function Footer() {
           <ExternalLinkAnchor href={SOCIAL_X}>X</ExternalLinkAnchor>
           <ExternalLinkAnchor href={SOCIAL_LINKEDIN}>
             LinkedIn
-          </ExternalLinkAnchor>
-          <ExternalLinkAnchor href={SOCIAL_TELEGRAM}>
-            Telegram
           </ExternalLinkAnchor>
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
         </nav>
@@ -2279,11 +2275,6 @@ function SponsorsPage({
           </li>
           <li>
             <a href={CONTACT_MAILTO}>Email {CONTACT_EMAIL}</a>
-          </li>
-          <li>
-            <ExternalLinkAnchor href={SOCIAL_TELEGRAM}>
-              Ask on Telegram
-            </ExternalLinkAnchor>
           </li>
           <li>
             <ExternalLinkAnchor href={SOURCE_REPOSITORY}>

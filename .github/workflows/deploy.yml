@@ -711,9 +711,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_BOT_USERNAME: ${{ secrets.TELEGRAM_BOT_USERNAME }}
-          TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
           SLOPBOT_RELEASE: ${{ vars.SLOPBOT_RELEASE }}
           SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_RELEASE }}
           SLOP_NOTIFY_MAIL_PILOTS: ${{ vars.SLOP_NOTIFY_MAIL_PILOTS }}
@@ -843,19 +840,6 @@ jobs:
             rm -f "$x_secrets"
           fi
 
-          # Optional Telegram connection bot (PRD SOC-02): all three values or none.
-          if [ -n "$TELEGRAM_BOT_TOKEN" ] || [ -n "$TELEGRAM_BOT_USERNAME" ] || [ -n "$TELEGRAM_WEBHOOK_SECRET" ]; then
-            telegram_secrets="$RUNNER_TEMP/slop-telegram-secrets.json"
-            node - "$telegram_secrets" <<'NODE'
-          const { writeFileSync } = require("node:fs");
-          const { TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET } = process.env;
-          if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_BOT_USERNAME || !TELEGRAM_WEBHOOK_SECRET) throw new Error("Telegram bot settings must be configured together");
-          writeFileSync(process.argv[2], JSON.stringify({ TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET }), { mode: 0o600 });
-          NODE
-            ./node_modules/.bin/wrangler pages secret bulk "$telegram_secrets" --project-name eliza-computer
-            rm -f "$telegram_secrets"
-          fi
-
           pages_secrets="$RUNNER_TEMP/slop-pages-secrets.txt"
           ./node_modules/.bin/wrangler pages secret list \
             --project-name eliza-computer > "$pages_secrets"
@@ -871,8 +855,6 @@ jobs:
             .sort();
           const xKeys = actual.filter((name) => name === "X_CLIENT_ID" || name === "X_CLIENT_SECRET");
           if (xKeys.length === 1) throw new TypeError("X OAuth credentials must be configured together");
-          const telegramKeys = actual.filter((name) => ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_USERNAME", "TELEGRAM_WEBHOOK_SECRET"].includes(name));
-          if (telegramKeys.length !== 0 && telegramKeys.length !== 3) throw new TypeError("Telegram bot settings must be configured together");
           // Optional owner-provisioned secrets for private-report intake and
           // private security analysis (PRD sections 8 and 11). They stay inert
           // until their feature is enabled; any other name still fails closed.
@@ -886,7 +868,7 @@ jobs:
             "SURPLUS_API_KEY",
           ];
           const required = actual.filter(
-            (name) => !xKeys.includes(name) && !telegramKeys.includes(name) && !optional.includes(name),
+            (name) => !xKeys.includes(name) && !optional.includes(name),
           );
           if (JSON.stringify(required) !== JSON.stringify(expected)) {
             throw new TypeError("Pages secret inventory is incomplete or contains unexpected entries");

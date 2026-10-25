@@ -331,8 +331,9 @@ recorded before that date unchanged; never delete, rewrite, or reissue one.
 Earned-point standings and rewards already exclude them. The X connection
 stays a consented profile link with no points.
 Verified payout recognition is fixed per recipient/project/cycle, never per dollar
-or transfer. X or Telegram control never confers GitHub, organization, or payment
-authority; a Telegram connection earns no points (PRD SOC-02).
+or transfer. X control never confers GitHub, organization, or payment authority.
+Telegram is retired (PRD section 3). Preserve its historical records; do not
+restore a bot, connection, public profile link, or support route.
 Only accepted-work points for the project and period determine reward shares;
 never feed historical participation or payout-recognition bonuses into rewards. Preserve
 historical settlements and compatibility fields without exposing a separate
