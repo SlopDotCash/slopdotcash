@@ -305,25 +305,43 @@ Placeholders:
 
 ### 2. Verifiable build with the pinned toolchain
 
+Use Anchor CLI 0.32.1 and the Docker image
+`solanafoundation/anchor:v0.32.1` with the digest
+`sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de`
+(linux/amd64). The image contains solana-cli 2.3.0. The build uses platform
+tools v1.52 and the locked `Cargo.lock`, the same arguments as
+`scripts/build-local.sh`.
+
 ```bash
 git clone https://github.com/SlopDotCash/slopdotcash.git && cd slopdotcash
 git checkout "$COMMIT"
 cd contracts/solana
-# Either verifiable path; both use a pinned Docker image.
-solana-verify build --library-name slop_escrow
-# or: anchor build --verifiable   (Anchor 0.32.1; image solanafoundation/anchor:v0.32.1)
+docker pull solanafoundation/anchor@sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de
+anchor build --verifiable --no-idl -- --tools-version v1.52 -- --locked
 ```
 
-Record the output file (`target/deploy/slop_escrow.so` for `solana-verify`,
-`target/verifiable/slop_escrow.so` for Anchor) as `$SO`.
+Do not use `solana-verify build`. solana-verify 0.5.2 selects the Solana 2.3.0
+image (`solanafoundation/solana-verifiable-build@sha256:695f890e…`), which has
+Cargo 1.84.0. `Cargo.lock` contains `block-buffer 0.12.1`, which needs the
+`edition2024` feature, so Cargo stops before the build starts.
+
+After Anchor writes the program file, it tries to extract the IDL on the host
+and stops with `unexpected argument '--tools-version'` and exit code 1. That
+step occurs after the program file is complete and does not change it. Check
+that `target/verifiable/slop_escrow.so` exists and has a new modification time.
+Any other error is a failed build.
+
+Record `target/verifiable/slop_escrow.so` as `$SO`.
 
 ```bash
 sha256sum "$SO"                          # REVIEWED_SO_SHA256
 solana-verify get-executable-hash "$SO"  # REVIEWED_EXECUTABLE_HASH
 ```
 
-A second operator repeats this step on a different machine. Both hashes must
-match. Record them in the release issue.
+A second operator repeats this step on a different machine with the same
+commit and image digest. Both hashes must match. Record the two values, the
+host and the image digest in the release issue. Do not continue if a value is
+different.
 
 ### 3. Record the current deployed program
 
@@ -342,11 +360,24 @@ solana-verify get-program-hash "$PROGRAM" -u "$RPC"
 The previous hash must equal the hash recorded at the last reviewed release.
 If it differs, stop: the program changed outside the runbook.
 
-If the size of `$SO` is larger than the `Data Length`, extend the program first:
+Before you write the buffer in step 4, compare the size of `$SO` with the
+`Data Length`. If `$SO` is larger, extend the program account by at least the
+difference. Do this before you write the buffer: an upgrade into a program
+account that is too small fails after the buffer is paid for.
 
 ```bash
-solana program extend "$PROGRAM" <ADDITIONAL_BYTES> -u "$RPC" --keypair "$PAYER"
+DATA_LENGTH=<Data Length from solana program show>
+ADDITIONAL_BYTES=$(( $(wc -c < "$SO") - DATA_LENGTH ))
+echo "$ADDITIONAL_BYTES"   # extend only if this is greater than 0
+solana program extend "$PROGRAM" "$ADDITIONAL_BYTES" -u "$RPC" --keypair "$PAYER"
+solana program show "$PROGRAM" -u "$RPC"   # Data Length must now be >= the size of $SO
 ```
+
+Example: the first-operator verifiable build for the next upgrade (#901,
+source `8f069cdc`) is 681,608 bytes. The mainnet program has a 681,392-byte
+`Data Length`. Thus extend it by at least 216 bytes
+(`solana program extend "$PROGRAM" 216 …`) before step 4. A larger value is
+also correct.
 
 ### 4. Write and check the buffer
 

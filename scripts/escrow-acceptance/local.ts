@@ -40,6 +40,11 @@ const FORKS: Record<string, string> = {
     "https://rpc.testnet.chain.robinhood.com",
 };
 const BINDING_DELAY = 3600;
+/** Loopback ports; override them when another local chain already uses the defaults. */
+const EVM_PORT = Number(process.env.ESCROW_ACCEPTANCE_LOCAL_EVM_PORT ?? 18731);
+const SOLANA_PORT = Number(
+  process.env.ESCROW_ACCEPTANCE_LOCAL_SOLANA_PORT ?? 18999,
+);
 const requested = process.argv.slice(2);
 const networks = requested.length
   ? requested
@@ -256,7 +261,7 @@ async function solanaLocalnet() {
   const upgradeAuthority = seed();
   const feeRecipient = pubkey(seed());
   const ledger = mkdtempSync(join(tmpdir(), "slop-acceptance-ledger-"));
-  const rpcUrl = "http://127.0.0.1:18999";
+  const rpcUrl = `http://127.0.0.1:${SOLANA_PORT}`;
   const validator = spawn(
     "solana-test-validator",
     [
@@ -265,11 +270,11 @@ async function solanaLocalnet() {
       "--ledger",
       ledger,
       "--rpc-port",
-      "18999",
+      String(SOLANA_PORT),
       "--faucet-port",
-      "19040",
+      String(SOLANA_PORT + 41),
       "--dynamic-port-range",
-      "19001-19030",
+      `${SOLANA_PORT + 2}-${SOLANA_PORT + 31}`,
       "--upgradeable-program",
       programId,
       so,
@@ -332,7 +337,7 @@ async function solanaLocalnet() {
 }
 
 const summary: Record<string, unknown> = {};
-let port = 18_731;
+let port = EVM_PORT;
 let failed = false;
 for (const network of networks) {
   if (network !== "solana-localnet" && !FORKS[network])

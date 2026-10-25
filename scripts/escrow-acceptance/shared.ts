@@ -23,6 +23,7 @@ import {
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import { projectVaultSnapshots } from "../../backend/payments/vault-snapshots";
 import type { VaultTotals } from "../../contracts/vault-totals";
+import { reservedGross } from "../../src/EscrowFunding";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -921,16 +922,153 @@ export async function reconcile(
     events.filter((e) => e.kind === "paid").length !== 2
   )
     mismatches.push(`ledger holds ${events.length} events, not 2 + 2`);
+  const publicApi = await reconcilePublicApi(projection, projectId, chain);
+  mismatches.push(...publicApi.mismatches);
   return {
     snapshot,
     chain,
     expected,
+    publicApi,
     ledger: {
       obligations: ledger.length,
       paid: paid.length,
       netPaid: ledgerNet.toString(),
       payoutFees: ledgerFees.toString(),
       events,
+    },
+    mismatches,
+  };
+}
+
+/** One public GET through the production payments handler, as the site requests it. */
+async function publicGet(projection: Projection, path: string) {
+  const response = await handlePaymentsApi(
+    new Request(`https://slop.cash/api/v1/payments${path}`),
+    { db: projection.db },
+  );
+  return {
+    status: response.status,
+    body: (await response.json()) as Record<string, unknown>,
+  };
+}
+/**
+ * Compares the public API responses that the site reads with the finalized
+ * chain counters: `/vault` (the vault totals panel) and `/totals` (indexed
+ * award totals). A counter the chain does not report must stay null in the
+ * API and in the panel's reserved figure; it must never become "0". A project
+ * with no indexed data must be unavailable (HTTP 503, or no snapshot), never a
+ * row of zero totals.
+ */
+export async function reconcilePublicApi(
+  projection: Projection,
+  projectId: string,
+  chain: VaultTotals,
+) {
+  const mismatches: string[] = [];
+  const vault = await publicGet(projection, `/projects/${projectId}/vault`);
+  const snapshots = (vault.body.snapshots ?? []) as Record<string, unknown>[];
+  if (vault.status !== 200 || snapshots.length !== 1)
+    mismatches.push(
+      `public /vault returned ${vault.status} with ${snapshots.length} snapshots, not one`,
+    );
+  const served = snapshots[0] ?? {};
+  for (const key of COUNTERS)
+    if (served[key] !== chain[key])
+      mismatches.push(
+        `${key}: public /vault ${JSON.stringify(served[key])} != chain ${JSON.stringify(chain[key])}`,
+      );
+  if (
+    String(served.assetAddress).toLowerCase() !== chain.asset.toLowerCase() ||
+    served.assetDecimals !== chain.decimals ||
+    String(served.vault).toLowerCase() !== chain.vault.toLowerCase()
+  )
+    mismatches.push("public /vault asset or vault identity differs from chain");
+  // The "Reserved for committed awards" figure of the vault totals panel.
+  const panelReserved = reservedGross(
+    served as Parameters<typeof reservedGross>[0],
+  );
+  const chainReserved = reservedGross(chain);
+  if (panelReserved !== chainReserved)
+    mismatches.push(
+      `panel reserved ${panelReserved} != chain reserved ${chainReserved}`,
+    );
+
+  const totals = await publicGet(projection, `/projects/${projectId}/totals`);
+  const assets = (totals.body.assets ?? []) as Record<string, unknown>[];
+  const row = assets.find(
+    (asset) =>
+      String(asset.assetAddress).toLowerCase() === chain.asset.toLowerCase(),
+  );
+  if (totals.status !== 200 || assets.length !== 1 || !row)
+    mismatches.push(
+      `public /totals returned ${totals.status} with ${assets.length} asset rows, not the vault asset`,
+    );
+  else {
+    if (row.totalNetPaidBase !== chain.totalPaid)
+      mismatches.push(
+        `public /totals net paid ${row.totalNetPaidBase} != chain ${chain.totalPaid}`,
+      );
+    if (row.payoutFeesPaidBase !== chain.totalPayoutFees)
+      mismatches.push(
+        `public /totals payout fees ${row.payoutFeesPaidBase} != chain ${chain.totalPayoutFees}`,
+      );
+    const reserved =
+      BigInt(String(row.reservedNetBase)) + BigInt(String(row.reservedFeeBase));
+    if (chainReserved === null || reserved.toString() !== chainReserved)
+      mismatches.push(
+        `public /totals reserved ${reserved} != chain reserved ${chainReserved}`,
+      );
+    if (row.assetDecimals !== chain.decimals)
+      mismatches.push("public /totals asset decimals differ from chain");
+  }
+  const coverage = totals.body.coverage as
+    | { completeThrough?: unknown }
+    | undefined;
+  if (typeof coverage?.completeThrough !== "string")
+    mismatches.push("public /totals reports no finalized coverage position");
+
+  // Missing data: a project the cron never indexed.
+  const missingId = `${projectId}-not-indexed`;
+  const missingTotals = await publicGet(
+    projection,
+    `/projects/${missingId}/totals`,
+  );
+  const missingVault = await publicGet(
+    projection,
+    `/projects/${missingId}/vault`,
+  );
+  const missingSnapshots = (missingVault.body.snapshots ?? null) as
+    | unknown[]
+    | null;
+  if (
+    missingTotals.status !== 503 ||
+    missingTotals.body.error !== "project_payments_not_indexed" ||
+    "assets" in missingTotals.body
+  )
+    mismatches.push(
+      `missing /totals returned ${missingTotals.status} ${JSON.stringify(missingTotals.body)}, not unavailable`,
+    );
+  if (
+    missingVault.status !== 200 ||
+    !Array.isArray(missingSnapshots) ||
+    missingSnapshots.length !== 0
+  )
+    mismatches.push(
+      `missing /vault returned ${missingVault.status} with snapshots ${JSON.stringify(missingSnapshots)}, not an empty list`,
+    );
+  // A counter that this vault type does not report is null on chain; check that null stays null.
+  const unreported = COUNTERS.filter((key) => chain[key] === null);
+  return {
+    vault: { status: vault.status, snapshot: served },
+    totals: { status: totals.status, row: row ?? null, coverage },
+    panelReserved,
+    unreportedCounters: Object.fromEntries(
+      unreported.map((key) => [key, served[key] ?? "absent"]),
+    ),
+    missing: {
+      projectId: missingId,
+      totals: { status: missingTotals.status, body: missingTotals.body },
+      vault: { status: missingVault.status, snapshots: missingSnapshots },
     },
     mismatches,
   };
