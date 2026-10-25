@@ -58,7 +58,9 @@ Config `9hjoFnUrgF65K4DnWSDbS1WJjoGu4LChuz8XFq73UtaS`: identity authority
 `9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY`, rotation authority
 `2tAA47aavW2mqtCAxbn21ZqLb8xZTeq8XvkRR9emduiy`. The release issues (#898,
 #899, #900, #901) hold the transaction identities. The verifiable Docker
-build and second-operator hash are still open for Solana.
+build and exact-artifact qualification are still open for Solana. The owner
+waived a second operator and a different build machine on 25 October 2026;
+that check was not completed (PRD section 11).
 
 These steps deploy replacement UUPS EVM factories and vault implementations,
 and deploy or upgrade the Solana program with owner-controlled upgrades.
@@ -305,25 +307,39 @@ Placeholders:
 
 ### 2. Verifiable build with the pinned toolchain
 
+Use Anchor CLI 0.32.1, the Docker image digest below, platform tools v1.52
+and the locked `Cargo.lock`. The image is linux/amd64 and contains Solana
+CLI 2.3.0.
+
 ```bash
 git clone https://github.com/SlopDotCash/slopdotcash.git && cd slopdotcash
 git checkout "$COMMIT"
 cd contracts/solana
-# Either verifiable path; both use a pinned Docker image.
-solana-verify build --library-name slop_escrow
-# or: anchor build --verifiable   (Anchor 0.32.1; image solanafoundation/anchor:v0.32.1)
+IMAGE=solanafoundation/anchor@sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de
+docker pull "$IMAGE"
+anchor build --verifiable --docker-image "$IMAGE" --no-idl -- --tools-version v1.52 -- --locked
 ```
 
-Record the output file (`target/deploy/slop_escrow.so` for `solana-verify`,
-`target/verifiable/slop_escrow.so` for Anchor) as `$SO`.
+Do not use the default `solana-verify build` image with this lockfile. Its
+Cargo 1.84.0 cannot build the edition-2024 dependency `block-buffer 0.12.1`.
+
+Anchor 0.32.1 extracts the IDL on the host after the Docker build. With these
+arguments, that later step exits with `unexpected argument '--tools-version'`.
+Accept that specific error only after the Docker build completed and wrote a
+new `target/verifiable/slop_escrow.so`. Any other error is a failed build.
+Record that program file as `$SO`.
 
 ```bash
 sha256sum "$SO"                          # REVIEWED_SO_SHA256
 solana-verify get-executable-hash "$SO"  # REVIEWED_EXECUTABLE_HASH
 ```
 
-A second operator repeats this step on a different machine. Both hashes must
-match. Record them in the release issue.
+Record the source commit, tool versions, image digest and both hashes in the
+release issue. A second operator or different machine is not required (owner
+decision, 25 October 2026; PRD section 11). This waiver is not a completed
+independent check. Qualify this exact artifact on the test network before the
+authorized mainnet upgrade. Steps 3 to 9 still verify the deployed bytes,
+executable hash and authority.
 
 ### 3. Record the current deployed program
 
