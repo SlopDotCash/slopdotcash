@@ -762,7 +762,7 @@ try {
           totals,
           vaultResponse: await response.json(),
           project: (await fixture.getProject(projectId))?.manifest,
-          config,
+          config: { ...config, chainId: config.chainId.toString() },
           provenance:
             "Actual local Anvil vault and migrated SQLite; public fixture accounts only",
         },
