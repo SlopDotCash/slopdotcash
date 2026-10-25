@@ -267,7 +267,8 @@ export function SecurityProgramEditor({
               <p>
                 Opening requires available funds in a verified, separate bounty
                 vault. Slop checks the latest finalized balance. Closing stops
-                new reports, not existing cases or awards.
+                new paid research. Private reporting, existing cases, and funded
+                awards remain available.
               </p>
               <label htmlFor="bounty-amount">
                 Published gross award ({existing?.amount.currency ?? "USDC"})

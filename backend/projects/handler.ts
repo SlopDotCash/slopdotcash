@@ -87,7 +87,11 @@ import {
   setupAuthority,
 } from "./setup";
 import { TokenMetadataError, type TokenMetadataReader } from "./token-metadata";
-import { attachOrdinaryVault, type OwnerVaultSetup } from "./vault-setup";
+import {
+  attachBountyVault,
+  attachOrdinaryVault,
+  type OwnerVaultSetup,
+} from "./vault-setup";
 
 export type ProjectApiDependencies = {
   persistence: ProjectPersistence;
@@ -1115,6 +1119,35 @@ async function ownerVault(
   const current = await deps.persistence.getProject(projectId);
   if (!current) fail(404, "not_found", "Project not found");
   const enforcements = await deps.persistence.listEnforcements();
+  const purpose =
+    new URL(request.url).searchParams.get("purpose") ?? "ordinary";
+  if (
+    request.method === "GET" &&
+    !["ordinary", "security-bounty"].includes(purpose)
+  )
+    fail(400, "invalid_request", "Invalid vault purpose");
+  if (request.method === "GET" && purpose === "security-bounty") {
+    // A banned account cannot read restricted bounty totals. During a project
+    // restriction, current owners can still read funded obligations and check
+    // existing transactions; new creation and deposits stay disabled.
+    assertMaintainerNotBanned(current.manifest, actor, enforcements);
+    requireAuthority(await currentAuthority(deps, current.manifest, actor));
+    const canSetup =
+      publicRestrictionOf(current, enforcements).state === "clear";
+    const program = current.manifest.securityBounty;
+    return json(200, {
+      revision: current.revision,
+      canSetup,
+      networks:
+        canSetup && !program?.settlement?.deployments.length && deps.vaultSetup
+          ? await deps.vaultSetup.networks(current, "security-bounty")
+          : [],
+      funds:
+        program && deps.securityProgramFunds
+          ? await deps.securityProgramFunds(current.id, program)
+          : null,
+    });
+  }
   assertMaintainerNotBanned(current.manifest, actor, enforcements);
   if (publicRestrictionOf(current, enforcements).state !== "clear")
     fail(
@@ -1155,19 +1188,27 @@ async function ownerVault(
   exactKeys(
     body,
     ["step", "expectedRevision", "network", "claimId", "automatic"],
-    ["transactionId"],
+    ["transactionId", "payoutPolicy"],
   );
   if (
     !["review", "register"].includes(String(body.step)) ||
     typeof body.network !== "string" ||
     typeof body.claimId !== "string" ||
     body.claimId.length > 150 ||
-    typeof body.automatic !== "boolean"
+    typeof body.automatic !== "boolean" ||
+    (body.payoutPolicy !== undefined &&
+      body.payoutPolicy !== "ordinary" &&
+      body.payoutPolicy !== "security-bounty") ||
+    (body.payoutPolicy === "security-bounty" && body.automatic !== false)
   )
     fail(400, "invalid_request", "Invalid vault setup request");
   const input = body as unknown as VaultSetupInput;
+  const bounty = input.payoutPolicy === "security-bounty";
+  const deployments = bounty
+    ? current.manifest.securityBounty?.settlement?.deployments
+    : current.manifest.escrow?.deployments;
   if (body.step === "register" && typeof body.transactionId === "string") {
-    const existing = current.manifest.escrow?.deployments.find(
+    const existing = deployments?.find(
       (d) =>
         d.network === input.network &&
         d.deploymentTransaction === body.transactionId,
@@ -1190,7 +1231,7 @@ async function ownerVault(
       "stale_revision",
       "The project changed. Reload and review the current policy.",
     );
-  if (current.manifest.escrow?.deployments.length)
+  if (deployments?.length)
     fail(
       409,
       "vault_already_registered",
@@ -1222,13 +1263,26 @@ async function ownerVault(
     const { manifest } = canonicalManifest(JSON.parse(stored.manifestText));
     if (
       manifest.id !== current.id ||
-      manifest.reward.kind !== current.manifest.reward.kind ||
-      manifest.reward.chain !== current.manifest.reward.chain ||
-      !sameValue(manifest.escrow, current.manifest.escrow) ||
-      !(
-        sameValue(manifest.rewardAsset, current.manifest.rewardAsset) ||
-        sameRewardAsset(manifest.rewardAsset, current.manifest.rewardAsset)
-      )
+      (bounty
+        ? !manifest.securityBounty ||
+          !current.manifest.securityBounty ||
+          manifest.securityBounty.amount.currency !==
+            current.manifest.securityBounty.amount.currency ||
+          manifest.securityBounty.amount.network !==
+            current.manifest.securityBounty.amount.network ||
+          manifest.securityBounty.amount.decimals !==
+            current.manifest.securityBounty.amount.decimals ||
+          !sameValue(
+            manifest.securityBounty.settlement,
+            current.manifest.securityBounty.settlement,
+          )
+        : manifest.reward.kind !== current.manifest.reward.kind ||
+          manifest.reward.chain !== current.manifest.reward.chain ||
+          !sameValue(manifest.escrow, current.manifest.escrow) ||
+          !(
+            sameValue(manifest.rewardAsset, current.manifest.rewardAsset) ||
+            sameRewardAsset(manifest.rewardAsset, current.manifest.rewardAsset)
+          ))
     )
       fail(
         409,
@@ -1253,7 +1307,13 @@ async function ownerVault(
   const updated = await appendRevision(request, deps, {
     current,
     actor,
-    manifest: attachOrdinaryVault(current.manifest, deployment),
+    manifest: bounty
+      ? attachBountyVault(
+          current.manifest,
+          deployment,
+          deps.now().toISOString().slice(0, 7),
+        )
+      : attachOrdinaryVault(current.manifest, deployment),
     ownerParticipation: true,
     reason:
       "Owner registered a finalized vault verified against the reviewed factory and project policy.",
@@ -1263,8 +1323,9 @@ async function ownerVault(
     deployment,
     project: updated.manifest,
     revision: updated.revision,
-    ...(creation.manifest.reward.monthlyCapMinor !==
-    updated.manifest.reward.monthlyCapMinor
+    ...(!bounty &&
+    creation.manifest.reward.monthlyCapMinor !==
+      updated.manifest.reward.monthlyCapMinor
       ? {
           notice: `Creation used a monthly cap of ${creation.manifest.reward.monthlyCapDisplay}. The project now uses ${updated.manifest.reward.monthlyCapDisplay}. Use the automatic payment controls below to apply the new cap.`,
         }

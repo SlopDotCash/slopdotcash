@@ -4942,6 +4942,9 @@ small {
 }
 .vault-operation input[type="radio"] {
   flex: 0 0 auto;
+  width: auto;
+  min-height: 0;
+  padding: 0;
   margin-top: 0.3em;
 }
 

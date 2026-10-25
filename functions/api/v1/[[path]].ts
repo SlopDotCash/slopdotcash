@@ -568,12 +568,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     );
   const projectDependencies: ProjectApiDependencies = {
     persistence: projectPersistence,
-    securityProgramFunds: (projectId, program) =>
-      readSecurityProgramFunds(
-        { db: context.env.SLOP_DB, now: () => new Date() },
-        projectId,
-        program,
-      ),
     vaultSetup: ownerVaultSetupService({
       db: context.env.SLOP_DB,
       projects: () => projectPersistence.listProjects(),
@@ -585,6 +579,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         return value;
       },
     }),
+    securityProgramFunds: (projectId, program) =>
+      readSecurityProgramFunds(
+        { db: context.env.SLOP_DB, now: () => new Date() },
+        projectId,
+        program,
+      ),
     vettingClearance: (
       projectId,
       manifest,
