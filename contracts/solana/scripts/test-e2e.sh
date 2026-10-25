@@ -39,7 +39,7 @@ stop_validator() {
 # Prove the production build accepts zero delay and rejects invalid bounds.
 bash scripts/build-local.sh
 start_validator
-node --test --test-force-exit --test-isolation=none integration/production-delay.e2e.mjs
+bash scripts/run-test-stage.sh production-delay node --test --test-force-exit --test-isolation=none integration/production-delay.e2e.mjs
 stop_validator
 # Reuse the same production build for the funded lifecycle suite. The validator also
 # preloads a Project of the earlier 316-byte layout for the migrate_project check, and
@@ -59,4 +59,4 @@ bun build ../../workers/payments/scanner.ts ../../backend/payments/ledger.ts ../
 bun build ../../workers/payment-executor/core.ts --target=node --outfile=.local/executor-core.mjs
 bun build ../../workers/payments/index.ts --target=node --outfile=.local/payments-worker.mjs
 bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/dispatch.mjs
-node --test --test-force-exit --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs
+bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs

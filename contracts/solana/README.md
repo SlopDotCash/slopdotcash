@@ -323,6 +323,12 @@ destination, unauthorized binding, a third-party payment mixed with unrelated
 token transfers, and a foreign project that mentions this project's account.
 Fixture keys and tokens have no mainnet value. CI runs these end-to-end
 workflows; a successful build alone is not payment evidence.
+If a test stage fails, the runner reads the known failed signatures while its
+local validator is still alive. `.local/failure-evidence/` retains bounded
+status and receipt metadata, health, slots and heights; CI uploads only those
+JSON reports. It excludes keys, transaction bytes, account data and raw logs.
+The original test exit status remains unchanged. An absent receipt or a later
+successful run does not establish the cause of an earlier failure.
 `cargo check --locked` verifies the host program build but does not prove SBF or
 validator execution. Use Anchor 0.32.1 and the platform tools pinned in the scripts.
 The end-to-end suite waits the award commitment delay out in seconds, so `test-e2e.sh`
