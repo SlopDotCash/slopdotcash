@@ -2379,8 +2379,8 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     repository: `e2e-security/bounty-intake-${suffix}`,
   };
   const otherProgram = {
-    id: `bounty-a-${suffix}`,
-    repository: `e2e-security/bounty-a-${suffix}`,
+    id: `bounty-intake-other-${suffix}`,
+    repository: `e2e-security/bounty-intake-other-${suffix}`,
   };
   const sentinel = `E2E-PRIVATE-SENTINEL-${suffix}`;
   const report = {
