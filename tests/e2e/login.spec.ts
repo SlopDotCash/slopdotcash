@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { expectHeaderRow } from "../header-row";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -183,6 +184,7 @@ test("the header login link keeps the current page as the return route", async (
   const link = page
     .getByRole("banner")
     .getByRole("link", { name: "Log in", exact: true });
+  await expectHeaderRow(page, link);
   await expect(link).toHaveAttribute(
     "href",
     `${deployment.site}/login?next=${encodeURIComponent("/how-it-works#faq")}`,

@@ -406,8 +406,15 @@ function Header() {
             <Wordmark domain={domain} />
           </span>
         </Link>
-        <Link className="header-nav-link" href="/how-it-works">
-          How It Works
+        <Link
+          ariaLabel="How it works"
+          className="header-nav-link"
+          href="/how-it-works"
+        >
+          <span className="header-nav-full">How It Works</span>
+          <span aria-hidden="true" className="header-nav-short">
+            ?
+          </span>
         </Link>
         <PointsNav />
       </div>

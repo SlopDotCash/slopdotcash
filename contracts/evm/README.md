@@ -24,8 +24,9 @@ for itself. The caller is the owner, and the factory keeps one vault for each
 awards or `Bounty` (1) for private bounties, so one project can hold separate
 ordinary and bounty vaults for the same token (owner decision D13, 24 October
 2026). It
-has no proxy, owner change, token approval, arbitrary call, rescue, claim
-expiry, or award cancellation entry point. An approved award remains reserved until it is paid. The owner can cancel only a wallet binding that has
+is a UUPS proxy that only the factory's upgrade authority can upgrade, and it
+has no owner change, token approval, arbitrary call, rescue, claim expiry, or
+award cancellation entry point. An approved award remains reserved until it is paid. The owner can cancel only a wallet binding that has
 not paid yet, and only inside a bounded window. The only mutable authority is
 the factory's identity authority, replaced by a public registrar-authorized rotation. This
 code has local EVM execution evidence only. It has not received an independent
@@ -333,8 +334,9 @@ ProjectEscrow
   monthlyCap() monthlyEnabled() monthlyRoots(uint32) monthlyWindow(uint32)
   monthlyDigest(uint32,bytes32) allocationRoot((uint64,uint128,bytes32)[])
   payoutFee(uint128) = gross / 50   withdrawalFee(uint128) = payoutFee(gross)
-EscrowFactory
-  constructor(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay)
+EscrowFactory (UUPS proxy; the implementation constructor disables initializers)
+  initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address vaultImplementation)
+  proposeUpgradeAuthority(address) acceptUpgradeAuthority() setVaultImplementation(address)
   create(bytes32 projectId, address token, uint8 purpose)   (owner = msg.sender)
   vaults(bytes32 key) vaultKey(address owner, bytes32 projectId, address token, uint8 purpose)
   VaultCreated(bytes32 indexed projectId, address indexed token, address indexed vault, address owner, uint8 purpose, uint8 decimals)

@@ -186,6 +186,16 @@ const initialized = (config: SolanaEscrowConfig, value: unknown) => {
     info.data[0].length > 0
   );
 };
+/** Whether a recorded obligation already pays this monthly award's actor at least
+ * its gross. release_monthly_award releases such a leaf at any time. */
+const paysActor = (
+  recorded: Uint8Array,
+  entry: { githubUserId: string; grossMicro: string },
+) =>
+  solanaUint(recorded, 112) === BigInt(entry.githubUserId) &&
+  solanaUint(recorded, 8) >= BigInt(entry.grossMicro) &&
+  solanaUint(recorded, 120) >=
+    BigInt(entry.grossMicro) - BigInt(entry.grossMicro) / 50n;
 /** Reads accounts at one finalized slot per batch of 100; returns the lowest slot seen. */
 async function readFinalized(config: SolanaEscrowConfig, addresses: string[]) {
   const values: unknown[] = [];
@@ -211,9 +221,11 @@ async function readFinalized(config: SolanaEscrowConfig, addresses: string[]) {
 
 /**
  * Attester rule for solanaMonthlyMessage v3: at one finalized slot no included
- * source has an `origin` or a `monthly-source` account; frozen_at is that slot's
- * block time. Origins are never closed, so every batch's source was also absent
- * at the lowest batch slot, whose block time is returned. A later hand commit has
+ * source has a `monthly-source` account, and any `origin` it has records an
+ * award paying that actor at least that gross (counted once, as on EVM);
+ * frozen_at is that slot's block time. Origins are never closed, so every
+ * batch's source was also absent at the lowest batch slot, whose block time is
+ * returned. A later hand commit of a smaller award or one to another actor has
  * committed_at >= frozen_at, so release_monthly_award keeps its gross reserved.
  */
 export async function freezeSolanaMonthly(
@@ -226,8 +238,30 @@ export async function freezeSolanaMonthly(
     return [origin, monthlySource];
   });
   const { values, slot } = await readFinalized(config, addresses);
-  if (values.some((value) => initialized(config, value)))
-    throw new Error("A monthly source was already consumed");
+  for (const [index, entry] of plan.entries.entries()) {
+    const [originInfo, marker] = values.slice(index * 2, index * 2 + 2);
+    if (initialized(config, marker))
+      throw new Error("A monthly source was already consumed by a month");
+    if (!initialized(config, originInfo)) continue;
+    // An existing award that already pays this actor at least this gross is
+    // counted once, as on EVM; the program releases this leaf.
+    const recorded = await readSolanaAccount(
+      config,
+      solanaPubkey(
+        solanaAccount(
+          originInfo,
+          config.programId,
+          40,
+          discriminator("Origin"),
+        ),
+        8,
+      ),
+      OBLIGATION_SIZE,
+      OBLIGATION_DISCRIMINATOR,
+    );
+    if (!recorded || !paysActor(recorded, entry))
+      throw new Error("A monthly source was already consumed");
+  }
   const time = await solanaRpc(config, "getBlockTime", [slot]);
   if (typeof time !== "number" || !Number.isSafeInteger(time) || time <= 0)
     throw new Error("Invalid finalized block time");
@@ -400,15 +434,13 @@ export async function submitSolanaMonthly(
     const actor = BigInt(entry.githubUserId);
     const gross = BigInt(entry.grossMicro);
     // Mirror release_monthly_award: a zero actor, or a consumed source whose
-    // obligation is another month's award for at least this gross to the same
-    // actor, or one committed strictly before frozen_at. Any other consumed
-    // source stays reserved for good and is never retried as a refund.
+    // obligation pays this actor at least this gross, or was committed strictly
+    // before frozen_at. Any other consumed source stays reserved for good and is
+    // never retried as a refund.
     let release = actor === 0n;
     let obligation = config.programId; // Anchor's placeholder for no account.
     if (!release) {
-      const [originInfo, marker] = (
-        await readFinalized(config, [origin, monthlySource])
-      ).values;
+      const [originInfo] = (await readFinalized(config, [origin])).values;
       if (initialized(config, originInfo)) {
         const consumed = solanaAccount(
           originInfo,
@@ -424,11 +456,10 @@ export async function submitSolanaMonthly(
           OBLIGATION_DISCRIMINATOR,
         );
         if (!recorded) throw new Error("Origin obligation missing");
-        const byMonth =
-          initialized(config, marker) &&
-          solanaUint(recorded, 112) === actor &&
-          solanaUint(recorded, 8) >= gross;
-        if (!byMonth && int64(recorded, 137) >= BigInt(frozenAt)) {
+        if (
+          !paysActor(recorded, entry) &&
+          int64(recorded, 137) >= BigInt(frozenAt)
+        ) {
           stranded++;
           continue;
         }
@@ -498,8 +529,9 @@ export async function submitSolanaMonthly(
       transactionIds,
       alreadyCommitted: false,
     };
-  // Only sources the owner consumed by hand after the freeze remain. They can
-  // never commit or release, so their gross stays reserved and nothing is left.
+  // Only sources the owner consumed by hand after the freeze with a smaller
+  // award or one to another actor remain. They can never commit or release, so their gross stays
+  // reserved and nothing is left.
   if (stranded)
     throw new Error(
       "Post-freeze source conflict remains reserved; reconciliation required",
