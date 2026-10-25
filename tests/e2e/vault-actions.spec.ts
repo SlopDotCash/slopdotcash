@@ -1231,10 +1231,11 @@ test("owner creates, registers and funds a vault through the real API", async ({
     });
     const setup = page.getByRole("region", { name: "Set up project vault" });
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
-    if (!automatic)
-      await setup
-        .getByLabel("Automatically pay the monthly allocation")
-        .uncheck();
+    const monthlySetting = setup.getByRole("combobox", {
+      name: /^Automatic monthly payment/,
+    });
+    await expect(monthlySetting).toHaveValue("on");
+    if (!automatic) await monthlySetting.selectOption("off");
     const reviewButton = setup.getByRole("button", {
       name: "Review vault creation",
       exact: true,

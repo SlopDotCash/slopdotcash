@@ -193,8 +193,8 @@ claim the same ID first, so ledger IDs stay unique across projects.
 `commitAward` stays owner-only. To let the monthly coordinator commit a month
 without the owner's wallet, an ordinary vault has one more path:
 
-- Normal creation sets the owner's cap and enables monthly commitments unless
-  the owner opts out. The owner can later call `setMonthlyCommitment(cap, enabled)`.
+- Normal creation sets the owner's cap and turns the setting on unless the
+  owner opts out. The owner can later call `setMonthlyCommitment(cap, enabled)`.
   "On" needs a positive cap. While it is off, no monthly allocation can commit.
   Awards already committed stay reserved. Compatibility callers of the old
   three-argument `create` retain their earlier off/zero initial state.

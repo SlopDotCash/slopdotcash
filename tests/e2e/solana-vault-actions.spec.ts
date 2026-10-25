@@ -999,12 +999,12 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
     await setup
       .getByRole("button", { name: "Connect Local Solana wallet" })
       .click();
-    await expect(
-      setup.getByRole("button", { name: "Review vault creation", exact: true }),
-    ).toBeDisabled();
-    await setup
-      .getByRole("combobox", { name: "Automatic monthly payment", exact: true })
-      .selectOption(automatic ? "on" : "off");
+    const monthly = setup.getByRole("combobox", {
+      name: "Automatic monthly payment",
+      exact: true,
+    });
+    await expect(monthly).toHaveValue("on");
+    if (!automatic) await monthly.selectOption("off");
     const browserReviewResponse = page.waitForResponse(
       (response) =>
         response.url() === `${origin}/api/v1/project-vaults/${project.id}` &&
