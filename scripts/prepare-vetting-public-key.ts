@@ -5,6 +5,8 @@ import { dirname, resolve, sep } from "node:path";
 import { sha256Hex } from "../backend/trace/validation";
 import { vettingServiceSigner } from "../workers/vetting/service";
 
+class PublicKeyPreparationError extends Error {}
+
 export const SCANNER_PUBLIC_KEYS = "VETTING_RESULT_PUBLIC_KEYS";
 export type PagesMetadata = {
   production_branch: string;
@@ -65,29 +67,35 @@ export function scannerPagesConfiguration(
     config.name !== target.project ||
     config.vars?.PUBLIC_SITE_URL !== target.origin
   )
-    throw new Error("Scanner Pages environment does not match");
+    throw new PublicKeyPreparationError(
+      "Scanner Pages environment does not match",
+    );
   const variables = remote.deployment_configs.production.env_vars ?? {};
   const existing = variables[SCANNER_PUBLIC_KEYS];
   if (
     existing &&
     (existing.type !== "plain_text" || existing.value !== key.publicKey)
   )
-    throw new Error(
+    throw new PublicKeyPreparationError(
       "Existing scanner public keys differ; rotation is not authorized",
     );
   if (
     config.vars?.[SCANNER_PUBLIC_KEYS] !== undefined &&
     config.vars[SCANNER_PUBLIC_KEYS] !== key.publicKey
   )
-    throw new Error("Source scanner public keys differ");
+    throw new PublicKeyPreparationError("Source scanner public keys differ");
   if (config.env?.preview?.vars?.[SCANNER_PUBLIC_KEYS] !== undefined)
-    throw new Error("Scanner key must not enter preview configuration");
+    throw new PublicKeyPreparationError(
+      "Scanner key must not enter preview configuration",
+    );
   const plain = Object.fromEntries(
     Object.entries(variables)
       .filter(([, v]) => v.type === "plain_text")
       .map(([name, v]) => {
         if (typeof v.value !== "string")
-          throw new Error("Pages plaintext configuration is invalid");
+          throw new PublicKeyPreparationError(
+            "Pages plaintext configuration is invalid",
+          );
         return [name, v.value];
       }),
   );
@@ -107,7 +115,9 @@ export function verifyScannerPublicKey(
     value?.type !== "plain_text" ||
     value.value !== key.publicKey
   )
-    throw new Error("Pages scanner public key readback does not match");
+    throw new PublicKeyPreparationError(
+      "Pages scanner public key readback does not match",
+    );
 }
 export async function pagesMetadata(
   target: PublicScannerKey["target"],
@@ -116,7 +126,9 @@ export async function pagesMetadata(
   const account = env.CLOUDFLARE_ACCOUNT_ID,
     token = env.CLOUDFLARE_API_TOKEN;
   if (!/^[a-f0-9]{32}$/.test(account ?? "") || !token)
-    throw new Error("Protected Cloudflare configuration is required");
+    throw new PublicKeyPreparationError(
+      "Protected Cloudflare configuration is required",
+    );
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${targets[target].project}`,
     {
@@ -125,17 +137,21 @@ export async function pagesMetadata(
       headers: { Authorization: `Bearer ${token}` },
     },
   );
-  if (!response.ok) throw new Error("Pages configuration could not be read");
+  if (!response.ok)
+    throw new PublicKeyPreparationError(
+      "Pages configuration could not be read",
+    );
   const body = (await response.json()) as {
     success?: boolean;
     result?: PagesMetadata;
   };
   if (body.success !== true || !body.result?.deployment_configs?.production)
-    throw new Error("Pages configuration is unavailable");
+    throw new PublicKeyPreparationError("Pages configuration is unavailable");
   return body.result;
 }
 function release(target: string) {
-  if (!(target in targets)) throw new Error("Unknown scanner environment");
+  if (!(target in targets))
+    throw new PublicKeyPreparationError("Unknown scanner environment");
   const chosen = targets[target as PublicScannerKey["target"]];
   if (
     process.env.GITHUB_ACTIONS !== "true" ||
@@ -150,12 +166,16 @@ function release(target: string) {
     execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim() !==
       process.env.GITHUB_SHA
   )
-    throw new Error("The exact protected Pages release is required");
+    throw new PublicKeyPreparationError(
+      "The exact protected Pages release is required",
+    );
 }
 function temporary(path: string) {
   const root = process.env.RUNNER_TEMP;
   if (!root || !resolve(path).startsWith(`${resolve(root)}${sep}`))
-    throw new Error("Output must stay in the release temporary directory");
+    throw new PublicKeyPreparationError(
+      "Output must stay in the release temporary directory",
+    );
   return resolve(path);
 }
 async function main() {
@@ -188,7 +208,9 @@ async function main() {
     raw.toString("base64") !== key.publicKey ||
     (await sha256Hex(raw)) !== key.sha256
   )
-    throw new Error("Derived public key metadata does not match this release");
+    throw new PublicKeyPreparationError(
+      "Derived public key metadata does not match this release",
+    );
   const remote = await pagesMetadata(key.target);
   if (mode === "verify") {
     verifyScannerPublicKey(remote, key);
@@ -198,15 +220,19 @@ async function main() {
     for (const [name, value] of Object.entries(expected.vars ?? {})) {
       const actual = remote.deployment_configs.production.env_vars?.[name];
       if (actual?.type !== "plain_text" || actual.value !== String(value))
-        throw new Error("Pages plaintext configuration readback differs");
+        throw new PublicKeyPreparationError(
+          "Pages plaintext configuration readback differs",
+        );
     }
     return;
   }
   if (mode !== "assemble")
-    throw new Error("Unknown scanner preparation command");
+    throw new PublicKeyPreparationError("Unknown scanner preparation command");
   const configPath = temporary(configFile);
   if (!configPath.endsWith(`${sep}wrangler.toml`))
-    throw new Error("A copied standard Pages config is required");
+    throw new PublicKeyPreparationError(
+      "A copied standard Pages config is required",
+    );
   const config = Bun.TOML.parse(
     await readFile(configPath, "utf8"),
   ) as ScannerPagesConfig;
@@ -219,9 +245,11 @@ async function main() {
   await rm(configPath);
 }
 if (import.meta.main)
-  await main().catch(() => {
+  await main().catch((error: unknown) => {
     console.error(
-      "Scanner public-key preparation failed; private material is not logged.",
+      error instanceof PublicKeyPreparationError
+        ? error.message
+        : "Scanner public-key preparation failed; private material is not logged.",
     );
     process.exitCode = 1;
   });

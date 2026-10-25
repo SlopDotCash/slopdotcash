@@ -479,7 +479,7 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           (
             cd "$publish_dir"
-            ./node_modules/.bin/wrangler pages deploy \
+            WRANGLER_LOG=error WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler pages deploy \
               --project-name=slop-staging \
               --branch=development \
               --commit-hash="$GITHUB_SHA" \
@@ -1463,7 +1463,7 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"
           for attempt in 1 2 3; do
-            if ./node_modules/.bin/wrangler pages deploy --cwd "$publish_dir" \
+            if WRANGLER_LOG=error WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler pages deploy --cwd "$publish_dir" \
               --project-name=eliza-computer \
               --branch=main \
               --commit-hash="$RELEASE_SHA" \
