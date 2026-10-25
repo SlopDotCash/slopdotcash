@@ -180,6 +180,13 @@ the account and the coordinator's freeze are not part of this run; the
 executor receives an authorization that the identity test key signs over the
 same digest (EVM) or message (Solana) as the attester.
 
+If the EVM executor refuses its gas ceiling, a direct permissionless send can
+prove the contract checks only. The evidence records that path separately and
+keeps the monthly scenario pending. It does not prove automatic execution.
+Previously saved evidence with that fallback is reclassified on resume. After
+an approved executor repair, use a new run to prove automatic submission; the
+previous period has already committed. Do not increase limits to obtain a pass.
+
 The evidence file has a `scenarios` object: per scenario its status
 (`passed`, `pending` or `failed`), the reason, its vaults, every
 transaction, and its checks. The run exits 0 only when every scenario passed.

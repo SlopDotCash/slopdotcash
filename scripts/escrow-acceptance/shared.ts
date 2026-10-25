@@ -1083,7 +1083,7 @@ export async function runScenarios(
 /**
  * The extended scenario figures in base units, scaled like scenarioAmounts.
  * A private bounty of 100 pays 75 and 25 (PRD section 8); ordinary awards pay
- * floor(gross / 50) as the fee.
+ * ceil(gross / 50) as the fee. The selected figures are exact multiples.
  */
 export function extendedAmounts(decimals: number, divisor: bigint) {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36)

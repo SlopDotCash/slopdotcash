@@ -870,7 +870,7 @@ export async function runEvmExtended(
             `${what} waits for finality (block ${BigInt(block)}, finalized ${finalized})`,
           );
       });
-    if (!entry.checks.automatic) {
+    if (!entry.checks.commitment) {
       // The executor verifies the reviewed vault at the finalized block.
       await waitFinalized(
         entry.steps["monthly:create"].block ?? "0",
@@ -954,7 +954,7 @@ export async function runEvmExtended(
         freeAtParent - freeAfter,
         items[1].gross + items[2].gross,
       );
-      entry.steps["monthly:automatic-commit"] = {
+      entry.steps["monthly:commitment"] = {
         transactionId: String(transactionId),
         from: keys.relayer.address.toLowerCase(),
         status: "success",
@@ -964,7 +964,7 @@ export async function runEvmExtended(
             ? "Submitted by the production executor (/v1/commit-monthly, submitEvmMonthly) with the identity authority's attestation"
             : "The production executor refused the commitment (gas above its reviewed ceiling, see executorRefusal); the relayer key submitted the same attested allocation permissionlessly",
       };
-      entry.checks.automatic = {
+      entry.checks.commitment = {
         path,
         period: periods.open,
         allocationRoot: authorization.plan.allocationRoot,
@@ -982,7 +982,7 @@ export async function runEvmExtended(
     }
     if (!entry.checks.replay) {
       await waitFinalized(
-        entry.steps["monthly:automatic-commit"].block ?? "0",
+        entry.steps["monthly:commitment"].block ?? "0",
         "the monthly commitment",
       );
       const nonceBefore = await relayerNonce();
@@ -992,7 +992,7 @@ export async function runEvmExtended(
         (again.ok &&
           again.body.alreadyCommitted !== true &&
           again.body.transactionId !==
-            entry.steps["monthly:automatic-commit"].transactionId) ||
+            entry.steps["monthly:commitment"].transactionId) ||
         nonceAfter !== nonceBefore
       )
         throw new Error(
@@ -1056,10 +1056,18 @@ export async function runEvmExtended(
       destination: wallets[n].address.toLowerCase(),
       path:
         n === 0
-          ? "manual commit and payment before the automatic commitment"
-          : "automatic commitment",
+          ? "manual commit and payment before the monthly commitment"
+          : "monthly commitment",
     }));
+    entry.checks.automatic = {
+      passed: (entry.checks.commitment as { path: string }).path === "executor",
+      route: "/v1/commit-monthly",
+    };
     await persist();
+    if (!(entry.checks.automatic as { passed: boolean }).passed)
+      throw new Waiting(
+        "Monthly contract checks passed through a direct permissionless commitment. Automatic executor acceptance is incomplete: the executor refused its reviewed gas ceiling. Use a new run after an approved executor repair; do not increase limits or count the direct send as automatic success.",
+      );
   }
 
   // ---- 3. walletless destination lifecycle ---------------------------------
@@ -1685,6 +1693,21 @@ export async function runEvmExtended(
     }
   }
 
+  const priorMonthly = run.scenarios?.monthly;
+  const priorAutomatic = priorMonthly?.checks.automatic as
+    | { path?: string }
+    | undefined;
+  if (priorMonthly && priorAutomatic?.path) {
+    priorMonthly.checks.commitment = priorAutomatic;
+    delete priorMonthly.checks.automatic;
+    const oldStep = priorMonthly.steps["monthly:automatic-commit"];
+    if (oldStep) {
+      priorMonthly.steps["monthly:commitment"] = oldStep;
+      delete priorMonthly.steps["monthly:automatic-commit"];
+    }
+    priorMonthly.status = "pending";
+    await persist();
+  }
   try {
     await runScenarios(run, persist, [
       [["bounty"], bounty],
