@@ -252,12 +252,9 @@ period is open at a time.
    award subtracts its gross. While `monthly_outstanding` is positive the owner's
    ordinary `commit` fails with `MonthlyOutstanding`, so the owner cannot consume
    an admitted award's source by hand and strand its reserve. Anyone, including
-   the owner, can clear the gate by committing the remaining awards. From 30 days
-   after a month's window closes, anyone can call `expire_month(period)` once.
-   It removes that month's unsettled gross from `monthly_outstanding`, so an
-   allocation that can never settle cannot block the owner's direct awards for
-   ever. That gross stays reserved, and its awards can still commit or release;
-   a remainder that can never settle stays reserved for good.
+   the owner, can clear the gate by committing the remaining awards. Time and
+   owner opt-out never remove the gate or release funds. Later monthly admissions,
+   funded payments and withdrawals of free funds remain available.
 4. An award that can never commit is returned to free balance by anyone with
    `release_monthly_award(period, source_digest, actor_id, gross, index, count,
    proof)`, passing the source's `origin`, its `monthly-source` marker and the
@@ -475,10 +472,15 @@ build before it cannot be read until anyone calls the permissionless
 payer and starts the new fields at zero (that build sent fees out at once).
 The same revision appended `released`, `frozen_at` and `expired` to
 `MonthlyAllocation` (now 109 bytes).
+The `expired` field remains for layout compatibility; this build removes
+`expire_month`. New funded months never expire. Before an in-place upgrade,
+`config-plan.mjs migrate` also refuses a previously expired month with unsettled
+funds. Such a month has an understated outstanding counter and needs separate
+recovery review; the planner neither rewrites it nor releases its reserve.
 A month of an earlier layout (92 bytes from the 316-byte build, or 100 bytes
 from the interim build with `released` only) cannot be read by this build:
 its awards fail closed, and any outstanding gross it added to
-`monthly_outstanding` could never settle or expire, so the owner's direct
+`monthly_outstanding` could never settle, so the owner's direct
 commits would stay refused for good. An in-place upgrade therefore requires
 that `getProgramAccounts` shows no MonthlyAllocation account of any size other
 than 109 bytes; `config-plan.mjs migrate` refuses to plan otherwise. Devnet

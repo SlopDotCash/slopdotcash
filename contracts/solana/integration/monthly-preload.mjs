@@ -14,15 +14,29 @@ import {
  * Escrow states that no live validator can reach, which test-e2e.sh preloads so the e2e
  * suite runs the program against real bytes. Public seeds: test use only.
  *
- * Expired: a current-layout Project with an admitted month that is already 30 days past its window,
- * which no live validator can reach. test-e2e.sh preloads both so expire_month runs against
- * real bytes. The month owes 3 USDC of its 5 USDC total; the project owes 1 USDC more for
- * other months.
+ * A past-window funded month is preloaded so the program can prove that time
+ * never opens its source to a conflicting owner award. The fixture has one
+ * valid leaf, a canonical project PDA and a funded SPL vault.
  */
-export const expiredProject = Keypair.fromSeed(
-  sha256Seed("slop-e2e-expired-project"),
-).publicKey;
+export const expiredOwner = Keypair.fromSeed(
+  sha256Seed("slop-e2e-expired-owner"),
+);
+const expiredProjectId = sha256Seed("slop-e2e-expired-project");
+export const [expiredProject, expiredBump] = PublicKey.findProgramAddressSync(
+  [
+    Buffer.from("project"),
+    expiredOwner.publicKey.toBuffer(),
+    expiredProjectId,
+    Buffer.from([0]),
+  ],
+  programId,
+);
 export const EXPIRED_PERIOD = 202001;
+export const EXPIRED_ACTOR = 100;
+export const EXPIRED_GROSS = 1_000_000;
+export const EXPIRED_SOURCE = sha256Seed("slop-e2e-funded-source").toString(
+  "hex",
+);
 const month = PublicKey.findProgramAddressSync(
   [
     Buffer.from("month"),
@@ -35,20 +49,34 @@ const month = PublicKey.findProgramAddressSync(
 function project() {
   const data = Buffer.concat([projectData(), Buffer.alloc(16)]);
   // Its own owner, so no owner listing of the legacy project includes it.
-  Keypair.fromSeed(sha256Seed("slop-e2e-expired-owner"))
-    .publicKey.toBuffer()
-    .copy(data, 8);
-  data.writeBigUInt64LE(4_000_000n, 200); // reserved
-  data.writeBigUInt64LE(4_000_000n, 324); // monthly_outstanding
+  expiredOwner.publicKey.toBuffer().copy(data, 8);
+  expiredProjectId.copy(data, 40);
+  data[248] = expiredBump;
+  data.writeBigInt64LE(0n, 249); // zero binding delay
+  data.writeBigUInt64LE(BigInt(EXPIRED_GROSS), 200); // reserved
+  data.writeBigUInt64LE(10_000_000n, 208); // deposited
+  data.writeBigUInt64LE(BigInt(EXPIRED_GROSS), 324); // monthly_outstanding
   return data;
 }
+function expiredVaultData() {
+  const data = Buffer.alloc(165);
+  legacyMint.publicKey.toBuffer().copy(data, 0);
+  expiredProject.toBuffer().copy(data, 32);
+  data.writeBigUInt64LE(10_000_000n, 64);
+  data[108] = 1;
+  return data;
+}
+
 function monthData() {
   const data = Buffer.alloc(109);
   Buffer.from("1170c1902bd6fc6b", "hex").copy(data, 0);
   expiredProject.toBuffer().copy(data, 8);
   data.writeUInt32LE(EXPIRED_PERIOD, 40);
-  data.writeBigUInt64LE(2_000_000n, 76); // committed
-  data.writeBigUInt64LE(5_000_000n, 84); // total
+  Buffer.from(
+    allocationTree([[EXPIRED_ACTOR, EXPIRED_GROSS, EXPIRED_SOURCE]]).root,
+    "hex",
+  ).copy(data, 44);
+  data.writeBigUInt64LE(BigInt(EXPIRED_GROSS), 84); // total; no leaf committed
   data.writeBigInt64LE(1_580_774_400n, 100); // frozen_at, 4 February 2020
   return data;
 }
@@ -201,6 +229,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     preloadArgs([
       ["expired-project", expiredProject, programId, project()],
       ["expired-month", month, programId, monthData()],
+      [
+        "expired-vault",
+        PublicKey.findProgramAddressSync(
+          [Buffer.from("vault"), expiredProject.toBuffer()],
+          programId,
+        )[0],
+        new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+        expiredVaultData(),
+      ],
       ["short-vault-project", shortProject, programId, shortVaultProject()],
       [
         "short-vault",
