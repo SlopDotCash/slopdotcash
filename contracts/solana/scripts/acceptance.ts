@@ -1180,7 +1180,7 @@ export async function runSolana(
         ownerDelta !== amounts.withdrawGross - amounts.withdrawFee ||
         vaultDelta !== -ownerDelta
       )
-        throw new Error("Withdrawal did not keep floor(gross / 50) as the fee");
+        throw new Error("Withdrawal did not keep ceil(gross / 50) as the fee");
       await persist();
     }
     if (!entry.checks.overWithdrawal)

@@ -281,24 +281,24 @@ contract FableEscrowTest is FableBase {
             if (g == 0) g = remaining;
             vm.prank(OWNER);
             vault.withdrawUnused(g);
-            fees += g / 50;
+            fees += (g + 49) / 50;
             remaining -= g;
         }
         require(vault.totalGrossWithdrawn() == total, "all out");
-        require(vault.totalWithdrawalFees() == fees, "fee == sum of floor(piece/50)");
-        require(fees <= total / 50 && total / 50 - fees < parts, "a split saves under one unit per piece");
+        require(vault.totalWithdrawalFees() == fees, "fee == sum of ceil(piece/50)");
+        require(fees >= (total + 49) / 50 && fees - total / 50 <= parts, "a split never lowers the fee");
         require(vault.accruedFees() == fees, "accrued");
         require(usdc.balanceOf(OWNER) == 1_000_000_000e6 - total + (total - fees), "owner net");
         require(conservationHolds(), "conservation");
     }
 
-    function test_sound_withdrawalFeeIsTwoPercentRoundedDown() public {
+    function test_sound_withdrawalFeeIsTwoPercentRoundedUp() public {
         depositAs(1_000);
         uint256 before = usdc.balanceOf(OWNER);
         vm.prank(OWNER);
-        vault.withdrawUnused(860); // floor(860 / 50) = 17
-        require(usdc.balanceOf(OWNER) - before == 843, "net 843");
-        require(vault.totalWithdrawalFees() == 17 && vault.accruedFees() == 17, "fee 17");
+        vault.withdrawUnused(860); // ceil(860 / 50) = 18
+        require(usdc.balanceOf(OWNER) - before == 842, "net 842");
+        require(vault.totalWithdrawalFees() == 18 && vault.accruedFees() == 18, "fee 18");
         require(conservationHolds(), "conservation");
     }
 
