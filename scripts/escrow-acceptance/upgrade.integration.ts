@@ -230,7 +230,7 @@ try {
   deploymentBlock = BigInt(proxy.blockNumber).toString();
   const projectId = `0x${"91".repeat(32)}`;
   const sourceDigest = `0x${"92".repeat(32)}`;
-  await send(
+  const creation = await send(
     buildCreateVaultCalldata({ projectId, asset: token, monthlyCap: "1000" }),
     factory,
   );
@@ -316,14 +316,16 @@ try {
   const finalBlock = BigInt(await rpc("eth_blockNumber", []));
   for (const [name, start] of [
     ["future-start", finalBlock + 1n],
-    ["late-start", finalBlock],
+    ["late-start", BigInt(creation.blockNumber) + 1n],
   ] as const) {
     const outcome = await run("plan", name, start.toString());
     assert.equal(outcome.exit, before ? 0 : 1, `${name} ${outcome.stderr}`);
     if (!before)
       assert.match(
         outcome.stderr,
-        /outside finalized history|existed before the supplied deployment block/,
+        name === "future-start"
+          ? /outside finalized history/
+          : /existed before the supplied deployment block/,
       );
     results[name] = { exit: outcome.exit };
   }
