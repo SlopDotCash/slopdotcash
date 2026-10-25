@@ -21,8 +21,9 @@ database_id = "1b453124-2709-45af-8389-151a8105c461"
 migrations_dir = "../../migrations"
 
 [vars]
-# off | dry_run. dry_run files accrual rows and the public accrual file and
-# posts nothing. There is no live mode in this Worker.
+# off | dry_run | live. dry_run files accrual rows and the public accrual file
+# and posts nothing; it loads no key. live also posts each filed root to the
+# distributor and is refused unless every REFERRAL_* value below it is set.
 REFERRAL_ACCRUAL_MODE = "off"
 # First UTC month the job may file. Paid events before it are never accrued.
 REFERRAL_FIRST_PERIOD = "2026-11"
@@ -42,7 +43,18 @@ REFERRAL_EXCLUDED_GITHUB_IDS = "18633264,202660855"
 ADMIN_GITHUB_IDS = "18633264,202660855"
 PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
 
-# No secrets: this Worker holds no key.
+# Live poster (PRD section 11, "Referral program"). The flag is the owner's
+# activation and stays "false" until the token exists, the funding line is
+# agreed, counsel has reviewed the terms and the owner activates the program.
+# Nothing in the code sets it. The addresses are empty until a reviewed
+# deployment is recorded here. Live mode refuses to start while any is unset.
+REFERRAL_PROGRAM_ENABLED = "false"
+REFERRAL_DISTRIBUTOR_ADDRESS = ""
+REFERRAL_TOKEN_ADDRESS = ""
+REFERRAL_POST_NETWORK = "robinhood-mainnet"
+
+# Secret, set only with `wrangler secret put` by the key custodian, and only
+# for live mode: REFERRAL_POSTER_KEY. Optional RPC_URL_REFERRAL.
 
 [observability]
 enabled = true

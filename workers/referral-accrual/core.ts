@@ -4,14 +4,15 @@
  * epoch's accrual file. The arithmetic is integer base units throughout. The
  * store is the only side effect, so the same inputs always give the same file.
  *
- * This module never signs, posts or pays. The `live` poster is a separate,
- * later change; here the file carries the root a poster would use and nothing
- * reads it.
+ * The accrual half never signs, posts or pays. The poster half at the end of
+ * this file (`postNextRoot`) runs only in live mode, after filing, and signs
+ * at most one postRoot per run through a PosterClient the chain file provides.
  */
 
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import {
   CLAIM_CHAIN,
+  type PosterConfig,
   type ReferralAccrualConfig,
   RULE_VERSION,
 } from "./config";
@@ -83,7 +84,7 @@ export interface AccrualFile {
   period: string;
   epoch: number;
   runId: string;
-  mode: "dry_run";
+  mode: "dry_run" | "live";
   body: string;
   bodySha256: string;
   merkleRoot: `0x${string}` | null;
@@ -469,7 +470,7 @@ export async function buildFile(
       ruleVersion: RULE_VERSION,
       period,
       epoch,
-      mode: "dry_run",
+      mode: deps.config.mode === "live" ? "live" : "dry_run",
       generatedAt: createdAt,
       runId,
       parameters: {
@@ -518,7 +519,7 @@ export async function buildFile(
     period,
     epoch,
     runId,
-    mode: "dry_run",
+    mode: deps.config.mode === "live" ? "live" : "dry_run",
     body,
     bodySha256: await deps.sha256(body),
     merkleRoot: tree ? tree.root : null,
@@ -568,4 +569,334 @@ export async function runAccrual(deps: RunDependencies): Promise<RunResult> {
   } finally {
     await store.releaseLock(runId, deps.now());
   }
+}
+
+/** One recorded postRoot send, as much of it as reconciliation needs. */
+export interface PostRow {
+  id: string;
+  runId: string;
+  period: string;
+  epoch: number;
+  network: string;
+  distributor: string;
+  token: string;
+  poster: string;
+  merkleRoot: string;
+  totalBase: string;
+  txId: string;
+  rawTx: string;
+  evmNonce: number;
+  state: "submitted" | "unknown" | "finalized" | "failed" | "voided";
+  reason: string | null;
+  blockNumber: string | null;
+  voidAcknowledgedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt: string;
+  finalizedAt: string | null;
+}
+
+export interface ChainState {
+  chainId: number;
+  token: string;
+  owner: string;
+  poster: string;
+  paused: boolean;
+  epochCap: bigint;
+  activeTotal: bigint;
+  totalClaimed: bigint;
+  balance: bigint;
+  nextEpoch: number;
+  hasPendingRoot: boolean;
+  latest: {
+    index: number;
+    root: string;
+    total: bigint;
+    postedAt: number;
+    voided: boolean;
+  } | null;
+}
+
+export interface PreparedPost {
+  txId: string;
+  rawTx: string;
+  evmNonce: number;
+}
+
+export type PostStatus =
+  | { kind: "pending" }
+  | { kind: "finalized"; blockNumber: string; voided: boolean }
+  | { kind: "failed"; reason: string }
+  /** Not seen on chain and the nonce still free: send the same bytes again. */
+  | { kind: "rebroadcast" };
+
+export interface PosterClient {
+  /** The signer, lowercase, or null when no key is loaded. */
+  address(): string | null;
+  state(): Promise<ChainState>;
+  epochAt(index: number): Promise<{
+    root: string;
+    total: bigint;
+    postedAt: number;
+    voided: boolean;
+  }>;
+  /** Simulates the post at the latest block, then signs it. */
+  prepare(epoch: number, root: string, total: bigint): Promise<PreparedPost>;
+  broadcast(rawTx: string): Promise<void>;
+  status(row: PostRow): Promise<PostStatus>;
+}
+
+export interface PostStore {
+  openPosts(network: string): Promise<PostRow[]>;
+  /** Every post that occupies a contract epoch (not failed), by epoch. */
+  acceptedPosts(network: string): Promise<PostRow[]>;
+  /** Filed files with a root, in epoch order: period, root and tree total. */
+  postableFiles(): Promise<
+    { period: string; merkleRoot: string; treeTotalBase: string }[]
+  >;
+  insertPost(row: PostRow): Promise<void>;
+  updatePost(
+    id: string,
+    fields: Partial<
+      Pick<
+        PostRow,
+        "state" | "reason" | "blockNumber" | "updatedAt" | "finalizedAt"
+      >
+    >,
+  ): Promise<void>;
+}
+
+export interface PostDependencies {
+  config: PosterConfig;
+  store: PostStore;
+  client: PosterClient;
+  now: () => Date;
+  randomId: () => string;
+  log: (event: Record<string, unknown>) => void;
+}
+
+export interface PostResult {
+  status:
+    | "posted"
+    | "nothing_to_post"
+    | "in_flight"
+    | "halted_after_void"
+    | "chain_mismatch"
+    | "paused"
+    | "pending_root"
+    | "precheck_failed";
+  reconciled: number;
+  reason?: string;
+}
+
+async function reconcilePosts(deps: PostDependencies): Promise<number> {
+  const { store, client } = deps;
+  let reconciled = 0;
+  for (const row of await store.openPosts(deps.config.network)) {
+    const status = await client.status(row);
+    const at = deps.now().toISOString();
+    switch (status.kind) {
+      case "pending":
+        break;
+      case "finalized":
+        await store.updatePost(row.id, {
+          state: status.voided ? "voided" : "finalized",
+          blockNumber: status.blockNumber,
+          finalizedAt: at,
+          updatedAt: at,
+          reason: null,
+        });
+        deps.log({
+          event: status.voided
+            ? "referral_post_voided"
+            : "referral_post_finalized",
+          period: row.period,
+          epoch: row.epoch,
+          txId: row.txId,
+          blockNumber: status.blockNumber,
+        });
+        reconciled += 1;
+        break;
+      case "failed":
+        await store.updatePost(row.id, {
+          state: "failed",
+          reason: status.reason,
+          updatedAt: at,
+        });
+        deps.log({
+          event: "referral_post_failed",
+          period: row.period,
+          epoch: row.epoch,
+          txId: row.txId,
+          reason: status.reason,
+        });
+        reconciled += 1;
+        break;
+      case "rebroadcast":
+        try {
+          await client.broadcast(row.rawTx);
+          await store.updatePost(row.id, {
+            state: "submitted",
+            reason: null,
+            updatedAt: at,
+          });
+        } catch (error) {
+          await store.updatePost(row.id, {
+            state: "unknown",
+            reason: message(error),
+            updatedAt: at,
+          });
+        }
+        break;
+    }
+  }
+  // A finalized root the owner voided afterwards: mark it so the halt applies.
+  for (const row of await store.acceptedPosts(deps.config.network)) {
+    if (row.state !== "finalized") continue;
+    const epoch = await client.epochAt(row.epoch);
+    if (!epoch.voided) continue;
+    const at = deps.now().toISOString();
+    await store.updatePost(row.id, { state: "voided", updatedAt: at });
+    deps.log({
+      event: "referral_post_voided",
+      period: row.period,
+      epoch: row.epoch,
+      txId: row.txId,
+    });
+    reconciled += 1;
+  }
+  return reconciled;
+}
+
+/**
+ * Posts the next filed root the chain does not carry yet. Order of checks:
+ * reconcile every recorded send; refuse while one is in flight; refuse
+ * after an owner void until the operator acknowledges it; refuse when the
+ * chain's token, poster or epoch count disagree with the configuration and
+ * the journal; refuse while the contract is paused or a root is pending;
+ * then simulate, record and broadcast one post.
+ */
+export async function postNextRoot(
+  deps: PostDependencies,
+): Promise<PostResult> {
+  const { store, client, config } = deps;
+  const reconciled = await reconcilePosts(deps);
+  const open = await store.openPosts(config.network);
+  if (open.length > 0) return { status: "in_flight", reconciled };
+  const accepted = await store.acceptedPosts(config.network);
+  const unacknowledged = accepted.find(
+    (row) => row.state === "voided" && row.voidAcknowledgedAt === null,
+  );
+  if (unacknowledged) {
+    deps.log({
+      event: "referral_post_halted_after_void",
+      period: unacknowledged.period,
+      epoch: unacknowledged.epoch,
+    });
+    return {
+      status: "halted_after_void",
+      reconciled,
+      reason: `epoch ${unacknowledged.epoch} (${unacknowledged.period}) was voided and is not acknowledged`,
+    };
+  }
+  const state = await client.state();
+  const signer = client.address();
+  const mismatch =
+    state.chainId !== config.chainId
+      ? `chain id ${state.chainId} is not ${config.chainId}`
+      : state.token !== config.token
+        ? `distributor token ${state.token} is not ${config.token}`
+        : signer === null
+          ? "no poster key"
+          : state.poster !== signer
+            ? `distributor poster ${state.poster} is not this key`
+            : state.nextEpoch !== accepted.length
+              ? `chain has ${state.nextEpoch} epochs, journal has ${accepted.length}`
+              : null;
+  if (mismatch) {
+    deps.log({ event: "referral_post_chain_mismatch", reason: mismatch });
+    return { status: "chain_mismatch", reconciled, reason: mismatch };
+  }
+  if (state.paused) return { status: "paused", reconciled };
+  if (state.hasPendingRoot) return { status: "pending_root", reconciled };
+  const posted = new Set(accepted.map((row) => row.period));
+  const lastPeriod = accepted.reduce(
+    (last, row) => (row.period > last ? row.period : last),
+    "",
+  );
+  const candidate = (await store.postableFiles()).find(
+    (file) => !posted.has(file.period) && file.period > lastPeriod,
+  );
+  if (!candidate) return { status: "nothing_to_post", reconciled };
+  const total = BigInt(candidate.treeTotalBase);
+  // The contract repeats these checks; failing them here records the reason
+  // instead of spending gas on a revert.
+  const previous = accepted
+    .filter((row) => row.state === "finalized")
+    .reduce(
+      (max, row) => (BigInt(row.totalBase) > max ? BigInt(row.totalBase) : max),
+      0n,
+    );
+  const precheck =
+    total < previous
+      ? `file total ${total} is below the last finalized total ${previous}`
+      : total - previous > state.epochCap
+        ? `file total grows by ${total - previous}, over the epoch cap ${state.epochCap}`
+        : state.balance + state.totalClaimed < total
+          ? `balance ${state.balance} plus claimed ${state.totalClaimed} does not cover ${total}`
+          : null;
+  if (precheck) {
+    deps.log({
+      event: "referral_post_precheck_failed",
+      period: candidate.period,
+      reason: precheck,
+    });
+    return { status: "precheck_failed", reconciled, reason: precheck };
+  }
+  const epoch = state.nextEpoch;
+  const prepared = await client.prepare(epoch, candidate.merkleRoot, total);
+  const at = deps.now().toISOString();
+  const row: PostRow = {
+    id: `rpost_${deps.randomId()}`,
+    runId: `rrun_${deps.randomId()}`,
+    period: candidate.period,
+    epoch,
+    network: config.network,
+    distributor: config.distributor,
+    token: config.token,
+    poster: signer as string,
+    merkleRoot: candidate.merkleRoot,
+    totalBase: total.toString(),
+    txId: prepared.txId,
+    rawTx: prepared.rawTx,
+    evmNonce: prepared.evmNonce,
+    state: "submitted",
+    reason: null,
+    blockNumber: null,
+    voidAcknowledgedAt: null,
+    createdAt: at,
+    updatedAt: at,
+    submittedAt: at,
+    finalizedAt: null,
+  };
+  // Durable before broadcast: an unknown send is resent unchanged, never re-signed.
+  await store.insertPost(row);
+  try {
+    await client.broadcast(prepared.rawTx);
+  } catch (error) {
+    await store.updatePost(row.id, {
+      state: "unknown",
+      reason: message(error),
+      updatedAt: deps.now().toISOString(),
+    });
+  }
+  deps.log({
+    event: "referral_post_submitted",
+    period: candidate.period,
+    epoch,
+    merkleRoot: candidate.merkleRoot,
+    totalBase: total.toString(),
+    txId: prepared.txId,
+  });
+  return { status: "posted", reconciled };
 }

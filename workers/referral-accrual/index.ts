@@ -3,16 +3,31 @@
  * accruals of each closed UTC month (PRD section 11, "Referral program",
  * proposed). It reads finalized payouts and each project's immutable referrer,
  * appends accrual rows, and publishes one public accrual file per epoch. It
- * has no HTTP route, loads no key, and never signs, posts or pays. The only
- * modes are `off` and `dry_run`.
+ * has no HTTP route. `off` and `dry_run` load no key and never sign. `live`
+ * adds the poster: after filing, it reconciles the distributor against the
+ * journal and the files and signs at most one postRoot per run from the
+ * poster hot key. Live is refused unless the owner's program flag, the
+ * distributor, the token and the network are all set.
  */
 
-import { parseConfig, type ReferralAccrualEnv } from "./config";
-import { message, type RunResult, runAccrual } from "./core";
+import { parseConfig, posterKey, type ReferralAccrualEnv } from "./config";
+import {
+  message,
+  type PostResult,
+  postNextRoot,
+  type RunResult,
+  runAccrual,
+} from "./core";
+import { createEvmPoster } from "./poster";
 import { D1AccrualStore, type ReferralD1Database } from "./store";
 
 export interface Env extends ReferralAccrualEnv {
   REFERRAL_DB: ReferralD1Database;
+}
+
+export interface RunOutcome extends RunResult {
+  /** Present in live mode only. */
+  post?: PostResult;
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -28,19 +43,45 @@ async function sha256Hex(text: string): Promise<string> {
 export async function runOnce(
   env: Env,
   now: () => Date = () => new Date(),
-): Promise<RunResult | null> {
+  /** Local harnesses only; the scheduled handler never passes overrides. */
+  overrides: { fetch?: typeof fetch; chainIdOverride?: number } = {},
+): Promise<RunOutcome | null> {
   // Off is inert even when the rest of the configuration is incomplete.
   if ((env.REFERRAL_ACCRUAL_MODE ?? "off").trim() === "off") return null;
   const config = parseConfig(env);
   if (config.mode === "off") return null;
-  return runAccrual({
+  const store = new D1AccrualStore(env.REFERRAL_DB);
+  const log = (event: Record<string, unknown>) =>
+    console.log(JSON.stringify(event));
+  const randomId = () => crypto.randomUUID();
+  const result: RunOutcome = await runAccrual({
     config,
-    store: new D1AccrualStore(env.REFERRAL_DB),
+    store,
     now,
-    randomId: () => crypto.randomUUID(),
+    randomId,
     sha256: sha256Hex,
-    log: (event) => console.log(JSON.stringify(event)),
+    log,
   });
+  if (config.mode !== "live" || config.poster === null) return result;
+  if (result.status === "locked") return result;
+  // dry_run never reaches here, so the key is loaded only in live mode.
+  const secret = posterKey(env);
+  if (secret === undefined)
+    throw new Error("live mode needs REFERRAL_POSTER_KEY");
+  result.post = await postNextRoot({
+    config: config.poster,
+    store,
+    client: createEvmPoster({
+      config: config.poster,
+      privateKey: secret,
+      fetch: overrides.fetch,
+      chainIdOverride: overrides.chainIdOverride,
+    }),
+    now,
+    randomId,
+    log,
+  });
+  return result;
 }
 
 export default {
