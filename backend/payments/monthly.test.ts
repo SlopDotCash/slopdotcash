@@ -1753,8 +1753,9 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
           legacyAuthorization: legacy,
         });
         dispatches++;
+        // A run that pushes V2 leaves to the admitted reserve returns the last leaf transaction.
         return Response.json({
-          transactionId: null,
+          transactionId: complete ? null : `0x${"a".repeat(64)}`,
           alreadyCommitted: true,
           complete,
         });
