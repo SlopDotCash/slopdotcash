@@ -739,8 +739,8 @@ jobs:
 
           # Base mainnet identity attester (workers/payment-executor, PRD
           # PAY-05; owner activation of 24 October 2026). configure.mjs pins
-          # the Base mainnet vaults of the reviewed registry snapshot at this
-          # commit. An absent Worker can be installed without pins or secrets,
+          # the Base mainnet vaults of the checked registry snapshot for this
+          # release. An absent Worker can be installed without pins or secrets,
           # privately and without a cron. An existing Worker stays unchanged
           # if this snapshot is empty. With pins, owner-installed secrets
           # must exist before this release changes anything. Only secret
