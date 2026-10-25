@@ -614,6 +614,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         forReinstatement,
       ),
     adminGithubIds: githubIdSet(context.env.ADMIN_GITHUB_IDS),
+    traceOperatorGithubIds: githubIdSet(context.env.OPERATOR_GITHUB_IDS),
     moderatorGithubIds: githubIdSet(context.env.PROJECT_MODERATOR_GITHUB_IDS),
     now: () => new Date(),
     randomId: () => crypto.randomUUID(),
@@ -942,12 +943,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       context.env.PRIVATE_TRACES,
     ),
     authSecret: context.env.TRACE_AUTH_SECRET,
-    operatorGithubIds: new Set(
-      (context.env.OPERATOR_GITHUB_IDS ?? "")
-        .split(",")
-        .map((value) => value.trim())
-        .filter((value) => /^\d+$/u.test(value)),
-    ),
+    operatorGithubIds: githubIdSet(context.env.OPERATOR_GITHUB_IDS),
+    operatorSession: (request) =>
+      sessionGithubActor(
+        request,
+        context.env.SLOP_DB,
+        new Date().toISOString(),
+      ),
     now: () => new Date(),
     randomId: () => crypto.randomUUID(),
     verifyIdentityAssertion: (assertion) =>

@@ -52,13 +52,13 @@ placed in argv or an environment variable, written to a trace, or exposed to
 the model.
 
 The exchange returns a contributor-only token valid for ten minutes. Operator
-status is never issued by this endpoint. Operator tokens must come from the
-separate operator identity path, and an operator claim is accepted only when
-the immutable GitHub numeric ID also appears in `OPERATOR_GITHUB_IDS`.
-This repository does not currently implement that separate operator issuer;
-therefore the operator grant, read, migration, and recovery routes must remain
-operationally unavailable. Never mint an operator token by hand or reuse the
-contributor assertion exchange as an operator issuer.
+status is never issued by this endpoint. The two trace grant/read routes accept
+an existing website session as described below. This does not issue an operator
+token or authorize another route. The separate operator bearer issuer remains
+unimplemented; legacy operator wallet migration stays unavailable. Never mint
+an operator token by hand or reuse the contributor assertion exchange as an
+operator issuer. Existing operator bearer validation still requires a maximum
+five-minute lifetime and the current `OPERATOR_GITHUB_IDS` allowlist.
 
 The write flow is:
 
@@ -86,7 +86,16 @@ run ID, and digest. There is intentionally no public run-status endpoint.
 ## Trace access
 
 Contributors and project owners cannot read trace bodies, including their own.
-A designated Slop operator must:
+A designated Slop operator signs in with GitHub on the website. Only the two
+routes below accept its one-hour HttpOnly session cookie. Each request must
+come from that website origin. POST requires an exact `Origin`; GET also accepts
+an absent `Origin` with browser `Sec-Fetch-Site: same-origin`. Any present wrong
+origin is refused. The immutable GitHub numeric ID must still be in
+`OPERATOR_GITHUB_IDS`. An expired or revoked session cannot
+create or use a grant. Admin, moderator and project-owner roles grant no access.
+The API does not return a transferable operator token. No new secret is needed.
+
+The operator must:
 
 1. Submit an 8-500 character reason to
    `POST /api/v1/operator/traces/{digest}/grant`.
@@ -183,3 +192,13 @@ trace collection fail-closed without blocking contribution or awaiting a website
 The Cloudflare account and bucket permissions remain limited to designated
 Slop operators. Application authorization does not replace Cloudflare account
 access control and audit logging.
+
+## Local access workflow check
+
+Run `bun run test:trace` with the pinned Bun and Node versions, Playwright
+Chromium, and OpenSSL installed. It uses the actual Pages handler, native D1 and
+R2, and synthetic identities and trace bytes. A loopback-only HTTPS proxy lets
+Chromium supply the real cookie and Fetch Metadata headers. No request reaches
+the public site. The temporary TLS certificate and fixture storage are removed
+after the run. This proves local access behavior, not operator designation or
+production deployment.
