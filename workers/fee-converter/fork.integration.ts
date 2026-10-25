@@ -5,8 +5,9 @@
 // Nothing reaches a real chain: Anvil holds the fork, the key is generated
 // here, and the test token arrives by impersonating a holder on the fork.
 // KyberSwap's public API is only read for a route.
-//   bun workers/fee-converter/fork.integration.ts [fork-rpc-url]
+//   bun workers/fee-converter/fork.integration.ts [fork-rpc-url] [--fee-claim-only]
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   decodeFunctionResult,
@@ -17,11 +18,17 @@ import {
   parseAbi,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { runOnce } from "./index";
+import { evmAwardId } from "../../contracts/evm/adapter";
+import { parseConfig } from "./config";
+import { chainClient, runOnce } from "./index";
 import { sqliteD1 } from "./sqlite-d1";
+import { projectVaults } from "./store";
 
-const FORK_URL = process.argv[2] ?? "https://mainnet.base.org";
-const PORT = 28545;
+const FORK_URL =
+  process.argv.slice(2).find((argument) => !argument.startsWith("--")) ??
+  "https://mainnet.base.org";
+const PORT = Number(process.env.SLOP_TEST_FEE_PORT ?? 28545);
+const claimOnly = process.argv.includes("--fee-claim-only");
 const RPC = `http://127.0.0.1:${PORT}`;
 const AERO = "0x940181a94a35a4569e4529a3cdfb74e38fd98631";
 const HOLDER = "0x6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d";
@@ -173,115 +180,121 @@ try {
   };
   const usdcBefore = await balanceOf(USDC, wallet);
 
-  // 1. Ordinary send, finalized on the next run.
-  await seed();
-  console.log("run:", JSON.stringify(await runOnce(env)));
-  expect(state(), "submitted", "1 after send");
-  await rpc("anvil_mine", ["0x80"]); // Anvil finalizes only after later blocks.
-  await runOnce(env);
-  expect(state(), "finalized", "1 after reconcile");
+  if (!claimOnly) {
+    // 1. Ordinary send, finalized on the next run.
+    await seed();
+    console.log("run:", JSON.stringify(await runOnce(env)));
+    expect(state(), "submitted", "1 after send");
+    await rpc("anvil_mine", ["0x80"]); // Anvil finalizes only after later blocks.
+    await runOnce(env);
+    expect(state(), "finalized", "1 after reconcile");
 
-  // 2. Swap lost before delivery: recorded unknown, rebroadcast unchanged, finalized.
-  await seed();
-  await runOnce(env, undefined, { fetch: faulty("before") });
-  expect(state(), "unknown", "2 after lost send");
-  const largeSend = sqlite
-    .query(
-      "SELECT tx_id, length(raw_tx) AS length FROM fee_conversions WHERE state = 'unknown'",
-    )
-    .get() as { tx_id: string; length: number };
-  if (largeSend.length <= 16384)
-    throw new Error(
-      "large-route recovery did not exceed the old storage limit",
+    // 2. Swap lost before delivery: recorded unknown, rebroadcast unchanged, finalized.
+    await seed();
+    await runOnce(env, undefined, { fetch: faulty("before") });
+    expect(state(), "unknown", "2 after lost send");
+    const largeSend = sqlite
+      .query(
+        "SELECT tx_id, length(raw_tx) AS length FROM fee_conversions WHERE state = 'unknown'",
+      )
+      .get() as { tx_id: string; length: number };
+    if (largeSend.length <= 16384)
+      throw new Error(
+        "large-route recovery did not exceed the old storage limit",
+      );
+    console.log(
+      `2 persisted signed transaction: ${largeSend.length} characters`,
     );
-  console.log(`2 persisted signed transaction: ${largeSend.length} characters`);
-  await runOnce(env);
-  expect(state(), "submitted", "2 after rebroadcast");
-  await rpc("anvil_mine", ["0x80"]);
-  await runOnce(env);
-  expect(state(), "finalized", "2 after reconcile");
-  const recoveredSend = sqlite
-    .query("SELECT state FROM fee_conversions WHERE tx_id = ?")
-    .get(largeSend.tx_id) as { state: string };
-  if (recoveredSend.state !== "finalized")
-    throw new Error(
-      "large-route recovery did not finalize the original transaction",
-    );
+    await runOnce(env);
+    expect(state(), "submitted", "2 after rebroadcast");
+    await rpc("anvil_mine", ["0x80"]);
+    await runOnce(env);
+    expect(state(), "finalized", "2 after reconcile");
+    const recoveredSend = sqlite
+      .query("SELECT state FROM fee_conversions WHERE tx_id = ?")
+      .get(largeSend.tx_id) as { state: string };
+    if (recoveredSend.state !== "finalized")
+      throw new Error(
+        "large-route recovery did not finalize the original transaction",
+      );
 
-  // 3. Swap delivered but the response lost: reconciled from the receipt, no resend.
-  await seed();
-  await runOnce(env, undefined, { fetch: faulty("after") });
-  expect(state(), "unknown", "3 after lost response");
-  await rpc("anvil_mine", ["0x80"]);
-  await runOnce(env);
-  expect(state(), "finalized", "3 after reconcile");
+    // 3. Swap delivered but the response lost: reconciled from the receipt, no resend.
+    await seed();
+    await runOnce(env, undefined, { fetch: faulty("after") });
+    expect(state(), "unknown", "3 after lost response");
+    await rpc("anvil_mine", ["0x80"]);
+    await runOnce(env);
+    expect(state(), "finalized", "3 after reconcile");
 
-  // 4. Below the minimum value: pending, nothing signed.
-  await seed(10n ** 18n); // 1 AERO, under the 1 USDC minimum
-  await runOnce(env);
-  expect(state(), "pending", "4 below minimum");
+    // 4. Below the minimum value: pending, nothing signed.
+    await seed(10n ** 18n); // 1 AERO, under the 1 USDC minimum
+    await runOnce(env);
+    expect(state(), "pending", "4 below minimum");
 
-  // 5. Price moved between quote and signing: refused before signing.
-  await seed(49n * 10n ** 18n);
-  await runOnce(env, undefined, { fetch: inflatedFirstQuote() });
-  expect(state(), "failed", "5 slippage refusal");
+    // 5. Price moved between quote and signing: refused before signing.
+    await seed(49n * 10n ** 18n);
+    await runOnce(env, undefined, { fetch: inflatedFirstQuote() });
+    expect(state(), "failed", "5 slippage refusal");
 
-  // 6. A token no aggregator can route: no_route. The AERO balance converts.
-  await rpc("anvil_setStorageAt", [
-    UNROUTED,
-    keccak256(
-      encodeAbiParameters(
-        [{ type: "address" }, { type: "uint256" }],
-        [wallet as `0x${string}`, 0n],
+    // 6. A token no aggregator can route: no_route. The AERO balance converts.
+    await rpc("anvil_setStorageAt", [
+      UNROUTED,
+      keccak256(
+        encodeAbiParameters(
+          [{ type: "address" }, { type: "uint256" }],
+          [wallet as `0x${string}`, 0n],
+        ),
       ),
-    ),
-    `0x${(1000n * 10n ** 18n).toString(16).padStart(64, "0")}`,
-  ]);
-  await runOnce(env);
-  expect(state(UNROUTED), "no_route", "6 unsupported route");
-  expect(state(), "submitted", "6 AERO send");
-  await rpc("anvil_mine", ["0x80"]);
-  await runOnce(env);
-  expect(state(), "finalized", "6 after reconcile");
+      `0x${(1000n * 10n ** 18n).toString(16).padStart(64, "0")}`,
+    ]);
+    await runOnce(env);
+    expect(state(UNROUTED), "no_route", "6 unsupported route");
+    expect(state(), "submitted", "6 AERO send");
+    await rpc("anvil_mine", ["0x80"]);
+    await runOnce(env);
+    expect(state(), "finalized", "6 after reconcile");
 
-  const usdcAfter = await balanceOf(USDC, wallet);
-  const aeroAfter = await balanceOf(AERO, wallet);
-  const rows = sqlite
-    .query(
-      `SELECT state, amount_in, quote_amount_out, min_amount_out, amount_out,
+    const usdcAfter = await balanceOf(USDC, wallet);
+    const aeroAfter = await balanceOf(AERO, wallet);
+    const rows = sqlite
+      .query(
+        `SELECT state, amount_in, quote_amount_out, min_amount_out, amount_out,
               approval_tx_id, tx_id, evm_nonce, token_balance_before, target_balance_before,
               target_balance_after, reason FROM fee_conversions ORDER BY rowid`,
+      )
+      .all() as { state: string; amount_out: string | null }[];
+    console.log(JSON.stringify(rows, null, 2));
+    const recorded = rows.reduce(
+      (sum, row) => sum + BigInt(row.amount_out ?? "0"),
+      0n,
+    );
+    console.log(
+      `USDC delta ${usdcAfter - usdcBefore}; recorded ${recorded}; AERO left ${aeroAfter}`,
+    );
+    if (
+      JSON.stringify(rows.map((row) => row.state)) !==
+        JSON.stringify([
+          "finalized",
+          "finalized",
+          "finalized",
+          "pending",
+          "failed",
+          "finalized",
+          "no_route",
+        ]) ||
+      recorded !== usdcAfter - usdcBefore ||
+      aeroAfter !== 0n
     )
-    .all() as { state: string; amount_out: string | null }[];
-  console.log(JSON.stringify(rows, null, 2));
-  const recorded = rows.reduce(
-    (sum, row) => sum + BigInt(row.amount_out ?? "0"),
-    0n,
-  );
-  console.log(
-    `USDC delta ${usdcAfter - usdcBefore}; recorded ${recorded}; AERO left ${aeroAfter}`,
-  );
-  if (
-    JSON.stringify(rows.map((row) => row.state)) !==
-      JSON.stringify([
-        "finalized",
-        "finalized",
-        "finalized",
-        "pending",
-        "failed",
-        "finalized",
-        "no_route",
-      ]) ||
-    recorded !== usdcAfter - usdcBefore ||
-    aeroAfter !== 0n
-  )
-    throw new Error("fork live cycles did not finalize with matching proceeds");
-  // A repeat run finds nothing left to sell and records nothing new.
-  await runOnce(env);
-  const count = sqlite
-    .query("SELECT COUNT(*) AS n FROM fee_conversions")
-    .get() as { n: number };
-  if (count.n !== 7) throw new Error("a repeat run added a record");
+      throw new Error(
+        "fork live cycles did not finalize with matching proceeds",
+      );
+    // A repeat run finds nothing left to sell and records nothing new.
+    await runOnce(env);
+    const count = sqlite
+      .query("SELECT COUNT(*) AS n FROM fee_conversions")
+      .get() as { n: number };
+    if (count.n !== 7) throw new Error("a repeat run added a record");
+  }
 
   // 7. EVM fees accrue inside the vault until claimFees() moves them to the
   // fee recipient. Deploy the reviewed contracts with this fee wallet as fee
@@ -295,6 +308,11 @@ try {
     "function deposit(uint128)",
     "function withdrawUnused(uint128)",
     "function accruedFees() view returns (uint128)",
+    "function freeBalance() view returns (uint128)",
+    "function reservedPrincipal() view returns (uint128)",
+    "function reservedFees() view returns (uint128)",
+    "function commitBountyAward(bytes32,uint64,uint128,bytes32)",
+    "function upgradeToAndCall(address,bytes)",
   ]);
   const call = async (from: string, to: string, data: Hex) => {
     const hash = await rpc("eth_sendTransaction", [
@@ -309,7 +327,13 @@ try {
   };
   const view = async (
     to: string,
-    functionName: "vaultKey" | "vaults" | "accruedFees",
+    functionName:
+      | "vaultKey"
+      | "vaults"
+      | "accruedFees"
+      | "freeBalance"
+      | "reservedPrincipal"
+      | "reservedFees",
     args: readonly unknown[] = [],
   ) =>
     decodeFunctionResult({
@@ -388,13 +412,15 @@ try {
   const vault = (
     (await view(factory, "vaults", [vaultKey])) as unknown as string
   ).toLowerCase();
-  const gross = 250n * 10n ** 18n;
+  const gross = 500n * 10n ** 18n;
+  const deposit = gross + 300n * 10n ** 18n;
+  const reserved = 100n * 10n ** 18n;
   await rpc("anvil_impersonateAccount", [HOLDER]);
   await rpc("eth_sendTransaction", [
     {
       from: HOLDER,
       to: AERO,
-      data: `0xa9059cbb${word(registrar)}${gross.toString(16).padStart(64, "0")}`,
+      data: `0xa9059cbb${word(registrar)}${deposit.toString(16).padStart(64, "0")}`,
     },
   ]);
   await rpc("anvil_stopImpersonatingAccount", [HOLDER]);
@@ -404,7 +430,7 @@ try {
     encodeFunctionData({
       abi: vaultAbi,
       functionName: "approve",
-      args: [vault as Hex, gross],
+      args: [vault as Hex, deposit],
     }),
   );
   await call(
@@ -413,7 +439,28 @@ try {
     encodeFunctionData({
       abi: vaultAbi,
       functionName: "deposit",
-      args: [gross],
+      args: [deposit],
+    }),
+  );
+  const sourceDigest = keccak256(
+    new TextEncoder().encode("fee-claim-reserved-award"),
+  );
+  await call(
+    registrar,
+    vault,
+    encodeFunctionData({
+      abi: vaultAbi,
+      functionName: "commitBountyAward",
+      args: [
+        evmAwardId(
+          BigInt((await rpc("eth_chainId", [])) as string),
+          vault,
+          sourceDigest,
+        ) as Hex,
+        101n,
+        reserved,
+        sourceDigest,
+      ],
     }),
   );
   await call(
@@ -428,21 +475,183 @@ try {
   const fee = (gross + 49n) / 50n;
   if ((await view(vault, "accruedFees")) !== fee)
     throw new Error("7 the withdrawal did not accrue the 2% fee");
-  const manifest = JSON.stringify({
-    id: "fee-claim-fork",
-    status: "active",
-    // The fee claim must also discover a bounty-only program. The shared
-    // claim path collects accrued fees regardless of their original rate.
-    securityBounty: {
-      settlement: {
-        deployments: [{ network: "base-mainnet", vault, asset: AERO }],
-      },
+  const runtimeDigest = async (address: string) =>
+    createHash("sha256")
+      .update(
+        Buffer.from(
+          ((await rpc("eth_getCode", [address, "latest"])) as string).slice(2),
+          "hex",
+        ),
+      )
+      .digest("hex");
+  const implementation = async (address: string) =>
+    `0x${((await rpc("eth_getStorageAt", [address, "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"])) as string).slice(-40)}`;
+  const vaultImplementation = await implementation(vault);
+  const factoryImplementation = await implementation(factory);
+  const deployment = {
+    network: "base-mainnet",
+    vault,
+    asset: AERO,
+    owner: registrar,
+    identityAuthority: authority,
+    feeRecipient: wallet,
+    factory,
+    registrar,
+    bindingDelaySeconds: "3600",
+    codeSha256: await runtimeDigest(vault),
+    factoryCodeSha256: await runtimeDigest(factory),
+    evmUpgrade: {
+      authority: "0x00000000000000000000000000000000000abcde",
+      vaultImplementation,
+      vaultImplementationCodeSha256: await runtimeDigest(vaultImplementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: await runtimeDigest(
+        factoryImplementation,
+      ),
     },
+  };
+  let revision = 0;
+  const save = (record: Record<string, unknown>, bounty = true) => {
+    const manifest = JSON.stringify({
+      id: "fee-claim-fork",
+      status: "active",
+      ...(bounty
+        ? { securityBounty: { settlement: { deployments: [record] } } }
+        : { escrow: { deployments: [record] } }),
+    });
+    revision++;
+    sqlite
+      .prepare(
+        "INSERT INTO project_revisions (project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,?,?,?,?,?)",
+      )
+      .run(
+        "fee-claim-fork",
+        revision,
+        manifest,
+        "a".repeat(64),
+        "local claim proof",
+        "now",
+      );
+    if (revision === 1)
+      sqlite
+        .prepare(
+          "INSERT INTO projects (id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+        )
+        .run(
+          "fee-claim-fork",
+          "active",
+          revision,
+          manifest,
+          "a".repeat(64),
+          "now",
+          "now",
+        );
+    else
+      sqlite
+        .prepare(
+          "UPDATE projects SET manifest=?,revision=? WHERE id='fee-claim-fork'",
+        )
+        .run(manifest, revision);
+  };
+  const parsed = parseConfig(env);
+  const feeClient = chainClient(env, parsed, parsed.networks[0]).vaultFees;
+  if (!feeClient) throw new Error("EVM client lacks fee claims");
+  const refusal = async (
+    label: string,
+    record: Record<string, unknown>,
+    bounty = true,
+  ) => {
+    save(record, bounty);
+    const entries = await projectVaults(db, ["base-mainnet"]);
+    const nonce = await rpc("eth_getTransactionCount", [wallet, "latest"]);
+    let error = "";
+    try {
+      await feeClient.claim(entries[0]);
+    } catch (caught) {
+      error = String(caught);
+    }
+    const afterNonce = await rpc("eth_getTransactionCount", [wallet, "latest"]);
+    const unchanged =
+      nonce === afterNonce && (await view(vault, "accruedFees")) === fee;
+    console.log(
+      JSON.stringify({ check: label, rejected: !!error, unchanged, error }),
+    );
+    if (!error || !unchanged)
+      throw new Error(`${label}: unreviewed claim was signed or accepted`);
+  };
+  await rpc("anvil_mine", ["0x80"]);
+  await refusal("missing deployment pins", {
+    network: "base-mainnet",
+    vault,
+    asset: AERO,
   });
-  sqlite.exec(`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at)
-    VALUES ('fee-claim-fork', 1, '${manifest}', '${"a".repeat(64)}', 'fork', 'now')`);
-  sqlite.exec(`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at)
-    VALUES ('fee-claim-fork', 'active', 1, '${manifest}', '${"a".repeat(64)}', 'now', 'now')`);
+  await refusal("changed runtime pin", {
+    ...deployment,
+    codeSha256: "0".repeat(64),
+  });
+  await refusal("changed asset", { ...deployment, asset: USDC });
+  await refusal("changed owner", { ...deployment, owner: authority });
+  await refusal("changed fee recipient", {
+    ...deployment,
+    feeRecipient: authority,
+  });
+  await refusal("changed upgrade authority", {
+    ...deployment,
+    evmUpgrade: { ...deployment.evmUpgrade, authority: registrar },
+  });
+  await refusal("wrong payout purpose", deployment, false);
+  save(deployment);
+  const freeBeforeClaim = await view(vault, "freeBalance");
+  if (
+    ((await view(vault, "reservedPrincipal")) as bigint) +
+      ((await view(vault, "reservedFees")) as bigint) !==
+      reserved ||
+    freeBeforeClaim !== 200n * 10n ** 18n
+  )
+    throw new Error("reserved/free fixture is wrong");
+  // A legitimate implementation upgrade needs a new reviewed pin before claims resume.
+  const nextImplementation = JSON.parse(
+    execFileSync(
+      "forge",
+      [
+        "create",
+        "--root",
+        fileURLToPath(new URL("../../contracts/evm", import.meta.url)),
+        "src/ProjectEscrow.sol:ProjectEscrow",
+        "--rpc-url",
+        RPC,
+        "--unlocked",
+        "--from",
+        registrar,
+        "--broadcast",
+        "--json",
+      ],
+      { encoding: "utf8" },
+    ),
+  ).deployedTo.toLowerCase();
+  await rpc("anvil_setBalance", [
+    deployment.evmUpgrade.authority,
+    "0xde0b6b3a7640000",
+  ]);
+  await rpc("anvil_impersonateAccount", [deployment.evmUpgrade.authority]);
+  await call(
+    deployment.evmUpgrade.authority,
+    vault,
+    encodeFunctionData({
+      abi: vaultAbi,
+      functionName: "upgradeToAndCall",
+      args: [nextImplementation, "0x"],
+    }),
+  );
+  await rpc("anvil_stopImpersonatingAccount", [
+    deployment.evmUpgrade.authority,
+  ]);
+  await rpc("anvil_mine", ["0x80"]);
+  await refusal("unreviewed implementation upgrade", deployment);
+  deployment.evmUpgrade.vaultImplementation = nextImplementation;
+  deployment.evmUpgrade.vaultImplementationCodeSha256 =
+    await runtimeDigest(nextImplementation);
+  save(deployment);
   const aeroBeforeClaim = await balanceOf(AERO, wallet);
 
   // A receipt run never claims; a dry run reports the claim and signs nothing.
@@ -454,7 +663,69 @@ try {
   )
     throw new Error("7 a receipt or dry run moved vault fees");
 
+  // The real claim executes, but a partial RPC receipt cannot prove it.
+  const receiptSnapshot = await rpc("evm_snapshot", []);
+  let filteredReceipts = 0;
+  const incompleteReceipt: typeof fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    const response = await fetch(input, init);
+    if (
+      typeof init?.body !== "string" ||
+      !init.body.includes('"eth_getTransactionReceipt"')
+    )
+      return response;
+    const body = await response.json();
+    if (body.result?.logs) {
+      body.result.logs = body.result.logs.filter(
+        (log: { address: string }) => log.address.toLowerCase() !== AERO,
+      );
+      filteredReceipts++;
+    }
+    return new Response(JSON.stringify(body), {
+      status: response.status,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  const incompleteClient = chainClient(env, parsed, parsed.networks[0], {
+    fetch: incompleteReceipt,
+  }).vaultFees;
+  if (!incompleteClient) throw new Error("EVM client lacks fee claims");
+  let incompleteError = "";
+  try {
+    await incompleteClient.claim(
+      (await projectVaults(db, ["base-mainnet"]))[0],
+    );
+  } catch (error) {
+    incompleteError = String(error);
+  }
+  if (
+    !incompleteError.includes("receipt does not match") ||
+    filteredReceipts === 0 ||
+    (await view(vault, "accruedFees")) !== 0n
+  )
+    throw new Error("a missing token transfer receipt was accepted");
+  const includedNonce = await rpc("eth_getTransactionCount", [
+    wallet,
+    "latest",
+  ]);
+  // Read current state for the next attempt; do not send a second claim.
+  if (
+    (await incompleteClient.accrued(
+      (
+        await projectVaults(db, ["base-mainnet"])
+      )[0],
+    )) !== null ||
+    includedNonce !== (await rpc("eth_getTransactionCount", [wallet, "latest"]))
+  )
+    throw new Error("included claim was not reconciled from current state");
+  console.log("7 incomplete receipt refused; included claim not repeated");
+  if (!(await rpc("evm_revert", [receiptSnapshot])))
+    throw new Error("local receipt snapshot restore failed");
+
   // A live recovery run claims the fee into the fee wallet and sells it.
+  const usdcBeforeClaim = await balanceOf(USDC, wallet);
   const [claimRun] = await runOnce(env);
   console.log("7 run:", JSON.stringify(claimRun));
   if (claimRun.claimed !== 1 || (await view(vault, "accruedFees")) !== 0n)
@@ -470,14 +741,33 @@ try {
   await rpc("anvil_mine", ["0x80"]);
   await runOnce(env);
   expect(state(), "finalized", "7 after reconcile");
+  const settledClaim = sqlite
+    .query(
+      "SELECT amount_out FROM fee_conversions WHERE token = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+    )
+    .get(AERO) as { amount_out: string };
+  const usdcReceived = (await balanceOf(USDC, wallet)) - usdcBeforeClaim;
+  if (usdcReceived <= 0n || BigInt(settledClaim.amount_out) !== usdcReceived)
+    throw new Error("7 the conversion receipt differs from received USDC");
+  console.log(`7 received and recorded ${usdcReceived} USDC minor units`);
   if ((await balanceOf(AERO, wallet)) !== 0n)
     throw new Error("7 the claimed fee was not sold");
+  if (
+    (await view(vault, "freeBalance")) !== freeBeforeClaim ||
+    ((await view(vault, "reservedPrincipal")) as bigint) +
+      ((await view(vault, "reservedFees")) as bigint) !==
+      reserved ||
+    (await balanceOf(AERO, vault)) !== 300n * 10n ** 18n
+  )
+    throw new Error("claim changed principal or reserved awards");
   // Nothing is left to claim, so a further run sends no claim.
   const [after] = await runOnce(env);
   if (after.claimed !== 0) throw new Error("7 a repeat run claimed again");
 
   console.log(
-    "PASS: Base fork live cycles (ordinary, lost send, lost response, below minimum, slippage refusal, unsupported route, vault fee claim)",
+    claimOnly
+      ? "PASS: Base fork fee claim, deployment refusals, reviewed upgrade, principal preservation and conversion"
+      : "PASS: Base fork live cycles (ordinary, lost send, lost response, below minimum, slippage refusal, unsupported route, verified vault fee claim)",
   );
 } finally {
   anvil.kill();
