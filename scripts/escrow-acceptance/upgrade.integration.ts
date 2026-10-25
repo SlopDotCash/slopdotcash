@@ -16,6 +16,7 @@ import {
   buildBindCalldata,
   buildCommitAwardCalldata,
   buildCreateVaultCalldata,
+  buildPayCalldata,
   evmAllocationRoot,
   evmAwardId,
   evmBindingDigest,
@@ -416,43 +417,115 @@ try {
   const healthy = await run("verify", "upgrade");
   assert.equal(healthy.exit, 0, healthy.stderr);
   results.validUpgrade = { exit: healthy.exit };
-  const mapping = (key: string | bigint, slot: bigint, offset = 0n) =>
-    toHex(
-      BigInt(
-        keccak256(
-          encodeAbiParameters(
-            [{ type: "uint256" }, { type: "uint256" }],
-            [BigInt(key), slot],
-          ),
-        ),
-      ) + offset,
-      { size: 32 },
+  const preservationBlock = Math.max(
+    ...Object.values(finished.steps).map((step: any) => Number(step.block)),
+  ).toString();
+  const frozen = JSON.stringify({
+    before: finished.before,
+    steps: finished.steps,
+  });
+  const payment = await send(buildPayCalldata(awardId, "1"), vault);
+  assert(BigInt(payment.blockNumber) > BigInt(preservationBlock));
+  const laterPayment = await run(
+    "verify",
+    "upgrade",
+    deploymentBlock,
+    "later-payment",
+  );
+  const expectPaymentFailure =
+    process.env.SLOP_UPGRADE_EXPECT_LATER_PAYMENT_FAILURE === "1";
+  assert.equal(
+    laterPayment.exit,
+    expectPaymentFailure ? 1 : 0,
+    laterPayment.stdout,
+  );
+  if (expectPaymentFailure) {
+    assert.match(laterPayment.stdout, /Upgrade verification failed: vault/);
+    results.laterPayment = {
+      reproduced: true,
+      exit: laterPayment.exit,
+      preservationBlock,
+    };
+    await Bun.write(
+      join(out, "result.json"),
+      `${JSON.stringify(results, null, 2)}\n`,
     );
-  for (const [name, slot] of [
-    ["funded-award", mapping(awardId, 11n)],
-    ["consumed-source", mapping(sourceDigest, 12n)],
-    ["binding", mapping(101n, 13n)],
-    ["monthly-root", mapping(202611n, 17n)],
-    ["monthly-reserve", mapping(202611n, 20n, 1n)],
-    ["source-sequence", toHex(19n, { size: 32 })],
-  ] as const) {
-    const old = await rpc("eth_getStorageAt", [vault, slot, "latest"]);
-    await rpc("anvil_setStorageAt", [vault, slot, toHex(999n, { size: 32 })]);
+    console.log(JSON.stringify(results));
+    process.exitCode = 0;
+  } else {
+    const qualified = await Bun.file(join(out, "upgrade/upgrade.json")).json();
+    assert.equal(
+      JSON.stringify({ before: qualified.before, steps: qualified.steps }),
+      frozen,
+    );
+    assert.equal(qualified.verification.preservationBlock, preservationBlock);
+    assert.equal(qualified.verification.laterPayments.length, 1);
+    assert.equal(
+      qualified.verification.laterPayments[0].transactionId,
+      payment.transactionHash,
+    );
     await rpc("anvil_mine", ["0x40"]);
-    const changed = await run("verify", "upgrade", deploymentBlock, name);
-    assert.equal(changed.exit, before ? 0 : 1, `${name} ${changed.stderr}`);
-    if (!before)
-      assert.match(
-        changed.stdout,
-        /Upgrade verification failed: vault .* (mapping|slot 19)/,
-      );
-    results[name] = { exit: changed.exit };
-    await rpc("anvil_setStorageAt", [vault, slot, old]);
-    await rpc("anvil_mine", ["0x40"]);
+    const repeated = await run(
+      "verify",
+      "upgrade",
+      deploymentBlock,
+      "later-payment-replay",
+    );
+    assert.equal(repeated.exit, 0, repeated.stdout);
+    const replay = await Bun.file(join(out, "upgrade/upgrade.json")).json();
+    assert.equal(replay.verification.preservationBlock, preservationBlock);
+    assert.equal(replay.verification.laterPayments.length, 1);
+    results.laterPayment = {
+      exit: laterPayment.exit,
+      preservationBlock,
+      exactFrozenPlan: true,
+      replay: true,
+    };
   }
-  const restored = await run("verify", "upgrade", deploymentBlock, "restored");
-  assert.equal(restored.exit, 0, restored.stdout);
-  results.restored = { exit: restored.exit };
+  if (!expectPaymentFailure) {
+    const mapping = (key: string | bigint, slot: bigint, offset = 0n) =>
+      toHex(
+        BigInt(
+          keccak256(
+            encodeAbiParameters(
+              [{ type: "uint256" }, { type: "uint256" }],
+              [BigInt(key), slot],
+            ),
+          ),
+        ) + offset,
+        { size: 32 },
+      );
+    for (const [name, slot] of [
+      ["funded-award", mapping(awardId, 11n)],
+      ["consumed-source", mapping(sourceDigest, 12n)],
+      ["binding", mapping(101n, 13n)],
+      ["monthly-root", mapping(202611n, 17n)],
+      ["monthly-reserve", mapping(202611n, 20n, 1n)],
+      ["source-sequence", toHex(19n, { size: 32 })],
+    ] as const) {
+      const old = await rpc("eth_getStorageAt", [vault, slot, "latest"]);
+      await rpc("anvil_setStorageAt", [vault, slot, toHex(999n, { size: 32 })]);
+      await rpc("anvil_mine", ["0x40"]);
+      const changed = await run("verify", "upgrade", deploymentBlock, name);
+      assert.equal(changed.exit, before ? 0 : 1, `${name} ${changed.stderr}`);
+      if (!before)
+        assert.match(
+          changed.stdout,
+          /Upgrade verification failed: vault .* (mapping|slot 19)/,
+        );
+      results[name] = { exit: changed.exit };
+      await rpc("anvil_setStorageAt", [vault, slot, old]);
+      await rpc("anvil_mine", ["0x40"]);
+    }
+    const restored = await run(
+      "verify",
+      "upgrade",
+      deploymentBlock,
+      "restored",
+    );
+    assert.equal(restored.exit, 0, restored.stdout);
+    results.restored = { exit: restored.exit };
+  }
   await Bun.write(
     join(out, "result.json"),
     `${JSON.stringify(results, null, 2)}\n`,
