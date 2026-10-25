@@ -1461,5 +1461,5 @@ for (const bounty of [false, true])
     bounty
       ? "owner creates, recovers and funds a private Solana bounty vault through the API"
       : "owner creates, recovers, registers and funds a Solana vault through the API",
-    (args, info) => ownerSetupWorkflow(args, info, bounty),
+    ({ page }, info) => ownerSetupWorkflow({ page }, info, bounty),
   );
