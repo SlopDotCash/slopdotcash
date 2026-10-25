@@ -1108,12 +1108,19 @@ configuration agree, signing and verification fail closed.
 
 ### 4.9 After the upgrade: read-only verification
 
-At one finalized block, verify each proxy implementation slot, implementation
-runtime, template pointer, unchanged roles, pending rotations and old awards.
+Prove unchanged storage at the canonical finalized completion block of the
+upgrade, including template selection and stragglers. Separately pin the current
+finalized block and verify proxy implementations, runtime, template, roles,
+pending rotations and the complete vault inventory. Later payments do not
+rewrite the preservation snapshot: verify their canonical receipts, stored fees,
+exact token movement and allowed accounting changes. Refuse every unexplained
+storage change or unsupported later activity.
+
 Run `verifyEvmDeployment` with the new review and history. Verify historic
 receipts at their own blocks. Confirm V2 availability and that cached totals
-include pending monthly funds. Record the result on the network release issue.
-Then complete section 3's separate first-payout and reconciliation gates.
+include pending monthly funds. Record both block numbers and hashes on the
+network release issue. Then complete section 3's separate first-payout and
+reconciliation gates.
 
 ### 4.10 Recovery
 
