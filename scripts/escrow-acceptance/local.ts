@@ -63,10 +63,7 @@ const requested = args.filter(
 const MONTHLY_WINDOW_TIME = Date.UTC(2026, 11, 5) / 1000;
 const networks = requested.length
   ? requested
-  : [
-      ...Object.keys(FORKS),
-      ...(suite === "extended" ? [] : ["solana-localnet"]),
-    ];
+  : [...Object.keys(FORKS), "solana-localnet"];
 const out = resolve(
   process.env.ESCROW_ACCEPTANCE_LOCAL_OUT ??
     join(root, "evidence", "escrow-acceptance-local"),
@@ -318,6 +315,7 @@ async function solanaLocalnet() {
     ESCROW_ACCEPTANCE_ACTOR_B_KEY: seed(),
   };
   const upgradeAuthority = seed();
+  const rotationAuthority = seed();
   const feeRecipient = pubkey(seed());
   const ledger = mkdtempSync(join(tmpdir(), "slop-acceptance-ledger-"));
   const rpcUrl = `http://127.0.0.1:${SOLANA_PORT}`;
@@ -357,7 +355,7 @@ async function solanaLocalnet() {
       upgradeAuthority,
       identity: pubkey(keys.ESCROW_ACCEPTANCE_IDENTITY_KEY),
       feeRecipient,
-      rotationAuthority: pubkey(seed()),
+      rotationAuthority: pubkey(rotationAuthority),
       fund: [
         pubkey(upgradeAuthority),
         pubkey(keys.ESCROW_ACCEPTANCE_OWNER_KEY),
@@ -384,8 +382,20 @@ async function solanaLocalnet() {
           .digest("hex"),
         ESCROW_ACCEPTANCE_PROGRAM_UPGRADE_AUTHORITY: pubkey(upgradeAuthority),
         ESCROW_ACCEPTANCE_ASSETS: mints.join(","),
-        ESCROW_ACCEPTANCE_BINDING_DELAY_SECONDS: "4",
-        ESCROW_ACCEPTANCE_ROTATION_DELAY_SECONDS: "4",
+        ...(suite === "extended"
+          ? {
+              // The local validator runs only key-recovery (zero delays, as
+              // deployed); the other scenarios need dispatch.
+              ESCROW_ACCEPTANCE_BINDING_DELAY_SECONDS: "0",
+              ESCROW_ACCEPTANCE_ROTATION_DELAY_SECONDS: "0",
+              ESCROW_ACCEPTANCE_SCENARIO_ASSET: mints[0],
+              ESCROW_ACCEPTANCE_BLOCKABLE_ASSET: mints[0],
+              ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY: rotationAuthority,
+            }
+          : {
+              ESCROW_ACCEPTANCE_BINDING_DELAY_SECONDS: "4",
+              ESCROW_ACCEPTANCE_ROTATION_DELAY_SECONDS: "4",
+            }),
       },
       async () => {},
     );
