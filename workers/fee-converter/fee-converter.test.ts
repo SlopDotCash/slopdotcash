@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { handleFeeConversionsApi } from "../../backend/fee-conversions/handler";
 import {
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
@@ -273,29 +274,71 @@ describe("release gates", () => {
 });
 
 describe("USDC routes", () => {
-  test("a network without a verified USDC target stays pending and never quotes, signs or loads a key", async () => {
+  test("retained Robinhood fees report not converted through receipt and recovery runs without quotes or keys", async () => {
     const { db, sqlite } = sqliteD1();
     const events: string[] = [];
     const original = console.log;
     console.log = (line: string) => events.push(line);
     try {
-      const results = await runOnce({
+      const env = {
         FEE_DB: db,
         FEE_CONVERTER_MODE: "live",
         FEE_CONVERTER_NETWORKS: "robinhood",
         FEE_WALLET_ROBINHOOD: WALLET,
         FEE_CONVERTER_ALLOWLIST: JSON.stringify({ robinhood: [TOKEN, USDG] }),
         ...LIMITS,
+        get FEE_WALLET_KEY_ROBINHOOD(): string {
+          throw new Error("retained fees must not load a signing key");
+        },
+      };
+      let requests = 0;
+      for (const mode of ["dry_run", "live"])
+        for (const trigger of ["receipts", "recovery"] as const) {
+          const results = await runOnce(
+            Object.assign(env, { FEE_CONVERTER_MODE: mode }),
+            undefined,
+            {
+              fetch: (async () => {
+                requests += 1;
+                throw new Error(
+                  "retained fees must not request a route or send",
+                );
+              }) as unknown as typeof fetch,
+            },
+            trigger,
+          );
+          expect(results).toEqual([
+            expect.objectContaining({
+              network: "robinhood",
+              status: "not_converted",
+              claimed: 0,
+            }),
+          ]);
+        }
+      expect(requests).toBe(0);
+      const response = await handleFeeConversionsApi(
+        new Request("https://slop.cash/api/v1/admin/fee-conversions"),
+        {
+          db,
+          adminGithubIds: new Set(["1"]),
+          sessionActor: async () => ({ githubId: "1" }),
+        },
+      );
+      expect(response?.status).toBe(200);
+      const report = await response?.json();
+      expect(
+        report.routes.find(
+          (route: { network: string }) => route.network === "robinhood",
+        ),
+      ).toEqual({
+        network: "robinhood",
+        targetToken: null,
+        status: "not_converted",
       });
-      expect(results).toEqual([
-        expect.objectContaining({
-          network: "robinhood",
-          status: "route_pending",
-        }),
-      ]);
+      expect(report.totals).toEqual([]);
       expect(
         events.some((line) =>
-          line.includes('"event":"fee_conversion_route_pending"'),
+          line.includes('"event":"fee_conversion_not_converted"'),
         ),
       ).toBe(true);
       // No record means no quote, and nothing names USDG or any other token

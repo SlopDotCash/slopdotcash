@@ -205,10 +205,10 @@ export interface RunDependencies {
 export interface NetworkRunResult {
   network: Network;
   /**
-   * `route_pending`: the network has no verified USDC target, so nothing is
+   * `not_converted`: the network retains received assets, so nothing is
    * quoted or signed and received fees stay in the fee wallet.
    */
-  status: "ran" | "locked" | "route_pending";
+  status: "ran" | "locked" | "not_converted";
   reconciled: number;
   records: Record<ConversionState, number>;
   /** Vaults whose accrued fees this run moved into the fee wallet. */
@@ -392,13 +392,13 @@ export async function runNetwork(
 
     const usdc = config.definition.usdc;
     if (usdc === null) {
-      // Never relabel another asset as USDC: the fees wait in the wallet.
+      // No conversion target is configured: retain each received asset unchanged.
       deps.log({
-        event: "fee_conversion_route_pending",
+        event: "fee_conversion_not_converted",
         network: config.network,
-        reason: "no verified USDC target",
+        reason: "received assets retained without conversion",
       });
-      result.status = "route_pending";
+      result.status = "not_converted";
       return result;
     }
     const candidates = [
