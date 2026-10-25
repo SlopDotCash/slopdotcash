@@ -13,10 +13,16 @@ import {
 import {
   buildBindCalldata,
   buildCommitMonthlyCalldata,
+  buildCommitMonthlyLeafCalldata,
   buildPayCalldata,
+  buildReserveMonthlyCalldata,
+  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmAwardId,
   evmMonthlyDigest,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
+  readEvmMonthlyReserve,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import {
@@ -598,7 +604,15 @@ async function signAndSubmit(
 export async function submitEvmMonthly(
   env: ExecutorEnvironment,
   authorization: MonthlyAuthorization,
-) {
+  admit = true,
+  maxLeaves = 16,
+): Promise<{
+  transactionId: string | null;
+  alreadyCommitted: boolean;
+  complete?: boolean;
+  notAdmitted?: boolean;
+  committedSources?: string[];
+}> {
   const { plan, signatureHex } = authorization;
   if (
     plan.family !== "evm" ||
@@ -616,6 +630,17 @@ export async function submitEvmMonthly(
     same(env.SIGNER.address, deployment.identityAuthority)
   )
     throw new Error("Monthly executor or deployment mismatch");
+  const reservation = plan.evmReservation;
+  if (reservation)
+    return submitEvmMonthlyReserve(
+      env,
+      authorization,
+      deployment,
+      reservation,
+      admit,
+      maxLeaves,
+    );
+  if (!admit) return { transactionId: null, alreadyCommitted: false };
   const root = evmAllocationRoot(plan.entries);
   const expected = evmMonthlyDigest(
     BigInt(deployment.chainId),
@@ -677,6 +702,181 @@ export async function submitEvmMonthly(
     },
   );
   return { ...result, alreadyCommitted: false };
+}
+
+/** The reserve and each leaf share the existing exact-byte transaction journal. A replacement root
+ * cannot skip an uncertain admission: first reconcile/rebroadcast that stored transaction. */
+async function submitEvmMonthlyReserve(
+  env: ExecutorEnvironment,
+  authorization: MonthlyAuthorization,
+  deployment: Deployment,
+  reservation: EvmMonthlyReservation,
+  admit: boolean,
+  maxLeaves: number,
+) {
+  const { plan, signatureHex } = authorization;
+  if (!Number.isSafeInteger(maxLeaves) || maxLeaves < 1)
+    throw new Error("Invalid monthly leaf bound");
+  const config = { ...deployment, chainId: BigInt(deployment.chainId) };
+  const tree = evmMonthlySumTree(plan.entries);
+  const expected = evmMonthlyReserveDigest(
+    config.chainId,
+    deployment.vault,
+    plan.request.period,
+    reservation,
+  );
+  if (
+    reservation.allocationDigest !== `0x${plan.request.snapshotSha256}` ||
+    reservation.allocationRoot !== tree.hash ||
+    plan.allocationRoot !== tree.hash ||
+    reservation.count !== plan.entries.length ||
+    reservation.remainingGross !== tree.total.toString() ||
+    reservation.wholeGross !== plan.totalGrossBase ||
+    expected.slice(2) !== plan.messageHex ||
+    !/^[a-f0-9]{130}$/.test(signatureHex)
+  )
+    throw new Error("Monthly reserve differs from its frozen authorization");
+  const state = await readEvmMonthlyReserve(config, plan.request.period);
+  const target = { network: plan.request.network, vault: deployment.vault };
+  const key = `monthly:v2:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
+  const fingerprint = digest(
+    JSON.stringify([deployment.chainId, target.vault.toLowerCase(), expected]),
+  );
+  if (BigInt(state.root) === 0n) {
+    if (!admit)
+      return {
+        notAdmitted: true,
+        transactionId: null,
+        alreadyCommitted: false,
+        complete: false,
+      };
+    const authority = (
+      await call(deployment, `${digest("identityAuthority()").slice(0, 10)}`, 1)
+    )[0];
+    if (
+      !same(
+        await recoverAddress({
+          hash: expected,
+          signature: `0x${signatureHex}`,
+        }),
+        `0x${authority.slice(24)}`,
+      )
+    ) {
+      throw new Error("Invalid monthly authority signature");
+    }
+    const previous = await env.JOURNAL.get<Attempt>(key);
+    if (
+      previous &&
+      !(await retireRevertedAttempt(env, deployment, key, previous))
+    ) {
+      const result = await signAndSubmit(
+        env,
+        deployment,
+        key,
+        previous.fingerprint,
+        "",
+        {
+          ...target,
+          idempotencyKey: digest(key).slice(2),
+          monthlyPeriod: plan.request.period,
+        },
+      );
+      return { ...result, alreadyCommitted: false, complete: false };
+    }
+    const result = await signAndSubmit(
+      env,
+      deployment,
+      key,
+      fingerprint,
+      buildReserveMonthlyCalldata(
+        plan.request.period,
+        reservation,
+        `0x${signatureHex}`,
+      ),
+      {
+        ...target,
+        idempotencyKey: digest(key).slice(2),
+        monthlyPeriod: plan.request.period,
+      },
+    );
+    return { ...result, alreadyCommitted: false, complete: false };
+  }
+  if (
+    state.root !== tree.hash ||
+    state.allocationDigest !== reservation.allocationDigest ||
+    state.total !== tree.total ||
+    state.count !== plan.entries.length
+  ) {
+    throw new Error("Another monthly reserve is already admitted");
+  }
+  // The chain already authenticated this root. A later authority rotation, owner opt-out or expired
+  // admission window cannot invalidate the funded reserve or require another authority signature.
+  if (state.remaining === 0n)
+    return { transactionId: null, alreadyCommitted: true, complete: true };
+  let transactionId: string | null = null;
+  const committedSources: string[] = [];
+  const cursorKey = `${key}:${tree.hash}:finalized-cursor`;
+  let cursor = (await env.JOURNAL.get<number>(cursorKey)) ?? 0;
+  if (
+    !Number.isSafeInteger(cursor) ||
+    cursor < 0 ||
+    cursor > plan.entries.length
+  )
+    throw new Error("Invalid monthly execution cursor");
+  for (
+    let index = cursor;
+    index < plan.entries.length && committedSources.length < maxLeaves;
+    ++index
+  ) {
+    const entry = plan.entries[index];
+    const id = evmAwardId(config.chainId, deployment.vault, entry.sourceDigest);
+    const award = await call(deployment, `0xe76af61d${id.slice(2)}`, 6);
+    if (BigInt(`0x${award[0]}`) !== 0n) {
+      if (
+        BigInt(`0x${award[0]}`).toString() !== entry.githubUserId ||
+        BigInt(`0x${award[1]}`).toString() !== String(entry.grossMicro) ||
+        !acceptsPayoutFee(BigInt(`0x${award[1]}`), BigInt(`0x${award[2]}`))
+      )
+        throw new Error(
+          "Admitted monthly source conflicts with a funded award",
+        );
+      if (cursor === index) {
+        cursor = index + 1;
+        await env.JOURNAL.put(cursorKey, cursor);
+      }
+      continue;
+    }
+    const leafKey = `${key}:${tree.hash}:leaf:${index}`;
+    const data = buildCommitMonthlyLeafCalldata(
+      plan.request.period,
+      entry,
+      index,
+      tree.proofs[index],
+    );
+    const previous = await env.JOURNAL.get<Attempt>(leafKey);
+    if (previous)
+      await retireRevertedAttempt(env, deployment, leafKey, previous);
+    const result = await signAndSubmit(
+      env,
+      deployment,
+      leafKey,
+      digest(data),
+      data,
+      {
+        ...target,
+        idempotencyKey: digest(leafKey).slice(2),
+        monthlyPeriod: plan.request.period,
+      },
+    );
+    transactionId = result.transactionId;
+    committedSources.push(entry.sourceDigest);
+  }
+  return {
+    transactionId,
+    alreadyCommitted: true,
+    complete: false,
+    committedSources,
+  };
 }
 
 /** The vault's identity authority, read at the finalized block, must be this signer. */

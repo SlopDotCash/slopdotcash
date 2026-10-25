@@ -311,7 +311,7 @@ export async function prepareEvmMonthlyReservation(
     if (
       error instanceof EvmRpcError &&
       error.data === "0x" &&
-      /revert/i.test(error.message)
+      /revert/i.test(error.rpcMessage)
     )
       return null;
     throw error;

@@ -55,7 +55,7 @@
     "verify:code": "bun run typecheck && bun run lint:check && bun run test:scripts && bun run test:slopbot && bun run test:notify && bun run test:fee-converter && bun test ./scripts/staging-payments.test.ts ./backend/notifications ./backend/security ./workers/vetting/acquire.test.ts && node workers/vetting-backup/workflow.mjs",
     "payments:deployments": "bun scripts/prepare-payment-deployments.ts",
     "payments:readiness": "bun scripts/check-payout-readiness.ts",
-    "test:contracts:evm": "bun contracts/evm/adapter.integration.ts",
+    "test:contracts:evm": "bun contracts/evm/adapter.integration.ts && bun contracts/evm/monthly-reserve.integration.ts",
     "test:security-payments": "bun backend/security/payments.integration.ts",
     "test:payments": "bun run test:security-payments && bun backend/payments/evm.integration.ts && bun workers/payments/recovery.integration.ts && bun workers/payments/reconcile.integration.ts && bun workers/payments/registry.integration.ts && bun workers/payment-executor/bind-trigger.integration.ts",
     "test:escrow-policy": "bun test workers/payments/escrow-policy.test.ts workers/payments/reconcile.test.ts src/lib/funding-address.test.ts src/lib/project-schema.robinhood.test.ts backend/payments/migrations.test.ts workers/payment-executor/wallet-rotation.test.ts contracts/evm/scripts.test.ts src/lib/payments/contracts.test.ts src/lib/payments/monthly-allocation.test.ts backend/payments/monthly.test.ts src/lib/monthly-commitment-actions.test.ts contracts/solana/monthly-commitment.test.ts",
