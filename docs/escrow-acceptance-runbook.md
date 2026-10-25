@@ -31,6 +31,18 @@ For each asset in `ESCROW_ACCEPTANCE_ASSETS`, in a new vault:
 7. After finality, the cron writes `vault_snapshots`. The runner compares that
    row with a fresh finalized `readVaultTotals` read, with the scenario
    figures, with the vault token balance, and with the ledger.
+8. The runner then reads the two public API responses that the site uses,
+   through the production handler (`backend/payments/handler.ts`):
+   `GET /api/v1/payments/projects/<id>/vault` (the vault totals panel) and
+   `GET /api/v1/payments/projects/<id>/totals` (the indexed award totals).
+   Each counter must equal the finalized chain counter. The panel's
+   "Reserved for committed awards" figure (`reservedGross`) must equal the
+   chain reserve. A counter that the vault type does not have must stay
+   `null`, not `"0"`. A project that the cron never indexed must be
+   unavailable: `/totals` returns HTTP 503 `project_payments_not_indexed`
+   and `/vault` returns an empty snapshot list. Zero totals for missing data
+   fail the run. The evidence keeps these results under
+   `reconciliation.publicApi`.
 
 The executor and attester are the production code (`PaymentSignerJournal` with
 test keys). The backend is a SQLite file with every D1 migration, kept beside
@@ -154,10 +166,42 @@ own evidence directory. Each scenario creates its own vault (EVM) or project
 | --- | --- |
 | `bounty` | In a bounty vault, a 100-unit private award pays 75 to the researcher and 25 to the fee recipient, in exact base units, with no other fee. An ordinary award and an amount that is not divisible by four are refused. Nothing is left to withdraw. |
 | `walletless-lifecycle` | An award without a wallet cannot pay. A wallet signature for another network or another vault is refused. A replacement wallet activates at once, a stale version cannot bind or pay, and the owner cannot cancel at the deployed zero binding delay. A recovered wallet is paid in the next transaction; the earlier wallets get nothing. With a review-window deployment, the owner cancels (EVM) or vetoes (Solana) a binding, the cancelled version cannot pay, and a new version is paid. |
-| `monthly` | Monthly commitment is off at vault creation. A zero cap is refused. Only the open period is accepted (the 72-hour cutoff). An allocation changed after signing, a total over the owner's cap, and an opted-out vault are refused. The owner commits and pays one award by hand first; the production executor then submits the attester-signed allocation (`/v1/commit-monthly`). The manual award is counted once (EVM) or released (Solana), a changed manual award fails closed, a second commitment is refused, and no award is paid twice. |
+| `monthly` | Monthly commitment is off at vault creation. A zero cap is refused. Only the open period is accepted (the 72-hour cutoff). An allocation changed after signing, a total over the owner's cap, and an opted-out vault are refused. The owner commits and pays one award by hand first. Then the project-operated keeper reserves and commits the allocation through V2 (`keeper-v2`), or the production executor submits the legacy commitment (`/v1/commit-monthly`, `executor-v1`); see below. The manual award is counted once (EVM) or released (Solana), a changed manual award fails closed, a second commitment is refused, and no award is paid twice. |
 | `interrupted-send` | The production payments Worker cron pays through the production executor. A loopback fault proxy forwards the first payment broadcast to the node, discards the answer, and fails the next status lookup. The signer instances restart. The cron recovers the journaled attempt: one attempt, one transaction, one payment. |
 | `failed-recipient` | One of three recipients rejects the token (blocked on EVM, frozen token account on Solana). The other two are paid in the same cron run. The failed award stays reserved and is paid with the same attempt after the block ends. |
 | `frozen-fee-destination` | While the fee recipient rejects the token, the fee claim fails, a mined claim reverts, and a waiting payout still pays. After the block ends, one claim moves every accrued fee. |
+| `key-recovery` | The identity authority key is replaced, as the key recovery runbook in `contracts/evm/README.md` prescribes. EVM: the registrar proposes the recovery key on the factory and anyone executes the rotation. Solana: the owner proposes the recovery key for the project, the Config rotation authority confirms it, and anyone executes it. Then the old key cannot bind (`Unauthorized` on EVM, `ConstraintHasOne` on Solana), a binding made before the rotation still pays, and the recovery key binds a new wallet that is paid. On EVM the registrar then rotates the factory back to the configured identity authority. |
+
+The `monthly` scenario has two paths. The run selects the path from the vault
+logic that the factory creates (`monthlyReserveVersion()` of
+`vaultImplementation()`) and records it as `checks.monthlyPath`:
+
+- `keeper-v2`: the factory has the V2 monthly reserve (#1170, after the
+  upgrade in [Factory upgrade qualification](#factory-upgrade-qualification-evm)).
+  The identity test key signs the reservation that
+  `prepareEvmMonthlyReservation` returns, and the run publishes it in the
+  payments database. The project-operated keeper (`scripts/payment-keeper`,
+  `runKeeper`) reads it through the unchanged public registry and payment
+  routes. The keeper sends `reserveMonthly`, then one `commitMonthlyLeaf` per
+  unfunded award, and pays each award after its wallet is bound. The relayer
+  key is the keeper's gas signer; it has no vault role. The manual award stays
+  out of the reserve. A keeper rerun signs nothing, and a second
+  `reserveMonthly`, `commitMonthly` or leaf is refused. The keeper serves the
+  PRD schedule only, from period 2026-11. On a public test network the
+  scenario therefore waits, with no transaction, until the 2026-11 window
+  opens at 2026-12-04T00:00Z. The keeper's gas budget is the network's
+  reviewed gas ceiling at 10 gwei per transaction and 40 such transactions
+  per day.
+- `executor-v1`: the factory has no V2 reserve (the factories now on the
+  public test networks). The production executor submits the legacy
+  `commitMonthly` (`/v1/commit-monthly`), as before.
+
+The `key-recovery` scenario on EVM changes the factory identity authority for
+every vault of that factory while it runs. Run no other acceptance run against
+the same factory at the same time. A run interrupted while the recovery key is
+in force runs `key-recovery` first on resume and rotates the factory back
+before any other scenario binds. The Solana rotation changes only the
+scenario's own project.
 
 Additional environment for the extended suite:
 
@@ -168,10 +212,13 @@ Additional environment for the extended suite:
 | `ESCROW_ACCEPTANCE_BLOCKABLE_ASSET` | all | EVM: a `TestDollar` (`contracts/evm/integration/TestDollar.sol`), whose `blockAddress` models a blocked USDC destination. Solana: a classic mint whose freeze authority is the owner key. |
 | `ESCROW_ACCEPTANCE_REVIEW_FACTORY` | EVM, optional | A factory from the same source with the same roles and a nonzero binding delay, for the cancellation window. |
 | `ESCROW_ACCEPTANCE_REVIEW_DELAY_SECONDS` | Solana, optional | Binding delay of the review-window project. |
+| `ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY` | EVM | `key-recovery`: the replacement identity authority. A separate test key with gas; it signs the new binding. |
+| `ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY` | Solana | `key-recovery`: the Config rotation authority (64-character hex seed). The run derives the replacement identity key in memory; the relayer pays its fees. |
+| `ESCROW_ACCEPTANCE_KEEPER_ADDITIONAL_FEE_RESERVE` | Base Sepolia, `keeper-v2` | Base L1 and operator fee reserve per keeper transaction, in wei. Required on Base Sepolia; `0` elsewhere. |
 
 The owner key needs 500 units of the scenario asset for the monthly scenario,
-100 for each lifecycle vault and 50 for the interrupted send, 100 of each
-bounty asset, and 250 of the blockable asset. The run derives the destination
+100 for each lifecycle vault, 50 for the interrupted send and 150 for key
+recovery, 100 of each bounty asset, and 250 of the blockable asset. The run derives the destination
 wallets in memory from the second actor key, so no new key is stored. The
 blockable asset and the review-window deployment are test fixtures: the
 evidence names their addresses, and a review-window result is not evidence
@@ -209,11 +256,104 @@ The evidence file has a `scenarios` object: per scenario its status
 (`passed`, `pending` or `failed`), the reason, its vaults, every
 transaction, and its checks. The run exits 0 only when every scenario passed.
 
+## Factory upgrade qualification (EVM)
+
+This step qualifies the V2 upgrade of `contracts/DEPLOY-MAINNET.md` section 4
+on a public test network factory, with the checks of
+`contracts/evm/integration/mainnet-upgrade-rehearsal.ts`. The implementations
+are the CREATE2 addresses of section 4.3, the same on every chain.
+
+```sh
+(cd contracts/evm && forge build)
+bun scripts/escrow-acceptance/evm-upgrade.ts plan    base-sepolia evidence/escrow-upgrade/base-sepolia
+bun scripts/escrow-acceptance/evm-upgrade.ts execute base-sepolia evidence/escrow-upgrade/base-sepolia
+bun scripts/escrow-acceptance/evm-upgrade.ts verify  base-sepolia evidence/escrow-upgrade/base-sepolia
+```
+
+- `plan` uses no key. At one finalized block it records the factory roles,
+  the current factory and vault implementations and their code digests, every
+  vault from the factory's `VaultCreated` logs with its storage slots 0 to 18,
+  and the ordered unsigned transactions: deploy both implementations through
+  the CREATE2 deployer, upgrade each vault, upgrade the factory, select the
+  new vault logic. It prints the factory's `upgradeAuthority()`.
+- `execute` signs those transactions with
+  `ESCROW_ACCEPTANCE_UPGRADE_AUTHORITY_KEY`. It refuses a key that is not the
+  authority in the plan and on chain. It skips a step that is already in its
+  target state, saves each signed transaction before broadcast, and upgrades
+  any vault created after the plan and before the new template (a
+  straggler).
+- `verify` uses no key. After finality it checks the new implementation slot
+  and template, the reviewed code digests, unchanged proxy code, unchanged
+  factory slots except the template slot, unchanged roles, unchanged vault
+  storage and initializer versions, `monthlyReserveVersion() == 2` on every
+  vault, and that another account cannot upgrade and no initializer can run
+  again. It records `supersededAtBlock` (section 4.7).
+
+Exit code 75 means a transaction waits for finality; run the same command
+again. Evidence is `upgrade.json` in the directory. Run no acceptance run
+against the factory between `plan` and `verify`: the storage comparison
+expects no other activity.
+
+The test network upgrade authority is the address that `plan` reads from
+`upgradeAuthority()`. The deploy scripts set it from
+`ESCROW_UPGRADE_AUTHORITY` at deployment time. The repository does not record
+which key holds it for the current test factories (the 24 October 2026
+factories in #902). That key is an owner input. Supply it only to the
+`execute` shell.
+
+After `verify` passes, use a new evidence directory for the extended suite.
+The `monthly` scenario then takes the `keeper-v2` path. Earlier evidence
+recorded the old implementations and cannot resume.
+
+## Commands per public test network
+
+Load the keys from the owner's secret store into one shell. Never put a value
+on the command line. The table names the variables only.
+
+| Network | Section 21 and extended suite | Upgrade qualification |
+| --- | --- | --- |
+| `base-sepolia` | Common keys below, `ESCROW_ACCEPTANCE_REGISTRAR_KEY`, `ESCROW_ACCEPTANCE_FACTORY`, `ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY`, `ESCROW_ACCEPTANCE_KEEPER_ADDITIONAL_FEE_RESERVE` | `ESCROW_ACCEPTANCE_RPC_URL`, `ESCROW_ACCEPTANCE_FACTORY`, `ESCROW_ACCEPTANCE_FACTORY_DEPLOYMENT_BLOCK`; `execute` also `ESCROW_ACCEPTANCE_UPGRADE_AUTHORITY_KEY` |
+| `ethereum-sepolia` | Common keys below, `ESCROW_ACCEPTANCE_REGISTRAR_KEY`, `ESCROW_ACCEPTANCE_FACTORY`, `ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY` | As Base Sepolia |
+| `robinhood-testnet` | Common keys below, `ESCROW_ACCEPTANCE_REGISTRAR_KEY`, `ESCROW_ACCEPTANCE_FACTORY`, `ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY`. Use an RPC that serves the `finalized` tag. | As Base Sepolia |
+| `solana-devnet` | Common keys below, `ESCROW_ACCEPTANCE_PROGRAM_ID`, `ESCROW_ACCEPTANCE_PROGRAM_CODE_SHA256`, `ESCROW_ACCEPTANCE_PROGRAM_UPGRADE_AUTHORITY`, `ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY` | Not applicable: the Solana program upgrade follows `contracts/DEPLOY-MAINNET.md` section 2. |
+
+Common keys: `ESCROW_ACCEPTANCE_RPC_URL`, `ESCROW_ACCEPTANCE_ASSETS`,
+`ESCROW_ACCEPTANCE_OWNER_KEY`, `ESCROW_ACCEPTANCE_DEPOSITOR_KEY`,
+`ESCROW_ACCEPTANCE_IDENTITY_KEY`, `ESCROW_ACCEPTANCE_RELAYER_KEY`,
+`ESCROW_ACCEPTANCE_ACTOR_A_KEY`, `ESCROW_ACCEPTANCE_ACTOR_B_KEY`. The
+extended suite also needs `ESCROW_ACCEPTANCE_SCENARIO_ASSET` and
+`ESCROW_ACCEPTANCE_BLOCKABLE_ASSET`, and optionally
+`ESCROW_ACCEPTANCE_REVIEW_FACTORY` (EVM) or
+`ESCROW_ACCEPTANCE_REVIEW_DELAY_SECONDS` (Solana). Optional for all:
+`ESCROW_ACCEPTANCE_UNIT_DIVISOR`, `ESCROW_ACCEPTANCE_FACTORY_CODE_SHA256`,
+`ESCROW_ACCEPTANCE_MAX_WAIT_SECONDS`, `ESCROW_ACCEPTANCE_POLL_SECONDS`.
+
+For each network, in this order (shown for `base-sepolia`; replace the
+network name and directory):
+
+```sh
+# 1. Section 21 on the current factory.
+bun run escrow:acceptance base-sepolia evidence/escrow-acceptance/base-sepolia
+# 2. Extended suite on the current factory (monthly takes executor-v1).
+bun run escrow:acceptance base-sepolia evidence/escrow-acceptance-extended/base-sepolia --suite extended
+# 3. EVM only: upgrade qualification (owner supplies the upgrade authority key to execute).
+bun scripts/escrow-acceptance/evm-upgrade.ts plan    base-sepolia evidence/escrow-upgrade/base-sepolia
+bun scripts/escrow-acceptance/evm-upgrade.ts execute base-sepolia evidence/escrow-upgrade/base-sepolia
+bun scripts/escrow-acceptance/evm-upgrade.ts verify  base-sepolia evidence/escrow-upgrade/base-sepolia
+# 4. EVM only: extended suite on the upgraded factory, in a new directory (monthly takes keeper-v2;
+#    it waits until the 2026-11 window opens at 2026-12-04T00:00Z).
+bun run escrow:acceptance base-sepolia evidence/escrow-acceptance-extended-v2/base-sepolia --suite extended
+```
+
+Repeat a command that exits with code 75 later. Each signed transaction is
+saved before broadcast, so a repeat never signs a step twice.
+
 ## Local proof
 
 ```sh
 SLOP_ESCROW_FEATURES=short-delay-for-tests bun run build:contracts:solana
 bun run test:escrow-acceptance:local
+bun scripts/escrow-acceptance/local.ts --suite extended
 ```
 
 This forks each EVM test network with Anvil (real chain id and real test
@@ -221,7 +361,19 @@ stablecoin, funded with `anvil_dealERC20`), deploys a factory and an 18-decimal
 `WideToken`, starts a local Solana validator with a 6-decimal and a 9-decimal
 mint, generates throwaway keys, and runs the same command until it passes. It
 moves time forward on the forks when the runner waits. Nothing reaches a
-public network except the read-only fork requests.
+public network except the read-only fork requests. Name networks to run only
+those, for example `bun scripts/escrow-acceptance/local.ts base-sepolia`.
+`ESCROW_ACCEPTANCE_LOCAL_EVM_PORT` and `ESCROW_ACCEPTANCE_LOCAL_SOLANA_PORT`
+move the loopback ports when another local chain uses the defaults.
+
+With `--suite extended`, the EVM forks deploy a zero-delay factory from the
+current source (it has the V2 reserve), a 120-second review-window factory, a
+`TestDollar` blockable asset and a recovery identity key. The fork clock moves
+to 2026-12-05, inside the 2026-11 commitment window, so the `monthly`
+scenario takes the `keeper-v2` path. Anvil keeps every historical state in
+memory (`--prune-history`): its disk-persisted states lose locally deployed
+bytecode, which breaks finalized-block reads of the test vaults. The local
+Solana validator runs only `key-recovery` (see the known blocker below).
 
 ## Known blockers
 
@@ -229,6 +381,8 @@ The payments Worker finds vaults only in the project registry, and the
 registry names registry networks only. The executor admits a local Solana
 validator only as `solana-localnet` and compares that name with the
 obligation. Thus no `solana-localnet` vault can reach dispatch, and on
-`solana-localnet` the runner stops before it signs, with that reason. The
-local proof therefore covers the EVM forks only, until a maintainer decides
-how a local Solana validator enters the registry.
+`solana-localnet` the section 21 runner stops before it signs, with that
+reason. The extended suite on `solana-localnet` runs only `key-recovery`,
+which needs no registry or dispatch, and records that deviation. The local
+proof of the other Solana scenarios stays open until a maintainer decides how
+a local Solana validator enters the registry.
