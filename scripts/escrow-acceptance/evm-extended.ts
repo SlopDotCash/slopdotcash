@@ -1697,7 +1697,17 @@ export async function runEvmExtended(
         after.paid,
         blocked.items.reduce((s, i) => s + i.net, 0n),
       );
-      expectEqual("failed vault balance", after.balance, 0);
+      // Nothing owed stays in the vault: any balance left is the owner's free funds.
+      for (const field of ["principalReserved", "feesReserved", "feesAccrued"])
+        expectEqual(`failed vault ${field}`, after[field], 0);
+      // Free funds are every recorded deposit less the gross of the three awards.
+      expectEqual(
+        "failed vault free",
+        after.free,
+        BigInt(after.deposited) -
+          blocked.items.reduce((sum, item) => sum + item.gross, 0n),
+      );
+      expectEqual("failed vault balance", after.balance, after.free);
       frozen.checks.claimed = {
         amount: text(fees),
         transaction: claimed.transactionHash,
