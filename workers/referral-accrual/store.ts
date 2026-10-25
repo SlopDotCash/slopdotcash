@@ -211,6 +211,13 @@ export class D1AccrualStore implements AccrualStore {
     return /^0x[0-9a-f]{40}$/u.test(address) ? address : null;
   }
 
+  async pinnedWallets() {
+    const { results } = await this.db
+      .prepare("SELECT referrer_github_id, wallet FROM referral_claim_wallets")
+      .all<{ referrer_github_id: string; wallet: string }>();
+    return new Map(results.map((row) => [row.referrer_github_id, row.wallet]));
+  }
+
   async insertAccruals(rows: AccrualRow[]) {
     const columns = ACCRUAL_COLUMNS.map(([, column]) => column).join(", ");
     const placeholders = ACCRUAL_COLUMNS.map(() => "?").join(", ");
@@ -244,5 +251,13 @@ export class D1AccrualStore implements AccrualStore {
         file.createdAt,
       )
       .run();
+    for (const pin of file.pins)
+      await this.db
+        .prepare(
+          `INSERT INTO referral_claim_wallets (referrer_github_id, wallet, pinned_period, created_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .bind(pin.githubId, pin.wallet, file.period, file.createdAt)
+        .run();
   }
 }

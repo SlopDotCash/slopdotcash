@@ -78,6 +78,8 @@ export interface Hold {
 }
 
 export interface AccrualFile {
+  /** Referrers entering a tree for the first time in this file, to pin. */
+  pins: { githubId: string; wallet: string }[];
   period: string;
   epoch: number;
   runId: string;
@@ -104,7 +106,10 @@ export interface AccrualStore {
   hasParticipationBan(githubId: string): Promise<boolean>;
   /** Current authorized claim-chain wallet, lowercase, or null. */
   claimWallet(githubId: string): Promise<string | null>;
+  /** Wallets pinned by earlier files: referrer id to wallet. */
+  pinnedWallets(): Promise<Map<string, string>>;
   insertAccruals(rows: AccrualRow[]): Promise<void>;
+  /** Inserts the file and pins the wallets of referrers entering a tree for the first time. */
   insertFile(file: AccrualFile): Promise<void>;
 }
 
@@ -390,6 +395,12 @@ export interface FileReferrer {
   githubId: string;
   githubLogin: string;
   cumulativeBase: string;
+  /**
+   * The leaf address. Once a referrer enters a tree its wallet is pinned for
+   * every later file, whatever the registry says afterwards, because the
+   * distributor tracks claims per address: moving a leaf would pay a
+   * cumulative twice and dropping one would strand it.
+   */
   wallet: string | null;
   /** Present only for referrers in the tree. */
   leaf?: { hash: string; proof: string[] };
@@ -405,12 +416,16 @@ export async function buildFile(
 ): Promise<AccrualFile> {
   const referrers: FileReferrer[] = [];
   const leaves: Leaf[] = [];
+  const pinned = await deps.store.pinnedWallets();
+  const pins: { githubId: string; wallet: string }[] = [];
   const walletOwner = new Map<string, string>();
+  for (const [githubId, wallet] of pinned) walletOwner.set(wallet, githubId);
   for (const [githubId, entry] of [...totals.perReferrer.entries()].sort(
     ([a], [b]) => (BigInt(a) < BigInt(b) ? -1 : 1),
   )) {
+    const pin = pinned.get(githubId) ?? null;
     const wallet =
-      entry.total > 0n ? await deps.store.claimWallet(githubId) : null;
+      pin ?? (entry.total > 0n ? await deps.store.claimWallet(githubId) : null);
     const referrer: FileReferrer = {
       githubId,
       githubLogin: entry.login,
@@ -419,12 +434,14 @@ export async function buildFile(
     };
     if (wallet !== null) {
       // Two accounts cannot share one claim address: the leaf would merge
-      // their totals and the first claimant would take both. Keep the earlier
-      // account's leaf and leave the later one out of this epoch's tree.
+      // their totals and the first claimant would take both. A pinned wallet
+      // belongs to its referrer; otherwise keep the earlier account's leaf
+      // and leave the later one out of this epoch's tree.
       const owner = walletOwner.get(wallet);
-      if (owner === undefined) {
+      if (owner === undefined || owner === githubId) {
         walletOwner.set(wallet, githubId);
         leaves.push({ address: wallet, cumulativeBase: entry.total });
+        if (pin === null) pins.push({ githubId, wallet });
       } else {
         referrer.wallet = null;
         deps.log({
@@ -497,6 +514,7 @@ export async function buildFile(
     2,
   );
   return {
+    pins,
     period,
     epoch,
     runId,

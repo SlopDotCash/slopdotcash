@@ -653,6 +653,58 @@ describe("one accrual run", () => {
     expect(body.merkle.leafCount).toBe(1);
   });
 
+  test("a wallet is pinned once it enters a tree, so a leaf never moves", async () => {
+    const { db, sqlite } = sqliteD1();
+    addProject(sqlite, "a", REFERRER);
+    addPaid(sqlite, "a", 1_000_000n, "2026-11-02T00:00:00.000Z");
+    addPaid(sqlite, "a", 1_000_000n, "2026-12-02T00:00:00.000Z");
+    const first = addWallet(sqlite, REFERRER, WALLET);
+    await runOnce(env(db), at("2026-12-02T00:00:00.000Z"));
+    expect(
+      sqlite
+        .query(
+          "SELECT referrer_github_id, wallet, pinned_period FROM referral_claim_wallets",
+        )
+        .all(),
+    ).toEqual([
+      {
+        referrer_github_id: REFERRER.githubId,
+        wallet: WALLET,
+        pinned_period: "2026-11",
+      },
+    ]);
+    // The referrer rotates to a new wallet in the registry; the file keeps the pinned one.
+    addWallet(sqlite, REFERRER, `0x${"9".repeat(40)}`, "robinhood", {
+      supersedes: first,
+    });
+    await runOnce(env(db), at("2027-01-02T00:00:00.000Z"));
+    const december = JSON.parse(files(sqlite)[1].body);
+    expect(december.referrers[0].wallet).toBe(WALLET);
+    expect(december.referrers[0].cumulativeBase).toBe(
+      (6n * ONE_TOKEN).toString(),
+    );
+    expect(() =>
+      sqlite.exec("UPDATE referral_claim_wallets SET wallet = '0x1'"),
+    ).toThrow(/pinned/u);
+    // A second account cannot take a pinned wallet, even in a later tree.
+    addProject(sqlite, "b", SECOND);
+    addPaid(sqlite, "b", 1_000_000n, "2027-01-02T00:00:00.000Z");
+    addWallet(sqlite, SECOND, WALLET);
+    await runOnce(env(db), at("2027-02-02T00:00:00.000Z"));
+    const january = JSON.parse(files(sqlite)[2].body);
+    expect(
+      january.referrers.map(
+        (r: { githubId: string; wallet: string | null }) => [
+          r.githubId,
+          r.wallet,
+        ],
+      ),
+    ).toEqual([
+      [REFERRER.githubId, WALLET],
+      [SECOND.githubId, null],
+    ]);
+  });
+
   test("two accounts on one wallet keep one leaf and the file says which", async () => {
     const { db, sqlite } = sqliteD1();
     addProject(sqlite, "a", REFERRER);

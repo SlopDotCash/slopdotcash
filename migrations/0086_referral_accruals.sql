@@ -109,3 +109,19 @@ CREATE TABLE referral_accrual_locks (
   run_id TEXT NOT NULL,
   expires_at TEXT NOT NULL
 ) STRICT;
+
+-- The claim wallet a referrer first enters a tree with is pinned: every later
+-- file keeps the same leaf address, so an unclaimed amount never moves to or
+-- disappears from an address (the distributor tracks claims per address).
+-- A referrer who loses this wallet's key needs a manual case, not a new row.
+CREATE TABLE referral_claim_wallets (
+  referrer_github_id TEXT PRIMARY KEY CHECK (referrer_github_id GLOB '[1-9]*' AND referrer_github_id NOT GLOB '*[^0-9]*'),
+  wallet TEXT NOT NULL CHECK (length(wallet) = 42 AND wallet GLOB '0x*' AND substr(wallet, 3) NOT GLOB '*[^0-9a-f]*'),
+  pinned_period TEXT NOT NULL REFERENCES referral_accrual_files(period),
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX referral_claim_wallets_one_account_per_wallet ON referral_claim_wallets(wallet);
+CREATE TRIGGER referral_claim_wallets_no_update BEFORE UPDATE ON referral_claim_wallets
+BEGIN SELECT RAISE(ABORT, 'referral claim wallet is pinned'); END;
+CREATE TRIGGER referral_claim_wallets_no_delete BEFORE DELETE ON referral_claim_wallets
+BEGIN SELECT RAISE(ABORT, 'referral claim wallet permanent'); END;

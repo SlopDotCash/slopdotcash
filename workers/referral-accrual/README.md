@@ -67,8 +67,13 @@ filed epochs, the referrer's current authorized Robinhood Chain wallet
 row), and the Merkle tree over `(wallet, cumulative)` leaves for referrers with
 a wallet and a positive total. A referrer without a wallet is carried in the
 file and enters a later tree once a wallet is registered; nothing is lost by
-binding late. Two accounts on one wallet keep one leaf, the earlier account's,
-and the run logs `referral_wallet_shared`.
+binding late. The wallet a referrer first enters a tree with is pinned
+(`referral_claim_wallets`) and every later file keeps it, whatever the
+registry says afterwards: the distributor tracks claims per address, so a
+moved leaf would pay a cumulative twice and a dropped leaf would strand it. A
+referrer who loses that wallet's key needs a manual case. Two accounts on one
+wallet keep one leaf, the pinned or earlier account's, and the run logs
+`referral_wallet_shared`.
 
 Leaf and tree shape, shared with `contracts/evm/test/ReferralDistributor.t.sol`
 through fixed vectors in the test suite:
