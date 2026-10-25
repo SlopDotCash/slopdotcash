@@ -39,6 +39,12 @@ bucket_name = "slop-vetting-evidence"
 binding = "SLOPBOT"
 service = "slop-slopbot"
 
+# Authenticated subscription assessments use Slopbot's existing journal.
+[[services]]
+binding = "SLOPBOT_VALUE_IMPORT"
+service = "slop-slopbot"
+entrypoint = "HistoricalValuePublisher"
+
 [[services]]
 binding = "VETTING_SANDBOX"
 service = "slop-vetting-sandbox"
