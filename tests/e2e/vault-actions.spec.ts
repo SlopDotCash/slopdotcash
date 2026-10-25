@@ -1239,6 +1239,8 @@ test("owner creates, registers and funds a vault through the real API", async ({
       name: "Review vault creation",
       exact: true,
     });
+    // The wallet connection keeps the button disabled until it finishes.
+    await expect(reviewButton).toBeEnabled();
     await reviewButton.focus();
     await expect(reviewButton).toBeFocused();
     await page.keyboard.press("Enter");
@@ -1674,7 +1676,12 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await expect(
       setup.getByLabel("Automatically pay the monthly allocation"),
     ).toHaveCount(0);
-    await setup.getByRole("button", { name: "Review vault creation" }).focus();
+    const reviewButton = setup.getByRole("button", {
+      name: "Review vault creation",
+    });
+    await expect(reviewButton).toBeEnabled();
+    await reviewButton.focus();
+    await expect(reviewButton).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(setup).toContainText(
       "Security bounty: 75% researcher, 25% Slop",
