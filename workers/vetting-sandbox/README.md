@@ -156,4 +156,3 @@ the complete merge, a second fresh sandbox, wrong parents, omitted paths,
 corrupt bytes, the unchanged request cap and the expanded-object bound. No
 subscription verdict enters CI. Real session, journal and Points consumption
 need separate end-to-end evidence; this SDK control does not provide them.
-
