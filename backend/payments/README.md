@@ -306,6 +306,9 @@ sections 6 and 7). Migration `0062` adds its private records.
    in `monthly_payment_authorization_attempts`; it never changes the snapshot,
    whole allocation amount, or prior signature. Once the chain admits a root,
    no new attempt is signed. Legacy EVM and Solana keep their original intent.
+   A reviewed EVM upgrade can add a V2 attempt to a legacy publication. Its
+   public response also retains the original signature, so an uncertain legacy
+   transaction can be reconciled if it wins admission.
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM/authorization/:network`
    returns the latest signed execution attempt and its publication time, without
    calling a signer or RPC. It exposes no private adjustment history.
