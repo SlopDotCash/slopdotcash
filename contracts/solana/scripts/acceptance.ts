@@ -20,6 +20,7 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  SolanaJSONRPCError,
   SystemProgram,
   sendAndConfirmTransaction,
   Transaction,
@@ -471,7 +472,7 @@ export function escrow(programId: PublicKey) {
   };
 }
 
-/** Signs keyed transactions once; a rerun rebroadcasts the saved bytes until their blockhash expires. */
+/** Reuses each signed step. An expired signature with unknown outcome stays pending. */
 export class SolanaChain {
   readonly connection: Connection;
   constructor(
@@ -486,7 +487,15 @@ export class SolanaChain {
   ) {
     const info = await this.connection
       .getTokenAccountBalance(account, commitment)
-      .catch(() => null);
+      .catch(async (error) => {
+        if (
+          error instanceof SolanaJSONRPCError &&
+          error.code === -32602 &&
+          (await this.connection.getAccountInfo(account, commitment)) === null
+        )
+          return null;
+        throw error;
+      });
     return info ? BigInt(info.value.amount) : 0n;
   }
   /** Simulates instructions that must fail and returns the program error and logs. */
@@ -528,9 +537,11 @@ export class SolanaChain {
       if (!status) {
         const height = await this.connection.getBlockHeight("finalized");
         if (height > (record.lastValidBlockHeight ?? 0)) {
-          // An expired blockhash can never land, so a fresh signature is safe.
-          delete steps[key];
-          record = undefined;
+          // Expiry prevents a later send; it does not prove an earlier send
+          // never landed. Deposits are not idempotent, so retain the evidence.
+          throw new Waiting(
+            `${key}: ${record.transactionId} expired with an unknown outcome; reconcile its finalized receipt before continuing`,
+          );
         }
       }
     }
