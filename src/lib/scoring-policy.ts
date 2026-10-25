@@ -1,5 +1,5 @@
 /**
- * Versioned selection of the Slop Score producer for new work (PRD section 7;
+ * Versioned selection of the accepted-work Points producer (PRD section 7;
  * SCR-04, SCR-05, SCR-06; MVP-09, MVP-05a).
  *
  * Work accepted before the selected policy's effective instant keeps the
@@ -16,16 +16,18 @@ export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
 export const MAX_CREDITED_REVIEWERS = 5 as const;
 
 /**
- * Owner decision D2 (24 Oct 2026).
+ * Owner decisions of 24 and 25 October 2026.
  *
  * - `effectiveAt`: work accepted from this exact UTC instant uses the value
- *   policy. Earlier work keeps its historical policy.
+ *   policy, including unpaid September and October historical work. Approved
+ *   or funded awards retain their frozen sources and amounts. This date does
+ *   not authorize paid API assessment of historical work.
  * - Review pool: one pool per pull request. It is the sum of the credited
  *   reviewers' highest assessed bands, capped at the pull request's own
  *   assessed size in thirds, and never less than one third.
  */
 export const VALUE_SCORING_POLICY_EFFECTIVE_AT =
-  "2026-11-01T00:00:00.000Z" as const;
+  "2026-09-01T00:00:00.000Z" as const;
 export const REVIEW_CREDIT_POOL_RULE = "credited-bands-capped-at-size" as const;
 /** The smallest review pool of a pull request with a credited reviewer. */
 export const MIN_REVIEW_CREDIT_POOL_THIRDS = 1 as const;
