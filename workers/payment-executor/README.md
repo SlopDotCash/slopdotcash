@@ -26,7 +26,35 @@ low-s, 27-or-28 encoding the vault accepts, and appends it to
 an expired authorization never blocks the claim. The attester reads the stored
 signature with the latest expiry for the on-chain version it is about to bind,
 verifies it again, and submits it unchanged; with no stored signature it
-refuses, and the award waits for the contributor. On Solana the destination keypair must sign
+refuses, and the award waits for the contributor. On a test stack the
+relayer requests the binding. A mainnet has no Slop relayer (PAY-04), so the
+production EVM attester's own five-minute cron run requests it
+(`/v1/bind-destinations` on its journal, reached only from `scheduled`).
+The production EVM attester refuses `/v1/pay`, so this run is its only
+binding path. Each run first passes the stack, network and preflight
+checks of every pinned vault. After the run indexes the finalized vault
+events, it reads from D1 each reserved award on a pinned vault whose
+contributor has a current signed wallet authorization and a stored binding
+signature that is valid for at least 10 more minutes, one per contributor
+and vault. It reads the key only when there is work. It checks at most 10
+candidates per run, the least recently checked first. For each candidate
+it does the same checks as `/v1/pay` without a payout attempt: the GitHub
+actor, the claim digest and the wallet signature of the named current
+claim, the finalized unpaid award, the identity signer, the successor
+lineage for a rotation, and the stored binding signature for the current
+on-chain version. A binding that is already current needs nothing. Its
+journal key names the vault, actor, claim and finalized binding version,
+so a binding whose broadcast result is unknown is broadcast again with the
+same bytes and never signed a second time. Every signed binding stays on a
+pending list until it is finalized or a finalized revert proof retires it.
+Each run broadcasts the pending bindings again first, also when their
+contributor is no longer a candidate, so a lost transaction never blocks
+the identity key's later nonces. A rejected or held candidate makes the run
+fail in the Worker logs; the other candidates continue. A binding that the
+project owner cancelled fails the same way until an identity review. The
+payout `pay`
+stays permissionless: the project owner or any wallet submits it, with no
+Slop key (`contracts/DEPLOY-MAINNET.md` section 3.6). On Solana the destination keypair must sign
 the same transaction: `POST /v1/pay` on the attester prepares, half-signs and
 journals the `bind_wallet` transaction and returns its bytes; the contributor's
 wallet signs them; `POST /v1/complete-bind` checks that the bytes, the identity
@@ -45,8 +73,10 @@ is accepted (Base Sepolia, Robinhood Chain Testnet, Ethereum Sepolia, Solana
 Devnet and Testnet); each network's chain and chain id come from
 `src/lib/escrow-policy.mjs`. A mainnet network (Base, Ethereum, Robinhood
 Chain, Solana) is accepted only when its value in `mainnet-execution.mjs` is
-`true`. Every value is `false`. Only a reviewed pull request that records that
-network's production activation can change one. The local integration
+`true`. Only `base-mainnet` is `true` (owner activation of 24 October 2026,
+`contracts/DEPLOY-MAINNET.md` section 3.6); every other value is `false`. Only
+a reviewed pull request that records that network's production activation can
+change one. The local integration
 override exists only in the core APIs and is not forwarded by the hosted
 wrapper. `assert-fresh-test-stack.mjs` accepts only registry test networks.
 
@@ -103,7 +133,7 @@ token accounts idempotently and pays through the version-bound escrow instructio
 
 `POST /v1/pay` returns a submitted transaction identity. It does not mark a
 payment paid; the independent scanner and verifier must prove finality first.
-On Base a missing finalized wallet binding requests the separate attester and
+On a Base test stack a missing finalized wallet binding requests the separate attester and
 remains retryable until binding finality; on Solana it waits for the
 contributor's co-signed binding. A verified successor wallet activates immediately after registration, signed
 authorization, and reconciliation of earlier payment attempts. The previous on-chain claim must occur
@@ -252,6 +282,22 @@ after a simulated 25-hour delay with the successor wallet's own acceptance. It a
 attempt discovery after wallet replacement and prevents retirement of signed
 transactions. The deterministic Anvil mnemonic is a
 public test fixture, not a user secret.
+
+`bun workers/payment-executor/bind-trigger.integration.ts` runs the
+production Base mainnet attester through its hosted entry point (`scheduled`
+and the journal Durable Object, configured by `configure.mjs --stack
+production`) against real contracts on Anvil with chain id 8453. An owner
+creates the vault, deposits and commits a 10 USDC award; the contributor
+confirms the wallet and signs the binding through the Pages account API; the
+cron run binds it; an unrelated wallet calls `pay`; the contributor
+receives 9.8 USDC, the award is indexed paid, `claimFees` moves 0.2 USDC to
+the fee recipient and the owner withdraws the rest. It also shows that an
+expired binding signature is never submitted, that a signature from
+another GitHub actor is refused by the API and by the attester, and that a
+binding whose broadcast is lost twice stays one journaled transaction with
+one nonce until the same bytes are broadcast. A second contributor's lost
+binding is broadcast again after she changes wallets and is no longer a
+candidate.
 
 Local execution is not public testnet evidence. Public-chain acceptance still
 needs isolated D1 and service bindings, dedicated funded gas/identity signers,

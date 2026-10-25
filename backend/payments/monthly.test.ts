@@ -918,6 +918,35 @@ describe("monthly coordinator", () => {
     );
   });
 
+  test("a Solana month needs its full total free, even for an award reserved earlier", async () => {
+    // Solana admission reserves the whole total; the identical earlier award is
+    // released afterwards, so it cannot count as already funded.
+    await setupFixture(solanaDeployment);
+    sqlite
+      .prepare(
+        "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES(?,?,?,?,?,?,?,6,'600','12',?,'reserved',?,NULL)",
+      )
+      .run(
+        "9".repeat(64),
+        project.id,
+        A,
+        solanaDeployment.network,
+        "solana",
+        solanaDeployment.vault,
+        solanaDeployment.asset,
+        escrowAwardOrigin(project.id, "2026-11", A),
+        afterCutoff.toISOString(),
+      );
+    await coordinate(afterCutoff);
+    vault("999");
+    expect((await coordinate(afterCutoff)).created).toEqual([]);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    vault("1000");
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
+  });
+
   test("an underfunded month has no obligation to reserve, and earlier unreserved obligations hold their funds", async () => {
     await coordinate(afterCutoff);
     vault("999");

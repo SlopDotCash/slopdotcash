@@ -608,6 +608,28 @@ try {
     ),
     /Reviewed gas ceiling required/,
   );
+  // A mainnet whose MAINNET_EXECUTION value is off is refused by the
+  // registry check. Base mainnet is on (24 October 2026 activation), so it
+  // reaches the RPC chain check, which refuses this local chain.
+  await assert.rejects(
+    preflightEvmDeployment(
+      {
+        ...preflightBase,
+        PAYMENT_RPC_URLS: JSON.stringify({ ethereum: rpcUrl }),
+        PAYMENT_DEPLOYMENTS: JSON.stringify([
+          {
+            ...withoutCeiling,
+            network: "ethereum",
+            chain: "ethereum",
+            chainId: "1",
+            gasCeiling: "500000",
+          },
+        ]),
+      },
+      { ...preflightInput, network: "ethereum" },
+    ),
+    /Test deployment required/,
+  );
   await assert.rejects(
     preflightEvmDeployment(
       {
@@ -623,7 +645,7 @@ try {
       },
       { ...preflightInput, network: "base-mainnet" },
     ),
-    /Test deployment required/,
+    /Wrong RPC chain/,
   );
   await assert.rejects(
     preflightEvmDeployment(

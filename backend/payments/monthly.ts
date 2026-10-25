@@ -14,7 +14,10 @@
  * handling and reconciliation and are never published.
  */
 import { readBoundedJson } from "../../src/lib/browser-json";
-import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
+import {
+  ESCROW_NETWORKS,
+  type EscrowDeployment,
+} from "../../src/lib/escrow-policy.mjs";
 import {
   type MonthlyAwardState,
   type PaymentAsset,
@@ -430,8 +433,10 @@ export async function freezeMonthlyPeriod(
  * Creates the obligations of a frozen month once, and only when the vault's
  * finalized free balance covers them together with every earlier obligation
  * still awaiting reservation in the same vault. Nothing is created for an
- * underfunded month; a later run retries after a deposit. Awards already
- * reserved under their source digest need no further funds.
+ * underfunded month; a later run retries after a deposit. On EVM, awards already
+ * reserved under their source digest need no further funds. A Solana month
+ * reserves its whole total at admission, even for an identical award it later
+ * releases, so its eligible awards always need free funds.
  */
 export async function createMonthlyObligations(
   db: D1Database,
@@ -498,8 +503,14 @@ export async function createMonthlyObligations(
         .first<{ items: string }>()
     )?.items ?? "[]",
   ) as { grossBase: string; sourceDigest: string }[];
+  const solana =
+    ESCROW_NETWORKS[run.network as keyof typeof ESCROW_NETWORKS]?.family ===
+    "solana";
   let needed = 0n;
-  for (const award of [...eligibleAwards, ...outstanding])
+  for (const award of eligibleAwards)
+    if (solana || !reserved.has(award.sourceDigest))
+      needed += BigInt(award.grossBase);
+  for (const award of outstanding)
     if (!reserved.has(award.sourceDigest)) needed += BigInt(award.grossBase);
   let fundingSnapshot: {
     asset: string;

@@ -161,6 +161,22 @@ test("member lookups fail closed when a stale public login collides with a priva
       welcome: 5,
       socialPoints: 0,
     });
+
+    // Welcome points ended on 24 October 2026; a later join reports none.
+    insertMember.run(
+      "MDQ6VXNlcjM=",
+      "3",
+      "carol",
+      "2026-10-24T00:00:00.000Z",
+      1,
+    );
+    expect(await readMember("carol")).toEqual({
+      actor: { id: "MDQ6VXNlcjM=", login: "carol" },
+      joinedAt: "2026-10-24T00:00:00.000Z",
+      public: true,
+      welcome: 0,
+      socialPoints: 0,
+    });
   } finally {
     server.stop(true);
     db.close();

@@ -80,12 +80,19 @@ type Member = {
   welcome: number;
   social_points?: number;
 };
+/**
+ * Welcome points ended on 24 October 2026 (PRD section 11). The legacy
+ * `welcome` column keeps its fixed value; only a membership that joined before
+ * this instant reports its historical award. `joined_at` is immutable.
+ */
+const WELCOME_POINTS_END = "2026-10-24T00:00:00.000Z";
+const WELCOME_SQL = `CASE WHEN m.joined_at < '${WELCOME_POINTS_END}' THEN m.welcome ELSE 0 END`;
 function publicMember(m: Member) {
   return {
     actor: { id: m.actor_id, login: m.login },
     joinedAt: m.joined_at,
     public: m.public === 1,
-    welcome: m.welcome,
+    welcome: m.joined_at < WELCOME_POINTS_END ? m.welcome : 0,
     socialPoints: m.social_points ?? 0,
   };
 }
@@ -146,7 +153,7 @@ export async function handlePointsApi(
         return json(400, { error: "invalid_cursor" });
       const result = await deps.db
         .prepare(
-          "SELECT json_group_array(json(item)) items FROM (SELECT json_object('actor',json_object('id',m.actor_id,'login',m.login),'welcome',m.welcome,'socialPoints',COALESCE(a.points,0),'x',CASE WHEN l.public=1 THEN json_object('id',l.x_id,'username',l.username,'verifiedAt',l.verified_at) ELSE NULL END,'telegram',CASE WHEN t.public=1 THEN json_object('username',t.username,'verifiedAt',t.verified_at) ELSE NULL END) item FROM points_members m LEFT JOIN points_x_awards a ON a.actor_id=m.actor_id LEFT JOIN points_x_links l ON l.actor_id=m.actor_id LEFT JOIN points_telegram_links t ON t.actor_id=m.actor_id WHERE m.public=1 AND m.actor_id>? ORDER BY m.actor_id LIMIT 26)",
+          `SELECT json_group_array(json(item)) items FROM (SELECT json_object('actor',json_object('id',m.actor_id,'login',m.login),'welcome',${WELCOME_SQL},'socialPoints',COALESCE(a.points,0),'x',CASE WHEN l.public=1 THEN json_object('id',l.x_id,'username',l.username,'verifiedAt',l.verified_at) ELSE NULL END,'telegram',CASE WHEN t.public=1 THEN json_object('username',t.username,'verifiedAt',t.verified_at) ELSE NULL END) item FROM points_members m LEFT JOIN points_x_awards a ON a.actor_id=m.actor_id LEFT JOIN points_x_links l ON l.actor_id=m.actor_id LEFT JOIN points_telegram_links t ON t.actor_id=m.actor_id WHERE m.public=1 AND m.actor_id>? ORDER BY m.actor_id LIMIT 26)`,
         )
         .bind(after)
         .first<{ items: string }>();
@@ -412,7 +419,7 @@ export async function handlePointsApi(
       // Login collisions fail closed; numeric actor identity remains canonical.
       const row = await deps.db
         .prepare(
-          "SELECT CASE WHEN COUNT(*)=1 AND public=1 THEN json_object('actor',json_object('id',actor_id,'login',login),'joinedAt',joined_at,'public',json('true'),'welcome',welcome,'socialPoints',COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id=points_members.actor_id),0)) ELSE NULL END AS member FROM points_members WHERE lower(login)=lower(?)",
+          `SELECT CASE WHEN COUNT(*)=1 AND m.public=1 THEN json_object('actor',json_object('id',m.actor_id,'login',m.login),'joinedAt',m.joined_at,'public',json('true'),'welcome',${WELCOME_SQL},'socialPoints',COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id=m.actor_id),0)) ELSE NULL END AS member FROM points_members m WHERE lower(m.login)=lower(?)`,
         )
         .bind(login)
         .first<{ member: string | null }>();

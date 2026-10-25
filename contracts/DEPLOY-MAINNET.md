@@ -429,10 +429,10 @@ Do this section for one network. Finish it, reconcile the first payout, and
 record the evidence before you start the next network. Agents must not run
 these steps; they may prepare commands and read reports.
 
-The code does not enable a mainnet. Every value in
+The code enables only Base mainnet (section 3.6). Every other value in
 `workers/payment-executor/mainnet-execution.mjs` is `false`, and the
-executor and the attester refuse a mainnet deployment before they read a
-signer secret. `workers/payment-executor/configure.mjs --stack production`
+executor and the attester refuse those mainnets before they read a signer
+secret. `workers/payment-executor/configure.mjs --stack production`
 generates the production stack for one mainnet. It is the identity attester
 Worker only (PAY-05). Slop holds no relayer key and runs no dispatcher or
 other scheduled job that starts a payment (PAY-04). The project or a
@@ -524,7 +524,264 @@ separately. Attach the report to the release issue.
 5. Record the transaction, the snapshot row and the page screenshot on the
    release issue. Then start the next network at step 3.1.
 
+### 3.6 Base mainnet activation: owner steps
+
+The owner approved Base mainnet execution on 24 October 2026 and installs the
+secrets. `base-mainnet` is `true` in `mainnet-execution.mjs`, and the Pages
+`PAYMENT_NETWORKS` in `wrangler.toml` is `["base-mainnet"]`. The production
+release (`.github/workflows/deploy.yml`, job `deploy`, `main` only, environment
+`eliza-army-production`) generates the attester configuration with
+`configure.mjs --stack production` from the registry snapshot of the released
+commit. Then:
+
+- If the snapshot pins no Base mainnet vault, the release skips the attester
+  and reports a notice. The attester has nothing to sign.
+- If the snapshot pins a vault, the release reads the secret names of
+  `slop-payments-base-mainnet-attester` (never the values). The names must be
+  exactly `PAYMENT_RPC_URLS` and `SIGNER_PRIVATE_KEY`. A missing or extra
+  name stops the release before it changes the identity Worker, D1 or
+  Pages. The release then deploys the attester with the commit SHA as its
+  version tag and checks that the active version has that tag.
+
+Install the secrets before the first snapshot that pins a Base vault reaches
+`main`. The push of that snapshot to `main` starts a release, and that release
+stops while the Worker or a secret is missing, as does every later release of
+the site. Do these steps from a clean checkout of `development` after an admin
+revision records the project's Base vault and the registry snapshot that
+contains it is on `development`:
+
+1. Generate the configuration. The secrets belong to the Worker name, so this
+   configuration also serves the later `main` release:
+
+   ```sh
+   bun install --frozen-lockfile --ignore-scripts
+   bun run payments:deployments mainnet base-mainnet > /tmp/base-mainnet-pinned.json
+   node workers/payment-executor/configure.mjs --stack production \
+     --network base-mainnet \
+     --deployments /tmp/base-mainnet-pinned.json \
+     --output workers/payment-executor/.generated
+   CONFIG=workers/payment-executor/.generated/slop-payments-base-mainnet-attester.json
+   ```
+
+   `.generated/` is ignored by git.
+
+2. Install the two secrets on the attester Worker only. Wrangler reads each
+   value at its prompt; do not put a value in the command, a file in the
+   repository, or the shell history. If the Worker does not exist yet,
+   Wrangler asks to create it: answer yes.
+
+   ```sh
+   ./node_modules/.bin/wrangler secret put SIGNER_PRIVATE_KEY --config "$CONFIG"
+   ./node_modules/.bin/wrangler secret put PAYMENT_RPC_URLS --config "$CONFIG"
+   ```
+
+   - `SIGNER_PRIVATE_KEY`: the `0x`-prefixed hex private key of the identity
+     authority `0x31B87d13f9091bC3b8A5cb6F45C8b3cB99Ed6d70`. No other key.
+   - `PAYMENT_RPC_URLS`: one line of JSON,
+     `{"base-mainnet":"https://<private Base endpoint>"}`. The endpoint must
+     serve the `finalized` block tag.
+
+   Do not install a relayer key, a test key or a Solana seed. The release
+   refuses any other secret name.
+
+3. Check the names (Wrangler prints names, not values):
+
+   ```sh
+   ./node_modules/.bin/wrangler secret list --config "$CONFIG"
+   ```
+
+   The list must contain exactly `PAYMENT_RPC_URLS` and `SIGNER_PRIVATE_KEY`.
+
+4. Fund `0x31B87d13f9091bC3b8A5cb6F45C8b3cB99Ed6d70` with a small Base ETH
+   balance. The attester signs and pays gas for each destination binding
+   transaction. It never pays out an award.
+
+5. Optional: run the readiness report of section 3.3. Enter the RPC map at a
+   silent prompt so that it is not in the command or the shell history:
+
+   ```sh
+   read -rs PAYMENT_RPC_URLS && export PAYMENT_RPC_URLS
+   bun run payments:readiness --registry-origin https://slop.cash \
+     --config "$CONFIG" --probe
+   unset PAYMENT_RPC_URLS
+   ```
+
+   For `base-mainnet`, `factory` and `attester` must be `configured` and
+   `rpc` must be `finalized`. `executor` reports `missing`.
+
+6. Approve the production release: merge the reviewed promotion pull request
+   from `development` to `main`. The `deploy` job checks the secrets and
+   deploys the attester. Check the job log for the attester deploy, then
+   check the Worker with
+   `./node_modules/.bin/wrangler deployments status --config "$CONFIG"`.
+
+Monitoring: the attester's five-minute cron run throws on any indexing or
+monthly authorization failure, which shows in the Cloudflare Workers logs of
+`slop-payments-base-mainnet-attester`
+(`./node_modules/.bin/wrangler tail --config "$CONFIG"`). No alerting service
+watches it.
+
+Destination bindings: the attester's five-minute cron run binds them. After
+it indexes the finalized vault events, it finds each reserved award on a
+pinned vault whose contributor has a current signed wallet authorization and
+a stored destination binding signature that is valid for at least 10 more
+minutes. For each one it checks the award, the GitHub actor, the claim
+digest and the wallet signature again, then submits `bindDestination` with
+the identity key. It journals the signed transaction before the first
+broadcast. When a broadcast result is unknown, the next run broadcasts the
+same bytes again and never signs a second binding for that version. It
+checks at most 10 contributors per run. A failed binding makes the cron run
+fail in the Worker logs. The attester refuses `/v1/pay`; the cron run is its
+only binding path. Slop does not submit the payout: `pay` is permissionless
+(step 8 below).
+
+#### Base test payout, owner sequence
+
+This is the full sequence for one 10 USDC test award. Agents must not run
+these steps. `$RPC` is your Base RPC URL, `--account owner` is your Foundry
+keystore for the owner wallet, and `$ACTOR` is the contributor's numeric
+GitHub ID. Run the commands from a clean checkout of `development`.
+
+```sh
+FACTORY=0xe51AbF8c6Dbb3Ca6E9AD09F2dc6EF141d7364aAb
+USDC=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+OWNER=<your owner wallet address>
+PROJECT=<the Slop project ID>
+PROJECT_ID=$(cast format-bytes32-string "$PROJECT")
+```
+
+1. Create the vault from the owner wallet. Purpose `0` is the ordinary
+   vault. `PROJECT_ID` is a nonzero label only; the admin revision of step 2
+   links the vault to the project.
+
+   ```sh
+   cast send "$FACTORY" 'create(bytes32,address,uint8)' "$PROJECT_ID" "$USDC" 0 \
+     --rpc-url "$RPC" --account owner
+   KEY=$(cast call "$FACTORY" 'vaultKey(address,bytes32,address,uint8)(bytes32)' \
+     "$OWNER" "$PROJECT_ID" "$USDC" 0 --rpc-url "$RPC")
+   VAULT=$(cast call "$FACTORY" 'vaults(bytes32)(address)' "$KEY" --rpc-url "$RPC")
+   ```
+
+   Record the creation transaction and the vault's runtime code SHA-256
+   (section 1.6).
+
+2. On `/admin`, append a manifest revision for the project with a reason.
+   It adds the `escrow` policy with one `base-mainnet` deployment: the vault,
+   USDC as `asset`, your wallet as `owner`, the identity authority, fee
+   recipient, factory, registrar, factory and vault code digests,
+   `evmUpgrade`, `bindingDelaySeconds` `"0"` and the creation transaction
+   (section 1.7). `escrow` is the payment switch: the schema requires
+   `reward.paymentMode` `"disabled"` beside it, because that field controls
+   only the old direct-payment path. Then sync the snapshot in a reviewed
+   pull request to `development`: `bun run projects:sync`.
+
+3. Install the attester secrets (steps 1 to 3 above). Do this before the
+   promotion that carries the new snapshot reaches `main`, or the release
+   stops at the secret check. Then merge the promotion pull request to
+   `main` (step 6 above). The release deploys the attester and its cron.
+
+4. Fund the attester for gas (step 4 above). About 0.001 ETH on Base pays
+   for many bindings.
+
+5. Deposit USDC into the vault. Use the "Fund or withdraw" panel on the
+   project funding page, or approve and deposit (20 USDC here):
+
+   ```sh
+   cast send "$USDC" 'approve(address,uint256)' "$VAULT" 20000000 --rpc-url "$RPC" --account owner
+   cast send "$VAULT" 'deposit(uint128)' 20000000 --rpc-url "$RPC" --account owner
+   ```
+
+6. Approve a 10 USDC award for the contributor. The monthly flow starts with
+   the period `2026-11`, so for this test the owner commits the award
+   directly. `SOURCE` must be a new nonzero 32-byte value for each award:
+
+   ```sh
+   SOURCE=$(cast keccak "slop-base-test-1")
+   AWARD=$(cast call "$VAULT" 'awardId(bytes32)(bytes32)' "$SOURCE" --rpc-url "$RPC")
+   cast send "$VAULT" 'commitAward(bytes32,uint64,uint128,bytes32)' \
+     "$AWARD" "$ACTOR" 10000000 "$SOURCE" --rpc-url "$RPC" --account owner
+   ```
+
+   After the block is finalized (about 15 minutes on Base), the next
+   attester run records the award as reserved.
+
+7. The contributor signs the binding. The site has no button for this step
+   yet. Signed in on `https://slop.cash`:
+   1. On `/earnings`, connect and confirm the Base wallet (a
+      `personal_sign` message).
+   2. Switch the wallet to Base. In the browser console of the same page,
+      run:
+
+      ```js
+      const call = async (path, body) => {
+        const response = await fetch(`/api/v1/payments/wallets/${path}`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
+        return response.json();
+      };
+      const me = await (await fetch("/api/v1/payments/me", { credentials: "same-origin" })).json();
+      const claimId = me.wallets.find((w) => w.chain === "base").claimId;
+      const consent = { claimId, network: "base-mainnet", vault: "<VAULT>", expectedVersion: "0" };
+      const { typedData } = await call("bind-challenge", consent);
+      const [address] = await ethereum.request({ method: "eth_requestAccounts" });
+      const signature = await ethereum.request({
+        method: "eth_signTypedData_v4",
+        params: [address, JSON.stringify(typedData)],
+      });
+      await call("bind-authorize", { ...consent, expiresAt: typedData.message.expiresAt, signature });
+      ```
+
+      `expectedVersion` is `"0"` for the first binding. For a later one, use
+      the version from `cast call "$VAULT" 'bindings(uint64)(address,uint64,bytes32,uint64,bool)' "$ACTOR" --rpc-url "$RPC"`.
+      The signature is valid for 90 days.
+
+   Within five minutes the attester submits `bindDestination`. Check it:
+
+   ```sh
+   cast call "$VAULT" 'payableBinding(uint64)(address,uint64)' "$ACTOR" --rpc-url "$RPC"
+   ```
+
+   The result is the contributor's wallet and version `1`. If it stays
+   `0x0…0 0`, read the attester log with `wrangler tail` (step 6 above).
+
+8. Pay. Any wallet may send this transaction; Slop holds no relayer key:
+
+   ```sh
+   cast send "$VAULT" 'pay(bytes32,uint64)' "$AWARD" 1 --rpc-url "$RPC" --account owner
+   ```
+
+   The contributor receives 9.8 USDC. After finality the attester run marks
+   the award paid, and `/earnings` shows it.
+
+9. Move the 2% fee (0.2 USDC) to the fee recipient
+   `0x8f77C37D8650776bFe73c9b12B15209eE15D9b86`. Anyone may call it:
+
+   ```sh
+   cast send "$VAULT" 'claimFees()' --rpc-url "$RPC" --account owner
+   cast call "$USDC" 'balanceOf(address)(uint256)' 0x8f77C37D8650776bFe73c9b12B15209eE15D9b86 --rpc-url "$RPC"
+   ```
+
+10. Withdraw the unused balance (10 USDC here). The vault keeps the 2%
+    withdrawal fee. Use "Fund or withdraw" on the funding page, or:
+
+    ```sh
+    cast send "$VAULT" 'withdrawUnused(uint128)' 10000000 --rpc-url "$RPC" --account owner
+    ```
+
+    You receive 9.8 USDC. Run step 9 again to move the withdrawal fee.
+
+Record the transactions on the release issue (section 3.5).
+
 To stop new Slop attestations on a network, change its
 `mainnet-execution.mjs` value back to `false` through a reviewed pull request
-and redeploy the attester Worker. Slop cannot stop a payment that the project
+and redeploy the attester Worker. On Base the release redeploys it only while
+the snapshot pins a Base vault, so stop the attester this way before a
+snapshot removes the last pinned Base vault; a release with no pinned vault
+leaves an existing attester unchanged. Do not delete `SIGNER_PRIVATE_KEY` to
+stop it: every later release of the site then stops at the secret check. Do
+not delete the Worker: that deletes its signing journal. Slop cannot stop a payment that the project
 or a permissionless executor submits for an approved and funded obligation.
