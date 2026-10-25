@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { requestOwnerCommitment } from "./owner-commitment-actions";
 
 const DIGEST = "b".repeat(64);
@@ -6,6 +6,15 @@ const MANIFEST = "c".repeat(64);
 const SNAPSHOT = "d".repeat(64);
 const U64_MAX = (1n << 64n) - 1n;
 const U128_MAX = (1n << 128n) - 1n;
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  Object.defineProperty(globalThis, "fetch", {
+    value: originalFetch,
+    configurable: true,
+    writable: true,
+  });
+});
 
 function plan(network: string, gross: bigint) {
   const fee = (gross + 49n) / 50n;
