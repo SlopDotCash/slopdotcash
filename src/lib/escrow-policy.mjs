@@ -248,6 +248,7 @@ export const EVM_CHAINS = Object.freeze(
 export const MIN_PRODUCTION_BINDING_DELAY = 0;
 /** New production deployments may rotate an authorized identity key immediately. */
 export const MIN_PRODUCTION_ROTATION_DELAY = 0;
+const MAX_U64 = (1n << 64n) - 1n;
 const EVM_IMPLEMENTATION_REVIEW_KEYS = [
   "authority",
   "vaultImplementation",
@@ -335,7 +336,10 @@ function validateEscrowPolicy(value, feeBasisPoints) {
         throw new TypeError("Invalid reviewed EVM upgrade");
       for (const review of [upgrade, ...history]) {
         if (review !== upgrade)
-          keys(review, [...EVM_IMPLEMENTATION_REVIEW_KEYS]);
+          keys(review, [
+            ...EVM_IMPLEMENTATION_REVIEW_KEYS,
+            "supersededAtBlock",
+          ]);
         if (
           ![
             review.authority,
@@ -353,8 +357,21 @@ function validateEscrowPolicy(value, feeBasisPoints) {
         )
           throw new TypeError("Invalid reviewed EVM upgrade");
       }
-      if (new Set(history.map(implementationReview)).size !== history.length)
-        throw new TypeError("Duplicate reviewed EVM implementation");
+      // Each entry applies only to events before the block at which it was
+      // superseded. Bounds strictly increase, so no entry repeats.
+      let bound = 0n;
+      for (const review of history) {
+        if (
+          typeof review.supersededAtBlock !== "string" ||
+          !/^[1-9][0-9]{0,19}$/.test(review.supersededAtBlock) ||
+          BigInt(review.supersededAtBlock) > MAX_U64 ||
+          BigInt(review.supersededAtBlock) <= bound
+        )
+          throw new TypeError(
+            "Reviewed EVM upgrade history needs increasing supersession blocks",
+          );
+        bound = BigInt(review.supersededAtBlock);
+      }
     }
     const network = ESCROW_NETWORKS[deployment.network];
     if (
@@ -481,19 +498,24 @@ function implementationReview(review) {
 }
 /**
  * EVM upgrade history is append-only. When the reviewed authority or an
- * implementation changes, the outgoing review is appended unless it is
- * already recorded, so events from before the upgrade still verify at their
- * own block. Existing history entries never change or disappear.
+ * implementation changes, exactly the outgoing review is appended with the
+ * block at which it was superseded (validation keeps bounds increasing), so
+ * events from before the upgrade still verify at their own block. Existing
+ * history entries never change or disappear.
  */
 function assertEvmUpgradeHistory(previous, next) {
-  const before = (previous.history ?? []).map(implementationReview);
-  const after = (next.history ?? []).map(implementationReview);
-  const outgoing = implementationReview(previous);
-  const expected =
-    outgoing === implementationReview(next) || before.includes(outgoing)
-      ? before
-      : [...before, outgoing];
-  if (JSON.stringify(after) !== JSON.stringify(expected))
+  const before = previous.history ?? [];
+  const after = next.history ?? [];
+  const changed = implementationReview(previous) !== implementationReview(next);
+  if (
+    after.length !== before.length + (changed ? 1 : 0) ||
+    before.some(
+      (entry, index) => JSON.stringify(entry) !== JSON.stringify(after[index]),
+    ) ||
+    (changed &&
+      implementationReview(after[before.length]) !==
+        implementationReview(previous))
+  )
     throw new TypeError(
       "Reviewed EVM upgrade history must append the outgoing implementation",
     );
@@ -503,6 +525,17 @@ export function assertEscrowTransition(
   next,
   allowUnfundedChange = false,
 ) {
+  // A deployment's first revision has no superseded reviews to record.
+  for (const deployment of next?.deployments ?? [])
+    if (
+      deployment.evmUpgrade?.history !== undefined &&
+      !previous?.deployments.some(
+        (candidate) => candidate.network === deployment.network,
+      )
+    )
+      throw new TypeError(
+        "A new escrow deployment cannot carry reviewed EVM upgrade history",
+      );
   if (!previous) return;
   if (
     !next ||

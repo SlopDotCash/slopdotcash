@@ -23,10 +23,16 @@ export interface EvmImplementationReview {
   factoryImplementation: string;
   factoryImplementationCodeSha256: string;
 }
+/** A superseded review. It applies only to events before `supersededAtBlock`. */
+export interface EvmSupersededReview extends EvmImplementationReview {
+  /** Decimal block number at and after which this review no longer applies. */
+  supersededAtBlock: string;
+}
 export interface EvmUpgrade extends EvmImplementationReview {
-  /** Superseded reviews, oldest first and append-only. Only finalized events verify against them,
-   * at their own block, so a later upgrade cannot strand earlier events. */
-  history?: EvmImplementationReview[];
+  /** Superseded reviews, oldest first and append-only. Only a finalized event before an entry's
+   * bound verifies against it, at its own block, so a later upgrade cannot strand earlier events
+   * and a rollback cannot revive a superseded review. */
+  history?: EvmSupersededReview[];
 }
 export type EvmEscrowConfig = EvmRpc & {
   evmUpgrade?: EvmUpgrade;
@@ -216,8 +222,9 @@ export function evmVaultKey(input: {
 export async function verifyEvmDeployment(
   config: EvmEscrowConfig,
   blockTag: unknown = "finalized",
-  /** Only for an event at its own block: also accept a superseded reviewed implementation. */
-  acceptReviewedHistory = false,
+  /** Only for an event at its own block number: also accept a superseded review whose bound is
+   * after that block. */
+  eventBlock?: bigint,
 ) {
   if (
     ![
@@ -252,7 +259,16 @@ export async function verifyEvmDeployment(
     "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
   const upgrade = config.evmUpgrade;
   const reviews: EvmImplementationReview[] = upgrade
-    ? [upgrade, ...(acceptReviewedHistory ? (upgrade.history ?? []) : [])]
+    ? [
+        upgrade,
+        ...(eventBlock === undefined
+          ? []
+          : (upgrade.history ?? []).filter(
+              (review) =>
+                /^[1-9][0-9]*$/.test(review.supersededAtBlock) &&
+                eventBlock < BigInt(review.supersededAtBlock),
+            )),
+      ]
     : [];
   if (
     reviews.some(
@@ -272,22 +288,8 @@ export async function verifyEvmDeployment(
     )
   )
     throw new Error("Escrow upgrade review is invalid");
-  for (const [target, pairs] of [
-    [
-      config.vault,
-      reviews.map((review) => [
-        review.vaultImplementation,
-        review.vaultImplementationCodeSha256,
-      ]),
-    ],
-    [
-      config.factory,
-      reviews.map((review) => [
-        review.factoryImplementation,
-        review.factoryImplementationCodeSha256,
-      ]),
-    ],
-  ] as const) {
+  const slots: string[] = [];
+  for (const target of [config.vault, config.factory]) {
     const slot = await rpc(config, "eth_getStorageAt", [
       target,
       implementationSlot,
@@ -295,35 +297,46 @@ export async function verifyEvmDeployment(
     ]);
     if (typeof slot !== "string" || !HASH.test(slot))
       throw new Error("Invalid implementation slot");
-    if (!upgrade) {
-      if (BigInt(slot) !== 0n)
-        throw new Error("Proxy deployment has no reviewed implementation");
-      continue;
-    }
-    const digests = pairs
-      .filter(
-        ([implementation]) =>
-          slot.toLowerCase() === addressWord(implementation).toLowerCase(),
-      )
-      .map(([, digest]) => digest);
-    if (
-      !digests.length ||
-      !digests.includes(
-        await runtimeSha256(config, `0x${slot.slice(-40)}`, blockTag),
-      )
-    )
-      throw new Error(
-        "Escrow implementation does not match reviewed deployment",
-      );
+    if (!upgrade && BigInt(slot) !== 0n)
+      throw new Error("Proxy deployment has no reviewed implementation");
+    slots.push(slot.toLowerCase());
   }
   if (upgrade) {
+    // The vault implementation, factory implementation and upgrade authority
+    // at this block must all come from one review, never a mix of reviews.
+    const [vaultSlot, factorySlot] = slots;
+    const vaultDigest = await runtimeSha256(
+      config,
+      `0x${vaultSlot.slice(-40)}`,
+      blockTag,
+    );
+    const factoryDigest = await runtimeSha256(
+      config,
+      `0x${factorySlot.slice(-40)}`,
+      blockTag,
+    );
     const authority = await getter(
       config,
       config.factory,
       "upgradeAuthority()",
       blockTag,
     );
-    if (!reviews.some((review) => authority === addressWord(review.authority)))
+    const implementations = reviews.filter(
+      (review) =>
+        vaultSlot === addressWord(review.vaultImplementation) &&
+        vaultDigest === review.vaultImplementationCodeSha256 &&
+        factorySlot === addressWord(review.factoryImplementation) &&
+        factoryDigest === review.factoryImplementationCodeSha256,
+    );
+    if (!implementations.length)
+      throw new Error(
+        "Escrow implementation does not match reviewed deployment",
+      );
+    if (
+      !implementations.some(
+        (review) => authority === addressWord(review.authority),
+      )
+    )
       throw new Error(
         "Escrow upgrade authority does not match reviewed deployment",
       );
@@ -439,7 +452,7 @@ async function finalizedLog(
   ) {
     throw new Error("Receipt block is not canonical");
   }
-  await verifyEvmDeployment(config, receipt.blockNumber, true);
+  await verifyEvmDeployment(config, receipt.blockNumber, blockNumber);
   if (!Array.isArray(receipt.logs)) throw new Error("Missing receipt logs");
   const matches = receipt.logs
     .map(object)

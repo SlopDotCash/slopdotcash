@@ -282,51 +282,72 @@ describe("reviewed EVM upgrade history", () => {
     factoryImplementation: `0x${"b".repeat(39)}${n}`,
     factoryImplementationCodeSha256: `${"e".repeat(63)}${n}`,
   });
+  const past = (n: string, block: number) => ({
+    ...review(n),
+    supersededAtBlock: String(block),
+  });
   const upgraded = (evmUpgrade: object) =>
     assertEscrowPolicy(policy("base", { ...evmDeployment, evmUpgrade }));
   const first = upgraded(review("7"));
-  test("accepts strict history and rejects malformed or duplicate entries", () => {
-    expect(upgraded({ ...review("8"), history: [review("7")] })).toBeTruthy();
+  const second = upgraded({ ...review("8"), history: [past("7", 100)] });
+  test("accepts strict history and rejects malformed, unbounded or duplicate entries", () => {
+    expect(second).toBeTruthy();
     for (const history of [
       [],
-      [{ ...review("7"), vaultImplementation: "0x1234" }],
-      [{ ...review("7"), factoryImplementationCodeSha256: "AB".repeat(32) }],
-      [{ ...review("7"), extra: true }],
-      [{ ...review("7"), authority: evmDeployment.feeRecipient }],
-      [review("7"), review("7")],
+      [review("7")],
+      [{ ...past("7", 100), vaultImplementation: "0x1234" }],
+      [{ ...past("7", 100), factoryImplementationCodeSha256: "AB".repeat(32) }],
+      [{ ...past("7", 100), extra: true }],
+      [{ ...past("7", 100), authority: evmDeployment.feeRecipient }],
+      [{ ...past("7", 100), supersededAtBlock: "0" }],
+      [{ ...past("7", 100), supersededAtBlock: "01" }],
+      [{ ...past("7", 100), supersededAtBlock: 100 }],
+      [{ ...past("7", 100), supersededAtBlock: "18446744073709551616" }],
+      [past("7", 100), past("7", 100)],
+      [past("7", 200), past("9", 100)],
     ])
       expect(() => upgraded({ ...review("8"), history })).toThrow(
-        /EVM upgrade|policy fields|EVM implementation/,
+        /EVM upgrade|policy fields|supersession/,
       );
   });
-  test("an upgrade must append the outgoing review", () => {
-    const second = upgraded({ ...review("8"), history: [review("7")] });
+  test("an upgrade must append exactly the outgoing review with a later bound", () => {
     expect(() => assertEscrowTransition(first, second)).not.toThrow();
-    expect(() => assertEscrowTransition(first, upgraded(review("8")))).toThrow(
-      /append the outgoing/,
-    );
-    expect(() =>
-      assertEscrowTransition(
-        first,
-        upgraded({ ...review("8"), history: [review("9")] }),
-      ),
-    ).toThrow(/append the outgoing/);
+    for (const next of [
+      review("8"),
+      { ...review("8"), history: [past("9", 100)] },
+      { ...review("8"), history: [past("7", 100), past("9", 200)] },
+    ])
+      expect(() => assertEscrowTransition(first, upgraded(next))).toThrow(
+        /append the outgoing/,
+      );
     const third = upgraded({
       ...review("9"),
-      history: [review("7"), review("8")],
+      history: [past("7", 100), past("8", 200)],
     });
     expect(() => assertEscrowTransition(second, third)).not.toThrow();
-    // A rollback to a recorded review appends only the outgoing review; a
-    // review already in history is not repeated.
+    expect(() =>
+      assertEscrowTransition(
+        second,
+        upgraded({
+          ...review("9"),
+          history: [past("7", 100), past("8", 100)],
+        }),
+      ),
+    ).toThrow(/supersession/);
+    // A rollback to a superseded review records the outgoing one again; the
+    // older entry keeps its bound, so it never covers the rolled-back period.
     const rollback = upgraded({
       ...review("7"),
-      history: [review("7"), review("8")],
+      history: [past("7", 100), past("8", 200)],
     });
     expect(() => assertEscrowTransition(second, rollback)).not.toThrow();
     expect(() =>
       assertEscrowTransition(
         rollback,
-        upgraded({ ...review("8"), history: [review("7"), review("8")] }),
+        upgraded({
+          ...review("8"),
+          history: [past("7", 100), past("8", 200), past("7", 300)],
+        }),
       ),
     ).not.toThrow();
     expect(() => assertEscrowTransition(second, second)).not.toThrow();
@@ -334,15 +355,16 @@ describe("reviewed EVM upgrade history", () => {
   test("history cannot be removed or edited", () => {
     const third = upgraded({
       ...review("9"),
-      history: [review("7"), review("8")],
+      history: [past("7", 100), past("8", 200)],
     });
     for (const history of [
       undefined,
-      [review("8")],
-      [review("8"), review("7")],
+      [past("8", 200)],
+      [past("8", 100), past("7", 200)],
+      [past("7", 150), past("8", 200)],
       [
-        { ...review("7"), vaultImplementationCodeSha256: "f".repeat(64) },
-        review("8"),
+        { ...past("7", 100), vaultImplementationCodeSha256: "f".repeat(64) },
+        past("8", 200),
       ],
     ])
       expect(() =>
@@ -351,5 +373,17 @@ describe("reviewed EVM upgrade history", () => {
           upgraded(history ? { ...review("9"), history } : review("9")),
         ),
       ).toThrow(/append the outgoing/);
+  });
+  test("a deployment's first appearance cannot carry history", () => {
+    const empty = assertEscrowPolicy(policy("base", evmDeployment));
+    const withoutDeployments = { ...empty, deployments: [] };
+    for (const previous of [undefined, withoutDeployments])
+      expect(() => assertEscrowTransition(previous, second)).toThrow(
+        /new escrow deployment/,
+      );
+    expect(() => assertEscrowTransition(undefined, first)).not.toThrow();
+    expect(() =>
+      assertEscrowTransition(withoutDeployments, first),
+    ).not.toThrow();
   });
 });
