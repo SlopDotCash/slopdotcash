@@ -888,7 +888,7 @@ export async function verifyVaultFundingAction(
       )
     : [0n];
   const encoded = (fee: bigint) =>
-    `0x${amountWord(gross)}${withdrawing ? `${amountWord(gross - fee)}${fee.toString(16).padStart(64, "0")}` : ""}`;
+    `0x${amountWord(gross)}${withdrawing ? `${(gross - fee).toString(16).padStart(64, "0")}${fee.toString(16).padStart(64, "0")}` : ""}`;
   const fee = fees.find(
     (candidate) =>
       typeof log.data === "string" &&
