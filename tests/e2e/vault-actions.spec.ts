@@ -1673,7 +1673,7 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     });
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
     await expect(
-      setup.getByLabel("Automatically pay the monthly allocation"),
+      setup.getByRole("combobox", { name: /^Automatic monthly payment/ }),
     ).toHaveCount(0);
     await setup.getByRole("button", { name: "Review vault creation" }).focus();
     await page.keyboard.press("Enter");
