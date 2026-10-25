@@ -871,7 +871,7 @@ try {
     if (bindingGuard && !bindingCancellation) {
       // Existing observation/guard controls keep the nonce held at the existing
       // gas-price ceiling: a cancellation bump would exceed it.
-      await rpc("anvil_setNextBlockBaseFeePerGas", ["0x12a0289e0"]);
+      await rpc("anvil_setNextBlockBaseFeePerGas", ["0x10c388d00"]);
       await rpc("anvil_mine", ["0x1"]);
     }
     dropAttesterBroadcast = true;
