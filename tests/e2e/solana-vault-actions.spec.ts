@@ -1417,6 +1417,49 @@ async function ownerSetupWorkflow(
       ).json();
       expect(opened.project.manifest.securityBounty.status).toBe("open");
       expect(opened.project.revision).toBe(3);
+      // The same private route must preserve the owner's existing withdrawal.
+      const donorAccount = spl.getAssociatedTokenAddressSync(
+        new web3.PublicKey(created.asset),
+        donor.publicKey,
+      );
+      const beforeWithdrawal = (
+        await spl.getAccount(connection, donorAccount, "finalized")
+      ).amount;
+      await funding.getByLabel("Withdraw free funds").check();
+      await funding.getByLabel("Token amount").fill("0.5");
+      await funding
+        .getByRole("button", { name: "Review withdrawal", exact: true })
+        .click();
+      await expect(
+        funding.getByRole("region", { name: "Review vault action" }),
+      ).toContainText("0.49");
+      await funding
+        .getByRole("button", {
+          name: "Confirm withdrawal in wallet",
+          exact: true,
+        })
+        .click();
+      await expect.poll(() => sends.length).toBe(3);
+      await connection.confirmTransaction(sends[2], "finalized");
+      await funding
+        .getByRole("button", { name: "Check transaction", exact: true })
+        .click();
+      await expect(funding.getByRole("status")).toContainText(
+        "Withdrawal verified",
+      );
+      expect(
+        (await spl.getAccount(connection, donorAccount, "finalized")).amount -
+          beforeWithdrawal,
+      ).toBe(490_000n);
+      expect(
+        (
+          await spl.getAccount(
+            connection,
+            new web3.PublicKey(created.vault),
+            "finalized",
+          )
+        ).amount,
+      ).toBe(9_510_000n);
       const publicProject = await (
         await page.request.get(`${origin}/api/v1/projects/${project.id}`)
       ).text();
