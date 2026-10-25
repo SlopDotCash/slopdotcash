@@ -44,7 +44,7 @@ import { type JournalStore, pendingStoredBindings } from "./core";
 import worker, { PaymentSignerJournal, runDestinationBindings } from "./index";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const anvilPort = 18583;
+const anvilPort = Number(process.env.SLOP_BIND_TRIGGER_PORT ?? "18583");
 const anvilUrl = `http://127.0.0.1:${anvilPort}`;
 // Anvil accounts 0 to 3: registrar, identity authority, vault owner and an
 // unrelated payer that proves `pay` needs no Slop key.
@@ -71,21 +71,47 @@ const anvil = spawn(
 // raw transaction before Anvil sees it, so the attester cannot tell whether
 // its binding was sent.
 let dropBroadcast = false;
+let bindingBroadcasts = 0;
+let receiptFault: {
+  transactionId: string;
+  kind: "missing" | "wrong-block";
+} | null = null;
 const proxy = Bun.serve({
   port: 0,
   async fetch(request) {
     const body = await request.text();
-    if (
-      dropBroadcast &&
-      (JSON.parse(body) as { method: string }).method ===
-        "eth_sendRawTransaction"
-    )
-      return new Response("lost", { status: 502 });
-    return fetch(anvilUrl, {
+    const input = JSON.parse(body) as {
+      id: number;
+      method: string;
+      params: unknown[];
+    };
+    if (input.method === "eth_sendRawTransaction") {
+      bindingBroadcasts += 1;
+      if (dropBroadcast) return new Response("lost", { status: 502 });
+    }
+    const fault =
+      receiptFault &&
+      input.method === "eth_getTransactionReceipt" &&
+      input.params[0] === receiptFault.transactionId
+        ? receiptFault
+        : null;
+    if (fault?.kind === "missing")
+      return Response.json({ jsonrpc: "2.0", id: input.id, result: null });
+    const response = await fetch(anvilUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body,
     });
+    if (fault?.kind === "wrong-block") {
+      const result = (await response.json()) as {
+        result: Record<string, unknown>;
+      };
+      return Response.json({
+        ...result,
+        result: { ...result.result, blockHash: `0x${"f".repeat(64)}` },
+      });
+    }
+    return response;
   },
 });
 const sql = new Database(":memory:");
@@ -636,7 +662,35 @@ try {
     "One nonce was allocated, for the one signed binding",
   );
 
-  // The RPC recovers: the next run broadcasts the journaled bytes.
+  // Renewed consent does not replace the still-valid exact consent already signed.
+  const renewed = String(Number(consent.message.expiresAt) + 3600);
+  storeRow(renewed, await signBinding(typedData("0", "123", renewed)));
+
+  // A signed transaction must also be held if its original consent expires.
+  // Move the actual local chain and the attester clock together, then restore
+  // the chain snapshot so the remaining independent cases use the original time.
+  const expirySnapshot = await rpc("evm_snapshot", []);
+  const originalNow = Date.now;
+  const expiredAt = Number(consent.message.expiresAt) + 1;
+  await rpc("evm_setNextBlockTimestamp", [expiredAt]);
+  await mine(64);
+  Date.now = () => expiredAt * 1000;
+  dropBroadcast = false;
+  const beforeExpiryBroadcasts = bindingBroadcasts;
+  try {
+    await assert.rejects(
+      runDestinationBindings(env as never),
+      /Destination binding incomplete/,
+    );
+    assert.equal(bindingBroadcasts, beforeExpiryBroadcasts);
+    assert.equal(await nonce(attester), 0);
+    assert.deepEqual(bindEntries(), held);
+  } finally {
+    Date.now = originalNow;
+    assert.equal(await rpc("evm_revert", [expirySnapshot]), true);
+  }
+
+  // The RPC recovers: the next run broadcasts the original authorized bytes.
   dropBroadcast = false;
   const run = await runDestinationBindings(env as never);
   assert.deepEqual(run, {
@@ -692,8 +746,9 @@ try {
 
   // Failure: a signed binding whose contributor stops being a candidate.
   // Carol's binding is signed and its broadcast is lost; she then changes
-  // wallets, so the old claim is no longer current. The attester still
-  // broadcasts the journaled bytes, so its nonce never stays blocked.
+  // wallets, so the old claim is no longer current. The old raw/hash/nonce
+  // stays held. This prevents obsolete rebroadcast but does not resolve the
+  // shared nonce gap; no replacement or cancellation is authorized here.
   const carolWallet = privateKeyToAccount(`0x${"0".repeat(63)}2`);
   const carolAward = evmAwardId(8453n, vault, `0x${"3".padStart(64, "0")}`);
   await send(
@@ -783,18 +838,77 @@ try {
     ).status,
     200,
   );
+  const carolAttempt = await journal.get<{ rawTransaction: `0x${string}` }>(
+    carolHeld[0].key,
+  );
+  assert.ok(carolAttempt);
+  const savedAttempt = JSON.stringify(carolAttempt);
+  const pendingKeys = await pendingStoredBindings(journal);
+  const beforeObsoleteBroadcasts = bindingBroadcasts;
   dropBroadcast = false;
-  assert.deepEqual(await runDestinationBindings(env as never), {
-    candidates: 0,
-    current: 0,
-    waiting: 0,
-    failed: 0,
-    submitted: [carolHeld[0].transactionId],
-  });
+  await assert.rejects(
+    runDestinationBindings(env as never),
+    /Destination binding incomplete/,
+  );
+  assert.equal(bindingBroadcasts, beforeObsoleteBroadcasts);
+  assert.equal(
+    await rpc("eth_getTransactionByHash", [carolHeld[0].transactionId]),
+    null,
+  );
+  assert.equal(
+    await nonce(attester),
+    1,
+    "Obsolete nonce remains held, not consumed or replaced",
+  );
+  assert.equal(
+    JSON.stringify(await journal.get(carolHeld[0].key)),
+    savedAttempt,
+  );
+  assert.deepEqual(await pendingStoredBindings(journal), pendingKeys);
+  assert.equal(await balance(asset, carolWallet.address), 0n);
+
+  // Model delayed delivery of the already-signed original request. Only the
+  // local node receives these existing bytes; no new attempt is signed. The
+  // service must reconcile that receipt truthfully even though D1 changed.
+  assert.equal(
+    await rpc("eth_sendRawTransaction", [carolAttempt.rawTransaction]),
+    carolHeld[0].transactionId,
+  );
+  await mine(1);
+  receiptFault = { transactionId: carolHeld[0].transactionId, kind: "missing" };
+  await assert.rejects(
+    runDestinationBindings(env as never),
+    /Destination binding incomplete/,
+  );
+  assert.equal(bindingBroadcasts, beforeObsoleteBroadcasts);
+  assert.deepEqual(await pendingStoredBindings(journal), pendingKeys);
+  assert.equal(
+    JSON.stringify(await journal.get(carolHeld[0].key)),
+    savedAttempt,
+  );
   await mine(64);
+  receiptFault = {
+    transactionId: carolHeld[0].transactionId,
+    kind: "wrong-block",
+  };
+  await assert.rejects(
+    runDestinationBindings(env as never),
+    /Destination binding incomplete/,
+  );
+  assert.deepEqual(await pendingStoredBindings(journal), pendingKeys);
+  receiptFault = null;
   await scheduled();
   assert.deepEqual(await pendingStoredBindings(journal), []);
-  assert.equal(await nonce(attester), 2, "Both signed bindings were mined");
+  assert.equal(
+    JSON.stringify(await journal.get(carolHeld[0].key)),
+    savedAttempt,
+  );
+  assert.equal(bindingBroadcasts, beforeObsoleteBroadcasts);
+  assert.equal(
+    await nonce(attester),
+    2,
+    "Finalized original receipts are reconciled despite wallet replacement",
+  );
 
   // (10) The owner withdraws the unused 39 USDC, less the 2% fee.
   await send(vault, "withdrawUnused(uint128)", ["39000000"], owner);
@@ -914,7 +1028,7 @@ try {
       null,
     );
   console.log(
-    `base-mainnet bind trigger: bound ${held[0].transactionId} after two lost broadcasts; paid ${recipient} 9.8 USDC; fee 0.2 USDC claimed; a non-candidate pending binding was broadcast again`,
+    `base-mainnet bind trigger: bound ${held[0].transactionId} after two lost broadcasts; paid ${recipient} 9.8 USDC; fee 0.2 USDC claimed; expired and superseded consent stayed held; the delayed original receipt reconciled without another broadcast`,
   );
 } finally {
   anvil.kill();

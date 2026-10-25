@@ -1,5 +1,11 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { recoverAddress } from "viem";
+import {
+  decodeFunctionData,
+  parseAbi,
+  parseTransaction,
+  recoverAddress,
+  recoverTransactionAddress,
+} from "viem";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import type {
   DispatchPayment,
@@ -497,6 +503,8 @@ async function signAndSubmit(
   },
   /** Journal list that records the key in the same transaction as the signed bytes. */
   pendingList?: string,
+  /** Authorization must still hold immediately before any stored binding broadcast. */
+  beforeBroadcast?: (attempt: Attempt) => Promise<void>,
 ) {
   let attempt = await env.JOURNAL.get<Attempt>(key);
   if (attempt && attempt.fingerprint !== fingerprint)
@@ -587,6 +595,7 @@ async function signAndSubmit(
       );
     return { transactionId: attempt.transactionId };
   }
+  await beforeBroadcast?.(attempt);
   try {
     const sent = await rpc(config, "eth_sendRawTransaction", [
       attempt.rawTransaction,
@@ -1088,6 +1097,7 @@ async function storedBindingCalldata(
   config: Deployment,
   input: DispatchPayment,
   expectedVersion: string,
+  exactConsent?: { expiresAt: string; signature: string },
 ) {
   // As the Solana program does, never bind the identity authority (or this
   // attester's own key) as a payout destination. The EVM vault would accept it.
@@ -1097,7 +1107,7 @@ async function storedBindingCalldata(
   )
     throw new Error("The identity authority cannot be a payout destination");
   const accepted = await env.PAYMENTS_DB.prepare(
-    "SELECT expires_at expiresAt,signature FROM payment_binding_authorizations WHERE claim_id=? AND github_user_id=? AND network=? AND vault=? AND chain_id=? AND expected_version=? AND CAST(expires_at AS INTEGER)>? ORDER BY CAST(expires_at AS INTEGER) DESC LIMIT 1",
+    `SELECT expires_at expiresAt,signature FROM payment_binding_authorizations WHERE claim_id=? AND github_user_id=? AND network=? AND vault=? AND chain_id=? AND expected_version=? AND CAST(expires_at AS INTEGER)>?${exactConsent ? " AND expires_at=? AND lower(signature)=?" : ""} ORDER BY CAST(expires_at AS INTEGER) DESC LIMIT 1`,
   )
     .bind(
       input.claimId,
@@ -1107,6 +1117,7 @@ async function storedBindingCalldata(
       config.chainId,
       expectedVersion,
       Math.floor(Date.now() / 1000) + 600,
+      ...(exactConsent ? [exactConsent.expiresAt, exactConsent.signature] : []),
     )
     .first<{ expiresAt: string; signature: string }>();
   if (!accepted) return null;
@@ -1226,8 +1237,9 @@ export async function bindingCandidates(
  *
  * There is one journal entry for each vault, actor, claim and finalized
  * binding version. A binding signed for that version is reconciled first:
- * its receipt is read and the same signed bytes are broadcast again. It is
- * never replaced until a finalized revert proof exists. The vault's
+ * its receipt is read independently of current authorization. Missing receipts
+ * permit the same bytes to be sent only while the exact claim and wallet consent
+ * remain authorized. Held bytes are never replaced without a finalized revert. The vault's
  * expectedVersion check refuses a replayed or reordered binding.
  */
 export async function bindStoredDestination(
@@ -1265,7 +1277,17 @@ export async function bindStoredDestination(
   )
     return {
       state: "submitted",
-      ...(await signAndSubmit(env, deployment, key, operation, "", journaled)),
+      ...(await signAndSubmit(
+        env,
+        deployment,
+        key,
+        operation,
+        "",
+        journaled,
+        undefined,
+        (attempt) =>
+          authorizeStoredBindingBroadcast(env, deployment, key, attempt),
+      )),
     };
   if ((await obligation(deployment, authorization)).paid)
     throw new Error("Award already paid");
@@ -1290,6 +1312,8 @@ export async function bindStoredDestination(
       data,
       journaled,
       PENDING_BINDINGS,
+      (attempt) =>
+        authorizeStoredBindingBroadcast(env, deployment, key, attempt),
     )),
   };
 }
@@ -1298,12 +1322,106 @@ const STORED_BINDING = "bind:stored:";
 /** Journal keys of stored bindings signed but not yet finalized. */
 const PENDING_BINDINGS = "pending-stored-bindings";
 
+const storedBindingAbi = parseAbi([
+  "function bindDestination(uint64 actorId,address destination,uint64 expectedVersion,bytes32 claimDigest,uint64 expiresAt,bytes walletSignature)",
+]);
+
+/** Rebuild the journaled intent from current D1 authority before its bytes leave the signer. */
+async function authorizeStoredBindingBroadcast(
+  env: ExecutorEnvironment,
+  deployment: Deployment,
+  key: string,
+  attempt: Attempt,
+) {
+  const transaction = parseTransaction(attempt.rawTransaction);
+  if (
+    !attempt.rawTransaction.startsWith("0x02") ||
+    transactionHash(attempt.rawTransaction) !== attempt.transactionId ||
+    transaction.chainId !== Number(deployment.chainId) ||
+    !same(transaction.to ?? "", deployment.vault) ||
+    (transaction.value ?? 0n) !== 0n ||
+    !transaction.data ||
+    !isEscrowChain(deployment.chain) ||
+    !same(
+      await recoverTransactionAddress({
+        serializedTransaction: attempt.rawTransaction as `0x02${string}`,
+      }),
+      env.SIGNER.address,
+    )
+  )
+    throw new Error(
+      "Stored binding transaction differs from its reviewed signer or deployment",
+    );
+  const { args } = decodeFunctionData({
+    abi: storedBindingAbi,
+    data: transaction.data,
+  });
+  const [actor, destination, version, claimDigest, expiresAt, signature] = args;
+  const candidate = await env.PAYMENTS_DB.prepare(
+    "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain WHERE o.id=? AND w.github_user_id=? AND w.record_sha256=? AND lower(w.wallet_address)=?",
+  )
+    .bind(
+      attempt.obligationId,
+      actor.toString(),
+      claimDigest.slice(2),
+      destination.toLowerCase(),
+    )
+    .first<BindingCandidate>();
+  if (!candidate)
+    throw new Error("Stored binding claim unavailable; signed attempt held");
+  const input: BindingRequest = { ...candidate, idempotencyKey: null };
+  const fingerprint = digest(
+    JSON.stringify([
+      deployment.chainId,
+      input.vault.toLowerCase(),
+      input.githubUserId,
+      input.claimId,
+      input.claimDigest,
+      input.destination.toLowerCase(),
+      version.toString(),
+    ]),
+  );
+  if (
+    fingerprint !== attempt.fingerprint ||
+    key !== `${STORED_BINDING}${fingerprint.slice(2)}` ||
+    input.network !== attempt.network ||
+    !same(input.vault, attempt.vault)
+  )
+    throw new Error("Stored binding differs from its recorded authorization");
+  const authorization = await authorizeRegistry(
+    env,
+    input,
+    deployment.chain,
+    "none",
+  );
+  await assertIdentitySigner(env, deployment);
+  if ((await obligation(deployment, authorization)).paid)
+    throw new Error("Award already paid; signed binding held");
+  const current = await binding(deployment, input.githubUserId);
+  if (current.version !== version.toString())
+    throw new Error(
+      "Stored binding version is no longer current; signed attempt held",
+    );
+  await authorizeBindingVersion(env, input, current, "none");
+  const data = await storedBindingCalldata(
+    env,
+    deployment,
+    input,
+    current.version,
+    { expiresAt: expiresAt.toString(), signature },
+  );
+  if (!data || !same(data, transaction.data))
+    throw new Error(
+      "Stored binding consent unavailable or expired; signed attempt held",
+    );
+  // Chain reads can take time. Recheck the current claim after them, directly before send.
+  await authorizeRegistry(env, input, deployment.chain, "none");
+}
+
 /**
- * Reconciles one signed stored binding, whether or not its contributor is
- * still a candidate. A later attester transaction cannot be mined while an
- * earlier nonce is unsent, so every signed binding is broadcast again with
- * its same bytes until it is finalized or a finalized revert proof retires
- * it. Returns true when nothing more is needed.
+ * Reconcile receipts even after the claim changes. A missing receipt is not
+ * permission to resend obsolete consent. Keep held bytes, hash and nonce intact;
+ * this alone does not resolve the shared nonce gap for later contributors.
  */
 async function reconcileStoredBinding(
   env: ExecutorEnvironment,
@@ -1314,8 +1432,18 @@ async function reconcileStoredBinding(
   const deployment = await preflightEvmDeployment(env, attempt);
   const receipt = (await rpc(deployment, "eth_getTransactionReceipt", [
     attempt.transactionId,
-  ])) as { status: string; blockNumber: string } | null;
+  ])) as {
+    status: string;
+    transactionHash: string;
+    blockHash: string;
+    blockNumber: string;
+  } | null;
   if (receipt) {
+    if (
+      receipt.transactionHash.toLowerCase() !==
+      attempt.transactionId.toLowerCase()
+    )
+      throw new Error("Recorded binding receipt identity mismatch");
     if (receipt.status !== "0x1") {
       if (await retireRevertedAttempt(env, deployment, key, attempt))
         return { settled: true };
@@ -1327,18 +1455,32 @@ async function reconcileStoredBinding(
       "finalized",
       false,
     ])) as { number: string };
-    return {
-      settled: BigInt(receipt.blockNumber) <= BigInt(finalized.number),
-    };
+    const block = (await rpc(deployment, "eth_getBlockByNumber", [
+      receipt.blockNumber,
+      false,
+    ])) as { hash: string } | null;
+    if (!block || block.hash !== receipt.blockHash)
+      throw new Error("Recorded binding receipt is not canonical");
+    return { settled: BigInt(receipt.blockNumber) <= BigInt(finalized.number) };
   }
   return {
     settled: false,
-    ...(await signAndSubmit(env, deployment, key, attempt.fingerprint, "", {
-      network: attempt.network,
-      vault: attempt.vault,
-      obligationId: attempt.obligationId,
-      idempotencyKey: key.slice(STORED_BINDING.length),
-    })),
+    ...(await signAndSubmit(
+      env,
+      deployment,
+      key,
+      attempt.fingerprint,
+      "",
+      {
+        network: attempt.network,
+        vault: attempt.vault,
+        obligationId: attempt.obligationId,
+        idempotencyKey: key.slice(STORED_BINDING.length),
+      },
+      undefined,
+      (current) =>
+        authorizeStoredBindingBroadcast(env, deployment, key, current),
+    )),
   };
 }
 

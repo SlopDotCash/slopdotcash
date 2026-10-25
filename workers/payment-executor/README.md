@@ -44,12 +44,14 @@ claim, the finalized unpaid award, the identity signer, the successor
 lineage for a rotation, and the stored binding signature for the current
 on-chain version. A binding that is already current needs nothing. Its
 journal key names the vault, actor, claim and finalized binding version,
-so a binding whose broadcast result is unknown is broadcast again with the
-same bytes and never signed a second time. Every signed binding stays on a
-pending list until it is finalized or a finalized revert proof retires it.
-Each run broadcasts the pending bindings again first, also when their
-contributor is no longer a candidate, so a lost transaction never blocks
-the identity key's later nonces. A rejected or held candidate makes the run
+so an unknown send retains the same signed bytes. Every signed binding stays
+on a pending list until its canonical receipt is finalized or a finalized
+revert proof retires it. Each run reads pending receipts first, even after a
+wallet changes. Before any broadcast, it verifies the exact signed intent
+against the current D1 claim, wallet authorization, unpaid award, on-chain
+version and unexpired stored consent. An obsolete or unprovable attempt stays
+held with its bytes, hash and nonce unchanged. This safety boundary alone does
+not resolve a held nonce that blocks the identity key's later transactions. A rejected or held candidate makes the run
 fail in the Worker logs; the other candidates continue. A binding that the
 project owner cancelled fails the same way until an identity review. The
 payout `pay`
@@ -366,9 +368,10 @@ the fee recipient and the owner withdraws the rest. It also shows that an
 expired binding signature is never submitted, that a signature from
 another GitHub actor is refused by the API and by the attester, and that a
 binding whose broadcast is lost twice stays one journaled transaction with
-one nonce until the same bytes are broadcast. A second contributor's lost
-binding is broadcast again after she changes wallets and is no longer a
-candidate.
+one nonce until the same authorized bytes are broadcast. Signed consent that
+expires or names a superseded claim is held without rebroadcast. The test also
+covers a delayed original send, missing receipt and noncanonical receipt;
+finalized receipt reconciliation remains possible after the claim changes.
 
 Local execution is not public testnet evidence. Public-chain acceptance still
 needs isolated D1 and service bindings, dedicated funded gas/identity signers,

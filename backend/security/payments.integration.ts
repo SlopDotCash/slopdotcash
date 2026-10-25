@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseTransaction } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   buildBindCalldata,
@@ -51,12 +52,19 @@ import {
 } from "./payments";
 
 const productionAttester = process.argv.includes("--production-attester");
+const bindingGuard = process.argv.includes("--binding-guard");
+const staleOnly = process.argv.includes("--stale-only");
+assert(!staleOnly || bindingGuard);
 const sharedScopes =
   productionAttester && !process.argv.includes("--private-only");
+assert(!bindingGuard || sharedScopes, "Binding guard requires both scopes");
 const network = productionAttester ? "base-mainnet" : "base-sepolia";
 const chainId = productionAttester ? "8453" : "84532";
 const bindingDelay = productionAttester ? "0" : "3600";
-const port = productionAttester ? 18559 : 18558;
+const port = Number(
+  process.env.SLOP_SECURITY_ANVIL_PORT ?? (productionAttester ? 18559 : 18558),
+);
+assert(Number.isSafeInteger(port) && port > 1024 && port < 65536);
 const rpcUrl = `http://127.0.0.1:${port}`;
 const chain = spawn(
   "anvil",
@@ -65,23 +73,56 @@ const chain = spawn(
 );
 let dropAttesterBroadcast = false;
 let droppedBindings = 0;
+let dropVault: string | null = null;
+const broadcastHashes: string[] = [];
+let receiptFault: {
+  transactionId: string;
+  kind: "missing" | "wrong-block" | "wrong-transaction";
+} | null = null;
 const attesterProxy = productionAttester
   ? Bun.serve({
       port: 0,
       async fetch(request) {
         const body = await request.text();
-        if (
-          dropAttesterBroadcast &&
-          JSON.parse(body).method === "eth_sendRawTransaction"
-        ) {
-          droppedBindings += 1;
-          return new Response("Lost binding broadcast", { status: 502 });
+        const input = JSON.parse(body);
+        if (input.method === "eth_sendRawTransaction") {
+          broadcastHashes.push(digest(input.params[0]));
+          if (
+            dropAttesterBroadcast ||
+            parseTransaction(input.params[0]).to?.toLowerCase() === dropVault
+          ) {
+            droppedBindings += 1;
+            return new Response("Lost binding broadcast", { status: 502 });
+          }
         }
-        return fetch(rpcUrl, {
+        const fault =
+          receiptFault &&
+          input.method === "eth_getTransactionReceipt" &&
+          input.params[0] === receiptFault.transactionId
+            ? receiptFault
+            : null;
+        if (fault?.kind === "missing")
+          return Response.json({ jsonrpc: "2.0", id: input.id, result: null });
+        const response = await fetch(rpcUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body,
         });
+        if (
+          fault?.kind === "wrong-block" ||
+          fault?.kind === "wrong-transaction"
+        ) {
+          const value = await response.json();
+          return Response.json({
+            ...value,
+            result: {
+              ...value.result,
+              [fault.kind === "wrong-block" ? "blockHash" : "transactionHash"]:
+                `0x${"f".repeat(64)}`,
+            },
+          });
+        }
+        return response;
       },
     })
   : null;
@@ -606,12 +647,20 @@ try {
             "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
           JOURNAL: { idFromName: (name: string) => name, get: () => signer },
         };
-        const signer = new PaymentSignerJournal(
+        let signer = new PaymentSignerJournal(
           { storage: journal },
           env as never,
         );
         return {
-          signer,
+          get signer() {
+            return signer;
+          },
+          restart: () => {
+            signer = new PaymentSignerJournal(
+              { storage: journal },
+              env as never,
+            );
+          },
           scheduled: () => attesterWorker.scheduled(undefined, env as never),
         };
       })()
@@ -796,15 +845,352 @@ try {
       await journal.get(`nonce:${chainId}:${authority}`),
       bindingCount,
     );
-    dropAttesterBroadcast = false;
-    await privateAttester.scheduled();
-    await rpc("anvil_mine", ["0x40"]);
-    await privateAttester.scheduled();
-    assert.equal(
-      await rpc("eth_getTransactionCount", [authority, "latest"]),
-      `0x${bindingCount.toString(16)}`,
-      "One binding per scope after uncertain sends and replay",
-    );
+    if (bindingGuard) {
+      assert(ordinaryDeployment);
+      type Saved = { rawTransaction: `0x${string}`; transactionId: string };
+      const attempts = () =>
+        sqlite
+          .query<{ key: string; value: string }, []>(
+            "SELECT key,value FROM signer_journal WHERE key LIKE 'bind:stored:%' OR key LIKE 'security:bind:stored:%' ORDER BY key",
+          )
+          .all()
+          .map((row) => ({
+            key: row.key,
+            ...(JSON.parse(row.value) as Saved),
+          }));
+      const saved = attempts();
+      assert.equal(saved.length, 2);
+      const privateAttempt = saved.find((entry) =>
+        entry.key.startsWith("security:"),
+      );
+      assert(privateAttempt);
+      const privateRaw = JSON.stringify(await journal.get(privateAttempt.key));
+      const oldBroadcasts = () =>
+        broadcastHashes.filter(
+          (hash) => hash === digest(privateAttempt.rawTransaction),
+        ).length;
+      const privatePending = () =>
+        journal.get<string[]>("security:pending-stored-bindings");
+      const nonce = async () =>
+        Number(
+          BigInt(await rpc("eth_getTransactionCount", [authority, "latest"])),
+        );
+      const scopeReport = async (scope: "ordinary" | "private") => {
+        const response = await privateAttester.signer.fetch(
+          new Request(
+            `https://attester.internal/v1/${scope === "private" ? "security/" : ""}bind-destinations`,
+            { method: "POST" },
+          ),
+        );
+        assert.equal(response.status, 200);
+        return response.json();
+      };
+      const unchanged = async () => {
+        assert.equal(
+          JSON.stringify(await journal.get(privateAttempt.key)),
+          privateRaw,
+        );
+        assert.deepEqual(await privatePending(), [
+          privateAttempt.key.slice("security:".length),
+        ]);
+      };
+      // Land the ordinary binding first. Its later reconciliation is valid
+      // even though actor+chain-wide wallet succession affects both scopes.
+      dropAttesterBroadcast = false;
+      dropVault = vault.toLowerCase();
+      await assert.rejects(privateAttester.scheduled(), AggregateError);
+      await rpc("anvil_mine", ["0x40"]);
+      await assert.rejects(privateAttester.scheduled(), AggregateError);
+      assert.equal(await nonce(), 1);
+      assert.deepEqual(await journal.get("pending-stored-bindings"), []);
+      await unchanged();
+      privateAttester.restart();
+      await assert.rejects(privateAttester.scheduled(), AggregateError);
+      assert.deepEqual(attempts(), saved);
+
+      if (!staleOnly) {
+        // The account appends renewed consent, but the saved transaction must
+        // still use its original exact signature and expiry.
+        const renewed = {
+          ...consent,
+          message: {
+            ...consent.message,
+            expiresAt: String(Number(consent.message.expiresAt) + 3600),
+          },
+        };
+        const renewal = await accountCall("wallets/bind-authorize", {
+          claimId,
+          network,
+          vault,
+          expectedVersion: "0",
+          expiresAt: renewed.message.expiresAt,
+          signature: await wallet.signTypedData(renewed),
+        });
+        assert.equal(renewal.status, 200, JSON.stringify(renewal.body));
+        await assert.rejects(privateAttester.scheduled(), AggregateError);
+        await unchanged();
+        assert.equal(attempts().length, 2);
+        const originalNow = Date.now;
+        const expirySnapshot = await rpc("evm_snapshot", []);
+        const expiredAt = Number(consent.message.expiresAt) + 1;
+        const beforeExpired = oldBroadcasts();
+        try {
+          await rpc("evm_setNextBlockTimestamp", [expiredAt]);
+          await rpc("anvil_mine", ["0x40"]);
+          Date.now = () => expiredAt * 1000;
+          dropVault = null;
+          privateAttester.restart();
+          let expiryRefused = false;
+          try {
+            await privateAttester.scheduled();
+          } catch (error) {
+            assert(error instanceof AggregateError);
+            expiryRefused = true;
+          }
+          console.log(
+            JSON.stringify({
+              observation: "original-private-consent-expired",
+              refused: expiryRefused,
+              oldBroadcastsBefore: beforeExpired,
+              oldBroadcastsAfter: oldBroadcasts(),
+              chainNonce: await nonce(),
+              journalNonce: await journal.get(`nonce:${chainId}:${authority}`),
+            }),
+          );
+          assert.equal(expiryRefused, true);
+          assert.equal(oldBroadcasts(), beforeExpired);
+          assert.equal(await nonce(), 1);
+          await unchanged();
+        } finally {
+          Date.now = originalNow;
+          assert.equal(await rpc("evm_revert", [expirySnapshot]), true);
+        }
+      }
+      dropVault = null;
+      // This chain-clock fault is rolled back only for the independent D1
+      // successor case. No wallet history or journal row is rolled back.
+      const successorWallet = privateKeyToAccount(`0x${"0".repeat(63)}2`);
+      const successor = await accountCall("wallets/register", {
+        chain: "base",
+        address: successorWallet.address.toLowerCase(),
+      });
+      assert.equal(successor.status, 200, JSON.stringify(successor.body));
+      assert.equal(
+        sqlite
+          .query<{ supersedes_claim_id: string }, [string]>(
+            "SELECT supersedes_claim_id FROM wallet_claims WHERE id=?",
+          )
+          .get(successor.body.claimId)?.supersedes_claim_id,
+        claimId,
+      );
+      const staleBroadcasts = oldBroadcasts();
+      privateAttester.restart();
+      let staleRefused = false;
+      try {
+        await privateAttester.scheduled();
+      } catch (error) {
+        assert(error instanceof AggregateError);
+        staleRefused = true;
+      }
+      console.log(
+        JSON.stringify({
+          observation: "private-claim-superseded",
+          refused: staleRefused,
+          oldBroadcastsBefore: staleBroadcasts,
+          oldBroadcastsAfter: oldBroadcasts(),
+          chainNonce: await nonce(),
+          journalNonce: await journal.get(`nonce:${chainId}:${authority}`),
+          oldReceipt:
+            (
+              await rpc("eth_getTransactionReceipt", [
+                privateAttempt.transactionId,
+              ])
+            )?.status ?? null,
+        }),
+      );
+      assert.equal(staleRefused, true);
+      assert.equal(oldBroadcasts(), staleBroadcasts);
+      assert.equal(
+        await rpc("eth_getTransactionByHash", [privateAttempt.transactionId]),
+        null,
+      );
+      assert.equal(await nonce(), 1);
+      await unchanged();
+
+      // A current ordinary authorization may be signed at nonce2, but the
+      // obsolete private nonce1 still prevents it from landing. Preserve
+      // that honest shared-nonce hold; no cancellation or replacement exists.
+      const successorChallenge = await accountCall("wallets/challenge", {
+        claimId: successor.body.claimId,
+      });
+      assert.equal(successorChallenge.status, 200);
+      const successorAuthorization = await accountCall("wallets/authorize", {
+        claimId: successor.body.claimId,
+        challengeId: successorChallenge.body.challengeId,
+        signature: await successorWallet.signMessage({
+          message: successorChallenge.body.message,
+        }),
+      });
+      assert.equal(successorAuthorization.status, 200);
+      const ordinaryChallenge = await accountCall("wallets/bind-challenge", {
+        claimId: successor.body.claimId,
+        network,
+        vault: ordinaryDeployment.vault,
+        expectedVersion: "1",
+      });
+      assert.equal(ordinaryChallenge.status, 200);
+      const ordinaryRenewal = await accountCall("wallets/bind-authorize", {
+        claimId: successor.body.claimId,
+        network,
+        vault: ordinaryDeployment.vault,
+        expectedVersion: "1",
+        expiresAt: ordinaryChallenge.body.typedData.message.expiresAt,
+        signature: await successorWallet.signTypedData(
+          ordinaryChallenge.body.typedData,
+        ),
+      });
+      assert.equal(ordinaryRenewal.status, 200);
+      await assert.rejects(privateAttester.scheduled(), AggregateError);
+      const successorAttempt = attempts().find(
+        (entry) => !saved.some((prior) => prior.key === entry.key),
+      );
+      assert(successorAttempt && !successorAttempt.key.startsWith("security:"));
+      assert.equal(parseTransaction(successorAttempt.rawTransaction).nonce, 2);
+      assert.equal(await journal.get(`nonce:${chainId}:${authority}`), 3);
+      assert.equal(await nonce(), 1);
+      assert.equal(
+        await rpc("eth_getTransactionReceipt", [
+          successorAttempt.transactionId,
+        ]),
+        null,
+      );
+      const queuedOrdinary = await rpc("eth_getTransactionByHash", [
+        successorAttempt.transactionId,
+      ]);
+      assert(queuedOrdinary);
+      assert.equal(queuedOrdinary.blockNumber, null);
+      assert.equal(queuedOrdinary.from.toLowerCase(), authority);
+      assert.equal(
+        queuedOrdinary.to.toLowerCase(),
+        ordinaryDeployment.vault.toLowerCase(),
+      );
+      const successorRaw = JSON.stringify(
+        await journal.get(successorAttempt.key),
+      );
+      privateAttester.restart();
+      await assert.rejects(privateAttester.scheduled(), AggregateError);
+      assert.equal(oldBroadcasts(), staleBroadcasts);
+      assert.equal(attempts().length, 3);
+      assert.equal(
+        JSON.stringify(await journal.get(successorAttempt.key)),
+        successorRaw,
+      );
+      await unchanged();
+      const heldReport = await scopeReport("private");
+      assert(heldReport.failed > 0);
+      assert.deepEqual(heldReport.submitted, []);
+
+      // Model late delivery of already-signed bytes directly to local Anvil.
+      // The service itself never rebroadcasts this obsolete authorization.
+      assert.equal(
+        await rpc("eth_sendRawTransaction", [privateAttempt.rawTransaction]),
+        privateAttempt.transactionId,
+      );
+      await rpc("anvil_mine", ["0x1"]);
+      receiptFault = {
+        transactionId: privateAttempt.transactionId,
+        kind: "missing",
+      };
+      assert((await scopeReport("private")).failed > 0);
+      await unchanged();
+      receiptFault = null;
+      const realReceipt = await rpc("eth_getTransactionReceipt", [
+        privateAttempt.transactionId,
+      ]);
+      assert.equal(realReceipt.status, "0x1");
+      const earlyFinalized = await rpc("eth_getBlockByNumber", [
+        "finalized",
+        false,
+      ]);
+      assert(BigInt(realReceipt.blockNumber) > BigInt(earlyFinalized.number));
+      assert.equal((await scopeReport("private")).failed, 0);
+      await unchanged();
+      await rpc("anvil_mine", ["0x40"]);
+      receiptFault = {
+        transactionId: privateAttempt.transactionId,
+        kind: "wrong-block",
+      };
+      assert((await scopeReport("private")).failed > 0);
+      await unchanged();
+      receiptFault = {
+        transactionId: privateAttempt.transactionId,
+        kind: "wrong-transaction",
+      };
+      assert((await scopeReport("private")).failed > 0);
+      await unchanged();
+      receiptFault = null;
+      privateAttester.restart();
+      await privateAttester.scheduled();
+      await privateAttester.scheduled();
+      assert.deepEqual(await privatePending(), []);
+      assert.deepEqual(await journal.get("pending-stored-bindings"), []);
+      assert.equal(
+        JSON.stringify(await journal.get(privateAttempt.key)),
+        privateRaw,
+      );
+      assert.equal(oldBroadcasts(), staleBroadcasts);
+      assert.equal(await nonce(), 3);
+      assert.equal(attempts().length, 3);
+      const totals = await readDeploymentVaultTotals(
+        config as unknown as PaymentDeployment,
+        rpcUrl,
+      );
+      assert.equal(totals.reservedPrincipal, "75000000");
+      assert.equal(totals.reservedFees, "25000000");
+      assert.equal(totals.accruedFees, "0");
+      assert.equal(
+        sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM security_payment_events WHERE kind='paid'",
+          )
+          .get()?.n,
+        0,
+      );
+      const publicPayments = (await accountCall("me")).body.payments;
+      assert.deepEqual(
+        publicPayments.map((payment: { id: string }) => payment.id),
+        [ordinaryAwardId],
+      );
+      console.log(
+        JSON.stringify({
+          proof: "private-binding-current-claim",
+          result: "passed",
+          privateTransaction: privateAttempt.transactionId,
+          ordinarySuccessor: successorAttempt.transactionId,
+          attempts: 3,
+          chainNonce: 3,
+          heldNonceBeforeDelayedDelivery: 1,
+          privateGrossStillReserved: (
+            BigInt(totals.reservedPrincipal) + BigInt(totals.reservedFees)
+          ).toString(),
+          originalConsentExpiryRefused: !staleOnly,
+          renewedConsentDidNotReplaceRaw: !staleOnly,
+          missingWrongNonfinalReceiptHeld: true,
+          finalReceiptReconciledWithoutResend: true,
+          cancellationOrReplacement: false,
+        }),
+      );
+    } else {
+      dropAttesterBroadcast = false;
+      await privateAttester.scheduled();
+      await rpc("anvil_mine", ["0x40"]);
+      await privateAttester.scheduled();
+      assert.equal(
+        await rpc("eth_getTransactionCount", [authority, "latest"]),
+        `0x${bindingCount.toString(16)}`,
+        "One binding per scope after uncertain sends and replay",
+      );
+    }
     // The attester never submits either an award payment or a monthly allocation.
     for (const path of [
       "/v1/pay",
@@ -848,195 +1234,202 @@ try {
     await rpc("evm_increaseTime", [3601]);
     await rpc("anvil_mine", ["0x40"]);
   }
-  await privateDb
-    .prepare(
-      "INSERT INTO payment_outbox(obligation_id,state,updated_at) VALUES(?,'ready',?)",
-    )
-    .bind(plan.obligationId, new Date().toISOString())
-    .run();
-  await rpc("anvil_setBalance", [wallet.address, "0x56bc75e2d63100000"]);
-  const makeExecutor = () =>
-    createEvmExecutor({
-      PAYMENTS_DB: privateDb,
-      PAYMENT_DEPLOYMENTS: JSON.stringify([
-        { ...config, gasCeiling: "500000" },
-      ]),
-      PAYMENT_RPC_URLS: JSON.stringify({ [network]: rpcUrl }),
-      SIGNER: wallet,
-      JOURNAL: journal,
-    });
-  let sent: string | undefined;
-  let submittedInput:
-    | (DispatchPayment & { idempotencyKey: string })
-    | undefined;
-  const execute = {
-    submit: async (input: DispatchPayment & { idempotencyKey: string }) => {
-      submittedInput = input;
-      sent = (await makeExecutor().submit(input)).transactionId;
-      throw new Error("Synthetic lost response after submission");
-    },
-  };
-  await assert.rejects(
-    dispatchPayment(
-      privateDb,
-      execute,
-      plan.obligationId,
-      new Date(),
-      (id, at) => securityPaymentNotices(database, id, "held", at),
-    ),
-    /lost response/,
-  );
-  assert.equal(
-    (await securitySettlementView(database, caseId))?.state,
-    "uncertain",
-  );
-  assert(sent);
-  assert(submittedInput);
-  // Reconstruct the signer engine after a lost response. Its durable journal
-  // returns the same signed transaction rather than paying a second time.
-  assert.equal(
-    (await makeExecutor().submit(submittedInput)).transactionId,
-    sent,
-  );
-  assert.equal(
-    sqlite
-      .query<{ n: number }, []>(
-        "SELECT count(*) n FROM signer_journal WHERE key LIKE 'pay:%'",
+  if (!bindingGuard) {
+    await privateDb
+      .prepare(
+        "INSERT INTO payment_outbox(obligation_id,state,updated_at) VALUES(?,'ready',?)",
       )
-      .get()?.n,
-    1,
-  );
-  await rpc("anvil_mine", ["0x40"]);
-  const paid = {
-    transactionId: sent,
-    eventIndex: 0,
-    kind: "paid" as const,
-    obligationId: plan.obligationId,
-  };
-  await indexPaymentEvent(
-    privateDb,
-    adapter,
-    paid,
-    new Date().toISOString(),
-    policy,
-  );
-  await indexPaymentEvent(
-    privateDb,
-    adapter,
-    paid,
-    new Date().toISOString(),
-    policy,
-  );
-  assert.equal((await securitySettlementView(database, caseId))?.state, "paid");
-  assert.equal(
-    sqlite
-      .query<{ n: number }, []>(
-        "SELECT count(*) n FROM security_payment_events WHERE kind='paid'",
-      )
-      .get()?.n,
-    1,
-  );
-  const publicPayments = (await accountCall("me")).body.payments;
-  assert.deepEqual(
-    publicPayments.map((payment: { id: string }) => payment.id),
-    ordinaryDeployment ? [ordinaryAwardId] : [],
-  );
-  const publicTotals = await accountCall(`projects/${projectId}/totals`);
-  assert.equal(publicTotals.status, ordinaryDeployment ? 200 : 503);
-  const ordinaryOutput = JSON.stringify({
-    publicPayments,
-    publicTotals: publicTotals.body,
-  });
-  assert(!ordinaryOutput.includes(vault));
-  assert(!ordinaryOutput.includes(caseId));
-  assert.equal(
-    (await call(dispute, "GET", `security-cases/${caseId}`)).status,
-    404,
-  );
-  const ordinaryNotices = sqlite
-    .query<{ event_key: string }, []>(
-      "SELECT event_key FROM notifications WHERE kind IN ('award_reserved','payment_paid','payout_held','payout_exception')",
-    )
-    .all();
-  assert.equal(ordinaryNotices.length, ordinaryDeployment ? 1 : 0);
-  for (const notice of ordinaryNotices) {
-    assert(notice.event_key.includes(ordinaryAwardId as string));
-    assert(!notice.event_key.includes(plan.obligationId));
-  }
-  const balance = execFileSync(
-    "cast",
-    [
-      "call",
-      token,
-      "balanceOf(address)(uint256)",
-      wallet.address,
-      "--rpc-url",
-      rpcUrl,
-    ],
-    { encoding: "utf8" },
-  )
-    .split(" ")[0]
-    .trim();
-  assert.equal(balance, "75000000");
-  const finalTotals = await readDeploymentVaultTotals(
-    config as unknown as PaymentDeployment,
-    rpcUrl,
-  );
-  assert.equal(finalTotals.accruedFees, "25000000");
-  assert.equal(finalTotals.reservedPrincipal, "0");
-  const backupRoot = mkdtempSync(join(tmpdir(), "slop-private-restore-"));
-  const backup = join(backupRoot, "private.sqlite");
-  sqlite.query("VACUUM INTO ?").run(backup);
-  const restored = sqliteD1([], backup);
-  try {
-    assert.equal(
-      (await securitySettlementView(restored.db, caseId))?.state,
-      "paid",
+      .bind(plan.obligationId, new Date().toISOString())
+      .run();
+    await rpc("anvil_setBalance", [wallet.address, "0x56bc75e2d63100000"]);
+    const makeExecutor = () =>
+      createEvmExecutor({
+        PAYMENTS_DB: privateDb,
+        PAYMENT_DEPLOYMENTS: JSON.stringify([
+          { ...config, gasCeiling: "500000" },
+        ]),
+        PAYMENT_RPC_URLS: JSON.stringify({ [network]: rpcUrl }),
+        SIGNER: wallet,
+        JOURNAL: journal,
+      });
+    let sent: string | undefined;
+    let submittedInput:
+      | (DispatchPayment & { idempotencyKey: string })
+      | undefined;
+    const execute = {
+      submit: async (input: DispatchPayment & { idempotencyKey: string }) => {
+        submittedInput = input;
+        sent = (await makeExecutor().submit(input)).transactionId;
+        throw new Error("Synthetic lost response after submission");
+      },
+    };
+    await assert.rejects(
+      dispatchPayment(
+        privateDb,
+        execute,
+        plan.obligationId,
+        new Date(),
+        (id, at) => securityPaymentNotices(database, id, "held", at),
+      ),
+      /lost response/,
     );
+    assert.equal(
+      (await securitySettlementView(database, caseId))?.state,
+      "uncertain",
+    );
+    assert(sent);
+    assert(submittedInput);
+    // Reconstruct the signer engine after a lost response. Its durable journal
+    // returns the same signed transaction rather than paying a second time.
+    assert.equal(
+      (await makeExecutor().submit(submittedInput)).transactionId,
+      sent,
+    );
+    assert.equal(
+      sqlite
+        .query<{ n: number }, []>(
+          "SELECT count(*) n FROM signer_journal WHERE key LIKE 'pay:%'",
+        )
+        .get()?.n,
+      1,
+    );
+    await rpc("anvil_mine", ["0x40"]);
+    const paid = {
+      transactionId: sent,
+      eventIndex: 0,
+      kind: "paid" as const,
+      obligationId: plan.obligationId,
+    };
     await indexPaymentEvent(
-      securityPaymentDatabase(restored.db),
+      privateDb,
       adapter,
       paid,
       new Date().toISOString(),
-      securityLedgerPolicy(restored.db),
+      policy,
+    );
+    await indexPaymentEvent(
+      privateDb,
+      adapter,
+      paid,
+      new Date().toISOString(),
+      policy,
     );
     assert.equal(
-      restored.sqlite
+      (await securitySettlementView(database, caseId))?.state,
+      "paid",
+    );
+    assert.equal(
+      sqlite
         .query<{ n: number }, []>(
           "SELECT count(*) n FROM security_payment_events WHERE kind='paid'",
         )
         .get()?.n,
       1,
     );
-    assert.equal(
-      restored.sqlite
-        .query<{ n: number }, []>("SELECT count(*) n FROM payment_obligations")
-        .get()?.n,
-      ordinaryDeployment ? 1 : 0,
+    const publicPayments = (await accountCall("me")).body.payments;
+    assert.deepEqual(
+      publicPayments.map((payment: { id: string }) => payment.id),
+      ordinaryDeployment ? [ordinaryAwardId] : [],
     );
+    const publicTotals = await accountCall(`projects/${projectId}/totals`);
+    assert.equal(publicTotals.status, ordinaryDeployment ? 200 : 503);
+    const ordinaryOutput = JSON.stringify({
+      publicPayments,
+      publicTotals: publicTotals.body,
+    });
+    assert(!ordinaryOutput.includes(vault));
+    assert(!ordinaryOutput.includes(caseId));
     assert.equal(
-      restored.sqlite
-        .query<{ n: number }, []>(
-          "SELECT count(*) n FROM security_payment_consents",
-        )
-        .get()?.n,
-      1,
+      (await call(dispute, "GET", `security-cases/${caseId}`)).status,
+      404,
     );
-    assert.throws(
-      () =>
+    const ordinaryNotices = sqlite
+      .query<{ event_key: string }, []>(
+        "SELECT event_key FROM notifications WHERE kind IN ('award_reserved','payment_paid','payout_held','payout_exception')",
+      )
+      .all();
+    assert.equal(ordinaryNotices.length, ordinaryDeployment ? 1 : 0);
+    for (const notice of ordinaryNotices) {
+      assert(notice.event_key.includes(ordinaryAwardId as string));
+      assert(!notice.event_key.includes(plan.obligationId));
+    }
+    const balance = execFileSync(
+      "cast",
+      [
+        "call",
+        token,
+        "balanceOf(address)(uint256)",
+        wallet.address,
+        "--rpc-url",
+        rpcUrl,
+      ],
+      { encoding: "utf8" },
+    )
+      .split(" ")[0]
+      .trim();
+    assert.equal(balance, "75000000");
+    const finalTotals = await readDeploymentVaultTotals(
+      config as unknown as PaymentDeployment,
+      rpcUrl,
+    );
+    assert.equal(finalTotals.accruedFees, "25000000");
+    assert.equal(finalTotals.reservedPrincipal, "0");
+    const backupRoot = mkdtempSync(join(tmpdir(), "slop-private-restore-"));
+    const backup = join(backupRoot, "private.sqlite");
+    sqlite.query("VACUUM INTO ?").run(backup);
+    const restored = sqliteD1([], backup);
+    try {
+      assert.equal(
+        (await securitySettlementView(restored.db, caseId))?.state,
+        "paid",
+      );
+      await indexPaymentEvent(
+        securityPaymentDatabase(restored.db),
+        adapter,
+        paid,
+        new Date().toISOString(),
+        securityLedgerPolicy(restored.db),
+      );
+      assert.equal(
         restored.sqlite
-          .query("DELETE FROM security_settlements WHERE case_id=?")
-          .run(caseId),
-      /immutable|permanent/,
-    );
-  } finally {
-    restored.sqlite.close();
-    rmSync(backupRoot, { recursive: true });
-  }
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM security_payment_events WHERE kind='paid'",
+          )
+          .get()?.n,
+        1,
+      );
+      assert.equal(
+        restored.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM payment_obligations",
+          )
+          .get()?.n,
+        ordinaryDeployment ? 1 : 0,
+      );
+      assert.equal(
+        restored.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM security_payment_consents",
+          )
+          .get()?.n,
+        1,
+      );
+      assert.throws(
+        () =>
+          restored.sqlite
+            .query("DELETE FROM security_settlements WHERE case_id=?")
+            .run(caseId),
+        /immutable|permanent/,
+      );
+    } finally {
+      restored.sqlite.close();
+      rmSync(backupRoot, { recursive: true });
+    }
 
-  console.log(
-    `${productionAttester ? "Production attester on local Base: " : "Private bounty: "}real API approval and visibility consent, ${productionAttester ? `${sharedScopes ? "two scoped bindings with shared nonces" : "private-only release pins"} after lost broadcasts, ` : ""}finalized vault funding, unsigned owner commitment, late wallet possession, 75/25 payment, lost-response recovery, replay rejection, private notices, backup restore, and public-output isolation passed.`,
-  );
+    console.log(
+      `${productionAttester ? "Production attester on local Base: " : "Private bounty: "}real API approval and visibility consent, ${productionAttester ? `${sharedScopes ? "two scoped bindings with shared nonces" : "private-only release pins"} after lost broadcasts, ` : ""}finalized vault funding, unsigned owner commitment, late wallet possession, 75/25 payment, lost-response recovery, replay rejection, private notices, backup restore, and public-output isolation passed.`,
+    );
+  }
 } finally {
   attesterProxy?.stop(true);
   chain.kill("SIGTERM");
