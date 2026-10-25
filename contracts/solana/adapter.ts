@@ -288,11 +288,11 @@ export async function verifySolanaDeployment(
       throw new Error("Upgrade authority mismatch");
     if (
       config.executedAtSlot !== undefined &&
-      new DataView(content.buffer, content.byteOffset).getBigUint64(4, true) >
+      new DataView(content.buffer, content.byteOffset).getBigUint64(4, true) >=
         BigInt(config.executedAtSlot)
     )
       throw new Error(
-        "Program changed after the receipt; execution is unverified",
+        "Program version was not effective before the receipt slot",
       );
     code = content.slice(45);
   } else if (
