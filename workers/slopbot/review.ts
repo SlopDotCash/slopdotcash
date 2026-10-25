@@ -342,6 +342,7 @@ async function loadContext(
           `/repos/${job.owner}/${job.repo}/pulls/${job.number}`,
         )
       : null;
+  if (job.itemKind === "pull_request" && pull === null) return null;
   const configFile = await github.fileText(
     job.owner,
     job.repo,

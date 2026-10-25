@@ -25,6 +25,7 @@ type SourceCase =
   | "wrong-repo"
   | "unavailable"
   | "wrong-comparison"
+  | "missing-pull"
   | "changed-original";
 
 async function reviewEmptyPull(
@@ -141,21 +142,24 @@ async function reviewEmptyPull(
           assignees: [],
         });
       if (path.endsWith("/pulls/5") || path.endsWith("/pulls/6"))
-        return Response.json({
-          draft: false,
-          merged: false,
-          head: { sha: (path.endsWith("/pulls/6") ? "e" : "b").repeat(40) },
-          base: {
-            sha: source ? "a".repeat(40) : targetSha,
-            ref: source ? "development" : "main",
-            repo: {
-              id: source === "wrong-repo" ? repositoryId + 1 : repositoryId,
+        if (source === "missing-pull")
+          return new Response(null, { status: 404 });
+        else
+          return Response.json({
+            draft: false,
+            merged: false,
+            head: { sha: (path.endsWith("/pulls/6") ? "e" : "b").repeat(40) },
+            base: {
+              sha: source ? "a".repeat(40) : targetSha,
+              ref: source ? "development" : "main",
+              repo: {
+                id: source === "wrong-repo" ? repositoryId + 1 : repositoryId,
+              },
             },
-          },
-          additions: 0,
-          deletions: 0,
-          changed_files: 0,
-        });
+            additions: 0,
+            deletions: 0,
+            changed_files: 0,
+          });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: "c".repeat(40) } });
       if (path.endsWith("/branches/development"))
@@ -324,4 +328,14 @@ test("an equal stored digest cannot label a changed original as a duplicate", as
   expect(result.prompts).toHaveLength(1);
   expect(result.outcome).toContain("held for maintainer");
   expect(result.review).toEqual({ status: "completed", action: "hold" });
+});
+
+test("an unavailable PR cannot be reviewed as an issue without its source", async () => {
+  const result = await reviewEmptyPull("active", "missing-pull");
+  expect(result.outcome).toBe("item or repository not readable");
+  expect(result.prompts).toEqual([]);
+  expect(result.review).toBeNull();
+  expect(result.writes.filter((w) => !w.endsWith("/access_tokens"))).toEqual(
+    [],
+  );
 });
