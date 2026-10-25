@@ -104,7 +104,7 @@ export function OwnerVaultSetup({
   const [signInRequired, setSignInRequired] = useState(false);
   const [claims, setClaims] = useState<WalletClaim[]>([]);
   const [network, setNetwork] = useState(saved.pending?.input.network ?? "");
-  const [automatic, setAutomatic] = useState<boolean | null>(null);
+  const [automatic, setAutomatic] = useState(true);
   const [wallet, setWallet] = useState<Connection | null>(null);
   const [review, setReview] = useState<Pending | null>(null);
   const createButton = useRef<HTMLButtonElement>(null);
@@ -198,12 +198,10 @@ export function OwnerVaultSetup({
         throw new Error(
           "Confirm this wallet in Earnings, then reload the setup options.",
         );
-      if (!bounty && automatic === null)
-        throw new Error("Choose the monthly payment setting before review.");
       const input = {
         network: network as EscrowDeployment["network"],
         claimId: claim.claimId,
-        automatic: bounty ? false : automatic === true,
+        automatic: bounty ? false : automatic,
         payoutPolicy,
         expectedRevision: info.revision,
       };
@@ -420,24 +418,17 @@ export function OwnerVaultSetup({
             {!bounty ? (
               <>
                 <label>
-                  Automatic monthly payment
-                  <select
-                    value={automatic === null ? "" : automatic ? "on" : "off"}
+                  <input
+                    type="checkbox"
+                    checked={automatic}
                     disabled={busy}
-                    onChange={(e) =>
-                      setAutomatic(
-                        e.target.value === "" ? null : e.target.value === "on",
-                      )
-                    }
-                  >
-                    <option value="">Choose a setting</option>
-                    <option value="on">On</option>
-                    <option value="off">Off</option>
-                  </select>
+                    onChange={(e) => setAutomatic(e.target.checked)}
+                  />{" "}
+                  Automatically pay the monthly allocation
                 </label>
                 <p>
                   The cap is {project.reward.monthlyCapDisplay} per month. You
-                  can change this setting later.
+                  can turn automatic payment off later.
                 </p>
               </>
             ) : (
@@ -450,12 +441,7 @@ export function OwnerVaultSetup({
             <button
               className="button"
               type="button"
-              disabled={
-                busy ||
-                !claim ||
-                (!bounty && automatic === null) ||
-                Boolean(saved.error)
-              }
+              disabled={busy || !claim || Boolean(saved.error)}
               onClick={() => void reviewCreation()}
             >
               Review vault creation

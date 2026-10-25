@@ -1231,12 +1231,10 @@ test("owner creates, registers and funds a vault through the real API", async ({
     });
     const setup = page.getByRole("region", { name: "Set up project vault" });
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
-    await expect(
-      setup.getByRole("button", { name: "Review vault creation", exact: true }),
-    ).toBeDisabled();
-    await setup
-      .getByRole("combobox", { name: /^Automatic monthly payment/ })
-      .selectOption(automatic ? "on" : "off");
+    if (!automatic)
+      await setup
+        .getByLabel("Automatically pay the monthly allocation")
+        .uncheck();
     const reviewButton = setup.getByRole("button", {
       name: "Review vault creation",
       exact: true,
@@ -1674,7 +1672,7 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     });
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
     await expect(
-      setup.getByRole("combobox", { name: /^Automatic monthly payment/ }),
+      setup.getByLabel("Automatically pay the monthly allocation"),
     ).toHaveCount(0);
     await setup.getByRole("button", { name: "Review vault creation" }).focus();
     await page.keyboard.press("Enter");
