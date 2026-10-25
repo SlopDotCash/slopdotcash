@@ -1783,14 +1783,17 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
     await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
     await expect(funding.getByRole("status")).toContainText("finalized");
+    // Verified funds do not let the owner open the program; a Slop admin
+    // opens it after review.
     await page.getByRole("button", { name: "Edit bounty settings" }).click();
-    await page.getByLabel("Status", { exact: true }).selectOption("open");
-    await page.getByRole("button", { name: "Publish bounty terms" }).click();
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision" }),
-    ).toBeVisible();
+      page.getByLabel("Status", { exact: true }).locator("option"),
+    ).toHaveText(["Paused", "Closed"]);
+    await expect(page.locator("#owner-security-form")).toContainText(
+      "A Slop admin opens the program after review.",
+    );
     const final = await (await page.request.get(`${origin}/__fixture`)).json();
-    expect(final.project.manifest.securityBounty.status).toBe("open");
+    expect(final.project.manifest.securityBounty.status).toBe("paused");
     expect(final.privateSnapshots.n).toBe(1);
     expect(final.publicSnapshots.n).toBe(0);
     const publicProject = await (

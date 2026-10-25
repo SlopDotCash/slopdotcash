@@ -519,7 +519,7 @@ test("owners publish and control bounty programs with verified funding @registry
       },
     );
     expect(unsupported.status).toBe(422);
-    expect(unsupported.body.error).toBe("security_funding_unavailable");
+    expect(unsupported.body.error).toBe("security_activation_restricted");
     // An account without repository access gets the authority refusal,
     // never the funding answer.
     const outsider = await api(
@@ -576,9 +576,50 @@ test("owners publish and control bounty programs with verified funding @registry
       ).status,
     ).toBe(200);
     await vaultSnapshot(id, bountyDeployment(repository), "200000000");
+    // Verified funds alone do not open the program: the owner cannot open it.
+    stored = await adminProject(request, id);
+    const ownerOpen = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS.security,
+      {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          securityBounty: {
+            ...(stored.manifest.securityBounty as object),
+            status: "open",
+          },
+        },
+      },
+    );
+    expect(ownerOpen.status).toBe(422);
+    expect(ownerOpen.body.error).toBe("security_activation_restricted");
     await page.reload({ waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Edit bounty settings" }).click();
-    await page.getByLabel("Status", { exact: true }).selectOption("open");
+    await expect(
+      page.getByLabel("Status", { exact: true }).locator("option"),
+    ).toHaveText(["Paused", "Closed"]);
+    // A Slop admin opens the program after review.
+    expect(
+      (
+        await revise(request, id, (manifest) => ({
+          ...manifest,
+          securityBounty: openTerms(
+            manifest.securityBounty as Record<string, unknown>,
+          ),
+        }))
+      ).status,
+    ).toBe(200);
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Edit bounty settings" }).click();
+    await expect(page.getByLabel("Status", { exact: true })).toHaveValue(
+      "open",
+    );
+    await page
+      .getByLabel("Disclosure", { exact: true })
+      .fill("Contact the maintainer before any disclosure.");
     await expectAccessible(page);
     await page.screenshot({
       path: test.info().outputPath("owner-bounty-settings.png"),

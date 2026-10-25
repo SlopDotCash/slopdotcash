@@ -371,6 +371,14 @@ async function ownerSecurityProgram(
       "security_asset_restricted",
       "A funded bounty program keeps its network and asset",
     );
+  // Program activation stays a Slop admin decision (PRD section 9, "activation
+  // per program"). Owners publish terms, fund the vault, pause and close.
+  if (status === "open" && before?.status !== "open")
+    fail(
+      422,
+      "security_activation_restricted",
+      "A Slop admin opens the bounty program after review. You can publish terms, fund the bounty vault, pause or close the program.",
+    );
   const funds = await deps.securityProgramFunds?.(next.id, after);
   if (status === "open" && (!funds || BigInt(funds.availableMinor) <= 0n))
     fail(
@@ -1119,14 +1127,13 @@ async function ownerVault(
   )
     fail(400, "invalid_request", "Invalid vault purpose");
   if (request.method === "GET" && purpose === "security-bounty") {
-    // Reading funded obligations and owner exits remains available during a
-    // restriction. New creation and deposits still require participation.
+    // A banned account cannot read restricted bounty totals. During a project
+    // restriction, current owners can still read funded obligations and check
+    // existing transactions; new creation and deposits stay disabled.
+    assertMaintainerNotBanned(current.manifest, actor, enforcements);
     requireAuthority(await currentAuthority(deps, current.manifest, actor));
-    const banned = bannedMaintainerIds(enforcements);
     const canSetup =
-      publicRestrictionOf(current, enforcements).state === "clear" &&
-      !banned.has(actor.githubId) &&
-      !banned.has(String(current.manifest.steward.github.actorId));
+      publicRestrictionOf(current, enforcements).state === "clear";
     const program = current.manifest.securityBounty;
     return json(200, {
       revision: current.revision,

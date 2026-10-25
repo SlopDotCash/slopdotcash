@@ -261,14 +261,17 @@ export function SecurityProgramEditor({
                   <option value="pending-approval">Pending (legacy)</option>
                 )}
                 <option value="paused">Paused</option>
-                <option value="open">Open</option>
+                {existing?.status === "open" && (
+                  <option value="open">Open</option>
+                )}
                 <option value="closed">Closed</option>
               </select>
               <p>
-                Opening requires available funds in a verified, separate bounty
-                vault. Slop checks the latest finalized balance. Closing stops
-                new paid research. Private reporting, existing cases, and funded
-                awards remain available.
+                A Slop admin opens the program after review. Opening also
+                requires available funds in a verified, separate bounty vault.
+                Slop checks the latest finalized balance. Closing stops new paid
+                research. Private reporting, existing cases, and funded awards
+                remain available.
               </p>
               <label htmlFor="bounty-amount">
                 Published gross award ({existing?.amount.currency ?? "USDC"})

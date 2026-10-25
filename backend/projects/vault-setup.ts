@@ -113,6 +113,14 @@ export function ownerVaultSetupService(deps: {
           ? "Save the USDC bounty terms and network before creating a bounty vault."
           : "Choose a monthly reward amount and network before creating a vault.",
       );
+    // Only the EVM verifier binds the requested purpose. Another network
+    // family must never record an ordinary vault as the bounty vault.
+    if (bounty && network.family !== "evm")
+      fail(
+        422,
+        "vault_setup_unavailable",
+        "Owner bounty vault setup is available only on EVM networks.",
+      );
     const claim = await deps.db
       .prepare(
         "SELECT w.wallet_address address FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
