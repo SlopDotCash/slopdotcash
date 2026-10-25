@@ -501,7 +501,7 @@ async function createSubmission(
   }
   const terms = await programTerms(deps, projectId);
   const repository = terms.intake.repository;
-  const state = await pvrState(deps, repository);
+  const state = await pvrState(deps, projectId);
   const automatic = await automaticIntake(deps, repository, state);
   // A direct report already exists on GitHub; it needs only the App.
   if (
@@ -952,6 +952,12 @@ async function sendSubmission(
   if (terms.intake.repository.toLowerCase() !== row.repository.toLowerCase())
     fail(409, "intake_changed", "The program's intake changed; start again");
   const grant = await requireGrant(request, deps, intake, row);
+  if ((await pvrState(deps, row.project_id)) !== "ready")
+    fail(
+      409,
+      "intake_unavailable",
+      "Private reporting could not be verified; your draft is kept",
+    );
   // The send is recorded before GitHub is called; a lost answer is uncertain.
   let sending: SubmissionRow | null;
   try {

@@ -345,6 +345,87 @@ test("setup activates a project only with installation write access and a clean 
   expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
 });
 
+test("an owner records and revokes explicit closure consent with current authority and immutable revisions", async () => {
+  const { persistence, call, create, state } = registry();
+  await create("open-registry", "example/open-registry");
+  state.clearance = CLEARED;
+  await call("POST", "project-setup/open-registry/check", OWNER, {});
+  const original = await persistence.getProject("open-registry");
+  if (!original) throw new Error("project missing");
+  expect(original.manifest.slopbot).toBeUndefined();
+  state.scans = [];
+  const request = {
+    manifest: { ...original.manifest, slopbot: { automaticClosure: true } },
+    expectedRevision: original.revision,
+  };
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  expect(
+    (await call("PUT", "projects/open-registry", OWNER, request)).status,
+  ).toBe(403);
+  expect((await persistence.getProject("open-registry"))?.revision).toBe(
+    original.revision,
+  );
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "admin",
+    roleName: "admin",
+  };
+  const enabled = await call("PUT", "projects/open-registry", OWNER, request);
+  expect(enabled.status).toBe(200);
+  expect(enabled.body.changes).toEqual({
+    presentation: ["slopbot"],
+    executable: [],
+    financial: [],
+  });
+  expect(state.scans).toEqual([]);
+  const current = await persistence.getProject("open-registry");
+  if (!current) throw new Error("project missing");
+  expect(current.manifest.slopbot?.automaticClosure).toBe(true);
+  expect(current.status).toBe(original.status);
+  expect(
+    (await call("PUT", "projects/open-registry", OWNER, request)).status,
+  ).toBe(409);
+  expect(
+    (
+      await call("PUT", "projects/open-registry", OWNER, {
+        manifest: {
+          ...current.manifest,
+          slopbot: { automaticClosure: "true" },
+        },
+        expectedRevision: current.revision,
+      })
+    ).status,
+  ).toBe(422);
+  expect(
+    (
+      await call("PUT", "projects/open-registry", OWNER, {
+        manifest: { ...current.manifest, slopbot: { automaticClosure: false } },
+        expectedRevision: current.revision,
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await persistence.getProject("open-registry"))?.manifest.slopbot
+      ?.automaticClosure,
+  ).toBe(false);
+  const history = (await persistence.listRevisions()).filter(
+    (row) => row.projectId === original.id,
+  );
+  expect(
+    history.find((row) => row.revision === original.revision)?.manifest,
+  ).toEqual(original.manifest);
+  expect(
+    history.find((row) => row.revision === current.revision)?.manifest.slopbot
+      ?.automaticClosure,
+  ).toBe(true);
+});
+
 test("owner revisions publish presentation at once, rescan skill inputs and apply money prospectively", async () => {
   const { persistence, call, create, state } = registry();
   await create("open-registry", "example/open-registry");

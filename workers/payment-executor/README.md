@@ -97,6 +97,16 @@ Any other `SIGNER_STACK` value stops the signer.
 
 ## Private bounty bindings
 
+The protected main release also prepares absent Solana, Ethereum and Robinhood
+attester services through `prepare-inactive.mjs`. It creates only empty,
+execution-disabled services with no public endpoint or cron. Existing services
+are left unchanged. A network with reviewed vault pins or enabled execution
+requires its separate network release. This preparation reads no signing key
+and installs no secrets; the existing matching credentials can be entered after
+the exact private service deployment is verified. It does not activate payments.
+The release also allows the existing Pages payment API's `PAYMENT_RPC_URLS`
+secret. Supply only the reviewed private RPC map there, never an attester key.
+
 One production attester serves a network's ordinary and bounty vaults. The
 configuration generator derives both pin lists from the checked registry.
 `PAYMENT_DEPLOYMENTS` selects ordinary vaults; `SECURITY_PAYMENT_DEPLOYMENTS`
@@ -202,9 +212,23 @@ signer transaction checks the tombstone before signing. The dispatcher may mark
 the old attempt failed only after confirmed retirement; a null lookup alone is
 never proof that signing cannot race the lookup.
 
-Signer keys must be dedicated to these Workers. An EVM transaction stuck due
-to fee pricing requires operator reconciliation; there is no automatic
-replacement or cancellation authority in this version.
+Signer keys must be dedicated to these Workers. The attester may automatically
+cancel only its own journaled EVM wallet binding after a D1 successor replaces
+the claim or finalized chain time passes its signed consent expiry (owner
+decision, 25 October 2026; PRD sections 6 and 11). It sends zero native value to
+its own plain account, with empty data, exactly 21,000 gas and the same nonce.
+The existing registry gas ceiling and 10 gwei maximum still apply. The larger of a minimum
+12.5% replacement increment and the existing current-base-fee quote creates one
+immutable cancellation attempt within that cap; it never creates
+further fee replacements. An inadequate fee or unavailable proof stays held.
+
+Both original and cancellation bytes are stored before broadcast and survive
+restart. Either transaction may win. Reuse the canonical finalized winner
+verification below before retiring the pending binding. RPC absence is not
+cancellation proof. Never reset the shared nonce or alter an award, wallet
+consent, payment or reserve. Other stuck EVM transactions still require separate
+operator reconciliation. No payment or monthly-commitment cancellation is
+allowed.
 
 A designated operator may reconcile one previously authorized external recovery
 transaction through `POST /api/v1/operator/wallet-bindings/reconcile`. The request

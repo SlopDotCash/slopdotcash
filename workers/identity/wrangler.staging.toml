@@ -13,6 +13,11 @@ database_name = "slop-staging"
 database_id = "6fcddcc1-f3d7-4175-bdde-09afddd53a8a"
 migrations_dir = "../../migrations"
 
+[[services]]
+binding = "REPORTING_READINESS"
+service = "slop-repository-access-staging"
+entrypoint = "ReportingReadinessRefresher"
+
 [[ratelimits]]
 name = "IDENTITY_START_LIMITER"
 namespace_id = "82001"

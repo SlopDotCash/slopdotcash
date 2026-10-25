@@ -248,9 +248,9 @@ export function ProjectSetupStatusPanel({
                           .network as keyof typeof REWARD_ASSET_NETWORKS
                       ]?.name ?? setup.funding.network}
                     </span>
-                    <Link href={`/projects/${setup.slug}/funding`}>
+                    <a href={`/projects/${setup.slug}/funding`}>
                       View vault funds and automatic payment
-                    </Link>
+                    </a>
                   </>
                 )}
               </dd>

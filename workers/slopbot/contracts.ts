@@ -125,6 +125,27 @@ export function parseRepositoryConfig(text: string | null): ConfigResult {
   };
 }
 
+/** Project consent is required even when an older repository file opts in.
+ * A present file keeps all its restrictions; a missing file is not required
+ * for the owner's explicit project setting (PRD section 5).
+ */
+export function projectRepositoryConfig(
+  automaticClosure: boolean,
+  text: string | null,
+): ConfigResult {
+  const parsed = parseRepositoryConfig(
+    text ??
+      JSON.stringify({ version: 1, audience: "protection", closure: true }),
+  );
+  return {
+    ...parsed,
+    config: {
+      ...parsed.config,
+      closure: automaticClosure && parsed.config.closure,
+    },
+  };
+}
+
 const CONFIG_KEYS = new Set([
   "version",
   "audience",
@@ -334,8 +355,6 @@ export function priceUsage(key: string, usage: Usage) {
   };
 }
 
-export const SHADOW_DAYS = 14;
-export const SHADOW_MIN_REVIEWS = 50;
 export const AUTHOR_DAILY_CAP = 3;
 export const CLOSE_CONFIDENCE = 0.9;
 export const REOPEN_BREAKER_RATIO = 0.1;
