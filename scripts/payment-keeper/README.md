@@ -52,7 +52,10 @@ bun run payments:keep --config /private/operator.json --journal /private/keeper.
 ```
 
 Public reads send the website Origin from the existing deployment configuration.
-This does not authenticate an account or grant access to a private route.
+The production registry uses its API host; public monthly authorization reads
+use the website host required by the payment API. Both hosts come from the
+existing deployment configuration. This does not authenticate an account or
+grant access to a private route.
 
 The dry run reads the registry, verifies deployed code and chain identity,
 indexes finalized evidence in the local journal, and reports funded awards and

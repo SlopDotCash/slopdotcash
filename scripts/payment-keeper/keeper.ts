@@ -140,6 +140,12 @@ export async function runKeeper(
     throw new Error("Public registry requires HTTPS");
   if (origin.pathname !== "/" || origin.username || origin.password)
     throw new Error("Use an API origin, not a path or credentials");
+  // Public payment routes are served on the website, while the production
+  // registry also has its dedicated API host. Reuse the deployment contract.
+  const paymentOrigin =
+    origin.origin === deploymentOrigins().api
+      ? deploymentOrigins().site
+      : origin.origin;
   const identity = JSON.stringify([
     origin.origin,
     config.network,
@@ -361,7 +367,7 @@ export async function runKeeper(
               await deps.store.journal.get<MonthlyAuthorization>(key);
             try {
               const publication = (await json(
-                `${origin.origin}/api/v1/payments/projects/${project.id}/monthly/${period}/authorization/${config.network}`,
+                `${paymentOrigin}/api/v1/payments/projects/${project.id}/monthly/${period}/authorization/${config.network}`,
               )) as { authorization: MonthlyAuthorization } | null;
               if (publication) {
                 const value = publication.authorization;
