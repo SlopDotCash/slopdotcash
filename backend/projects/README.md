@@ -50,8 +50,8 @@ points and profiles still validate.
 | `GET /api/v1/project-revisions` | public, edge cached | Full revision history with SHA-256 digests |
 | `GET /api/v1/project-account-bans` | public, edge cached | GitHub ID and earliest start time of each active account ban, for the score generator; no reason, evidence, project or login |
 | `GET /api/v1/project-github/owned-repositories` | session | The signed-in maintainer's public repositories |
-| `GET /api/v1/project-vaults/:id` | session, current authority | Lists served setup networks and the current revision |
-| `POST /api/v1/project-vaults/:id` | session, current authority, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction |
+| `GET /api/v1/project-vaults/:id` | session, steward or repository admin | Lists served setup networks and the current revision |
+| `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction |
 | `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` |
 | `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
