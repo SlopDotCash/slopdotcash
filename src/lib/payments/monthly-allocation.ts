@@ -213,7 +213,11 @@ export function buildExecutionSnapshot(input: {
   vault: string;
   asset: string;
   frozenAt: string;
+  /** Rebuild a month frozen before fees rounded up, whose rows hold floor(gross / 50). */
+  legacyFloorFee?: boolean;
 }): { snapshot: MonthlyExecutionSnapshot; text: string; sha256: string } {
+  const feeOf = (gross: bigint) =>
+    input.legacyFloorFee ? gross / 50n : ordinaryFee(gross);
   let total = 0n;
   const awards: MonthlyExecutionAward[] = [];
   for (const row of input.allocations) {
@@ -224,8 +228,8 @@ export function buildExecutionSnapshot(input: {
       githubUserId: row.githubUserId,
       login: row.login,
       grossBase: gross.toString(),
-      feeBase: ordinaryFee(gross).toString(),
-      netBase: (gross - ordinaryFee(gross)).toString(),
+      feeBase: feeOf(gross).toString(),
+      netBase: (gross - feeOf(gross)).toString(),
       sourceDigest: row.sourceDigest,
     });
   }

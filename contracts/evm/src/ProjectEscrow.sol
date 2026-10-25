@@ -414,10 +414,12 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
             uint128 fee = payoutFee(entry.gross);
             if (alreadyCommitted[i]) {
                 // An owner can reserve or pay an award while this signed allocation is in transit.
-                // Count the exact same obligation once; a changed award must still fail closed.
+                // Count the exact same obligation once; a changed award must still fail closed. An
+                // award reserved before fees rounded up holds floor(gross / 50) and is still the same award.
                 if (
                     existing.actorId != entry.actorId || existing.gross != entry.gross
-                        || existing.sourceDigest != entry.sourceDigest || existing.fee != fee
+                        || existing.sourceDigest != entry.sourceDigest
+                        || (existing.fee != fee && existing.fee != entry.gross / 50)
                 ) revert DuplicateAward();
             } else {
                 commit(id, entry.actorId, entry.gross, entry.sourceDigest, fee);

@@ -113,7 +113,8 @@ export function ordinaryFee(gross: bigint): bigint {
 }
 /** The fee a vault records for `gross`. Vaults deployed before fees rounded up still record
  * floor(gross / 50) until their upgrade, so reconciliation accepts either 2% rounding and
- * nothing else. */
+ * nothing else. Remove the floor branch once every deployed vault and program runs the
+ * rounded-up code and its manifest digest is updated. */
 export function acceptsPayoutFee(
   gross: bigint,
   fee: bigint,
