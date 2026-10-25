@@ -38,7 +38,9 @@ export type MonthlyAwardState =
   | "underfunded"
   | "awaiting-reservation"
   | "reserved"
-  | "paid";
+  | "paid"
+  /** Another award (other actor, gross or fee) is reserved under this award's source. */
+  | "conflict";
 /**
  * An approved monthly award that is frozen but not yet reserved in the vault
  * (PRD sections 3 and 6). Once reserved it is an AccountPayment instead.

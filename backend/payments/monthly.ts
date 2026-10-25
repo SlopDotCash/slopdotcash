@@ -19,6 +19,7 @@ import {
   type EscrowDeployment,
 } from "../../src/lib/escrow-policy.mjs";
 import {
+  acceptsPayoutFee,
   type MonthlyAwardState,
   type PaymentAsset,
   VAULT_SNAPSHOT_STALE_MS,
@@ -261,17 +262,56 @@ async function loadRun(
 
 export type { MonthlyAwardState };
 
-/** Chain evidence sets reserved/paid; the recorded ban decision sets excluded. */
+/** A finalized chain obligation recorded for a monthly award's source. */
+interface ChainAward {
+  githubUserId: string;
+  grossBase: string;
+  feeBase: string;
+  state: "reserved" | "paid";
+}
+/** Whether the chain obligation under a source is this monthly award: the same
+ * actor and gross, with a genuine 2% fee. The source digest is public, so anyone
+ * reserving another award under it must never make the frozen award look
+ * reserved, paid or funded. */
+function holdsAward(
+  chain: ChainAward | undefined,
+  award: { githubUserId: string; grossBase: string },
+): chain is ChainAward {
+  return (
+    chain !== undefined &&
+    chain.githubUserId === award.githubUserId &&
+    chain.grossBase === award.grossBase &&
+    /^(0|[1-9][0-9]*)$/.test(chain.feeBase) &&
+    acceptsPayoutFee(BigInt(chain.grossBase), BigInt(chain.feeBase))
+  );
+}
+async function chainAwards(
+  db: D1Database,
+  network: string,
+  vault: string,
+): Promise<Map<string, ChainAward>> {
+  const row = await db
+    .prepare(
+      "SELECT json_group_array(json_object('sourceDigest',source_digest,'githubUserId',github_user_id,'grossBase',gross_base,'feeBase',fee_base,'state',state)) items FROM payment_obligations WHERE network=? AND vault=?",
+    )
+    .bind(network, vault)
+    .first<{ items: string }>();
+  return new Map(
+    (
+      JSON.parse(row?.items ?? "[]") as (ChainAward & {
+        sourceDigest: string;
+      })[]
+    ).map(({ sourceDigest, ...award }) => [sourceDigest, award]),
+  );
+}
+
+/** Chain evidence sets reserved/paid only when it is this exact award; any other
+ * obligation under the source is a conflict. The recorded ban decision sets excluded. */
 async function awardStates(
   db: D1Database,
   run: StoredRun,
 ): Promise<Map<string, MonthlyAwardState>> {
-  const row = await db
-    .prepare(
-      "SELECT json_group_array(json_object('sourceDigest',source_digest,'state',state)) items FROM payment_obligations WHERE network=? AND vault=? AND source_digest IN (SELECT json_extract(value,'$.sourceDigest') FROM json_each(?))",
-    )
-    .bind(run.network, run.vault, JSON.stringify(run.snapshot.awards))
-    .first<{ items: string }>();
+  const chain = await chainAwards(db, run.network, run.vault);
   const exclusions = await db
     .prepare(
       "SELECT json_group_array(source_digest) items FROM monthly_payment_exclusions WHERE network=? AND vault=?",
@@ -279,24 +319,22 @@ async function awardStates(
     .bind(run.network, run.vault)
     .first<{ items: string }>();
   const excluded = new Set<string>(JSON.parse(exclusions?.items ?? "[]"));
-  const chain = new Map(
-    (
-      JSON.parse(row?.items ?? "[]") as {
-        sourceDigest: string;
-        state: "reserved" | "paid";
-      }[]
-    ).map((entry) => [entry.sourceDigest, entry.state]),
-  );
   return new Map(
-    run.snapshot.awards.map((award) => [
-      award.githubUserId,
-      chain.get(award.sourceDigest) ??
-        (excluded.has(award.sourceDigest)
-          ? "excluded"
-          : run.obligationsCreatedAt
-            ? "awaiting-reservation"
-            : "underfunded"),
-    ]),
+    run.snapshot.awards.map((award) => {
+      const held = chain.get(award.sourceDigest);
+      return [
+        award.githubUserId,
+        held
+          ? holdsAward(held, award)
+            ? held.state
+            : "conflict"
+          : excluded.has(award.sourceDigest)
+            ? "excluded"
+            : run.obligationsCreatedAt
+              ? "awaiting-reservation"
+              : "underfunded",
+      ];
+    }),
   );
 }
 
@@ -452,20 +490,15 @@ export async function createMonthlyObligations(
       "This month has not been finalized.",
     );
   if (run.obligationsCreatedAt) return "already-created";
-  const reserved = new Set(
-    (
-      JSON.parse(
-        (
-          await db
-            .prepare(
-              "SELECT json_group_array(source_digest) items FROM payment_obligations WHERE network=? AND vault=?",
-            )
-            .bind(run.network, run.vault)
-            .first<{ items: string }>()
-        )?.items ?? "[]",
-      ) as string[]
-    ).values(),
-  );
+  const chain = await chainAwards(db, run.network, run.vault);
+  const reserved = new Set(chain.keys());
+  // Only the exact award already reserved needs no further funds; another award
+  // under the same source is a conflict and never funds this one.
+  const held = (award: {
+    githubUserId: string;
+    grossBase: string;
+    sourceDigest: string;
+  }) => holdsAward(chain.get(award.sourceDigest), award);
   const currentBan = `SELECT enforcementId FROM (${PARTICIPATION_BAN_QUERY.replace(
     "b.github_id = ?",
     "b.github_id = json_extract(decision.value,'$.githubUserId')",
@@ -487,7 +520,15 @@ export async function createMonthlyObligations(
   }[];
   const excluded = decisions.filter(
     (entry) =>
-      entry.enforcementId !== null && !reserved.has(entry.sourceDigest),
+      entry.enforcementId !== null &&
+      !held({
+        githubUserId: entry.githubUserId,
+        grossBase:
+          run.snapshot.awards.find(
+            (award) => award.sourceDigest === entry.sourceDigest,
+          )?.grossBase ?? "",
+        sourceDigest: entry.sourceDigest,
+      }),
   );
   const excludedDigests = new Set(excluded.map((entry) => entry.sourceDigest));
   const eligibleAwards = run.snapshot.awards.filter(
@@ -497,21 +538,20 @@ export async function createMonthlyObligations(
     (
       await db
         .prepare(
-          "SELECT json_group_array(json_object('grossBase',gross_base,'sourceDigest',source_digest)) items FROM monthly_payment_obligations WHERE network=? AND vault=?",
+          "SELECT json_group_array(json_object('githubUserId',github_user_id,'grossBase',gross_base,'sourceDigest',source_digest)) items FROM monthly_payment_obligations WHERE network=? AND vault=?",
         )
         .bind(run.network, run.vault)
         .first<{ items: string }>()
     )?.items ?? "[]",
-  ) as { grossBase: string; sourceDigest: string }[];
+  ) as { githubUserId: string; grossBase: string; sourceDigest: string }[];
   const solana =
     ESCROW_NETWORKS[run.network as keyof typeof ESCROW_NETWORKS]?.family ===
     "solana";
   let needed = 0n;
   for (const award of eligibleAwards)
-    if (solana || !reserved.has(award.sourceDigest))
-      needed += BigInt(award.grossBase);
+    if (solana || !held(award)) needed += BigInt(award.grossBase);
   for (const award of outstanding)
-    if (!reserved.has(award.sourceDigest)) needed += BigInt(award.grossBase);
+    if (!held(award)) needed += BigInt(award.grossBase);
   let fundingSnapshot: {
     asset: string;
     free: string;
@@ -1121,7 +1161,7 @@ export function monthlyOwnerService(deps: {
         );
       const obligation = await deps.db
         .prepare(
-          "SELECT m.github_login,m.gross_base,m.fee_base,m.source_digest,(SELECT state FROM payment_obligations o WHERE o.network=m.network AND o.vault=m.vault AND o.source_digest=m.source_digest) chain_state FROM monthly_payment_obligations m WHERE m.project_id=? AND m.period=? AND m.github_user_id=?",
+          "SELECT m.github_login,m.gross_base,m.fee_base,m.source_digest,o.state chain_state,o.github_user_id chain_actor,o.gross_base chain_gross,o.fee_base chain_fee FROM monthly_payment_obligations m LEFT JOIN payment_obligations o ON o.network=m.network AND o.vault=m.vault AND o.source_digest=m.source_digest WHERE m.project_id=? AND m.period=? AND m.github_user_id=?",
         )
         .bind(project.id, period, expected.githubUserId)
         .first<{
@@ -1129,7 +1169,10 @@ export function monthlyOwnerService(deps: {
           gross_base: string;
           fee_base: string;
           source_digest: string;
-          chain_state: string | null;
+          chain_state: "reserved" | "paid" | null;
+          chain_actor: string | null;
+          chain_gross: string | null;
+          chain_fee: string | null;
         }>();
       if (
         !obligation &&
@@ -1150,6 +1193,26 @@ export function monthlyOwnerService(deps: {
           409,
           "award_unfunded",
           "This award waits for enough free vault funds.",
+        );
+      if (
+        obligation.chain_state !== null &&
+        !holdsAward(
+          {
+            githubUserId: obligation.chain_actor ?? "",
+            grossBase: obligation.chain_gross ?? "",
+            feeBase: obligation.chain_fee ?? "",
+            state: obligation.chain_state,
+          },
+          {
+            githubUserId: expected.githubUserId,
+            grossBase: obligation.gross_base,
+          },
+        )
+      )
+        throw new MonthlyPaymentError(
+          409,
+          "award_conflict",
+          "Another award is already reserved under this award's source; this award cannot be reserved.",
         );
       if (obligation.chain_state !== null)
         throw new MonthlyPaymentError(

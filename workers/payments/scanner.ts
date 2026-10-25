@@ -253,8 +253,10 @@ export async function scanSolanaPayments(
             : invocation.accounts[0];
         if (project !== projectPda) continue;
         let obligationId: string;
-        if (invocation.kind === "reserved")
-          obligationId = hex(invocation.data.slice(8, 40));
+        if (invocation.kind === "reserved") {
+          if (!invocation.awardId) throw new Error("Commit award ID missing");
+          obligationId = invocation.awardId;
+        }
         else {
           const award = (await rpc(rpcUrl, "getAccountInfo", [
             invocation.accounts[1],
