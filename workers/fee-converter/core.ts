@@ -26,6 +26,8 @@ export type ConversionState =
 
 export interface ConversionRow {
   id: string;
+  /** Existing rows are conversions. Claims share the same pending-token guard. */
+  kind?: "conversion" | "claim";
   runId: string;
   network: Network;
   mode: "dry_run" | "live";
@@ -146,7 +148,16 @@ export interface VaultFeeClient {
    * Signs and sends the claim, waits until it is included successfully and
    * verifies that the fee wallet received the fee.
    */
-  claim(vault: FeeVault): Promise<{ txId: string }>;
+  claim(
+    vault: FeeVault,
+    recordClaim?: (claim: {
+      txId: string;
+      rawTx: string;
+      evmNonce: number | null;
+      expiresAt: number | null;
+      amount: bigint;
+    }) => Promise<void>,
+  ): Promise<{ txId: string }>;
 }
 
 export interface ConversionStore {
@@ -290,7 +301,10 @@ async function reconcile(
         reason: below ? "finalized below the signed minimum" : null,
       });
       deps.log({
-        event: "fee_conversion_finalized",
+        event:
+          row.kind === "claim"
+            ? "fee_claim_finalized"
+            : "fee_conversion_finalized",
         network: row.network,
         token: row.token,
         txId: row.txId,
@@ -419,6 +433,8 @@ export async function runNetwork(
         client.vaultFees,
         deps,
         leased,
+        blocked,
+        runId,
       );
 
     const since = new Date(
@@ -492,6 +508,8 @@ async function claimVaultFees(
   fees: VaultFeeClient,
   deps: RunDependencies,
   leased: () => Promise<boolean>,
+  blocked: Set<string>,
+  runId: string,
 ): Promise<number> {
   const { limits } = deps;
   let claimed = 0;
@@ -504,9 +522,11 @@ async function claimVaultFees(
         vault: vault.vault,
         ...fields,
       });
+    let claimId: string | null = null;
     try {
       const accrued = await fees.accrued(vault);
       if (!accrued) continue;
+      if (blocked.has(accrued.asset)) continue;
       const amount = accrued.amount.toString();
       let value = accrued.amount;
       if (accrued.asset !== usdc) {
@@ -534,10 +554,53 @@ async function claimVaultFees(
         report("fee_claim_quoted", { amount, valueMicro: value.toString() });
         continue;
       }
-      const { txId } = await fees.claim(vault);
+      const { txId } = await fees.claim(vault, async (send) => {
+        const at = deps.now().toISOString();
+        const claimRow: ConversionRow = {
+          id: deps.randomId(),
+          kind: "claim",
+          runId,
+          network: config.network,
+          mode: "live",
+          feeWallet: config.feeWallet,
+          token: accrued.asset,
+          targetToken: accrued.asset,
+          amountIn: send.amount.toString(),
+          route: null,
+          quoteAmountOut: null,
+          minAmountOut: null,
+          quoteValueMicro: null,
+          quote: JSON.stringify(vault),
+          priceImpactBps: null,
+          approvalTxId: null,
+          txId: send.txId,
+          rawTx: send.rawTx,
+          evmNonce: send.evmNonce,
+          expiresAt: send.expiresAt,
+          amountOut: null,
+          tokenBalanceBefore: null,
+          targetBalanceBefore: null,
+          targetBalanceAfter: null,
+          state: "submitted",
+          reason: null,
+          createdAt: at,
+          updatedAt: at,
+          submittedAt: at,
+          finalizedAt: null,
+        };
+        await deps.store.insert(claimRow);
+        claimId = claimRow.id;
+        blocked.add(accrued.asset);
+      });
       claimed += 1;
       report("fee_claim_included", { amount, txId });
     } catch (error) {
+      if (claimId)
+        await deps.store.update(claimId, {
+          state: "unknown",
+          reason: `claim: ${message(error)}`,
+          updatedAt: deps.now().toISOString(),
+        });
       report("fee_claim_error", { error: message(error) });
     }
   }

@@ -414,10 +414,15 @@ export function createSolanaClient(
    * config with the finalized project bytes. Null when the vault pays another
    * fee recipient. Unknown or mismatched state throws, so no claim follows.
    */
-  async function verifiedVault(entry: FeeVault) {
-    const escrow = solanaEscrowConfig(entry, config.rpcUrl);
+  async function verifiedVault(entry: FeeVault, executedAtSlot?: number) {
+    const escrow = {
+      ...solanaEscrowConfig(entry, config.rpcUrl),
+      executedAtSlot,
+    };
     // Another wallet's fees are not this run's to claim.
     if (escrow.feeRecipient !== wallet) return null;
+    if (escrow.upgradeAuthority === wallet)
+      throw new Error("Fee wallet must not be the program upgrade authority");
     if (solanaVaultAddress(escrow.programId, escrow.projectPda) !== entry.vault)
       throw new Error("vault is not the reviewed project's vault address");
     if (entry.vault !== escrow.vault)
@@ -459,6 +464,71 @@ export function createSolanaClient(
     return total(meta.postTokenBalances) - total(meta.preTokenBalances);
   };
 
+  async function claimReceipt(
+    entry: FeeVault,
+    txId: string,
+    transaction: {
+      slot: number;
+      transaction: { signatures: string[] };
+      meta: {
+        err: unknown;
+        preTokenBalances: TokenBalance[];
+        postTokenBalances: TokenBalance[];
+        logMessages: string[] | null;
+      };
+    },
+  ) {
+    if (
+      !Number.isSafeInteger(transaction.slot) ||
+      transaction.slot < 0 ||
+      transaction.transaction?.signatures?.[0] !== txId
+    )
+      throw new Error("claim receipt identity or slot is missing");
+    const verified = await verifiedVault(entry, transaction.slot);
+    if (!verified) throw new Error("Recorded claim pays another fee wallet");
+    const { escrow } = verified;
+    if (transaction.meta.err !== null)
+      throw new Error("claim receipt reports a failed transaction");
+    const eventTag = sha256(
+      new TextEncoder().encode("event:FeesClaimed"),
+    ).slice(0, 8);
+    const programs: string[] = [];
+    let amount: bigint | null = null;
+    for (const log of transaction.meta.logMessages ?? []) {
+      const invoked = /^Program (\w+) invoke \[\d+\]$/.exec(log);
+      if (invoked) programs.push(invoked[1]);
+      else if (/^Program \w+ (?:success|failed:)/.test(log)) programs.pop();
+      else if (
+        programs.at(-1) === escrow.programId &&
+        log.startsWith("Program data: ")
+      ) {
+        const data = fromBase64(log.slice("Program data: ".length));
+        if (!eventTag.every((byte, index) => data[index] === byte)) continue;
+        if (
+          amount !== null ||
+          data.length !== 80 ||
+          solanaBase58(data.slice(8, 40)) !== escrow.projectPda ||
+          solanaBase58(data.slice(40, 72)) !== ata(escrow.mint, wallet)
+        )
+          throw new Error("claim receipt has an invalid FeesClaimed event");
+        amount = new DataView(data.buffer, data.byteOffset).getBigUint64(
+          72,
+          true,
+        );
+      }
+    }
+    const received = delta(transaction.meta, wallet, escrow.mint);
+    const paid = -delta(transaction.meta, escrow.projectPda, escrow.mint);
+    if (
+      amount === null ||
+      amount === 0n ||
+      received !== amount ||
+      paid !== amount
+    )
+      throw new Error("claim receipt does not match the vault fee");
+    return received;
+  }
+
   const vaultFees: VaultFeeClient = {
     async accrued(entry): Promise<AccruedFees | null> {
       const verified = await verifiedVault(entry);
@@ -474,7 +544,7 @@ export function createSolanaClient(
       return limits.solanaFeeMicro;
     },
 
-    async claim(entry) {
+    async claim(entry, recordClaim) {
       if (!seed)
         throw new Error("Signing is disabled without a fee-wallet key");
       const verified = await verifiedVault(entry);
@@ -482,12 +552,9 @@ export function createSolanaClient(
       const { escrow } = verified;
       const amount = solanaUint(verified.project, ACCRUED_FEES_OFFSET);
       if (amount === 0n) throw new Error("no accrued fees to claim");
-      // Reconcile before sending. A claim confirmed but not yet finalized
-      // has already zeroed the confirmed counter, and any unfinalized project
-      // transaction (an earlier claim among them) waits for finality. A send
-      // lost before confirmation cannot land after its blockhash expires,
-      // well inside the 15-minute recovery interval, and the program moves
-      // only the counter's current value, so a repeat never pays twice.
+      // The run reconciles recorded claims before reaching this path. Also
+      // wait for unfinalized project activity: the confirmed counter may
+      // already reflect a claim that the finalized project does not yet show.
       if ((await confirmedAccrued(escrow)) === 0n)
         throw new Error("an earlier claim is confirmed but not yet finalized");
       const recent = await rpc<
@@ -552,9 +619,19 @@ export function createSolanaClient(
       )
         throw new Error("claim simulation credited less than the accrued fee");
 
+      if (!recordClaim)
+        throw new Error("Fee claim requires a durable send record");
       const signature = ed25519.sign(body, seed);
       const txId = solanaBase58(signature);
-      await broadcast(toBase64(concat(Uint8Array.of(1), signature, body)));
+      const rawTx = toBase64(concat(Uint8Array.of(1), signature, body));
+      await recordClaim({
+        txId,
+        rawTx,
+        evmNonce: null,
+        expiresAt: latest.value.lastValidBlockHeight,
+        amount,
+      });
+      await broadcast(rawTx);
       for (let poll = 0; ; poll++) {
         const statuses = await rpc<{
           value: ({ err: unknown; confirmationStatus: string | null } | null)[];
@@ -581,13 +658,16 @@ export function createSolanaClient(
         await sleep(CLAIM_POLL_MS);
       }
 
-      // Verify the receipt before conversion: the vault paid the fee wallet
-      // at least the accrued fee, and exactly what the vault lost.
+      // Verify the executed FeesClaimed amount against both the fee wallet's
+      // credit and the vault's debit before conversion.
       const transaction = await rpc<{
+        slot: number;
+        transaction: { signatures: string[] };
         meta: {
           err: unknown;
           preTokenBalances: TokenBalance[];
           postTokenBalances: TokenBalance[];
+          logMessages: string[] | null;
         };
       } | null>("getTransaction", [
         txId,
@@ -599,10 +679,7 @@ export function createSolanaClient(
       ]);
       if (!transaction || transaction.meta.err !== null)
         throw new Error(`claim ${txId} receipt is not available`);
-      const received = delta(transaction.meta, wallet, escrow.mint);
-      const paid = -delta(transaction.meta, escrow.projectPda, escrow.mint);
-      if (received < amount || received !== paid)
-        throw new Error(`claim ${txId} receipt does not match the vault fee`);
+      await claimReceipt(entry, txId, transaction);
       return { txId };
     },
   };
@@ -786,11 +863,18 @@ export function createSolanaClient(
         if (status.confirmationStatus !== "finalized")
           return { kind: "pending" };
         if (status.err !== null)
-          return { kind: "failed", reason: "swap transaction failed on chain" };
+          return {
+            kind: "failed",
+            reason: `${row.kind === "claim" ? "claim" : "swap"} transaction failed on chain`,
+          };
         const transaction = await rpc<{
+          slot: number;
+          transaction: { signatures: string[] };
           meta: {
+            err: unknown;
             preTokenBalances: TokenBalance[];
             postTokenBalances: TokenBalance[];
+            logMessages: string[] | null;
           };
         } | null>("getTransaction", [
           row.txId,
@@ -801,6 +885,15 @@ export function createSolanaClient(
           },
         ]);
         if (!transaction) return { kind: "pending" };
+        if (row.kind === "claim")
+          return {
+            kind: "finalized",
+            amountOut: await claimReceipt(
+              JSON.parse(row.quote as string) as FeeVault,
+              row.txId as string,
+              transaction,
+            ),
+          };
         // The row's own target, so a send reconciles against the asset it
         // was signed for.
         const credit = delta(transaction.meta, wallet, row.targetToken);
@@ -810,9 +903,17 @@ export function createSolanaClient(
         { commitment: "finalized" },
       ]);
       // A finalized height past the blockhash window proves the bytes can
-      // never land, so a new attempt cannot double-spend this one.
+      // no longer land. For a claim, an absent history entry still cannot
+      // prove that it did not already land; retain the receipt requirement.
       if (row.expiresAt !== null && height > row.expiresAt)
-        return { kind: "failed", reason: "blockhash expired before inclusion" };
+        return row.kind === "claim"
+          ? { kind: "pending" }
+          : { kind: "failed", reason: "blockhash expired before inclusion" };
+      if (
+        row.kind === "claim" &&
+        !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
+      )
+        throw new Error("Recorded claim pays another fee wallet");
       return { kind: "rebroadcast" };
     },
   };
