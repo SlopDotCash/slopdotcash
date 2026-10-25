@@ -179,6 +179,10 @@ published score. Do not rewrite a frozen cycle or change an approved, funded,
 scheduled or paid obligation through this provisional extension. Review
 activity keeps its actual source date; a later merge does not move an August
 review into the September or October activity ledger.
+When a review predates the selected value policy, publish
+`review-credit-before-policy` and preserve its prior Points. This omission
+and `review-credit-outside-window` are not adverse scoring decisions. A
+source-bound correction within the applicable policy can still revise credit.
 
 ## Current producer: slop-value-v1
 
