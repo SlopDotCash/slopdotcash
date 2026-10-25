@@ -575,43 +575,48 @@ try {
     readVaultTotals({ rpcUrl, network: "anvil", vault, chainId: 8453n }),
     /Wrong chain/,
   );
-  // A withdrawal that is not a multiple of 50 base units pays the fee rounded
-  // up: ceil(1,000,049 / 50) = 20,001, so the owner receives 980,048.
-  const oddWithdrawal = (await rpc("eth_sendTransaction", [
-    {
-      from: owner,
-      to: vault,
-      gas: "0x7a1200",
-      data: buildWithdrawCalldata("1000049"),
-    },
-  ])) as string;
-  await rpc("anvil_mine", ["0x40"]);
-  const oddReceipt = (await rpc("eth_getTransactionReceipt", [
-    oddWithdrawal,
-  ])) as {
-    blockHash: string;
-    logs: { logIndex: string; topics: string[] }[];
-  };
-  const oddEvent = oddReceipt.logs.find(
-    (log) => log.topics[0] === EVM_ESCROW_EVENT_TOPICS.UnusedWithdrawn,
-  );
-  assert.ok(oddEvent, "the withdrawal emits UnusedWithdrawn");
-  assert.deepEqual(
-    await verifyVaultFundingAction(
-      config,
-      oddWithdrawal,
-      Number(BigInt(oddEvent.logIndex)),
-      { operation: "withdraw", address: owner, gross: "1000049" },
-    ),
-    {
-      transactionId: oddWithdrawal,
-      blockId: oddReceipt.blockHash,
-      gross: "1000049",
-      fee: "20001",
-      net: "980048",
-    },
-    "the withdrawal fee is ceil(gross / 50)",
-  );
+  // Odd amounts round up. A one-unit withdrawal pays its whole amount as a fee.
+  for (const amounts of [
+    { gross: "1000049", fee: "20001", net: "980048" },
+    { gross: "1", fee: "1", net: "0" },
+  ]) {
+    const withdrawal = (await rpc("eth_sendTransaction", [
+      {
+        from: owner,
+        to: vault,
+        gas: "0x7a1200",
+        data: buildWithdrawCalldata(amounts.gross),
+      },
+    ])) as string;
+    await rpc("anvil_mine", ["0x40"]);
+    const receipt = (await rpc("eth_getTransactionReceipt", [withdrawal])) as {
+      status: string;
+      blockHash: string;
+      logs: { logIndex: string; topics: string[] }[];
+    };
+    assert.equal(receipt.status, "0x1", "the real withdrawal succeeds");
+    console.log(
+      `Withdrawal ${amounts.gross} base units succeeded on the local chain`,
+    );
+    const event = receipt.logs.find(
+      (log) => log.topics[0] === EVM_ESCROW_EVENT_TOPICS.UnusedWithdrawn,
+    );
+    assert.ok(event, "the withdrawal emits UnusedWithdrawn");
+    assert.deepEqual(
+      await verifyVaultFundingAction(
+        config,
+        withdrawal,
+        Number(BigInt(event.logIndex)),
+        { operation: "withdraw", address: owner, gross: amounts.gross },
+      ),
+      {
+        transactionId: withdrawal,
+        blockId: receipt.blockHash,
+        ...amounts,
+      },
+      "the withdrawal fee is ceil(gross / 50)",
+    );
+  }
   // The same factory creates a second vault for the project in an 18-decimal
   // token, with amounts beyond uint64.
   const wide = deploy("test/WideToken.sol:WideToken", ["18"]);
