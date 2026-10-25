@@ -238,8 +238,10 @@ single release operator to prevent concurrent provisioning races.
 ### Production stack definition
 
 `--stack production` generates the identity attester Worker for one registry
-mainnet. It is for `contracts/DEPLOY-MAINNET.md` section 3.2 and is run by an
-operator only:
+mainnet. The following commands require registered vaults and serve
+`contracts/DEPLOY-MAINNET.md` section 3.2. For the first Base vault, use that
+runbook's empty-capable setup in section 3.6. The owner or an authorized agent
+prepares the configuration:
 
 ```sh
 bun run projects:sync
@@ -271,7 +273,8 @@ secret name above, and refuses the network while its `MAINNET_EXECUTION`
 value is `false`. The hosted signer refuses `SIGNER_ROLE=relayer` and the
 relayer endpoints on a production stack. The generated
 `apply-production-stack.sh` lists the dry run, the attester deploy and its
-secret prompts for the operator to review and run.
+secret prompts for review. Do not run its local deployment commands for
+production; use the protected `main` release workflow.
 
 An empty production deployment list is valid only when the checked registry
 has no deployment for that network and scope. It generates the same private

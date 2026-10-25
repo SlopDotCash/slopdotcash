@@ -574,7 +574,9 @@ before creating a vault; it does not establish vault or payment readiness.
 
 ### 3.2 Configure the stack
 
-1. Pin the signer deployments from the registry snapshot:
+1. For a network with registered vaults, pin the signer deployments from the
+   registry snapshot. For the first Base vault, use the empty-capable setup
+   in section 3.6 instead:
    `bun run projects:sync`, then
    `bun run payments:deployments mainnet <network> > pinned.json`.
 2. Generate the stack:
@@ -648,13 +650,14 @@ separately. Attach the report to the release issue.
 
 ### 3.6 Base mainnet activation: owner steps
 
-The owner approved Base mainnet execution on 24 October 2026 and installs the
-secrets. `base-mainnet` is `true` in `mainnet-execution.mjs`, and the Pages
+The owner approved Base mainnet execution on 24 October 2026. The owner or
+an authorized agent installs the secrets under PRD section 11.
+`base-mainnet` is `true` in `mainnet-execution.mjs`, and the Pages
 `PAYMENT_NETWORKS` in `wrangler.toml` is `["base-mainnet"]`. The production
 release (`.github/workflows/deploy.yml`, job `deploy`, `main` only, environment
 `eliza-army-production`) generates the attester configuration with
-`configure.mjs --stack production` from the registry snapshot of the released
-commit. Then:
+`configure.mjs --stack production` from the checked registry artifact of the
+verified build. The release verifies both registry-file digests first. Then:
 
 - If the snapshot pins no Base mainnet vault and the Worker is proved absent,
   the release installs the private attester with an empty allowlist and no
