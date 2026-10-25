@@ -22,7 +22,7 @@ Create a private JSON configuration with these fields:
 | `projectIds` | The project IDs this operator serves. Deployments come only from D1. |
 | `signer` | The dedicated operator gas wallet's public address. |
 | `rpcUrl` | That network's RPC URL. |
-| `perRun` | Maximum funded-award checks per vault in one run. |
+| `perRun` | Maximum funded-award checks per vault and examined EVM monthly leaves per period in one run. |
 | `gas.perTransaction` | Operator-approved native reservation per transaction. |
 | `gas.perDay` | Operator-approved native base units per UTC day, including unknown sends. |
 | `gas.additionalFeeReserve` | Base L1-data and operator-fee allowance per transaction; zero on other supported rails. |
@@ -93,11 +93,13 @@ destination verifiers. A successful send is `submitted`, not paid. Only a
 verified finalized payment receipt updates its local payment index; Slop's
 independent scanner updates the site. A walletless or blocked award waits while
 other awards continue. Project restrictions and opt-out prevent new monthly
-admission. Already funded awards and admitted Solana months can still finish.
+admission. Already funded awards and admitted EVM V2 or Solana months can still finish.
 Private bounty vaults stay separate and use their 75/25 payout policy; the
 keeper does not submit a discretionary bounty award.
 
-The EVM monthly scalability gap remains open in #902 and #904. At the current
-500,000-gas mainnet ceiling, three new ordinary awards exceed the padded limit.
-This command preserves that refusal. It does not raise the limit, split the
-current atomic contract call, or claim that large months are launch-ready.
+EVM V2 admits the whole funded month, then commits its awards in bounded calls.
+The keeper retains every signed publication. Before admission, it can select a
+later source sequence for the same frozen allocation. It preserves the original
+legacy signature and reconciles any uncertain transaction before a successor
+send. Once admitted, the chain selects the root to finish. The existing gas
+ceiling still applies; large legacy calls need a reviewed V2 deployment.

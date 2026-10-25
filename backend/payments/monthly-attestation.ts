@@ -3,6 +3,7 @@
  * This prepares authorization bytes only. It does not reserve or pay funds.
  */
 import {
+  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmMonthlyDigest,
 } from "../../contracts/evm/adapter";
@@ -17,6 +18,7 @@ import {
   maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
+import { assertEscrowFinancialPolicy } from "../../src/lib/payments/escrow-review";
 import {
   assertPeriod,
   buildExecutionSnapshot,
@@ -27,6 +29,7 @@ import {
 } from "../../src/lib/payments/monthly-allocation";
 import { payoutExcludedGithubUserIds } from "../../src/lib/payout-exclusions.mjs";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
+import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import type { D1TransactionalDatabase } from "../d1";
 import { chainAwards, holdsAward } from "./chain-awards";
@@ -46,6 +49,8 @@ export interface MonthlyAttestationPlan {
   messageHex: string;
   family: "evm" | "solana";
   totalGrossBase: string;
+  /** EVM V2: one remaining-source execution attempt for the frozen allocation. */
+  evmReservation?: EvmMonthlyReservation;
   /** Solana only: Unix seconds of the finalized slot at which the attester saw
    * no `origin` or `monthly-source` account for any included source. */
   frozenAt?: string;
@@ -72,6 +77,7 @@ export async function prepareMonthlyAttestation(
   },
   request: MonthlyAttestationRequest,
   frozenAt?: string,
+  retainEvmSources = false,
 ): Promise<MonthlyAttestationPlan> {
   const period = assertPeriod(request.period);
   const cutoff = monthlyCutoff(deps.schedule, period);
@@ -108,7 +114,7 @@ export async function prepareMonthlyAttestation(
     );
   const run = await deps.db
     .prepare(
-      "SELECT r.snapshot,r.snapshot_sha256,r.network,r.vault,r.frozen_at,r.obligations_created_at,b.cap_base,b.manifest_sha256 base_manifest_sha256,b.source_snapshot_sha256 FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period WHERE r.project_id=? AND r.period=?",
+      "SELECT r.snapshot,r.snapshot_sha256,r.network,r.vault,r.frozen_at,r.obligations_created_at,b.cap_base,b.manifest base_manifest,b.manifest_sha256 base_manifest_sha256,b.source_snapshot_sha256 FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period WHERE r.project_id=? AND r.period=?",
     )
     .bind(project.id, period)
     .first<{
@@ -119,6 +125,7 @@ export async function prepareMonthlyAttestation(
       frozen_at: string;
       obligations_created_at: string | null;
       cap_base: string;
+      base_manifest: string;
       base_manifest_sha256: string;
       source_snapshot_sha256: string;
     }>();
@@ -146,7 +153,6 @@ export async function prepareMonthlyAttestation(
     snapshot.vault !== deployment.vault ||
     run.vault !== deployment.vault ||
     snapshot.asset !== deployment.asset ||
-    snapshot.manifestSha256 !== project.manifestSha256 ||
     snapshot.baseManifestSha256 !== run.base_manifest_sha256 ||
     snapshot.sourceSnapshotSha256 !== run.source_snapshot_sha256 ||
     snapshot.capBase !== run.cap_base ||
@@ -156,6 +162,30 @@ export async function prepareMonthlyAttestation(
       "snapshot_changed",
       "The frozen allocation does not match the current project and proposal.",
     );
+  const revision = await deps.db
+    .prepare(
+      "SELECT manifest FROM project_revisions WHERE project_id=? AND manifest_sha256=?",
+    )
+    .bind(project.id, snapshot.manifestSha256)
+    .first<{ manifest: string }>();
+  if (!revision || sha256Hex(revision.manifest) !== snapshot.manifestSha256)
+    reject(
+      "snapshot_changed",
+      "The frozen allocation's project revision is unavailable.",
+    );
+  // As at the freeze, a later revision keeps the month only with the financial
+  // terms that sized its proposal; the snapshot keeps its freeze-time revision.
+  try {
+    assertEscrowFinancialPolicy(
+      project.manifest,
+      assertProjectDefinition(JSON.parse(run.base_manifest)),
+    );
+  } catch {
+    reject(
+      "financial_policy_changed",
+      "The project's payment terms changed after this month was proposed.",
+    );
+  }
   if (!Array.isArray(snapshot.awards) || snapshot.awards.length === 0)
     reject("empty_allocation", "An empty month needs no chain commitment.");
   const excluded = payoutExcludedGithubUserIds(project.manifest, period);
@@ -193,7 +223,7 @@ export async function prepareMonthlyAttestation(
       })),
       allocationSequence: snapshot.allocationSequence,
       trigger: snapshot.trigger,
-      manifestSha256: project.manifestSha256,
+      manifestSha256: snapshot.manifestSha256,
       network: request.network,
       vault: deployment.vault,
       asset: deployment.asset,
@@ -304,7 +334,13 @@ export async function prepareMonthlyAttestation(
   // the Solana leaf could never settle. Leave it out so the rest of the month
   // commits; the owner view reports it as a conflict. An identical award stays
   // in and is counted once.
-  const chain = await chainAwards(deps.db, request.network, deployment.vault);
+  const network = ESCROW_NETWORKS[request.network];
+  // V2 derives remaining entries from one finalized chain block. Feed it the
+  // whole funded allocation: indexing progress must not change its identity.
+  const chain =
+    retainEvmSources && network.family === "evm"
+      ? new Map()
+      : await chainAwards(deps.db, request.network, deployment.vault);
   const committable = eligible.filter((a) => {
     const held = chain.get(a.sourceDigest);
     return !held || holdsAward(held, a);
@@ -314,7 +350,6 @@ export async function prepareMonthlyAttestation(
   const totalGrossBase = committable
     .reduce((total, a) => total + BigInt(a.grossBase), 0n)
     .toString();
-  const network = ESCROW_NETWORKS[request.network];
   const entries = committable.map((a) => ({
     githubUserId: a.githubUserId,
     grossMicro: a.grossBase,

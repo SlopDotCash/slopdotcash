@@ -177,11 +177,14 @@ export function reservedGross(snapshot: {
   reservedFees: string | null;
   reserved: string | null;
 }): string | null {
-  return snapshot.reservedPrincipal !== null && snapshot.reservedFees !== null
-    ? (
-        BigInt(snapshot.reservedPrincipal) + BigInt(snapshot.reservedFees)
-      ).toString()
-    : snapshot.reserved;
+  return (
+    snapshot.reserved ??
+    (snapshot.reservedPrincipal !== null && snapshot.reservedFees !== null
+      ? (
+          BigInt(snapshot.reservedPrincipal) + BigInt(snapshot.reservedFees)
+        ).toString()
+      : null)
+  );
 }
 /** Measured against the viewer's clock: the response itself can be edge-cached. */
 export function vaultSnapshotStale(

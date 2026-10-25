@@ -8,6 +8,7 @@ import {
   solanaPaymentAdapter,
   verifySolanaDeployment,
 } from "../../contracts/solana/adapter";
+import { canonicalJson } from "../../src/lib/canonical-json";
 import { deploymentOrigins } from "../../src/lib/deployment";
 import {
   ESCROW_NETWORKS,
@@ -58,7 +59,7 @@ export interface KeeperConfiguration {
   signer: string;
   rpcUrl: string;
   gas: GasBudget;
-  /** Maximum award checks per vault per run; failures rotate on the next run. */
+  /** Maximum award checks per vault and examined EVM leaves per month per run. */
   perRun: number;
 }
 type Deployment = PaymentDeploymentRecord & {
@@ -115,6 +116,66 @@ export interface KeeperResult {
   state: string;
   transactionId?: string | null;
   error?: string;
+}
+
+/** A publication can replace only an unadmitted execution attempt, never its frozen allocation. */
+async function retainAuthorization(
+  store: KeeperStore,
+  key: string,
+  value: MonthlyAuthorization,
+) {
+  await store.journal.transaction(async (journal) => {
+    const previous = await journal.get<MonthlyAuthorization>(key);
+    if (previous && canonicalJson(previous) !== canonicalJson(value)) {
+      const old = previous.plan;
+      const next = value.plan;
+      const reservation = next.evmReservation;
+      if (
+        old.family !== "evm" ||
+        next.family !== "evm" ||
+        !reservation ||
+        reservation.version !== 2 ||
+        canonicalJson(old.request) !== canonicalJson(next.request) ||
+        old.deployment.vault.toLowerCase() !==
+          next.deployment.vault.toLowerCase() ||
+        old.deployment.asset.toLowerCase() !==
+          next.deployment.asset.toLowerCase() ||
+        reservation.allocationDigest !== `0x${next.request.snapshotSha256}`
+      )
+        throw new Error(
+          "Published authorization changed the frozen allocation",
+        );
+      if (old.evmReservation) {
+        if (
+          !/^(0|[1-9][0-9]{0,77})$/.test(reservation.sourceSequence) ||
+          !/^(0|[1-9][0-9]{0,77})$/.test(old.evmReservation.sourceSequence) ||
+          BigInt(reservation.sourceSequence) <=
+            BigInt(old.evmReservation.sourceSequence) ||
+          reservation.wholeGross !== old.evmReservation.wholeGross ||
+          canonicalJson(previous.legacyAuthorization ?? null) !==
+            canonicalJson(value.legacyAuthorization ?? null)
+        )
+          throw new Error(
+            "Published authorization is not a later execution attempt",
+          );
+      } else if (
+        canonicalJson(value.legacyAuthorization ?? null) !==
+        canonicalJson({ plan: old, signatureHex: previous.signatureHex })
+      ) {
+        throw new Error(
+          "Published authorization did not retain the original signature",
+        );
+      }
+    }
+    for (const authorization of previous ? [previous, value] : [value]) {
+      const attemptKey = `${key}:attempt:${authorization.plan.messageHex}`;
+      const retained = await journal.get<MonthlyAuthorization>(attemptKey);
+      if (retained && canonicalJson(retained) !== canonicalJson(authorization))
+        throw new Error("Retained monthly authorization changed");
+      if (!retained) await journal.put(attemptKey, authorization);
+    }
+    await journal.put(key, value);
+  });
 }
 
 /** One bounded run. The operator schedules this executable; Slop never hosts its key. */
@@ -380,14 +441,9 @@ export async function runKeeper(
                   throw new Error(
                     "Published authorization names another deployment",
                   );
-                if (
-                  authorization &&
-                  JSON.stringify(authorization) !== JSON.stringify(value)
-                )
-                  throw new Error("Published authorization changed");
+                await retainAuthorization(deps.store, key, value);
                 authorization = value;
                 fresh = true;
-                await deps.store.journal.put(key, value);
               }
             } catch (error) {
               result.push({
@@ -422,12 +478,19 @@ export async function runKeeper(
               continue;
             }
             try {
-              if (network.family === "evm" && !admit) continue;
+              if (
+                network.family === "evm" &&
+                !admit &&
+                !authorization.plan.evmReservation
+              )
+                continue;
               const submitted =
                 network.family === "evm"
                   ? await submitEvmMonthly(
                       evm as PublicEvmExecutorEnvironment,
                       authorization,
+                      admit,
+                      config.perRun,
                     )
                   : await submitSolanaMonthly(
                       solana as PublicSolanaExecutorEnvironment,

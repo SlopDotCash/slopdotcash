@@ -10,6 +10,10 @@ import {
 } from "../../backend/projects/cloudflare-persistence";
 import { publicRestrictionOf } from "../../backend/projects/enforcement";
 import { securityPaymentDatabase } from "../../backend/security/payment-database";
+import {
+  EvmMonthlyAlreadyAdmitted,
+  prepareEvmMonthlyReservation,
+} from "../../contracts/evm/adapter";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
@@ -233,6 +237,8 @@ export class PaymentSignerJournal {
               SIGNER: privateKeyToAccount(key),
             },
             authorization,
+            new URL(request.url).searchParams.get("admit") !== "false",
+            16,
           ),
         );
       }
@@ -306,12 +312,26 @@ export class PaymentSignerJournal {
                 network: input.network,
                 vault: plan.deployment.vault,
               };
-              if (plan.family === "evm")
-                await assertEvmMonthlySources(
-                  await preflightEvmDeployment(this.env, target),
-                  plan.entries,
+              if (plan.family === "evm") {
+                const deployment = await preflightEvmDeployment(
+                  this.env,
+                  target,
                 );
-              else await preflightSolanaDeployment(this.env, target);
+                if (!plan.evmReservation)
+                  await assertEvmMonthlySources(deployment, plan.entries);
+              } else await preflightSolanaDeployment(this.env, target);
+            },
+            reserve: async (plan) => {
+              const deployment = await preflightEvmDeployment(this.env, {
+                network: input.network,
+                vault: plan.deployment.vault,
+              });
+              return prepareEvmMonthlyReservation(
+                { ...deployment, chainId: BigInt(deployment.chainId) },
+                input.period,
+                `0x${input.snapshotSha256}`,
+                plan.entries,
+              );
             },
             freeze: async (plan) =>
               freezeSolanaMonthly(
@@ -493,7 +513,12 @@ export class PaymentSignerJournal {
       } else throw new Error("Unsupported signer family");
       const result = await engine.submit(input);
       return Response.json(result);
-    } catch {
+    } catch (error) {
+      if (error instanceof EvmMonthlyAlreadyAdmitted)
+        return Response.json(
+          { error: "monthly_already_admitted" },
+          { status: 409 },
+        );
       // No keys, signed transaction bytes, wallet consent signatures, or RPC credentials in responses/logs.
       return Response.json(
         { error: "execution_pending_or_rejected" },
@@ -552,6 +577,15 @@ export async function runMonthlyAttester(env: Environment) {
           body: JSON.stringify(request),
         }),
       );
+      if (response.status === 409) {
+        const rejected = (await readBoundedJson(
+          response,
+          4096,
+          "monthly authorization status",
+        )) as { error?: unknown };
+        if (rejected.error === "monthly_already_admitted")
+          throw new EvmMonthlyAlreadyAdmitted();
+      }
       if (!response.ok)
         throw new Error("Monthly attester rejected authorization");
       return (await readBoundedJson(

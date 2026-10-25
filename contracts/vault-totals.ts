@@ -30,6 +30,6 @@ export interface VaultTotals {
   reservedFees: string | null;
   /** Fees held in the vault until claimFees (EVM) or claim_fees (Solana). */
   accruedFees: string | null;
-  /** Solana combined reserve; null on EVM. */
+  /** Combined reserve when present, including an admitted month not yet materialized as awards. */
   reserved: string | null;
 }
