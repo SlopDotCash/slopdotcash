@@ -826,6 +826,33 @@ try {
   console.log("7 run:", JSON.stringify(claimRun));
   if (claimRun.claimed !== 1 || (await view(vault, "accruedFees")) !== 0n)
     throw new Error("7 the live run did not claim the accrued fee");
+  // A later role change stops new claims, but cannot invalidate an earlier
+  // receipt whose deployment and roles were valid at its own block.
+  await call(
+    registrar,
+    factory,
+    encodeFunctionData({
+      abi: vaultAbi,
+      functionName: "proposeIdentityAuthority",
+      args: [wallet as Hex],
+    }),
+  );
+  await call(
+    registrar,
+    factory,
+    encodeFunctionData({
+      abi: vaultAbi,
+      functionName: "executeIdentityAuthorityRotation",
+    }),
+  );
+  let newClaimRefused = false;
+  try {
+    await feeClient.accrued((await projectVaults(db, ["base-mainnet"]))[0]);
+  } catch (error) {
+    newClaimRefused = String(error).includes("vault role");
+  }
+  if (!newClaimRefused)
+    throw new Error("new claims ignored a later fee-wallet role");
   await rpc("anvil_mine", ["0x80"]);
   await runOnce(env, undefined, undefined, "receipts");
   expect(state(), "submitted", "7 claimed fee send");

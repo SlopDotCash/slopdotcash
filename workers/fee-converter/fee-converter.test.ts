@@ -972,6 +972,44 @@ describe("D1 contract", () => {
     expect(() =>
       sqlite.exec("UPDATE fee_conversions SET state = 'pending'"),
     ).toThrow(/final/);
+    sqlite.exec(`INSERT INTO fee_conversions
+      (id, run_id, network, mode, fee_wallet, token, target_token, amount_in,
+       route, quote, tx_id, raw_tx, evm_nonce, expires_at, min_amount_out,
+       state, created_at, updated_at, submitted_at, amount_out, finalized_at)
+      VALUES
+      ('id-submitted', 'run-existing', 'base', 'live', '${WALLET}', '${TOKEN}', '${USDC}',
+       '10', 'kyberswap', '{"route":"existing"}', '0xabc1', '0x0102', 4, 1234, '5',
+       'submitted', 'then', 'then', 'then', NULL, NULL),
+      ('id-finalized', 'run-existing', 'base', 'live', '${WALLET}', '${OTHER}', '${USDC}',
+       '20', 'kyberswap', '{"route":"settled"}', '0xabc2', '0x0304', 3, 1233, '7',
+       'finalized', 'before', 'then', 'before', '8', 'then')`);
+    const before = sqlite
+      .query("SELECT * FROM fee_conversions ORDER BY id")
+      .all() as Record<string, unknown>[];
+    sqlite.exec(
+      readFileSync(new URL("0082_fee_claim_journal.sql", dir), "utf8"),
+    );
+    const after = sqlite
+      .query("SELECT * FROM fee_conversions ORDER BY id")
+      .all() as Record<string, unknown>[];
+    expect(
+      after.map(({ kind, ...row }) => {
+        expect(kind).toBe("conversion");
+        return row;
+      }),
+    ).toEqual(before);
+    for (const sql of [
+      "UPDATE fee_conversions SET raw_tx = '0x9999' WHERE id = 'id-submitted'",
+      "UPDATE fee_conversions SET kind = 'claim' WHERE id = 'id-submitted'",
+      "UPDATE fee_conversions SET quote = '{}' WHERE id = 'id-finalized'",
+      "DELETE FROM fee_conversions WHERE id = 'id-submitted'",
+      "DELETE FROM fee_conversions WHERE id = 'id-finalized'",
+    ])
+      expect(() => sqlite.exec(sql)).toThrow(/immutable|final|permanent/);
+    expect(
+      sqlite.query("SELECT * FROM fee_conversions ORDER BY id").all(),
+    ).toEqual(after);
+    sqlite.close();
   });
 
   test("candidate tokens come only from reviewed manifests on the network", async () => {
