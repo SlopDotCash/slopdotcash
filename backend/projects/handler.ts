@@ -108,6 +108,8 @@ export type ProjectApiDependencies = {
     vault: string,
   ) => Promise<SolanaEscrowConfig>;
   adminGithubIds: ReadonlySet<string>;
+  /** Private trace access is separate from project administration. */
+  traceOperatorGithubIds?: ReadonlySet<string>;
   /** GitHub actor IDs with the project moderation role (PRD ADM-05, ADM-06). */
   moderatorGithubIds: ReadonlySet<string>;
   now: () => Date;
@@ -783,7 +785,11 @@ function sessionBody(
   actor: GithubActor,
   deps: ProjectApiDependencies,
 ): WebSession {
-  return { ...actor, admin: deps.adminGithubIds.has(actor.githubId) };
+  return {
+    ...actor,
+    admin: deps.adminGithubIds.has(actor.githubId),
+    traceOperator: deps.traceOperatorGithubIds?.has(actor.githubId) ?? false,
+  };
 }
 
 async function requireSession(
