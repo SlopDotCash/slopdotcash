@@ -27,6 +27,7 @@ export const qualificationMigrations = [
 export const qualificationSchema = `
 CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY, state TEXT, completed_at TEXT);
 CREATE TABLE qualification_results(phase TEXT PRIMARY KEY, result TEXT NOT NULL CHECK(json_valid(result)));
+CREATE TABLE qualification_deliveries(id TEXT PRIMARY KEY, action TEXT NOT NULL);
 `;
 const tables = [
   "vetting_assessments",
@@ -45,6 +46,7 @@ type Environment = BackupEnvironment & {
 type Command = {
   qualification: string;
   action: "seed" | "verify" | "corrupt" | "empty";
+  delivery: string;
 };
 type Rows = Record<string, string | number | null>[];
 const encoder = new TextEncoder();
@@ -471,7 +473,9 @@ async function empty(env: Environment) {
 export default {
   fetch: backup.fetch,
   async queue(
-    batch: { messages: { body: unknown; ack(): void; retry(): void }[] },
+    batch: {
+      messages: { id: string; body: unknown; ack(): void; retry(): void }[];
+    },
     env: Environment,
   ) {
     check(
@@ -481,19 +485,47 @@ export default {
     for (const message of batch.messages) {
       const command = message.body as Partial<Command>;
       if (!command.qualification) {
+        let acknowledged = false;
         await backup.queue(
           {
             messages: [
-              message as Parameters<typeof backup.queue>[0]["messages"][number],
+              {
+                body: message.body as Parameters<
+                  typeof backup.queue
+                >[0]["messages"][number]["body"],
+                ack() {
+                  acknowledged = true;
+                  message.ack();
+                },
+                retry() {
+                  message.retry();
+                },
+              },
             ],
           },
           env,
         );
+        if (acknowledged) {
+          const job = message.body as { page?: number; kind?: string };
+          await env.EVIDENCE_DATABASE.prepare(
+            "INSERT OR IGNORE INTO qualification_deliveries VALUES(?,?)",
+          )
+            .bind(
+              `queue:${message.id}`,
+              job.kind === "cleanup" ? "cleanup" : `backup-page-${job.page}`,
+            )
+            .run();
+        }
         continue;
       }
       check(
         command.qualification === env.QUALIFICATION_RUN,
         "Wrong qualification identity",
+      );
+      check(
+        typeof command.delivery === "string" &&
+          new RegExp(`^${command.action}-[0-9]+$`).test(command.delivery),
+        "Missing command delivery identity",
       );
       try {
         if (command.action === "seed") await seed(env);
@@ -501,6 +533,11 @@ export default {
         else if (command.action === "corrupt") await corrupt(env);
         else if (command.action === "empty") await empty(env);
         else throw new Error("Unknown qualification action");
+        await env.EVIDENCE_DATABASE.prepare(
+          "INSERT OR IGNORE INTO qualification_deliveries VALUES(?,?)",
+        )
+          .bind(`command:${command.delivery}`, command.action)
+          .run();
         message.ack();
       } catch {
         await record(env, `failed-${command.action}`, { failed: true });

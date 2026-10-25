@@ -71,7 +71,29 @@ try {
         await database.prepare(query).run();
   }
   const queue = await runtime.getQueueProducer("EVIDENCE_BACKUP_QUEUE");
-  const send = (action) => queue.send({ qualification: identity, action });
+  let deliveryNumber = 0;
+  const send = async (action) => {
+    const delivery = `${action}-${++deliveryNumber}`;
+    await queue.send({ qualification: identity, action, delivery });
+    const deadline = Date.now() + 120_000;
+    while (
+      !(await db
+        .prepare("SELECT id FROM qualification_deliveries WHERE id=?")
+        .bind(`command:${delivery}`)
+        .first())
+    ) {
+      assert.equal(
+        await db
+          .prepare("SELECT phase FROM qualification_results WHERE phase=?")
+          .bind(`failed-${action}`)
+          .first(),
+        null,
+        `Failed ${action}`,
+      );
+      assert.ok(Date.now() < deadline, `Missing actual ${delivery} receipt`);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  };
   async function wait(name) {
     const deadline = Date.now() + 120_000;
     for (;;) {
@@ -97,7 +119,14 @@ try {
   const deadline = Date.now() + 120_000;
   while (
     (await db.prepare("SELECT phase FROM vetting_storage_cycles").first())
-      ?.phase !== "complete"
+      ?.phase !== "complete" ||
+    (
+      await db
+        .prepare(
+          "SELECT count(*) n FROM qualification_deliveries WHERE action='backup-page-0'",
+        )
+        .first()
+    ).n < 2
   ) {
     assert.ok(Date.now() < deadline, "Actual backup queue did not finish");
     await new Promise((r) => setTimeout(r, 100));
@@ -110,6 +139,16 @@ try {
   assert.equal(proof.immutablePolicy, true);
   await send("verify");
   await send("corrupt");
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT count(*) n FROM qualification_deliveries WHERE action='verify'",
+        )
+        .first()
+    ).n,
+    2,
+  );
   const corruption = await wait("corrupt");
   assert.deepEqual(corruption, {
     changedBytesRefused: true,
@@ -150,6 +189,20 @@ try {
       proof,
       corruption,
       ownedFixtureBucketsEmpty: true,
+      acknowledgedVerifyCommands: (
+        await db
+          .prepare(
+            "SELECT count(*) n FROM qualification_deliveries WHERE action='verify'",
+          )
+          .first()
+      ).n,
+      acknowledgedFirstPageDeliveries: (
+        await db
+          .prepare(
+            "SELECT count(*) n FROM qualification_deliveries WHERE action='backup-page-0'",
+          )
+          .first()
+      ).n,
     }),
   );
 } finally {

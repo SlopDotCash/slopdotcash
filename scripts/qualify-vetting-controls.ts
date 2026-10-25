@@ -148,13 +148,36 @@ async function main() {
     if ((await api(path, "GET", undefined, true)) !== null)
       throw new Error("Owned fixture still exists after deletion");
   }
+  let deliveryNumber = 0;
   async function command(action: string) {
     if (!bindingsVerified)
       throw new Error("Qualification bindings are not verified");
+    const delivery = `${action}-${++deliveryNumber}`;
     await api(`queues/${owned.queues[0].queue_id}/messages`, "POST", {
       content_type: "json",
-      body: { qualification: run, action },
+      body: { qualification: run, action, delivery },
     });
+    const deadline = Date.now() + 180_000;
+    for (;;) {
+      const rows = await query(
+        owned.databases[0].uuid,
+        "SELECT id FROM qualification_deliveries WHERE id=?",
+        [`command:${delivery}`],
+      );
+      if (rows.length === 1) return;
+      if (
+        (
+          await query(
+            owned.databases[0].uuid,
+            "SELECT phase FROM qualification_results WHERE phase=?",
+            [`failed-${action}`],
+          )
+        ).length ||
+        Date.now() > deadline
+      )
+        throw new Error("Qualification command was not completed");
+      await new Promise((r) => setTimeout(r, 1000));
+    }
   }
   async function waitFor(phase: string, timeout = 180_000) {
     const end = Date.now() + timeout;
@@ -483,7 +506,18 @@ async function main() {
         owned.databases[0].uuid,
         "SELECT phase FROM vetting_storage_cycles",
       );
-      if (rows.length === 1 && rows[0].phase === "complete") break;
+      const deliveries = await query(
+        owned.databases[0].uuid,
+        "SELECT count(*) n FROM qualification_deliveries WHERE action='backup-page-0'",
+      );
+      if (
+        rows.length === 1 &&
+        rows[0].phase === "complete" &&
+        Number(deliveries[0]?.n) >= 2
+      ) {
+        report.acknowledgedFirstPageDeliveries = Number(deliveries[0].n);
+        break;
+      }
       if (Date.now() > until)
         throw new Error("Hosted queue snapshot did not finish");
       await new Promise((r) => setTimeout(r, 1000));
@@ -492,6 +526,13 @@ async function main() {
     report.verify = await waitFor("verify");
     await command("verify"); // Command replay uses permanent phase results.
     report.replayedVerify = await waitFor("verify");
+    const verifiedDeliveries = await query(
+      owned.databases[0].uuid,
+      "SELECT count(*) n FROM qualification_deliveries WHERE action='verify'",
+    );
+    if (Number(verifiedDeliveries[0]?.n) !== 2)
+      throw new Error("Repeated verification was not delivered");
+    report.acknowledgedVerifyCommands = 2;
     await command("corrupt");
     report.corrupt = await waitFor("corrupt");
     success = true;
