@@ -1356,7 +1356,7 @@ async function ownerSetupWorkflow(
       });
       // Private balances never resolve through the public funding route. Async
       // config and parse errors must retain its established JSON response.
-      for (const data of [fundingBody, "{"]) {
+      for (const data of [fundingBody, Buffer.from("{")]) {
         const rejected = await page.request.post(
           `${origin}/api/v1/payments/projects/${project.id}/solana-funding`,
           {
