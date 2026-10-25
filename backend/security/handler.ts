@@ -28,6 +28,7 @@ import {
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
+import type { RepositoryAccessReader } from "../projects/setup";
 import { readJsonObject } from "../trace/validation";
 import type { AdvisoryReader, GithubPrivateReport } from "./advisories";
 import {
@@ -48,6 +49,7 @@ import {
   OUTSTANDING_RESERVATIONS,
   readSecurityProgramFunds,
 } from "./program-funds";
+import { repositoryReportingAuthority } from "./project-access";
 import { handleSubmissionRoute } from "./submissions";
 export type SecurityD1Database = D1TransactionalDatabase<D1Statement>;
 
@@ -88,6 +90,7 @@ export type SecurityApiDependencies = {
    * submission route closed and the manual claim flow unchanged.
    */
   intake?: IntakeConfig;
+  repositoryAccess?: RepositoryAccessReader;
 };
 
 export type Role =
@@ -307,7 +310,7 @@ export async function requireActor(
   return actor;
 }
 
-export async function currentProgram(
+export async function currentReportingProject(
   deps: Pick<SecurityApiDependencies, "db">,
   projectId: string,
 ): Promise<{ manifest: ProjectDefinition; revision: number } | null> {
@@ -317,34 +320,92 @@ export async function currentProgram(
     .first<{ manifest: string; revision: number }>();
   if (row === null) return null;
   const manifest = JSON.parse(row.manifest) as ProjectDefinition;
-  return manifest.securityBounty === undefined
-    ? null
-    : { manifest, revision: row.revision };
+  return { manifest, revision: row.revision };
 }
 
-/** Every project that runs a program, keyed by id, from current revisions. */
+/** Reporting needs a registered repository, not financial terms. */
+export type ReportingContext = Pick<
+  SecurityBountyTerms,
+  "intake" | "approvers"
+> &
+  Partial<Pick<SecurityBountyTerms, "responseTargets">>;
+
+export async function reportingContext(
+  deps: Pick<SecurityApiDependencies, "db" | "repositoryAccess">,
+  projectId: string,
+  contacts = false,
+): Promise<ReportingContext> {
+  const project = await currentReportingProject(deps, projectId);
+  if (project === null || project.manifest.listingTier === "retired")
+    fail(
+      404,
+      "project_not_found",
+      "This project is not available for private reporting",
+    );
+  const { manifest } = project;
+  if (manifest.securityBounty) return manifest.securityBounty;
+  const technical: Actor[] = [];
+  if (contacts) {
+    // Registry actors are candidates only. Each needs current GitHub authority.
+    const rows = await deps.db
+      .prepare(
+        "SELECT actor_github_id AS githubId, actor_github_login AS githubLogin FROM project_revisions WHERE project_id = ? AND actor_github_id IS NOT NULL UNION SELECT a.applicant_github_id, a.applicant_github_login FROM projects p JOIN project_applications a ON a.id = p.source_application_id WHERE p.id = ?",
+      )
+      .bind(projectId, projectId)
+      .all<Actor>();
+    const candidates = new Map(
+      (rows.results ?? []).map((actor) => [actor.githubId, actor]),
+    );
+    const steward = manifest.steward.github;
+    if (steward.type === "User")
+      candidates.set(steward.actorId, {
+        githubId: steward.actorId,
+        githubLogin: steward.login,
+      });
+    for (const actor of candidates.values()) {
+      if (
+        await repositoryReportingAuthority(
+          deps.repositoryAccess,
+          manifest,
+          actor,
+        )
+      )
+        technical.push(actor);
+    }
+  }
+  return {
+    intake: {
+      kind: "github-private-vulnerability-reporting",
+      repository: manifest.repositories[0].id,
+    },
+    approvers: { technical, financial: [], dispute: [] },
+  };
+}
+
+/** Current registered projects, including those without paid terms. */
 async function programs(
   deps: SecurityApiDependencies,
-): Promise<Map<string, SecurityBountyTerms>> {
+): Promise<Map<string, ProjectDefinition>> {
   const result = await deps.db
     .prepare(
-      "SELECT manifest FROM projects WHERE json_type(manifest, '$.securityBounty') = 'object'",
+      "SELECT manifest FROM projects WHERE json_type(manifest, '$.securityBounty') = 'object' OR id IN (SELECT project_id FROM security_cases)",
     )
     .all<{ manifest: string }>();
-  const map = new Map<string, SecurityBountyTerms>();
-  for (const row of result.results ?? []) {
-    const manifest = JSON.parse(row.manifest) as ProjectDefinition;
-    if (manifest.securityBounty) map.set(manifest.id, manifest.securityBounty);
-  }
-  return map;
+  return new Map(
+    (result.results ?? []).map((row) => {
+      const manifest = JSON.parse(row.manifest) as ProjectDefinition;
+      return [manifest.id, manifest];
+    }),
+  );
 }
 
 function programRoles(
-  terms: SecurityBountyTerms | undefined,
+  terms: ReportingContext | undefined,
   githubId: string,
   moderators: ReadonlySet<string>,
 ): Set<Role> {
   const roles = new Set<Role>();
+  if (moderators.has(githubId)) roles.add("dispute");
   if (terms === undefined) return roles;
   if (terms.approvers.technical.some((entry) => entry.githubId === githubId))
     roles.add("security-maintainer");
@@ -372,16 +433,23 @@ async function activeTriager(
 
 /** Current roles; recomputed on every request so revocation is immediate. */
 async function caseRoles(
-  deps: Pick<SecurityApiDependencies, "db" | "moderatorGithubIds">,
+  deps: Pick<
+    SecurityApiDependencies,
+    "db" | "moderatorGithubIds" | "repositoryAccess"
+  >,
   row: CaseRow,
   actor: Actor,
-  terms: SecurityBountyTerms | undefined,
 ): Promise<Set<Role>> {
+  const project = await currentReportingProject(deps, row.project_id);
+  const terms = project?.manifest.securityBounty;
   const roles = programRoles(
     terms,
     actor.githubId,
     deps.moderatorGithubIds ?? new Set(),
   );
+  const triager =
+    row.reporter_github_id !== actor.githubId &&
+    (await activeTriager(deps, row.id, actor.githubId));
   // A moderator reads only cases with an appeal or a related-party award
   // review.
   if (
@@ -389,6 +457,22 @@ async function caseRoles(
     row.related_party_review === "not-applicable"
   )
     roles.delete("dispute");
+  if (
+    terms === undefined &&
+    row.reporter_github_id !== actor.githubId &&
+    !triager &&
+    !roles.has("dispute")
+  ) {
+    if (
+      project &&
+      (await repositoryReportingAuthority(
+        deps.repositoryAccess,
+        project.manifest,
+        actor,
+      ))
+    )
+      roles.add("security-maintainer");
+  }
   // Finance needs nothing before the owner approved an award.
   if (!["reserved", "approved"].includes(row.award_state))
     roles.delete("financial");
@@ -396,7 +480,7 @@ async function caseRoles(
     // A reporter never decides their own case.
     roles.clear();
     roles.add("reporter");
-  } else if (await activeTriager(deps, row.id, actor.githubId)) {
+  } else if (triager) {
     roles.add("triager");
   }
   return roles;
@@ -408,15 +492,27 @@ export async function securityNotificationAccess(
   caseId: string,
   githubId: string,
   moderatorGithubIds: ReadonlySet<string> = new Set(),
+  repositoryAccess?: RepositoryAccessReader,
 ): Promise<{ allowed: boolean; acknowledgeHours: number }> {
   const row = await loadCase({ db }, caseId);
   if (row === null) return { allowed: false, acknowledgeHours: 0 };
-  const program = await currentProgram({ db }, row.project_id);
+  const program = await currentReportingProject({ db }, row.project_id);
+  const login = await db
+    .prepare(
+      "SELECT login FROM (SELECT login, 0 AS priority, joined_at AS at FROM points_members WHERE github_id = ? UNION ALL SELECT actor_github_login AS login, 1 AS priority, created_at AS at FROM project_revisions WHERE project_id = ? AND actor_github_id = ?) ORDER BY priority, at DESC LIMIT 1",
+    )
+    .bind(githubId, row.project_id, githubId)
+    .first<{ login: string }>();
+  const steward = program?.manifest.steward?.github;
+  const githubLogin =
+    login?.login ??
+    (steward?.type === "User" && steward.actorId === githubId
+      ? steward.login
+      : "");
   const roles = await caseRoles(
-    { db, moderatorGithubIds },
+    { db, moderatorGithubIds, repositoryAccess },
     row,
-    { githubId, githubLogin: "" },
-    program?.manifest.securityBounty,
+    { githubId, githubLogin },
   );
   return {
     allowed: roles.size > 0,
@@ -633,7 +729,7 @@ async function programFunds(
   projectId: string,
   snapshotGuards: { sql: string; values: unknown[] }[] = [],
 ) {
-  const program = (await currentProgram(deps, projectId))?.manifest
+  const program = (await currentReportingProject(deps, projectId))?.manifest
     .securityBounty;
   if (program === undefined || program.funding.state !== "verified-available")
     return null;
@@ -663,7 +759,7 @@ async function caseView(
 ): Promise<Record<string, unknown>> {
   const terms = frozenTerms(row);
   const settlement = await securitySettlementView(deps.db, row.id);
-  const current = await currentProgram(deps, row.project_id);
+  const current = await currentReportingProject(deps, row.project_id);
   const reservation = await deps.db
     .prepare(
       "SELECT root_cause_key, policy_revision, gross_minor, currency, reserved_at FROM security_award_reservations WHERE case_id = ?",
@@ -901,16 +997,25 @@ async function listCases(
 ): Promise<Response> {
   const actor = await requireActor(request, deps);
   const all = await programs(deps);
-  const projectIds = [...all.entries()]
-    .filter(
-      ([, terms]) =>
-        programRoles(
-          terms,
-          actor.githubId,
-          deps.moderatorGithubIds ?? new Set(),
-        ).size > 0,
+  const currentRoles = new Map<string, Set<Role>>();
+  for (const [id, manifest] of all) {
+    const roles = programRoles(
+      manifest.securityBounty,
+      actor.githubId,
+      deps.moderatorGithubIds ?? new Set(),
+    );
+    if (
+      !manifest.securityBounty &&
+      (await repositoryReportingAuthority(
+        deps.repositoryAccess,
+        manifest,
+        actor,
+      ))
     )
-    .map(([id]) => id);
+      roles.add("security-maintainer");
+    if (roles.size) currentRoles.set(id, roles);
+  }
+  const projectIds = [...currentRoles.keys()];
   const placeholders = projectIds.map(() => "?").join(", ");
   const result = await deps.db
     .prepare(
@@ -923,7 +1028,7 @@ async function listCases(
   const cases: Record<string, unknown>[] = [];
   const reads: D1Statement[] = [];
   for (const row of result.results ?? []) {
-    const roles = await caseRoles(deps, row, actor, all.get(row.project_id));
+    const roles = await caseRoles(deps, row, actor);
     if (roles.size === 0) continue;
     cases.push(await caseView(deps, row, roles, false));
     reads.push(accessLog(deps, row.id, actor, roles, "read"));
@@ -933,13 +1038,7 @@ async function listCases(
   if (reads.length > 0) await deps.db.batch(reads);
   const programsForActor = projectIds.map((id) => ({
     projectId: id,
-    roles: [
-      ...programRoles(
-        all.get(id),
-        actor.githubId,
-        deps.moderatorGithubIds ?? new Set(),
-      ),
-    ].sort(),
+    roles: [...(currentRoles.get(id) ?? [])].sort(),
   }));
   return json(200, {
     viewer: { githubId: actor.githubId, githubLogin: actor.githubLogin },
@@ -956,13 +1055,7 @@ async function readCase(
   const actor = await requireActor(request, deps);
   const row = await loadCase(deps, caseId);
   if (row === null) notFound();
-  const program = await currentProgram(deps, row.project_id);
-  const roles = await caseRoles(
-    deps,
-    row,
-    actor,
-    program?.manifest.securityBounty,
-  );
+  const roles = await caseRoles(deps, row, actor);
   if (roles.size === 0) notFound();
   await accessLog(deps, row.id, actor, roles, "read").run();
   return json(200, { case: await caseView(deps, row, roles, true) });
@@ -1060,7 +1153,7 @@ export function inboxStatements(
     idempotencyKey: string;
     reporterGithubId: string;
     detail: Record<string, unknown>;
-    terms: SecurityBountyTerms | undefined;
+    terms: ReportingContext | undefined;
     /** The change proposes a related-party award for independent review. */
     relatedReview?: boolean;
   },
@@ -1110,7 +1203,7 @@ function constraintError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function handoffUrl(terms: SecurityBountyTerms): string {
+function handoffUrl(terms: Pick<ReportingContext, "intake">): string {
   return `https://github.com/${terms.intake.repository}/security/advisories/new`;
 }
 
@@ -1230,7 +1323,7 @@ async function recordPrivateReports(
   deps: SecurityApiDependencies,
   input: {
     projectId: string;
-    terms: SecurityBountyTerms;
+    terms: ReportingContext;
     reports: GithubPrivateReport[];
     actor: Actor;
   },
@@ -1367,7 +1460,7 @@ async function rejectUnconfirmedClaims(
   deps: SecurityApiDependencies,
   input: {
     projectId: string;
-    terms: SecurityBountyTerms;
+    terms: ReportingContext;
     reports: GithubPrivateReport[];
     actor: Actor;
     claimant: string | null;
@@ -1439,7 +1532,7 @@ async function rejectUnconfirmedClaims(
 async function reconcileProgram(
   deps: SecurityApiDependencies,
   projectId: string,
-  terms: SecurityBountyTerms,
+  terms: ReportingContext,
   actor: Actor,
   scope: "own" | "all",
 ): Promise<
@@ -1471,14 +1564,31 @@ async function reconcileProgram(
   return { state: "ok", received, reports };
 }
 
+async function maintainsProject(
+  deps: SecurityApiDependencies,
+  projectId: string,
+  actor: Actor,
+): Promise<boolean> {
+  const project = await currentReportingProject(deps, projectId);
+  if (!project) return false;
+  return project.manifest.securityBounty
+    ? programRoles(
+        project.manifest.securityBounty,
+        actor.githubId,
+        new Set(),
+      ).has("security-maintainer")
+    : repositoryReportingAuthority(
+        deps.repositoryAccess,
+        project.manifest,
+        actor,
+      );
+}
+
 async function programOrNotFound(
   deps: SecurityApiDependencies,
   projectId: string,
-): Promise<SecurityBountyTerms> {
-  const program = await currentProgram(deps, projectId);
-  if (program === null || program.manifest.listingTier === "retired")
-    fail(404, "program_not_found", "This project has no security program");
-  return program.manifest.securityBounty as SecurityBountyTerms;
+): Promise<ReportingContext> {
+  return reportingContext(deps, projectId, true);
 }
 
 /**
@@ -1512,10 +1622,10 @@ async function createCase(
   const projectId = stringField(body, "projectId", PROJECT_ID);
   const advisory = stringField(body, "advisory", GHSA);
   const idempotencyKey = stringField(body, "idempotencyKey", IDEMPOTENCY_KEY);
-  const program = await currentProgram(deps, projectId);
+  const program = await currentReportingProject(deps, projectId);
   if (program === null)
     fail(404, "program_not_found", "This project has no security program");
-  const terms = program.manifest.securityBounty as SecurityBountyTerms;
+  const terms = await reportingContext(deps, projectId, true);
   const now = deps.now();
   const at = now.toISOString();
   const id = `sc_${deps.randomId().replaceAll("-", "")}`;
@@ -1530,13 +1640,7 @@ async function createCase(
     reporter = actor;
     role = "reporter";
   } else {
-    if (
-      !programRoles(
-        terms,
-        actor.githubId,
-        deps.moderatorGithubIds ?? new Set(),
-      ).has("security-maintainer")
-    )
+    if (!(await maintainsProject(deps, projectId, actor)))
       fail(403, "forbidden", "Only a security maintainer can record a case");
     if (body.confirmation !== true)
       fail(
@@ -1631,7 +1735,7 @@ async function createCase(
             .bind(existing.id, idempotencyKey, actor.githubId)
             .first<{ ok: number }>()) !== null);
       if (replayed) {
-        const roles = await caseRoles(deps, existing, actor, terms);
+        const roles = await caseRoles(deps, existing, actor);
         if (roles.size > 0)
           return json(200, {
             replayed: true,
@@ -1652,7 +1756,7 @@ async function createCase(
     );
   }
   const row = (await loadCase(deps, id)) as CaseRow;
-  const roles = await caseRoles(deps, row, actor, terms);
+  const roles = await caseRoles(deps, row, actor);
   return json(201, { case: await caseView(deps, row, roles, true) });
 }
 
@@ -1666,13 +1770,7 @@ async function importReports(
   if (body.mode !== "import") fail(400, "invalid_request", "Invalid mode");
   const projectId = stringField(body, "projectId", PROJECT_ID);
   const terms = await programOrNotFound(deps, projectId);
-  if (
-    !programRoles(
-      terms,
-      actor.githubId,
-      deps.moderatorGithubIds ?? new Set(),
-    ).has("security-maintainer")
-  )
+  if (!(await maintainsProject(deps, projectId, actor)))
     fail(403, "forbidden", "Only a security maintainer can import reports");
   const result = await reconcileProgram(deps, projectId, terms, actor, "all");
   return json(200, {
@@ -2119,7 +2217,7 @@ async function planChange(
           "confirmation_required",
           "Accept public chain visibility before payment",
         );
-      const program = await currentProgram(deps, row.project_id);
+      const program = await currentReportingProject(deps, row.project_id);
       const deployment =
         program?.manifest.securityBounty?.settlement?.deployments.find(
           (d) => d.network === body.network,
@@ -2170,7 +2268,7 @@ async function planChange(
           "confirmation_required",
           "Confirm the exact 75/25 payout and public chain visibility",
         );
-      const program = await currentProgram(deps, row.project_id);
+      const program = await currentReportingProject(deps, row.project_id);
       const deployment =
         program?.manifest.securityBounty?.settlement?.deployments.find(
           (d) => d.network === body.network,
@@ -2426,8 +2524,8 @@ async function reporterIsRelated(
   row: CaseRow,
 ): Promise<boolean> {
   if (row.related_party === "related") return true;
-  const program = (await currentProgram(deps, row.project_id))?.manifest
-    .securityBounty;
+  const program = (await currentReportingProject(deps, row.project_id))
+    ?.manifest.securityBounty;
   return (
     programRoles(program, row.reporter_github_id, new Set()).size > 0 ||
     program?.approvers.dispute.some(
@@ -2628,7 +2726,7 @@ async function awardReservation(
   // Approved awards stay owed through a quarantine or a ban, but a
   // restricted program starts no new commitment (PRD section 11, Restricted
   // projects).
-  const program = await currentProgram(deps, row.project_id);
+  const program = await currentReportingProject(deps, row.project_id);
   if (program === null || program.manifest.listingTier === "retired")
     fail(
       409,
@@ -2767,7 +2865,7 @@ async function automaticAction(
     );
   }
   const updated = (await loadCase(deps, row.id)) as CaseRow;
-  const nextRoles = await caseRoles(deps, updated, actor, terms);
+  const nextRoles = await caseRoles(deps, updated, actor);
   if (nextRoles.size === 0) notFound();
   await accessLog(deps, row.id, actor, nextRoles, "read").run();
   return json(200, { case: await caseView(deps, updated, nextRoles, true) });
@@ -2782,13 +2880,8 @@ async function actOnCase(
   const body = await readJsonObject(request);
   const row = await loadCase(deps, caseId);
   if (row === null) notFound();
-  const program = await currentProgram(deps, row.project_id);
-  const roles = await caseRoles(
-    deps,
-    row,
-    actor,
-    program?.manifest.securityBounty,
-  );
+  const program = await currentReportingProject(deps, row.project_id);
+  const roles = await caseRoles(deps, row, actor);
   if (roles.size === 0) notFound();
   const action = typeof body.action === "string" ? body.action : "";
   const idempotencyKey = stringField(body, "idempotencyKey", IDEMPOTENCY_KEY);
@@ -2911,12 +3004,7 @@ async function actOnCase(
   // Slopbot triages every appeal first; a moderator still decides it.
   if (change.kind === "appeal") await scheduleAppealTriage(deps, row.id);
   const updated = (await loadCase(deps, row.id)) as CaseRow;
-  const nextRoles = await caseRoles(
-    deps,
-    updated,
-    actor,
-    program?.manifest.securityBounty,
-  );
+  const nextRoles = await caseRoles(deps, updated, actor);
   return json(200, {
     case:
       nextRoles.size === 0
@@ -2997,15 +3085,16 @@ async function intakeReadiness(
 ): Promise<Response> {
   if (!PROJECT_ID.test(projectId))
     fail(404, "program_not_found", "No security program");
-  const program = await currentProgram(deps, projectId);
+  const program = await currentReportingProject(deps, projectId);
   if (program === null || program.manifest.listingTier === "retired")
     fail(404, "program_not_found", "No security program");
-  const terms = program.manifest.securityBounty as SecurityBountyTerms;
+  const terms = program.manifest.securityBounty;
+  const context = await reportingContext(deps, projectId);
   const checkedAt = deps.now().toISOString();
-  const repository = terms.intake.repository;
+  const repository = context.intake.repository;
   const state = await pvrState(deps, repository);
   const closed =
-    terms.capacity.closesAt !== null &&
+    terms?.capacity.closesAt != null &&
     Date.parse(terms.capacity.closesAt) <= Date.parse(checkedAt);
   return json(
     200,
@@ -3016,10 +3105,11 @@ async function intakeReadiness(
       automatic: await automaticIntake(deps, repository, state),
       checkedAt,
       maxAgeSeconds: INTAKE_READINESS_TTL_SECONDS,
-      programStatus: terms.status,
+      programStatus: terms?.status ?? null,
       // Pause or closure stops new paid research, never the private route.
-      paidParticipation: terms.status === "open" && !closed ? "open" : "closed",
-      handoffUrl: state === "ready" ? handoffUrl(terms) : null,
+      paidParticipation:
+        terms?.status === "open" && !closed ? "open" : "closed",
+      handoffUrl: state === "ready" ? handoffUrl(context) : null,
     },
     `public, max-age=0, s-maxage=${INTAKE_READINESS_TTL_SECONDS}`,
   );
@@ -3037,6 +3127,7 @@ async function acknowledgeNotice(
     caseId,
     actor.githubId,
     deps.moderatorGithubIds,
+    deps.repositoryAccess,
   );
   if (!access.allowed) notFound();
   const body = await readJsonObject(request);

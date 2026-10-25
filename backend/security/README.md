@@ -4,6 +4,14 @@ PRD section 8 ("Report and decide privately", "Pay a private award"), section
 10, SEC-01 to SEC-18 and MVP-13 (issue #910). Program terms are public; cases
 are not.
 
+Registered projects accept private reports without paid bounty terms or funds.
+Without terms, intake uses the primary registered repository. Receipts freeze
+`terms: null` and `award_state: not-applicable`; later terms do not grant an
+award to an earlier report. Current repository authority grants technical
+case access only. Registry authors and the steward are notification candidates;
+Slop checks their current GitHub repository permission before use and delivery.
+No public page read requires a maintainer permission check.
+
 ## Program terms
 
 A project opts in with the optional `securityBounty` section of its D1

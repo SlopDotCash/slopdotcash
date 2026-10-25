@@ -271,7 +271,10 @@ Production uses `slop-notify` and the production Pages D1 contract. Staging uses
 receives its service binding only after the isolated Worker release succeeds;
 preview Pages remains unbound. The runtime rejects a pilot whose secret inbox
 URL does not match the selected environment's exact `/inbox` URL.
-The release also sets and verifies `SLOP_ENVIRONMENT`. Project-application
+Security mail also binds the selected Pages `SLOPBOT` service. For a project
+without paid bounty terms, it rechecks current repository authority before
+sending a maintainer notice. An unavailable check sends nothing and retries.
+The release verifies this private binding and `SLOP_ENVIRONMENT`. Project-application
 review links must use that environment's site origin; staging email links
 open the staging admin queue.
 

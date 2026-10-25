@@ -37,9 +37,9 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
+import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
-  parseRepositoryAccess,
   readRepositoryAccess,
   vettingScanRequester,
 } from "../../../backend/projects/setup";
@@ -359,27 +359,6 @@ function githubIdSet(value: string | undefined): Set<string> {
       .map((entry) => entry.trim())
       .filter((entry) => /^[1-9]\d*$/u.test(entry)),
   );
-}
-
-/** Reads one repository's Slopbot installation and account permission. */
-async function slopbotRepositoryAccess(
-  slopbot: Env["SLOPBOT"],
-  repository: { path: string; githubId: string },
-  actor: { githubId: string; githubLogin: string },
-) {
-  if (slopbot === undefined) throw new Error("Slopbot is not connected");
-  const url = new URL("https://slopbot.internal/v1/repository-access");
-  url.searchParams.set("repository", repository.path);
-  url.searchParams.set("repositoryId", repository.githubId);
-  url.searchParams.set("login", actor.githubLogin);
-  url.searchParams.set("githubId", actor.githubId);
-  // Older Pages clients keep their original response until they request facts.
-  url.searchParams.set("includeRepository", "1");
-  const response = await slopbot.fetch(
-    new Request(url, { headers: { accept: "application/json" } }),
-  );
-  if (!response.ok) throw new Error(`Slopbot returned ${response.status}`);
-  return parseRepositoryAccess(await readBoundedJson(response, 4 * 1024));
 }
 
 function githubHeaders(token: string | undefined): Record<string, string> {
@@ -713,6 +692,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     cache: edgeCache(),
     waitUntil: context.waitUntil?.bind(context),
     intake: privateIntake(context.env),
+    repositoryAccess: (repository, actor) =>
+      slopbotRepositoryAccess(context.env.SLOPBOT, repository, actor),
   });
   if (securityResponse !== null) return securityResponse;
   const evidenceResponse = await evidence.handle(context.request);

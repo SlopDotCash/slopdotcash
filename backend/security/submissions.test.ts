@@ -12,9 +12,15 @@ import {
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
+import { dispatchSecurityMail } from "../../workers/notify/security";
+import { slopbotRepositoryAccess } from "../projects/repository-access";
 import type { SecurityAnalysisInput, SecurityAnalyzer } from "./analysis";
 import { FAKE_OAUTH, fakeGithub } from "./github-advisories.fake";
-import { handleSecurityApi, type SecurityD1Database } from "./handler";
+import {
+  handleSecurityApi,
+  type SecurityD1Database,
+  securityNotificationAccess,
+} from "./handler";
 import { githubIntakeOAuth, type IntakeConfig } from "./intake-grant";
 import { seedParticipationBan } from "./participation-ban.fixture";
 import { cvss3BaseScore, deterministicAnalyzer } from "./report-analysis";
@@ -84,19 +90,44 @@ const REPORT = {
   cweIds: ["CWE-284"],
 };
 
-function setup(options: { mode?: "on" | "off"; pvr?: boolean } = {}) {
+function setup(
+  options: { mode?: "on" | "off"; pvr?: boolean; noProgram?: boolean } = {},
+) {
   const { db, sqlite } = sqliteD1(migrations);
+  const owner = options.noProgram
+    ? {
+        actorId: "700000050",
+        login: "example",
+        nodeId: "O_700000050",
+        type: "Organization",
+      }
+    : {
+        actorId: MAINTAINER.githubId,
+        login: MAINTAINER.githubLogin,
+        nodeId: "U_900000101",
+        type: "User",
+      };
   const manifest = JSON.stringify({
     id: PROJECT,
     status: "active",
-    securityBounty: PROGRAM,
+    repositories: [{ id: REPO }],
+    authority: { repositoryId: "700000001", repositoryNodeId: "R_700000001" },
+    steward: { github: owner },
+    ...(options.noProgram ? {} : { securityBounty: PROGRAM }),
   });
   const digest = createHash("sha256").update(manifest).digest("hex");
   sqlite
     .query(
-      "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'test', ?)",
+      "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at, actor_github_id, actor_github_login) VALUES (?, 1, ?, ?, 'test', ?, ?, ?)",
     )
-    .run(PROJECT, manifest, digest, "2026-10-01T00:00:00.000Z");
+    .run(
+      PROJECT,
+      manifest,
+      digest,
+      "2026-10-01T00:00:00.000Z",
+      MAINTAINER.githubId,
+      MAINTAINER.githubLogin,
+    );
   sqlite
     .query(
       "INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)",
@@ -156,6 +187,44 @@ function setup(options: { mode?: "on" | "off"; pvr?: boolean } = {}) {
   };
   const responses: string[] = [];
   let ids = 0;
+  let permission: "admin" | "read" = "admin";
+  let repositoryId = 700000001;
+  let accessUnavailable = false;
+  const repositoryAccess = (
+    repository: { path: string; githubId: string },
+    actor: Account,
+  ) =>
+    slopbotRepositoryAccess(
+      {
+        fetch: async (request) => {
+          const url = new URL(request.url);
+          expect(url.searchParams.get("repositoryId")).toBe("700000001");
+          expect(url.searchParams.get("githubId")).toBe(actor.githubId);
+          if (accessUnavailable) return new Response(null, { status: 503 });
+          return Response.json({
+            installation: "installed",
+            installationId: 123,
+            permission:
+              actor.githubId === MAINTAINER.githubId ? permission : "read",
+            roleName: null,
+            repository: {
+              id: repositoryId,
+              node_id: "R_700000001",
+              full_name: REPO,
+              private: false,
+              owner: {
+                id: Number(owner.actorId),
+                node_id: owner.nodeId,
+                login: owner.login,
+                type: owner.type,
+              },
+            },
+          });
+        },
+      },
+      repository,
+      actor,
+    );
   const raw = async (
     as: Account | null,
     method: "GET" | "POST",
@@ -196,6 +265,7 @@ function setup(options: { mode?: "on" | "off"; pvr?: boolean } = {}) {
         },
         intake,
         analyzer,
+        repositoryAccess,
       },
     )) as Response;
     if (as) absorb(as, response.headers.getSetCookie());
@@ -314,6 +384,18 @@ function setup(options: { mode?: "on" | "off"; pvr?: boolean } = {}) {
     ).map((r) => r.recipient_github_id);
   return {
     sqlite,
+    db: securityDb,
+    clock,
+    repositoryAccess,
+    setPermission: (value: "admin" | "read") => {
+      permission = value;
+    },
+    setRepositoryId: (value: number) => {
+      repositoryId = value;
+    },
+    setAccessUnavailable: (value: boolean) => {
+      accessUnavailable = value;
+    },
     github,
     intake,
     analyzed,
@@ -458,24 +540,29 @@ describe("private intake: creation and identity", () => {
     expect(t.row(created.body.submission?.id as string).repository).toBe(REPO);
   });
 
-  test("a grant for another GitHub account is refused and sets no grant cookie", async () => {
-    const t = setup();
-    const created = await t.create();
-    const callback = await t.authorize(
-      REPORTER,
-      created.body.authorizeUrl as string,
-      OTHER,
-    );
-    expect(callback.status).toBe(303);
-    expect(callback.location).toContain("intake=grant_identity_mismatch");
-    expect(
-      callback.cookies.some((c) => c.startsWith("__Secure-slop_intake_grant=")),
-    ).toBe(false);
-    const sent = await t.send(created.body.submission?.id as string, 1);
-    expect(sent.status).toBe(409);
-    expect(sent.body.error).toBe("grant_required");
-    expect(t.github.counts.posts).toBe(0);
-  });
+  test.each([false, true])(
+    "a grant for another GitHub account is refused and sets no grant cookie (no program: %s)",
+    async (noProgram) => {
+      const t = setup({ noProgram });
+      const created = await t.create();
+      const callback = await t.authorize(
+        REPORTER,
+        created.body.authorizeUrl as string,
+        OTHER,
+      );
+      expect(callback.status).toBe(303);
+      expect(callback.location).toContain("intake=grant_identity_mismatch");
+      expect(
+        callback.cookies.some((c) =>
+          c.startsWith("__Secure-slop_intake_grant="),
+        ),
+      ).toBe(false);
+      const sent = await t.send(created.body.submission?.id as string, 1);
+      expect(sent.status).toBe(409);
+      expect(sent.body.error).toBe("grant_required");
+      expect(t.github.counts.posts).toBe(0);
+    },
+  );
 
   test("the grant cookie is encrypted, HttpOnly, Strict and scoped to the submission routes", async () => {
     const t = setup();
@@ -539,6 +626,124 @@ describe("private intake: creation and identity", () => {
     t.advance(2 * 60 * 60 * 1000 + 1000);
     expect((await t.send(id, 1)).body.error).toBe("grant_required");
     expect(t.github.counts.posts).toBe(0);
+  });
+});
+
+describe("registered project without paid bounty terms", () => {
+  test("private intake accepts a report without inventing an award", async () => {
+    const t = setup({ noProgram: true });
+    const readiness = await t.call(
+      REPORTER,
+      "GET",
+      `security-programs/${PROJECT}/intake`,
+    );
+    expect(readiness.status).toBe(200);
+    expect(readiness.body).toMatchObject({
+      repository: REPO,
+      paidParticipation: "closed",
+    });
+    const submission = await t.ready();
+    const sent = await t.send(submission.id, 1);
+    expect(sent.status).toBe(200);
+    expect(sent.body.submission?.state).toBe("receipt-verified");
+    expect(t.github.advisories[0].advisory.author.id).toBe(
+      Number(REPORTER.githubId),
+    );
+    const recorded = t.cases()[0];
+    expect(recorded).toMatchObject({
+      terms: null,
+      award_state: "not-applicable",
+      payment_state: "not-applicable",
+      next_action_due_at: null,
+    });
+    expect(t.outbox()).toEqual([MAINTAINER.githubId, REPORTER.githubId]);
+    const path = `security-cases/${recorded.id}`;
+    expect((await t.call(MAINTAINER, "GET", path)).status).toBe(200);
+    expect((await t.call(OTHER, "GET", path)).status).toBe(404);
+    expect((await t.call(ADMIN, "GET", path)).status).toBe(404);
+    const list = await t.call(MAINTAINER, "GET", "security-cases");
+    expect(list.status).toBe(200);
+    expect((list.body.cases as unknown[]).length).toBe(1);
+    // Mail uses the same live actor/repository authorization and sends no case text.
+    expect(
+      await securityNotificationAccess(
+        t.db,
+        String(recorded.id),
+        MAINTAINER.githubId,
+        new Set(),
+        t.repositoryAccess,
+      ),
+    ).toEqual({ allowed: true, acknowledgeHours: 0 });
+    const sentMail: string[] = [];
+    const mail = {
+      db: t.db,
+      repositoryAccess: t.repositoryAccess,
+      now: t.clock,
+      fromAddress: "notifications@slop.cash",
+      config: {
+        inboxUrl: "https://slop.test/inbox",
+        recipients: {
+          [MAINTAINER.githubId]: {
+            email: "maintainer@example.invalid",
+            verifiedAt: "2026-10-01T00:00:00.000Z",
+            evidenceReference: "fixture verification",
+            backupGithubId: MAINTAINER_2.githubId,
+          },
+          [REPORTER.githubId]: {
+            email: "reporter@example.invalid",
+            verifiedAt: "2026-10-01T00:00:00.000Z",
+            evidenceReference: "fixture verification",
+            backupGithubId: MAINTAINER_2.githubId,
+          },
+        },
+      },
+      sendEmail: async (_from: string, to: string, mime: string) => {
+        sentMail.push(to);
+        expect(mime).not.toContain(SENTINEL);
+      },
+    };
+    t.setAccessUnavailable(true);
+    await dispatchSecurityMail(mail);
+    expect(sentMail).toEqual(["reporter@example.invalid"]);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT state FROM security_notification_outbox WHERE recipient_github_id = ?",
+        )
+        .get(MAINTAINER.githubId),
+    ).toEqual({ state: "retrying" });
+    t.setAccessUnavailable(false);
+    t.setPermission("read");
+    expect((await t.call(MAINTAINER, "GET", path)).status).toBe(404);
+    expect(
+      (
+        await securityNotificationAccess(
+          t.db,
+          String(recorded.id),
+          MAINTAINER.githubId,
+          new Set(),
+          t.repositoryAccess,
+        )
+      ).allowed,
+    ).toBe(false);
+    t.advance(3_600_000);
+    await dispatchSecurityMail(mail);
+    expect(sentMail).toEqual(["reporter@example.invalid"]);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT state FROM security_notification_outbox WHERE recipient_github_id = ?",
+        )
+        .get(MAINTAINER.githubId),
+    ).toEqual({ state: "suppressed" });
+    t.setPermission("admin");
+    t.setRepositoryId(700000002);
+    expect((await t.call(MAINTAINER, "GET", path)).status).toBe(404);
+    t.setRepositoryId(700000001);
+    t.setAccessUnavailable(true);
+    expect((await t.call(MAINTAINER, "GET", path)).status).toBe(503);
+    // Provider failure cannot hide the reporter's own receipt.
+    expect((await t.call(REPORTER, "GET", path)).status).toBe(200);
   });
 });
 

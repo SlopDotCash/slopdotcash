@@ -2382,6 +2382,10 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     id: `bounty-intake-other-${suffix}`,
     repository: `e2e-security/bounty-intake-other-${suffix}`,
   };
+  const noProgram = {
+    id: `report-only-${suffix}`,
+    repository: `e2e-security/report-only-${suffix}`,
+  };
   const sentinel = `E2E-PRIVATE-SENTINEL-${suffix}`;
   const report = {
     summary: `Vault withdraw skips the owner check ${sentinel}`,
@@ -2422,9 +2426,9 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     return { status: response.status(), body: text ? JSON.parse(text) : {} };
   };
   /** Creates a submission and completes the fixture's GitHub consent. */
-  const authorized = async () => {
+  const authorized = async (projectId = program.id) => {
     const created = await intakeApi("POST", "security-submissions", {
-      projectId: program.id,
+      projectId,
       idempotencyKey: key(),
       origin: "slop",
     });
@@ -2460,7 +2464,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       ).json()) as { count: number }
     ).count;
 
-  for (const currentProgram of [program, otherProgram]) {
+  for (const currentProgram of [program, otherProgram, noProgram]) {
     await test.step("program setup with the intake app installed", async () => {
       await listProject(
         request,
@@ -2476,20 +2480,26 @@ test("automatic private intake files as the reporter and verifies receipt @regis
             monthlyCapMinor: "0",
             monthlyCapDisplay: "$0",
           },
-          securityBounty: bountyTerms(currentProgram.repository),
+          ...(currentProgram === noProgram
+            ? {}
+            : { securityBounty: bountyTerms(currentProgram.repository) }),
         },
       );
-      const opened = await revise(request, currentProgram.id, (m) => ({
-        ...m,
-        securityBounty: openTerms(m.securityBounty as Record<string, unknown>),
-      }));
-      expect(opened.status).toBe(200);
-      // The bounty vault holds one published award of finalized free funds.
-      await vaultSnapshot(
-        currentProgram.id,
-        bountyDeployment(currentProgram.repository),
-        "10000000000",
-      );
+      if (currentProgram !== noProgram) {
+        const opened = await revise(request, currentProgram.id, (m) => ({
+          ...m,
+          securityBounty: openTerms(
+            m.securityBounty as Record<string, unknown>,
+          ),
+        }));
+        expect(opened.status).toBe(200);
+        // The bounty vault holds one published award of finalized free funds.
+        await vaultSnapshot(
+          currentProgram.id,
+          bountyDeployment(currentProgram.repository),
+          "10000000000",
+        );
+      }
       await setIntake(request, currentProgram.repository, "enabled");
       const installed = await request.fetch(
         `${GITHUB_FIXTURE}/__fixture/intake-app/${currentProgram.repository}/installed`,
@@ -2508,6 +2518,117 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       });
     });
   }
+
+  await test.step("a project without paid terms accepts a private report", async () => {
+    const context = await browser.newContext({
+      viewport: test.info().project.use.viewport,
+      recordVideo: { dir: test.info().outputPath("report-only-video") },
+    });
+    const page = await context.newPage();
+    const errors = observe(page);
+    try {
+      await signIn(page, TOKENS["reporter-a"]);
+      await page.goto(`/projects/${noProgram.id}/security`, {
+        waitUntil: "networkidle",
+      });
+      await expect(
+        page.getByRole("heading", {
+          name: "Report a security issue",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        page.getByText(
+          "This project has no published bounty terms. You can report privately. No award is promised.",
+        ),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("textbox", { name: "Summary", exact: true }),
+      ).toBeVisible();
+      await expectAccessible(page);
+      await page.screenshot({
+        path: test.info().outputPath("report-only-intake.png"),
+        fullPage: true,
+      });
+      const submission = await authorized(noProgram.id);
+      const sent = await intakeApi(
+        "POST",
+        `security-submissions/${submission.id}/send`,
+        { expectedRevision: submission.revision, report },
+      );
+      expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+      expect(sent.body.submission).toMatchObject({ state: "receipt-verified" });
+      const caseId = (sent.body.submission as { caseId: string }).caseId;
+      const own = await api(
+        request,
+        "GET",
+        `security-cases/${caseId}`,
+        TOKENS["reporter-a"],
+      );
+      expect(own.body.case).toMatchObject({
+        view: "reporter",
+        submissionState: "verified",
+        awardState: "not-applicable",
+        paymentState: "not-applicable",
+      });
+      const maintainer = await api(
+        request,
+        "GET",
+        `security-cases/${caseId}`,
+        TOKENS.security,
+      );
+      expect(maintainer.status, JSON.stringify(maintainer.body)).toBe(200);
+      expect(maintainer.body.case).toMatchObject({
+        view: "restricted",
+        terms: null,
+      });
+      expect(
+        (
+          await api(
+            request,
+            "GET",
+            `security-cases/${caseId}`,
+            TOKENS["reporter-b"],
+          )
+        ).status,
+      ).toBe(404);
+      await page.goto("/security", { waitUntil: "networkidle" });
+      const choice = page.getByRole("button").filter({ hasText: noProgram.id });
+      await expect(choice).toHaveCount(1);
+      await choice.focus();
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByRole("article").filter({ hasText: noProgram.id }),
+      ).toBeVisible();
+      await expectAccessible(page);
+      await page.screenshot({
+        path: test.info().outputPath("report-only-receipt.png"),
+        fullPage: true,
+      });
+      const revoked = await request.fetch(
+        `${GITHUB_FIXTURE}/__fixture/slopbot/${noProgram.repository}/permission/e2e-security/read`,
+        { method: "PUT" },
+      );
+      expect(revoked.status()).toBe(204);
+      expect(
+        (await api(request, "GET", `security-cases/${caseId}`, TOKENS.security))
+          .status,
+      ).toBe(404);
+      expect(
+        (
+          await api(
+            request,
+            "GET",
+            `security-cases/${caseId}`,
+            TOKENS["reporter-a"],
+          )
+        ).status,
+      ).toBe(200);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
 
   await test.step("the program page offers the private form with consent", async () => {
     const context = await browser.newContext({
