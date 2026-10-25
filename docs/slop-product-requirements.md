@@ -28,7 +28,7 @@ Only owners and maintainers open issues. Contributors use approved requirements 
 
 ## 3. Accounts and wallets
 
-GitHub is the only login. Use its permanent actor ID through renames. Account holds profile, connections, wallets, preferences, and sessions, with links to Inbox and Payouts. Social connections are optional. Record walletless awards against the account; a verified wallet is required only to receive payment.
+GitHub is the only login. Use its permanent actor ID through renames. Account holds profile, connections, wallets, preferences, and sessions, with links to Inbox and Payouts. The X connection is optional. Telegram integration is removed by owner decision on 25 October 2026. Do not provide a Telegram bot, connection, profile link, or support route. Keep existing historical records unchanged. Record walletless awards against the account; a verified wallet is required only to receive payment.
 
 Public GitHub work stays public. Show private case status only in the authorized user's private account area. Keep private case amounts out of ordinary balances and public rankings. X connection shows on the profile with consent and permits no posting or messaging. Support account closure.
 
@@ -164,7 +164,7 @@ The researcher submits through Slop. With the researcher's GitHub authorization,
 
 Use safe evidence of a critical bug or potential loss of funds. Actual loss is not required and must not be induced. Record the first verified qualifying report for each underlying finding. Prevent duplicate reservations. Discretionary approval precedes any award reservation; private bounties do not use the monthly automatic-payment fallback.
 
-Keep receipt, remediation, award, payment, and disclosure states separate. Use independent private patch review and exact-revision tests. A fix, payment, or expired deadline never authorizes disclosure. Maintainers should supply an e-mail address, Telegram or Signal address to be contacted by reporters and moderators.
+Keep receipt, remediation, award, payment, and disclosure states separate. Use independent private patch review and exact-revision tests. A fix, payment, or expired deadline never authorizes disclosure. Maintainers should supply an e-mail or Signal address to be contacted by reporters and moderators.
 
 ### Pay a private award
 

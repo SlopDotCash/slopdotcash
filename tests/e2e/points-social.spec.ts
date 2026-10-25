@@ -78,39 +78,10 @@ test("social membership preserves past points and connection privacy without new
   await page.route(`${site}/api/v1/payments/**/direct-transfers`, (route) =>
     route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
   );
-  let telegram: {
-    id: string;
-    username: string | null;
-    verifiedAt: string;
-    public: number;
-  } | null = {
-    id: "987654321",
-    username: "social_member_tg",
-    verifiedAt: me.joinedAt,
-    public: 0,
-  };
-  const publicTelegram = () =>
-    telegram?.public
-      ? { username: telegram.username, verifiedAt: telegram.verifiedAt }
-      : null;
   await page.route(`${site}/api/v1/points/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
     let value: unknown;
     if (path.endsWith("/sessions")) value = { sessions: [] };
-    else if (path.endsWith("/telegram/me"))
-      value = { configured: true, account: telegram, flow: null };
-    else if (path.endsWith("/telegram/visibility")) {
-      expect(route.request().method()).toBe("POST");
-      telegram = {
-        ...telegram!,
-        public: route.request().postDataJSON().public ? 1 : 0,
-      };
-      value = { updated: true };
-    } else if (path.endsWith("/telegram/disconnect")) {
-      expect(route.request().method()).toBe("POST");
-      telegram = null;
-      value = { disconnected: true };
-    } else if (path.endsWith("/telegram/profile")) value = publicTelegram();
     else if (path.endsWith("/x/me"))
       value = {
         configured: true,
@@ -136,7 +107,6 @@ test("social membership preserves past points and connection privacy without new
           {
             ...me,
             x: account?.public ? account : null,
-            telegram: publicTelegram(),
           },
         ],
         next: null,
@@ -217,8 +187,9 @@ test("social membership preserves past points and connection privacy without new
     page.getByRole("region", { name: "People", exact: true }),
   ).toHaveCount(0);
   const social = page.getByRole("region", { name: "Connections" });
-  await expect(social.getByRole("checkbox")).toHaveCount(2);
+  await expect(social.getByRole("checkbox")).toHaveCount(1);
   await expect(social).toContainText("Connections grant no authority.");
+  await expect(page.getByText(/Telegram/i)).toHaveCount(0);
   await expect(social).not.toContainText("+10 points");
   await page.screenshot({
     path: info.outputPath("account-connections.png"),
@@ -234,30 +205,15 @@ test("social membership preserves past points and connection privacy without new
     .getByLabel("Show my X account with my public membership", { exact: true })
     .click();
   await visibilitySaved;
-  const telegramVisibilitySaved = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname ===
-        "/api/v1/points/telegram/visibility" &&
-      response.request().method() === "POST",
-  );
-  await social
-    .getByLabel("Show my Telegram account with my public membership", {
-      exact: true,
-    })
-    .click();
-  await telegramVisibilitySaved;
   await page.goto(`${site}/points#people`);
   await community.getByLabel("GitHub username").fill("social-member");
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toBeVisible();
-  await expect(
-    community.getByRole("link", { name: "Telegram · @social_member_tg" }),
-  ).toHaveAttribute("href", "https://t.me/social_member_tg");
   await page
     .getByRole("link", { name: "Account settings", exact: true })
     .click();
-  await expect(social.getByRole("checkbox")).toHaveCount(2);
+  await expect(social.getByRole("checkbox")).toHaveCount(1);
   const a11y = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
     .analyze();
@@ -275,23 +231,10 @@ test("social membership preserves past points and connection privacy without new
     .getByRole("button", { name: "Disconnect X", exact: true })
     .click();
   await disconnected;
-  const telegramDisconnected = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname ===
-        "/api/v1/points/telegram/disconnect" &&
-      response.request().method() === "POST",
-  );
-  await social
-    .getByRole("button", { name: "Disconnect Telegram", exact: true })
-    .click();
-  await telegramDisconnected;
   await page.goto(`${site}/points#people`);
   await community.getByLabel("GitHub username").fill("social-member");
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
-  ).toHaveCount(0);
-  await expect(
-    community.getByRole("link", { name: "Telegram · @social_member_tg" }),
   ).toHaveCount(0);
   await expect(community.getByText("15 pts", { exact: true })).toBeVisible();
   await community

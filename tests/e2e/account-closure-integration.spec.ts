@@ -60,6 +60,12 @@ for (const withObligations of [false, true])
       });
       const errors: string[] = [];
       const failures: string[] = [];
+      const retiredRequests: string[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname.startsWith("/api/v1/points/telegram/"))
+          retiredRequests.push(url.pathname);
+      });
       page.on("pageerror", (error) => errors.push(error.message));
       page.on("response", (response) => {
         if (response.url().startsWith(SITE) && response.status() >= 400)
@@ -130,6 +136,36 @@ for (const withObligations of [false, true])
         withObligations ? 1 : 0,
       );
       await page.goto(`${SITE}/account`);
+      const connections = page.getByRole("region", { name: "Connections" });
+      const visibility = connections.getByLabel(
+        "Show my X account with my public membership",
+      );
+      await expect(visibility).toBeChecked();
+      await expect(page.getByText(/Telegram/i)).toHaveCount(0);
+      await expect(page.locator('a[href^="https://t.me/"]')).toHaveCount(0);
+      await visibility.focus();
+      await page.keyboard.press("Space");
+      await expect(visibility).not.toBeChecked();
+      await expect(connections.getByRole("status")).toHaveText(
+        "X visibility updated.",
+      );
+      await page.keyboard.press("Space");
+      await expect(visibility).toBeChecked();
+      await page.screenshot({
+        path: info.outputPath("account-connections.png"),
+        fullPage: true,
+      });
+      await page.goto(`${SITE}/points#people`);
+      const people = page.getByRole("region", { name: "People", exact: true });
+      await people.getByLabel("GitHub username").fill(started.login);
+      await expect(
+        people.getByRole("link", { name: "X · @closing_x" }),
+      ).toBeVisible();
+      await expect(page.getByText(/Telegram/i)).toHaveCount(0);
+      await expect(page.locator('a[href^="https://t.me/"]')).toHaveCount(0);
+      expect((await readState()).connections).toEqual(before.connections);
+      expect((await readState()).retained).toEqual(before.retained);
+      await page.goto(`${SITE}/account`);
       const recovery = page.locator("#recovery");
       await expect(
         recovery.getByRole("button", { name: "Close account", exact: true }),
@@ -184,6 +220,7 @@ for (const withObligations of [false, true])
         ).violations,
       ).toEqual([]);
       expect(errors).toEqual([]);
+      expect(retiredRequests).toEqual([]);
       expect(failures).toEqual([
         "401 /api/v1/payments/me",
         "409 /api/v1/points/join",

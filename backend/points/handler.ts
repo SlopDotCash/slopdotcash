@@ -7,11 +7,6 @@ import { POINTS_RULE } from "../../src/lib/points";
 import { randomToken, sha256Hex } from "../../workers/identity/crypto";
 import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
-import {
-  handleTelegram,
-  handleTelegramWebhook,
-  type TelegramConfiguration,
-} from "./telegram";
 import { handleX, type XConfiguration } from "./x";
 
 export interface PointsDependencies {
@@ -24,8 +19,6 @@ export interface PointsDependencies {
   allowedOrigins?: readonly string[];
   x?: XConfiguration;
   xFetch?: (input: string, init: RequestInit) => Promise<Response>;
-  telegram?: TelegramConfiguration;
-  telegramFetch?: (input: string, init: RequestInit) => Promise<Response>;
 }
 const cookieName = "__Host-slop_points";
 const headers = {
@@ -114,10 +107,6 @@ export async function handlePointsApi(
     ]).has(url.origin)
   )
     return json(403, { error: "origin_forbidden" });
-  // Telegram's servers post updates here with no browser origin; the webhook
-  // authenticates by its own secret header and is not a browser-limited route.
-  if (route === "/telegram/webhook")
-    return handleTelegramWebhook(request, deps, now);
   if (
     request.method !== "GET" &&
     (request.method !== "POST" ||
@@ -148,15 +137,13 @@ export async function handlePointsApi(
       }
     }
     if (route.startsWith("/x/")) return await handleX(request, deps, now);
-    if (route.startsWith("/telegram/"))
-      return await handleTelegram(request, deps, now);
     if (route === "/people" && request.method === "GET") {
       const after = url.searchParams.get("after") ?? "";
       if (after && !/^[A-Za-z0-9_=-]{4,256}$/.test(after))
         return json(400, { error: "invalid_cursor" });
       const result = await deps.db
         .prepare(
-          `SELECT json_group_array(json(item)) items FROM (SELECT json_object('actor',json_object('id',m.actor_id,'login',m.login),'welcome',${WELCOME_SQL},'socialPoints',COALESCE(a.points,0),'x',CASE WHEN l.public=1 THEN json_object('id',l.x_id,'username',l.username,'verifiedAt',l.verified_at) ELSE NULL END,'telegram',CASE WHEN t.public=1 THEN json_object('username',t.username,'verifiedAt',t.verified_at) ELSE NULL END) item FROM points_members m LEFT JOIN points_x_awards a ON ${X_AWARD_SQL} LEFT JOIN points_x_links l ON l.actor_id=m.actor_id LEFT JOIN points_telegram_links t ON t.actor_id=m.actor_id WHERE m.public=1 AND m.actor_id>? ORDER BY m.actor_id LIMIT 26)`,
+          `SELECT json_group_array(json(item)) items FROM (SELECT json_object('actor',json_object('id',m.actor_id,'login',m.login),'welcome',${WELCOME_SQL},'socialPoints',COALESCE(a.points,0),'x',CASE WHEN l.public=1 THEN json_object('id',l.x_id,'username',l.username,'verifiedAt',l.verified_at) ELSE NULL END) item FROM points_members m LEFT JOIN points_x_awards a ON ${X_AWARD_SQL} LEFT JOIN points_x_links l ON l.actor_id=m.actor_id WHERE m.public=1 AND m.actor_id>? ORDER BY m.actor_id LIMIT 26)`,
         )
         .bind(after)
         .first<{ items: string }>();
@@ -338,7 +325,7 @@ export async function handlePointsApi(
           return json(400, { error: "confirmation_mismatch" });
         // One atomic batch: deactivate and hide the membership, remove the
         // optional connections and activity email, then end every session.
-        // Claims keep each X and Telegram ID reserved to this GitHub identity.
+        // Claims keep X and historical Telegram IDs reserved to this GitHub identity.
         // Wallets, unpaid obligations, payment and settlement records, private
         // cases, points history and public GitHub work are not touched.
         const results = await deps.db.batch([
