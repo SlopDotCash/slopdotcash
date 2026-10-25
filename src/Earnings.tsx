@@ -118,7 +118,7 @@ function account(value: unknown): PaymentsAccount {
         !isBaseUnits(m.netBase) ||
         !isBaseUnits(m.feeBase) ||
         BigInt(m.grossBase) !== BigInt(m.netBase) + BigInt(m.feeBase) ||
-        !["underfunded", "awaiting-reservation"].includes(m.state),
+        !["underfunded", "awaiting-reservation", "conflict"].includes(m.state),
     ) ||
     data.balances.some(
       (b) =>
@@ -707,7 +707,9 @@ export function EarningsPage({
                             <td>
                               {award.state === "underfunded"
                                 ? "Approved, underfunded: waiting for the project to add funds"
-                                : "Approved, funded: the project vault reserves it next"}
+                                : award.state === "conflict"
+                                  ? "Approved, but the vault holds a different award under its source: it cannot be reserved"
+                                  : "Approved, funded: the project vault reserves it next"}
                             </td>
                           </tr>
                         ))}

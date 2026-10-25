@@ -20,6 +20,7 @@ import { CycleArchivePage, CyclePage } from "./CyclePages";
 import { EarningsPage } from "./Earnings";
 import {
   EscrowFunding,
+  reservedGross,
   useVaultTotals,
   vaultSnapshotStale,
 } from "./EscrowFunding";
@@ -1212,8 +1213,7 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
         <span key={`${snapshot.network}:${snapshot.vault}`}>
           {index > 0 ? " · " : null}
           {networkLabel(snapshot.network)}: {amount(snapshot.freeBalance)}{" "}
-          available · {amount(snapshot.reservedPrincipal ?? snapshot.reserved)}{" "}
-          reserved
+          available · {amount(reservedGross(snapshot))} reserved
           {vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
             ? ` (stale, read ${formatDateTime(snapshot.observedAt)})`
             : null}
