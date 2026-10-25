@@ -137,6 +137,62 @@ process.exit(1);
     assert.equal(invoked.length, 1);
     assert.deepEqual(invoked[0].slice(0, 2), ["deployments", "list"]);
   }
+  // Execute the publication decision from the same workflow: an unchanged
+  // zero-pin Worker may not yet export the new named entrypoint.
+  const publicationStart = workflow.indexOf(
+    '          if [ "$attester_release" != "true" ]; then',
+  );
+  const publicationEnd = workflow.indexOf(
+    '          cp -R dist "$publish_dir/dist"',
+    publicationStart,
+  );
+  assert(publicationStart >= 0 && publicationEnd > publicationStart);
+  const publication = workflow
+    .slice(publicationStart, publicationEnd)
+    .replace(/^ {10}/gm, "");
+  const parsedPages = spawnSync(
+    "bun",
+    [
+      "--no-env-file",
+      "-e",
+      'process.stdout.write(JSON.stringify(Bun.TOML.parse(await Bun.file("wrangler.toml").text())))',
+    ],
+    { encoding: "utf8", env, timeout: 10_000 },
+  );
+  assert.equal(parsedPages.status, 0, parsedPages.stderr);
+  const pages = JSON.parse(parsedPages.stdout);
+  const recovery = pages.services.find(
+    (service) => service.binding === "BINDING_RECOVERY",
+  );
+  assert.deepEqual(recovery, {
+    binding: "BINDING_RECOVERY",
+    service: config.name,
+    entrypoint: "BindingRecovery",
+  });
+  for (const released of ["true", "false"]) {
+    const output = join(directory, "wrangler.jsonc");
+    await writeFile(output, JSON.stringify(pages));
+    const result = spawnSync("bash", ["-euc", publication], {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: childEnvironment(process.env, {
+        attester_release: released,
+        publish_dir: directory,
+      }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const actual = JSON.parse(await readFile(output, "utf8"));
+    assert.deepEqual(actual, {
+      ...pages,
+      services:
+        released === "true"
+          ? pages.services
+          : pages.services.filter(
+              (service) => service.binding !== "BINDING_RECOVERY",
+            ),
+    });
+    assert.deepEqual(actual.env.preview.services, []);
+  }
   const entry = join(directory, "observer.mjs");
   await writeFile(
     entry,

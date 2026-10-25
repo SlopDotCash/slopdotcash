@@ -1,3 +1,4 @@
+import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   type DeploymentTier,
   deploymentOrigins,
@@ -21,6 +22,7 @@ import {
   isWalletChain,
   type WalletChain,
 } from "../../src/lib/wallets";
+import { isBindingRecoveryInput } from "../../workers/payment-executor/binding-recovery";
 import { type ApiError, fail } from "../api-error";
 import { pathParts } from "../api-path";
 import { canonicalWalletClaimDigests } from "../payments/wallet-registration";
@@ -59,10 +61,12 @@ export type TraceApiDependencies = {
   persistence: TracePersistence;
   authSecret: string;
   operatorGithubIds: ReadonlySet<string>;
-  /** Existing site session; used only for the two same-origin trace read routes. */
+  /** Existing site session; used only for the explicit same-origin operator routes. */
   operatorSession?: (
     request: Request,
   ) => Promise<{ githubId: string; githubLogin: string } | null>;
+  /** Named observation-only service binding, never the default signing entrypoint. */
+  bindingRecovery?: { fetch(request: Request): Promise<Response> };
   now: () => Date;
   randomId: () => string;
   verifyIdentityAssertion: (
@@ -1212,6 +1216,84 @@ async function createReadGrant(
   });
 }
 
+async function reconcileWalletBinding(
+  request: Request,
+  actor: AuthenticatedActor,
+  deps: TraceApiDependencies,
+): Promise<Response> {
+  assertOperator(actor);
+  const { scope, reason, ...input } = await readJsonObject(request);
+  if (
+    (scope !== "ordinary" && scope !== "security-bounty") ||
+    !isBindingRecoveryInput(input) ||
+    typeof reason !== "string" ||
+    reason.trim().length < 8 ||
+    reason.length > 500
+  )
+    fail(
+      400,
+      "invalid_request",
+      "An exact binding, winner and recovery reason are required",
+    );
+  if (!deps.bindingRecovery)
+    fail(503, "recovery_unavailable", "Recovery is unavailable");
+  const audit = {
+    actorGithubId: actor.githubId,
+    target: `binding:${input.originalTransactionId.toLowerCase()}`,
+    requestId: deps.randomId(),
+    details: {
+      scope,
+      reason,
+      network: input.network,
+      vault: input.vault,
+      winnerTransactionId: input.winnerTransactionId,
+    },
+  };
+  const record = (action: string, details: AuditInput["details"] = {}) =>
+    deps.persistence.writeAudit({
+      ...audit,
+      id: deps.randomId(),
+      createdAt: deps.now().toISOString(),
+      action,
+      details: { ...audit.details, ...details },
+    });
+  // A durable request audit precedes the independent journal transaction.
+  // An uncertain response remains retryable using the immutable observation.
+  await record("wallet_binding.reconciliation_requested");
+  let response: Response;
+  try {
+    response = await deps.bindingRecovery.fetch(
+      new Request("https://attester.internal/v1/reconcile-binding", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope, ...input }),
+      }),
+    );
+  } catch {
+    await record("wallet_binding.reconciliation_unknown");
+    fail(
+      503,
+      "recovery_unavailable",
+      "Recovery outcome is unavailable; retry the same request",
+    );
+  }
+  if (!response.ok) {
+    await record("wallet_binding.reconciliation_refused");
+    fail(
+      409,
+      "recovery_pending_or_rejected",
+      "Binding recovery is pending or refused",
+    );
+  }
+  const result = (await readBoundedJson(
+    response,
+    2048,
+    "binding recovery",
+  )) as Record<string, unknown>;
+  await record("wallet_binding.reconciled", { state: String(result.state) });
+  return json(200, result);
+}
+
 async function readTrace(
   request: Request,
   actor: AuthenticatedActor,
@@ -1270,6 +1352,8 @@ function matchAuthenticatedRoute(
   parts: string[],
   deps: TraceApiDependencies,
 ): ((actor: AuthenticatedActor) => Promise<Response>) | null {
+  if (isBindingRecoveryRoute(request, parts))
+    return (actor) => reconcileWalletBinding(request, actor, deps);
   if (
     request.method === "GET" &&
     parts.length === 2 &&
@@ -1376,6 +1460,19 @@ function isOperatorTraceRoute(
   );
 }
 
+function isBindingRecoveryRoute(
+  request: Request,
+  parts: readonly string[],
+): boolean {
+  return (
+    request.method === "POST" &&
+    parts.length === 3 &&
+    parts[0] === "operator" &&
+    parts[1] === "wallet-bindings" &&
+    parts[2] === "reconcile"
+  );
+}
+
 function browserRouteHeaders(
   parts: readonly string[],
   method: string,
@@ -1472,7 +1569,8 @@ async function handleTraceApiInternal(
     return json(400, { error: "https_required" });
   }
   const operatorSessionRoute =
-    isOperatorTraceRoute(request, parts) &&
+    (isOperatorTraceRoute(request, parts) ||
+      isBindingRecoveryRoute(request, parts)) &&
     request.headers.get("authorization") === null &&
     (deploymentOrigins(deps.tier).browserOrigins.has(requestUrl.origin) ||
       isLocal);
@@ -1547,6 +1645,9 @@ async function handleTraceApiInternal(
     const route = matchAuthenticatedRoute(request, parts, deps);
     // No contributor or project-owner read endpoint exists by design.
     if (route === null) return json(404, { error: "not_found" });
+    // Recovery never accepts the contributor/legacy bearer-token path.
+    if (isBindingRecoveryRoute(request, parts) && !operatorSessionRoute)
+      fail(403, "forbidden", "Same-origin operator session is required");
     let actor: AuthenticatedActor | null;
     if (operatorSessionRoute) {
       const origin = request.headers.get("origin");

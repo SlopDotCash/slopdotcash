@@ -23,6 +23,10 @@ import {
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
 import { runMonthlyCoordinator, syncRegistryVaults } from "../payments/index";
 import {
+  isBindingRecoveryInput,
+  reconcileBindingWinner,
+} from "./binding-recovery";
+import {
   assertEvmMonthlySources,
   type BindingRunReport,
   bindingCandidates,
@@ -62,7 +66,7 @@ interface Namespace {
   idFromName(name: string): unknown;
   get(id: unknown): Fetcher;
 }
-interface Environment {
+export interface Environment {
   PAYMENT_SCOPE?: "security-bounty";
   SECURITY_PAYMENT_DEPLOYMENTS?: string;
   PAYMENTS_DB: D1Database;
@@ -94,6 +98,55 @@ export class PaymentSignerJournal {
   ) {}
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // This observation-only path must run before database or secret access,
+    // including the ordinary/private environment copy below.
+    if (url.pathname === "/v1/reconcile-binding") {
+      if (
+        request.method !== "POST" ||
+        this.env.SIGNER_STACK !== "production" ||
+        this.env.SIGNER_ROLE !== "attester" ||
+        this.env.CHAIN_FAMILY !== "evm"
+      )
+        return new Response("Not found", { status: 404 });
+      try {
+        const { scope, ...input } = (await readBoundedJson(
+          request,
+          2048,
+          "binding recovery",
+        )) as Record<string, unknown>;
+        if (
+          (scope !== "ordinary" && scope !== "security-bounty") ||
+          !isBindingRecoveryInput(input)
+        )
+          return Response.json({ error: "invalid_request" }, { status: 400 });
+        const privateScope = scope === "security-bounty";
+        const deployments = privateScope
+          ? this.env.SECURITY_PAYMENT_DEPLOYMENTS
+          : this.env.PAYMENT_DEPLOYMENTS;
+        if (!deployments)
+          return Response.json(
+            { error: "binding_recovery_unavailable" },
+            { status: 409 },
+          );
+        return Response.json(
+          await reconcileBindingWinner(
+            {
+              PAYMENT_DEPLOYMENTS: deployments,
+              PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
+              JOURNAL: privateScope
+                ? privateScopeJournal(this.state.storage)
+                : this.state.storage,
+            },
+            input,
+          ),
+        );
+      } catch {
+        return Response.json(
+          { error: "binding_recovery_pending_or_rejected" },
+          { status: 409 },
+        );
+      }
+    }
     if (url.pathname.startsWith("/v1/security/")) {
       url.pathname = url.pathname.replace("/v1/security/", "/v1/");
       if (this.env.PAYMENT_SCOPE === "security-bounty")

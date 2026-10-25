@@ -118,6 +118,8 @@ type Env = {
   SECURITY_SOLANA_IDENTITY_ATTESTER?: {
     fetch(request: Request): Promise<Response>;
   };
+  /** Named recovery-only entrypoint; it cannot submit a binding or payment. */
+  BINDING_RECOVERY?: { fetch(request: Request): Promise<Response> };
   /** Private RPC endpoints for explicit wallet funding review/check requests. Never returned to the browser. */
   PAYMENT_RPC_URLS?: string;
   PRIVATE_TRACES: R2Bucket;
@@ -944,6 +946,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     ),
     authSecret: context.env.TRACE_AUTH_SECRET,
     operatorGithubIds: githubIdSet(context.env.OPERATOR_GITHUB_IDS),
+    bindingRecovery: context.env.BINDING_RECOVERY,
     operatorSession: (request) =>
       sessionGithubActor(
         request,

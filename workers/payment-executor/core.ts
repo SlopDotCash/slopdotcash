@@ -119,7 +119,7 @@ export interface Authorization extends DispatchPayment {
   challengeId: string;
   expiresAt: string;
 }
-interface Attempt {
+export interface Attempt {
   /** Payment attempts name an obligation; monthly attempts name a period. */
   obligationId?: string;
   monthlyPeriod?: string;
@@ -1318,11 +1318,11 @@ export async function bindStoredDestination(
   };
 }
 
-const STORED_BINDING = "bind:stored:";
+export const STORED_BINDING = "bind:stored:";
 /** Journal keys of stored bindings signed but not yet finalized. */
-const PENDING_BINDINGS = "pending-stored-bindings";
+export const PENDING_BINDINGS = "pending-stored-bindings";
 
-const storedBindingAbi = parseAbi([
+export const storedBindingAbi = parseAbi([
   "function bindDestination(uint64 actorId,address destination,uint64 expectedVersion,bytes32 claimDigest,uint64 expiresAt,bytes walletSignature)",
 ]);
 
