@@ -1018,7 +1018,10 @@ is durable-state evidence, not a model, queue or publication acceptance result.
 
 The scheduler selects one due request and claims it before source reads. It
 checks live registry and installation authority, then reads the complete closed
-PR evidence and pinned policy. A matching current journal avoids another model
+PR evidence and pinned policy. Collection, history validation and publication
+use the validated current D1 manifest, so new registrations do not wait for a
+Worker rebuild. Publication reads the manifest again and preserves the final
+restriction and installation checks. A matching current journal avoids another model
 call. New results pass the reserved inference route, a final ownership check
 and the existing fresh-source publisher before the request is completed.
 Open work completes as context, not an implementation award. Missing evidence keeps the request pending. Related PRs are collected with
