@@ -2299,6 +2299,10 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     id: `bounty-intake-${suffix}`,
     repository: `e2e-security/bounty-intake-${suffix}`,
   };
+  const otherProgram = {
+    id: `bounty-intake-other-${suffix}`,
+    repository: `e2e-security/bounty-intake-other-${suffix}`,
+  };
   const sentinel = `E2E-PRIVATE-SENTINEL-${suffix}`;
   const report = {
     summary: `Vault withdraw skips the owner check ${sentinel}`,
@@ -2377,50 +2381,54 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       ).json()) as { count: number }
     ).count;
 
-  await test.step("program setup with the intake app installed", async () => {
-    await listProject(
-      request,
-      TOKENS.security,
-      program.repository,
-      program.id,
-      {
-        reward: {
-          ...(applicationManifest(program.id, program.repository)
-            .reward as object),
-          monthlyCapMinor: "0",
-          monthlyCapDisplay: "$0",
+  for (const currentProgram of [program, otherProgram]) {
+    await test.step("program setup with the intake app installed", async () => {
+      await listProject(
+        request,
+        TOKENS.security,
+        currentProgram.repository,
+        currentProgram.id,
+        {
+          reward: {
+            ...(applicationManifest(
+              currentProgram.id,
+              currentProgram.repository,
+            ).reward as object),
+            monthlyCapMinor: "0",
+            monthlyCapDisplay: "$0",
+          },
+          securityBounty: bountyTerms(currentProgram.repository),
         },
-        securityBounty: bountyTerms(program.repository),
-      },
-    );
-    const opened = await revise(request, program.id, (m) => ({
-      ...m,
-      securityBounty: openTerms(m.securityBounty as Record<string, unknown>),
-    }));
-    expect(opened.status).toBe(200);
-    // The bounty vault holds one published award of finalized free funds.
-    await vaultSnapshot(
-      program.id,
-      bountyDeployment(program.repository),
-      "10000000000",
-    );
-    await setIntake(request, program.repository, "enabled");
-    const installed = await request.fetch(
-      `${GITHUB_FIXTURE}/__fixture/intake-app/${program.repository}/installed`,
-      { method: "PUT" },
-    );
-    expect(installed.status()).toBe(204);
-    const readiness = await api(
-      request,
-      "GET",
-      `security-programs/${program.id}/intake?installed=1`,
-      null,
-    );
-    expect(readiness.body).toMatchObject({
-      state: "ready",
-      automatic: "ready",
+      );
+      const opened = await revise(request, currentProgram.id, (m) => ({
+        ...m,
+        securityBounty: openTerms(m.securityBounty as Record<string, unknown>),
+      }));
+      expect(opened.status).toBe(200);
+      // The bounty vault holds one published award of finalized free funds.
+      await vaultSnapshot(
+        currentProgram.id,
+        bountyDeployment(currentProgram.repository),
+        "10000000000",
+      );
+      await setIntake(request, currentProgram.repository, "enabled");
+      const installed = await request.fetch(
+        `${GITHUB_FIXTURE}/__fixture/intake-app/${currentProgram.repository}/installed`,
+        { method: "PUT" },
+      );
+      expect(installed.status()).toBe(204);
+      const readiness = await api(
+        request,
+        "GET",
+        `security-programs/${currentProgram.id}/intake?installed=1`,
+        null,
+      );
+      expect(readiness.body).toMatchObject({
+        state: "ready",
+        automatic: "ready",
+      });
     });
-  });
+  }
 
   await test.step("the program page offers the private form with consent", async () => {
     const context = await browser.newContext({
@@ -2464,6 +2472,15 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       page.getByRole("link", { name: /Or report directly on GitHub/u }),
     ).toBeVisible();
     await expect(summary).toHaveValue("Draft survives readiness expiry");
+    await page.evaluate((path) => {
+      history.pushState({}, "", path);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }, `/projects/${otherProgram.id}/security`);
+    await expect(
+      page.getByRole("link", { name: /Or report directly on GitHub/u }),
+    ).toHaveAttribute("href", new RegExp(otherProgram.id));
+    await expect(summary).toHaveValue("");
+    await expect(description).toHaveValue("");
     expect(errors).toEqual([]);
     await context.close();
   });
