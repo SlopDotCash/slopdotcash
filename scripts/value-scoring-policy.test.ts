@@ -558,6 +558,76 @@ test("a maintainer correction overrides only the implementation score", () => {
   expect(result.valueAssessmentCoverage?.[0]?.status).toBe("human-ratified");
 });
 
+test("a zero-share value reviewer is not treated as already awarded", () => {
+  const ratified = outcome(16, "2026-10-21T10:00:00.000Z");
+  const maintainer = actor("maintainer");
+  const projectId = TARGET_REPOSITORIES.find(
+    (target) => target.id === REPO,
+  )?.projectId;
+  const record = {
+    schemaVersion: "1",
+    ruleVersion: "slop-score-v2",
+    projectId,
+    pullRequestNodeId: ratified.id,
+    headSha: HEAD,
+    workUnitId: "wu_slopdotcash_pr_16",
+    tier: "micro",
+    scoreThirds: 1,
+    proposalReviewNodeIds: [],
+    coRatifierNodeIds: [],
+    reason: "Narrow mechanical correction.",
+    supersedes: null,
+  };
+  const createdAt = "2026-10-22T10:00:00.000Z";
+  const source = {
+    ...reviewed(ratified, [
+      review(16, 1, bob as GitHubActor, "APPROVED", "2026-10-21T07:00:00.000Z"),
+      review(16, 2, maintainer, "COMMENTED", "2026-10-21T08:00:00.000Z"),
+      review(16, 3, maintainer, "APPROVED", "2026-10-21T09:00:00.000Z"),
+    ]),
+    comments: [
+      {
+        id: "IC_ratify_16",
+        artifactId: ratified.id,
+        kind: "comment" as const,
+        body: `\`\`\`slop-score\n${JSON.stringify(record)}\n\`\`\`\n`,
+        url: `${REPO_URL}/pull/16#issuecomment-16`,
+        createdAt,
+        updatedAt: createdAt,
+        author: maintainer,
+        authorAssociation: "OWNER",
+      },
+    ],
+  };
+  const result = createLeaderboardSnapshot(
+    input({
+      mergedPullRequestOutcomes: [ratified],
+      reviewedMergedPullRequests: [source],
+      valuePolicy: POLICY,
+      valueDecisions: new Map<string, unknown>([
+        [
+          ratified.id,
+          assessed(ratified, "7", "micro", [
+            { sourceId: "PRR_16_1", tier: "deep" },
+            { sourceId: "PRR_16_2", tier: "triage" },
+            { sourceId: "PRR_16_3", tier: "triage" },
+          ]),
+        ],
+      ]) as unknown as LeaderboardInput["valueDecisions"],
+    }),
+  );
+  const byId = new Map(result.ledger.map((event) => [event.id, event]));
+  expect(byId.get("PR_16:value-review:PRR_16_1")?.scoreThirds).toBe(1);
+  expect(byId.get("PR_16:ratifier:IC_ratify_16")?.scoreThirds).toBe(1);
+  const exclusions = new Map(
+    (result.reviewExclusions ?? [])
+      .filter((exclusion) => exclusion.pullRequestId === "PR_16")
+      .map((exclusion) => [exclusion.reviewId, exclusion.reason]),
+  );
+  expect(exclusions.get("PRR_16_2")).toBe("review-credit-zero-share");
+  expect(exclusions.get("PRR_16_3")).toBe("review-credit-zero-share");
+});
+
 test("a maintainer ratification of a carrier keeps joint review credit", () => {
   const joint = outcome(12, "2026-10-20T10:00:00.000Z");
   const maintainer = actor("maintainer");
