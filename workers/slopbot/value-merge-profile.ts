@@ -3,7 +3,8 @@ import { sha256Hex } from "./github";
 import type { ValueEvidence } from "./value-evidence";
 import type { ValueMergeResolution } from "./value-merge-resolution";
 
-export const MERGE_PROFILE = "git-2.50.1-v1" as const;
+export const MERGE_GIT_VERSION = "git version 2.56.0" as const;
+export const MERGE_PROFILE = "git-2.56.0-v1" as const;
 export interface ValueMergeRecipe {
   profile: typeof MERGE_PROFILE;
   inputSha256: string;
