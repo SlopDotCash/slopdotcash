@@ -2,6 +2,7 @@ import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { expectHeaderRow } from "../header-row";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -166,6 +167,7 @@ test("social membership preserves past points and connection privacy without new
   await expect(
     page.getByRole("region", { name: "Your account details" }),
   ).toHaveCount(0);
+  await expectHeaderRow(page, accountButton);
   const header = page.getByRole("banner");
   await accountButton.click();
   const accountPanel = page.getByRole("region", {
