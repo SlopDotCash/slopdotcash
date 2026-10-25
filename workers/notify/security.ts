@@ -1,3 +1,4 @@
+import type { RepositoryAccessReader } from "../../backend/projects/setup";
 /** SEC-16 restricted pilot. No public route, caller-supplied destination or case content. */
 
 import {
@@ -23,6 +24,7 @@ export type SecurityMailDependencies = {
   config: SecurityMailConfig;
   /** Slop moderators, who decide escalated private-case disputes. */
   moderatorGithubIds?: ReadonlySet<string>;
+  repositoryAccess?: RepositoryAccessReader;
   fromAddress: string;
   now(): Date;
   sendEmail(from: string, to: string, mime: string): Promise<void>;
@@ -200,6 +202,7 @@ async function escalate(deps: SecurityMailDependencies, row: Delivery) {
         row.case_id,
         backupId,
         deps.moderatorGithubIds,
+        deps.repositoryAccess,
       )
     ).allowed
   )
@@ -246,12 +249,20 @@ export async function dispatchSecurityMail(
       .bind(at, at, row.id, at)
       .run();
     if (claim.meta?.changes !== 1) continue;
-    const access = await securityNotificationAccess(
-      deps.db,
-      row.case_id,
-      row.recipient_github_id,
-      deps.moderatorGithubIds,
-    );
+    let access: Awaited<ReturnType<typeof securityNotificationAccess>>;
+    try {
+      access = await securityNotificationAccess(
+        deps.db,
+        row.case_id,
+        row.recipient_github_id,
+        deps.moderatorGithubIds,
+        deps.repositoryAccess,
+      );
+    } catch {
+      // An unavailable authority check sends nothing and remains retryable.
+      await retryWithoutProviderCall(deps, row);
+      continue;
+    }
     if (!access.allowed) {
       await recordDelivery(deps, row, "suppressed");
       continue;
@@ -300,6 +311,7 @@ export async function dispatchSecurityMail(
       row.case_id,
       row.recipient_github_id,
       deps.moderatorGithubIds,
+      deps.repositoryAccess,
     );
     if (!access.allowed) continue;
     const overdue =

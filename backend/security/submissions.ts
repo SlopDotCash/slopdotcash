@@ -19,7 +19,6 @@
  *   report in the reporter's browser.
  */
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
-import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import { fail } from "../api-error";
 import type { D1QueryStatement as D1Statement } from "../d1";
 import { notifySecurityReportReceived } from "../notifications/events";
@@ -38,7 +37,6 @@ import {
 import {
   automaticIntake,
   caseInsertStatement,
-  currentProgram,
   eventStatement,
   exactKeys,
   GHSA,
@@ -47,6 +45,8 @@ import {
   json,
   PROJECT_ID,
   pvrState,
+  type ReportingContext,
+  reportingContext,
   requireActor,
   type SecurityApiDependencies,
   scheduleAnalysis,
@@ -60,6 +60,7 @@ import {
   type IntakeConfig,
   readGrant,
 } from "./intake-grant";
+import { reportingAuthorityUnavailable } from "./project-access";
 import { checkedAnalysis } from "./report-analysis";
 
 export type SubmissionState =
@@ -375,11 +376,8 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
 async function programTerms(
   deps: SecurityApiDependencies,
   projectId: string,
-): Promise<SecurityBountyTerms> {
-  const program = await currentProgram(deps, projectId);
-  if (program === null || program.manifest.listingTier === "retired")
-    fail(404, "program_not_found", "This project has no security program");
-  return program.manifest.securityBounty as SecurityBountyTerms;
+): Promise<ReportingContext> {
+  return reportingContext(deps, projectId);
 }
 
 function grantResponse(
@@ -688,14 +686,22 @@ async function verifyReceipt(
     (row.origin === "slop" && !facts.markerFound)
   )
     return failWith("invalid");
-  return writeVerifiedCase(deps, intake, row, terms, facts);
+  let context: ReportingContext;
+  try {
+    context = await reportingContext(deps, row.project_id, true);
+  } catch (error) {
+    if (!reportingAuthorityUnavailable(error)) throw error;
+    // GitHub already received it. Keep the journal and grant for reconciliation.
+    return stay("contacts-unavailable");
+  }
+  return writeVerifiedCase(deps, intake, row, context, facts);
 }
 
 async function writeVerifiedCase(
   deps: SecurityApiDependencies,
   intake: IntakeConfig,
   row: SubmissionRow,
-  terms: SecurityBountyTerms,
+  terms: ReportingContext,
   facts: AdvisoryFacts,
 ): Promise<{ status: number; row: SubmissionRow }> {
   const now = deps.now();

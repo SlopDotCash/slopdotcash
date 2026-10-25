@@ -1417,13 +1417,13 @@ function ProjectPage({
                   }
                 />
               ) : null}
-              {project.securityBounty ? (
-                <p className="project-terms-line">
-                  <Link href={`/projects/${project.slug}/security`}>
-                    Security bounty
-                  </Link>
-                </p>
-              ) : null}
+              <p className="project-terms-line">
+                <Link href={`/projects/${project.slug}/security`}>
+                  {project.securityBounty
+                    ? "Security bounty"
+                    : "Report a security issue"}
+                </Link>
+              </p>
               {project.rewardAsset ? (
                 <p className="project-terms-line">
                   Reward asset: {project.rewardAsset.symbol} on{" "}
