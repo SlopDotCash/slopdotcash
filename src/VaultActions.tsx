@@ -16,6 +16,7 @@ import { networkLabel } from "./lib/network-names";
 import {
   formatAssetAmount,
   formatBaseUnits,
+  type PayoutPolicy,
   transactionUrl,
 } from "./lib/payments/contracts";
 import {
@@ -75,11 +76,15 @@ export function VaultActions({
   projectId,
   deployment,
   connectedWallet,
+  payoutPolicy = "ordinary",
+  canDeposit = true,
   onFinalized,
 }: {
   projectId: string;
   deployment: EscrowDeployment;
   connectedWallet?: VaultConnection;
+  payoutPolicy?: PayoutPolicy;
+  canDeposit?: boolean;
   onFinalized: () => void;
 }) {
   const solana = ESCROW_NETWORKS[deployment.network].family === "solana";
@@ -100,7 +105,7 @@ export function VaultActions({
     connectedWallet ?? null,
   );
   const [operation, setOperation] = useState<VaultOperation>(
-    saved.pending?.operation ?? "deposit",
+    saved.pending?.operation ?? (canDeposit ? "deposit" : "withdraw"),
   );
   const [amount, setAmount] = useState(saved.pending?.amount ?? "");
   const [review, setReview] = useState<Review | null>(null);
@@ -136,6 +141,14 @@ export function VaultActions({
         throw new Error(
           `Reconnect the wallet that submitted this action: ${pending.wallet}`,
         );
+      if (
+        !canDeposit &&
+        !pending &&
+        !sameWallet(connection.address, deployment.owner)
+      )
+        throw new Error(
+          "Connect the vault owner's wallet to withdraw free funds.",
+        );
       setWallet(connection);
       setReview(null);
       // Only the owner may withdraw; any other wallet can only deposit.
@@ -145,6 +158,8 @@ export function VaultActions({
   const inspect = () =>
     run(async () => {
       if (!wallet) throw new Error("Choose a wallet first.");
+      if (!canDeposit && operation === "deposit")
+        throw new Error("New deposits are currently unavailable.");
       setReview(
         solana
           ? await reviewSolanaVaultAction(
@@ -154,12 +169,20 @@ export function VaultActions({
               operation,
               amount,
             )
-          : await reviewVaultAction(deployment, wallet, operation, amount),
+          : await reviewVaultAction(
+              deployment,
+              wallet,
+              operation,
+              amount,
+              payoutPolicy,
+            ),
       );
     });
   const send = (step: Step) =>
     run(async () => {
       if (!wallet || !review || pending || storageError) return;
+      if (!canDeposit && operation === "deposit")
+        throw new Error("New deposits are currently unavailable.");
       const current = solana
         ? await reviewSolanaVaultAction(
             projectId,
@@ -215,6 +238,7 @@ export function VaultActions({
             amount,
             step,
             beforeSend,
+            payoutPolicy,
           );
         }
         const submitted = { ...intent, hash };
@@ -262,6 +286,7 @@ export function VaultActions({
             pending.gross,
             hash,
             pending.step,
+            payoutPolicy,
           );
       if (!pending.hash) remember({ ...pending, hash });
       if (result === "pending") {
@@ -426,8 +451,12 @@ export function VaultActions({
             <fieldset className="vault-operation">
               <legend>Action</legend>
               {(isOwner
-                ? (["deposit", "withdraw"] as const)
-                : (["deposit"] as const)
+                ? canDeposit
+                  ? (["deposit", "withdraw"] as const)
+                  : (["withdraw"] as const)
+                : canDeposit
+                  ? (["deposit"] as const)
+                  : []
               ).map((choice) => (
                 <label key={choice}>
                   <input
@@ -466,6 +495,7 @@ export function VaultActions({
               type="button"
               className="button secondary-button"
               onClick={() => void inspect()}
+              disabled={!canDeposit && operation === "deposit"}
             >
               Review {operation === "deposit" ? "deposit" : "withdrawal"}
             </button>
@@ -523,7 +553,7 @@ export function VaultActions({
               <button
                 type="button"
                 className="button primary-button"
-                disabled={busy}
+                disabled={busy || (!canDeposit && operation === "deposit")}
                 onClick={() =>
                   void send(
                     review.resetAllowance
