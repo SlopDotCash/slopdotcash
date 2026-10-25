@@ -503,8 +503,9 @@ payments.
 
 ### 3.1 Preconditions
 
-1. Sections 0 to 2 are complete for this network, and the independent review
-   and the testnet acceptance runs are recorded.
+1. Sections 0 to 2 are complete for this network. Record the required testnet
+   acceptance evidence and the owner's waiver of the independent contract
+   audit and signer/attester legal review. The waived reviews are not completed.
 2. The owner creates the vault through project funding. The server verifies
    the finalized creation and records it in a permanent project revision
    (`escrow.deployments`). No per-project admin approval is required. For the

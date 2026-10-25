@@ -123,17 +123,7 @@ export function ownerVaultSetupService(deps: {
     // A new project never inherits their owner, asset, vault or upgrade history.
     for (const { deployment } of await templates(project, payoutPolicy)) {
       const d = currentReview(deployment);
-      if (
-        !d.factory ||
-        !d.factoryCodeSha256 ||
-        !d.registrar ||
-        !d.evmUpgrade ||
-        reviewed.some(
-          (r) =>
-            r.network === d.network &&
-            r.factory.toLowerCase() === d.factory?.toLowerCase(),
-        )
-      )
+      if (!d.factory || !d.factoryCodeSha256 || !d.registrar || !d.evmUpgrade)
         continue;
       reviewed.push({
         network: d.network,

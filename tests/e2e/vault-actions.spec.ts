@@ -1382,6 +1382,23 @@ test("owner creates, registers and funds a vault through the real API", async ({
     expect(created.owner).toBe(donor);
     expect(created.deploymentTransaction).toBe(sends[0]);
     expect(created.evmUpgrade).toEqual(deployment.evmUpgrade);
+    // A staged infrastructure review must not hide a newer verified D1 review.
+    // The first creation above still began with no project deployment at all.
+    const fallback = await page.request.post(`${origin}/__fixture`, {
+      data: {
+        factoryReview: { factoryCodeSha256: "0".repeat(64) },
+        reviewCurrentVault: true,
+        claimId: claim.claimId,
+        automatic,
+      },
+    });
+    expect(fallback.status()).toBe(200);
+    expect((await fallback.json()).infrastructureReview.existingVault).toBe(
+      created.vault,
+    );
+    await page.request.post(`${origin}/__fixture`, {
+      data: { factoryReview: factory },
+    });
     const monthly = await readEvmMonthlyCommitment({
       ...created,
       rpcUrl,

@@ -15,6 +15,7 @@ import type { SolanaEscrowConfig } from "../contracts/solana/adapter";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import type { VaultSetupReview } from "../src/lib/vault-setup";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import securityPayments from "../workers/security-payments";
 import { paymentDeployments } from "./prepare-payment-deployments";
@@ -174,10 +175,25 @@ Bun.serve({
     const url = new URL(request.url);
     try {
       if (url.pathname === "/__fixture") {
+        let infrastructureReview: VaultSetupReview | undefined;
         if (request.method === "POST") {
           const body = await request.json();
           if (input.factory && body.factoryReview)
             Object.assign(input.factory, body.factoryReview);
+          if (body.reviewCurrentVault === true) {
+            const current = await persistence.getProject(input.project.id);
+            if (!current || !deps.vaultSetup)
+              throw new Error("Missing local fixture");
+            infrastructureReview = await deps.vaultSetup.review(
+              current,
+              actor,
+              {
+                network: servedNetwork,
+                claimId: body.claimId,
+                automatic: body.automatic,
+              },
+            );
+          }
           if (typeof body.permitted === "boolean") permitted = body.permitted;
           if (typeof body.templatesEnabled === "boolean")
             templatesEnabled = body.templatesEnabled;
@@ -200,6 +216,7 @@ Bun.serve({
         return Response.json({
           token,
           scanReads,
+          infrastructureReview,
           projects: (await persistence.listProjects()).length,
           paymentPins: paymentDeployments(
             (await persistence.listProjects()).map((p) => p.manifest),
