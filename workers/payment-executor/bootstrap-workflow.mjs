@@ -194,6 +194,37 @@ process.exit(1);
     });
     assert.deepEqual(actual.env.preview.services, []);
   }
+  // The application already accepts the private payment RPC map. Its
+  // installation must pass the real Pages release guard without admitting
+  // a signing key into Pages.
+  const secretStart = workflow.indexOf('          node - "$pages_secrets"');
+  const secretEnd = workflow.indexOf("\n          NODE", secretStart);
+  assert(secretStart >= 0 && secretEnd > secretStart);
+  const secretGuard = workflow
+    .slice(secretStart, secretEnd + "\n          NODE".length)
+    .replace(/^ {10}/gm, "");
+  for (const extra of ["PAYMENT_RPC_URLS", "SIGNER_PRIVATE_KEY"]) {
+    const secretPath = join(directory, "pages-secret-names.txt");
+    await writeFile(
+      secretPath,
+      ["OPERATOR_GITHUB_IDS", "TRACE_AUTH_SECRET", extra]
+        .map((name) => `- ${name}: Value Encrypted`)
+        .join("\n"),
+    );
+    const checked = spawnSync("bash", ["-euc", secretGuard], {
+      encoding: "utf8",
+      env: childEnvironment(process.env, { pages_secrets: secretPath }),
+      timeout: 10_000,
+    });
+    if (extra === "PAYMENT_RPC_URLS")
+      assert.equal(checked.status, 0, checked.stderr);
+    else
+      assert.notEqual(
+        checked.status,
+        0,
+        "Pages must reject a signing-key secret",
+      );
+  }
   // Exercise the same non-Base publication helper the protected release uses.
   // Only the provider CLI is a controlled input; configs and Workerd are real.
   const prepared = [];

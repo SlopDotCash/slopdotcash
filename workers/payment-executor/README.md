@@ -104,6 +104,8 @@ are left unchanged. A network with reviewed vault pins or enabled execution
 requires its separate network release. This preparation reads no signing key
 and installs no secrets; the existing matching credentials can be entered after
 the exact private service deployment is verified. It does not activate payments.
+The release also allows the existing Pages payment API's `PAYMENT_RPC_URLS`
+secret. Supply only the reviewed private RPC map there, never an attester key.
 
 One production attester serves a network's ordinary and bounty vaults. The
 configuration generator derives both pin lists from the checked registry.
