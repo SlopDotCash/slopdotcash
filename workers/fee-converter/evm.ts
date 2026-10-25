@@ -744,6 +744,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           txId: sent.hash,
           rawTx: sent.raw,
           evmNonce: latest,
+          expiresAt: null,
           amount,
         });
         await sendRaw(sent.raw);

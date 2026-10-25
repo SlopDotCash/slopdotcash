@@ -153,7 +153,8 @@ export interface VaultFeeClient {
     recordClaim?: (claim: {
       txId: string;
       rawTx: string;
-      evmNonce: number;
+      evmNonce: number | null;
+      expiresAt: number | null;
       amount: bigint;
     }) => Promise<void>,
   ): Promise<{ txId: string }>;
@@ -575,7 +576,7 @@ async function claimVaultFees(
           txId: send.txId,
           rawTx: send.rawTx,
           evmNonce: send.evmNonce,
-          expiresAt: null,
+          expiresAt: send.expiresAt,
           amountOut: null,
           tokenBalanceBefore: null,
           targetBalanceBefore: null,
