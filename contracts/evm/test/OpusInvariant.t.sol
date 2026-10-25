@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import "./OpusBase.sol";
 import {WideToken} from "./WideToken.sol";
+import {MonthlyTree} from "./MonthlyTree.sol";
 
 interface MintableToken {
     function mint(address to, uint256 amount) external;
@@ -36,6 +37,12 @@ contract OpusHandler {
     // Track that a paid award went to the binding that was active at that instant.
     bool public paidToWrongDestination;
     bool public paidBeforeActivation;
+    /// @dev V2 reserves in admission order, their leaves, and the gross no leaf has proven yet.
+    uint256 public reserveCount;
+    mapping(uint256 => uint32) internal reservePeriod;
+    mapping(uint256 => ProjectEscrow.MonthlyAward[]) internal reserveEntries;
+    mapping(uint256 => mapping(uint256 => bool)) internal leafCommitted;
+    uint256 public ghostUnsettled;
 
     constructor(ProjectEscrow e, MintableToken t, address o, uint256 authorityKey_, uint256 maxDeposit_) {
         escrow = e;
@@ -149,16 +156,7 @@ contract OpusHandler {
     function commitMonthly(uint256 actorSeed, uint256 gross, address caller) external {
         uint128 free = escrow.freeBalance();
         if (free < 2) return;
-        if (!escrow.monthlyEnabled()) {
-            vm.prank(owner);
-            escrow.setMonthlyCommitment(type(uint128).max, true);
-        }
-        (uint64 opensAt, uint64 closesAt) = escrow.monthlyWindow(period);
-        while (block.timestamp >= closesAt) {
-            period = period % 100 == 12 ? period + 89 : period + 1;
-            (opensAt, closesAt) = escrow.monthlyWindow(period);
-        }
-        if (block.timestamp < opensAt) vm.warp(opensAt);
+        _openPeriod();
         gross = 1 + (gross % (free / 2));
         ProjectEscrow.MonthlyAward[] memory entries = new ProjectEscrow.MonthlyAward[](2);
         for (uint256 i; i < 2; ++i) {
@@ -175,6 +173,76 @@ contract OpusHandler {
             actorOf.push(entries[i].actorId);
         }
         period = period % 100 == 12 ? period + 89 : period + 1;
+    }
+
+    /// @dev Anyone reserves a signed V2 remainder of one to six leaves for the next open period.
+    function reserveMonthly(uint256 actorSeed, uint256 gross, uint256 width, address caller) external {
+        if (escrow.pendingMonthlyGross() != escrow.expiredMonthlyGross()) return;
+        uint256 n = 1 + (width % 6);
+        uint128 free = escrow.freeBalance();
+        if (free < n) return;
+        _openPeriod();
+        gross = 1 + (gross % (free / n));
+        ProjectEscrow.MonthlyAward[] memory entries = new ProjectEscrow.MonthlyAward[](n);
+        for (uint256 i; i < n; ++i) {
+            entries[i] = ProjectEscrow.MonthlyAward(
+                _actor(actorSeed + i), uint128(gross), keccak256(abi.encode("monthly-v2", nonce++))
+            );
+            reserveEntries[reserveCount].push(entries[i]);
+        }
+        (ProjectEscrow.AllocationNode memory root,) = MonthlyTree.build(entries, 0);
+        ProjectEscrow.MonthlyReservation memory r = ProjectEscrow.MonthlyReservation(
+            keccak256(abi.encode("allocation", period)),
+            root.hash,
+            root.total,
+            root.total,
+            uint32(n),
+            escrow.ordinarySourceSequence()
+        );
+        (uint8 v, bytes32 rr, bytes32 s) = vm.sign(authorityKey, escrow.monthlyReserveDigest(period, r));
+        vm.prank(caller);
+        escrow.reserveMonthly(period, r, abi.encodePacked(rr, s, v));
+        reservePeriod[reserveCount++] = period;
+        ghostUnsettled += root.total;
+        period = period % 100 == 12 ? period + 89 : period + 1;
+    }
+
+    /// @dev Anyone proves one leaf of any admitted reserve, expired or not.
+    function commitMonthlyLeaf(uint256 reserveSeed, uint256 leafSeed, address caller) external {
+        if (reserveCount == 0) return;
+        uint256 r = reserveSeed % reserveCount;
+        ProjectEscrow.MonthlyAward[] memory entries = reserveEntries[r];
+        uint256 i = leafSeed % entries.length;
+        if (leafCommitted[r][i]) return;
+        (, ProjectEscrow.AllocationNode[] memory proof) = MonthlyTree.build(entries, i);
+        vm.prank(caller);
+        escrow.commitMonthlyLeaf(reservePeriod[r], entries[i], uint32(i), proof);
+        leafCommitted[r][i] = true;
+        ids.push(escrow.awardId(entries[i].sourceDigest));
+        actorOf.push(entries[i].actorId);
+        ghostUnsettled -= entries[i].gross;
+    }
+
+    /// @dev Anyone expires a reserve once its grace has passed; time moves forward to allow it.
+    function expireMonthlyReserve(uint256 reserveSeed) external {
+        if (reserveCount == 0) return;
+        uint32 p = reservePeriod[reserveSeed % reserveCount];
+        (, uint64 closesAt) = escrow.monthlyWindow(p);
+        if (block.timestamp < closesAt + 30 days) vm.warp(closesAt + 30 days);
+        escrow.expireMonthlyReserve(p);
+    }
+
+    function _openPeriod() internal {
+        if (!escrow.monthlyEnabled()) {
+            vm.prank(owner);
+            escrow.setMonthlyCommitment(type(uint128).max, true);
+        }
+        (uint64 opensAt, uint64 closesAt) = escrow.monthlyWindow(period);
+        while (block.timestamp >= closesAt) {
+            period = period % 100 == 12 ? period + 89 : period + 1;
+            (opensAt, closesAt) = escrow.monthlyWindow(period);
+        }
+        if (block.timestamp < opensAt) vm.warp(opensAt);
     }
 
     function claim() external {
@@ -210,16 +278,23 @@ contract OpusInvariantTest is OpusBase {
     function invariant_supplyIdentity() public view {
         uint256 lhs = escrow.totalDeposited();
         uint256 rhs = uint256(escrow.freeBalance()) + escrow.reservedPrincipal() + escrow.reservedFees()
-            + escrow.totalPaid() + escrow.totalPayoutFees() + escrow.totalGrossWithdrawn();
+            + escrow.pendingMonthlyGross() + escrow.totalPaid() + escrow.totalPayoutFees()
+            + escrow.totalGrossWithdrawn();
         require(lhs == rhs, "totalDeposited identity");
     }
 
     function invariant_balanceIdentity() public view {
-        uint256 accounted =
-            uint256(escrow.freeBalance()) + escrow.reservedPrincipal() + escrow.reservedFees() + escrow.accruedFees();
+        uint256 accounted = uint256(escrow.freeBalance()) + escrow.reservedPrincipal() + escrow.reservedFees()
+            + escrow.pendingMonthlyGross() + escrow.accruedFees();
         require(
             IERC20(token()).balanceOf(address(escrow)) == accounted + handler.ghostDonated(), "vault balance identity"
         );
+    }
+
+    /// @dev Pending gross is exactly what no leaf has proven; expiry never removes it, only its block.
+    function invariant_monthlyReserveAccounting() public view {
+        require(escrow.pendingMonthlyGross() == handler.ghostUnsettled(), "pending equals unproven leaves");
+        require(escrow.expiredMonthlyGross() <= escrow.pendingMonthlyGross(), "expired within pending");
     }
 
     function invariant_feeIdentity() public view {
