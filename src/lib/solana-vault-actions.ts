@@ -142,7 +142,7 @@ export async function sendSolanaVaultAction(
   );
 }
 export async function sendSolanaWalletTransaction(
-  deployment: EscrowDeployment,
+  deployment: Pick<EscrowDeployment, "network">,
   wallet: VaultConnection,
   transaction: string,
   msg: Uint8Array,

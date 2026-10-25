@@ -6,6 +6,14 @@ import {
   prepareEvmVaultCreation,
   verifyEvmVaultCreation,
 } from "../../contracts/evm/adapter";
+import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
+import {
+  prepareSolanaVaultCreation,
+  SolanaVaultCreationFailed,
+  verifySolanaVaultCreation,
+} from "../../contracts/solana/owner-creation";
+import type { SolanaVaultCreation } from "../../contracts/solana/owner-instructions";
+import { SolanaWalletActionError } from "../../contracts/solana/wallet-transactions";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -91,18 +99,28 @@ export function ownerVaultSetupService(deps: {
           ESCROW_NETWORKS[d.network].chain ===
             (payoutPolicy === "security-bounty"
               ? project.manifest.securityBounty?.amount.network
-              : project.manifest.reward.chain) &&
-          // Solana uses the same registration policy; its edge creation planner is separate.
-          ESCROW_NETWORKS[d.network].family === "evm",
+              : project.manifest.reward.chain),
       );
   }
   async function resolve(
     project: ProjectRecord,
     actor: GithubActor,
     input: VaultSetupInput,
+    registrationOnly = false,
   ) {
     const network = ESCROW_NETWORKS[input.network];
     const reward = project.manifest.reward;
+    // Bounty and monthly funds must never share a vault. The Solana path builds
+    // an ordinary vault from the monthly cap only, so it refuses any other purpose.
+    if (
+      (input.payoutPolicy ?? "ordinary") !== "ordinary" &&
+      network?.family !== "evm"
+    )
+      fail(
+        422,
+        "vault_setup_unavailable",
+        "Owner setup for a Solana bounty vault is not available.",
+      );
     const bounty = input.payoutPolicy === "security-bounty";
     const program = project.manifest.securityBounty;
     if (
@@ -155,6 +173,78 @@ export function ownerVaultSetupService(deps: {
         "vault_setup_unavailable",
         "This network has no reviewed reward asset.",
       );
+    if (network.family === "solana") {
+      if (BigInt(reward.monthlyCapMinor) > (1n << 64n) - 1n)
+        fail(
+          422,
+          "vault_setup_unavailable",
+          "The monthly amount exceeds the Solana vault limit.",
+        );
+      for (const { deployment: template, payoutPolicy } of await templates(
+        project,
+      )) {
+        if (
+          template.network !== input.network ||
+          !template.programId ||
+          !template.projectPda ||
+          !template.networkDomain ||
+          !template.rotationAuthority ||
+          !template.rotationDelaySeconds ||
+          !network.genesisHash
+        )
+          continue;
+        const config: SolanaEscrowConfig = {
+          ...template,
+          programId: template.programId,
+          projectPda: template.projectPda,
+          networkDomain: template.networkDomain,
+          genesisHash: network.genesisHash,
+          rotationAuthority: template.rotationAuthority,
+          rotationDelaySeconds: template.rotationDelaySeconds,
+          rpcUrl: deps.rpcUrl(input.network),
+          projectId: project.id,
+          mint: template.asset,
+          payoutPolicy,
+        };
+        const creation: SolanaVaultCreation = {
+          programId: config.programId,
+          owner: claim.address,
+          mint: asset,
+          projectDigest: registryProjectDigest(project.id),
+          networkDomain: config.networkDomain,
+          identityAuthority: config.identityAuthority,
+          feeRecipient: config.feeRecipient,
+          bindingDelaySeconds: config.bindingDelaySeconds,
+          rotationDelaySeconds: config.rotationDelaySeconds,
+          monthlyCap: reward.monthlyCapMinor,
+          automaticMonthly: input.automatic,
+          payoutPolicy: "ordinary",
+        };
+        try {
+          const prepared = await prepareSolanaVaultCreation(
+            config,
+            creation,
+            registrationOnly,
+          );
+          return {
+            family: "solana" as const,
+            template,
+            config,
+            creation,
+            prepared,
+          };
+        } catch (error) {
+          if (error instanceof SolanaWalletActionError)
+            fail(422, "vault_creation_invalid", error.message);
+          // Only a current verified program and Config may anchor new owner creation.
+        }
+      }
+      fail(
+        503,
+        "vault_setup_unavailable",
+        "Vault creation is unavailable until this network has a compatible reviewed program.",
+      );
+    }
     const creation: EvmVaultCreation = {
       projectId: `0x${registryProjectDigest(project.id)}`,
       owner: claim.address,
@@ -187,7 +277,7 @@ export function ownerVaultSetupService(deps: {
       };
       try {
         const prepared = await prepareEvmVaultCreation(config, creation);
-        return { template, config, creation, prepared };
+        return { family: "evm" as const, template, config, creation, prepared };
       } catch {
         // A historical template may have been upgraded. Only a still-verifiable one is usable.
       }
@@ -209,12 +299,22 @@ export function ownerVaultSetupService(deps: {
       ];
     },
     async review(project, actor, input) {
-      const { config, creation, prepared } = await resolve(
-        project,
-        actor,
-        input,
-      );
+      const result = await resolve(project, actor, input);
+      if (result.family === "solana")
+        return {
+          family: "solana",
+          network: input.network,
+          owner: result.creation.owner,
+          asset: result.creation.mint,
+          cap: project.manifest.reward.monthlyCapMinor,
+          capDisplay: project.manifest.reward.monthlyCapDisplay,
+          automatic: input.automatic,
+          creation: result.creation,
+          ...result.prepared,
+        };
+      const { config, creation, prepared } = result;
       return {
+        family: "evm",
         payoutPolicy: input.payoutPolicy ?? "ordinary",
         network: input.network,
         owner: creation.owner,
@@ -230,11 +330,35 @@ export function ownerVaultSetupService(deps: {
       };
     },
     async register(project, actor, input, transactionId) {
-      const { template, config, creation } = await resolve(
-        project,
-        actor,
-        input,
-      );
+      const result = await resolve(project, actor, input, true);
+      if (result.family === "solana") {
+        try {
+          const verified = await verifySolanaVaultCreation(
+            result.config,
+            result.creation,
+            transactionId,
+          );
+          if (!verified) return null;
+          return {
+            ...currentReview(result.template),
+            ...verified,
+            owner: result.creation.owner,
+            asset: result.creation.mint,
+            deploymentTransaction: transactionId,
+          };
+        } catch (error) {
+          fail(
+            422,
+            error instanceof SolanaVaultCreationFailed
+              ? "vault_creation_failed"
+              : "vault_creation_invalid",
+            error instanceof Error
+              ? error.message
+              : "The creation transaction could not be verified.",
+          );
+        }
+      }
+      const { template, config, creation } = result;
       let vault: string | null;
       try {
         vault = await verifyEvmVaultCreation(config, creation, transactionId);

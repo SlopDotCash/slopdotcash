@@ -1118,11 +1118,12 @@ export async function verifyEvmVaultCreation(
   );
   await verifyEvmDeployment(created, "finalized", undefined, input.projectId);
   if (input.payoutPolicy !== "security-bounty") {
+    // Read the policy at the creation block: a later owner change must not block registration.
     const cap = BigInt(
-      await getter(created, vault, "monthlyCap()", "finalized"),
+      await getter(created, vault, "monthlyCap()", receipt.blockNumber),
     );
     const enabled = BigInt(
-      await getter(created, vault, "monthlyEnabled()", "finalized"),
+      await getter(created, vault, "monthlyEnabled()", receipt.blockNumber),
     );
     if (
       cap !== BigInt(input.monthlyCap) ||

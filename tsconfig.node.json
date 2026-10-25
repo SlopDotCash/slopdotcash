@@ -24,6 +24,8 @@
     "contracts/evm/integration/mainnet-upgrade-rehearsal.ts",
     "contracts/solana/adapter.ts",
     "contracts/solana/transactions.ts",
+    "contracts/solana/owner-instructions.ts",
+    "contracts/solana/owner-creation.ts",
     "contracts/solana/funding.ts",
     "contracts/solana/wallet-transactions.ts",
     "contracts/solana/commitment.ts",

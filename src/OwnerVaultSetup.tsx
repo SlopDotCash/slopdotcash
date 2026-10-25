@@ -3,11 +3,14 @@ import { readBoundedJson } from "./lib/browser-json";
 import type { EscrowDeployment } from "./lib/escrow-policy.mjs";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
-import type { PayoutPolicy } from "./lib/payments/contracts";
+import { formatBaseUnits, type PayoutPolicy } from "./lib/payments/contracts";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import {
   checkedVaultSetupReview,
+  isVaultCreationId,
+  solanaVaultCreationMessage,
   type VaultSetupInput,
   type VaultSetupReview,
 } from "./lib/vault-setup";
@@ -65,7 +68,7 @@ function restore(key: string): Pending | null {
     typeof value.review.owner !== "string" ||
     typeof value.review.capDisplay !== "string" ||
     !Object.hasOwn(ESCROW_NETWORKS, value.input.network) ||
-    (value.hash !== null && !/^0x[0-9a-fA-F]{64}$/.test(value.hash))
+    (value.hash !== null && !isVaultCreationId(value.input.network, value.hash))
   )
     throw new Error(
       "The saved request cannot be read. Check your wallet activity before creating a vault.",
@@ -113,7 +116,14 @@ export function OwnerVaultSetup({
   const [notice, setNotice] = useState("");
   const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
   const [reload, setReload] = useState(0);
-  const wallets = usePayoutWallets().filter((w) => w.family === "evm");
+  const solana =
+    ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.family ===
+    "solana";
+  const sameWallet = (a: string, b: string) =>
+    solana ? a === b : a.toLowerCase() === b.toLowerCase();
+  const wallets = usePayoutWallets().filter((w) =>
+    solana ? w.family === "solana" && w.solanaFunding : w.family === "evm",
+  );
   useEffect(() => {
     if (review && !pending && !busy) createButton.current?.focus();
   }, [review, pending, busy]);
@@ -177,10 +187,7 @@ export function OwnerVaultSetup({
   const connect = (provider: PayoutWallet) =>
     run(async () => {
       const connected = await provider.connect();
-      if (
-        pending &&
-        connected.address.toLowerCase() !== pending.review.owner.toLowerCase()
-      )
+      if (pending && !sameWallet(connected.address, pending.review.owner))
         throw new Error("Reconnect the wallet used for this vault request.");
       setWallet(connected);
       setReview(null);
@@ -190,7 +197,8 @@ export function OwnerVaultSetup({
       c.authorized &&
       c.chain ===
         ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.chain &&
-      c.address.toLowerCase() === wallet?.address.toLowerCase(),
+      wallet &&
+      sameWallet(c.address, wallet.address),
   );
   const reviewCreation = () =>
     run(async () => {
@@ -223,19 +231,21 @@ export function OwnerVaultSetup({
     });
   const create = () =>
     run(async () => {
-      if (!wallet?.evmRequest || !review)
-        throw new Error("Connect and review first.");
-      const accounts = await wallet.evmRequest("eth_accounts", []);
-      if (
-        !Array.isArray(accounts) ||
-        String(accounts[0]).toLowerCase() !==
-          review.review.owner.toLowerCase() ||
-        BigInt(String(await wallet.evmRequest("eth_chainId", []))) !==
-          BigInt(review.review.chainId)
-      )
-        throw new Error(
-          `Connect the reviewed wallet on ${networkLabel(review.input.network)}.`,
-        );
+      if (!wallet || !review) throw new Error("Connect and review first.");
+      if (review.review.family === "evm") {
+        if (!wallet.evmRequest) throw new Error("Choose an EVM wallet.");
+        const accounts = await wallet.evmRequest("eth_accounts", []);
+        if (
+          !Array.isArray(accounts) ||
+          String(accounts[0]).toLowerCase() !==
+            review.review.owner.toLowerCase() ||
+          BigInt(String(await wallet.evmRequest("eth_chainId", []))) !==
+            BigInt(review.review.chainId)
+        )
+          throw new Error(
+            `Connect the reviewed wallet on ${networkLabel(review.input.network)}.`,
+          );
+      }
       const fresh = (await request(`project-vaults/${project.id}`, {
         ...review.input,
         step: "review",
@@ -251,20 +261,46 @@ export function OwnerVaultSetup({
           "This vault already exists. Recover its creation transaction instead of sending another.",
         );
       if (
-        JSON.stringify(fresh.review.transaction) !==
-        JSON.stringify(review.review.transaction)
+        fresh.review.family !== review.review.family ||
+        (fresh.review.family === "evm" &&
+          JSON.stringify(fresh.review.transaction) !==
+            JSON.stringify(review.review.transaction)) ||
+        (fresh.review.family === "solana" &&
+          review.review.family === "solana" &&
+          JSON.stringify(fresh.review.creation) !==
+            JSON.stringify(review.review.creation))
       )
         throw new Error("The creation request changed. Review again.");
-      remember(review);
+      // Refresh Solana's transaction lifetime only after the owner, policy and
+      // exact creation instructions still match the review above.
+      const ready = { ...review, review: fresh.review };
+      remember(ready);
       try {
-        const hash = await wallet.evmRequest("eth_sendTransaction", [
-          review.review.transaction,
-        ]);
-        if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash))
+        let hash: unknown;
+        if (ready.review.family === "solana") {
+          if (!ready.review.transaction)
+            throw new Error("Recover the existing vault transaction.");
+          hash = await sendSolanaWalletTransaction(
+            { network: ready.input.network },
+            wallet,
+            ready.review.transaction.transaction,
+            solanaVaultCreationMessage(ready.review),
+            () => remember(ready),
+          );
+        } else {
+          if (!wallet.evmRequest) throw new Error("Choose an EVM wallet.");
+          hash = await wallet.evmRequest("eth_sendTransaction", [
+            ready.review.transaction,
+          ]);
+        }
+        if (
+          typeof hash !== "string" ||
+          !isVaultCreationId(ready.input.network, hash)
+        )
           throw new Error(
             "The wallet did not return a transaction hash. Recover it from wallet activity.",
           );
-        remember({ ...review, hash });
+        remember({ ...ready, hash });
         setRecoveryHash(hash);
         setReview(null);
         setNotice(
@@ -280,7 +316,7 @@ export function OwnerVaultSetup({
       const current = pending ?? review;
       if (!current) throw new Error("Review the existing vault first.");
       const hash = recoveryHash.trim();
-      if (!/^0x[0-9a-fA-F]{64}$/.test(hash))
+      if (!isVaultCreationId(current.input.network, hash))
         throw new Error(
           "Enter the creation transaction hash from your wallet.",
         );
@@ -371,8 +407,8 @@ export function OwnerVaultSetup({
       {!active && info ? (
         info.networks.length === 0 ? (
           <p>
-            Vault creation is unavailable until a compatible factory is reviewed
-            for this project's network.
+            Vault creation is unavailable until a compatible factory or program
+            is reviewed for this project's network.
           </p>
         ) : (
           <>
@@ -383,6 +419,7 @@ export function OwnerVaultSetup({
                 disabled={busy}
                 onChange={(e) => {
                   setNetwork(e.target.value);
+                  setWallet(null);
                   setReview(null);
                 }}
               >
@@ -471,6 +508,17 @@ export function OwnerVaultSetup({
                 <dd>Security bounty: 75% researcher, 25% Slop</dd>
               </>
             )}
+            {active.review.family === "solana" && active.review.transaction && (
+              <>
+                <dt>Estimated network fee (SOL)</dt>
+                <dd>
+                  {formatBaseUnits(
+                    active.review.transaction.networkFeeLamports,
+                    9,
+                  )}
+                </dd>
+              </>
+            )}
           </dl>
           {!pending && !active.review.existingVault ? (
             <button
@@ -486,7 +534,7 @@ export function OwnerVaultSetup({
           {pending || active.review.existingVault ? (
             <>
               <label>
-                Creation transaction hash{" "}
+                Creation transaction {solana ? "signature" : "hash"}{" "}
                 <input
                   value={recoveryHash}
                   disabled={busy}
