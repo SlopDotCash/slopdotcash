@@ -296,19 +296,26 @@ sections 6 and 7). Migration `0062` adds its private records.
 5. **Authorization and execution.** The ordinary attester's scheduled job
    refreshes the finalized vault projection, runs the coordinator, and signs
    each funded month's eligible allocation. The Durable Object records the
-   first intent before signing and refuses a different root for that month.
+   first intent before signing and keeps the frozen economic allocation fixed.
    Funding-time exclusions are omitted; later bans preserve funded awards.
-   The signed allocation is immutable in `monthly_payment_authorizations`.
+   The first authorization is immutable in `monthly_payment_authorizations`.
+   EVM V2 signs the remaining sources at one finalized block. A source change
+   before admission invalidates that attempt. A retry appends a signed attempt
+   in `monthly_payment_authorization_attempts`; it never changes the snapshot,
+   whole allocation amount, or prior signature. Once the chain admits a root,
+   no new attempt is signed. Legacy EVM and Solana keep their original intent.
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM/authorization/:network`
-   returns only this final authorization and its publication time, without
+   returns the latest signed execution attempt and its publication time, without
    calling a signer or RPC. It exposes no private adjustment history.
    Publication is not a reservation or payment. A project-operated or
    permissionless executor must still submit the bounded commitment and
    reconcile finalized results. The payments scheduler sends published allocations
    to the configured executor's `/v1/commit-monthly` service. Hosted relayers
    accept this only on the test stack; production requires a separately operated
-   executor. EVM admission reserves its awards in one transaction and keeps the
-   monthly digest of #1081. Solana signs `solanaMonthlyMessage` v3. Before it
+   executor. Legacy EVM reserves its awards in one transaction. EVM V2 reserves
+   the remaining total, then commits bounded proven leaves. An admitted month
+   remains resumable after opt-out or its admission window; only finalized
+   completion retires it. Solana signs `solanaMonthlyMessage` v3. Before it
    signs, the attester reads every included source's `origin` and
    `monthly-source` account at one finalized slot, refuses the month if any
    exists, and signs that slot's block time as `frozenAt`. The journal keeps this

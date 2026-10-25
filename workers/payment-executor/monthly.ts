@@ -6,7 +6,13 @@ import {
   type MonthlyAttestationRequest,
   prepareMonthlyAttestation,
 } from "../../backend/payments/monthly-attestation";
+import {
+  type EvmMonthlyReservation,
+  evmMonthlyReserveDigest,
+  type MonthlyAllocationEntry,
+} from "../../contracts/evm/adapter";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import type { JournalStore } from "./core";
 
 export interface MonthlyAuthorization {
@@ -46,15 +52,58 @@ export async function signMonthlyAllocation(
     /** Solana: at one finalized slot, prove that no included source has an
      * `origin` or `monthly-source` account and return that slot's block time. */
     freeze?(plan: MonthlyAttestationPlan): Promise<string>;
+    /** EVM V2: observe remaining sources and admission at one finalized block.
+     * Null is only a proven legacy vault; an admitted root refuses a new attempt. */
+    reserve?(plan: MonthlyAttestationPlan): Promise<{
+      reservation: EvmMonthlyReservation;
+      entries: MonthlyAllocationEntry[];
+    } | null>;
   },
   request: MonthlyAttestationRequest,
 ): Promise<MonthlyAuthorization> {
-  let plan = await prepareMonthlyAttestation(
-    { ...deps, now: deps.now() },
-    request,
-  );
+  const prepare = async (frozenAt?: string) => {
+    let prepared = await prepareMonthlyAttestation(
+      { ...deps, now: deps.now() },
+      request,
+      frozenAt,
+      !!deps.reserve,
+    );
+    if (prepared.family !== "evm" || !deps.reserve) return prepared;
+    const attempt = await deps.reserve(prepared);
+    if (!attempt)
+      return prepareMonthlyAttestation({ ...deps, now: deps.now() }, request);
+    if (
+      attempt.reservation.allocationDigest !== `0x${request.snapshotSha256}` ||
+      attempt.reservation.wholeGross !== prepared.totalGrossBase
+    )
+      throw new Error(
+        "Monthly execution attempt changed the frozen allocation",
+      );
+    const chainId = ESCROW_NETWORKS[request.network].chainId;
+    if (!chainId) throw new Error("EVM chain identity is missing");
+    prepared = {
+      ...prepared,
+      evmReservation: attempt.reservation,
+      entries: attempt.entries.map((entry) => ({
+        ...entry,
+        grossMicro: String(entry.grossMicro),
+      })),
+      allocationRoot: attempt.reservation.allocationRoot,
+      messageHex: evmMonthlyReserveDigest(
+        BigInt(chainId),
+        prepared.deployment.vault,
+        request.period,
+        attempt.reservation,
+      ).slice(2),
+    };
+    return prepared;
+  };
+  let plan = await prepare();
   await deps.verifyDeployment(plan);
-  const key = `monthly:${request.network}:${plan.deployment.vault}:${request.period}`;
+  const monthKey = `monthly:${request.network}:${plan.deployment.vault}:${request.period}`;
+  const key = plan.evmReservation
+    ? `${monthKey}:v2:${plan.evmReservation.sourceSequence}`
+    : monthKey;
   if (plan.family === "solana") {
     // The release path is refund-free only if frozen_at is a time at which no
     // included source was consumed. A recorded freeze stays true: origins are
@@ -78,6 +127,20 @@ export async function signMonthlyAllocation(
     ...(plan.frozenAt ? { frozenAt: plan.frozenAt } : {}),
   };
   const intent = await deps.journal.transaction(async (tx) => {
+    if (plan.evmReservation) {
+      // A new source sequence can change execution inputs, never the frozen
+      // allocation. Preserve a legacy intent and every V2 signed attempt.
+      const bindingKey = `${monthKey}:allocation`;
+      for (const binding of [
+        await tx.get<Intent>(monthKey),
+        await tx.get<{ snapshotSha256: string }>(bindingKey),
+      ])
+        if (binding && binding.snapshotSha256 !== request.snapshotSha256)
+          throw new Error(
+            "Monthly authorization already bound to another allocation",
+          );
+      await tx.put(bindingKey, { snapshotSha256: request.snapshotSha256 });
+    }
     const previous = await tx.get<Intent>(key);
     if (previous) {
       if (
@@ -120,11 +183,7 @@ export async function signMonthlyAllocation(
     throw new Error("Monthly signature does not match the reviewed authority");
   }
   // A slow signer must not publish after a restriction or opt-out was observed.
-  const current = await prepareMonthlyAttestation(
-    { ...deps, now: deps.now() },
-    request,
-    plan.frozenAt,
-  );
+  const current = await prepare(plan.frozenAt);
   if (
     current.messageHex !== plan.messageHex ||
     current.deployment.identityAuthority !== expected.authority

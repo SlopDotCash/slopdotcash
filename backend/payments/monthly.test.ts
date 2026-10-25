@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { privateKeyToAccount } from "viem/accounts";
+import {
+  EvmMonthlyAlreadyAdmitted,
+  evmMonthlySumTree,
+} from "../../contracts/evm/adapter";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
@@ -30,7 +34,10 @@ import {
   MonthlyPaymentError,
   monthlyOwnerService,
 } from "./monthly";
-import { prepareMonthlyAttestation } from "./monthly-attestation";
+import {
+  type MonthlyAttestationPlan,
+  prepareMonthlyAttestation,
+} from "./monthly-attestation";
 import { publishMonthlyAuthorizations } from "./monthly-publication";
 
 const testAttester = privateKeyToAccount(`0x${"01".repeat(32)}`);
@@ -1477,6 +1484,214 @@ test("monthly signing preserves its first intent through retry and refuses a cha
     "already bound",
   );
   expect(signatures).toBe(1);
+});
+
+test("V2 monthly signing publishes permanent source-bound attempts and resumes the selected admitted month", async () => {
+  vault("1000");
+  await coordinate(afterCutoff);
+  if (!schedule) throw new Error("Fixture schedule missing");
+  const { digest } = sqlite
+    .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
+    .get() as { digest: string };
+  const request = {
+    projectId: project.id,
+    period: "2026-11",
+    network: "base-sepolia" as const,
+    snapshotSha256: digest,
+  };
+  const records = new Map<string, unknown>();
+  const journal: JournalStore = {
+    async get<T>(key: string) {
+      return records.get(key) as T | undefined;
+    },
+    async put<T>(key: string, value: T) {
+      records.set(key, structuredClone(value));
+    },
+    async transaction<T>(fn: (store: JournalStore) => Promise<T>) {
+      return fn(journal);
+    },
+  };
+  // Controlled finalized observations here; the Anvil workflow invokes the
+  // real adapter with the same signer/publication path and actual source changes.
+  let sequence = 9n;
+  let admitted = false;
+  let changeDuringSign = false;
+  let signatures = 0;
+  const deps = {
+    db,
+    ...projects(),
+    networks: ["base-sepolia"],
+    schedule,
+    now: () => afterCutoff,
+    journal,
+    verifyDeployment: async () => {},
+    reserve: async (plan: MonthlyAttestationPlan) => {
+      if (admitted) throw new EvmMonthlyAlreadyAdmitted();
+      expect(plan.entries.map((e) => e.githubUserId)).toEqual([A, B]);
+      expect(plan.totalGrossBase).toBe("1000");
+      const entries = sequence === 9n ? plan.entries : plan.entries.slice(1);
+      const tree = evmMonthlySumTree(entries);
+      return {
+        entries,
+        reservation: {
+          version: 2 as const,
+          allocationDigest: `0x${digest}`,
+          allocationRoot: tree.hash,
+          wholeGross: plan.totalGrossBase,
+          remainingGross: tree.total.toString(),
+          count: entries.length,
+          sourceSequence: sequence.toString(),
+        },
+      };
+    },
+    sign: async (plan: MonthlyAttestationPlan) => {
+      signatures++;
+      const signature = (
+        await testAttester.sign({ hash: `0x${plan.messageHex}` })
+      ).slice(2);
+      if (changeDuringSign) sequence++;
+      return signature;
+    },
+  };
+  const authorize = () => signMonthlyAllocation(deps, request);
+  const publication = {
+    db,
+    networks: ["base-sepolia"],
+    schedule,
+    now: afterCutoff,
+    authorize,
+  };
+  expect((await publishMonthlyAuthorizations(publication)).failures).toEqual(
+    [],
+  );
+  const first = await authorize();
+  expect(first.plan.evmReservation?.sourceSequence).toBe("9");
+  expect(signatures).toBe(1);
+  const original = sqlite
+    .prepare("SELECT authorization FROM monthly_payment_authorizations")
+    .get();
+  expect(count("monthly_payment_authorization_attempts")).toBe(1);
+  expect(await publishMonthlyAuthorizations(publication)).toEqual({
+    published: [],
+    failures: [],
+  });
+  // The indexed conflicting source must not shrink the economic allocation.
+  sqlite
+    .prepare(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES(?,?,?,?,?,?,?,6,'1','1',?,'reserved',?,NULL)",
+    )
+    .run(
+      "manual-source",
+      project.id,
+      A,
+      request.network,
+      "base",
+      deployment.vault,
+      deployment.asset,
+      escrowAwardOrigin(project.id, request.period, A),
+      afterCutoff.toISOString(),
+    );
+  sequence = 10n;
+  expect((await publishMonthlyAuthorizations(publication)).failures).toEqual(
+    [],
+  );
+  const second = await authorize();
+  expect(second.plan.entries.map((e) => e.githubUserId)).toEqual([B]);
+  expect(second.plan.totalGrossBase).toBe("1000");
+  expect(second.plan.evmReservation?.remainingGross).toBe("400");
+  expect(second.plan.request).toEqual(first.plan.request);
+  expect(second.plan.allocationRoot).not.toBe(first.plan.allocationRoot);
+  expect(count("monthly_payment_authorization_attempts")).toBe(2);
+  expect(
+    sqlite
+      .prepare("SELECT authorization FROM monthly_payment_authorizations")
+      .get(),
+  ).toEqual(original);
+  const publicUrl = `https://slop.cash/api/v1/payments/projects/${project.id}/monthly/2026-11/authorization/base-sepolia`;
+  const readPublic = async () => {
+    const response = await handlePaymentsApi(new Request(publicUrl), { db });
+    expect(response.status).toBe(200);
+    return ((await response.json()) as { authorization: typeof second })
+      .authorization;
+  };
+  expect(await readPublic()).toEqual(second);
+  // An older signature cannot replace the new public execution inputs.
+  expect(
+    (
+      await publishMonthlyAuthorizations({
+        ...publication,
+        authorize: async () => first,
+      })
+    ).failures,
+  ).toHaveLength(1);
+  expect(await readPublic()).toEqual(second);
+  // A source consumed during signing leaves its intent, but publishes nothing.
+  sequence = 11n;
+  changeDuringSign = true;
+  await expect(authorize()).rejects.toThrow("changed during signing");
+  expect(count("monthly_payment_authorization_attempts")).toBe(2);
+  changeDuringSign = false;
+  // Sequence is uint256; ordering must not cast it to SQLite int64.
+  sequence = 1n << 64n;
+  expect((await publishMonthlyAuthorizations(publication)).failures).toEqual(
+    [],
+  );
+  const current = await authorize();
+  expect(await readPublic()).toEqual(current);
+  expect(count("monthly_payment_authorization_attempts")).toBe(3);
+  expect(() =>
+    sqlite.exec(
+      "UPDATE monthly_payment_authorization_attempts SET published_at='later'",
+    ),
+  ).toThrow("immutable");
+  expect(() =>
+    sqlite.exec("DELETE FROM monthly_payment_authorization_attempts"),
+  ).toThrow("permanent");
+  admitted = true;
+  expect(await publishMonthlyAuthorizations(publication)).toEqual({
+    published: [],
+    failures: [],
+  });
+  expect(await readPublic()).toEqual(current);
+  sqlite
+    .prepare(
+      "INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) VALUES(?,1,0,?,?)",
+    )
+    .run(project.id, OWNER, afterCutoff.toISOString());
+  let complete = false;
+  let dispatches = 0;
+  const dispatcher = {
+    PAYMENTS_DB: db,
+    REGISTRY_DB: db,
+    PAYMENT_NETWORKS: '["base-sepolia"]',
+    PAYMENT_RPC_URLS: "{}",
+    MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
+    EVM_PAYMENT_EXECUTOR: {
+      fetch: async (request: Request) => {
+        expect(new URL(request.url).searchParams.get("admit")).toBe("false");
+        expect(await request.json()).toEqual(current);
+        dispatches++;
+        return Response.json({
+          transactionId: null,
+          alreadyCommitted: true,
+          complete,
+        });
+      },
+    },
+  };
+  const later = new Date("2027-01-04T00:00:00.000Z");
+  await runMonthlyCommitments(dispatcher, later);
+  expect(
+    sqlite.prepare("SELECT complete FROM monthly_payment_execution").get(),
+  ).toEqual({ complete: 0 });
+  complete = true;
+  await runMonthlyCommitments(dispatcher, later);
+  await runMonthlyCommitments(dispatcher, later);
+  expect(dispatches).toBe(2);
+  expect(
+    sqlite.prepare("SELECT complete FROM monthly_payment_execution").get(),
+  ).toEqual({ complete: 1 });
+  expect(count("payment_obligations")).toBe(1); // Only the separately indexed manual award.
 });
 
 test("monthly signing never publishes when the signer fails or an opt-out arrives during signing", async () => {
