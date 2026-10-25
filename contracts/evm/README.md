@@ -466,7 +466,8 @@ for Robinhood Chain Testnet. After the test deployment authority reviews the
 simulation, the same invocation with `--broadcast` submits testnet
 transactions. No public deployment was run as part of the local
 implementation. Mainnet steps are in [`../DEPLOY-MAINNET.md`](../DEPLOY-MAINNET.md);
-only humans run them. Keep transaction artifacts in ignored `broadcast/`, and
+a human or owner-authorized agent may run them under PRD section 11.
+Keep transaction artifacts in ignored `broadcast/`, and
 publish only reviewed safe deployment evidence.
 
 Record the source SHA, compiler settings, factory address, deployment

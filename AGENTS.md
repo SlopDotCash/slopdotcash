@@ -24,7 +24,7 @@ alias only.
   control, or payment authority.
 - Slop never holds keys, signs transactions, broadcasts payments, or claims
   success before public evidence proves it, except for the two narrowly scoped
-  kinds of key below. No other exception exists.
+  kinds of key below. No other application-service exception exists.
   - The escrow identity attester key (PAY-05, approved by the repository owner
     on 14 October 2026). It only attests the authenticated GitHub actor for a
     destination binding that the destination wallet also signs, and it submits
@@ -46,14 +46,18 @@ alias only.
     also submit permissionless fee claims on reviewed vaults, moving only
     accrued fees to that same fee wallet. It holds no vault role and cannot
     withdraw free funds or touch contributor principal, reserved awards or payments. Per-run and
-    daily caps bound it. Owners manually sweep USDC proceeds to separate
+    daily caps bound it. Owners authorize USDC sweeps to separate
     owner-controlled software wallets, with sweep keys held in their local
     `.env`, not by the Worker (PRD sections 6 and 11, 24 October 2026).
     The job runs in dry run until a
     reviewed activation record enables signing.
-- Humans create, store and rotate these keys and deploy mainnet contracts.
-  Agents never handle key material or deploy to mainnet. The vote-only Squads
-  project vault key is removed with Squads.
+- The owner may authorize an agent to use necessary existing credentials
+  privately and execute reviewed setup, testnet or mainnet plans (owner
+  decision, 25 October 2026; PRD section 11). Stay within the authorized
+  financial scope. Never print secrets or signing material. This permission
+  does not expand application-service signer powers or waive acceptance,
+  explicit mainnet activation or the reviewed release flow. The vote-only
+  Squads project vault key is removed with Squads.
 - Never publish secrets, prompts, responses, source files, credentials, session
   identifiers, private trajectories, or signing material.
 

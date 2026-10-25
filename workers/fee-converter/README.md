@@ -343,7 +343,7 @@ before the daily converted value is material.
    `unknown` row for the network.
 4. `wrangler secret put FEE_WALLET_KEY_<NETWORK> --config workers/fee-converter/wrangler.toml`
    with the new key, then deploy through the workflow.
-5. Move the remaining balance from the old wallet with a human-signed
+5. Move the remaining balance from the old wallet with an owner-authorized
    transaction, then destroy the old key.
 
 ## Sweep to treasury
@@ -354,7 +354,9 @@ sweeps. Their keys stay in the owner's local `.env`, outside this Worker; do
 not describe them as cold storage. See the [owner decision](https://github.com/SlopDotCash/slopdotcash/issues/905#issuecomment-6379777455).
 Sweep on a fixed schedule, such as weekly or above a threshold. Keep only
 a small gas balance (ETH, or SOL) in the fee wallet. A
-sweep is a human-signed transfer outside this Worker.
+sweep is an owner-authorized transfer outside this Worker. A human or an
+owner-authorized agent may sign it under PRD section 11; this permission gives
+the Worker no sweep power.
 
 ## Turn on live mode
 

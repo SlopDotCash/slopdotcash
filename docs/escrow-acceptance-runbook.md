@@ -1,8 +1,9 @@
 # Escrow acceptance runbook (PRD section 21)
 
 This runbook runs the PRD section 21 funded-award scenario on one test
-network and writes a machine-readable evidence file. A human operator runs it
-with funded test keys. Test assets are not real funds, and a test run is not
+network and writes a machine-readable evidence file. A human or owner-authorized
+agent runs the reviewed plan with funded test keys under PRD section 11. Keep
+credentials private. Test assets are not real funds, and a test run is not
 mainnet evidence.
 
 Networks: `base-sepolia`, `ethereum-sepolia`, `robinhood-testnet`,

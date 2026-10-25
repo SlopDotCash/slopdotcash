@@ -2,8 +2,9 @@
 
 This runbook deploys the escrow v4 `EscrowFactory` to Robinhood Chain Testnet
 (chain id 46630), creates one test vault, and records the evidence. A human
-operator runs every step that signs. An agent may run only the read-only
-checks. Never use a production key or a mainnet RPC for these steps.
+or owner-authorized agent may run the reviewed steps under PRD section 11.
+Keep credentials private. Never use a production key or a mainnet RPC for
+these steps.
 
 Network facts and their sources are in
 [Robinhood Chain escrow design](robinhood-chain-escrow-design.md). The
@@ -31,7 +32,7 @@ contract and adapter are described in
 Do not put a private key in a command line, an environment dump, a source file
 or the evidence.
 
-## 2. Read-only chain checks (agents may run these)
+## 2. Read-only chain checks
 
 ```sh
 export ROBINHOOD_TESTNET_RPC_URL=https://rpc.testnet.chain.robinhood.com
@@ -93,7 +94,7 @@ faucet serves. Thus:
    `test/WideToken.sol`), but the evidence must name that token and must not
    claim a USDG run.
 
-## 4. Deploy the factory (human only)
+## 4. Deploy the factory
 
 ```sh
 cd contracts/evm
@@ -135,7 +136,7 @@ with `forge verify-contract`, using the explorer's Blockscout API URL. The
 implementations take no constructor arguments; the factory proxy takes its
 implementation address and encoded initialization call from step 4.
 
-## 6. Create and exercise one vault (human only)
+## 6. Create and exercise one vault
 
 The test owner creates its ordinary vault (purpose `0`) for a reviewed test
 project ID and the test token. Vault creation is permissionless and the sender
