@@ -53,7 +53,7 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:8897/health > /dev/null
-          node scripts/value-merge-sdk.workflow.mjs http://127.0.0.1:8897 "$RUNNER_TEMP/value-merge-sdk.json"
+          node scripts/value-merge-sdk.workflow.mjs http://127.0.0.1:8897 "$RUNNER_TEMP/value-merge-sdk.json" "$image"
           kill "$merge_pid"
           wait "$merge_pid" || true
           merge_pid=""

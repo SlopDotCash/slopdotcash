@@ -1,15 +1,16 @@
 /** Linux SDK qualification with pinned public objects; no assessment/journal. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const [origin, output] = process.argv.slice(2);
+const [origin, output, image] = process.argv.slice(2);
 assert.equal(process.platform, "linux", "This proof requires native Linux");
 assert.match(origin, /^http:\/\/127\.0\.0\.1:\d+$/);
 assert(output, "Provide a safe result path");
+assert.match(image, /^sha256:[a-f0-9]{64}$/u, "Use the locally built image ID");
 const fixture = JSON.parse(
   await readFile(
     new URL(
@@ -79,6 +80,75 @@ const control = (inputs) => ({
   schema: "public-merge-control-not-an-assessment",
   inputs,
 });
+function containerAbsent(name) {
+  try {
+    execFileSync("docker", ["container", "inspect", name], { stdio: "pipe" });
+    return false;
+  } catch (error) {
+    if (
+      error.status === 1 &&
+      /No such (?:object|container):/u.test(String(error.stderr))
+    )
+      return true;
+    throw new Error("Cannot verify owned child-pipe container state");
+  }
+}
+async function childPipeControl() {
+  const name = `slop-merge-pipes-${randomUUID()}`;
+  assert(containerAbsent(name), "Child-pipe container name already exists");
+  try {
+    const result = execFileSync(
+      "docker",
+      [
+        "run",
+        "--name",
+        name,
+        "--rm",
+        "-i",
+        "--pull=never",
+        "--network=none",
+        "--read-only",
+        "--memory=256m",
+        "--cpus=2",
+        "--pids-limit=64",
+        "--tmpfs",
+        "/analysis/work:rw,size=16m,uid=65534,gid=65534,mode=0700",
+        "--entrypoint",
+        "python3",
+        image,
+        "-",
+      ],
+      {
+        input: await readFile(
+          new URL(
+            "../tests/fixtures/value-merge-child-pipes.py",
+            import.meta.url,
+          ),
+        ),
+        encoding: "utf8",
+        timeout: 30_000,
+        maxBuffer: 8192,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    report.childPipes = JSON.parse(result);
+    assert.deepEqual(report.childPipes, {
+      originalChildPipeCode: "EPERM",
+      fixedGitVersion: "git version 2.56.0",
+      networkRefusalsPreserved: true,
+      genericSocketpairRefused: true,
+      fixedUnixPairOnly: true,
+    });
+  } finally {
+    if (!containerAbsent(name))
+      execFileSync("docker", ["rm", "--force", name], {
+        timeout: 10_000,
+        stdio: "pipe",
+      });
+    report.childPipeContainerRemoved = containerAbsent(name);
+    assert(report.childPipeContainerRemoved);
+  }
+}
 async function send(name, inputs, bundle, expected) {
   const form = new FormData();
   form.append(
@@ -100,6 +170,7 @@ async function send(name, inputs, bundle, expected) {
     status: response.status,
     expected,
     elapsedMs: Math.round(performance.now() - started),
+    failureStage: response.headers.get("x-fixture-merge-stage"),
   });
   assert.equal(response.status, expected, name);
   const result = await response.json();
@@ -121,6 +192,7 @@ async function send(name, inputs, bundle, expected) {
     );
 }
 try {
+  await childPipeControl();
   git(["init", "--bare", "--template="]);
   git([
     "fetch",

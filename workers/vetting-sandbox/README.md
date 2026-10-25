@@ -141,6 +141,10 @@ object inventory larger than 256 MiB before reconstruction and monitors the
 owned work directory against 256 MiB while running. That monitor is not a hard
 filesystem quota; the existing container disk ceiling is separate. Cleanup
 must acknowledge success before the publisher can append any journal row.
+Node/libuv uses connected Unix socket pairs for Git child-process pipes. Only
+this fixed operation permits those pairs. Socket creation, other socket-pair
+families and io_uring remain blocked; ordinary artifacts retain their original
+blanket socket-pair refusal.
 
 Run `bun --no-env-file scripts/prepare-vetting-sandbox.mjs` from the repository
 root before a direct container build. Normal Wrangler and release commands do
@@ -156,3 +160,6 @@ the complete merge, a second fresh sandbox, wrong parents, omitted paths,
 corrupt bytes, the unchanged request cap and the expanded-object bound. No
 subscription verdict enters CI. Real session, journal and Points consumption
 need separate end-to-end evidence; this SDK control does not provide them.
+The same image also checks the original child-pipe refusal, fixed Git child
+execution and retained network refusals. Failed requests record only fixed
+operation stages and supervisor status, never child output or source bytes.
