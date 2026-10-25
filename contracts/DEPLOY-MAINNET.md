@@ -374,10 +374,9 @@ solana program show "$PROGRAM" -u "$RPC"   # Data Length must now be >= the size
 ```
 
 Example: the first-operator verifiable build for the next upgrade (#901,
-source `8f069cdc`) is 681,608 bytes. The mainnet program has a 681,392-byte
-`Data Length`. Thus extend it by at least 216 bytes
-(`solana program extend "$PROGRAM" 216 …`) before step 4. A larger value is
-also correct.
+source `edf3b341`) is 672,560 bytes. The mainnet program has a 681,392-byte
+`Data Length`. `ADDITIONAL_BYTES` is negative, so do not extend the program
+account for this upgrade.
 
 ### 4. Write and check the buffer
 
