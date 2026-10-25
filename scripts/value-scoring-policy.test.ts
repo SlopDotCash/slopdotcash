@@ -788,6 +788,36 @@ test("a joint award gives way to the minimum when its decision is no longer asse
         .filter((revision) => revision.award.amount > 0)
         .map((revision) => revision.award.workUnitId),
     ).toEqual(["wu_slopdotcash_slopdotcash_pr_14"]);
+
+    // The exact completion source can invalidate a unit without generating
+    // a new award, for example when no eligible author remains.
+    const noCredit = jointSnapshot(notAssessed(status), [
+      { ...merged, author: null, commits: [] },
+    ]);
+    expect(noCredit.ledger).toEqual([]);
+    const removed = applyPointsSnapshot(
+      assessedJournal,
+      noCredit,
+      "4".repeat(64),
+      AT,
+    );
+    expect(pointMembers(removed)[0]?.total ?? 0).toBe(0);
+
+    // A different record does not invalidate the earlier unit by inference.
+    const unrelated = {
+      ...noCredit,
+      valueAssessmentCoverage: noCredit.valueAssessmentCoverage?.map((row) => ({
+        ...row,
+        recordDigest: "d".repeat(64),
+      })),
+    };
+    const retained = applyPointsSnapshot(
+      assessedJournal,
+      unrelated,
+      "5".repeat(64),
+      AT,
+    );
+    expect(pointMembers(retained)[0]?.total).toBe(90);
   }
 
   // A snapshot that does not score the merge is not evidence that the unit

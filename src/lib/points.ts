@@ -444,6 +444,7 @@ export function applyPointsSnapshot(
       sourceUrl.origin === "https://github.com"
         ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
         : null;
+    let invalidatedJointDecision: PointDecision | undefined;
     if (snapshot.valueAssessmentCoverage && match) {
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
@@ -453,6 +454,21 @@ export function applyPointsSnapshot(
           row.repository === repository?.id &&
           row.pullRequestNumber === Number(match[3]),
       );
+      // The exact completion source can invalidate its prior joint decision
+      // even when it no longer has an eligible actor for a replacement award.
+      if (
+        a.category === "merged-pull-request" &&
+        a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
+        coverage?.pullRequestId === a.sourceId &&
+        ["stale", "incomplete"].includes(coverage.status) &&
+        coverage.recordDigest &&
+        previous.decision?.sourceId === `value:${coverage.recordDigest}`
+      )
+        invalidatedJointDecision = {
+          sourceId: previous.decision.sourceId,
+          effectiveAt: snapshot.generatedAt,
+          reason: `The current completion source marks this prior joint assessment ${coverage.status}.`,
+        };
       // A missing valuation is not evidence that an earlier award was wrong.
       // A legacy-policy source is scored by its unchanged historical rules.
       // A joint unit award still gives way once the same merge is scored by
@@ -462,6 +478,7 @@ export function applyPointsSnapshot(
           !["assessed", "human-ratified", "legacy-policy"].includes(
             coverage.status,
           )) &&
+        !invalidatedJointDecision &&
         !(
           a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
           ownRecordMerges.has(`${a.projectId}\0${a.sourceId}`)
@@ -481,7 +498,9 @@ export function applyPointsSnapshot(
       project?.repositories.every((r) => repositoryIds.has(r.id))
     ) {
       awards.push({ ...a, amount: 0 });
-      const decision = parentDecisions.get(a.sourceUrl.split("#")[0]);
+      const decision =
+        invalidatedJointDecision ??
+        parentDecisions.get(a.sourceUrl.split("#")[0]);
       if (decision)
         decisions.set(a.key, {
           ...decision,
