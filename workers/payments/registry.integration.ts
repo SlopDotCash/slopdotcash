@@ -663,10 +663,19 @@ try {
     "TEST_SIGNER_PRIVATE_KEY",
   ]);
   // A production stack refuses a test network, a test stack refuses a
-  // mainnet, MAINNET_EXECUTION refuses the mainnet, and an unknown stack
-  // stops: none of them reads a secret.
+  // mainnet, the enabled Base mainnet preflight refuses an RPC of another
+  // chain, MAINNET_EXECUTION refuses a mainnet that is off, and an unknown
+  // stack stops: none of them reads a secret. A production EVM attester
+  // signs bindings only in its scheduled run (/v1/bind-destinations).
+  const bindRun = "/v1/bind-destinations";
   assert.deepEqual(
-    await secretsRead("production", "base-sepolia", [sepoliaRecord]),
+    await secretsRead(
+      "production",
+      "base-sepolia",
+      [sepoliaRecord],
+      "attester",
+      bindRun,
+    ),
     [],
   );
   assert.deepEqual(
@@ -674,8 +683,43 @@ try {
     [],
   );
   assert.deepEqual(
-    await secretsRead("production", "base-mainnet", [mainnetRecord]),
+    await secretsRead(
+      "production",
+      "base-mainnet",
+      [mainnetRecord],
+      "attester",
+      bindRun,
+    ),
     [],
+  );
+  assert.deepEqual(
+    await secretsRead(
+      "production",
+      "ethereum",
+      [
+        paymentDeploymentRecord("eliza", {
+          ...deployment,
+          network: "ethereum",
+        }),
+      ],
+      "attester",
+      bindRun,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    await signerRun("production", "base-mainnet", [mainnetRecord]),
+    { status: 404, read: [] },
+  );
+  assert.deepEqual(
+    await signerRun(
+      "test",
+      "base-sepolia",
+      [sepoliaRecord],
+      "attester",
+      bindRun,
+    ),
+    { status: 404, read: [] },
   );
   assert.deepEqual(
     await secretsRead("staging", "base-sepolia", [sepoliaRecord]),
@@ -726,7 +770,7 @@ try {
   assert.match(String(partial.failures[0]), /Project broken escrow/);
 
   // 5. The readiness report: the probe proves the Base Sepolia chain id and
-  //    a finalized head, and a mainnet stays off by review.
+  //    a finalized head, and a mainnet that is not enabled stays off by review.
   assert.equal(await probeRpc("base-sepolia", rpcUrl), "finalized");
   assert.equal(await probeRpc("base-mainnet", rpcUrl), "wrong-chain");
   const record = paymentDeploymentRecord("eliza", deployment);
@@ -779,7 +823,7 @@ try {
   const mainnet = report(
     [signer("attester"), signer("relayer"), dispatcher],
     {},
-  ).find((item) => item.network === "base-mainnet");
+  ).find((item) => item.network === "ethereum");
   assert.equal(mainnet?.executor, "off-by-review");
   assert(
     mainnet?.reasons.includes("MAINNET_EXECUTION is off for this network"),

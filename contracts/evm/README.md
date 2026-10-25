@@ -342,8 +342,9 @@ ProjectEscrow
   monthlyCap() monthlyEnabled() monthlyRoots(uint32) monthlyWindow(uint32)
   monthlyDigest(uint32,bytes32) allocationRoot((uint64,uint128,bytes32)[])
   payoutFee(uint128) = gross / 50   withdrawalFee(uint128) = payoutFee(gross)
-EscrowFactory
+EscrowFactory (UUPS proxy; the implementation constructor disables initializers)
   initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address vaultImplementation)
+  proposeUpgradeAuthority(address) acceptUpgradeAuthority() setVaultImplementation(address)
   create(bytes32 projectId, address token, uint8 purpose)   (owner = msg.sender)
   createWithMonthlyCommitment(bytes32 projectId, address token, uint128 cap, bool enabled)
   vaults(bytes32 key) vaultKey(address owner, bytes32 projectId, address token, uint8 purpose)

@@ -251,14 +251,21 @@ period is open at a time.
    `release_monthly_award(period, source_digest, actor_id, gross, index, count,
    proof)`, passing the source's `origin`, its `monthly-source` marker and the
    obligation the origin records. The leaf must prove against the recorded
-   month, and one of these must hold: its actor is zero; another month's award
-   to the same actor for at least this gross consumed the source (the marker
-   exists); or the recorded obligation was committed strictly before the month's
-   `frozen_at`. The attester takes `frozen_at` from the block time of the
-   finalized slot at which it checked that no included source has an `origin`,
-   and never repeats a source of any admitted month. Otherwise the call fails
-   with `AwardCommittable`. A source the owner consumes by hand after the freeze
-   therefore stays reserved and never becomes a refund. Both `commit_monthly_award` and `release_monthly_award`
+   month, and one of these must hold: its actor is zero; the recorded
+   obligation pays this actor at least this gross (an identical hand award,
+   which EVM also counts once, a larger one, or another month's award), so the
+   contributor is already paid; or the recorded obligation was committed
+   strictly before the month's `frozen_at`. The attester takes `frozen_at` from
+   the block time of the finalized slot at which it checked that no included
+   source has a `monthly-source` marker and that any existing `origin` records
+   an award paying that actor at least that gross, and never repeats a source of
+   any admitted month. Otherwise the call fails with `AwardCommittable`. A
+   source the owner consumes by hand after the freeze with a smaller award, or
+   one to another actor, therefore stays reserved and never becomes a refund.
+   The release instruction still takes the `monthly-source` address but no
+   longer reads it. Because admission reserves the whole total even for an
+   award that is later released, the backend funds a Solana month only when its
+   full total is free. Both `commit_monthly_award` and `release_monthly_award`
    create the `["settled", month, source_digest]` PDA, so each source of a month
    settles once: a committed award cannot also be released. A source repeated
    inside one allocation could settle only once and would leave the second copy
@@ -352,9 +359,9 @@ escrow instruction, not per transaction. The event index is the instruction's
 position in the transaction's flattened instruction list (top-level
 instructions, each followed by its inner instructions). For `commit` it checks
 the instruction's project, award account and arguments against the durable
-award. For `pay` it requires the inner `transferChecked` calls from the vault,
-signed by the project PDA: the net amount to the destination, and the fee to
-the fee recipient's account unless the fee is zero. Logs are not used, because unrelated
+award. For `pay` it requires exactly one inner `transferChecked` from the vault,
+signed by the project PDA: the net amount to the destination. The fee stays in
+the vault as `accrued_fees` until `claim_fees`. Logs are not used, because unrelated
 instructions in the same transaction can truncate them. Unrelated instructions
 in the same transaction cannot make a valid payment unverifiable. The scanner
 uses the same instruction list, skips other projects' instructions, processes
@@ -390,7 +397,7 @@ when ProgramData reserves additional zero-filled capacity.
 The shared service in `workers/payment-executor/solana.ts` validates the current
 SQLite/D1 wallet consent and the finalized deployment before signing. Each role
 holds a different test signer. The gas signer cannot be the owner or identity
-signer. It creates recipient and fee ATAs idempotently and pays the exact bound
+signer. It creates the recipient ATA idempotently and pays the exact bound
 version. The identity role prepares a `bind_wallet` transaction that names the
 destination as a second required signer, signs its half, journals the bytes
 and returns them; the contributor's wallet signs the same bytes and the

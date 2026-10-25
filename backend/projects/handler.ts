@@ -887,6 +887,7 @@ async function runSetupCheck(
     project = await appendRevision(request, deps, {
       current: project,
       manifest: { ...project.manifest, status: "active" },
+      ownerParticipation: true,
       reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? "Grandfathered before security scans" : `Clean scan ${clearance.assessment.id}`}.`,
       actor,
     });

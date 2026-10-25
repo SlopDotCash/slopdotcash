@@ -1298,3 +1298,102 @@ test.each(["vault verification", "owner update"])(
     ).toEqual([]);
   },
 );
+
+// A moderator decision on another project also applies during this activation.
+test("a ban issued during the authority check prevents automatic activation", async () => {
+  const t = registry();
+  await t.create("vault-target", "example/vault-target");
+  const banSource = applicationManifest(
+    "ban-source",
+    "example/ban-source",
+  ) as unknown as ProjectDefinition;
+  await t.call("POST", "projects", OTHER, {
+    manifest: {
+      ...banSource,
+      authority: {
+        ...banSource.authority,
+        repositoryId: "987654322",
+        repositoryNodeId: "R_different",
+      },
+    },
+  });
+  const target = await t.persistence.getProject("vault-target");
+  const source = await t.persistence.getProject("ban-source");
+  if (!target || !source) throw new Error("Projects required");
+  let start!: () => void;
+  let finish!: () => void;
+  const started = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  const resumed = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  t.state.clearance = CLEARED;
+  t.deps.repositoryAccess = async () => {
+    start();
+    await resumed;
+    return t.state.access;
+  };
+  const activation = t.call(
+    "POST",
+    `project-setup/${target.id}/check`,
+    OWNER,
+    {},
+  );
+  await started;
+  const scan: ProjectEnforcement = {
+    id: "enf_vault_race_scan",
+    projectId: source.id,
+    sequence: 1,
+    action: "ban",
+    stateAfter: "banned",
+    appealAfter: "none",
+    reason: "Confirmed malicious code",
+    evidenceReference: "private-fixture",
+    repositoryGithubId: "987654322",
+    repositoryKeys: ["example/ban-source"],
+    actor: null,
+    actorRole: "vetting-service",
+    decisionSource: "standing-rule",
+    systemIssuer: {
+      kind: "vetting-service",
+      keySha256: "a".repeat(64),
+      assessmentId: "vet_fixture",
+      policyVersion: "fixture",
+      rule: "confirmed-malicious",
+    },
+    beforeRevision: source.revision,
+    beforeManifestSha256: source.manifestSha256,
+    afterRevision: null,
+    afterManifestSha256: null,
+    result: "revision_pending",
+    createdAt: NOW,
+  };
+  expect(await t.persistence.appendEnforcement(scan, null, [])).toBe(
+    "recorded",
+  );
+  expect(
+    await t.persistence.appendEnforcement(
+      {
+        ...scan,
+        id: "enf_vault_race_moderator",
+        sequence: 2,
+        actor: { githubId: ADMIN, githubLogin: "admin" },
+        actorRole: "project-moderator",
+        decisionSource: "admin-panel",
+        systemIssuer: undefined,
+        maintainerBans: [{ githubId: OWNER, githubLogin: "owner" }],
+      },
+      null,
+      [],
+    ),
+  ).toBe("recorded");
+  finish();
+  const result = await activation;
+  expect(result.status).toBe(403);
+  expect(result.body.error).toBe("maintainer_banned");
+  expect(await t.persistence.getProject(target.id)).toMatchObject({
+    revision: 1,
+    status: "paused",
+  });
+});

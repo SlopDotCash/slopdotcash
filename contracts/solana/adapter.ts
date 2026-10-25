@@ -49,6 +49,8 @@ export const PROJECT_DISCRIMINATOR = "cda8bdcab5f78e13";
 export const CONFIG_SIZE = 105;
 /** Classic SPL Token mint size. */
 const MINT_SIZE = 82;
+/** Classic SPL Token account size: mint (0), owner (32), amount u64 (64), ... */
+const TOKEN_ACCOUNT_SIZE = 165;
 type Obj = Record<string, unknown>;
 const object = (value: unknown): Obj => {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -806,19 +808,20 @@ export async function readVaultTotals(config: {
     account(first.value, config.programId, PROJECT_SIZE, PROJECT_DISCRIMINATOR),
     168,
   );
-  // Project and mint come from one finalized slot.
+  // Project, mint and vault token account come from one finalized slot.
+  const vault = solanaVaultAddress(config.programId, config.projectPda);
   const response = object(
     await rpc(config, "getMultipleAccounts", [
-      [config.projectPda, mint],
+      [config.projectPda, mint, vault],
       { commitment: "finalized", encoding: "base64" },
     ]),
   );
   const slot = object(response.context).slot;
   if (!Number.isSafeInteger(slot) || Number(slot) < 0)
     throw new Error("Invalid RPC slot");
-  const [projectInfo, mintInfo] = list(response.value);
-  if (projectInfo === null || mintInfo === null)
-    throw new Error("Project or mint account missing");
+  const [projectInfo, mintInfo, vaultInfo] = list(response.value);
+  if (projectInfo === null || mintInfo === null || vaultInfo === null)
+    throw new Error("Project, mint or vault account missing");
   const project = account(
     projectInfo,
     config.programId,
@@ -839,6 +842,14 @@ export async function readVaultTotals(config: {
     accruedFees = uint(project, 316);
   const free = deposited - paid - payoutFees - withdrawnGross - reserved;
   if (free < 0n) throw new Error("Project counters exceed deposits");
+  // As on EVM, fail closed when the vault holds less than the counters owe.
+  const vaultAccount = tokenProgramAccount(vaultInfo, TOKEN_ACCOUNT_SIZE);
+  if (
+    pubkey(vaultAccount, 0) !== mint ||
+    pubkey(vaultAccount, 32) !== config.projectPda ||
+    uint(vaultAccount, 64) < free + reserved + accruedFees
+  )
+    throw new Error("Vault balance is below free, reserved and accrued fees");
   return {
     network: config.network,
     vault: config.projectPda,
