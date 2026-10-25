@@ -342,6 +342,145 @@ async function serveProfileSite(page: Page) {
   return site;
 }
 
+test("profile payment totals stay unavailable until direct transfers recover", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { current } = await profileRecords(page);
+  const errors: string[] = [];
+  const consoleErrors: { message: string; url: string }[] = [];
+  const failures: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error")
+      consoleErrors.push({
+        message: message.text(),
+        url: message.location().url,
+      });
+  });
+  page.on("response", (response) => {
+    if (new URL(response.url()).origin === site && response.status() >= 400)
+      failures.push(`${response.status()} ${new URL(response.url()).pathname}`);
+  });
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  const paymentPath = "/api/v1/payments/actors/1/direct-transfers";
+  let requests = 0;
+  let releaseRetry = () => {};
+  const retryReady = new Promise<void>((resolve) => {
+    releaseRetry = resolve;
+  });
+  await page.route(`${site}${paymentPath}`, async (route) => {
+    requests += 1;
+    if (requests === 1)
+      return route.fulfill({ status: 503, body: "Payment source unavailable" });
+    if (requests === 2) await retryReady;
+    return route.fulfill({
+      json: {
+        totalMicro: requests === 2 ? "2000000" : "0",
+        transfers:
+          requests === 2
+            ? [
+                {
+                  projectId: "eliza",
+                  githubUserId: "1",
+                  login: current.login,
+                  amountMicro: "2000000",
+                  contributionMonth: "2026-08",
+                  network: "base-sepolia",
+                  chain: "base",
+                  recipient: "synthetic-recipient",
+                  transactionId: "synthetic-profile-payment",
+                  blockTime: "2026-08-17T12:00:00.000Z",
+                },
+              ]
+            : [],
+      },
+    });
+  });
+  try {
+    await page.goto(`${site}/contributors/${current.login}`, {
+      waitUntil: "networkidle",
+    });
+    const profile = page.getByRole("region", { name: "Contributor profile" });
+    const paid = profile
+      .getByText("paid · USDC", { exact: true })
+      .locator("..")
+      .locator("strong");
+    const payouts = profile.getByRole("region", {
+      name: "Payouts",
+      exact: true,
+    });
+    const payoutTotal = payouts.locator(".profile-card-heading > span");
+    const settlement = payouts
+      .getByRole("link")
+      .filter({ hasText: "Verified settlement" });
+    await expect(settlement).toContainText("$1");
+    expect(failures).toEqual([`503 ${paymentPath}`]);
+    await page.screenshot({
+      path: info.outputPath("profile-payments-unavailable.png"),
+      fullPage: true,
+    });
+    await expect(paid).toHaveText("Unavailable");
+    await expect(payoutTotal).toHaveText("Unavailable");
+    await expect(
+      profile.getByText("Payment records unavailable."),
+    ).toBeVisible();
+    const retry = profile.getByRole("button", {
+      name: "Retry payment records",
+    });
+    await retry.focus();
+    await page.keyboard.press("Enter");
+    await expect(paid).toHaveText("Loading…");
+    await expect(payoutTotal).toHaveText("Loading…");
+    await expect(settlement).toContainText("$1");
+    releaseRetry();
+    await expect(paid).toHaveText("$3");
+    await expect(payoutTotal).toHaveText("$3 USDC");
+    await expect(
+      payouts.getByRole("link").filter({ hasText: "Direct transfer" }),
+    ).toContainText("$2");
+    await expect(retry).toHaveCount(0);
+    expect(
+      (
+        await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+          .analyze()
+      ).violations,
+    ).toEqual([]);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: info.outputPath("profile-payments-recovered.png"),
+      fullPage: true,
+    });
+    // A complete empty direct-transfer result leaves the verified settlement total.
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(paid).toHaveText("$1");
+    await expect(payoutTotal).toHaveText("$1 USDC");
+    await expect(settlement).toContainText("$1");
+    expect(requests).toBe(3);
+    expect(errors).toEqual([]);
+    expect(failures).toEqual([`503 ${paymentPath}`]);
+    expect(
+      consoleErrors.every(
+        (error) =>
+          error.url === `${site}${paymentPath}` &&
+          error.message.includes("503"),
+      ),
+    ).toBe(true);
+  } finally {
+    releaseRetry();
+  }
+});
+
 for (const staleMembership of [false, true]) {
   test(
     staleMembership

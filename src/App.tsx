@@ -1834,10 +1834,9 @@ function HowItWorksPage() {
           <summary>When will my work show up?</summary>
           <p>
             Open pull requests do not earn points. Once a pull request merges,
-            it and its qualifying reviews appear at the next data refresh, which
-            runs every 6 hours. Each one is dated when it happened, so points
-            can appear spread through the day. There is no waiting period and no
-            minimum account age.
+            it and its qualifying reviews appear at the next site release. Each
+            one is dated when it happened, so points can appear spread through
+            the day. There is no waiting period and no minimum account age.
           </p>
         </details>
         <details>

@@ -46,8 +46,10 @@ alias only.
     also submit permissionless fee claims on reviewed vaults, moving only
     accrued fees to that same fee wallet. It holds no vault role and cannot
     withdraw free funds or touch contributor principal, reserved awards or payments. Per-run and
-    daily caps bound it, and owners sweep USDC proceeds to cold storage
-    (PRD section 11, 24 October 2026). The job runs in dry run until a
+    daily caps bound it. Owners manually sweep USDC proceeds to separate
+    owner-controlled software wallets, with sweep keys held in their local
+    `.env`, not by the Worker (PRD sections 6 and 11, 24 October 2026).
+    The job runs in dry run until a
     reviewed activation record enables signing.
 - Humans create, store and rotate these keys and deploy mainnet contracts.
   Agents never handle key material or deploy to mainnet. The vote-only Squads
@@ -432,13 +434,11 @@ No separate manual release approval is required. Publication credentials must
 never be exposed to pull-request runs. Every production release uses the
 shared publication lock.
 
-GitHub runs schedules only on the default branch, so
-`.github/workflows/scheduled-release.yml` dispatches the full release workflow
-on `main` and `development` every 6 hours. Each dispatched run snapshots the
-current D1 registry, ingests live GitHub data, passes the full quality gate,
-and publishes through its branch's normal release job. A newly activated
-project thus gets its collected data without a commit. Every production release
-requires current main equivalence. Every deployment is bound to its actual
+Every release snapshots the current D1 registry, ingests live GitHub data,
+passes the full quality gate, and publishes through its branch's normal release
+job. To publish new data without a commit, run the release workflow by hand
+(`workflow_dispatch`). Every production release requires current main
+equivalence. Every deployment is bound to its actual
 tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting

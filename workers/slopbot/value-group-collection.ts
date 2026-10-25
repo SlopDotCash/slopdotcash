@@ -1,4 +1,7 @@
-import { REGISTERED_REPOSITORIES } from "../../src/lib/repositories.mjs";
+import {
+  REGISTERED_REPOSITORIES,
+  type TargetRepository,
+} from "../../src/lib/repositories.mjs";
 import type { D1Database } from "./persistence";
 import { collectValueContext } from "./value-context";
 import { collectValueEvidence } from "./value-evidence";
@@ -26,10 +29,9 @@ export async function collectValueGroup(
   seed: WorkUnitSource,
   authorize: (source: Identity) => Promise<boolean>,
   startAt: number,
+  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
 ): Promise<WorkUnitSource[] | null> {
-  const root = REGISTERED_REPOSITORIES.find(
-    (r) => r.id === seed.evidence.repository,
-  );
+  const root = repositories.find((r) => r.id === seed.evidence.repository);
   if (!root) return null;
   const queue: Selection[] = [
     {
@@ -48,7 +50,7 @@ export async function collectValueGroup(
       continue;
     }
     if (sources.size >= 32) return null;
-    const repository = REGISTERED_REPOSITORIES.find(
+    const repository = repositories.find(
       (r) =>
         r.projectId === root.projectId &&
         [r.id, ...r.aliases].some(
