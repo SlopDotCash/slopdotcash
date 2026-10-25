@@ -787,42 +787,12 @@ try {
     grossMicro: "1",
     sourceDigest: `0x${escrowAwardOrigin(projectId, "2026-12", "9999")}`,
   };
+  // A later month's admission is not blocked by these leaves (test/MonthlyReserveV2.t.sol); manual
+  // awards are.
   await send(vault, commit(laterManual), owner.address, false);
+  const laterDigest = `0x${"d".repeat(64)}`;
   await send(vault, buildSetMonthlyCommitmentCalldata("0", false));
   await rpc("evm_setNextBlockTimestamp", [1799020801]);
-  await finalized();
-
-  // A second month cannot overlap a partially materialized reserve, even with a valid signature.
-  await send(vault, buildSetMonthlyCommitmentCalldata("1", true));
-  await finalized();
-  const laterDigest = `0x${"d".repeat(64)}`;
-  const overlapping = await prepareEvmMonthlyReservation(
-    config,
-    "2026-12",
-    laterDigest,
-    [laterManual],
-  );
-  assert(overlapping);
-  const overlappingSignature = await authority.sign({
-    hash: evmMonthlyReserveDigest(
-      chainId,
-      vault,
-      "2026-12",
-      overlapping.reservation,
-    ) as `0x${string}`,
-  });
-  await send(
-    vault,
-    buildReserveMonthlyCalldata(
-      "2026-12",
-      overlapping.reservation,
-      overlappingSignature,
-    ),
-    gas.address,
-    false,
-  );
-  assert.equal(BigInt(await value(vault, "pendingMonthlyGross()")), 98000000n);
-  await send(vault, buildSetMonthlyCommitmentCalldata("0", false));
   await finalized();
 
   // Existing funded awards retain their bytes and can pay while leaves remain, after Off/window end.
@@ -1233,7 +1203,6 @@ try {
         uncertainLegacyAdmission: "same-transaction-finalized-winner",
         keeper:
           "public HTTP, durable V1-to-V2 and later attempt cache, restart, one leaf after Off/window",
-        simultaneousPendingMonth: "refused",
         allFundedMonth: "sealed-with-no-leaves",
         manualRace: "rejected-before-reserve",
         optedOutAndWindowExpired: "leaves-completed",
