@@ -5,7 +5,13 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { encodeFunctionData, type Hex, keccak256, parseAbi } from "viem";
+import {
+  encodeFunctionData,
+  type Hex,
+  keccak256,
+  parseAbi,
+  parseTransaction,
+} from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   buildBindCalldata,
@@ -748,6 +754,286 @@ try {
     )?.n,
     3,
   );
+
+  // Bounded same-nonce fee replacement (owner decision, 25 October 2026).
+  const paid = async () =>
+    (
+      await queryOne<{ n: number }>(
+        "SELECT count(*) n FROM awards WHERE payment IS NOT NULL",
+      )
+    )?.n;
+  const fundAward = async (label: string) => {
+    const source = `0x${hash(label)}`;
+    const id = evmAwardId(11155111n, vault, source);
+    await send(
+      owner,
+      vault,
+      buildCommitAwardCalldata({
+        obligationId: id,
+        githubUserId: "1001",
+        grossMicro: "100",
+        sourceDigest: source,
+      }),
+    );
+    await mine();
+    return id.toLowerCase();
+  };
+  const outcome = (results: Awaited<ReturnType<typeof tick>>, id: string) => {
+    const item = results.find(
+      (entry) => entry.operation.toLowerCase() === `award:${id}`,
+    );
+    assert(item, JSON.stringify(results));
+    return item;
+  };
+  const journalValue = async <T>(sql: string) => {
+    const row = await queryOne<{ value: string }>(sql);
+    assert(row, sql);
+    return JSON.parse(row.value) as T;
+  };
+  const replacements = async (original: string) =>
+    (
+      await journalValue<{
+        replacements: { rawTransaction: Hex; transactionId: string }[];
+      }>(`SELECT value FROM journal WHERE key='fee-bump:${original}'`)
+    ).replacements;
+  const signedFees = async (transactionId: string) => {
+    const tx = (await chain("eth_getTransactionByHash", [transactionId])) as {
+      maxFeePerGas: Hex;
+      maxPriorityFeePerGas: Hex;
+      nonce: Hex;
+    };
+    return {
+      maxFeePerGas: BigInt(tx.maxFeePerGas),
+      priority: BigInt(tx.maxPriorityFeePerGas),
+    };
+  };
+  const nextBaseFee = (value: bigint) =>
+    chain("anvil_setNextBlockBaseFeePerGas", [`0x${value.toString(16)}`]);
+  const later = async () => {
+    now = new Date(now.getTime() + 11 * 60_000);
+  };
+  const finalize = async () => {
+    // Without automine, a mined send needs one more finalization window.
+    await mine();
+    await mine();
+  };
+  const gasRows = (ids: string[]) =>
+    cloudflare
+      ? cloudflare.query<{
+          transaction_id: string;
+          actual: string | null;
+          expiry_evidence: string | null;
+        }>(
+          `SELECT transaction_id,actual,expiry_evidence FROM gas WHERE transaction_id IN (${ids.map((id) => `'${id}'`).join(",")})`,
+        )
+      : store.db
+          .query<
+            {
+              transaction_id: string;
+              actual: string | null;
+              expiry_evidence: string | null;
+            },
+            []
+          >(
+            `SELECT transaction_id,actual,expiry_evidence FROM gas WHERE transaction_id IN (${ids.map((id) => `'${id}'`).join(",")})`,
+          )
+          .all();
+  const assertOneWinner = async (winner: string, losers: string[]) => {
+    const rows = await gasRows([winner, ...losers]);
+    assert.equal(rows.length, losers.length + 1, JSON.stringify(rows));
+    for (const row of rows) {
+      if (row.transaction_id === winner) {
+        assert(row.actual && BigInt(row.actual) > 0n, JSON.stringify(row));
+      } else {
+        assert.equal(row.actual, "0", "losing same-nonce reserve released");
+        assert.equal(
+          JSON.parse(row.expiry_evidence ?? "{}").transactionId,
+          winner,
+        );
+      }
+    }
+    assert.equal(
+      (
+        await queryOne<{ n: number }>(
+          "SELECT count(*) n FROM gas WHERE actual IS NULL",
+        )
+      )?.n,
+      0,
+    );
+  };
+  const restart = async () => {
+    if (cloudflare) await cloudflare.restart();
+    else {
+      store.close();
+      store = openKeeperStore(join(directory, "keeper.sqlite"));
+    }
+  };
+  const nonceMark = () =>
+    queryOne<{ value: string }>(
+      "SELECT value FROM journal WHERE key LIKE 'nonce:%'",
+    );
+
+  // 1. A send stalled by a high base fee is replaced once and the replacement lands.
+  const stalledAward = await fundAward("fee-bump-lands");
+  await chain("evm_setAutomine", [false]);
+  let before = signatures;
+  const stalledOriginal = outcome(await tick(), stalledAward).transactionId;
+  assert(stalledOriginal);
+  assert.equal(signatures, before + 1);
+  const stalledFees = await signedFees(stalledOriginal);
+  await nextBaseFee((stalledFees.maxFeePerGas * 120n) / 100n);
+  await chain("anvil_mine", ["0x1"]);
+  // Anvil drops the underpriced send; inside the wait nothing new is signed.
+  const inside = outcome(await tick(), stalledAward);
+  assert.equal(inside.state, "waiting", JSON.stringify(inside));
+  assert.equal((await replacements(stalledOriginal)).length, 0);
+  assert.equal(signatures, before + 1);
+  await later();
+  const bumped = outcome(await tick(), stalledAward).transactionId;
+  assert(bumped && bumped !== stalledOriginal);
+  assert.equal(signatures, before + 2);
+  const bumpedFees = await signedFees(bumped);
+  assert.equal(
+    bumpedFees.maxFeePerGas,
+    (stalledFees.maxFeePerGas * 125n + 99n) / 100n,
+  );
+  assert.equal(bumpedFees.priority, (stalledFees.priority * 125n + 99n) / 100n);
+  await finalize();
+  const paidBefore = await paid();
+  await tick();
+  assert.equal(await paid(), (paidBefore ?? 0) + 1);
+  await assertOneWinner(bumped, [stalledOriginal]);
+
+  // 2. The original lands after its replacement was broadcast: one record, reserves released.
+  await chain("evm_setAutomine", [true]);
+  const raceAward = await fundAward("fee-bump-original-wins");
+  await chain("evm_setAutomine", [false]);
+  before = signatures;
+  const raceOriginal = outcome(await tick(), raceAward).transactionId;
+  assert(raceOriginal);
+  const raceFees = await signedFees(raceOriginal);
+  await nextBaseFee((raceFees.maxFeePerGas * 120n) / 100n);
+  await chain("anvil_mine", ["0x1"]);
+  await later();
+  const raceReplacement = outcome(await tick(), raceAward).transactionId;
+  assert(raceReplacement && raceReplacement !== raceOriginal);
+  assert.equal(signatures, before + 2);
+  // Another node still held the original and a block producer included it.
+  const raceRaw = (
+    await journalValue<{ rawTransaction: Hex }>(
+      `SELECT value FROM journal WHERE json_extract(value,'$.transactionId')='${raceOriginal}'`,
+    )
+  ).rawTransaction;
+  await chain("anvil_dropTransaction", [raceReplacement]);
+  await nextBaseFee(1n);
+  assert.equal(await chain("eth_sendRawTransaction", [raceRaw]), raceOriginal);
+  await finalize();
+  const racePaidBefore = await paid();
+  const raceResult = await tick();
+  assert.equal(await paid(), (racePaidBefore ?? 0) + 1, "no double record");
+  assert(
+    !raceResult.some(
+      (entry) => entry.operation.toLowerCase() === `award:${raceAward}`,
+    ),
+    "the indexed payment needs no further send",
+  );
+  assert.equal(signatures, before + 2);
+  await assertOneWinner(raceOriginal, [raceReplacement]);
+
+  // 3. Cap reached, restart mid-bump and budget refusal.
+  await chain("evm_setAutomine", [true]);
+  const cappedAward = await fundAward("fee-bump-cap");
+  await chain("evm_setAutomine", [false]);
+  before = signatures;
+  const nonceBefore = (await nonceMark())?.value;
+  const cappedOriginal = outcome(await tick(), cappedAward).transactionId;
+  assert(cappedOriginal);
+  const nonceAfterOriginal = (await nonceMark())?.value;
+  assert.equal(
+    BigInt(nonceAfterOriginal ?? "0"),
+    BigInt(nonceBefore ?? "0") + 1n,
+  );
+  const cappedFees = await signedFees(cappedOriginal);
+  await nextBaseFee(cappedFees.maxFeePerGas * 10n);
+  await chain("anvil_mine", ["0x1"]);
+  for (let step = 1; step <= 5; step++) {
+    if (step === 2) {
+      // Restart mid-bump: the journal continues; nothing new is signed inside the wait.
+      await restart();
+      await tick();
+      assert.equal(signatures, before + 2, "restart signs nothing new");
+    }
+    await later();
+    if (step === 4) {
+      const latest = await queryOne<{ maximum: string }>(
+        "SELECT maximum FROM gas WHERE actual IS NULL ORDER BY CAST(maximum AS INTEGER) DESC LIMIT 1",
+      );
+      assert(latest);
+      const refused = await tick(true, {
+        ...config,
+        gas: { ...config.gas, perTransaction: latest.maximum },
+      });
+      assert(
+        outcome(refused, cappedAward).error?.includes("gas budget"),
+        JSON.stringify(refused),
+      );
+      assert.equal(signatures, before + 4, "no replacement without a reserve");
+      assert.equal((await replacements(cappedOriginal)).length, 3);
+    }
+    await tick();
+    assert.equal(signatures, before + 1 + step);
+    assert.equal((await replacements(cappedOriginal)).length, step);
+  }
+  await later();
+  const capped = await tick();
+  assert.equal(outcome(capped, cappedAward).state, "waiting");
+  assert(
+    outcome(capped, cappedAward).error?.includes("cap reached"),
+    JSON.stringify(capped),
+  );
+  assert.equal(signatures, before + 6, "the cap stops further signing");
+  const ladder = await replacements(cappedOriginal);
+  const finalFees = await Promise.all(
+    ladder.map(async (item) => parseTransaction(item.rawTransaction)),
+  );
+  const originalTransaction = parseTransaction(
+    (
+      await journalValue<{ rawTransaction: Hex }>(
+        `SELECT value FROM journal WHERE json_extract(value,'$.transactionId')='${cappedOriginal}'`,
+      )
+    ).rawTransaction,
+  );
+  for (const item of finalFees) {
+    assert.equal(item.nonce, originalTransaction.nonce);
+    assert.equal(item.data, originalTransaction.data);
+    assert.equal(item.to, originalTransaction.to);
+    assert.equal(item.gas, originalTransaction.gas);
+  }
+  assert.equal(
+    finalFees.at(-1)?.maxFeePerGas,
+    (originalTransaction.maxFeePerGas ?? 0n) * 3n,
+  );
+  assert.equal(
+    finalFees.at(-1)?.maxPriorityFeePerGas,
+    (originalTransaction.maxPriorityFeePerGas ?? 0n) * 3n,
+  );
+  assert.equal(
+    (await nonceMark())?.value,
+    nonceAfterOriginal,
+    "replacements never advance the nonce",
+  );
+  // The fee falls; the latest capped replacement is rebroadcast and lands.
+  await nextBaseFee(1n);
+  await tick();
+  await finalize();
+  const capPaidBefore = await paid();
+  await tick();
+  assert.equal(await paid(), (capPaidBefore ?? 0) + 1);
+  await assertOneWinner(ladder[4].transactionId, [
+    cappedOriginal,
+    ...ladder.slice(0, 4).map((item) => item.transactionId),
+  ]);
+  await chain("evm_setAutomine", [true]);
   console.log(
     JSON.stringify({
       result: "PASS",
@@ -779,8 +1065,13 @@ try {
         "finalized exact receipt indexing",
         "completed replay",
         "funded award after pause and opt-out",
+        "stalled send replaced at +25% after the wait and the replacement lands",
+        "original lands after its replacement: one payment, other reserve released",
+        "fee cap of three times stops signing and reports waiting",
+        "restart mid-bump continues from the journal without a new nonce",
+        "replacement refused when its reserve does not fit the budget",
       ],
-      payments: 3,
+      payments: 6,
       signatures,
       journal: "retained privately; no raw signed bytes in report",
     }),
