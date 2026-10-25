@@ -1,0 +1,35 @@
+# Independent operator template. Never included in Slop's deployment workflow.
+# Copy this template and choose your own account, name, cadence and configuration.
+name = "project-payment-keeper"
+main = "index.ts"
+compatibility_date = "2026-07-30"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[triggers]
+# The operator selects a schedule after reviewing their gas budget.
+crons = []
+
+[vars]
+KEEPER_MODE = "off"
+# Set KEEPER_CONFIG with the existing operator configuration from README.md.
+
+[[durable_objects.bindings]]
+name = "KEEPER"
+class_name = "OperatorKeeper"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OperatorKeeper"]
+
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
+[observability]
+enabled = true
+
+[observability.logs]
+invocation_logs = false

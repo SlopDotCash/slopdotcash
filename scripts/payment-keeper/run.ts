@@ -1,11 +1,9 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { ed25519 } from "@noble/curves/ed25519.js";
-import { privateKeyToAccount } from "viem/accounts";
-import { solanaBase58 } from "../../contracts/solana/adapter";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { validateBudget } from "./budget";
 import { type KeeperConfiguration, runKeeper } from "./keeper";
+import { keeperSigners } from "./signer";
 import { openKeeperStore } from "./store";
 
 const { values } = parseArgs({
@@ -32,49 +30,8 @@ try {
     config,
     {
       store,
-      ...(values.execute && family === "evm"
-        ? {
-            evmSigner: {
-              address: config.signer,
-              async signTransaction(
-                input: Parameters<
-                  ReturnType<typeof privateKeyToAccount>["signTransaction"]
-                >[0],
-              ) {
-                const key = process.env.KEEPER_EVM_PRIVATE_KEY;
-                if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key))
-                  throw new Error("Dedicated operator EVM key unavailable");
-                const account = privateKeyToAccount(key as `0x${string}`);
-                if (
-                  account.address.toLowerCase() !== config.signer.toLowerCase()
-                )
-                  throw new Error(
-                    "Operator key does not match configured signer",
-                  );
-                return account.signTransaction(input);
-              },
-            },
-          }
-        : {}),
-      ...(values.execute && family === "solana"
-        ? {
-            solanaSigner: {
-              address: config.signer,
-              async signMessage(message: Uint8Array) {
-                const value = process.env.KEEPER_SOLANA_SIGNER_SEED;
-                if (!value || !/^[0-9a-f]{64}$/.test(value))
-                  throw new Error("Dedicated operator Solana seed unavailable");
-                const seed = Uint8Array.from(value.match(/../g) ?? [], (byte) =>
-                  Number.parseInt(byte, 16),
-                );
-                if (solanaBase58(ed25519.getPublicKey(seed)) !== config.signer)
-                  throw new Error(
-                    "Operator key does not match configured signer",
-                  );
-                return ed25519.sign(message, seed);
-              },
-            },
-          }
+      ...(values.execute
+        ? keeperSigners(config, (name) => process.env[name])
         : {}),
     },
     values.execute,

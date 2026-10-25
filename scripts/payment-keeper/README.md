@@ -108,3 +108,8 @@ later source sequence for the same frozen allocation. It preserves the original
 legacy signature and reconciles any uncertain transaction before a successor
 send. Once admitted, the chain selects the root to finish. The existing gas
 ceiling still applies; large legacy calls need a reviewed V2 deployment.
+
+For an operator-owned Cloudflare Cron deployment, use the
+[Durable Object adapter](../../workers/operator-keeper/README.md). It runs this
+same keeper with durable SQLite storage. The template is off. Do not run both
+hosts with the same gas wallet.
