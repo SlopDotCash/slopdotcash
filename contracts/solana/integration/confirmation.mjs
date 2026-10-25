@@ -94,12 +94,17 @@ export class ReceiptConnection extends Connection {
 
 export function receiptProvider() {
   const provider = anchor.AnchorProvider.env();
+  // Anchor defaults to processed. Receipts exist at confirmed/finalized only;
+  // use confirmed for both the blockhash/preflight bank and setup completion.
+  // Both processed and confirmed use the same 30-second legacy deadline.
+  const options = {
+    ...provider.opts,
+    commitment: "confirmed",
+    preflightCommitment: "confirmed",
+  };
   return new anchor.AnchorProvider(
-    new ReceiptConnection(
-      provider.connection.rpcEndpoint,
-      provider.opts.commitment,
-    ),
+    new ReceiptConnection(provider.connection.rpcEndpoint, options.commitment),
     provider.wallet,
-    provider.opts,
+    options,
   );
 }
