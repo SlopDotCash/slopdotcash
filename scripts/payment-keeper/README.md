@@ -87,6 +87,11 @@ on that observation day. Future days can then proceed. A later exact receipt
 reconciles its actual cost without deleting the earlier conservative record.
 This is budget accounting, not proof that the transaction never landed.
 Retry reads the same journal. Never delete it to retry a payment.
+There is no automatic EVM fee bump. If a signed EVM send stays pending because
+its max fee is below the network fee, keep the journal and signer unchanged:
+each later run broadcasts the same signed bytes until the network fee falls
+below that max fee. A manual same-nonce replacement at a higher fee is an owner
+decision, because the journal must then be reconciled to the replacement.
 
 The keeper uses the existing finalized scanner and exact amount, token, fee and
 destination verifiers. A successful send is `submitted`, not paid. Only a

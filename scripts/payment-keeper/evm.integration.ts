@@ -33,19 +33,12 @@ import { type KeeperConfiguration, runKeeper } from "./keeper";
 import { openKeeperStore } from "./store";
 
 const root = resolve(import.meta.dir, "../..");
-const url = "http://127.0.0.1:28550";
+const port = process.env.SLOP_KEEPER_TEST_PORT ?? "28550";
+const url = `http://127.0.0.1:${port}`;
 const directory = mkdtempSync(join(tmpdir(), "slop-keeper-e2e-"));
 const anvil = spawn(
   "anvil",
-  [
-    "--host",
-    "127.0.0.1",
-    "--port",
-    "28550",
-    "--chain-id",
-    "11155111",
-    "--silent",
-  ],
+  ["--host", "127.0.0.1", "--port", port, "--chain-id", "11155111", "--silent"],
   { stdio: "ignore" },
 );
 const keeper = privateKeyToAccount(generatePrivateKey());

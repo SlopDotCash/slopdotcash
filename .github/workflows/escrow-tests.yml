@@ -30,6 +30,7 @@ on:
       - 'src/lib/project-schema.*'
       - 'scripts/check-payout-test-funding.mjs'
       - 'scripts/*escrow*'
+      - 'scripts/payment-keeper/**'
       - 'scripts/prepare-payment-deployments.ts'
       - 'scripts/check-payout-readiness.ts'
       - 'scripts/test-payout-browser.mjs'
