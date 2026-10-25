@@ -119,6 +119,8 @@ pre {
 .primary-button {
   background: var(--orange);
   color: var(--on-accent);
+  /* Keep text and background paired when a disabled action becomes available. */
+  transition: border-color var(--brand-motion-fast) var(--brand-motion-ease);
 }
 
 .primary-button:hover {
