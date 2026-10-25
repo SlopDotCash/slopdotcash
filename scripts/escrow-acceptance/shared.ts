@@ -254,8 +254,16 @@ export interface Evidence {
   errors: string[];
 }
 export function sourceCommit(): string {
+  const cwd = resolve(import.meta.dir, "..", "..");
+  const unchanged = Bun.spawnSync(["git", "diff", "--quiet", "HEAD", "--"], {
+    cwd,
+  });
+  if (unchanged.exitCode !== 0)
+    throw new Error(
+      "Acceptance evidence requires a clean tracked tree. Commit or restore tracked changes before signing; untracked evidence and journals may remain.",
+    );
   const result = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
-    cwd: resolve(import.meta.dir, "..", ".."),
+    cwd,
   });
   const commit = result.stdout.toString().trim();
   if (result.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(commit))
