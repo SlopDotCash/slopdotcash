@@ -1016,10 +1016,23 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
     (await getAccount(provider.connection, recipientAta)).isFrozen,
     true,
   );
-  await assert.rejects(
-    dispatchPayment(db, restarted, frozenId.toString("hex"), new Date()),
-    /Simulation failed|Account is frozen|custom program error: 0x11/i,
-  );
+  const frozenFetch = globalThis.fetch;
+  let frozenRpcError;
+  globalThis.fetch = async (url, options) => {
+    const response = await frozenFetch(url, options);
+    if (JSON.parse(options?.body ?? "{}").method === "sendTransaction")
+      frozenRpcError = (await response.clone().json()).error;
+    return response;
+  };
+  try {
+    await assert.rejects(
+      dispatchPayment(db, restarted, frozenId.toString("hex"), new Date()),
+      /RPC failure/,
+    );
+  } finally {
+    globalThis.fetch = frozenFetch;
+  }
+  assert.match(JSON.stringify(frozenRpcError), /frozen|0x11/i);
   const frozenAttempt = sql
     .prepare("SELECT * FROM payment_attempts WHERE obligation_id=?")
     .get(frozenId.toString("hex"));
