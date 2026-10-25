@@ -850,8 +850,8 @@ or a permissionless executor submits for an approved and funded obligation.
 
 ## 4. EVM monthly reserve V2 upgrade
 
-This kit targets contract source `e192d98e11836cea35c24b131d13b8e9d9b55fb7`.
-It replaces the earlier `e55a804a` and `2a4e80b3` kits. The existing mainnet review is still
+This kit targets contract source `e55a804a370cb54884c6b0dfe4748ff665eea78c`.
+It replaces the earlier `2a4e80b3` kit. The existing mainnet review is still
 `bce5b0df`, as listed above. Recheck that review before use. Agents prepare
 and rehearse this kit on local forks only. The human upgrade authority signs
 and sends mainnet transactions. Follow the approved launch order in section 0.
@@ -867,10 +867,7 @@ Anyone can then create each award from its Merkle proof. A leaf moves funds
 from the monthly reserve to the award reserve; it does not debit free funds
 again. Funded leaves remain executable after opt-out or the admission window.
 While leaves remain, new manual or legacy ordinary commitments wait. Funded
-payments and withdrawals of free funds remain available. From 30 days after
-the period window closes, anyone may call `expireMonthlyReserve(period)` once.
-It ends the wait but keeps the unproven gross reserved for its leaves; it never
-refunds the project (PRD, funded-award expiry). See `evm/README.md`.
+payments and withdrawals of free funds remain available.
 
 The first 27 vault storage fields are unchanged, including `Award`, `Binding`
 and existing mappings. New fields follow them:
@@ -880,7 +877,6 @@ and existing mappings. New fields follow them:
 | `pendingMonthlyGross` (`uint128`) | 18 | 1, after the existing `entered` flag |
 | `ordinarySourceSequence` (`uint256`) | 19 | 0 |
 | `monthlyReserves` (mapping) | 20 | 0 |
-| `expiredMonthlyGross` (`uint128`) | 21 | 0 |
 
 The factory's 10 fields are unchanged. No initializer or migration call is
 needed. Old source-use mappings remain authoritative; the new source sequence
@@ -906,7 +902,7 @@ Runtime SHA-256 includes the implementation address in the UUPS self-reference.
 
 | Role | Address | Runtime SHA-256 | Bytes |
 | --- | --- | --- | --- |
-| Vault | `0xf7e8C1D346B17A47F5ACcf6DB76D31576c176Fdb` | `74fad6ed1462f8240bb497eaaa0637a4b371dfebe9743455ab3698dec20704a5` | 22,247 |
+| Vault | `0xB486d51528fe66D3798994Dd820f84B903df88B6` | `88937eddbe9141817e2578e2e238ad708aa69348574e999369554fcbfdb7fbe8` | 21,642 |
 | Factory | `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f` | `976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd` | 6,879 |
 
 The factory matches the earlier kit; the vault does not. Reproduce addresses
@@ -950,7 +946,7 @@ Use these values only after the exact build and current-state checks pass:
 ```sh
 FACTORY=0xe51AbF8c6Dbb3Ca6E9AD09F2dc6EF141d7364aAb
 AUTHORITY=0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D
-NEW_VAULT=0xf7e8C1D346B17A47F5ACcf6DB76D31576c176Fdb
+NEW_VAULT=0xB486d51528fe66D3798994Dd820f84B903df88B6
 NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
 ```
 
@@ -1013,8 +1009,8 @@ leaf creation does not debit free funds twice.
 The script advances time on its local fork only to exercise the monthly
 window. Its blocks and receipts are local evidence. It does not qualify
 mainnet finality, actual fees, provider availability or the first live payout.
-Use the result for this exact contract source; earlier `e55a804a` and
-`2a4e80b3` results do not qualify this kit. Retain any failed provider attempt with the successful retry.
+Use the result for this exact contract source; earlier `2a4e80b3` results do
+not qualify V2. Retain any failed provider attempt with the successful retry.
 
 ### 4.7 Choose `supersededAtBlock`
 
@@ -1030,7 +1026,7 @@ registry operation. Use the addresses and digests in section 4.3 as current
 `evmUpgrade`; retain each previous review in `history` with its verified
 `supersededAtBlock`. Never rewrite old history. A new deployment has no
 invented prior history. Proxy digests stay unchanged. Set `sourceCommit` to
-`e192d98e11836cea35c24b131d13b8e9d9b55fb7` and record the upgrade transaction
+`e55a804a370cb54884c6b0dfe4748ff665eea78c` and record the upgrade transaction
 where the registry contract requires it.
 
 Regenerate pinned `PAYMENT_DEPLOYMENTS` from D1 and deploy the reviewed

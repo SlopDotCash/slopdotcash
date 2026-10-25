@@ -177,7 +177,7 @@ contract OpusHandler {
 
     /// @dev Anyone reserves a signed V2 remainder of one to six leaves for the next open period.
     function reserveMonthly(uint256 actorSeed, uint256 gross, uint256 width, address caller) external {
-        if (escrow.pendingMonthlyGross() != escrow.expiredMonthlyGross()) return;
+        if (escrow.pendingMonthlyGross() != 0) return;
         uint256 n = 1 + (width % 6);
         uint128 free = escrow.freeBalance();
         if (free < n) return;
@@ -207,7 +207,7 @@ contract OpusHandler {
         period = period % 100 == 12 ? period + 89 : period + 1;
     }
 
-    /// @dev Anyone proves one leaf of any admitted reserve, expired or not.
+    /// @dev Anyone proves one leaf of any admitted reserve.
     function commitMonthlyLeaf(uint256 reserveSeed, uint256 leafSeed, address caller) external {
         if (reserveCount == 0) return;
         uint256 r = reserveSeed % reserveCount;
@@ -221,15 +221,6 @@ contract OpusHandler {
         ids.push(escrow.awardId(entries[i].sourceDigest));
         actorOf.push(entries[i].actorId);
         ghostUnsettled -= entries[i].gross;
-    }
-
-    /// @dev Anyone expires a reserve once its grace has passed; time moves forward to allow it.
-    function expireMonthlyReserve(uint256 reserveSeed) external {
-        if (reserveCount == 0) return;
-        uint32 p = reservePeriod[reserveSeed % reserveCount];
-        (, uint64 closesAt) = escrow.monthlyWindow(p);
-        if (block.timestamp < closesAt + 30 days) vm.warp(closesAt + 30 days);
-        escrow.expireMonthlyReserve(p);
     }
 
     function _openPeriod() internal {
@@ -291,10 +282,9 @@ contract OpusInvariantTest is OpusBase {
         );
     }
 
-    /// @dev Pending gross is exactly what no leaf has proven; expiry never removes it, only its block.
+    /// @dev Pending gross is exactly what no leaf has proven.
     function invariant_monthlyReserveAccounting() public view {
         require(escrow.pendingMonthlyGross() == handler.ghostUnsettled(), "pending equals unproven leaves");
-        require(escrow.expiredMonthlyGross() <= escrow.pendingMonthlyGross(), "expired within pending");
     }
 
     function invariant_feeIdentity() public view {

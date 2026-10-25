@@ -15,8 +15,7 @@ interface ReserveVm {
     function sign(uint256, bytes32) external pure returns (uint8, bytes32, bytes32);
 }
 
-/// @dev V2 bounded admission (reserveMonthly), leaf execution (commitMonthlyLeaf) and the stale-reserve
-/// expiry (expireMonthlyReserve).
+/// @dev V2 bounded admission, leaf execution and preservation of funded recipients.
 contract MonthlyReserveV2Test {
     ReserveVm internal constant vm = ReserveVm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
@@ -32,9 +31,6 @@ contract MonthlyReserveV2Test {
     /// @dev 00:00 UTC on 4 December 2026 and on 4 January 2027.
     uint64 internal constant NOVEMBER_OPENS = 1_796_342_400;
     uint64 internal constant NOVEMBER_CLOSES = 1_799_020_800;
-    uint64 internal constant NOVEMBER_EXPIRES = NOVEMBER_CLOSES + 30 days;
-
-    event MonthlyReserveExpired(uint32 indexed period, uint128 unsettled);
 
     TestDollar internal usdc;
     EscrowFactory internal factory;
@@ -131,7 +127,7 @@ contract MonthlyReserveV2Test {
             require(target.pendingMonthlyGross() == 0, "every leaf settles");
             require(target.freeBalance() == 10_000e6 - total, "a leaf never charges free funds again");
             require(target.reservedPrincipal() + target.reservedFees() == total, "leaves become awards");
-            (,, uint128 remaining,,,) = target.monthlyReserves(PERIOD);
+            (,, uint128 remaining,,) = target.monthlyReserves(PERIOD);
             require(remaining == 0, "reserve fully settled");
         }
     }
@@ -248,90 +244,49 @@ contract MonthlyReserveV2Test {
         reserve(vault, PERIOD, r);
     }
 
-    // ------------------------------------------------------------------
-    // Stale-reserve expiry
-    // ------------------------------------------------------------------
-
-    /// @dev A signed reserve that no leaf can prove (an attester fault or a stolen attester key).
-    function unprovable() internal returns (ProjectEscrow.MonthlyReservation memory r) {
-        r = ProjectEscrow.MonthlyReservation(
-            keccak256("random"), keccak256("random root"), CAP, CAP, 1, vault.ordinarySourceSequence()
-        );
-        reserve(vault, PERIOD, r);
-    }
-
-    function test_anUnprovableReserveBlocksUntilItsGraceThenExpiresOnce() public {
-        unprovable();
+    function test_timeCannotPermitAnotherAwardToTakeAFundedLeafSource() public {
+        ProjectEscrow.MonthlyAward[] memory e = entries(1, 987);
+        reserve(vault, PERIOD, plan(vault, e, sum(e)));
         uint128 free = vault.freeBalance();
-        bytes32 source = keccak256("manual award");
-        bytes32 id = vault.awardId(source);
-        vm.prank(OWNER);
-        vm.expectRevert(ProjectEscrow.MonthlyLeavesPending.selector);
-        vault.commitAward(id, 7, 5e6, source);
-        // Opt-out does not remove the block, and nobody, the owner included, can expire a live reserve.
         vm.prank(OWNER);
         vault.setMonthlyCommitment(CAP, false);
+        vm.warp(NOVEMBER_CLOSES + 30 days);
+
+        // The removed time-based bypass must not enable reuse of a funded source.
+        (bool bypass,) = address(vault).call(abi.encodeWithSignature("expireMonthlyReserve(uint32)", PERIOD));
+        require(!bypass, "time cannot bypass funded source protection");
+        bytes32 id = vault.awardId(e[0].sourceDigest);
         vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyLeavesPending.selector);
-        vault.commitAward(id, 7, 5e6, source);
-        vm.warp(NOVEMBER_EXPIRES - 1);
-        vm.prank(OWNER);
-        vm.expectRevert(ProjectEscrow.MonthlyWindowClosed.selector);
-        vault.expireMonthlyReserve(PERIOD);
-
-        vm.warp(NOVEMBER_EXPIRES);
-        vm.expectEmit(true, false, false, true, address(vault));
-        emit MonthlyReserveExpired(PERIOD, CAP);
-        vm.prank(SUBMITTER);
-        vault.expireMonthlyReserve(PERIOD);
-        (,,,,, bool expired) = vault.monthlyReserves(PERIOD);
-        require(expired, "expired");
-        // Time alone never refunds a funded reserve (PRD funded-award expiry).
-        require(vault.freeBalance() == free, "remainder stays reserved");
-        require(vault.pendingMonthlyGross() == CAP && vault.expiredMonthlyGross() == CAP, "still accounted");
-        vm.prank(OWNER);
-        vm.expectRevert(ProjectEscrow.InsufficientFreeBalance.selector);
-        vault.withdrawUnused(free + 1);
-        vm.prank(OWNER);
-        vault.commitAward(id, 7, 5e6, source);
-        // A repeat changes nothing.
-        vm.expectRevert(ProjectEscrow.MonthExpired.selector);
-        vault.expireMonthlyReserve(PERIOD);
-        require(vault.expiredMonthlyGross() == CAP, "counted once");
-    }
-
-    function test_expiryNeverReleasesProvenValueAndLeavesStillCommit() public {
-        ProjectEscrow.MonthlyAward[] memory e = entries(3, 0);
-        uint128 total = sum(e);
-        reserve(vault, PERIOD, plan(vault, e, total));
-        uint128 free = vault.freeBalance();
+        vault.commitAward(id, 999, e[0].gross, e[0].sourceDigest);
+        require(vault.pendingMonthlyGross() == e[0].gross && vault.freeBalance() == free, "reserve preserved");
         leaf(vault, PERIOD, e, 0);
-        uint128 principal = vault.reservedPrincipal();
-        vm.warp(NOVEMBER_EXPIRES);
-        vault.expireMonthlyReserve(PERIOD);
-        require(vault.expiredMonthlyGross() == total - e[0].gross, "only the unproven remainder");
-        require(vault.reservedPrincipal() == principal && vault.freeBalance() == free, "proven award unchanged");
-        // A later month may admit while the expired remainder waits for its leaves.
-        ProjectEscrow.MonthlyAward[] memory next = entries(2, 99);
-        reserve(vault, NEXT_PERIOD, plan(vault, next, sum(next)));
-        require(vault.pendingMonthlyGross() == total - e[0].gross + sum(next), "both reserves held");
-        bytes32 id = vault.awardId(keccak256("x"));
+        (uint64 actor, uint128 gross, uint128 fee,,,) = vault.awards(id);
+        require(actor == e[0].actorId && gross == e[0].gross, "original funded obligation preserved");
+        require(vault.pendingMonthlyGross() == 0 && vault.freeBalance() == free, "leaf does not debit twice");
+
+        // Once the funded leaf exists, ordinary owner commitments resume.
+        bytes32 other = keccak256("unrelated award after completion");
+        bytes32 otherId = vault.awardId(other);
         vm.prank(OWNER);
-        vm.expectRevert(ProjectEscrow.MonthlyLeavesPending.selector);
-        vault.commitAward(id, 7, 1e6, keccak256("x"));
-        // Expired leaves still commit and leave the expired count.
-        leaf(vault, PERIOD, e, 1);
-        leaf(vault, PERIOD, e, 2);
-        require(vault.expiredMonthlyGross() == 0, "expired remainder settled");
-        leaf(vault, NEXT_PERIOD, next, 0);
-        leaf(vault, NEXT_PERIOD, next, 1);
-        require(vault.pendingMonthlyGross() == 0, "all settled");
-        require(vault.freeBalance() == free - sum(next), "no gross reserved twice or refunded");
+        vault.commitAward(otherId, 999, 1e6, other);
+
+        address wallet = bindAndPay(id, actor);
+        require(usdc.balanceOf(wallet) == gross - fee, "original recipient paid exactly once");
+        (,,,,, bool paid) = vault.awards(id);
+        require(paid, "funded award completed");
     }
 
-    function test_onlyAV2ReserveExpires() public {
-        vm.warp(NOVEMBER_EXPIRES);
-        vm.expectRevert(ProjectEscrow.InvalidInput.selector);
-        vault.expireMonthlyReserve(PERIOD);
+    function bindAndPay(bytes32 id, uint64 actor) internal returns (address wallet) {
+        uint256 walletKey = 0xD357;
+        wallet = vm.addr(walletKey);
+        bytes32 claim = keccak256("original contributor wallet");
+        uint64 expiresAt = uint64(block.timestamp + 1 days);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(walletKey, vault.bindingDigest(actor, wallet, 0, claim, expiresAt));
+        vm.prank(vm.addr(AUTHORITY_KEY));
+        vault.bindDestination(actor, wallet, 0, claim, expiresAt, abi.encodePacked(r, s, v));
+        vm.warp(block.timestamp + DELAY + 1);
+        vm.prank(SUBMITTER);
+        vault.pay(id, 1);
     }
 }

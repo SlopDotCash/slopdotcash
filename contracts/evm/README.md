@@ -251,24 +251,9 @@ leaf during constant-size admission.
 While pending gross remains, new manual awards, legacy monthly commitments,
 and another V2 admission wait. Existing funded payments, bindings, deposits,
 and free withdrawals remain available. Permissionless leaf execution completes
-the reserve after owner opt-out or window expiry. The executor bounds examined
-leaves, including already committed leaves, and retains a finalized cursor for
-restart.
-
-A reserve that no leaf can prove (an attester fault or a stolen attester key)
-would block those calls for ever. As Solana `expire_month` does, anyone may
-call `expireMonthlyReserve(period)` once, from 30 days after the period's
-window closes. It adds the unproven remainder to `expiredMonthlyGross` and
-emits `MonthlyReserveExpired(period, unsettled)`. Commitments wait only while
-`pendingMonthlyGross` exceeds `expiredMonthlyGross`. The remainder stays
-reserved, and its leaves can still commit later. There is no refund: time
-alone never releases a funded reserve to the project (PRD, funded-award
-expiry). A remainder that can never be proven stays reserved for good, as on
-Solana. After expiry, an owner who commits an unsettled leaf's source by hand
-leaves that leaf reserved for good; the owner pays twice and gains nothing. A
-repeat call reverts with `MonthExpired` and changes nothing. An early
-call reverts with `MonthlyWindowClosed`, so nobody, the owner included, can end
-a live reserve.
+the reserve after owner opt-out or window expiry. It has no refund, expiry, or
+human release step. The executor bounds examined leaves, including already
+committed leaves, and retains a finalized cursor for restart.
 
 `monthly-reserve.integration.ts` exercises the real migrated database, frozen
 snapshot, signer, public authorization, and local chain executor with 100 awards.
@@ -291,8 +276,8 @@ period and root, replay, the wrong attester, the rotation, purpose isolation and
 permissionless creation. `test/MonthlyReserveV2.t.sol` tests V2 trees of
 odd and even widths, index aliasing, forged sibling totals, leaf replay, a
 stale source sequence, count-zero sealing, the cap on the whole gross and
-reserve expiry. The invariant handler in `test/OpusInvariant.t.sol` commits
-signed legacy allocations, V2 reserves and leaves, and expires reserves, from
+preservation of funded leaves after the admission window. The invariant handler in `test/OpusInvariant.t.sol` commits
+signed legacy allocations, V2 reserves and leaves from
 random callers, and checks both identities below with pending gross.
 
 The first version uses individual commit and pay calls. Dispatchers isolate
@@ -359,8 +344,6 @@ The adapter's `readVaultTotals` reads `totals()`, `token()` and `decimals()` at
 one pinned finalized block and checks the first identity. The old `totals()`
 ABI stays unchanged. A V2 reader also reads `pendingMonthlyGross()` at that block
 when it is nonzero and returns the combined award and pending-month reserve.
-`pendingMonthlyGross` includes expired remainders, so expiry changes neither
-identity.
 
 The vault has no service charge. Slopbot is free (PRD section 5), so no call
 moves free funds to the fee recipient except the payout and withdrawal fees
