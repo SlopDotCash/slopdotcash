@@ -234,7 +234,8 @@ export async function runEvmExtended(
     let vault = (
       await chain.read<string>(factory, FACTORY, "vaults", [key])
     ).toLowerCase();
-    if (vault === ZERO) {
+    const creation = entry.steps[`${name}:create`];
+    if (vault === ZERO || (creation && !creation.status)) {
       if (entry.steps[`${name}:create`]?.status === "success")
         throw new Error(`${name}: recorded vault is missing from the factory`);
       await send(
@@ -255,7 +256,11 @@ export async function runEvmExtended(
     if (!entry.steps[`${name}:create`]) {
       // An interrupted run can create the vault after its evidence was last
       // saved; the factory's VaultCreated event names the creation.
-      const latest = BigInt((await chain.rpc("eth_blockNumber", [])) as string);
+      const startedAtBlock = run.chain.startedAtBlock;
+      if (!/^(0|[1-9][0-9]*)$/.test(startedAtBlock ?? ""))
+        throw new Error(
+          "Creation recovery has no recorded transaction or run start block. Preserve this evidence and use a new run.",
+        );
       const [created] = await getLogs(
         {
           address: factory,
@@ -270,7 +275,7 @@ export async function runEvmExtended(
             `0x${vault.slice(2).padStart(64, "0")}`,
           ],
         },
-        latest > 100_000n ? latest - 100_000n : 0n,
+        BigInt(startedAtBlock),
       );
       if (!created) throw new Error(`${name}: vault has no VaultCreated event`);
       entry.steps[`${name}:create`] = {

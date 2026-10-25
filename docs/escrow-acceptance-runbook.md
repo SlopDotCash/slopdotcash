@@ -187,9 +187,14 @@ same digest (EVM) or message (Solana) as the attester.
 If the EVM executor refuses its gas ceiling, a direct permissionless send can
 prove the contract checks only. The evidence records that path separately and
 keeps the monthly scenario pending. It does not prove automatic execution.
-Previously saved evidence with that fallback is reclassified on resume. After
+Earlier evidence with that fallback does not prove automatic execution. After
 an approved executor repair, use a new run to prove automatic submission; the
 previous period has already committed. Do not increase limits to obtain a pass.
+
+The monthly test uses the legacy creation call, which starts Off, to test
+owner opt-in and opt-out. It does not prove the website's default-On atomic
+creation flow. The direct bounty tests prove contract settlement, not private
+API access or ledger isolation.
 
 A scenario passes only after its recorded transactions are finalized. A run
 that waits for finality retains the completed execution and checks the same

@@ -436,6 +436,9 @@ export async function openEvmRun(
       suite,
       chain: {
         chainId,
+        startedAtBlock: BigInt(
+          (await chain.rpc("eth_blockNumber", [])) as string,
+        ).toString(),
         factoryCodeSha256,
         factoryCodeDigestSource: reviewedFactoryCode
           ? "reviewed (ESCROW_ACCEPTANCE_FACTORY_CODE_SHA256)"
