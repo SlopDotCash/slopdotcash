@@ -6,6 +6,7 @@ import type {
   MergedPullRequestOutcome,
   PenaltyFeedRecord,
 } from "../src/lib/leaderboard-types";
+import { findIngestedProjectByRepositoryId } from "../src/lib/projects.mjs";
 import {
   findRegisteredRepositoryById,
   REGISTERED_REPOSITORIES,
@@ -58,6 +59,7 @@ async function fetchHistoryPage(
   after: number,
   transport: Fetch,
   through: number | null = null,
+  repositoryNodeId?: string,
 ) {
   const registered = findRegisteredRepositoryById(repository);
   if (
@@ -70,11 +72,30 @@ async function fetchHistoryPage(
     (through !== null && (!Number.isSafeInteger(through) || through < after))
   )
     throw new Error("Invalid value-history source query");
+  const project = findIngestedProjectByRepositoryId(registered.id);
+  // Each project's primary repository has an immutable D1 authority pin.
+  // Secondary repositories retain the existing registered-name read path.
+  const pinnedNodeId =
+    project?.repositories[0].id === registered.id
+      ? project.authority.repositoryNodeId
+      : null;
+  if (
+    repositoryNodeId !== undefined &&
+    pinnedNodeId !== null &&
+    repositoryNodeId !== pinnedNodeId
+  )
+    throw new Error(
+      "Value-history repository identity differs from the registry",
+    );
+  const immutableRead = repositoryNodeId !== undefined && pinnedNodeId !== null;
   const url = new URL(
     kind === "joint" ? "/v1/work-unit-assessments" : "/v1/value-assessments",
     HISTORY_ORIGIN,
   );
-  url.searchParams.set("repository", registered.id);
+  url.searchParams.set(
+    immutableRead ? "repositoryNodeId" : "repository",
+    immutableRead ? repositoryNodeId : registered.id,
+  );
   url.searchParams.set("pull", String(pull));
   url.searchParams.set("after", String(after));
   if (through !== null) url.searchParams.set("through", String(through));
@@ -128,7 +149,9 @@ async function fetchHistoryPage(
       (kind === "joint"
         ? "slop-work-unit-history:v1"
         : "slop-value-history:v1") ||
-    body.repository !== registered.id ||
+    (immutableRead
+      ? body.repositoryNodeId !== repositoryNodeId
+      : body.repository !== registered.id) ||
     body.pullRequestNumber !== pull ||
     !Array.isArray(body.records) ||
     body.records.length > 100 ||
@@ -240,6 +263,7 @@ export async function fetchValueHistoryPage(
   pull: number,
   after: number,
   transport: Fetch = fetch,
+  repositoryNodeId?: string,
 ): Promise<Page> {
   const page = await fetchHistoryPage(
     "single",
@@ -247,6 +271,8 @@ export async function fetchValueHistoryPage(
     pull,
     after,
     transport,
+    null,
+    repositoryNodeId,
   );
   return { records: page.records, nextAfter: page.nextAfter };
 }
@@ -257,6 +283,7 @@ export async function fetchWorkUnitHistoryPage(
   after: number,
   through: number | null,
   transport: Fetch = fetch,
+  repositoryNodeId?: string,
 ): Promise<JointPage> {
   const page = await fetchHistoryPage(
     "joint",
@@ -265,6 +292,7 @@ export async function fetchWorkUnitHistoryPage(
     after,
     transport,
     through,
+    repositoryNodeId,
   );
   return {
     records: page.records,
@@ -402,6 +430,7 @@ export async function loadValueInputs(
           collected.evidence.pull.number,
           after,
           transport,
+          collected.evidence.repositoryNodeId,
         ),
       sourceCache.get(id)?.evidence ?? collected.evidence,
       collected.policy,
@@ -460,6 +489,7 @@ export async function loadValueInputs(
           after,
           through,
           transport,
+          identity.node_id,
         ),
       { repositoryNodeId: identity.node_id, pullRequestNodeId: outcome.id },
     );
@@ -530,6 +560,7 @@ export async function loadValueInputs(
       outcome.number,
       0,
       transport,
+      identity.node_id,
     );
     if (first.records.length === 0 && first.nextAfter === null) {
       valueDecisions.set(outcome.id, {
@@ -550,6 +581,7 @@ export async function loadValueInputs(
               outcome.number,
               after,
               transport,
+              identity.node_id,
             ),
       collected.evidence,
       collected.policy,

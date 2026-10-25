@@ -293,6 +293,7 @@ export async function workUnitHistory(
   pullRequestNumber: number,
   afterSequence: number,
   throughSequence: number | null = null,
+  repositoryNodeId?: string,
 ) {
   if (
     !Number.isSafeInteger(afterSequence) ||
@@ -303,6 +304,8 @@ export async function workUnitHistory(
         throughSequence < afterSequence))
   )
     throw new Error("Joint history requires a stable sequence boundary");
+  const identity =
+    repositoryNodeId === undefined ? "repository" : "repositoryNodeId";
   const row = await db
     .prepare(
       `WITH RECURSIVE
@@ -312,7 +315,7 @@ export async function workUnitHistory(
       SELECT j.record_digest FROM slopbot_work_unit_journal j, bounds b
       WHERE j.sequence <= b.through_sequence AND EXISTS (
         SELECT 1 FROM json_each(j.record_json, '$.sources') s
-        WHERE json_extract(s.value, '$.repository') = ?
+        WHERE json_extract(s.value, '$.${identity}') = ?
           AND json_extract(s.value, '$.pullRequestNumber') = ?)
       UNION
       SELECT p.predecessor_digest FROM slopbot_work_unit_predecessors p
@@ -327,7 +330,12 @@ export async function workUnitHistory(
          WHERE j.sequence > ? ORDER BY j.sequence LIMIT 101)) AS records_json
     FROM bounds b`,
     )
-    .bind(throughSequence, repository, pullRequestNumber, afterSequence)
+    .bind(
+      throughSequence,
+      repositoryNodeId ?? repository,
+      pullRequestNumber,
+      afterSequence,
+    )
     .first<{
       maximum: number;
       through_sequence: number;
