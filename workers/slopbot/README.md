@@ -23,7 +23,13 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    then gets an installation token and re-reads the
    repository, the item, any optional `.github/slopbot.json`, and `AGENTS.md`,
    `CONTRIBUTING.md` and `README.md` from the default branch at its current
-   SHA.
+   SHA. PR content comes from an immutable comparison of the current
+   GitHub-selected target branch and PR head, with the target repository ID
+   verified. Stale PR-file metadata cannot add inherited changes. Missing
+   patches, unavailable comparisons and the 300-file comparison limit stop
+   review. Before action, recheck the target, head, merge base and content.
+   A due maintainer hold also compares the current item with its stored content
+   digest; a changed finding is superseded without changing the hold deadline.
 3. `routing.ts` applies the published precedence: installation, private
    repository, type switch, open/draft, bot author, human reopen, exemption,
    audience, author cap, budget. Advisory review stays broad; closure needs the

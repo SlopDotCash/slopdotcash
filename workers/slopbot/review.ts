@@ -132,7 +132,7 @@ type Pull = {
   draft: boolean;
   merged: boolean;
   head: { sha: string };
-  base: { sha: string };
+  base: { sha: string; ref: string; repo: { id: number } };
   additions: number;
   deletions: number;
   changed_files: number;
@@ -207,45 +207,76 @@ export async function pullDiff(
   github: GitHubClient,
   owner: string,
   repo: string,
-  number: number,
-  changedFiles: number,
+  repositoryId: number,
+  pull: Pick<Pull, "base" | "head">,
 ) {
+  // PR metadata/files can retain an old base after the target branch moves.
+  // Read the GitHub-selected target, then compare immutable commits instead.
+  const sha = /^[0-9a-f]{40}$/u;
+  if (
+    pull.base.repo?.id !== repositoryId ||
+    typeof pull.base.ref !== "string" ||
+    pull.base.ref.length === 0 ||
+    !sha.test(pull.head.sha)
+  )
+    throw new Error("Pull request target identity is unavailable");
+  const branch = await github.get<{ commit: { sha: string } }>(
+    `/repos/${owner}/${repo}/branches/${encodeURIComponent(pull.base.ref)}`,
+  );
+  if (!branch || !sha.test(branch.commit?.sha))
+    throw new Error("Pull request target branch is unavailable");
+  const baseSha = branch.commit.sha;
+  const comparison = await github.get<{
+    base_commit: { sha: string };
+    merge_base_commit: { sha: string };
+    files: {
+      filename: string;
+      previous_filename?: string;
+      status: string;
+      patch?: string;
+    }[];
+  }>(
+    `/repos/${owner}/${repo}/compare/${baseSha}...${pull.head.sha}?per_page=1&page=1`,
+  );
+  if (
+    comparison?.base_commit?.sha !== baseSha ||
+    !sha.test(comparison?.merge_base_commit?.sha ?? "") ||
+    !Array.isArray(comparison?.files)
+  )
+    throw new Error("Pull request comparison is unavailable");
   let diff = "";
-  let truncated = false;
-  let filesRead = 0;
-  let sizeLimitReached = false;
-  for (let page = 1; page <= 3; page += 1) {
-    const files = await github.get<
-      {
-        filename: string;
-        previous_filename?: string;
-        status: string;
-        patch?: string;
-      }[]
-    >(
-      `/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
-    );
-    if (files === null || files.length === 0) break;
-    for (const file of files) {
-      filesRead += 1;
-      if (file.patch === undefined) truncated = true;
-      const fileName =
-        file.previous_filename === undefined
-          ? file.filename
-          : `${file.previous_filename} -> ${file.filename}`;
-      const chunk = `--- ${fileName} (${file.status})\n${file.patch ?? "(binary or too large to show)"}\n`;
-      if (diff.length + chunk.length > MAX_DIFF_CHARS) {
-        truncated = true;
-        sizeLimitReached = true;
-        break;
-      }
-      diff += chunk;
-    }
-    if (sizeLimitReached || files.length < 100 || filesRead >= changedFiles)
+  // GitHub returns at most 300 comparison files, on the first page only.
+  // Saturation cannot prove that every changed path was returned.
+  let truncated = comparison.files.length >= 300;
+  for (const file of comparison.files.slice(0, 300)) {
+    if (
+      typeof file.filename !== "string" ||
+      typeof file.status !== "string" ||
+      (file.previous_filename !== undefined &&
+        typeof file.previous_filename !== "string") ||
+      (file.patch !== undefined && typeof file.patch !== "string")
+    )
+      throw new Error("Pull request comparison file is invalid");
+    if (file.patch === undefined) truncated = true;
+    const fileName =
+      file.previous_filename === undefined
+        ? file.filename
+        : `${file.previous_filename} -> ${file.filename}`;
+    const chunk = `--- ${fileName} (${file.status})\n${file.patch ?? "(binary or too large to show)"}\n`;
+    if (diff.length + chunk.length > MAX_DIFF_CHARS) {
+      truncated = true;
       break;
+    }
+    diff += chunk;
   }
-  if (filesRead < changedFiles) truncated = true;
-  return { diff, truncated };
+  return {
+    diff,
+    truncated,
+    changedFiles: comparison.files.length,
+    baseSha,
+    mergeBaseSha: comparison.merge_base_commit.sha,
+    targetRef: pull.base.ref,
+  };
 }
 
 type Context = {
@@ -260,6 +291,8 @@ type Context = {
   policyDigest: string;
   diffTruncated: boolean;
   baseSha: string;
+  mergeBaseSha: string;
+  targetRef: string;
   quality: QualityEvidence[];
   registration: { scope: ReviewScope; projectId: string };
 };
@@ -324,16 +357,19 @@ async function loadContext(
   // Policy is always read from the default branch at a recorded SHA; a pull
   // request's own policy edits are content under review (BOT-04).
   const policy = await loadPolicy(github, job.owner, job.repo, baseSha);
-  const { diff, truncated } =
+  const comparison =
     pull === null
-      ? { diff: "", truncated: false }
-      : await pullDiff(
-          github,
-          job.owner,
-          job.repo,
-          job.number,
-          pull.changed_files,
-        );
+      ? {
+          diff: "",
+          truncated: false,
+          changedFiles: 0,
+          baseSha,
+          mergeBaseSha: baseSha,
+          targetRef: repo.default_branch,
+        }
+      : await pullDiff(github, job.owner, job.repo, repo.id, pull);
+  const { diff, truncated } = comparison;
+  if (truncated) throw new Error("Pull request comparison is incomplete");
   const itemText = reviewedItemText(issue, pull, diff);
   const revision =
     pull?.head.sha ?? (await sha256Hex(`${issue.title}\n${issue.body ?? ""}`));
@@ -345,7 +381,11 @@ async function loadContext(
     }),
   );
   const quality =
-    pull === null || truncated || pull.base.sha !== baseSha
+    pull === null ||
+    truncated ||
+    pull.base.sha !== comparison.baseSha ||
+    comparison.baseSha !== baseSha ||
+    comparison.mergeBaseSha !== baseSha
       ? []
       : await loadQualityEvidence(
           github,
@@ -365,12 +405,17 @@ async function loadContext(
           job.qualityCommentId,
         );
   return {
-    baseSha: pull?.base.sha ?? baseSha,
+    baseSha: comparison.baseSha,
+    mergeBaseSha: comparison.mergeBaseSha,
+    targetRef: comparison.targetRef,
     quality,
     github,
     repo,
     issue,
-    pull,
+    pull:
+      pull === null
+        ? null
+        : { ...pull, changed_files: comparison.changedFiles },
     revision,
     itemText,
     config,
@@ -439,8 +484,8 @@ async function duplicateOf(
           context.github,
           job.owner,
           job.repo,
-          prior.item_number,
-          otherPull.changed_files,
+          context.repo.id,
+          otherPull,
         );
   // The stored digest identifies a historical candidate, not its current
   // contents. An edited open original must not make this item a duplicate.
@@ -1139,6 +1184,9 @@ async function runReview(
     fresh.repo.private ||
     fresh.issue.state !== "open" ||
     fresh.revision !== context.revision ||
+    fresh.baseSha !== context.baseSha ||
+    fresh.mergeBaseSha !== context.mergeBaseSha ||
+    fresh.targetRef !== context.targetRef ||
     (await sha256Hex(fresh.itemText)) !== contentDigest ||
     fresh.policyDigest !== context.policyDigest ||
     (fresh.pull?.merged ?? false) ||
@@ -1454,6 +1502,8 @@ async function stillMayClose(
     fresh.issue.assignees.length > 0 ||
     fresh.revision !== original.revision ||
     fresh.baseSha !== original.baseSha ||
+    fresh.mergeBaseSha !== original.mergeBaseSha ||
+    fresh.targetRef !== original.targetRef ||
     fresh.itemText !== original.itemText ||
     fresh.policyDigest !== original.policyDigest ||
     !fresh.config.ok ||
@@ -2200,23 +2250,27 @@ export async function applyMaintainerHold(
     install.suspended_at !== null
   )
     return supersede("installation removed or suspended");
-  const github = await GitHubClient.forInstallation(
-    env.SLOPBOT_APP_ID,
-    env.SLOPBOT_APP_PRIVATE_KEY,
-    job.installationId,
+  const context = await loadContext(
+    env,
+    { ...job, kind: "review" },
+    registration,
   );
-  const repo = await publicRepository(github, job);
-  if (repo === null) return supersede("repository not readable");
-  const issue = await github.get<Issue>(
-    `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
-  );
-  if (issue === null || issue.node_id !== hold.item_node_id)
+  if (context === null || context.issue.node_id !== hold.item_node_id)
     return supersede("item not readable");
+  const { github, repo, issue, pull, revision } = context;
   if (issue.state !== "open") return supersede("item is no longer open");
-  const { pull, revision } = await itemRevision(github, job, issue);
   if (pull?.draft) return supersede("item is a draft");
   if (pull?.merged || revision !== hold.revision)
     return supersede("item changed after the review");
+  const reviewed = await db
+    .prepare("SELECT content_digest FROM slopbot_reviews WHERE review_key = ?")
+    .bind(job.reviewKey)
+    .first<{ content_digest: string }>();
+  if (reviewed === null) throw new Error("Held review source is unavailable");
+  // A target advance alone changes no finding. Supersede only when the actual
+  // reviewed item changed, including a corrected current-target comparison.
+  if ((await sha256Hex(context.itemText)) !== reviewed.content_digest)
+    return supersede("reviewed source changed");
   if (await maintainerActedSince(env, github, repo, job, hold.held_at)) {
     await resolveHold(db, job.reviewKey, "maintainer_acted");
     return "maintainer acted; no label";
