@@ -576,6 +576,7 @@ export default { fetch(request, env, ctx) {
       contents,
       directory,
       browser,
+      proxyUrl: `http://127.0.0.1:${proxy.address().port}`,
       setStaticHandler: (handler) => {
         staticHandler = handler;
       },
