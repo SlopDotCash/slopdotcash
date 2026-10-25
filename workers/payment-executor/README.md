@@ -153,6 +153,10 @@ incorrectly marked an unobserved signature submitted. The journal keeps its
 signed bytes; only the existing finalized-expiry checks permit a replacement.
 Signed transaction bytes are never returned.
 
+Deploy the executor before, or together with, the payments Worker when adding
+this observation field. The updated payments Worker refuses an older executor
+response that lacks it; it does not guess submission or start another send.
+
 `POST /v1/cancel-unsubmitted` retires an old-wallet attempt only after a signed
 successor exists. Its journal transaction either finds a previously signed
 transaction and returns that identity, or writes a retirement tombstone. Every
