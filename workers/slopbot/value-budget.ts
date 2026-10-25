@@ -39,7 +39,7 @@ export async function reserveValueBudget(
          FROM slopbot_costs WHERE substr(created_at,1,7)=?1
        ), held AS (
          SELECT COALESCE(SUM(reserved_micro_usd),0) AS cost,
-                COUNT(*)-COUNT(reserved_micro_usd) AS unknown
+                COUNT(*)-COUNT(approved_limit_micro_usd) AS unknown
          FROM slopbot_value_budget_reservations r
          WHERE NOT EXISTS
            (SELECT 1 FROM slopbot_value_budget_reconciliations c WHERE c.attempt_id=r.attempt_id)

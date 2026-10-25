@@ -401,6 +401,11 @@ test("attempt migration preserves populated children; known alerts-only costs re
     expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([]);
     for (const table of tables)
       expect(() => sqlite.exec(`DELETE FROM ${table}`)).toThrow("immutable");
+    // Old alerts-only estimates are not charge ceilings. Preserve their bytes,
+    // but do not admit capped work until the unknown actual cost is reconciled.
+    expect(
+      await reserveValueBudget(db, `value:${crypto.randomUUID()}`, 1, 1000),
+    ).toBe(false);
     for (const id of [cap, alert])
       sqlite
         .query(
