@@ -58,6 +58,8 @@ type Run = {
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
   loseNextReopenResponse: () => void;
   closeByMaintainer: () => void;
+  /** The default-branch `.github/slopbot.json`; null when absent. */
+  policyFile: (text: string | null) => void;
   writes: string[];
   comments: string[];
   labels: string[];
@@ -67,7 +69,10 @@ type Run = {
   job: (kind: string, extra: Record<string, unknown>) => Job;
 };
 
-async function closedItem(cb: (run: Run) => Promise<void>) {
+async function closedItem(
+  cb: (run: Run) => Promise<void>,
+  { consent = true }: { consent?: boolean } = {},
+) {
   const { db, sqlite } = sqliteD1(
     readdirSync(new URL("../../migrations/", import.meta.url))
       .filter((p) => p.endsWith(".sql"))
@@ -75,7 +80,12 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   );
   const project = findProject("asi");
   if (!project) throw new Error("fixture project missing");
-  const manifest = JSON.stringify({ ...project, status: "active" });
+  // The owner's project-settings consent to automatic closure.
+  const manifest = JSON.stringify({
+    ...project,
+    status: "active",
+    ...(consent ? { slopbot: { automaticClosure: true } } : {}),
+  });
   const digest = createHash("sha256").update(manifest).digest("hex");
   const at = "2026-01-01T00:00:00.000Z";
   sqlite.run(
@@ -93,19 +103,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
     [`${owner}/${repo}`.toLowerCase(), project.id],
   );
-  // An installation past its shadow period: 14 days and 50 completed reviews.
   sqlite.run(
     "INSERT INTO slopbot_installations(installation_id, account_id, account_login, account_type, created_at) VALUES (1,77,?,'Organization',?)",
     [owner, at],
   );
   const repositoryId = Number(project.authority.repositoryId);
-  for (let i = 0; i < 50; i++)
-    sqlite.run(
-      `INSERT INTO slopbot_reviews(review_key,installation_id,repository_id,item_kind,item_number,item_node_id,
-        author_id,revision,content_digest,policy_digest,status,created_at,completed_at)
-       VALUES (?,1,?,'pull_request',?,?,1000,'r','d','p','completed',?,?)`,
-      [`shadow-${i}`, repositoryId, 100 + i, `PR_shadow_${i}`, at, at],
-    );
   // The verified Slop-skill member (D6): a member record and the author's own
   // authenticated run, whose pull_request_opened event names this node ID.
   sqlite.run(
@@ -133,7 +135,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let pauseReopen: (() => Promise<void>) | null = null;
   let loseReopenResponse = false;
   let verdict = { category: "spam" as Category, confidence: 0.97 };
-  const config = Buffer.from(
+  let config: string | null = Buffer.from(
     JSON.stringify({ version: 1, audience: "protection", closure: true }),
   ).toString("base64");
   const login = (id: number) =>
@@ -183,7 +185,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           default_branch: "main",
           owner: { login: owner, id: 77, type: "Organization" },
         });
-      if (path.endsWith("/contents/.github/slopbot.json"))
+      if (path.endsWith("/contents/.github/slopbot.json") && config !== null)
         return Response.json({
           type: "file",
           size: 64,
@@ -390,6 +392,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       },
       closeByMaintainer: () => {
         state = "closed";
+      },
+      policyFile: (text) => {
+        config = text === null ? null : Buffer.from(text).toString("base64");
       },
       loseNextReopenResponse: () => {
         loseReopenResponse = true;
@@ -1053,6 +1058,40 @@ test("a reversed scam penalty suppresses the pending account-review mail", async
     expect(await run.mail()).toEqual([]);
     // The Inbox history is permanent; the notice is not deleted or rewritten.
     expect(run.sql(SCAM_NOTICES)).toHaveLength(1);
+  });
+});
+
+test("closure needs the owner's project-settings consent, not a policy file", async () => {
+  await closedItem(
+    async (run) => {
+      run.policyFile(null);
+      expect(await run.review()).toBe("labeled (spam)");
+      expect(run.writes).not.toContain("PATCH /repos/SlopDotCash/asi/pulls/5");
+      expect(run.comments.join("\n")).toContain(
+        "the project owner has not enabled automatic closure",
+      );
+      expect(run.sql(PENALTY)).toEqual([]);
+    },
+    { consent: false },
+  );
+  // With consent, a missing policy file does not block closure.
+  await closedItem(async (run) => {
+    run.policyFile(null);
+    expect(await run.review()).toBe("closed (spam)");
+  });
+});
+
+test("a policy file that turns closure off is a binding opt-out", async () => {
+  await closedItem(async (run) => {
+    run.policyFile(
+      JSON.stringify({ version: 1, audience: "protection", closure: false }),
+    );
+    expect(await run.review()).toBe("labeled (spam)");
+    expect(run.writes).not.toContain("PATCH /repos/SlopDotCash/asi/pulls/5");
+    expect(run.comments.join("\n")).toContain(
+      ".github/slopbot.json turns closure off",
+    );
+    expect(run.sql(PENALTY)).toEqual([]);
   });
 });
 

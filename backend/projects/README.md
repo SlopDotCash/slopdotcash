@@ -131,8 +131,10 @@ Owner revisions (`PUT /api/v1/projects/:id`) publish at once against
 `expectedRevision`; a changed base returns `409`. The server keeps status
 and listing tier, then classifies the change (`src/lib/project-revision-changes.ts`):
 
-- presentation (`name`, `eyebrow`, `headline`, `description`, `links`)
-  publishes as it is and keeps the scan clearance;
+- presentation and Slopbot settings (`name`, `eyebrow`, `headline`,
+  `description`, `links`, and `slopbot.automaticClosure`, the owner's
+  explicit consent to Slopbot automatic closure) publish as they are and keep
+  the scan clearance;
 - executable content (`contribution`; `repositories`, `skill` and
   `reviewSkill` never change by owner revision) pauses an active project
   and queues a new scan; a clean result reactivates it on the next setup

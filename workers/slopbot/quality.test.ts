@@ -386,132 +386,47 @@ test("missing provider credentials never produce a confirmation", async () => {
   expect(result.calls.every((call) => call.outcome === "failed")).toBe(true);
 });
 
-test("shadow qualification requires real review rows, elapsed time, the same verifier and explicit approval", async () => {
-  const { Database } = await import("bun:sqlite");
-  const { readFileSync } = await import("node:fs");
+test("objective closure qualifies only through the reviewed profile approval", async () => {
   const { qualityQualified } = await import("./review");
-  const sql = new Database(":memory:");
-  sql.exec(
-    readFileSync(
-      new URL("../../migrations/0013_slopbot.sql", import.meta.url),
-      "utf8",
-    ),
-  );
-  sql.exec(
-    readFileSync(
-      new URL(
-        "../../migrations/0040_slopbot_quality_shadow.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
-  );
-  const db = {
-    async batch() {
-      throw new Error("Unexpected transaction in shadow qualification");
-    },
-    prepare(query: string) {
-      let args: unknown[] = [];
-      const statement = {
-        bind(...values: unknown[]) {
-          args = values;
-          return statement;
-        },
-        async first<T>() {
-          return sql.prepare(query).get(...(args as string[])) as T | null;
-        },
-        async run() {
-          sql.prepare(query).run(...(args as string[]));
-          return { success: true };
-        },
-      };
-      return statement;
-    },
-  };
   const proof = await verify(regression);
   expect(proof).not.toBeNull();
   if (!proof) throw Error("test receipt failed");
   const env = {
     ...trust,
-    SLOPBOT_DB: db,
+    SLOPBOT_DB: {} as never,
     SLOPBOT_APP_ID: "test",
     SLOPBOT_APP_USER_ID: "test",
     SLOPBOT_APP_PRIVATE_KEY: "unused",
-  };
-  const job = {
-    kind: "review" as const,
-    repositoryId: 42,
-    installationId: 1,
-    deliveryId: "test",
-    owner: "example",
-    repo: "project",
-    itemKind: "pull_request" as const,
-    number: 1,
   };
   const qualified = {
     ...env,
     SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256: profile,
   };
   const later = Date.parse("2026-12-01T00:00:00Z");
-  try {
-    expect(await qualityQualified(qualified, job, proof, later)).toBe(false);
-    sql
-      .prepare("INSERT INTO slopbot_quality_shadow VALUES (?,?,?,?,?,?,?,?,?)")
-      .run(
-        "review",
-        42,
-        "PR_example",
-        head,
-        subject.policyDigest,
-        profile,
-        publicKey,
-        proof.id,
-        "2026-11-01T00:00:00.000Z",
-      );
-    for (let i = 0; i < 49; i++)
-      sql
-        .prepare(`INSERT INTO slopbot_reviews
-      (review_key,installation_id,repository_id,item_kind,item_number,item_node_id,author_id,revision,content_digest,policy_digest,status,created_at)
-      VALUES (?,1,42,'pull_request',?,?,1,?,? ,?,'completed','2026-11-02T00:00:00.000Z')`)
-        .run(`r${i}`, i, `PR_${i}`, head, "digest", subject.policyDigest);
-    expect(await qualityQualified(qualified, job, proof, later)).toBe(false);
-    // Retrying the same PR under another policy cannot manufacture item 50.
-    sql.exec(
-      "INSERT INTO slopbot_reviews SELECT 'retry',installation_id,repository_id,item_kind,item_number,item_node_id,author_id,revision,content_digest,policy_digest,status,skip_reason,verdict,action,created_at,completed_at FROM slopbot_reviews WHERE review_key='r0'",
-    );
-    expect(await qualityQualified(qualified, job, proof, later)).toBe(false);
-    sql.exec(
-      "UPDATE slopbot_reviews SET item_node_id='PR_50' WHERE review_key='retry'",
-    );
-    expect(await qualityQualified(qualified, job, proof, later)).toBe(true);
-    expect(await qualityQualified(env, job, proof, later)).toBe(false);
-    expect(
-      await qualityQualified(
-        qualified,
-        job,
-        proof,
-        Date.parse("2026-11-02T00:00:00Z"),
-      ),
-    ).toBe(false);
-    expect(
-      await qualityQualified(
-        { ...qualified, SLOPBOT_QUALITY_VERIFIER_KEY: "rotated" },
-        job,
-        proof,
-        later,
-      ),
-    ).toBe(false);
-    expect(
-      await qualityQualified(
-        qualified,
-        { ...job, repositoryId: 43 },
-        proof,
-        later,
-      ),
-    ).toBe(false);
-  } finally {
-    sql.close();
-  }
+  // No fixed waiting period or item count: the reviewed evidence of real
+  // cases and counterexamples sets the qualified profile (PRD section 11).
+  expect(qualityQualified(qualified, proof, later)).toBe(true);
+  expect(qualityQualified(env, proof, later)).toBe(false);
+  expect(
+    qualityQualified(
+      {
+        ...qualified,
+        SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256: "0".repeat(64),
+      },
+      proof,
+      later,
+    ),
+  ).toBe(false);
+  expect(
+    qualityQualified(
+      { ...qualified, SLOPBOT_QUALITY_PROFILE_SHA256: "0".repeat(64) },
+      proof,
+      later,
+    ),
+  ).toBe(false);
+  expect(
+    qualityQualified(qualified, proof, Date.parse("2026-01-01T00:00:00Z")),
+  ).toBe(false);
 });
 
 test("a signed-evidence comment queues only identifiers and can arrive after the bot review", async () => {

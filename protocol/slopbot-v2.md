@@ -12,7 +12,10 @@ v2 keeps every v1 rule except the ones listed under "Changes from v1".
    the disclosed operator for each installation. The service is free (see
    "Cost").
 2. **Delegated closure.** Slopbot may close an issue or pull request only under
-   a category the repository has set to `close`, as defined in PRD BOT-06. It
+   a category set to `close`, as defined in PRD BOT-06, and only after the
+   project owner turns on automatic closure in project settings. A repository
+   policy file is not needed to opt in; an invalid file or `"closure": false`
+   refuses closure (PRD section 11, 25 October 2026). It
    still never merges, approves payouts, requests changes, bans, excludes, or
    pays. The separate owner-approved SCR-06 value-scoring extension permits
    automatic provisional assessments; it does not enable closure powers.
@@ -163,5 +166,7 @@ published rejection rule and two grounded verdicts identifying the same
 verified defect: removal of required behavior, a reproduced patch regression,
 or a result claim contradicted by its cited artifact. Missing verification
 requires label-only handling. This amendment grants no production activation,
-penalty, score or payment authority. Existing shadow qualification, explicit
-enablement, caps, appeals and reopen controls remain required.
+penalty, score or payment authority. Reviewed qualification from real cases
+and counterexamples, explicit enablement, caps, appeals and reopen controls
+remain required; the fixed 14-day and 50-item minimums no longer apply (PRD
+section 11, 25 October 2026).

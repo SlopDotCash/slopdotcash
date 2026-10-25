@@ -41,6 +41,7 @@ export type RepositoryConfig = {
   audience: Audience;
   issues: boolean;
   pullRequests: boolean;
+  /** False is the repository's opt-out. Consent is a project setting. */
   closure: boolean;
   reviewExempt: boolean;
   dailyCloseCap: number;
@@ -61,7 +62,22 @@ const DEFAULT_CATEGORIES: RepositoryConfig["categories"] = {
   low_quality: "label",
 };
 
-// A missing or invalid file fails closed to label-only review (BOT-08).
+// No policy file: the published defaults. Closure still needs the owner's
+// project-settings consent (PRD section 11, 25 October 2026).
+export function defaultConfig(): RepositoryConfig {
+  return {
+    version: 1,
+    audience: "protection",
+    issues: true,
+    pullRequests: true,
+    closure: true,
+    reviewExempt: false,
+    dailyCloseCap: 25,
+    categories: { ...DEFAULT_CATEGORIES },
+  };
+}
+
+// An invalid file fails closed to label-only review (BOT-08).
 export function labelOnlyConfig(): RepositoryConfig {
   const categories = { ...DEFAULT_CATEGORIES };
   for (const key of Object.keys(categories) as (keyof typeof categories)[]) {
@@ -84,13 +100,7 @@ export type ConfigResult =
   | { ok: false; config: RepositoryConfig; problem: string };
 
 export function parseRepositoryConfig(text: string | null): ConfigResult {
-  if (text === null) {
-    return {
-      ok: false,
-      config: labelOnlyConfig(),
-      problem: `${CONFIG_PATH} is missing`,
-    };
-  }
+  if (text === null) return { ok: true, config: defaultConfig() };
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -117,7 +127,7 @@ export function parseRepositoryConfig(text: string | null): ConfigResult {
       audience: value.audience as Audience,
       issues: (value.issues as boolean | undefined) ?? true,
       pullRequests: (value.pullRequests as boolean | undefined) ?? true,
-      closure: (value.closure as boolean | undefined) ?? false,
+      closure: (value.closure as boolean | undefined) ?? true,
       reviewExempt: (value.reviewExempt as boolean | undefined) ?? false,
       dailyCloseCap: (value.dailyCloseCap as number | undefined) ?? 25,
       categories,
@@ -334,8 +344,6 @@ export function priceUsage(key: string, usage: Usage) {
   };
 }
 
-export const SHADOW_DAYS = 14;
-export const SHADOW_MIN_REVIEWS = 50;
 export const AUTHOR_DAILY_CAP = 3;
 export const CLOSE_CONFIDENCE = 0.9;
 export const REOPEN_BREAKER_RATIO = 0.1;

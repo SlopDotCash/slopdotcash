@@ -1919,6 +1919,7 @@ const CHANGE_LABELS: Record<string, string> = {
   reward: "Monthly funding",
   rewardAsset: "Reward asset",
   escrow: "Vault network",
+  slopbot: "Slopbot automatic closure",
 };
 
 const label = (field: string) => CHANGE_LABELS[field] ?? field;
@@ -1934,6 +1935,7 @@ type UpdateDraft = {
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
+  automaticClosure: string;
 } & Record<(typeof SKILL_RULE_FIELDS)[number], string>;
 
 const DRAFT_FIELDS = [
@@ -1947,6 +1949,7 @@ const DRAFT_FIELDS = [
   "tokenAddress",
   "tokenSymbol",
   "monthlyAmount",
+  "automaticClosure",
   "note",
 ] as const;
 
@@ -2022,6 +2025,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       capMinor === "0"
         ? ""
         : formatAssetAmount(capMinor, decimals).replaceAll(",", ""),
+    automaticClosure: current.slopbot?.automaticClosure ? "on" : "off",
     ...(Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
         field,
@@ -2182,6 +2186,10 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     return {
       ...source,
       ...fundingFields,
+      // Consent is recorded only when the owner changes it.
+      ...(value.automaticClosure === initial.automaticClosure
+        ? {}
+        : { slopbot: { automaticClosure: value.automaticClosure === "on" } }),
       headline: value.headline.trim(),
       description: value.goal.trim(),
       contribution: {
@@ -2228,6 +2236,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       before: current.contribution?.[field] ?? "",
       after: next.contribution?.[field] ?? "",
     })),
+    {
+      field: "slopbot",
+      label: CHANGE_LABELS.slopbot,
+      before: current.slopbot?.automaticClosure ? "On" : "Off",
+      after: next.slopbot?.automaticClosure ? "On" : "Off",
+    },
     ...(current.reward.kind === "monthly-pool" &&
     next.reward.kind === "monthly-pool"
       ? [
@@ -2376,6 +2390,29 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             />
           ))}
         </details>
+        <fieldset className="funding-mode">
+          <legend>Slopbot automatic closure</legend>
+          <label className="checkbox-field">
+            <input
+              checked={value.automaticClosure === "on"}
+              name="automaticClosure"
+              onChange={(event) =>
+                set("automaticClosure")(event.target.checked ? "on" : "off")
+              }
+              type="checkbox"
+            />{" "}
+            Let Slopbot close clearly bad pull requests automatically
+          </label>
+          <p className="field-hint">
+            Slopbot closes only pull requests that Slop members opened with the
+            project skill, never a maintainer&apos;s. A second review must
+            confirm the finding. Uncertain findings go to you first, and authors
+            can appeal. A <code>.github/slopbot.json</code> file that sets{" "}
+            <code>&quot;closure&quot;: false</code> still turns closure off.
+            Closure also stays off until Slop activates it after a reviewed
+            qualification.
+          </p>
+        </fieldset>
         {monthly ? (
           <FundingFields
             choice={choice}

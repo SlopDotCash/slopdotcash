@@ -33,8 +33,6 @@ import {
   parseRepositoryConfig,
   REOPEN_BREAKER_RATIO,
   SECURITY_CATEGORIES,
-  SHADOW_DAYS,
-  SHADOW_MIN_REVIEWS,
   UNIVERSAL_CATEGORIES,
   type Verdict,
 } from "./contracts";
@@ -75,6 +73,7 @@ import {
 } from "./quality";
 import {
   type ReviewScope,
+  registeredProject,
   registeredRepository,
   requireRegisteredRepository,
   requireScope,
@@ -541,24 +540,18 @@ async function closureState(
       why: `policy file problem: ${context.config.problem}`,
     };
   if (!context.config.config.closure)
-    return { allowed: false, why: "maintainer has not enabled closure" };
+    return { allowed: false, why: `${CONFIG_PATH} turns closure off` };
+  // Consent is read fresh from the live registry for every decision.
+  if ((await registeredProject(db, job))?.slopbot?.automaticClosure !== true)
+    return {
+      allowed: false,
+      why: "the project owner has not enabled automatic closure",
+    };
   if (!mayClose)
     return {
       allowed: false,
       why: "author is not eligible for automatic closure",
     };
-  const install = await store.installation(db, job.installationId);
-  const ageDays =
-    install === null
-      ? 0
-      : (Date.now() - Date.parse(install.created_at)) / 86_400_000;
-  const reviewed = await store.count(
-    db,
-    "SELECT COUNT(*) AS n FROM slopbot_reviews WHERE installation_id = ? AND status = 'completed'",
-    job.installationId,
-  );
-  if (ageDays < SHADOW_DAYS || reviewed < SHADOW_MIN_REVIEWS)
-    return { allowed: false, why: "shadow period" };
   const closes7 = await store.count(
     db,
     "SELECT COUNT(*) AS n FROM slopbot_actions WHERE repository_id = ? AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')",
@@ -1112,13 +1105,13 @@ async function runReview(
                 new Date().toISOString(),
               )
               .run();
-            const qualified = await qualityQualified(env, job, proof);
+            const qualified = qualityQualified(env, proof);
             close = mode === "close" && state.allowed && qualified;
             blockedClose = close
               ? null
               : !state.allowed
                 ? state.why
-                : "objective closure awaits reviewed shadow qualification";
+                : "objective closure awaits reviewed qualification";
           } else
             blockedClose =
               "source or eligibility changed before shadow recording";
@@ -1403,37 +1396,18 @@ export function qualityFor(
   return proof;
 }
 
-export async function qualityQualified(
+export function qualityQualified(
   env: ReviewEnv,
-  job: Job,
   proof: QualityEvidence,
   now = Date.now(),
-): Promise<boolean> {
-  if (
-    now < QUALITY_EFFECTIVE_AT ||
-    env.SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256 !== proof.profile ||
-    env.SLOPBOT_QUALITY_PROFILE_SHA256 !== proof.profile
-  )
-    return false;
-  const shadow = await env.SLOPBOT_DB.prepare(
-    `SELECT MIN(created_at) AS started
-    FROM slopbot_quality_shadow WHERE repository_id = ? AND profile_sha256 = ? AND verifier_key = ?`,
-  )
-    .bind(job.repositoryId, proof.profile, env.SLOPBOT_QUALITY_VERIFIER_KEY)
-    .first<{ started: string | null }>();
-  if (
-    !shadow?.started ||
-    now - Date.parse(shadow.started) < SHADOW_DAYS * 86_400_000
-  )
-    return false;
-  const reviewed = await store.count(
-    env.SLOPBOT_DB,
-    `SELECT COUNT(DISTINCT item_node_id) AS n
-    FROM slopbot_reviews WHERE repository_id = ? AND status = 'completed' AND created_at >= ?`,
-    job.repositoryId,
-    shadow.started,
+): boolean {
+  // The qualified profile is set only after the reviewed evidence of real
+  // cases and counterexamples passes (PRD section 11, 25 October 2026).
+  return (
+    now >= QUALITY_EFFECTIVE_AT &&
+    env.SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256 === proof.profile &&
+    env.SLOPBOT_QUALITY_PROFILE_SHA256 === proof.profile
   );
-  return reviewed >= SHADOW_MIN_REVIEWS;
 }
 
 async function stillMayClose(
@@ -1489,10 +1463,7 @@ async function stillMayClose(
     return false;
   if (verdict.category === "low_quality") {
     const proof = qualityFor(verdict, fresh);
-    if (
-      proof === null ||
-      (forClosure && !(await qualityQualified(env, job, proof)))
-    )
+    if (proof === null || (forClosure && !qualityQualified(env, proof)))
       return false;
   }
   return !forClosure || (await closureState(env, job, fresh, true)).allowed;

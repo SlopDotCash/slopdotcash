@@ -21,7 +21,7 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    repository IDs skip; database errors retry. Registry checks repeat for the
    same scope before inference and GitHub writes. The queue consumer
    then gets an installation token and re-reads the
-   repository, the item, `.github/slopbot.json`, and `AGENTS.md`,
+   repository, the item, the optional `.github/slopbot.json`, and `AGENTS.md`,
    `CONTRIBUTING.md` and `README.md` from the default branch at its current
    SHA.
 3. `routing.ts` applies the published precedence: installation, private
@@ -47,8 +47,10 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    - verified evidence;
    - for guidance categories, a rule quoted verbatim from the named file;
    - confidence ≥ 0.9;
-   - closure enabled globally and by the repository;
-   - the shadow period over;
+   - closure enabled globally (`SLOPBOT_CLOSURE_ENABLED`), by the project
+     owner's consent in project settings (`slopbot.automaticClosure` in the
+     live D1 manifest, read again before each close), and not turned off by
+     the repository policy file;
    - no circuit breaker and no daily cap hit;
    - a confirming second verdict (Surplus, falling back to GPT-6.1 Sol);
    - an unchanged item just before acting.
@@ -103,7 +105,10 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
 
 ## Repository policy file
 
-`.github/slopbot.json` on the default branch:
+Owners turn on automatic closure in project settings; no policy file is
+needed to opt in (PRD section 11, 25 October 2026). Registration or App
+installation alone never enables closure. A repository may still publish an
+optional `.github/slopbot.json` on the default branch:
 
 ```json
 {
@@ -116,7 +121,9 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
 }
 ```
 
-A missing or invalid file means label-only review.
+A missing file uses the published defaults above. An invalid file means
+label-only review. `"closure": false` is a binding opt-out even when the
+project settings consent to closure.
 
 ## Budget-block recovery
 
@@ -234,10 +241,11 @@ Do these in order. Each step names who does it and how to verify it.
 8. **Verify free review:** use a registered repository with no project credits.
    Confirm that an eligible review runs, records provider costs, and adds zero
    customer charges. Verify that unregistered repositories remain blocked.
-9. **Observe the shadow period:** review the labels and comments for at least
-   14 days and 50 items, with `SLOPBOT_CLOSURE_ENABLED` still `"false"`.
-   Enabling closure later is a separate reviewed PR that sets the variable
-   and records the agreement data.
+9. **Qualify closure from reviewed evidence:** with `SLOPBOT_CLOSURE_ENABLED`
+   still `"false"`, review real cases and counterexamples from the labels and
+   comments. There is no fixed waiting period or item count (PRD section 11,
+   25 October 2026). Enabling closure later is a separate reviewed activation
+   that sets the variable and records that evidence.
 
 ## App permissions and events
 
@@ -875,7 +883,7 @@ alone cannot activate reviews. The Worker checks current D1 state, so pausing or
 restricting a project stops later work even if selection cleanup is delayed.
 If the App was installed while its webhook was inactive, recover its installation
 delivery after protected deployment; a missing installation row must not be
-invented as proof of a qualified shadow period.
+invented.
 
 ### Repository access for project setup
 
@@ -895,7 +903,7 @@ records in D1 alone never answer this check.
 ## Objective quality verification
 
 The [trusted evidence contract](QUALITY.md) implements the approved objective
-criteria and shadow admission. Production closure remains disabled.
+criteria and shadow records. Production closure remains disabled.
 
 ### Live registry at value publication
 

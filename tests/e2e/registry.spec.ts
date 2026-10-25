@@ -548,6 +548,42 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     (await (await admin.request.get(`/api/v1/projects/${project.id}`)).json())
       .project.headline,
   ).toBe("Useful accepted outcomes with a clearer project scope");
+
+  // Slopbot closure consent is a project setting (PRD section 11). It
+  // publishes at once, keeps the scan clearance and is off until chosen.
+  const consent = returningOwner.getByRole("checkbox", {
+    name: "Let Slopbot close clearly bad pull requests automatically",
+  });
+  await expect(consent).not.toBeChecked();
+  await consent.focus();
+  await returningOwner.keyboard.press("Space");
+  await expect(consent).toBeChecked();
+  const consentChange = returningOwner.locator(".project-change", {
+    has: returningOwner.getByRole("heading", {
+      name: "Slopbot automatic closure",
+    }),
+  });
+  await expect(consentChange).toContainText("CurrentOff");
+  await expect(consentChange).toContainText("ProposedOn");
+  await expect(returningOwner.locator(".update-changes")).toContainText(
+    "Publishes now: Slopbot automatic closure.",
+  );
+  await expectAccessible(returningOwner);
+  await returningOwner.getByRole("button", { name: "Publish changes" }).click();
+  await expect(
+    returningOwner
+      .getByRole("status")
+      .filter({ hasText: "Published revision 3" }),
+  ).toBeVisible();
+  await returningOwner.reload({ waitUntil: "networkidle" });
+  await expect(consent).toBeChecked();
+  const consented = (
+    await (await admin.request.get(`/api/v1/projects/${project.id}`)).json()
+  ).project;
+  expect(consented.slopbot).toEqual({ automaticClosure: true });
+  expect(consented.status).toBe("paused");
+  await admin.reload({ waitUntil: "networkidle" });
+  await expect(card).toContainText("3 · updated");
   await returningOwner.goto("/projects/new", { waitUntil: "networkidle" });
   await returningOwner.getByText("Your projects", { exact: true }).click();
   await expect(returningOwner.locator("main")).toContainText(project.name);

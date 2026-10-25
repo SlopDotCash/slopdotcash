@@ -97,22 +97,21 @@ identifies the revision and defect, gives the repair, and provides the appeal.
 Migration `0040_slopbot_quality_shadow.sql` stores confirmed proposals after
 live source, policy, registry, installation, exemption and appeal rechecks.
 Only independently grounded pairs are recorded. Repeated revisions of one PR
-count once for the minimum. Nothing in this table grants closure or penalties.
+count once. Nothing in this table grants closure or penalties.
 
-Qualification needs at least 50 separate reviewed items in the repository
-after its first confirmed proposal under the current verifier key and profile,
-and at least 14 days from that proposal. A maintainer must inspect all proposed closures,
-record agreement and counterexample results in the reviewed activation record,
-and approve activation separately. Reviews before that first proposal cannot
-qualify the new objective verifier. The ordinary installation shadow gate also
-remains in force.
+Qualification is reviewed evidence from real cases and counterexamples, not a
+fixed waiting period or item count (PRD section 11, 25 October 2026). A
+maintainer must inspect the proposed closures under the current verifier key
+and profile, record agreement and counterexample results in the reviewed
+activation record, and approve activation separately.
 
 Keep `SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256` unset until that review passes.
 Only the protected production release may set it to the qualified profile.
 This setting represents the separate maintainer qualification, not verifier
 self-approval. The global `SLOPBOT_CLOSURE_ENABLED` must also be true, the
 repository must explicitly allow `low_quality: close`, and the effective time
-must have passed. The daily cap, reopen breaker, exemptions and appeal checks
+must have passed. The project owner must also consent in project settings.
+The daily cap, reopen breaker, exemptions and appeal checks
 still apply. Recheck immediately before the close request after comment/label
 writes. GitHub offers no atomic conditional close across all these resources;
 a concurrent maintainer change after the last check remains a race and is

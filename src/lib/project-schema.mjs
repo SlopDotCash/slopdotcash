@@ -92,7 +92,8 @@ const PROJECT_KEYS = [
 ];
 /**
  * Optional manifest sections. `rewardAsset` and `contribution` arrive with
- * the D1 registry; older revisions omit them.
+ * the D1 registry; older revisions omit them. `slopbot` holds the owner's
+ * explicit automatic-closure consent (PRD section 11).
  */
 const OPTIONAL_PROJECT_KEYS = [
   "escrow",
@@ -100,6 +101,7 @@ const OPTIONAL_PROJECT_KEYS = [
   "rewardAsset",
   "contribution",
   "securityBounty",
+  "slopbot",
 ];
 export const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
 
@@ -1216,6 +1218,12 @@ function validateProjectDefinition(
   text(project.description, "project.description", { max: 600, min: 24 });
   if (project.contribution !== undefined)
     validateContribution(project.contribution);
+  if (project.slopbot !== undefined) {
+    const slopbot = record(project.slopbot, "project.slopbot");
+    exactKeys(slopbot, ["automaticClosure"], "project.slopbot");
+    if (typeof slopbot.automaticClosure !== "boolean")
+      throw new TypeError("project.slopbot.automaticClosure must be boolean");
+  }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&
     project.listingTier !== "featured" &&

@@ -217,6 +217,11 @@ export interface ProjectDefinition {
   readonly contribution?: Readonly<Record<ContributionField, string>>;
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
+  /**
+   * Owner settings for Slopbot. `automaticClosure` is the explicit consent
+   * that automatic closure needs; absent means no consent (PRD section 11).
+   */
+  readonly slopbot?: { readonly automaticClosure: boolean };
   readonly repositories: readonly {
     readonly id: string;
     readonly aliases?: readonly string[];
