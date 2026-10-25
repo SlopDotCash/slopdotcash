@@ -11,7 +11,11 @@
 > the outgoing implementation in its reviewed history so events from before the
 > upgrade still verify. Copy the same `evmUpgrade` (including `history`) into the
 > executor's pinned `PAYMENT_DEPLOYMENTS`; it is compared field by field, and a
-> mismatch makes monthly signing fail closed.
+> mismatch makes monthly signing fail closed. Each history entry's
+> `supersededAtBlock` is the block of the LAST proxy upgrade (vault or factory)
+> that leaves that review; events after it from that review are rejected, so a
+> bound set at the first of several upgrades would reject events from proxies
+> not yet upgraded.
 >
 > Pending upgrades (24 October 2026): the mainnet EVM vaults and the Solana
 > program were deployed from `bce5b0df`. Source on `development` rounds the 2%
