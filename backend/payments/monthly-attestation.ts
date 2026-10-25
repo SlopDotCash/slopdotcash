@@ -162,6 +162,17 @@ export async function prepareMonthlyAttestation(
       "snapshot_changed",
       "The frozen allocation does not match the current project and proposal.",
     );
+  const revision = await deps.db
+    .prepare(
+      "SELECT manifest FROM project_revisions WHERE project_id=? AND manifest_sha256=?",
+    )
+    .bind(project.id, snapshot.manifestSha256)
+    .first<{ manifest: string }>();
+  if (!revision || sha256Hex(revision.manifest) !== snapshot.manifestSha256)
+    reject(
+      "snapshot_changed",
+      "The frozen allocation's project revision is unavailable.",
+    );
   // As at the freeze, a later revision keeps the month only with the financial
   // terms that sized its proposal; the snapshot keeps its freeze-time revision.
   try {
