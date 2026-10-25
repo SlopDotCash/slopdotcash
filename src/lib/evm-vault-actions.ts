@@ -9,7 +9,7 @@ import {
   verifyVaultFundingAction,
 } from "../../contracts/evm/adapter";
 import { ESCROW_NETWORKS, type EscrowDeployment } from "./escrow-policy.mjs";
-import type { PayoutPolicy } from "./payments/contracts";
+import { ordinaryFee, type PayoutPolicy } from "./payments/contracts";
 import { parseVaultAmount } from "./payments/vault-amount";
 import type { PayoutWallet } from "./use-payout-wallets";
 
@@ -129,7 +129,7 @@ export async function reviewVaultAction(
       ),
     );
   }
-  const fee = operation === "withdraw" ? gross / 50n : 0n;
+  const fee = operation === "withdraw" ? ordinaryFee(gross) : 0n;
   return {
     gross: gross.toString(),
     fee: fee.toString(),

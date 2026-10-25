@@ -1,4 +1,8 @@
 import {
+  acceptsPayoutFee,
+  ordinaryFee,
+} from "../../src/lib/payments/contracts";
+import {
   readVaultTotals,
   type SolanaEscrowConfig,
   solanaPubkey,
@@ -163,7 +167,7 @@ export async function prepareSolanaFunding(
     intent.wallet,
     instructions,
   );
-  const fee = intent.operation === "withdraw" ? gross / 50n : 0n;
+  const fee = intent.operation === "withdraw" ? ordinaryFee(gross) : 0n;
   return {
     ...intent,
     ...prepared,
@@ -227,8 +231,14 @@ export async function checkSolanaFunding(
     add(config.vault, gross);
     add(ata(config.mint, intent.wallet), -gross);
   } else {
-    // The withdrawal fee stays in the vault until claim_fees.
-    const fee = gross / 50n;
+    // The withdrawal fee stays in the vault until claim_fees. A program not yet
+    // upgraded to rounded-up fees still takes floor(gross / 50).
+    const owner = ata(config.mint, config.owner);
+    const fee = gross - ((after.get(owner) ?? 0n) - (before.get(owner) ?? 0n));
+    if (!acceptsPayoutFee(gross, fee))
+      throw new SolanaFundingError(
+        "The withdrawal fee is not 2% of the amount.",
+      );
     add(config.vault, fee - gross);
     add(ata(config.mint, config.owner), gross - fee);
   }

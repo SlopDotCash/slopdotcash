@@ -264,15 +264,14 @@ run. `off` reads none of them.
 | `FEE_CONVERTER_MAX_PRICE_IMPACT_BPS` | `200` | Price-impact cap (2%). |
 | `FEE_CONVERTER_RUN_CAP_MICRO` | `1000000000` | Per-run, per-network value cap (1,000 USDC). |
 | `FEE_CONVERTER_DAILY_CAP_MICRO` | `5000000000` | Rolling 24-hour live value cap per network (5,000 USDC). |
-| `FEE_CONVERTER_SOLANA_FEE_MICRO` | unset (`2000`) | Solana fee estimate used for the gas multiple; an estimate, not policy. |
-
-The PRD sells fees when they arrive and leaves open whether tiny balances may
-accumulate to avoid gas waste. The two dust-threshold values stay empty, so
-the converter cannot run, until the owner records that decision. The
-slippage, impact and cap values are the earlier reviewed values; the PRD
-still lists conversion limits as an approval item.
-| `FEE_WALLET_<NETWORK>` | Base and Solana set | Public fee-wallet address. A network without one is refused. |
+| `FEE_CONVERTER_SOLANA_FEE_MICRO` | `2000` | Solana fee estimate used for the gas multiple; an estimate, not policy. |
+| `FEE_WALLET_<NETWORK>` | All four networks set | Public fee-wallet address. A network without one is refused. |
 | `KYBERSWAP_CLIENT_ID` | `slop-fee-converter` | Client id header for KyberSwap. |
+
+The owner approved these limits on 24 October 2026. See [PRD section
+11](../../docs/slop-product-requirements.md#11-source-delivery-and-acceptance).
+Small balances accumulate until both minimums are met. These decisions do
+not enable conversion: mode, network, route and release checks still apply.
 
 Secrets (set only by the key custodian, never in D1, CI or the repository):
 
@@ -352,15 +351,17 @@ sweep is a human-signed transfer outside this Worker.
 
 ## Turn on live mode
 
-1. The owner approves MVP-07c, the fee wallet per network, and the dust
-   threshold (`FEE_CONVERTER_MIN_VALUE_MICRO`, `FEE_CONVERTER_GAS_MULTIPLE`). On 19 October
-   2026 the owner chose the Base fee wallet
-   `0x8f77C37D8650776bFe73c9b12B15209eE15D9b86` for Robinhood Chain and
-   Ethereum too. `FEE_WALLET_ROBINHOOD` and `FEE_WALLET_ETHEREUM` are set in
-   `wrangler.toml`. Each network still runs only when it is enabled.
-2. Create the Worker shell once: `wrangler deploy --config
-   workers/fee-converter/wrangler.toml` from a trusted machine with mode `off`.
-3. Set the secrets for each network you will enable (key custodian only).
+1. Use the approved wallets and limits in `wrangler.toml` and PRD section 11.
+   Verify the selected network's USDC route and current deployment evidence
+   in [#905](https://github.com/SlopDotCash/slopdotcash/issues/905). Keep
+   unavailable routes pending. Do not request the recorded choices again.
+2. The key custodian checks installed secret names with `wrangler secret list
+   --config workers/fee-converter/wrangler.toml`. Keep existing valid secrets.
+3. The key custodian installs any missing secret with `wrangler secret put
+   <NAME> --config workers/fee-converter/wrangler.toml`. Enter its value only
+   at the private prompt. If the Worker does not exist, accept Wrangler's
+   offer to create it. Publish application code only through the checked-in
+   release workflow from reviewed `main`, not a local `wrangler deploy`.
 4. Set the repository variable `SLOP_FEE_CONVERTER_RELEASE` to `enabled`.
 5. Land a pull request with `FEE_CONVERTER_MODE = "dry_run"` and the network
    list. Watch `GET /api/v1/admin/fee-conversions` for at least a day: quotes,

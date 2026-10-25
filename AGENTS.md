@@ -536,7 +536,7 @@ wallet at payout. No contract converts it. A scheduled backend job converts
 fees already in the fee wallet to USDC (PRD section 6) inside that wallet
 (TOK-07, MVP-07c); a network without a verified USDC route keeps the fee token
 pending. It never blocks or touches a contributor payment.
-Unused-fund withdrawals deduct the same 2%, `floor(gross / 50)`, enforced in the
+Unused-fund withdrawals deduct the same 2%, `ceil(gross / 50)`, enforced in the
 contracts, and reach only the owner's refund destination; funded
 obligations cannot be withdrawn.
 Historical v1 records retain their original fee and authority rules. No project
