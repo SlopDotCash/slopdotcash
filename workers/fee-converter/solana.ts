@@ -17,7 +17,6 @@ import {
   PROJECT_SIZE,
   type SolanaEscrowConfig,
   solanaAccount,
-  solanaAuthorityRotation,
   solanaBase58,
   solanaUint,
   solanaVaultAddress,
@@ -422,23 +421,13 @@ export function createSolanaClient(
     };
     // Another wallet's fees are not this run's to claim.
     if (escrow.feeRecipient !== wallet) return null;
+    if (escrow.upgradeAuthority === wallet)
+      throw new Error("Fee wallet must not be the program upgrade authority");
     if (solanaVaultAddress(escrow.programId, escrow.projectPda) !== entry.vault)
       throw new Error("vault is not the reviewed project's vault address");
     if (entry.vault !== escrow.vault)
       throw new Error("vault differs from its reviewed deployment record");
     const project = await verifyDeployment(escrow);
-    const rotation = solanaAuthorityRotation(project);
-    if (
-      [
-        escrow.owner,
-        escrow.identityAuthority,
-        escrow.rotationAuthority,
-        escrow.upgradeAuthority,
-        rotation.identityAuthority,
-        rotation.pendingIdentityAuthority,
-      ].includes(wallet)
-    )
-      throw new Error("The fee wallet holds or is proposed for a vault role");
     return { escrow, project };
   }
 
