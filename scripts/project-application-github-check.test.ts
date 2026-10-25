@@ -1,11 +1,12 @@
 // The GitHub check of project setup through the production Pages Function:
-// every repository and alias in the manifest is read from GitHub, not only
-// the first repository. These facts never grant authority; the Slopbot
-// installation read does (owner decision D11).
+// the primary identity comes from the authenticated Slopbot read; every
+// additional repository and alias is checked too. Identity facts alone never
+// grant authority; the installation permission does (owner decision D11).
 import { afterEach, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { onRequest, repositoryControl } from "../functions/api/v1/[[path]]";
+import { parseRepositoryIdentity } from "../src/lib/project-contracts";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
@@ -89,7 +90,12 @@ let stubGithub = () => {
 /** The public-facts check of a manifest. */
 async function control(manifest: unknown) {
   stubGithub();
-  return await repositoryControl(manifest as ProjectDefinition, {} as never);
+  const project = manifest as ProjectDefinition;
+  return await repositoryControl(
+    project,
+    {} as never,
+    parseRepositoryIdentity(repositories[project.repositories[0].id]),
+  );
 }
 
 /** What the Slopbot binding reads; `null` leaves Slopbot unbound. */
@@ -138,7 +144,26 @@ async function submit(
       ADMIN_GITHUB_IDS: "900000001",
       ...(slopbot === null
         ? {}
-        : { SLOPBOT: { fetch: async () => Response.json(slopbot) } }),
+        : {
+            SLOPBOT: {
+              fetch: async (request: Request) => {
+                const url = new URL(request.url);
+                expect(url.searchParams.get("includeRepository")).toBe("1");
+                return Response.json({
+                  ...slopbot,
+                  ...(slopbot.installation === "installed"
+                    ? {
+                        repository: Object.hasOwn(slopbot, "repository")
+                          ? slopbot.repository
+                          : repositories[
+                              url.searchParams.get("repository") ?? ""
+                            ],
+                      }
+                    : {}),
+                });
+              },
+            },
+          }),
     } as never,
   });
   const body = (await response.json()) as {
@@ -311,7 +336,7 @@ test("a check names at most 5 repositories and aliases", async () => {
   );
   expect((await control(five)).state).toBe("matched");
   expect(lookups.filter((url) => url.startsWith(`${API}/repos/`))).toHaveLength(
-    5,
+    4,
   );
 
   lookups.length = 0;
@@ -390,10 +415,62 @@ test("a project cannot claim a different GitHub owner account type", async () =>
   const manifest = manifestWith({});
   manifest.steward.github.type = "Organization";
   const { status, body } = await submit(manifest);
-  expect(lookups).toContain(`${API}/repos/example/open-registry`);
+  expect(lookups).not.toContain(`${API}/repos/example/open-registry`);
   expect(status).toBe(422);
   expect(body).toMatchObject({
     error: "invalid_manifest",
     message: "Repository or steward facts do not match GitHub",
   });
 });
+
+// A service response is parsed independently of the caller's manifest. The
+// current Pages client must refuse old/malformed identity or changed facts.
+test.each([
+  ["old Worker reply", undefined, 503],
+  [
+    "private repository",
+    { ...(repositories["example/open-registry"] as object), private: true },
+    422,
+  ],
+  [
+    "recreated repository",
+    { ...(repositories["example/open-registry"] as object), id: 999 },
+    422,
+  ],
+  [
+    "changed repository node",
+    {
+      ...(repositories["example/open-registry"] as object),
+      node_id: "R_changed",
+    },
+    422,
+  ],
+  [
+    "different owner",
+    {
+      ...(repositories["example/open-registry"] as object),
+      owner: { ...OWNER, id: 999 },
+    },
+    422,
+  ],
+  [
+    "changed owner node",
+    {
+      ...(repositories["example/open-registry"] as object),
+      owner: { ...OWNER, node_id: "U_changed" },
+    },
+    422,
+  ],
+] as const)(
+  "an owner write refuses %s from the App",
+  async (_name, repository, status) => {
+    const result = await submit(manifestWith({}), "projects", undefined, {
+      ...ADMIN_ACCESS,
+      repository,
+    });
+    expect(result.status).toBe(status);
+    expect(
+      result.sqlite.prepare("SELECT COUNT(*) AS count FROM projects").get(),
+    ).toEqual({ count: 0 });
+  },
+);

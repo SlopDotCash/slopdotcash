@@ -105,7 +105,13 @@ checks. Funding is reported separately; a project works without it.
   `SLOPBOT` service binding (`https://slopbot.internal/v1/repository-access`,
   `workers/slopbot/repository-access.ts`). The Worker asks GitHub for the
   repository's installation with its App JWT and checks the repository id.
-  Without the binding the check reports `retry`.
+  The current Pages client requests the repository's public identity fields
+  with `includeRepository=1` and reuses that authenticated read. It does not
+  make a second anonymous request for the primary repository. Tokens never
+  leave the Worker. Deploy the Worker before Pages: requests without the flag
+  retain the old response, while a current Pages client refuses a response
+  without the required identity fields. Without the binding the check reports
+  `retry`.
 - **Scan.** Creation, a changed skill input, and a setup check of an
   unscanned or stale revision queue a scan through the existing vetting
   queue (`vettingScanRequester`, the same assessment row and live pin as
@@ -248,12 +254,12 @@ rate limit, and caches each answer for five minutes. The browser never calls
   canonical templates and complete maintainer-authored `contribution`
   fields. Repository receipt authority, terms activation, listing tier and
   money arrive through later revisions.
-- The API reads public GitHub facts on every write
-  (`SLOP_GITHUB_READ_TOKEN` is optional). The repository id, node id, name,
-  and owner must match the manifest, or the request is refused. Every
-  other repository and every alias of an older project must also be a
-  public GitHub repository, and an alias must be a name of the repository
-  it is listed under, with at most 5 names in all.
+- On every owner write, the API checks the primary repository's public
+  identity from the authenticated Slopbot read. The repository id, node id,
+  name, visibility and owner must match the manifest, or the request is
+  refused. Every other repository and every alias of an older project still
+  requires a public lookup (`SLOP_GITHUB_READ_TOKEN` is optional). An alias
+  must name the repository it is listed under, with at most 5 names in all.
 - `/projects/new` and `/admin` preview the exact generated contributor and
   reviewer skills.
 - A revision activates, or changes its skill inputs while active, and its
