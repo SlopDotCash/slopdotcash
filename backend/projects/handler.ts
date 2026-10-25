@@ -1499,6 +1499,19 @@ async function publishOwnerRevision(
       },
     };
   let { manifest: submitted } = canonicalManifest(prepared);
+  // Reject forbidden manifest changes before reading private funds.
+  if (submitted.id !== projectId)
+    fail(422, "invalid_manifest", "Project id cannot change");
+  const restricted = classifyRevisionChanges(
+    current.manifest,
+    submitted,
+  ).restricted;
+  if (restricted.length > 0)
+    fail(
+      422,
+      "owner_field_restricted",
+      `These fields do not change through owner self-service: ${restricted.join(", ")}`,
+    );
   if (programChanged)
     submitted = await ownerSecurityProgram(
       current.manifest,
@@ -1508,15 +1521,7 @@ async function publishOwnerRevision(
       isProjectStewardOrAdmin(current.manifest, actor, checked.access),
       deps,
     );
-  if (submitted.id !== projectId)
-    fail(422, "invalid_manifest", "Project id cannot change");
   const changes = classifyRevisionChanges(current.manifest, submitted);
-  if (changes.restricted.length > 0)
-    fail(
-      422,
-      "owner_field_restricted",
-      `These fields do not change through owner self-service: ${changes.restricted.join(", ")}`,
-    );
   if (
     changes.presentation.length +
       changes.executable.length +
