@@ -18,8 +18,9 @@ Never delete, rewrite, or reissue them. They count where they counted before
 (profile and community total points) and stay out of earned-point standings
 and payouts. The legacy `points_members.welcome` column keeps its fixed value;
 the points API reports a welcome award only for a membership whose immutable
-`joined_at` is before 2026-10-24T00:00:00.000Z, and 0 otherwise. Descriptions
-of those awards below are historical.
+`joined_at` is before 2026-10-24T00:00:00.000Z, and 0 otherwise. It reports an
+X connection award only when its immutable `awarded_at` is before the same
+instant, and 0 otherwise. Descriptions of those awards below are historical.
 
 ## Earning and history
 
