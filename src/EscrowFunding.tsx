@@ -217,6 +217,12 @@ export function EscrowFunding({
             Use the deposit action below to fund this project. Direct token
             transfers are not credited.
           </p>
+          {project.reward.paymentMode !== "enabled" ? (
+            <p role="note">
+              Payments are disabled for this project. No award is paid from the
+              vault until payments are enabled.
+            </p>
+          ) : null}
           {totals.status === "error" ? (
             <p role="alert">{totals.message}</p>
           ) : totals.status !== "ready" ? (

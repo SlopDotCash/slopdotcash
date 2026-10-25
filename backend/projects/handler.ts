@@ -1006,7 +1006,24 @@ async function ownerVault(
       "project_restricted",
       "Request reinstatement before setting up a vault.",
     );
-  requireAuthority(await currentAuthority(deps, current.manifest, actor));
+  const checked = await currentAuthority(deps, current.manifest, actor);
+  requireAuthority(checked);
+  // A project has one ordinary vault and no replacement, and its owner
+  // controls refunds and the monthly switch. Write access is not enough:
+  // only the steward or a repository admin may create or register it.
+  if (
+    actor.githubId !== String(current.manifest.steward.github.actorId) &&
+    !(
+      checked.access.state === "read" &&
+      checked.access.access.installation === "installed" &&
+      checked.access.access.permission === "admin"
+    )
+  )
+    fail(
+      403,
+      "vault_authority_required",
+      `Only the project steward or an admin of ${current.manifest.repositories[0].id} can set up the project vault.`,
+    );
   if (!deps.vaultSetup)
     fail(
       503,

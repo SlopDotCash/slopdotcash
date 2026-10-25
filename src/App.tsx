@@ -1284,26 +1284,22 @@ function ProjectFundingPage({
                       ?.advertisedAmountDisplay ?? "External")}
             </dd>
           </div>
-          {!project.escrow ? (
-            <>
-              <div>
-                <dt>Funding</dt>
-                <dd>{fundingStateLabel(project)}</dd>
-              </div>
-              <div>
-                <dt>Committed</dt>
-                <dd>{formatMicroUsdc(project.reward.committedMinor)}</dd>
-              </div>
-              <div>
-                <dt>Payments</dt>
-                <dd>{paymentStateLabel(project)}</dd>
-              </div>
-              <div>
-                <dt>Project vault</dt>
-                <dd>{vaultStateLabel(project)}</dd>
-              </div>
-            </>
-          ) : null}
+          <div>
+            <dt>Funding</dt>
+            <dd>{fundingStateLabel(project)}</dd>
+          </div>
+          <div>
+            <dt>Committed</dt>
+            <dd>{formatMicroUsdc(project.reward.committedMinor)}</dd>
+          </div>
+          <div>
+            <dt>Payments</dt>
+            <dd>{paymentStateLabel(project)}</dd>
+          </div>
+          <div>
+            <dt>Project vault</dt>
+            <dd>{vaultStateLabel(project)}</dd>
+          </div>
         </dl>
         {project.reward.kind === "external-prize-share" ? (
           <p>
