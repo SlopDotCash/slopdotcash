@@ -35,11 +35,36 @@ jobs:
           # The original image's Git 2.34 lacks merge-tree --write-tree. Build
           # only this proof's derivative; production/controller still use image.
           merge_image="$(docker build --quiet --file tests/fixtures/value-merge.Dockerfile tests/fixtures)"
-          bun --no-env-file scripts/value-merge-resolution.integration.ts "$merge_image" "$RUNNER_TEMP/value-merge-proof.json" "$image"
+          transport_pid=""
+          runner_pid=""
+          transport_bundle="$RUNNER_TEMP/value-merge-transport-public.bundle"
+          cleanup() {
+            if [ -n "$transport_pid" ]; then kill "$transport_pid" 2>/dev/null || true; wait "$transport_pid" 2>/dev/null || true; fi
+            if [ -n "$runner_pid" ]; then kill "$runner_pid" 2>/dev/null || true; wait "$runner_pid" 2>/dev/null || true; fi
+            rm -f "$transport_bundle"
+          }
+          trap cleanup EXIT
+          bun --no-env-file scripts/value-merge-resolution.integration.ts "$merge_image" "$RUNNER_TEMP/value-merge-proof.json" "$image" "$transport_bundle"
+          # A harmless JSON size control exercises the proposed multipart/RPC
+          # transport with the real SDK. No unpublished assessment is uploaded.
+          ./node_modules/.bin/wrangler dev --config tests/fixtures/value-merge-transport-pages.toml \
+            --config tests/fixtures/value-merge-transport-publisher.toml --ip 127.0.0.1 --port 8897 \
+            > "$RUNNER_TEMP/merge-transport.log" 2>&1 &
+          transport_pid=$!
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:8897/health > /dev/null; then break; fi
+            if ! kill -0 "$transport_pid" 2>/dev/null; then echo 'Test transport Worker stopped'; exit 1; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8897/health > /dev/null
+          node scripts/value-merge-transport.workflow.mjs "$transport_bundle" --transport-control \
+            "$RUNNER_TEMP/value-merge-transport.json" http://127.0.0.1:8897 "$transport_pid"
+          kill "$transport_pid"
+          wait "$transport_pid" || true
+          transport_pid=""
           ./node_modules/.bin/wrangler dev --config workers/vetting-sandbox/wrangler.toml --ip 127.0.0.1 --port 8896 \
             --var "RUNNER_IMAGE_SHA256:$RUNNER_IMAGE_SHA256" --var "SLOP_RELEASE_SHA:$GITHUB_SHA" > "$RUNNER_TEMP/sandbox.log" 2>&1 &
           runner_pid=$!
-          trap 'kill "$runner_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 120); do
             if curl --fail --silent "$SLOP_SANDBOX_TEST_URL/health" > /dev/null; then break; fi
             if ! kill -0 "$runner_pid" 2>/dev/null; then cat "$RUNNER_TEMP/sandbox.log"; exit 1; fi
@@ -53,6 +78,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-merge-proof-${{ github.sha }}
-          path: ${{ runner.temp }}/value-merge-proof.json
+          path: |
+            ${{ runner.temp }}/value-merge-proof.json
+            ${{ runner.temp }}/value-merge-transport.json
           if-no-files-found: warn
           retention-days: 7

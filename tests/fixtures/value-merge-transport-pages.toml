@@ -1,0 +1,15 @@
+# Test-only local Worker. No deployment or provider binding is authorized.
+name = "slop-merge-transport-pages"
+main = "value-merge-transport-worker.ts"
+compatibility_date = "2026-09-14"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[[services]]
+binding = "PUBLISHER"
+service = "slop-merge-transport-publisher"
+entrypoint = "TransportPublisher"
+
+[observability]
+enabled = false

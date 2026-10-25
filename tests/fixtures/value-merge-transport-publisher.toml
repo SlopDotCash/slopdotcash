@@ -1,0 +1,27 @@
+# Test-only local Worker using the unchanged production sandbox source/image.
+name = "slop-merge-transport-publisher"
+main = "value-merge-transport-worker.ts"
+compatibility_date = "2026-09-14"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+MODE = "sdk"
+
+[[containers]]
+class_name = "OfflineSandbox"
+image = "../../workers/vetting-sandbox/Dockerfile"
+max_instances = 1
+instance_type = "basic"
+
+[[durable_objects.bindings]]
+name = "RUNNER"
+class_name = "OfflineSandbox"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OfflineSandbox"]
+
+[observability]
+enabled = false

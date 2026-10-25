@@ -86,6 +86,28 @@ intake, full claim attribution, copied-work credit, model output or assessment
 publication. A different Git version remains visible even when trees and patch
 bytes match. Failed reconstruction or cleanup fails the existing CI job.
 
+The job also checks a proposed transport, without changing value intake. It
+reuses that public bundle in a multipart request under the existing 25 MiB
+request ceiling. A 15,546-byte harmless JSON control stands in for an assessment.
+Both parts are files: text form fields normalize line endings. A test-only
+Pages adapter calls the existing HTTP handler, then a named Worker RPC method
+streams the bundle to the unchanged SDK's file API. The SDK reads the file back
+and both hashes must match. It calls `destroy()` in `finally`. An acknowledged
+destroy is not proof of Cloudflare VM teardown. The existing isolation probes
+remain separate and unchanged.
+
+For private local feasibility, `scripts/value-merge-transport.workflow.mjs`
+accepts a retained bundle path, a private envelope path and a safe result path.
+That mode uses native Workerd and a checksum sink, with no SDK container. It
+does not import, validate, log or publish the assessment. The Linux SDK mode
+requires `--transport-control` instead of a private envelope. Both modes check
+JSON compatibility and refusal of a missing test role, wrong origin and excess
+size. Their role is synthetic; this is not real-session acceptance. Host RSS
+samples cover whole Workerd processes, not an isolate's 128 MiB memory limit.
+The container's peak memory is reported separately. Neither test establishes
+hosted capacity, full authenticated import, source validation or Points output.
+Those remain required before the proposed transport can be production ready.
+
 The same CI job then runs the complete scan pass for a harmless native Linux
 program and an unsupported Windows executable. The controller sends the native
 program through this runner, reviews its bounded output, retains the exact

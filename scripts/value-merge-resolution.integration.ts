@@ -6,6 +6,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  copyFileSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -173,7 +174,12 @@ async function inContainer() {
   );
 }
 
-async function onHost(image: string, output: string, sandboxImage: string) {
+async function onHost(
+  image: string,
+  output: string,
+  sandboxImage: string,
+  transportBundle?: string,
+) {
   assert.match(
     image,
     /^sha256:[0-9a-f]{64}$/,
@@ -303,6 +309,9 @@ async function onHost(image: string, output: string, sandboxImage: string) {
     };
     assert.equal(execution.status, 0, "Native container failed");
     assert.equal(result.status, "passed", "Native reconstruction did not pass");
+    // Optional public input handoff to the existing job's SDK transport probe.
+    // This contains only the same pinned public objects, never an assessment.
+    if (transportBundle) copyFileSync(bundle, transportBundle);
   } catch (error) {
     failure = error;
     result = { ...result, status: "failed", hostPhase: phase };
@@ -362,5 +371,10 @@ if (process.argv[2] === "container") {
     process.argv[2] && process.argv[3] && process.argv[4],
     "Pass test image ID, safe result path and unchanged sandbox image ID",
   );
-  await onHost(process.argv[2], process.argv[3], process.argv[4]);
+  await onHost(
+    process.argv[2],
+    process.argv[3],
+    process.argv[4],
+    process.argv[5],
+  );
 }
