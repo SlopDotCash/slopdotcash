@@ -1240,7 +1240,7 @@ export async function bindingCandidates(
  * binding version. A binding signed for that version is reconciled first:
  * its receipt is read independently of current authorization. Missing receipts
  * permit the same bytes to be sent only while the exact claim and wallet consent
- * remain authorized. Held bytes are never replaced without a finalized revert. The vault's
+ * remain authorized. Held bytes survive until a finalized winning receipt. The vault's
  * expectedVersion check refuses a replayed or reordered binding.
  */
 export async function bindStoredDestination(

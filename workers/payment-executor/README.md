@@ -207,8 +207,9 @@ cancel only its own journaled EVM wallet binding after a D1 successor replaces
 the claim or finalized chain time passes its signed consent expiry (owner
 decision, 25 October 2026; PRD sections 6 and 11). It sends zero native value to
 its own plain account, with empty data, exactly 21,000 gas and the same nonce.
-The existing registry gas ceiling and 10 gwei maximum still apply. One bounded
-12.5% fee increment creates one immutable cancellation attempt; it never creates
+The existing registry gas ceiling and 10 gwei maximum still apply. The larger of a minimum
+12.5% replacement increment and the existing current-base-fee quote creates one
+immutable cancellation attempt within that cap; it never creates
 further fee replacements. An inadequate fee or unavailable proof stays held.
 
 Both original and cancellation bytes are stored before broadcast and survive

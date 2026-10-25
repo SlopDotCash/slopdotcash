@@ -67,6 +67,13 @@ const quantity = (value: unknown): bigint => {
     throw new Error("Binding reconciliation quantity unavailable");
   return BigInt(value);
 };
+// RPCs may return signature scalars without their leading zero nibble. Padding
+// changes no scalar; the reconstructed signed hash and recovered sender still bind it.
+const signatureScalar = (value: unknown): Hex => {
+  if (typeof value !== "string" || !/^0x[0-9a-f]{1,64}$/i.test(value))
+    throw new Error("Winner signature unavailable");
+  return `0x${value.slice(2).padStart(64, "0")}`;
+};
 
 /** Observe one already-finalized winner. This environment has no signer or key. */
 export async function reconcileBindingWinner(
@@ -243,9 +250,7 @@ export async function reconcileBindingWinner(
       quantity(tx.gas) !== 21_000n ||
       quantity(receipt.gasUsed) !== 21_000n ||
       !Array.isArray(tx.accessList) ||
-      tx.accessList.length !== 0 ||
-      !/^0x[0-9a-f]{64}$/i.test(tx.r) ||
-      !/^0x[0-9a-f]{64}$/i.test(tx.s)
+      tx.accessList.length !== 0
     )
       throw new Error("Winner is not the supported inert self-transaction");
     const parity = quantity(tx.yParity ?? tx.v);
@@ -264,7 +269,11 @@ export async function reconcileBindingWinner(
         data: "0x",
         accessList: [],
       },
-      { r: tx.r, s: tx.s, yParity: Number(parity) },
+      {
+        r: signatureScalar(tx.r),
+        s: signatureScalar(tx.s),
+        yParity: Number(parity),
+      },
     );
     if (
       !same(keccak256(serialized), input.winnerTransactionId) ||
