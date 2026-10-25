@@ -56,7 +56,7 @@ assert.equal(
   genesis,
   "Apply and record the fixture-only genesis overlay; never spoof RPC genesis",
 );
-assert.notEqual(genesis, "EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
+assert.notEqual(genesis, "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG");
 const owner = provider.wallet.payer;
 const program = new anchor.Program(
   JSON.parse(readFileSync("target/idl/slop_escrow.json")),
