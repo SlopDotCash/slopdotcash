@@ -152,15 +152,16 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
   });
   if (!response.ok) throw new Error(`RPC HTTP failure: ${response.status}`);
   const body = object(await response.json());
+  if (body.id !== 1) throw new Error("RPC request failed");
   if (body.error) {
     const error = object(body.error);
     throw new EvmRpcError(
-      Number(error.code),
-      String(error.message),
-      error.data,
+      error.data === "0x" &&
+        typeof error.message === "string" &&
+        /revert/i.test(error.message),
     );
   }
-  if (body.error || body.id !== 1 || !("result" in body)) {
+  if (!("result" in body)) {
     throw new Error("RPC request failed");
   }
   return body.result;
@@ -169,11 +170,7 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
 /** Only a proved empty EVM revert means an older reviewed implementation lacks a method.
  * Transport, provider and malformed-response errors must never select a legacy fallback. */
 export class EvmRpcError extends Error {
-  constructor(
-    public code: number,
-    public rpcMessage: string,
-    public data: unknown,
-  ) {
+  constructor(public emptyRevert: boolean) {
     super("RPC request failed");
   }
 }

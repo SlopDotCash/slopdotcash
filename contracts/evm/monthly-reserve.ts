@@ -308,12 +308,7 @@ export async function prepareEvmMonthlyReservation(
     if (BigInt(version) !== 2n)
       throw new Error("Unreviewed monthly reserve version");
   } catch (error) {
-    if (
-      error instanceof EvmRpcError &&
-      error.data === "0x" &&
-      /revert/i.test(error.rpcMessage)
-    )
-      return null;
+    if (error instanceof EvmRpcError && error.emptyRevert) return null;
     throw error;
   }
   const [admitted] = await words(

@@ -6,13 +6,25 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { encodeFunctionData, parseAbi } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
+import { handlePaymentsApi } from "../../backend/payments/handler";
+import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
+import type { MonthlyAttestationPlan } from "../../backend/payments/monthly-attestation";
+import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
+import { storeVaultSnapshot } from "../../backend/payments/vault-snapshots";
+import { CloudflareProjectPersistence } from "../../backend/projects/cloudflare-persistence";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
+import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
+import { sha256Hex } from "../../src/lib/sha256";
+import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import {
   type ExecutorEnvironment,
   type JournalStore,
   submitEvmMonthly,
 } from "../../workers/payment-executor/core";
-import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
+import {
+  type MonthlyAuthorization,
+  signMonthlyAllocation,
+} from "../../workers/payment-executor/monthly";
 import {
   buildBindCalldata,
   buildCommitAwardCalldata,
@@ -47,6 +59,8 @@ import {
 } from "./integration/upgrade";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
+const legacyRoot = process.env.SLOP_MONTHLY_LEGACY_ROOT;
+let deploymentRoot = legacyRoot ?? root;
 const port = process.env.SLOP_MONTHLY_TEST_PORT ?? "28647";
 const rpcUrl = `http://127.0.0.1:${port}`;
 const anvil = spawn(
@@ -60,7 +74,7 @@ const accounts = Array.from({ length: 6 }, (_, addressIndex) =>
     { addressIndex },
   ),
 );
-const [owner, authority, recipient, fee, gas] = accounts;
+const [owner, authority, recipient, fee, gas, registrar] = accounts;
 const chainId = 84532n;
 const period = "2026-11";
 const projectId = "eliza";
@@ -69,7 +83,7 @@ const digest = (bytes: string) =>
     .update(Buffer.from(bytes.replace(/^0x/, ""), "hex"))
     .digest("hex");
 const projectDigest = `0x${createHash("sha256").update(`slop-project:${projectId}`).digest("hex")}`;
-const allocationDigest = `0x${"a".repeat(64)}`;
+
 const ABI = parseAbi([
   "function mint(address,uint256)",
   "function approve(address,uint256)",
@@ -131,7 +145,7 @@ function deploy(contract: string, args: string[] = []): string {
     [
       "create",
       "--root",
-      root,
+      deploymentRoot,
       contract,
       "--rpc-url",
       rpcUrl,
@@ -144,7 +158,7 @@ function deploy(contract: string, args: string[] = []): string {
     ],
     { encoding: "utf8" },
   );
-  return JSON.parse(output).deployedTo;
+  return String(JSON.parse(output).deployedTo).toLowerCase();
 }
 async function value(to: string, signature: string, args: string[] = []) {
   const data = execFileSync("cast", ["calldata", signature, ...args], {
@@ -182,7 +196,7 @@ try {
   await rpc("evm_setNextBlockTimestamp", [1796342400]);
   const token = deploy("integration/TestDollar.sol:TestDollar");
   const factory = deploy("src/ProjectEscrow.sol:EscrowFactory", [
-    owner.address,
+    registrar.address,
     fee.address,
     authority.address,
     "0",
@@ -224,16 +238,16 @@ try {
     chainId,
     vault,
     asset: token,
-    owner: owner.address,
-    identityAuthority: authority.address,
-    feeRecipient: fee.address,
+    owner: owner.address.toLowerCase(),
+    identityAuthority: authority.address.toLowerCase(),
+    feeRecipient: fee.address.toLowerCase(),
     codeSha256: digest(String(await rpc("eth_getCode", [vault, "latest"]))),
     bindingDelaySeconds: "0",
     factory,
     factoryCodeSha256: digest(
       String(await rpc("eth_getCode", [factory, "latest"])),
     ),
-    registrar: owner.address,
+    registrar: registrar.address.toLowerCase(),
     evmUpgrade: await captureUpgrade(rpc, factory, vault),
   };
   await finalized();
@@ -242,7 +256,7 @@ try {
     { length: 100 },
     (_, index) => ({
       githubUserId: String(1001 + index),
-      grossMicro: "1000000",
+      grossMicro: index === 0 ? "1000001" : index === 1 ? "999999" : "1000000",
       sourceDigest: `0x${escrowAwardOrigin(projectId, period, String(1001 + index))}`,
     }),
   );
@@ -258,6 +272,224 @@ try {
   const originalAward = await value(vault, "awards(bytes32)", [
     evmAwardId(chainId, vault, entries[0].sourceDigest),
   ]);
+  const binding = {
+    githubUserId: entries[0].githubUserId,
+    destination: recipient.address,
+    expectedVersion: "0",
+    claimDigest: `0x${"c".repeat(64)}`,
+    expiresAt: "1800000000",
+  };
+  // The wallet signs before the optional implementation upgrade.
+  const walletSignature = await recipient.sign({
+    hash: evmBindingDigest(chainId, vault, binding) as `0x${string}`,
+  });
+  const network = "base-sepolia" as const;
+  const now = new Date("2026-12-04T01:00:00Z");
+  const schedule = { firstPeriod: period, cutoffSecondsAfterPeriodEnd: 259200 };
+  const fixture = await createMonthlyAllocationFixture({
+    deployment: {
+      network,
+      vault,
+      asset: token,
+      owner: config.owner,
+      identityAuthority: config.identityAuthority,
+      feeRecipient: config.feeRecipient,
+      codeSha256: config.codeSha256,
+      bindingDelaySeconds: "0",
+      rotationDelaySeconds: null,
+      factory,
+      factoryCodeSha256: config.factoryCodeSha256,
+      registrar: config.registrar,
+      evmUpgrade: config.evmUpgrade,
+      programId: null,
+      upgradeAuthority: null,
+      projectPda: null,
+      networkDomain: null,
+      deploymentTransaction: created.hash,
+      sourceCommit: "8a72098a9e4fd5c5828da4d18d882e1a6cb89bcf",
+    },
+    period,
+    capBase: "100000000",
+    rows: entries.map((entry) => ({
+      githubUserId: entry.githubUserId,
+      grossBase: String(entry.grossMicro),
+    })),
+  });
+  assert.equal(fixture.project.id, projectId);
+  await storeVaultSnapshot(
+    fixture.db,
+    { projectId, network, chain: "base", vault, asset: token },
+    await readVaultTotals({ ...config, network }),
+    now.toISOString(),
+  );
+  const coordinated = await coordinateMonthlyPayments({
+    db: fixture.db,
+    projects: fixture,
+    networks: [network],
+    schedule,
+    now,
+  });
+  assert.deepEqual(coordinated.failures, []);
+  assert.deepEqual(coordinated.created, [`${projectId}/${period}`]);
+  const frozen = fixture.sqlite
+    .prepare("SELECT snapshot_sha256,snapshot FROM monthly_payment_runs")
+    .get() as { snapshot_sha256: string; snapshot: string };
+  const allocationDigest = `0x${frozen.snapshot_sha256}`;
+  const attestationJournal = journal();
+  let useReserve = false;
+  const publication = {
+    db: fixture.db,
+    networks: [network],
+    schedule,
+    now,
+    authorize: (request: Parameters<typeof signMonthlyAllocation>[1]) =>
+      signMonthlyAllocation(
+        {
+          ...fixture,
+          networks: [network],
+          schedule,
+          now: () => now,
+          journal: attestationJournal.store,
+          verifyDeployment: async () => {
+            await verifyEvmDeployment(config);
+          },
+          ...(useReserve
+            ? {
+                reserve: (plan: MonthlyAttestationPlan) =>
+                  prepareEvmMonthlyReservation(
+                    config,
+                    period,
+                    `0x${plan.request.snapshotSha256}`,
+                    plan.entries,
+                  ),
+              }
+            : {}),
+          sign: async (plan) =>
+            (await authority.sign({ hash: `0x${plan.messageHex}` })).slice(2),
+        },
+        request,
+      ),
+  };
+  const readPublished = async () => {
+    const response = await handlePaymentsApi(
+      new Request(
+        `https://slop.cash/api/v1/payments/projects/${projectId}/monthly/${period}/authorization/${network}`,
+      ),
+      { db: fixture.db },
+    );
+    assert.equal(response.status, 200);
+    return ((await response.json()) as { authorization: MonthlyAuthorization })
+      .authorization;
+  };
+  assert.deepEqual(
+    (await publishMonthlyAuthorizations(publication)).failures,
+    [],
+  );
+  const legacyAuthorization = await readPublished();
+  assert.equal(legacyAuthorization.plan.evmReservation, undefined);
+  const permanentAuthorization = fixture.sqlite
+    .prepare("SELECT authorization FROM monthly_payment_authorizations")
+    .get();
+  if (legacyRoot) {
+    const storageBefore = await Promise.all(
+      Array.from({ length: 24 }, (_, index) =>
+        rpc("eth_getStorageAt", [vault, `0x${index.toString(16)}`, "latest"]),
+      ),
+    );
+    const totalsBefore = await readVaultTotals({ ...config, network });
+    const domainBefore = await value(vault, "domainSeparator()");
+    const oldReview = config.evmUpgrade;
+    assert(oldReview);
+    deploymentRoot = root;
+    const implementation = deploy("src/ProjectEscrow.sol:ProjectEscrow");
+    const upgrade = await send(
+      vault,
+      execFileSync(
+        "cast",
+        ["calldata", "upgradeToAndCall(address,bytes)", implementation, "0x"],
+        { encoding: "utf8" },
+      ).trim(),
+      registrar.address,
+    );
+    await finalized();
+    config.evmUpgrade = {
+      ...(await captureUpgrade(rpc, factory, vault)),
+      history: [
+        {
+          ...oldReview,
+          supersededAtBlock: BigInt(upgrade.receipt.blockNumber).toString(),
+        },
+      ],
+    };
+    assert.deepEqual(
+      await Promise.all(
+        Array.from({ length: 24 }, (_, index) =>
+          rpc("eth_getStorageAt", [vault, `0x${index.toString(16)}`, "latest"]),
+        ),
+      ),
+      storageBefore,
+      "legacy storage slots retained",
+    );
+    const totalsAfter = await readVaultTotals({ ...config, network });
+    // The observation block advances, but every financial counter must stay unchanged.
+    for (const key of [
+      "freeBalance",
+      "reservedPrincipal",
+      "reservedFees",
+      "totalDeposited",
+      "totalPaid",
+      "totalPayoutFees",
+      "totalGrossWithdrawn",
+    ] as const)
+      assert.equal(totalsAfter[key], totalsBefore[key], key);
+    assert.equal(
+      await value(vault, "domainSeparator()"),
+      domainBefore,
+      "old signature domain retained",
+    );
+    assert.equal(
+      await value(vault, "awards(bytes32)", [
+        evmAwardId(chainId, vault, entries[0].sourceDigest),
+      ]),
+      originalAward,
+    );
+    const current = await fixture.getProject(projectId);
+    assert(current?.manifest.escrow);
+    const manifest = assertProjectDefinition({
+      ...current.manifest,
+      escrow: {
+        ...current.manifest.escrow,
+        deployments: current.manifest.escrow.deployments.map((deployment) => ({
+          ...deployment,
+          evmUpgrade: config.evmUpgrade,
+        })),
+      },
+    });
+    const manifestText = JSON.stringify(manifest);
+    const updated = await new CloudflareProjectPersistence(
+      fixture.db,
+    ).appendProjectRevision(
+      {
+        projectId,
+        expectedRevision: current.revision,
+        manifest,
+        manifestText,
+        manifestSha256: sha256Hex(manifestText),
+        reason: "Reviewed local upgrade",
+        actor: { githubId: "900000071", githubLogin: "owner" },
+        at: now.toISOString(),
+      },
+      0,
+    );
+    assert.equal(updated, "updated");
+  }
+  useReserve = true;
+  assert.deepEqual(
+    (await publishMonthlyAuthorizations(publication)).failures,
+    [],
+  );
+  const firstAuthorization = await readPublished();
+  assert.deepEqual(firstAuthorization.legacyAuthorization, legacyAuthorization);
   await assert.rejects(
     prepareEvmMonthlyReservation(config, period, allocationDigest, [
       entries[0],
@@ -283,7 +515,8 @@ try {
     period,
     first.reservation,
   );
-  const firstSignature = await authority.sign({ hash: firstDigest });
+  assert.equal(firstAuthorization.plan.messageHex, firstDigest.slice(2));
+  const firstSignature = `0x${firstAuthorization.signatureHex}`;
   const legacySignature = await authority.sign({
     hash: evmMonthlyDigest(
       chainId,
@@ -342,7 +575,35 @@ try {
     period,
     next.reservation,
   );
-  const signature = await authority.sign({ hash: nextDigest });
+  assert.deepEqual(
+    (await publishMonthlyAuthorizations(publication)).failures,
+    [],
+  );
+  const authorization = await readPublished();
+  assert.equal(authorization.plan.messageHex, nextDigest.slice(2));
+  assert.deepEqual(
+    fixture.sqlite
+      .prepare("SELECT authorization FROM monthly_payment_authorizations")
+      .get(),
+    permanentAuthorization,
+  );
+  assert.equal(
+    (
+      fixture.sqlite
+        .prepare(
+          "SELECT count(*) n FROM monthly_payment_authorization_attempts",
+        )
+        .get() as { n: number }
+    ).n,
+    2,
+  );
+  assert.deepEqual(
+    fixture.sqlite
+      .prepare("SELECT snapshot_sha256,snapshot FROM monthly_payment_runs")
+      .get(),
+    frozen,
+  );
+  const signature = `0x${authorization.signatureHex}`;
   // Legacy signatures cannot admit V2, even for the same period and economic allocation.
   await send(
     vault,
@@ -388,26 +649,13 @@ try {
     SIGNER: gas,
     JOURNAL: execution.store,
   };
-  const authorization = {
-    plan: {
-      request: {
-        projectId,
-        period,
-        network: "base-sepolia",
-        snapshotSha256: allocationDigest.slice(2),
-      },
-      deployment: config,
-      family: "evm",
-      allocationRoot: next.reservation.allocationRoot,
-      messageHex: nextDigest.slice(2),
-      totalGrossBase: next.reservation.wholeGross,
-      entries: next.entries,
-      evmReservation: next.reservation,
-    },
-    signatureHex: signature.slice(2),
-  } as unknown as MonthlyAuthorization;
   await submitEvmMonthly(env, authorization);
   await finalized();
+  assert.deepEqual(await publishMonthlyAuthorizations(publication), {
+    published: [],
+    failures: [],
+  });
+  assert.deepEqual(await readPublished(), authorization);
   const totals = await readVaultTotals({ ...config, network: "base-sepolia" });
   assert.equal(totals.freeBalance, "0");
   assert.equal(
@@ -430,11 +678,44 @@ try {
   const laterManual = {
     githubUserId: "9999",
     grossMicro: "1",
-    sourceDigest: `0x${"b".repeat(64)}`,
+    sourceDigest: `0x${escrowAwardOrigin(projectId, "2026-12", "9999")}`,
   };
   await send(vault, commit(laterManual), owner.address, false);
   await send(vault, buildSetMonthlyCommitmentCalldata("0", false));
   await rpc("evm_setNextBlockTimestamp", [1799020801]);
+  await finalized();
+
+  // A second month cannot overlap a partially materialized reserve, even with a valid signature.
+  await send(vault, buildSetMonthlyCommitmentCalldata("1", true));
+  await finalized();
+  const laterDigest = `0x${"d".repeat(64)}`;
+  const overlapping = await prepareEvmMonthlyReservation(
+    config,
+    "2026-12",
+    laterDigest,
+    [laterManual],
+  );
+  assert(overlapping);
+  const overlappingSignature = await authority.sign({
+    hash: evmMonthlyReserveDigest(
+      chainId,
+      vault,
+      "2026-12",
+      overlapping.reservation,
+    ) as `0x${string}`,
+  });
+  await send(
+    vault,
+    buildReserveMonthlyCalldata(
+      "2026-12",
+      overlapping.reservation,
+      overlappingSignature,
+    ),
+    gas.address,
+    false,
+  );
+  assert.equal(BigInt(await value(vault, "pendingMonthlyGross()")), 98000000n);
+  await send(vault, buildSetMonthlyCommitmentCalldata("0", false));
   await finalized();
 
   // Existing funded awards retain their bytes and can pay while leaves remain, after Off/window end.
@@ -444,16 +725,6 @@ try {
     ]),
     originalAward,
   );
-  const binding = {
-    githubUserId: entries[0].githubUserId,
-    destination: recipient.address,
-    expectedVersion: "0",
-    claimDigest: `0x${"c".repeat(64)}`,
-    expiresAt: "1800000000",
-  };
-  const walletSignature = await recipient.sign({
-    hash: evmBindingDigest(chainId, vault, binding) as `0x${string}`,
-  });
   await send(
     vault,
     buildBindCalldata({ ...binding, walletSignature }),
@@ -475,7 +746,8 @@ try {
     Number(BigInt(paidLog.logIndex)),
     evmAwardId(chainId, vault, entries[0].sourceDigest),
   );
-  assert.equal(payment.netMicro, "980000");
+  assert.equal(payment.netMicro, legacyRoot ? "980001" : "980000");
+  assert.equal(payment.feeMicro, legacyRoot ? "20000" : "20001");
   assert.equal(BigInt(await value(vault, "pendingMonthlyGross()")), 98000000n);
   const tree = evmMonthlySumTree(next.entries);
   await send(
@@ -494,8 +766,24 @@ try {
     false,
   );
   await send(vault, commit(laterManual), owner.address, false);
+  // A new permissionless keeper has no prior cursor. Already-finalized leaves consume its
+  // work bound too; a long prefix must not cause an unbounded scan or extra transaction.
+  await submitEvmMonthly(env, authorization, false, 20);
+  await finalized();
+  const resumed = journal();
+  env.JOURNAL = resumed.store;
+  const beforeResume = await value(vault, "pendingMonthlyGross()");
+  const boundedResume = await submitEvmMonthly(env, authorization, false, 16);
+  assert.equal(boundedResume.transactionId, null);
+  assert.equal(boundedResume.complete, false);
+  assert.equal(await value(vault, "pendingMonthlyGross()"), beforeResume);
+  assert(
+    [...resumed.records.entries()].some(
+      ([key, value]) => key.endsWith(":finalized-cursor") && value === 16,
+    ),
+  );
   let complete = false;
-  for (let runs = 0; runs < 10; ++runs) {
+  for (let runs = 0; runs < 2 * Math.ceil(entries.length / 16) + 2; ++runs) {
     const result = await submitEvmMonthly(env, authorization, false, 16);
     if (result.complete) {
       complete = true;
@@ -516,7 +804,7 @@ try {
   assert.equal(
     BigInt(completed.reservedPrincipal ?? "0") +
       BigInt(completed.reservedFees ?? "0"),
-    99000000n,
+    98999999n,
   );
   await send(
     token,
@@ -536,8 +824,64 @@ try {
   );
   await send(vault, buildDepositCalldata("1"));
   await send(vault, commit(laterManual));
+  await send(vault, buildSetMonthlyCommitmentCalldata("1", true));
+  await finalized();
+  const empty = await prepareEvmMonthlyReservation(
+    config,
+    "2026-12",
+    laterDigest,
+    [laterManual],
+  );
+  assert(empty);
+  assert.equal(empty.entries.length, 0);
+  assert.equal(empty.reservation.remainingGross, "0");
+  const emptyMessage = evmMonthlyReserveDigest(
+    chainId,
+    vault,
+    "2026-12",
+    empty.reservation,
+  );
+  const emptyAuthorization: MonthlyAuthorization = {
+    plan: {
+      ...authorization.plan,
+      request: {
+        ...authorization.plan.request,
+        period: "2026-12",
+        snapshotSha256: laterDigest.slice(2),
+      },
+      entries: [],
+      totalGrossBase: "1",
+      evmReservation: empty.reservation,
+      allocationRoot: empty.reservation.allocationRoot,
+      messageHex: emptyMessage.slice(2),
+    },
+    signatureHex: (
+      await authority.sign({ hash: emptyMessage as `0x${string}` })
+    ).slice(2),
+  };
+  await submitEvmMonthly(env, emptyAuthorization);
+  await finalized();
+  assert.equal(
+    (await submitEvmMonthly(env, emptyAuthorization, false)).complete,
+    true,
+    "an all-funded month terminates without leaves",
+  );
+  assert.equal(BigInt(await value(vault, "pendingMonthlyGross()")), 0n);
+  await send(
+    vault,
+    buildReserveMonthlyCalldata(
+      "2026-12",
+      empty.reservation,
+      `0x${emptyAuthorization.signatureHex}`,
+    ),
+    gas.address,
+    false,
+  );
   const gasUsed: bigint[] = [];
-  for (const item of execution.records.values()) {
+  for (const item of [
+    ...execution.records.values(),
+    ...resumed.records.values(),
+  ]) {
     const record = item as { transactionId?: string };
     if (record?.transactionId) {
       const receipt = (await rpc("eth_getTransactionReceipt", [
@@ -554,6 +898,201 @@ try {
       );
     }
   }
+  // A small legacy call can already be in flight when a V2 successor is published. Keep its
+  // exact transaction, then accept its independently authenticated finalized root as the winner.
+  const raceFactory = deploy("src/ProjectEscrow.sol:EscrowFactory", [
+    registrar.address,
+    fee.address,
+    authority.address,
+    "0",
+  ]);
+  await send(
+    raceFactory,
+    buildCreateVaultCalldata({
+      projectId: projectDigest,
+      asset: token,
+      monthlyCap: "2",
+      automaticMonthly: true,
+    }),
+  );
+  const raceVault = `0x${(await value(raceFactory, "vaults(bytes32)", [vaultKey])).slice(-40)}`;
+  await send(
+    token,
+    encodeFunctionData({
+      abi: ABI,
+      functionName: "approve",
+      args: [raceVault as `0x${string}`, 2n],
+    }),
+  );
+  await send(raceVault, buildDepositCalldata("2"));
+  const raceConfig: EvmEscrowConfig = {
+    ...config,
+    vault: raceVault,
+    factory: raceFactory,
+    codeSha256: digest(String(await rpc("eth_getCode", [raceVault, "latest"]))),
+    factoryCodeSha256: digest(
+      String(await rpc("eth_getCode", [raceFactory, "latest"])),
+    ),
+    evmUpgrade: await captureUpgrade(rpc, raceFactory, raceVault),
+  };
+  const raceEntries = ["7001", "7002"].map((githubUserId) => ({
+    githubUserId,
+    grossMicro: "1",
+    sourceDigest: `0x${escrowAwardOrigin(projectId, "2026-12", githubUserId)}`,
+  }));
+  await send(
+    raceVault,
+    buildCommitAwardCalldata({
+      ...raceEntries[0],
+      obligationId: evmAwardId(chainId, raceVault, raceEntries[0].sourceDigest),
+    }),
+  );
+  await finalized();
+  const raceSnapshot = "e".repeat(64);
+  const legacyRootHash = evmAllocationRoot(raceEntries);
+  const legacyMessage = evmMonthlyDigest(
+    chainId,
+    raceVault,
+    "2026-12",
+    legacyRootHash,
+  );
+  const raceDeployment = {
+    ...authorization.plan.deployment,
+    vault: raceVault,
+    factory: raceFactory,
+    codeSha256: raceConfig.codeSha256,
+    factoryCodeSha256: raceConfig.factoryCodeSha256,
+    evmUpgrade: raceConfig.evmUpgrade,
+  };
+  const legacyRace: MonthlyAuthorization = {
+    plan: {
+      ...authorization.plan,
+      evmReservation: undefined,
+      request: {
+        ...authorization.plan.request,
+        period: "2026-12",
+        snapshotSha256: raceSnapshot,
+      },
+      deployment: raceDeployment,
+      totalGrossBase: "2",
+      entries: raceEntries,
+      allocationRoot: legacyRootHash,
+      messageHex: legacyMessage.slice(2),
+    },
+    signatureHex: (
+      await authority.sign({ hash: legacyMessage as `0x${string}` })
+    ).slice(2),
+  };
+  const raceReserve = await prepareEvmMonthlyReservation(
+    raceConfig,
+    "2026-12",
+    `0x${raceSnapshot}`,
+    raceEntries,
+  );
+  assert(raceReserve);
+  const raceMessage = evmMonthlyReserveDigest(
+    chainId,
+    raceVault,
+    "2026-12",
+    raceReserve.reservation,
+  );
+  const successor: MonthlyAuthorization = {
+    plan: {
+      ...legacyRace.plan,
+      evmReservation: raceReserve.reservation,
+      entries: raceReserve.entries.map((entry) => ({
+        ...entry,
+        grossMicro: String(entry.grossMicro),
+      })),
+      allocationRoot: raceReserve.reservation.allocationRoot,
+      messageHex: raceMessage.slice(2),
+    },
+    signatureHex: (
+      await authority.sign({ hash: raceMessage as `0x${string}` })
+    ).slice(2),
+    legacyAuthorization: legacyRace,
+  };
+  const raceJournal = journal();
+  const raceEnv: ExecutorEnvironment = {
+    ...env,
+    PAYMENT_DEPLOYMENTS: JSON.stringify([
+      {
+        ...raceConfig,
+        chainId: chainId.toString(),
+        network,
+        chain: "base",
+        projectId,
+        gasCeiling: "500000",
+      },
+    ]),
+    JOURNAL: raceJournal.store,
+  };
+  await rpc("evm_setAutomine", [false]);
+  const pendingLegacy = await submitEvmMonthly(raceEnv, legacyRace);
+  assert(pendingLegacy.transactionId);
+  const beforeReplacementNonce = await rpc("eth_getTransactionCount", [
+    gas.address,
+    "pending",
+  ]);
+  const pendingSuccessor = await submitEvmMonthly(raceEnv, successor);
+  assert.equal(
+    pendingSuccessor.transactionId,
+    pendingLegacy.transactionId,
+    "successor resumes the original exact signed transaction",
+  );
+  assert.equal(
+    await rpc("eth_getTransactionCount", [gas.address, "pending"]),
+    beforeReplacementNonce,
+    "successor consumes no new nonce",
+  );
+  assert.equal(
+    [...raceJournal.records.values()].filter(
+      (item) => (item as { transactionId?: string })?.transactionId,
+    ).length,
+    1,
+  );
+  await rpc("evm_setAutomine", [true]);
+  await finalized();
+  // A later authority rotation cannot invalidate the root that already committed.
+  await send(
+    raceFactory,
+    execFileSync(
+      "cast",
+      ["calldata", "proposeIdentityAuthority(address)", recipient.address],
+      { encoding: "utf8" },
+    ).trim(),
+    registrar.address,
+  );
+  await rpc("evm_increaseTime", [172801]);
+  await rpc("anvil_mine", ["0x1"]);
+  await send(
+    raceFactory,
+    execFileSync("cast", ["calldata", "executeIdentityAuthorityRotation()"], {
+      encoding: "utf8",
+    }).trim(),
+    gas.address,
+  );
+  await finalized();
+  raceConfig.identityAuthority = recipient.address.toLowerCase();
+  raceEnv.PAYMENT_DEPLOYMENTS = JSON.stringify([
+    {
+      ...raceConfig,
+      chainId: chainId.toString(),
+      network,
+      chain: "base",
+      projectId,
+      gasCeiling: "500000",
+    },
+  ]);
+  const legacyWinner = await submitEvmMonthly(raceEnv, successor, false);
+  assert.equal(legacyWinner.complete, true);
+  assert.equal(legacyWinner.transactionId, null);
+  assert.equal(BigInt(await value(raceVault, "pendingMonthlyGross()")), 0n);
+  assert.equal(
+    (await readVaultTotals({ ...raceConfig, network })).freeBalance,
+    "0",
+  );
+  fixture.sqlite.close();
   console.log(
     JSON.stringify(
       {
@@ -568,7 +1107,13 @@ try {
         configuredGasCeiling: "500000",
         createdAtBlock: created.receipt.blockNumber,
         wholeMonthReserve: next.reservation.remainingGross,
-        principalAndFeesAfterOneOldPayment: "99000000",
+        principalAndFeesAfterOneOldPayment: "98999999",
+        legacyImplementationUpgrade: Boolean(legacyRoot),
+        oldAwardFee: payment.feeMicro,
+        preUpgradeWalletSignature: "accepted",
+        uncertainLegacyAdmission: "same-transaction-finalized-winner",
+        simultaneousPendingMonth: "refused",
+        allFundedMonth: "sealed-with-no-leaves",
         manualRace: "rejected-before-reserve",
         optedOutAndWindowExpired: "leaves-completed",
         replay: "refused",

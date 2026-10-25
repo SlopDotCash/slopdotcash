@@ -527,6 +527,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         external
     {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
+        if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
