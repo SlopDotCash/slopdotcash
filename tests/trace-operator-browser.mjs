@@ -169,6 +169,7 @@ export async function runTraceOperatorUi({
         continue;
       }
       await page.getByRole("button", { name: "Your account" }).click();
+      await page.waitForLoadState("networkidle");
       await expect(
         page.getByRole("link", { name: "Private traces", exact: true }),
       ).toBeVisible();
@@ -280,6 +281,7 @@ export async function runTraceOperatorUi({
       await expect(page.getByRole("alert")).toContainText(
         "bytes did not match",
       );
+      assert.equal(downloads, downloadsBeforeCorruption);
       await expect(reason).toHaveValue(
         "Check synthetic transfer integrity refusal",
       );
@@ -349,6 +351,7 @@ export async function runTraceOperatorUi({
       );
       await expect(submit).toHaveCount(0);
       await page.getByRole("button", { name: "Your account" }).click();
+      await page.waitForLoadState("networkidle");
       await expect(
         page.getByRole("link", { name: "Admin", exact: true }),
       ).toBeVisible();
