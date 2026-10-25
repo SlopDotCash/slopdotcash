@@ -96,16 +96,16 @@ identifies the revision and defect, gives the repair, and provides the appeal.
 
 Migration `0040_slopbot_quality_shadow.sql` stores confirmed proposals after
 live source, policy, registry, installation, exemption and appeal rechecks.
-Only independently grounded pairs are recorded. Repeated revisions of one PR
-count once for the minimum. Nothing in this table grants closure or penalties.
+Only independently grounded pairs are recorded. Repeated revisions do not
+represent independent cases. Nothing in this table grants closure or penalties.
 
-Qualification needs at least 50 separate reviewed items in the repository
-after its first confirmed proposal under the current verifier key and profile,
-and at least 14 days from that proposal. A maintainer must inspect all proposed closures,
-record agreement and counterexample results in the reviewed activation record,
-and approve activation separately. Reviews before that first proposal cannot
-qualify the new objective verifier. The ordinary installation shadow gate also
-remains in force.
+Qualification uses reviewed real cases and counterexamples under the current
+verifier key and profile. The owner replaced the fixed 14-day and 50-item
+threshold on 25 October 2026. Inspect proposed closures and record agreement,
+counterexamples and the exact verifier evidence in the production activation
+record. A different key or profile requires its own reviewed evidence; old
+results do not qualify it. Synthetic controls are useful tests but do not prove
+real model qualification. Activation remains separate.
 
 Keep `SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256` unset until that review passes.
 Only the protected production release may set it to the qualified profile.

@@ -255,6 +255,17 @@ reviews. The current global closure switch stays off until reviewed production
 activation. Document changes alone do not activate closure, payments, or
 security enforcement.
 
+Automatic closure also requires explicit consent in project settings. Start
+the control unchecked and treat absent consent as false; registration or App
+installation alone is not consent. A separate `.github/slopbot.json` file is
+not required, but preserve its existing opt-outs and category restrictions
+and the repository's rejection rules. Use existing immutable project revisions
+and current GitHub authority checks. Qualify closure with reviewed real cases
+and counterexamples, not a fixed 14-day and 50-item threshold. Keep independent
+confirmation, caps, appeals, reopen protection, the seven-day uncertain
+label-only rule and explicit production activation. Fixtures prove controls,
+not actual model qualification (owner decision, 25 October 2026).
+
 ## Installer and attribution
 
 The public checksum detects corruption only. The trust root of a project
