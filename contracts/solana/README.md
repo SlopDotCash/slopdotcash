@@ -202,6 +202,14 @@ on nor off is selected for the owner. The unsigned transaction contains `initial
 does. This uses the current program and needs no program upgrade. Private
 bounty initialization does not accept monthly settings.
 
+`buildInitializeVaultInstructions` in `owner-instructions.ts` builds the same
+instructions for edge and browser callers. It returns the project, vault and
+Config addresses and unsigned instructions. The caller must first verify the
+reviewed program, Config, network, mint and owner's authority. The builder does
+not prove those facts or send a transaction. The local validator workflow
+compares its output with the owner CLI, creates both monthly choices and a
+separate bounty vault, then verifies deposits into each vault.
+
 The owner can later call `set_monthly_commitment(cap, enabled)` on an ordinary
 project. "On" needs a positive cap; turning it off preserves existing awards.
 Legacy callers that send `initialize` alone retain their earlier off/zero

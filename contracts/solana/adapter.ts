@@ -221,6 +221,7 @@ export async function solanaMintDecimals(
 /** Bind the reviewed deployment to finalized executable bytes and all project authorities. */
 export async function verifySolanaDeployment(
   config: SolanaEscrowConfig,
+  expectedProjectDigest?: string,
 ): Promise<Uint8Array> {
   if (!/^[0-9a-f]{64}$/.test(config.codeSha256))
     throw new Error("Missing reviewed program digest");
@@ -296,6 +297,19 @@ export async function verifySolanaDeployment(
     PROJECT_SIZE,
     PROJECT_DISCRIMINATOR,
   );
+  if (
+    expectedProjectDigest !== undefined &&
+    (hex(project.slice(40, 72)) !== hex(digest(expectedProjectDigest)) ||
+      config.projectPda !==
+        programAddress(config.programId, [
+          encoder.encode("project"),
+          publicKeyBytes(config.owner),
+          digest(expectedProjectDigest),
+          Uint8Array.of(solanaProjectPurpose(config.payoutPolicy)),
+        ]) ||
+      config.vault !== solanaVaultAddress(config.programId, config.projectPda))
+  )
+    throw new Error("The vault belongs to a different registry project.");
   // L-3: the program pins the identity authority and fee recipient of every new project
   // in its singleton Config. A project whose fee recipient differs (for example one
   // created before the Config existed) is refused, and so is a deployment without a Config.

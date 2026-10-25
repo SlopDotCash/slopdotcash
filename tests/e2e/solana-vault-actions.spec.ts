@@ -1,19 +1,37 @@
 /** Real local validator and public fixture wallets. No live RPC or funds. */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { expect, test } from "@playwright/test";
 import { handlePaymentsApi } from "../../backend/payments/handler";
-import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
+import {
+  type SolanaEscrowConfig,
+  solanaBase58,
+  verifySolanaDeployment,
+} from "../../contracts/solana/adapter";
+import { verifySolanaVaultCreation } from "../../contracts/solana/owner-creation";
+import { buildInitializeVaultInstructions } from "../../contracts/solana/owner-instructions";
+import { message } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
 import { formatAssetAmount } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { registryProjectDigest } from "../../src/lib/vault-setup";
+import { CONTRIBUTION } from "../project-application-manifest";
 
 // Dependencies are installed by the existing Solana contract test command.
 const requireSolana = createRequire(
@@ -276,6 +294,82 @@ test.afterAll(async () => {
   if (ledger) rmSync(ledger, { recursive: true, force: true });
 });
 
+function installLocalSolanaWallet() {
+  const bridge = window as unknown as {
+    localSolanaAccount(): Promise<{ address: string; publicKey: number[] }>;
+    localSolanaSend(
+      wire: number[],
+      address: string,
+      chain: string,
+    ): Promise<{ error?: string; signature?: number[] }>;
+  };
+  let accounts: {
+    address: string;
+    publicKey: Uint8Array;
+    chains: string[];
+    features: string[];
+  }[] = [];
+  const wallet = {
+    name: "Local Solana wallet",
+    version: "1.0.0",
+    icon: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E",
+    chains: ["solana:devnet"],
+    get accounts() {
+      return accounts;
+    },
+    features: {
+      "standard:connect": {
+        version: "1.0.0",
+        connect: async () => {
+          const next = await bridge.localSolanaAccount();
+          accounts = [
+            {
+              address: next.address,
+              publicKey: Uint8Array.from(next.publicKey),
+              chains: ["solana:devnet"],
+              features: ["solana:signMessage", "solana:signAndSendTransaction"],
+            },
+          ];
+          return { accounts };
+        },
+      },
+      "solana:signMessage": {
+        version: "1.0.0",
+        signMessage: async () => {
+          throw new Error("Funding must not request an account-link message");
+        },
+      },
+      "solana:signAndSendTransaction": {
+        version: "1.0.0",
+        supportedTransactionVersions: ["legacy"],
+        signAndSendTransaction: async ({
+          transaction,
+          account,
+          chain,
+        }: {
+          transaction: Uint8Array;
+          account: { address: string };
+          chain: string;
+        }) => {
+          const result = await bridge.localSolanaSend(
+            [...transaction],
+            account.address,
+            chain,
+          );
+          if (result.error === "rejected")
+            throw Object.assign(new Error("User rejected"), { code: 4001 });
+          if (result.error)
+            throw new Error("Transport interrupted after submission");
+          return [{ signature: Uint8Array.from(result.signature ?? []) }];
+        },
+      },
+    },
+  };
+  window.addEventListener("wallet-standard:app-ready", (event) =>
+    (event as CustomEvent).detail.register(wallet),
+  );
+}
+
 test("Solana wallet deposits, recovers after reload, and owner withdraws with verified fee", async ({
   page,
 }, info) => {
@@ -308,84 +402,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
         : { signature: [...decodeBase58Bytes(signature)] };
     },
   );
-  await page.addInitScript(() => {
-    const bridge = window as unknown as {
-      localSolanaAccount(): Promise<{ address: string; publicKey: number[] }>;
-      localSolanaSend(
-        wire: number[],
-        address: string,
-        chain: string,
-      ): Promise<{ error?: string; signature?: number[] }>;
-    };
-    let accounts: {
-      address: string;
-      publicKey: Uint8Array;
-      chains: string[];
-      features: string[];
-    }[] = [];
-    const wallet = {
-      name: "Local Solana wallet",
-      version: "1.0.0",
-      icon: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E",
-      chains: ["solana:devnet"],
-      get accounts() {
-        return accounts;
-      },
-      features: {
-        "standard:connect": {
-          version: "1.0.0",
-          connect: async () => {
-            const next = await bridge.localSolanaAccount();
-            accounts = [
-              {
-                address: next.address,
-                publicKey: Uint8Array.from(next.publicKey),
-                chains: ["solana:devnet"],
-                features: [
-                  "solana:signMessage",
-                  "solana:signAndSendTransaction",
-                ],
-              },
-            ];
-            return { accounts };
-          },
-        },
-        "solana:signMessage": {
-          version: "1.0.0",
-          signMessage: async () => {
-            throw new Error("Funding must not request an account-link message");
-          },
-        },
-        "solana:signAndSendTransaction": {
-          version: "1.0.0",
-          supportedTransactionVersions: ["legacy"],
-          signAndSendTransaction: async ({
-            transaction,
-            account,
-            chain,
-          }: {
-            transaction: Uint8Array;
-            account: { address: string };
-            chain: string;
-          }) => {
-            const result = await bridge.localSolanaSend(
-              [...transaction],
-              account.address,
-              chain,
-            );
-            if (result.error === "rejected")
-              throw Object.assign(new Error("User rejected"), { code: 4001 });
-            if (result.error)
-              throw new Error("Transport interrupted after submission");
-            return [{ signature: Uint8Array.from(result.signature ?? []) }];
-          },
-        },
-      },
-    };
-    window.addEventListener("wallet-standard:app-ready", (event) =>
-      (event as CustomEvent).detail.register(wallet),
-    );
-  });
+  await page.addInitScript(installLocalSolanaWallet);
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
@@ -792,4 +809,417 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
       () => document.documentElement.scrollWidth - innerWidth,
     ),
   ).toBeLessThanOrEqual(1);
+});
+
+test("owner creates, recovers, registers and funds a Solana vault through the API", async ({
+  page,
+}, info) => {
+  test.setTimeout(480_000);
+  const automatic = !info.project.name.includes("mobile");
+  const temporary = mkdtempSync(join(tmpdir(), "slop-solana-setup-"));
+  const apiPort = rpcPort + 60;
+  const origin = `http://127.0.0.1:${apiPort}`;
+  const target = {
+    ...project,
+    contribution: CONTRIBUTION,
+    skill: {
+      ...project.skill,
+      publishAtRoot: false,
+      sourcePath: "skills/project-contributor-template",
+    },
+    reviewSkill: {
+      id: `review-${project.id}-contributions`,
+      sourcePath: "skills/project-reviewer-template",
+    },
+    reward: {
+      ...project.reward,
+      monthlyCapMinor: "1000000000",
+      monthlyCapDisplay: "1,000 TEST",
+    },
+    escrow: { ...project.escrow, deployments: [] },
+  };
+  const other = PROJECTS.find(
+    (p) => p.id !== project.id && p.reward.kind === "monthly-pool",
+  );
+  if (!other) throw new Error("Second registry fixture missing");
+  const template = {
+    ...other,
+    reward: target.reward,
+    rewardAsset: project.rewardAsset,
+    escrow: project.escrow,
+  };
+  const file = join(temporary, "projects.json");
+  writeFileSync(file, JSON.stringify({ project: target, template }));
+  // Only the isolated harness bundle changes the expected public-cluster identity.
+  // The RPC, program code, Config, transactions, signatures and balances remain real.
+  mkdirSync(join(temporary, "tests"));
+  symlinkSync(join(root, "migrations"), join(temporary, "migrations"), "dir");
+  const bundle = join(temporary, "tests", "server.mjs");
+  execFileSync(
+    "bun",
+    [
+      "build",
+      "scripts/vault-setup-browser-server.ts",
+      "--target=bun",
+      `--outfile=${bundle}`,
+    ],
+    { cwd: root },
+  );
+  const original = readFileSync(bundle, "utf8");
+  const publicGenesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+  expect(original.includes(publicGenesis)).toBe(true);
+  const overlaid = original.replaceAll(publicGenesis, config.genesisHash);
+  writeFileSync(bundle, overlaid);
+  await info.attach("local-network-overlay.json", {
+    body: JSON.stringify(
+      {
+        originalBundleSha256: hash(original).toString("hex"),
+        bundleSha256: hash(overlaid).toString("hex"),
+        network: "solana-devnet",
+        publicGenesis,
+        localGenesis: config.genesisHash,
+        note: "Only the isolated test bundle changes its expected cluster identity; production source is unchanged.",
+      },
+      null,
+      2,
+    ),
+    contentType: "application/json",
+  });
+  let output = "";
+  const server = spawn("bun", [bundle, file, String(apiPort), rpcUrl], {
+    cwd: root,
+    env: { ...process.env, SLOP_E2E_VAULT_ACTIONS: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  server.stdout?.on("data", (s) => (output += String(s)));
+  server.stderr?.on("data", (s) => (output += String(s)));
+  const sends: string[] = [];
+  let interrupted = true;
+  try {
+    await expect
+      .poll(() => output, { timeout: 30_000 })
+      .toContain("Vault setup API ready");
+    const initial = await (
+      await page.request.get(`${origin}/__fixture`)
+    ).json();
+    const headers = {
+      origin,
+      cookie: `__Host-slop_points=${initial.token}`,
+      "content-type": "application/json",
+    };
+    const api = async (path: string, data: unknown) => {
+      const response = await page.request.post(`${origin}/api/v1/${path}`, {
+        headers,
+        data,
+      });
+      const body = await response.json();
+      expect(response.ok(), JSON.stringify(body)).toBe(true);
+      return body;
+    };
+    const claim = await api("payments/wallets/register", {
+      chain: "solana",
+      address: donor.publicKey.toBase58(),
+    });
+    const challenge = await api("payments/wallets/challenge", {
+      claimId: claim.claimId,
+    });
+    await api("payments/wallets/authorize", {
+      claimId: claim.claimId,
+      challengeId: challenge.challengeId,
+      signature: Buffer.from(
+        ed25519.sign(
+          new TextEncoder().encode(challenge.message),
+          donor.secretKey.slice(0, 32),
+        ),
+      ).toString("base64"),
+    });
+    const reviewed = await api(`project-vaults/${project.id}`, {
+      step: "review",
+      expectedRevision: 1,
+      network: "solana-devnet",
+      claimId: claim.claimId,
+      automatic,
+    });
+    expect(
+      await verifySolanaVaultCreation(
+        config,
+        reviewed.review.creation,
+        solanaBase58(new Uint8Array(64)),
+      ),
+    ).toBeNull();
+    await page.exposeFunction("localSolanaAccount", () => ({
+      address: donor.publicKey.toBase58(),
+      publicKey: [...donor.publicKey.toBytes()],
+    }));
+    await page.exposeFunction(
+      "localSolanaSend",
+      async (wire: number[], address: string, chain: string) => {
+        expect(address).toBe(donor.publicKey.toBase58());
+        expect(chain).toBe("solana:devnet");
+        const transaction = web3.Transaction.from(Uint8Array.from(wire));
+        transaction.sign(donor);
+        const signature = await connection.sendRawTransaction(
+          transaction.serialize(),
+          { skipPreflight: false, maxRetries: 0 },
+        );
+        sends.push(signature);
+        return interrupted
+          ? { error: "unknown" }
+          : { signature: [...decodeBase58Bytes(signature)] };
+      },
+    );
+    await page.addInitScript(installLocalSolanaWallet);
+    await page.addInitScript((token) => {
+      // biome-ignore lint/suspicious/noDocumentCookie: The actual local API session is reused by the browser.
+      document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+    }, initial.token);
+    const errors: string[] = [];
+    const failedRequests: string[] = [];
+    let wrongSignature = false;
+    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("console", (event) => {
+      if (
+        event.type() === "error" &&
+        !(wrongSignature && event.text().includes("422"))
+      )
+        errors.push(event.text());
+    });
+    page.on("response", (response) => {
+      if (
+        response.url().startsWith(origin) &&
+        response.status() >= 400 &&
+        !(wrongSignature && response.status() === 422)
+      )
+        failedRequests.push(`${response.status()} ${response.url()}`);
+    });
+    await page.goto(`${origin}/projects/${project.slug}/funding`, {
+      waitUntil: "networkidle",
+    });
+    const setup = page.getByRole("region", { name: "Set up project vault" });
+    await setup
+      .getByRole("button", { name: "Connect Local Solana wallet" })
+      .click();
+    await expect(
+      setup.getByRole("button", { name: "Review vault creation", exact: true }),
+    ).toBeDisabled();
+    await setup
+      .getByRole("combobox", { name: "Automatic monthly payment", exact: true })
+      .selectOption(automatic ? "on" : "off");
+    const browserReviewResponse = page.waitForResponse(
+      (response) =>
+        response.url() === `${origin}/api/v1/project-vaults/${project.id}` &&
+        response.request().method() === "POST" &&
+        response.request().postDataJSON().step === "review",
+    );
+    await setup.getByRole("button", { name: "Review vault creation" }).click();
+    const browserReview = (await (await browserReviewResponse).json()).review;
+    await expect(
+      setup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toBeEnabled();
+    await page.screenshot({
+      path: info.outputPath("solana-create-review.png"),
+      fullPage: true,
+    });
+    if (automatic) {
+      // A normal owner can leave this review open past the Solana transaction lifetime.
+      await expect
+        .poll(() => connection.getBlockHeight("confirmed"), {
+          timeout: 240_000,
+          intervals: [1000],
+        })
+        .toBeGreaterThan(browserReview.transaction.lastValidBlockHeight);
+      const validity = await connection.isBlockhashValid(
+        browserReview.transaction.blockhash,
+        "confirmed",
+      );
+      expect(validity.value).toBe(false);
+      await info.attach("expired-creation-review.json", {
+        body: JSON.stringify({
+          blockhash: browserReview.transaction.blockhash,
+          lastValidBlockHeight: browserReview.transaction.lastValidBlockHeight,
+          blockHeightBeforeCreate: await connection.getBlockHeight("confirmed"),
+          validBeforeCreate: validity.value,
+        }),
+        contentType: "application/json",
+      });
+    }
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await expect(setup.getByRole("alert")).toContainText(
+      "Transport interrupted",
+    );
+    expect(sends).toHaveLength(1);
+    await page.reload({ waitUntil: "networkidle" });
+    const edited = structuredClone(target);
+    edited.reward.monthlyCapMinor = "2000000000";
+    edited.reward.monthlyCapDisplay = "2,000 TEST";
+    const changed = await page.request.put(
+      `${origin}/api/v1/projects/${project.id}`,
+      { headers, data: { manifest: edited, expectedRevision: 1 } },
+    );
+    expect(changed.ok(), JSON.stringify(await changed.json())).toBe(true);
+    wrongSignature = true;
+    await setup
+      .getByLabel("Creation transaction signature")
+      .fill(deployment.deploymentTransaction);
+    await setup
+      .getByRole("button", { name: "Check vault registration" })
+      .click();
+    await expect(setup.getByRole("alert")).toContainText("does not match");
+    wrongSignature = false;
+    await connection.confirmTransaction(sends[0], "finalized");
+    await setup.getByLabel("Creation transaction signature").fill(sends[0]);
+    await setup
+      .getByRole("button", { name: "Check vault registration" })
+      .click();
+    await expect(setup).toHaveCount(0);
+    await expect(
+      page
+        .locator(".funding-status-grid")
+        .getByText("2,000 TEST", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Creation used a monthly cap" }),
+    ).toContainText("1,000 TEST. The project now uses 2,000 TEST");
+    const state = await (await page.request.get(`${origin}/__fixture`)).json();
+    expect(state.project.revision).toBe(3);
+    expect(state.revisions.n).toBe(3);
+    const created = state.project.manifest.escrow.deployments[0];
+    expect(created.owner).toBe(donor.publicKey.toBase58());
+    expect(created.deploymentTransaction).toBe(sends[0]);
+    const program = new anchor.Program(
+      JSON.parse(
+        readFileSync(`${root}/contracts/solana/idl/slop_escrow.json`, "utf8"),
+      ),
+      new anchor.AnchorProvider(connection, new anchor.Wallet(owner), {
+        commitment: "finalized",
+      }),
+    );
+    const account = await program.account.project.fetch(
+      new web3.PublicKey(created.projectPda),
+      "finalized",
+    );
+    expect(account.monthlyEnabled).toBe(automatic);
+    expect(account.monthlyCap.toString()).toBe("1000000000");
+    const createdConfig = { ...config, ...created, mint: created.asset };
+    const digest = registryProjectDigest(project.id);
+    await expect(
+      verifySolanaDeployment(createdConfig, "f".repeat(64)),
+    ).rejects.toThrow("different registry project");
+    await expect(
+      verifySolanaDeployment(
+        { ...createdConfig, projectPda: deployment.projectPda },
+        digest,
+      ),
+    ).rejects.toThrow("different registry project");
+    await expect(
+      verifySolanaDeployment(
+        { ...createdConfig, owner: owner.publicKey.toBase58() },
+        digest,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      verifySolanaDeployment(
+        { ...createdConfig, mint: owner.publicKey.toBase58() },
+        digest,
+      ),
+    ).rejects.toThrow("asset mismatch");
+    // A real duplicate initialize fails. Only its exact signed message qualifies as failed.
+    const duplicatePlan = buildInitializeVaultInstructions(
+      reviewed.review.creation,
+    );
+    const duplicateBlock = await connection.getLatestBlockhash("finalized");
+    const duplicateTx = web3.Transaction.from(
+      Buffer.concat([
+        Buffer.from([1]),
+        Buffer.alloc(64),
+        message(
+          donor.publicKey.toBase58(),
+          duplicateBlock.blockhash,
+          duplicatePlan.instructions,
+        ),
+      ]),
+    );
+    duplicateTx.sign(donor);
+    const failedCreation = await connection.sendRawTransaction(
+      duplicateTx.serialize(),
+      { skipPreflight: true, maxRetries: 0 },
+    );
+    await connection.confirmTransaction(failedCreation, "finalized");
+    await expect(
+      verifySolanaVaultCreation(
+        config,
+        reviewed.review.creation,
+        failedCreation,
+      ),
+    ).rejects.toThrow("exact vault creation transaction failed");
+
+    await api(`project-vaults/${project.id}`, {
+      step: "register",
+      expectedRevision: 1,
+      network: "solana-devnet",
+      claimId: claim.claimId,
+      automatic,
+      transactionId: sends[0],
+    });
+    expect(
+      (await (await page.request.get(`${origin}/__fixture`)).json()).revisions
+        .n,
+    ).toBe(3);
+    interrupted = false;
+    const funding = page.getByRole("region", { name: /Fund or withdraw/ });
+    await funding
+      .getByRole("button", { name: "Connect Local Solana wallet" })
+      .click();
+    await funding.getByLabel("Token amount").fill("10");
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await funding
+      .getByRole("button", { name: "Confirm deposit in wallet" })
+      .click();
+    await expect.poll(() => sends.length).toBe(2);
+    await connection.confirmTransaction(sends[1], "finalized");
+    await funding.getByRole("button", { name: /Check/ }).click();
+    await expect(funding).toContainText("finalized");
+    expect(
+      (
+        await spl.getAccount(
+          connection,
+          new web3.PublicKey(created.vault),
+          "finalized",
+        )
+      ).amount,
+    ).toBe(10_000_000n);
+    expect(
+      (
+        await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+          .analyze()
+      ).violations,
+    ).toEqual([]);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    expect(errors).toEqual([]);
+    expect(failedRequests).toEqual([]);
+    await page.screenshot({
+      path: info.outputPath("solana-created-funded.png"),
+      fullPage: true,
+    });
+  } finally {
+    await info.attach("solana-setup-api.log", {
+      body: output,
+      contentType: "text/plain",
+    });
+    if (server.exitCode === null) {
+      const stopped = new Promise((resolve) => server.once("exit", resolve));
+      server.kill("SIGTERM");
+      await stopped;
+    }
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });

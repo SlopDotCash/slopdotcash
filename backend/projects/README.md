@@ -396,20 +396,21 @@ the setup page. A scan result alone never grants repository authority.
 
 ### Owner vault setup
 
-The funding page creates and registers an ordinary EVM vault, then uses the
+The funding page creates and registers an ordinary EVM or Solana vault, then uses the
 existing deposit controls. The owner confirms a current wallet through the
 payment wallet-claim route. Slop checks current GitHub authority and derives
 the project digest, asset and cap from the current registry revision. The
 wallet signs the exact creation; the server never signs or broadcasts.
 
 Setup lists served networks with a factory record in D1. Before creation,
-Slop verifies that factory's current code and compatibility. Registration
+Slop verifies that factory's current code and compatibility. On Solana it
+verifies the program bytes, upgrade authority and pinned Config. Registration
 verifies the exact finalized transaction, project
 digest, owner, asset, purpose, code and monthly setting before appending one
 revision. Retry returns the registered vault. An unknown send stays pending
 until the owner recovers its transaction hash; it never sends again by itself.
-The owner chooses On or Off before review. The atomic creation builder records
-that choice with the monthly cap.
+The owner chooses On or Off for monthly payment before review. The atomic
+creation builder records that choice and the cap in one transaction.
 
 If the monthly amount changes while creation is pending, registration checks
 that transaction against its original immutable revision. The current asset
@@ -425,6 +426,6 @@ read private snapshots. A restriction stops new setup and deposits in Slop,
 but the owner can still read funded state, check transactions and withdraw
 free funds. Chain transactions remain public.
 
-Solana website creation still requires its own end-to-end acceptance.
-Mainnet setup also requires the separately approved factory upgrade and
-network activation.
+Solana setup supports ordinary vaults only. Private Solana vault setup needs
+separate implementation and end-to-end acceptance. Mainnet setup also requires
+the separately approved factory upgrade and network activation.

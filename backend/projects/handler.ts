@@ -25,7 +25,10 @@ import {
   sameRewardAsset,
 } from "../../src/lib/reward-asset.mjs";
 import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
-import type { VaultSetupInput } from "../../src/lib/vault-setup";
+import {
+  isVaultCreationId,
+  type VaultSetupInput,
+} from "../../src/lib/vault-setup";
 import { type ApiError, fail } from "../api-error";
 import { pathParts } from "../api-path";
 import type { readSecurityProgramFunds } from "../security/program-funds";
@@ -1191,7 +1194,7 @@ async function ownerVault(
     });
   if (
     typeof body.transactionId !== "string" ||
-    !/^0x[0-9a-fA-F]{64}$/.test(body.transactionId)
+    !isVaultCreationId(input.network, body.transactionId)
   )
     fail(400, "invalid_request", "Enter the vault creation transaction hash.");
   // A wallet send may outlive an owner edit. Verify its exact creation intent

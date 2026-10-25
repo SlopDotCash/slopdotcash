@@ -10,6 +10,8 @@ import {
 } from "../backend/projects/handler";
 import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import { readSecurityProgramFunds } from "../backend/security/program-funds";
+import type { SolanaEscrowConfig } from "../contracts/solana/adapter";
+import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import securityPayments from "../workers/security-payments";
@@ -26,6 +28,8 @@ if (
 )
   throw new Error("Local endpoints required");
 const origin = `http://127.0.0.1:${port}`;
+const servedNetwork = input.template.escrow.deployments[0]
+  .network as keyof typeof ESCROW_NETWORKS;
 const { sqlite, db } = sqliteD1(
   readdirSync("migrations")
     .filter((n) => n.endsWith(".sql"))
@@ -101,7 +105,7 @@ const deps: ProjectApiDependencies = {
   vaultSetup: ownerVaultSetupService({
     db,
     projects: () => persistence.listProjects(),
-    networks: () => (templatesEnabled ? ["base-sepolia"] : []),
+    networks: () => (templatesEnabled ? [servedNetwork] : []),
     rpcUrl: () => rpcUrl,
   }),
   securityProgramFunds: (projectId, program) =>
@@ -126,8 +130,8 @@ Bun.serve({
             await securityPayments.scheduled(null, {
               PAYMENTS_DB: db,
               REGISTRY_DB: db,
-              PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]),
-              PAYMENT_RPC_URLS: JSON.stringify({ "base-sepolia": rpcUrl }),
+              PAYMENT_NETWORKS: JSON.stringify([servedNetwork]),
+              PAYMENT_RPC_URLS: JSON.stringify({ [servedNetwork]: rpcUrl }),
               // This zero-award fixture exercises the real scanner, not payouts.
               EVM_PAYMENT_EXECUTOR: {
                 fetch: async () => {
@@ -179,7 +183,28 @@ Bun.serve({
       const projectResponse = await handleProjectApi(projectRequest, deps);
       if (projectResponse) return projectResponse;
       if (url.pathname.startsWith("/api/v1/payments"))
-        return handlePaymentsApi(request, { db, allowedOrigins: [origin] });
+        return handlePaymentsApi(request, {
+          db,
+          allowedOrigins: [origin],
+          solanaFundingConfig: async (projectId, network, vault) => {
+            const project = await persistence.getProject(projectId);
+            const deployment = project?.manifest.escrow?.deployments.find(
+              (d) => d.network === network && d.vault === vault,
+            );
+            if (
+              !deployment ||
+              ESCROW_NETWORKS[deployment.network].family !== "solana"
+            )
+              throw new Error("Unknown Solana vault");
+            return {
+              ...deployment,
+              projectId,
+              mint: deployment.asset,
+              rpcUrl,
+              genesisHash: ESCROW_NETWORKS[deployment.network].genesisHash,
+            } as SolanaEscrowConfig;
+          },
+        });
       if (url.pathname.startsWith("/api/v1/points"))
         return handlePointsApi(request, {
           db,
