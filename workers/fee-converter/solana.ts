@@ -661,8 +661,8 @@ export function createSolanaClient(
         await sleep(CLAIM_POLL_MS);
       }
 
-      // Verify the receipt before conversion: the vault paid the fee wallet
-      // at least the accrued fee, and exactly what the vault lost.
+      // Verify the executed FeesClaimed amount against both the fee wallet's
+      // credit and the vault's debit before conversion.
       const transaction = await rpc<{
         slot: number;
         transaction: { signatures: string[] };
