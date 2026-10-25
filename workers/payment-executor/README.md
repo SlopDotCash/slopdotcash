@@ -115,6 +115,11 @@ an absent month returns `notAdmitted: true`. The scheduler uses this for older
 months and opted-out projects. No response marks an award paid: the finalized
 scanner remains authoritative.
 
+The separately operated [payment keeper](../../scripts/payment-keeper/README.md)
+uses these same commitment builders and signed journals. It reads public
+authorizations and finalized contract wallet bindings, without private D1
+account access. The hosted production role remains attester-only.
+
 ## Durability and retries
 
 Base nonce allocation, transaction signing, and persistence of signed bytes,
