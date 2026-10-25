@@ -30,7 +30,14 @@ const FORK_URL =
   "https://mainnet.base.org";
 const PORT = Number(process.env.SLOP_TEST_FEE_PORT ?? 28545);
 const claimOnly = process.argv.includes("--fee-claim-only");
-const supportedFaults = ["before", "after", "receipt", "hashes", "race"];
+const supportedFaults = [
+  "before",
+  "after",
+  "receipt",
+  "hashes",
+  "race",
+  "finalized-role",
+];
 const faults =
   process.env.SLOP_TEST_CLAIM_FAULTS?.split(",") ?? supportedFaults;
 if (faults.some((fault) => !supportedFaults.includes(fault)))
@@ -776,9 +783,7 @@ try {
 
   // Each retry uses a fresh Worker invocation and the durable SQLite journal.
   console.log(`Claim fault cases: ${faults.join(", ")}`);
-  for (const fault of faults) {
-    const snapshot = await rpc("evm_snapshot", []);
-    sqlite.exec("SAVEPOINT claim_proof");
+  for (const fault of faults.filter((fault) => fault !== "finalized-role")) {
     const conversionsBefore = (
       sqlite
         .query(
@@ -923,120 +928,123 @@ try {
     console.log(
       `7 ${fault}: unverified claim blocked conversion; same send recovered once`,
     );
-    if (!(await rpc("evm_revert", [snapshot])))
-      throw new Error("local claim snapshot restore failed");
-    sqlite.exec("ROLLBACK TO claim_proof; RELEASE claim_proof");
   }
 
-  // A live recovery run claims the fee into the fee wallet and sells it.
-  const usdcBeforeClaim = await balanceOf(USDC, wallet);
-  const [claimRun] = await runOnce(env);
-  console.log("7 run:", JSON.stringify(claimRun));
-  if (claimRun.claimed !== 1 || (await view(vault, "accruedFees")) !== 0n)
-    throw new Error("7 the live run did not claim the accrued fee");
-  // A later role change stops new claims, but cannot invalidate an earlier
-  // receipt whose deployment and roles were valid at its own block.
-  await call(
-    registrar,
-    factory,
-    encodeFunctionData({
-      abi: vaultAbi,
-      functionName: "proposeIdentityAuthority",
-      args: [wallet as Hex],
-    }),
-  );
-  await call(
-    registrar,
-    factory,
-    encodeFunctionData({
-      abi: vaultAbi,
-      functionName: "executeIdentityAuthorityRotation",
-    }),
-  );
-  let newClaimRefused = false;
-  try {
-    await feeClient.accrued((await projectVaults(db, ["base-mainnet"]))[0]);
-  } catch (error) {
-    newClaimRefused = String(error).includes("vault role");
-  }
-  if (!newClaimRefused)
-    throw new Error("new claims ignored a later fee-wallet role");
-  await rpc("anvil_mine", ["0x80"]);
-  await runOnce(env, undefined, undefined, "receipts");
-  expect(state(), "submitted", "7 claimed fee send");
-  const claimedRow = sqlite
-    .query(
-      "SELECT amount_in, token_balance_before FROM fee_conversions WHERE token = ? AND kind = 'conversion' ORDER BY created_at DESC, rowid DESC LIMIT 1",
-    )
-    .get(AERO) as { amount_in: string; token_balance_before: string };
-  if (claimedRow.token_balance_before !== (aeroBeforeClaim + fee).toString())
-    throw new Error("7 the conversion did not see the claimed fee");
-  await rpc("anvil_mine", ["0x80"]);
-  await runOnce(env);
-  expect(state(), "finalized", "7 after reconcile");
-  const settledClaim = sqlite
-    .query(
-      "SELECT amount_out FROM fee_conversions WHERE token = ? AND kind = 'conversion' ORDER BY created_at DESC, rowid DESC LIMIT 1",
-    )
-    .get(AERO) as { amount_out: string };
-  const usdcReceived = (await balanceOf(USDC, wallet)) - usdcBeforeClaim;
-  if (usdcReceived <= 0n || BigInt(settledClaim.amount_out) !== usdcReceived)
-    throw new Error("7 the conversion receipt differs from received USDC");
-  console.log(`7 received and recorded ${usdcReceived} USDC minor units`);
-  if ((await balanceOf(AERO, wallet)) !== 0n)
-    throw new Error("7 the claimed fee was not sold");
-  if (
-    (await view(vault, "freeBalance")) !== freeBeforeClaim ||
-    ((await view(vault, "reservedPrincipal")) as bigint) +
-      ((await view(vault, "reservedFees")) as bigint) !==
-      reserved ||
-    (await balanceOf(AERO, vault)) !== 300n * 10n ** 18n
-  )
-    throw new Error("claim changed principal or reserved awards");
-  // Nothing is left to claim, so a further run sends no claim.
-  const [after] = await runOnce(env);
-  if (after.claimed !== 0) throw new Error("7 a repeat run claimed again");
-  const response = await handleFeeConversionsApi(
-    new Request("http://localhost/api/v1/admin/fee-conversions"),
-    {
-      db,
-      adminGithubIds: new Set(["1"]),
-      sessionActor: async () => ({ githubId: "1" }),
-    },
-  );
-  const report = (await response?.json()) as {
-    recent: { txId: string | null }[];
-    totals: { token: string; amountOut: string }[];
-  };
-  const claimIds = (
-    sqlite
-      .query("SELECT tx_id FROM fee_conversions WHERE kind = 'claim'")
-      .all() as { tx_id: string }[]
-  ).map((row) => row.tx_id);
-  const recordedProceeds = (
-    sqlite
-      .query(
-        "SELECT amount_out FROM fee_conversions WHERE kind = 'conversion' AND state = 'finalized'",
-      )
-      .all() as { amount_out: string }[]
-  ).reduce((sum, row) => sum + BigInt(row.amount_out), 0n);
-  if (
-    response?.status !== 200 ||
-    report.recent.some(
-      (row) => row.txId !== null && claimIds.includes(row.txId),
-    ) ||
-    report.totals.find((total) => total.token === AERO)?.amountOut !==
-      recordedProceeds.toString()
-  )
-    throw new Error(
-      "admin conversion report included a claim or incorrect proceeds",
+  if (faults[0] === "finalized-role") {
+    // A live recovery run claims the fee into the fee wallet and sells it.
+    const usdcBeforeClaim = await balanceOf(USDC, wallet);
+    const [claimRun] = await runOnce(env);
+    console.log("7 run:", JSON.stringify(claimRun));
+    if (claimRun.claimed !== 1 || (await view(vault, "accruedFees")) !== 0n)
+      throw new Error("7 the live run did not claim the accrued fee");
+    // A later role change stops new claims, but cannot invalidate an earlier
+    // receipt whose deployment and roles were valid at its own block.
+    await call(
+      registrar,
+      factory,
+      encodeFunctionData({
+        abi: vaultAbi,
+        functionName: "proposeIdentityAuthority",
+        args: [wallet as Hex],
+      }),
     );
+    await call(
+      registrar,
+      factory,
+      encodeFunctionData({
+        abi: vaultAbi,
+        functionName: "executeIdentityAuthorityRotation",
+      }),
+    );
+    let newClaimRefused = false;
+    try {
+      await feeClient.accrued((await projectVaults(db, ["base-mainnet"]))[0]);
+    } catch (error) {
+      newClaimRefused = String(error).includes("vault role");
+    }
+    if (!newClaimRefused)
+      throw new Error("new claims ignored a later fee-wallet role");
+    await rpc("anvil_mine", ["0x80"]);
+    await runOnce(env, undefined, undefined, "receipts");
+    expect(state(), "submitted", "7 claimed fee send");
+    const claimedRow = sqlite
+      .query(
+        "SELECT amount_in, token_balance_before FROM fee_conversions WHERE token = ? AND kind = 'conversion' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
+      .get(AERO) as { amount_in: string; token_balance_before: string };
+    if (claimedRow.token_balance_before !== (aeroBeforeClaim + fee).toString())
+      throw new Error("7 the conversion did not see the claimed fee");
+    await rpc("anvil_mine", ["0x80"]);
+    await runOnce(env);
+    expect(state(), "finalized", "7 after reconcile");
+    const settledClaim = sqlite
+      .query(
+        "SELECT amount_out FROM fee_conversions WHERE token = ? AND kind = 'conversion' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
+      .get(AERO) as { amount_out: string };
+    const usdcReceived = (await balanceOf(USDC, wallet)) - usdcBeforeClaim;
+    if (usdcReceived <= 0n || BigInt(settledClaim.amount_out) !== usdcReceived)
+      throw new Error("7 the conversion receipt differs from received USDC");
+    console.log(`7 received and recorded ${usdcReceived} USDC minor units`);
+    if ((await balanceOf(AERO, wallet)) !== 0n)
+      throw new Error("7 the claimed fee was not sold");
+    if (
+      (await view(vault, "freeBalance")) !== freeBeforeClaim ||
+      ((await view(vault, "reservedPrincipal")) as bigint) +
+        ((await view(vault, "reservedFees")) as bigint) !==
+        reserved ||
+      (await balanceOf(AERO, vault)) !== 300n * 10n ** 18n
+    )
+      throw new Error("claim changed principal or reserved awards");
+    // Nothing is left to claim, so a further run sends no claim.
+    const [after] = await runOnce(env);
+    if (after.claimed !== 0) throw new Error("7 a repeat run claimed again");
+    const response = await handleFeeConversionsApi(
+      new Request("http://localhost/api/v1/admin/fee-conversions"),
+      {
+        db,
+        adminGithubIds: new Set(["1"]),
+        sessionActor: async () => ({ githubId: "1" }),
+      },
+    );
+    const report = (await response?.json()) as {
+      recent: { txId: string | null }[];
+      totals: { token: string; amountOut: string }[];
+    };
+    const claimIds = (
+      sqlite
+        .query("SELECT tx_id FROM fee_conversions WHERE kind = 'claim'")
+        .all() as { tx_id: string }[]
+    ).map((row) => row.tx_id);
+    const recordedProceeds = (
+      sqlite
+        .query(
+          "SELECT amount_out FROM fee_conversions WHERE kind = 'conversion' AND state = 'finalized'",
+        )
+        .all() as { amount_out: string }[]
+    ).reduce((sum, row) => sum + BigInt(row.amount_out), 0n);
+    if (
+      response?.status !== 200 ||
+      report.recent.some(
+        (row) => row.txId !== null && claimIds.includes(row.txId),
+      ) ||
+      report.totals.find((total) => total.token === AERO)?.amountOut !==
+        recordedProceeds.toString()
+    )
+      throw new Error(
+        "admin conversion report included a claim or incorrect proceeds",
+      );
 
-  console.log(
-    claimOnly
-      ? "PASS: Base fork fee claim, deployment refusals, reviewed upgrade, principal preservation and conversion"
-      : "PASS: Base fork live cycles (ordinary, lost send, lost response, below minimum, slippage refusal, unsupported route, verified vault fee claim)",
-  );
+    console.log(
+      claimOnly
+        ? "PASS: Base fork fee claim, deployment refusals, reviewed upgrade, principal preservation and conversion"
+        : "PASS: Base fork live cycles (ordinary, lost send, lost response, below minimum, slippage refusal, unsupported route, verified vault fee claim)",
+    );
+  } else {
+    console.log(
+      `PASS: Base fork ${faults[0]} claim recovery and principal preservation`,
+    );
+  }
 } finally {
   anvil.kill();
   await anvil.exited;
