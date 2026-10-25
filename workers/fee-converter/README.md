@@ -171,7 +171,14 @@ rejects so the cron failure remains visible; it does not publish a successful
 | Base (8453) | Circle USDC `0x8335…2913` | KyberSwap Aggregator API | No API key, one integration for all three EVM chains, the router is the same audited `MetaAggregationRouterV2` (`0x6131…37b5`) on each. Its calldata carries the receiver, the input amount and the minimum output, so the Worker can check them before signing. |
 | Ethereum (1) | Circle USDC `0xa0b8…eb48` | KyberSwap Aggregator API | Same router address and code on chain. AGENTS.md requires verifying this address from Circle's primary source before activation. |
 | Robinhood Chain (4663) | **Pending.** No verified Circle USDC. | KyberSwap Aggregator API once a target exists | The PRD supersedes the earlier USDG target. On 18 October 2026 there was no Circle USDC on 4663, and the tokens named "USDC" in KyberSwap's list were unrelated clones flagged as honeypots. The network runs as `route_pending` until a reviewed change sets `usdc` in `config.ts` to an address verified from Circle's primary source and a route to it is proven. |
-| Solana | Circle USDC `EPjF…Dt1v` | Jupiter Swap API v1 | The standard Solana router. Uses `lite-api.jup.ag` without a key, or `api.jup.ag` when `JUPITER_API_KEY` is set. |
+| Solana | Circle USDC `EPjF…Dt1v` | Jupiter Swap API v1 | Uses `api.jup.ag` with or without `JUPITER_API_KEY`. An explicit `JUPITER_API_URL` overrides this default. |
+
+Jupiter's [migration guide](https://developers.jup.ag/docs/portal/migration)
+replaces the `lite-api.jup.ag` hostname with `api.jup.ag`; the endpoint paths
+stay the same. Keyless access supports 0.5 requests per second. An optional
+API key provides higher limits, as described in its
+[setup guide](https://developers.jup.ag/docs/portal/setup). This hostname change
+does not enable conversion or change the quote and signing checks.
 
 0x Swap API v2, 1inch and the Uniswap Trading API all need an API key.
 Robinhood's support pages name 0x and LI.FI for swaps on Robinhood Chain,

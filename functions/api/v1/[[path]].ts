@@ -50,6 +50,7 @@ import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
 import {
   githubAdvisoryClient,
   githubAppAdvisoryToken,
+  githubAppReportingReader,
   githubInstallationCheck,
 } from "../../../backend/security/github-advisories";
 import { handleSecurityApi } from "../../../backend/security/handler";
@@ -118,6 +119,8 @@ type Env = {
   SECURITY_SOLANA_IDENTITY_ATTESTER?: {
     fetch(request: Request): Promise<Response>;
   };
+  /** Named recovery-only entrypoint; it cannot submit a binding or payment. */
+  BINDING_RECOVERY?: { fetch(request: Request): Promise<Response> };
   /** Private RPC endpoints for explicit wallet funding review/check requests. Never returned to the browser. */
   PAYMENT_RPC_URLS?: string;
   PRIVATE_TRACES: R2Bucket;
@@ -661,11 +664,17 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         context.env.SLOP_DB,
         new Date().toISOString(),
       ),
-    github: {
-      fetch: (url, init) => fetch(url, init),
-      token: context.env.SLOP_GITHUB_READ_TOKEN,
-      apiOrigin: githubApiOrigin(context.env.SLOP_GITHUB_API_ORIGIN),
-    },
+    reportingRead:
+      context.env.GITHUB_INTAKE_APP_ID &&
+      context.env.GITHUB_INTAKE_APP_PRIVATE_KEY
+        ? githubAppReportingReader({
+            fetch: (url, init) => fetch(url, init),
+            appId: context.env.GITHUB_INTAKE_APP_ID,
+            privateKey: context.env.GITHUB_INTAKE_APP_PRIVATE_KEY,
+            apiOrigin: githubApiOrigin(context.env.SLOP_GITHUB_API_ORIGIN),
+            now: () => new Date(),
+          })
+        : async () => ({ kind: "unavailable" }),
     advisories:
       context.env.GITHUB_INTAKE_APP_ID &&
       context.env.GITHUB_INTAKE_APP_PRIVATE_KEY
@@ -944,6 +953,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     ),
     authSecret: context.env.TRACE_AUTH_SECRET,
     operatorGithubIds: githubIdSet(context.env.OPERATOR_GITHUB_IDS),
+    bindingRecovery: context.env.BINDING_RECOVERY,
     operatorSession: (request) =>
       sessionGithubActor(
         request,

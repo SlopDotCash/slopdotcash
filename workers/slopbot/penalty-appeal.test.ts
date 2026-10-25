@@ -55,6 +55,11 @@ type Run = {
   deliver: (job: Job) => Promise<string>;
   tick: () => Promise<Job[]>;
   model: (category: Category, confidence: number) => void;
+  consent: (value: boolean | null) => void;
+  revokeOnConfirmation: () => void;
+  repositoryConfig: (value: string | null, truncated?: boolean) => void;
+  policyResponse: (status: number, body?: unknown) => void;
+  closureEnabled: (value: boolean) => void;
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
   loseNextReopenResponse: () => void;
   closeByMaintainer: () => void;
@@ -75,7 +80,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   );
   const project = findProject("asi");
   if (!project) throw new Error("fixture project missing");
-  const manifest = JSON.stringify({ ...project, status: "active" });
+  const manifest = JSON.stringify({
+    ...project,
+    status: "active",
+    slopbot: { automaticClosure: true },
+  });
   const digest = createHash("sha256").update(manifest).digest("hex");
   const at = "2026-01-01T00:00:00.000Z";
   sqlite.run(
@@ -93,19 +102,12 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
     [`${owner}/${repo}`.toLowerCase(), project.id],
   );
-  // An installation past its shadow period: 14 days and 50 completed reviews.
+  // Installation age and review counts do not grant closure authority.
   sqlite.run(
     "INSERT INTO slopbot_installations(installation_id, account_id, account_login, account_type, created_at) VALUES (1,77,?,'Organization',?)",
-    [owner, at],
+    [owner, new Date().toISOString()],
   );
   const repositoryId = Number(project.authority.repositoryId);
-  for (let i = 0; i < 50; i++)
-    sqlite.run(
-      `INSERT INTO slopbot_reviews(review_key,installation_id,repository_id,item_kind,item_number,item_node_id,
-        author_id,revision,content_digest,policy_digest,status,created_at,completed_at)
-       VALUES (?,1,?,'pull_request',?,?,1000,'r','d','p','completed',?,?)`,
-      [`shadow-${i}`, repositoryId, 100 + i, `PR_shadow_${i}`, at, at],
-    );
   // The verified Slop-skill member (D6): a member record and the author's own
   // authenticated run, whose pull_request_opened event names this node ID.
   sqlite.run(
@@ -133,9 +135,41 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let pauseReopen: (() => Promise<void>) | null = null;
   let loseReopenResponse = false;
   let verdict = { category: "spam" as Category, confidence: 0.97 };
-  const config = Buffer.from(
-    JSON.stringify({ version: 1, audience: "protection", closure: true }),
-  ).toString("base64");
+  let config: string | null = null;
+  let configTruncated = false;
+  let policyResponse: { status: number; body?: unknown } | null = null;
+  let revokeOnConfirmation = false;
+  let modelCalls = 0;
+  const consent = (value: boolean | null) => {
+    const row = sqlite
+      .query("SELECT revision, manifest FROM projects WHERE id = ?")
+      .get(project.id) as { revision: number; manifest: string };
+    const current = JSON.parse(row.manifest);
+    if (value === null) delete current.slopbot;
+    else current.slopbot = { automaticClosure: value };
+    // Fixture only: append the state that the actual self-service route
+    // separately proves. Keep the production D1 revision triggers intact.
+    const text = JSON.stringify(current);
+    const sha = createHash("sha256").update(text).digest("hex");
+    const at = new Date().toISOString();
+    sqlite.transaction(() => {
+      sqlite.run(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,?,?,?,?,?)",
+        [
+          project.id,
+          row.revision + 1,
+          text,
+          sha,
+          "Synthetic owner consent change",
+          at,
+        ],
+      );
+      sqlite.run(
+        "UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?",
+        [row.revision + 1, text, sha, at, project.id],
+      );
+    })();
+  };
   const login = (id: number) =>
     ({
       [AUTHOR]: "author",
@@ -150,7 +184,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       const path = url.pathname;
       if (request.method !== "GET" && !path.endsWith("/access_tokens"))
         writes.push(`${request.method} ${path}`);
-      if (path === "/v1/messages")
+      if (path === "/v1/messages") {
+        if (++modelCalls === 2 && revokeOnConfirmation) consent(false);
         return Response.json({
           id: "msg_local",
           type: "message",
@@ -174,6 +209,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           ],
           usage: { input_tokens: 10, output_tokens: 10 },
         });
+      }
       if (path.endsWith("/access_tokens"))
         return Response.json({ token: "local-synthetic-token" });
       if (path === `/repos/${owner}/${repo}`)
@@ -183,13 +219,23 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           default_branch: "main",
           owner: { login: owner, id: 77, type: "Organization" },
         });
-      if (path.endsWith("/contents/.github/slopbot.json"))
+      if (path.endsWith("/contents/.github/slopbot.json")) {
+        if (policyResponse !== null) {
+          const { status, body } = policyResponse;
+          return body === undefined || typeof body === "string"
+            ? new Response(body ?? null, { status })
+            : Response.json(body, { status });
+        }
+        if (config === null) return new Response(null, { status: 404 });
         return Response.json({
           type: "file",
-          size: 64,
-          content: config,
+          size: configTruncated ? 20_000 : Buffer.byteLength(config),
+          content: Buffer.from(
+            configTruncated ? `${config}${" ".repeat(20_000)}` : config,
+          ).toString("base64"),
           encoding: "base64",
         });
+      }
       if (path.endsWith("/issues/5") && request.method === "GET")
         return Response.json({
           node_id: "PR_local",
@@ -450,6 +496,20 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       model: (category, confidence) => {
         verdict = { category, confidence };
       },
+      consent,
+      revokeOnConfirmation: () => {
+        revokeOnConfirmation = true;
+      },
+      repositoryConfig: (value, truncated = false) => {
+        config = value;
+        configTruncated = truncated;
+      },
+      policyResponse: (status, body) => {
+        policyResponse = { status, body };
+      },
+      closureEnabled: (value) => {
+        env.SLOPBOT_CLOSURE_ENABLED = String(value);
+      },
       sql: (q) => sqlite.query(q).all(),
       feed: ((url: Parameters<typeof fetch>[0]) =>
         worker.fetch(
@@ -470,6 +530,95 @@ const PENALTY =
 const APPEAL =
   "SELECT draft, escalation IS NOT NULL AS escalated, resolution, resolved_by FROM slopbot_appeals";
 const day = 24 * 60 * 60 * 1000;
+
+test("project closure consent is fresh and never overrides repository or production opt-outs", async () => {
+  // Synthetic decisions exercise authorization only, not model qualification.
+  for (const boundary of [
+    "absent",
+    "revoked",
+    "during confirmation",
+    "production off",
+    "file off",
+    "category off",
+    "invalid file",
+    "truncated file",
+    "non-file",
+    "unreadable file",
+    "redirect",
+    "empty success",
+    "forbidden",
+    "rate limited",
+    "server failure",
+    "malformed response",
+  ]) {
+    await closedItem(async (run) => {
+      if (boundary === "absent") {
+        run.consent(null);
+        run.repositoryConfig(
+          JSON.stringify({ version: 1, audience: "protection", closure: true }),
+        );
+      }
+      if (boundary === "revoked") run.consent(false);
+      if (boundary === "during confirmation") run.revokeOnConfirmation();
+      if (boundary === "production off") run.closureEnabled(false);
+      if (boundary === "file off")
+        run.repositoryConfig(
+          JSON.stringify({
+            version: 1,
+            audience: "protection",
+            closure: false,
+          }),
+        );
+      if (boundary === "category off")
+        run.repositoryConfig(
+          JSON.stringify({
+            version: 1,
+            audience: "protection",
+            closure: true,
+            categories: { spam: "off" },
+          }),
+        );
+      if (boundary === "invalid file") run.repositoryConfig("invalid");
+      if (boundary === "truncated file")
+        run.repositoryConfig(
+          JSON.stringify({ version: 1, audience: "protection", closure: true }),
+          true,
+        );
+      if (boundary === "non-file") run.policyResponse(200, { type: "dir" });
+      if (boundary === "unreadable file")
+        run.policyResponse(200, {
+          type: "file",
+          size: 2_000_000,
+          encoding: "none",
+        });
+      if (boundary === "redirect") run.policyResponse(302);
+      if (boundary === "empty success") run.policyResponse(204);
+      if (boundary === "forbidden") run.policyResponse(403);
+      if (boundary === "rate limited") run.policyResponse(429);
+      if (boundary === "server failure") run.policyResponse(503);
+      if (boundary === "malformed response")
+        run.policyResponse(200, "not JSON");
+      if (
+        [
+          "forbidden",
+          "rate limited",
+          "server failure",
+          "malformed response",
+        ].includes(boundary)
+      )
+        await expect(run.review()).rejects.toThrow();
+      else expect(await run.review(), boundary).not.toBe("closed (spam)");
+      expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(false);
+      expect(run.sql(PENALTY)).toEqual([]);
+    });
+  }
+  // No file, no completed-review quota and a new installation: explicit
+  // consent plus independent confirmation can reach the existing close path.
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toHaveLength(1);
+  });
+});
 
 test("a spam close debits 3 thirds once; an accepted uphold draft reopens the item and reverses the debit once", async () => {
   await closedItem(async (run) => {

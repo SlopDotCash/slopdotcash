@@ -42,6 +42,7 @@ import {
   type PayoutPolicy,
 } from "../../src/lib/payments/contracts";
 import { finalizedEvmRevert } from "../payments/reconcile";
+import { reconcileBindingWinner } from "./binding-recovery";
 import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
 import type { MonthlyAuthorization } from "./monthly";
 
@@ -119,7 +120,7 @@ export interface Authorization extends DispatchPayment {
   challengeId: string;
   expiresAt: string;
 }
-interface Attempt {
+export interface Attempt {
   /** Payment attempts name an obligation; monthly attempts name a period. */
   obligationId?: string;
   monthlyPeriod?: string;
@@ -1239,7 +1240,7 @@ export async function bindingCandidates(
  * binding version. A binding signed for that version is reconciled first:
  * its receipt is read independently of current authorization. Missing receipts
  * permit the same bytes to be sent only while the exact claim and wallet consent
- * remain authorized. Held bytes are never replaced without a finalized revert. The vault's
+ * remain authorized. Held bytes survive until a finalized winning receipt. The vault's
  * expectedVersion check refuses a replayed or reordered binding.
  */
 export async function bindStoredDestination(
@@ -1271,6 +1272,12 @@ export async function bindStoredDestination(
   const key = `${STORED_BINDING}${operation.slice(2)}`;
   const journaled = { ...input, idempotencyKey: operation.slice(2) };
   const existing = await env.JOURNAL.get<Attempt | null>(key);
+  if (existing && (await env.JOURNAL.get(cancellationKey(existing)))) {
+    const result = await reconcileStoredBinding(env, key);
+    return result.transactionId
+      ? { state: "submitted", transactionId: result.transactionId }
+      : { state: "waiting" };
+  }
   if (
     existing &&
     !(await retireRevertedAttempt(env, deployment, key, existing))
@@ -1318,16 +1325,16 @@ export async function bindStoredDestination(
   };
 }
 
-const STORED_BINDING = "bind:stored:";
+export const STORED_BINDING = "bind:stored:";
 /** Journal keys of stored bindings signed but not yet finalized. */
-const PENDING_BINDINGS = "pending-stored-bindings";
+export const PENDING_BINDINGS = "pending-stored-bindings";
 
-const storedBindingAbi = parseAbi([
+export const storedBindingAbi = parseAbi([
   "function bindDestination(uint64 actorId,address destination,uint64 expectedVersion,bytes32 claimDigest,uint64 expiresAt,bytes walletSignature)",
 ]);
 
 /** Rebuild the journaled intent from current D1 authority before its bytes leave the signer. */
-async function authorizeStoredBindingBroadcast(
+async function storedBindingIntent(
   env: ExecutorEnvironment,
   deployment: Deployment,
   key: string,
@@ -1388,6 +1395,19 @@ async function authorizeStoredBindingBroadcast(
     !same(input.vault, attempt.vault)
   )
     throw new Error("Stored binding differs from its recorded authorization");
+  return { input, transaction, version, expiresAt, signature };
+}
+
+async function authorizeStoredBindingBroadcast(
+  env: ExecutorEnvironment,
+  deployment: Deployment,
+  key: string,
+  attempt: Attempt,
+) {
+  const { input, transaction, version, expiresAt, signature } =
+    await storedBindingIntent(env, deployment, key, attempt);
+  if (!isEscrowChain(deployment.chain))
+    throw new Error("Unknown binding chain");
   const authorization = await authorizeRegistry(
     env,
     input,
@@ -1410,7 +1430,7 @@ async function authorizeStoredBindingBroadcast(
     current.version,
     { expiresAt: expiresAt.toString(), signature },
   );
-  if (!data || !same(data, transaction.data))
+  if (!data || !transaction.data || !same(data, transaction.data))
     throw new Error(
       "Stored binding consent unavailable or expired; signed attempt held",
     );
@@ -1418,10 +1438,185 @@ async function authorizeStoredBindingBroadcast(
   await authorizeRegistry(env, input, deployment.chain, "none");
 }
 
+type BindingCancellation = {
+  original: Attempt;
+  reason:
+    | { kind: "superseded"; claimId: string; successorClaimId: string }
+    | { kind: "expired"; expiresAt: string; finalizedBlock: string };
+  rawTransaction: Hex;
+  transactionId: Hex;
+};
+const cancellationKey = (attempt: Attempt) =>
+  `binding-cancel:${attempt.transactionId.toLowerCase()}`;
+
+/** One immutable competitor for this binding's nonce; no payment or monthly operation. */
+async function cancelObsoleteStoredBinding(
+  env: ExecutorEnvironment,
+  deployment: Deployment,
+  key: string,
+  attempt: Attempt,
+): Promise<{ settled: boolean; transactionId?: string } | null> {
+  const archiveKey = cancellationKey(attempt);
+  let cancellation = await env.JOURNAL.get<BindingCancellation>(archiveKey);
+  const observe = async () =>
+    reconcileBindingWinner(
+      env,
+      {
+        network: attempt.network,
+        vault: attempt.vault,
+        originalTransactionId: attempt.transactionId,
+        winnerTransactionId:
+          cancellation?.transactionId ?? attempt.transactionId,
+      },
+      true,
+    );
+  // Canonical receipts win over current D1 state, including after a lost send.
+  if ((await observe()).state !== "pending") return { settled: true };
+  await assertIdentitySigner(env, deployment);
+  const {
+    input,
+    transaction: original,
+    expiresAt,
+  } = await storedBindingIntent(env, deployment, key, attempt);
+  if (
+    typeof original.nonce !== "number" ||
+    !Number.isSafeInteger(original.nonce) ||
+    original.maxFeePerGas === undefined ||
+    original.maxPriorityFeePerGas === undefined
+  )
+    throw new Error("Stored binding fee or nonce unavailable");
+  const nonce = original.nonce;
+  if (!cancellation) {
+    const successor = await env.PAYMENTS_DB.prepare(
+      "SELECT id FROM wallet_claims WHERE supersedes_claim_id=? AND github_user_id=? AND chain=?",
+    )
+      .bind(input.claimId, input.githubUserId, deployment.chain)
+      .first<{ id: string }>();
+    let reason: BindingCancellation["reason"];
+    if (successor) {
+      reason = {
+        kind: "superseded",
+        claimId: input.claimId,
+        successorClaimId: successor.id,
+      };
+    } else {
+      const finalized = (await rpc(deployment, "eth_getBlockByNumber", [
+        "finalized",
+        false,
+      ])) as {
+        number: string;
+        timestamp: string;
+      };
+      if (BigInt(finalized.timestamp) <= expiresAt) return null;
+      reason = {
+        kind: "expired",
+        expiresAt: expiresAt.toString(),
+        finalizedBlock: finalized.number,
+      };
+    }
+    if (21_000n > BigInt(deployment.gasCeiling))
+      throw new Error("Cancellation exceeds narrow operation gas policy");
+    const latest = (await rpc(deployment, "eth_getBlockByNumber", [
+      "latest",
+      false,
+    ])) as { baseFeePerGas: string };
+    // One 12.5% replacement increment, bounded by the existing 10 gwei limit.
+    // A later underpriced attempt stays held; it never creates another competitor.
+    const bump = (value: bigint) => (value * 9n + 7n) / 8n;
+    const priority =
+      bump(original.maxPriorityFeePerGas) > 1_000_000n
+        ? bump(original.maxPriorityFeePerGas)
+        : 1_000_000n;
+    const quote = BigInt(latest.baseFeePerGas) * 2n + priority;
+    const maxFee =
+      quote > bump(original.maxFeePerGas) ? quote : bump(original.maxFeePerGas);
+    if (maxFee > 10_000_000_000n || priority > maxFee)
+      throw new Error("Cancellation exceeds signer gas fee policy");
+    if (
+      (await rpc(deployment, "eth_getCode", [env.SIGNER.address, "latest"])) !==
+      "0x"
+    )
+      throw new Error("Cancellation requires a plain signer account");
+    cancellation = await env.JOURNAL.transaction(async (store) => {
+      const retained = await store.get<BindingCancellation>(archiveKey);
+      if (retained) return retained;
+      if (
+        JSON.stringify(await store.get(key)) !== JSON.stringify(attempt) ||
+        !((await store.get<string[]>(PENDING_BINDINGS)) ?? []).includes(key) ||
+        (await store.get(
+          `binding-observed:${attempt.transactionId.toLowerCase()}`,
+        ))
+      )
+        throw new Error("Binding changed before cancellation signing");
+      const rawTransaction = await env.SIGNER.signTransaction({
+        type: "eip1559",
+        chainId: Number(deployment.chainId),
+        nonce,
+        gas: 21_000n,
+        maxFeePerGas: maxFee,
+        maxPriorityFeePerGas: priority,
+        to: env.SIGNER.address as Hex,
+        value: 0n,
+        data: "0x",
+      });
+      const next = {
+        original: attempt,
+        reason,
+        rawTransaction,
+        transactionId: transactionHash(rawTransaction),
+      };
+      await store.put(archiveKey, next);
+      // Never replace original bytes or reset/increment the shared nonce high-water mark.
+      return next;
+    });
+  }
+  const signed = parseTransaction(cancellation.rawTransaction);
+  if (
+    JSON.stringify(cancellation.original) !== JSON.stringify(attempt) ||
+    !cancellation.rawTransaction.startsWith("0x02") ||
+    transactionHash(cancellation.rawTransaction) !==
+      cancellation.transactionId ||
+    signed.chainId !== Number(deployment.chainId) ||
+    signed.nonce !== original.nonce ||
+    !same(signed.to ?? "", env.SIGNER.address) ||
+    (signed.value ?? 0n) !== 0n ||
+    (signed.data ?? "0x") !== "0x" ||
+    signed.gas !== 21_000n ||
+    (signed.accessList?.length ?? 0) !== 0 ||
+    signed.maxFeePerGas === undefined ||
+    signed.maxFeePerGas > 10_000_000_000n ||
+    signed.maxPriorityFeePerGas === undefined ||
+    signed.maxPriorityFeePerGas > signed.maxFeePerGas ||
+    signed.gas > BigInt(deployment.gasCeiling) ||
+    !same(
+      await recoverTransactionAddress({
+        serializedTransaction: cancellation.rawTransaction as `0x02${string}`,
+      }),
+      env.SIGNER.address,
+    )
+  )
+    throw new Error(
+      "Stored cancellation differs from its binding or gas policy",
+    );
+  // A binding included during preparation must reconcile before any competing send.
+  if ((await observe()).state !== "pending") return { settled: true };
+  if (
+    (await rpc(deployment, "eth_getCode", [env.SIGNER.address, "latest"])) !==
+    "0x"
+  )
+    throw new Error("Cancellation requires a plain signer account");
+  const sent = await rpc(deployment, "eth_sendRawTransaction", [
+    cancellation.rawTransaction,
+  ]);
+  if (sent !== cancellation.transactionId)
+    throw new Error("Cancellation hash mismatch");
+  return { settled: false, transactionId: cancellation.transactionId };
+}
+
 /**
  * Reconcile receipts even after the claim changes. A missing receipt is not
- * permission to resend obsolete consent. Keep held bytes, hash and nonce intact;
- * this alone does not resolve the shared nonce gap for later contributors.
+ * permission to resend obsolete consent. Only a proved obsolete binding may
+ * use the narrowly authorized self-cancellation; uncertain evidence stays held.
  */
 async function reconcileStoredBinding(
   env: ExecutorEnvironment,
@@ -1430,6 +1625,16 @@ async function reconcileStoredBinding(
   const attempt = await env.JOURNAL.get<Attempt | null>(key);
   if (!attempt) return { settled: true };
   const deployment = await preflightEvmDeployment(env, attempt);
+  if (await env.JOURNAL.get(cancellationKey(attempt))) {
+    const result = await cancelObsoleteStoredBinding(
+      env,
+      deployment,
+      key,
+      attempt,
+    );
+    if (!result) throw new Error("Stored cancellation unavailable");
+    return result;
+  }
   const receipt = (await rpc(deployment, "eth_getTransactionReceipt", [
     attempt.transactionId,
   ])) as {
@@ -1463,6 +1668,13 @@ async function reconcileStoredBinding(
       throw new Error("Recorded binding receipt is not canonical");
     return { settled: BigInt(receipt.blockNumber) <= BigInt(finalized.number) };
   }
+  const cancellation = await cancelObsoleteStoredBinding(
+    env,
+    deployment,
+    key,
+    attempt,
+  );
+  if (cancellation) return cancellation;
   return {
     settled: false,
     ...(await signAndSubmit(
@@ -1490,7 +1702,7 @@ export interface BindingRunReport {
   current: number;
   waiting: number;
   failed: number;
-  /** Binding transactions signed or broadcast again in this run. */
+  /** Binding or same-nonce cancellation transactions broadcast in this run. */
   submitted: string[];
 }
 

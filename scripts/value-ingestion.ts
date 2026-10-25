@@ -21,12 +21,17 @@ import {
 } from "../workers/slopbot/value-context";
 import { collectValueEvidence } from "../workers/slopbot/value-evidence";
 import type { valueHistory } from "../workers/slopbot/value-journal";
+import type { ValueMergeRecipe } from "../workers/slopbot/value-merge-profile";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit";
 import {
   consumeWorkUnitHistory,
   readWorkUnitHistory,
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
+import {
+  hydrateValueMergeSource,
+  type PublicMergeRepository,
+} from "./value-merge-ingestion";
 
 type JointPage = Awaited<ReturnType<typeof workUnitHistory>>;
 const HISTORY_ORIGIN = "https://slopbot.slop.cash";
@@ -324,7 +329,7 @@ export async function loadValueInputs(
     Awaited<ReturnType<typeof consumeWorkUnitHistory>>
   >();
   const valueActors = new Map<string, GitHubActor>();
-  const publicRepositories = new Map<string, { id: number; node_id: string }>();
+  const publicRepositories = new Map<string, PublicMergeRepository>();
   const census = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
   if (census.size !== outcomes.length)
     throw new Error("Value census repeats a source");
@@ -341,11 +346,9 @@ export async function loadValueInputs(
       throw new Error("Value outcome repository is not registered");
     let identity = publicRepositories.get(repository.id);
     if (!identity) {
-      const live = await github.get<{
-        id: number;
-        node_id: string;
-        private: boolean;
-      }>(`/repos/${repository.owner}/${repository.name}`);
+      const live = await github.get<PublicMergeRepository>(
+        `/repos/${repository.owner}/${repository.name}`,
+      );
       if (
         live?.private !== false ||
         (repository.expectedNodeId !== null &&
@@ -365,7 +368,21 @@ export async function loadValueInputs(
     number: number,
     id: string,
     contextPaths: readonly ValueContextSelection[] = [],
+    recipe?: ValueMergeRecipe,
   ) {
+    const hydrate = async (raw: WorkUnitSource) => {
+      const collected = {
+        ...raw,
+        evidence: await collectValueContext(github, raw.evidence, contextPaths),
+      };
+      return recipe
+        ? hydrateValueMergeSource(
+            collected,
+            recipe,
+            (await repositoryIdentity(repositoryId)).identity,
+          )
+        : collected;
+    };
     const cached = sourceCache.get(id);
     if (cached) {
       if (
@@ -374,14 +391,7 @@ export async function loadValueInputs(
         cached.evidence.pull.number !== number
       )
         throw new Error("Joint source identity changed between records");
-      return {
-        ...cached,
-        evidence: await collectValueContext(
-          github,
-          cached.evidence,
-          contextPaths,
-        ),
-      };
+      return hydrate(cached);
     }
     const { repository, identity } = await repositoryIdentity(repositoryId);
     const evidence = await collectValueEvidence(github, repository.id, number);
@@ -413,10 +423,7 @@ export async function loadValueInputs(
     };
     const collected = { evidence, policy };
     sourceCache.set(id, collected);
-    return {
-      ...collected,
-      evidence: await collectValueContext(github, evidence, contextPaths),
-    };
+    return hydrate(collected);
   }
 
   async function legacy(collected: WorkUnitSource) {
@@ -522,6 +529,7 @@ export async function loadValueInputs(
             member.pullRequestNumber,
             member.pullRequestNodeId,
             member.contextPaths ?? [],
+            member.mergeRecipe,
           );
           members.push(collected);
           legacyDigests.set(

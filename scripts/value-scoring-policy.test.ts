@@ -558,6 +558,76 @@ test("a maintainer correction overrides only the implementation score", () => {
   expect(result.valueAssessmentCoverage?.[0]?.status).toBe("human-ratified");
 });
 
+test("a zero-share value reviewer is not treated as already awarded", () => {
+  const ratified = outcome(16, "2026-10-21T10:00:00.000Z");
+  const maintainer = actor("maintainer");
+  const projectId = TARGET_REPOSITORIES.find(
+    (target) => target.id === REPO,
+  )?.projectId;
+  const record = {
+    schemaVersion: "1",
+    ruleVersion: "slop-score-v2",
+    projectId,
+    pullRequestNodeId: ratified.id,
+    headSha: HEAD,
+    workUnitId: "wu_slopdotcash_pr_16",
+    tier: "micro",
+    scoreThirds: 1,
+    proposalReviewNodeIds: [],
+    coRatifierNodeIds: [],
+    reason: "Narrow mechanical correction.",
+    supersedes: null,
+  };
+  const createdAt = "2026-10-22T10:00:00.000Z";
+  const source = {
+    ...reviewed(ratified, [
+      review(16, 1, bob as GitHubActor, "APPROVED", "2026-10-21T07:00:00.000Z"),
+      review(16, 2, maintainer, "COMMENTED", "2026-10-21T08:00:00.000Z"),
+      review(16, 3, maintainer, "APPROVED", "2026-10-21T09:00:00.000Z"),
+    ]),
+    comments: [
+      {
+        id: "IC_ratify_16",
+        artifactId: ratified.id,
+        kind: "comment" as const,
+        body: `\`\`\`slop-score\n${JSON.stringify(record)}\n\`\`\`\n`,
+        url: `${REPO_URL}/pull/16#issuecomment-16`,
+        createdAt,
+        updatedAt: createdAt,
+        author: maintainer,
+        authorAssociation: "OWNER",
+      },
+    ],
+  };
+  const result = createLeaderboardSnapshot(
+    input({
+      mergedPullRequestOutcomes: [ratified],
+      reviewedMergedPullRequests: [source],
+      valuePolicy: POLICY,
+      valueDecisions: new Map<string, unknown>([
+        [
+          ratified.id,
+          assessed(ratified, "7", "micro", [
+            { sourceId: "PRR_16_1", tier: "deep" },
+            { sourceId: "PRR_16_2", tier: "triage" },
+            { sourceId: "PRR_16_3", tier: "triage" },
+          ]),
+        ],
+      ]) as unknown as LeaderboardInput["valueDecisions"],
+    }),
+  );
+  const byId = new Map(result.ledger.map((event) => [event.id, event]));
+  expect(byId.get("PR_16:value-review:PRR_16_1")?.scoreThirds).toBe(1);
+  expect(byId.get("PR_16:ratifier:IC_ratify_16")?.scoreThirds).toBe(1);
+  const exclusions = new Map(
+    (result.reviewExclusions ?? [])
+      .filter((exclusion) => exclusion.pullRequestId === "PR_16")
+      .map((exclusion) => [exclusion.reviewId, exclusion.reason]),
+  );
+  expect(exclusions.get("PRR_16_2")).toBe("review-credit-zero-share");
+  expect(exclusions.get("PRR_16_3")).toBe("review-credit-zero-share");
+});
+
 test("a maintainer ratification of a carrier keeps joint review credit", () => {
   const joint = outcome(12, "2026-10-20T10:00:00.000Z");
   const maintainer = actor("maintainer");
@@ -689,6 +759,189 @@ test("a maintainer ratification of a carrier keeps joint review credit", () => {
   expect(ratified.get("PR_12:value-review:PRR_12_1")?.scoreThirds).toBe(3);
   expect(ratified.get("PR_12:value-review:PRR_12_2")?.scoreThirds).toBe(3);
   expect(ratified.get("PR_12:ratifier:IC_ratify")?.scoreThirds).toBe(1);
+});
+
+test("a tier-none correction publishes the exclusion that zeroes pre-window review points", () => {
+  const merged = outcome(21, "2026-10-20T10:00:00.000Z");
+  const carolReview = review(
+    21,
+    1,
+    carol as GitHubActor,
+    "APPROVED",
+    "2026-10-19T02:00:00.000Z",
+  );
+  const snapshotAt = (
+    at: string,
+    from: string,
+    tier: string,
+    digest: string,
+  ) => {
+    setSystemTime(new Date(at));
+    return createLeaderboardSnapshot(
+      input({
+        generatedAt: at,
+        windowFrom: from,
+        windowTo: at,
+        sourceUpdatedAt: at,
+        verificationWindowFrom: from,
+        source: {
+          provider: "github-graphql",
+          fetchedAt: at,
+          cutoffAt: at,
+          repositoryId: "R_fixture",
+          repositories: TARGET_REPOSITORIES.map((target) => ({
+            id: target.id,
+            repositoryId:
+              target.role === "primary"
+                ? "R_fixture"
+                : `R_fixture_${target.name.replaceAll("-", "_")}`,
+          })),
+          requestCount: 1,
+          searchSliceCount: 1,
+          rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: at },
+          counts: {
+            mergedPullRequests: 0,
+            detailedMergedPullRequests: 0,
+            closedIssues: 0,
+            detailedClosedIssues: 0,
+            resolvedIssues: 0,
+            openIssues: 0,
+            openPullRequests: 0,
+          },
+          verificationWindow: { days: 35, from, to: at },
+          evidenceVerification: {
+            status: "complete",
+            sourceCount: 0,
+            artifactCount: 0,
+            maxSources: 64,
+            maxArtifacts: 64,
+          },
+        },
+        mergedPullRequestOutcomes: [merged],
+        reviewedMergedPullRequests: [reviewed(merged, [carolReview])],
+        valuePolicy: POLICY,
+        valueDecisions: new Map<string, unknown>([
+          [
+            merged.id,
+            assessed(merged, digest, "medium", [
+              { sourceId: carolReview.id, tier },
+            ]),
+          ],
+        ]) as unknown as LeaderboardInput["valueDecisions"],
+      }),
+    );
+  };
+  try {
+    // Carol's standard review earns 3 thirds = 30 points.
+    const first = snapshotAt(
+      "2026-10-23T12:00:00.000Z",
+      "2026-09-18T12:00:00.000Z",
+      "standard",
+      "d",
+    );
+    let journal = applyPointsSnapshot(
+      emptyPointsJournal("2026-10-23T12:00:00.000Z"),
+      first,
+      "a".repeat(64),
+      "2026-10-23T12:00:00.000Z",
+    );
+    const award = () =>
+      [...latestPoints(journal).values()].find(
+        (revision) => revision.award.actor.id === "U_carol",
+      );
+    expect(award()?.award.amount).toBe(30);
+    expect(award()?.award.occurredAt).toBe("2026-10-19T02:00:00.000Z");
+
+    // The rolling window moves past Carol's submission time and a corrected
+    // assessment rates her review tier none. The scorer credits nothing,
+    // and PRD section 7's ruling reaches Slop Points only through the
+    // published exclusion (#848): without it the old award can never be
+    // zeroed once its submission predates the window.
+    const second = snapshotAt(
+      "2026-11-24T10:00:00.000Z",
+      "2026-10-20T10:00:00.000Z",
+      "none",
+      "e",
+    );
+    expect(
+      second.ledger.some(
+        (event) =>
+          event.category === "substantive-review" &&
+          event.actor.id === "U_carol",
+      ),
+    ).toBe(false);
+    expect(
+      second.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === "PR_21",
+      )?.status,
+    ).toBe("assessed");
+    expect(
+      (second.reviewExclusions ?? []).find(
+        (entry) => entry.reviewId === carolReview.id,
+      )?.reason,
+    ).toBe("review-credit-zero-share");
+    journal = applyPointsSnapshot(
+      journal,
+      second,
+      "b".repeat(64),
+      "2026-11-24T10:00:00.000Z",
+    );
+    expect(award()?.award.amount).toBe(0);
+    expect(
+      pointMembers(journal).find((member) => member.actor.id === "U_carol")
+        ?.total,
+    ).toBe(0);
+
+    // The closed-unmerged caller loop publishes the same exclusion for an
+    // assessed tier-none review, so that path's rulings can correct points
+    // the same way.
+    const closedOutcome = outcome(22, "2026-10-20T11:00:00.000Z");
+    const closedReview = review(
+      22,
+      1,
+      carol as GitHubActor,
+      "APPROVED",
+      "2026-10-19T03:00:00.000Z",
+    );
+    const closedPull = {
+      ...closedOutcome,
+      ...reviewed(closedOutcome, [closedReview]),
+      mergedAt: null,
+      closedAt: "2026-10-20T11:00:00.000Z",
+      isDraft: false,
+      reviewDecision: null,
+      activeReviewRequestCount: 0,
+      assignees: [],
+      labels: [],
+      files: [],
+      closingIssueIds: [],
+      changedFiles: 1,
+      commitCount: 1,
+    };
+    const closedSnapshot = createLeaderboardSnapshot(
+      input({
+        closedUnmergedPullRequests: [
+          closedPull,
+        ] as unknown as LeaderboardInput["closedUnmergedPullRequests"],
+        valuePolicy: POLICY,
+        valueDecisions: new Map<string, unknown>([
+          [
+            closedOutcome.id,
+            assessed(closedOutcome, "9", "medium", [
+              { sourceId: closedReview.id, tier: "none" },
+            ]),
+          ],
+        ]) as unknown as LeaderboardInput["valueDecisions"],
+      }),
+    );
+    expect(
+      (closedSnapshot.reviewExclusions ?? []).find(
+        (entry) => entry.reviewId === closedReview.id,
+      )?.reason,
+    ).toBe("review-credit-zero-share");
+  } finally {
+    setSystemTime(new Date(AT));
+  }
 });
 
 test("a joint award gives way to the minimum when its decision is no longer assessed", () => {

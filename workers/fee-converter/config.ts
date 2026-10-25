@@ -282,11 +282,7 @@ export function parseConfig(env: FeeConverterEnv): FeeConverterConfig {
         : SOLANA_FEE_ESTIMATE_MICRO,
     },
     kyberClientId: env.KYBERSWAP_CLIENT_ID?.trim() || "slop-fee-converter",
-    jupiterApiUrl:
-      env.JUPITER_API_URL?.trim() ||
-      (jupiterApiKey
-        ? "https://api.jup.ag/swap/v1"
-        : "https://lite-api.jup.ag/swap/v1"),
+    jupiterApiUrl: env.JUPITER_API_URL?.trim() || "https://api.jup.ag/swap/v1",
     jupiterApiKey,
   };
 }

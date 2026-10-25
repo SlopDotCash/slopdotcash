@@ -220,7 +220,12 @@ Additional environment for the extended suite:
 The owner key needs 500 units of the scenario asset for the monthly scenario,
 100 for each lifecycle vault, 50 for the interrupted send and 150 for key
 recovery, 100 of each bounty asset, and 250 of the blockable asset. The run derives the destination
-wallets in memory from the second actor key, so no new key is stored. The
+wallets in memory from the second actor key, so no new key is stored. On
+Solana, the recorded run ID also binds each derived wallet. A new run must
+use a new run ID; resume with the same evidence directory and source to keep
+the same wallets and signed attempts. The Config fee account remains shared:
+serialize runs that use the same blockable mint and verify its state before
+starting. The runner does not thaw an earlier run's recipient account. The
 blockable asset and the review-window deployment are test fixtures: the
 evidence names their addresses, and a review-window result is not evidence
 for the deployed zero-delay configuration.

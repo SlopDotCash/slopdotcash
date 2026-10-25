@@ -284,12 +284,25 @@ export function ownerVaultSetupService(deps: {
         chainId: BigInt(network.chainId),
         rpcUrl: deps.rpcUrl(input.network),
       };
-      try {
-        const prepared = await prepareEvmVaultCreation(config, creation);
-        return { family: "evm" as const, template, config, creation, prepared };
-      } catch {
-        // A historical template may have been upgraded. Only a still-verifiable one is usable.
-      }
+      const prepared = await prepareEvmVaultCreation(config, creation).catch(
+        () => {
+          // A historical template may have been upgraded. Only a still-verifiable one is usable.
+          return null;
+        },
+      );
+      if (!prepared) continue;
+      if (
+        [creation.owner, template.identityAuthority].some(
+          (address) =>
+            address.toLowerCase() === template.feeRecipient.toLowerCase(),
+        )
+      )
+        fail(
+          422,
+          "vault_role_conflict",
+          "The platform fee wallet must be separate from the vault owner and identity authority.",
+        );
+      return { family: "evm" as const, template, config, creation, prepared };
     }
     fail(
       503,

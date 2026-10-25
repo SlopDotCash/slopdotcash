@@ -13,6 +13,7 @@ import {
   type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
+import type { ValueMergeRecipe } from "./value-merge-profile";
 import { mergeResolutionMatches } from "./value-merge-resolution";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
@@ -20,6 +21,7 @@ import { valueSourceDigest } from "./value-review";
 export interface WorkUnitSource {
   evidence: ValueEvidence;
   policy: { sha: string; text: string };
+  mergeRecipe?: ValueMergeRecipe;
 }
 
 export interface WorkUnitClaim {

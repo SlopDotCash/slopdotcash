@@ -16,6 +16,7 @@ import {
   valueContextSelections,
 } from "./value-context";
 import type { StoredValueRecord } from "./value-journal";
+import { type ValueMergeRecipe, validMergeRecipe } from "./value-merge-profile";
 import {
   type ValueProducer,
   valueResultProducerIdentity,
@@ -54,6 +55,7 @@ export interface WorkUnitRecord {
     policySha: string;
     sourceDigest: string;
     contextPaths?: ValueContextSelection[];
+    mergeRecipe?: ValueMergeRecipe;
   }[];
   claims: WorkUnitEvidence["claims"];
   units: (WorkUnitAssessment["units"][number] & { workUnitId: string })[];
@@ -152,47 +154,54 @@ export function workUnitSourceBindings(
   evidence: WorkUnitEvidence,
   repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
 ): WorkUnitRecord["sources"] {
-  return evidence.sources.map(({ evidence: source, policy }, i) => {
-    const occurredAt =
-      source.pull.merged_at ??
-      source.indirectAcceptance?.observedOnBranchAt ??
-      source.pull.closed_at;
-    const repository = repositories.find((entry) =>
-      [entry.id, ...entry.aliases].some(
-        (id) => id.toLowerCase() === source.repository.toLowerCase(),
-      ),
-    );
-    if (!repository) throw new Error("Joint source repository is unregistered");
-    if (occurredAt === null)
-      throw new Error("Joint source lacks occurrence date");
-    return {
-      repository: repository.id,
-      repositoryNodeId: source.repositoryNodeId,
-      repositoryDatabaseId: source.repositoryDatabaseId,
-      pullRequestNodeId: source.pull.node_id,
-      pullRequestNumber: source.pull.number,
-      headSha: source.pull.head.sha,
-      mergeSha: source.pull.merge_commit_sha,
-      ...(source.indirectAcceptance
-        ? {
-            indirectAcceptance: {
-              historicalHeadSha: source.indirectAcceptance.historicalHeadSha,
-              integrationSha: source.indirectAcceptance.integrationSha,
-              acceptedTipSha: source.indirectAcceptance.acceptedTipSha,
-              branch: source.indirectAcceptance.branch,
-              observationRunId: source.indirectAcceptance.observationRunId,
-              observedOnBranchAt: source.indirectAcceptance.observedOnBranchAt,
-            },
-          }
-        : {}),
-      occurredAt,
-      policySha: policy.sha,
-      sourceDigest: evidence.sourceDigests[i].digest,
-      ...(source.contextFiles?.length
-        ? { contextPaths: valueContextSelections(source) }
-        : {}),
-    };
-  });
+  return evidence.sources.map(
+    ({ evidence: source, policy, mergeRecipe }, i) => {
+      if (mergeRecipe !== undefined && !validMergeRecipe(mergeRecipe))
+        throw new Error("Invalid merge reconstruction recipe");
+      const occurredAt =
+        source.pull.merged_at ??
+        source.indirectAcceptance?.observedOnBranchAt ??
+        source.pull.closed_at;
+      const repository = repositories.find((entry) =>
+        [entry.id, ...entry.aliases].some(
+          (id) => id.toLowerCase() === source.repository.toLowerCase(),
+        ),
+      );
+      if (!repository)
+        throw new Error("Joint source repository is unregistered");
+      if (occurredAt === null)
+        throw new Error("Joint source lacks occurrence date");
+      return {
+        repository: repository.id,
+        repositoryNodeId: source.repositoryNodeId,
+        repositoryDatabaseId: source.repositoryDatabaseId,
+        pullRequestNodeId: source.pull.node_id,
+        pullRequestNumber: source.pull.number,
+        headSha: source.pull.head.sha,
+        mergeSha: source.pull.merge_commit_sha,
+        ...(source.indirectAcceptance
+          ? {
+              indirectAcceptance: {
+                historicalHeadSha: source.indirectAcceptance.historicalHeadSha,
+                integrationSha: source.indirectAcceptance.integrationSha,
+                acceptedTipSha: source.indirectAcceptance.acceptedTipSha,
+                branch: source.indirectAcceptance.branch,
+                observationRunId: source.indirectAcceptance.observationRunId,
+                observedOnBranchAt:
+                  source.indirectAcceptance.observedOnBranchAt,
+              },
+            }
+          : {}),
+        occurredAt,
+        policySha: policy.sha,
+        sourceDigest: evidence.sourceDigests[i].digest,
+        ...(mergeRecipe ? { mergeRecipe } : {}),
+        ...(source.contextFiles?.length
+          ? { contextPaths: valueContextSelections(source) }
+          : {}),
+      };
+    },
+  );
 }
 
 export function workUnitIdentity(unit: WorkUnitAssessment["units"][number]) {

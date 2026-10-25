@@ -1,7 +1,7 @@
 /** Private GitHub evidence for copied contributions. A closure comment is a
  * discovery hint, never sufficient evidence for assigning implementation credit.
  */
-import type { FileChange } from "./value-evidence";
+import type { FileChange, ValueEvidence } from "./value-evidence";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
   hasCompleteValuePatch,
@@ -9,6 +9,103 @@ import {
   valuePatch,
 } from "./value-patch";
 import type { WorkUnitSource } from "./value-work-unit";
+
+/** An exact same-author reopen already retains authenticated attribution.
+ * A rebase can change every commit SHA without changing the delivered work.
+ * Partial copies and changed authors still require the acknowledgement below.
+ */
+function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
+  if (
+    original.pull.state !== "closed" ||
+    !original.pull.closed_at ||
+    !accepted.pull.merged_at ||
+    !(
+      Date.parse(original.pull.closed_at) <= Date.parse(accepted.pull.merged_at)
+    ) ||
+    original.pull.user.type !== "User" ||
+    accepted.pull.user.type !== "User" ||
+    original.pull.user.node_id !== accepted.pull.user.node_id ||
+    original.limitations.length ||
+    accepted.limitations.length ||
+    !(
+      original.relatedPullRequests.some(
+        (ref) => ref.id === accepted.pull.node_id,
+      ) ||
+      accepted.relatedPullRequests.some(
+        (ref) => ref.id === original.pull.node_id,
+      )
+    )
+  )
+    return false;
+
+  const net = (evidence: ValueEvidence) =>
+    evidence.files
+      .map((file) => [
+        file.filename,
+        file.previous_filename ?? null,
+        file.status,
+        file.additions,
+        valueDeletionCount(file),
+        valuePatch(file),
+      ])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  if (
+    !original.files.length ||
+    !original.files.every(hasCompleteValuePatch) ||
+    !accepted.files.every(hasCompleteValuePatch) ||
+    JSON.stringify(net(original)) !== JSON.stringify(net(accepted))
+  )
+    return false;
+
+  // Bind each complete ordinary commit to its position, not just a set of
+  // matching files. Unknown authors, merges and extra edits are not a reopen.
+  const history = (evidence: ValueEvidence) => {
+    if (
+      !evidence.commits.length ||
+      evidence.commits.at(-1)?.sha !== evidence.pull.head.sha ||
+      evidence.commitAttribution.length !== evidence.commits.length
+    )
+      return null;
+    const result = [];
+    for (const [index, commit] of evidence.commits.entries()) {
+      const attribution = evidence.commitAttribution.find(
+        (item) => item.sha === commit.sha,
+      );
+      if (
+        commit.parents.length !== 1 ||
+        commit.parents[0].sha !==
+          (index === 0
+            ? evidence.pull.base.sha
+            : evidence.commits[index - 1].sha) ||
+        commit.author?.type !== "User" ||
+        !attribution?.files?.length ||
+        attribution.limitations.length ||
+        !attribution.actorNodeIds.includes(commit.author.node_id) ||
+        attribution.changedPaths?.length !== attribution.files.length ||
+        new Set(attribution.changedPaths).size !== attribution.files.length ||
+        new Set(attribution.files.map((file) => file.filename)).size !==
+          attribution.files.length ||
+        !attribution.files.every((file) =>
+          attribution.changedPaths?.includes(file.filename),
+        )
+      )
+        return null;
+      const edits = attribution.files.map(retainedEditIdentity);
+      if (edits.includes(null)) return null;
+      result.push([
+        commit.author.node_id,
+        commit.commit.author.date,
+        commit.commit.message,
+        [...attribution.actorNodeIds].sort(),
+        [...attribution.changedPaths].sort(),
+        edits.sort(),
+      ]);
+    }
+    return JSON.stringify(result);
+  };
+  const before = history(original);
+  return before !== null && before === history(accepted);
+}
 
 export function retainedCopySources(
   original: WorkUnitSource,
@@ -33,15 +130,18 @@ export function retainedCopySources(
       )
     )
       return false;
-    return evidence.comments.some(
-      (comment) =>
-        comment.user?.node_id === accepted.merged_by?.node_id &&
-        Date.parse(comment.created_at) >=
-          Date.parse(accepted.merged_at as string) &&
-        /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body) &&
-        [...comment.body.matchAll(/\b[a-f0-9]{40}\b/gu)].some(
-          ([sha]) => sha === accepted.merge_commit_sha,
-        ),
+    return (
+      sameAuthorReopen(evidence, integration) ||
+      evidence.comments.some(
+        (comment) =>
+          comment.user?.node_id === accepted.merged_by?.node_id &&
+          Date.parse(comment.created_at) >=
+            Date.parse(accepted.merged_at as string) &&
+          /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body) &&
+          [...comment.body.matchAll(/\b[a-f0-9]{40}\b/gu)].some(
+            ([sha]) => sha === accepted.merge_commit_sha,
+          ),
+      )
     );
   });
 }

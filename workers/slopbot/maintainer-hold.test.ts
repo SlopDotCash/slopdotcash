@@ -25,6 +25,7 @@ async function uncertainReview(
     review: () => Promise<string>;
     tick: () => Promise<Job[]>;
     deliver: (jobs: Job[]) => Promise<void>;
+    setDraft: (v: boolean) => void;
     writes: string[];
     labels: { name: string }[];
     sql: (q: string) => unknown;
@@ -61,6 +62,7 @@ async function uncertainReview(
     [owner, at],
   );
   const repositoryId = Number(project.authority.repositoryId);
+  let pullDraft = false;
   const writes: string[] = [];
   const labels: { name: string }[] = [];
   const server = Bun.serve({
@@ -114,7 +116,7 @@ async function uncertainReview(
         });
       if (path.endsWith("/pulls/5"))
         return Response.json({
-          draft: false,
+          draft: pullDraft,
           merged: false,
           head: { sha: "b".repeat(40) },
           base: { sha: "c".repeat(40) },
@@ -215,6 +217,9 @@ async function uncertainReview(
     await cb({
       writes,
       labels,
+      setDraft: (v: boolean) => {
+        pullDraft = v;
+      },
       review: () => reviewItem(env as unknown as ReviewEnv, job),
       tick: async () => {
         sent.length = 0;
@@ -319,4 +324,26 @@ test("a label-only finding without cited evidence waits even at high confidence"
     },
     0.99,
   );
+});
+
+test("a pull request converted to draft during the window is not labeled", async () => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    expect(await run.review()).toMatch(/^held for maintainer until /);
+    // The author converts the pull request back to draft before the window
+    // ends; the head SHA the hold recorded does not change.
+    run.setDraft(true);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
+    await run.deliver(due);
+    expect(run.writes.filter((w) => w.endsWith("/labels"))).toEqual([]);
+    expect(run.labels).toEqual([]);
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: "superseded" },
+    ]);
+    expect(run.sql("SELECT action FROM slopbot_actions ORDER BY id")).toEqual([
+      { action: "comment" },
+    ]);
+  });
 });

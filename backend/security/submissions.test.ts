@@ -11,6 +11,7 @@ import {
 } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
+import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { dispatchSecurityMail } from "../../workers/notify/security";
 import { slopbotRepositoryAccess } from "../projects/repository-access";
@@ -24,6 +25,11 @@ import {
 import { githubIntakeOAuth, type IntakeConfig } from "./intake-grant";
 import { seedParticipationBan } from "./participation-ban.fixture";
 import { cvss3BaseScore, deterministicAnalyzer } from "./report-analysis";
+import {
+  type ReportingObservation,
+  refreshReportingObservation,
+  reportingTarget,
+} from "./reporting-readiness";
 import { RECONCILE_QUIET_MS, SUBMITTED_LIMIT_MS } from "./submissions";
 
 // Several tests build more than one database with every migration.
@@ -135,6 +141,9 @@ function setup(
     .run(PROJECT, manifest, digest, START, START);
   let now = new Date(START);
   const clock = () => now;
+  let reportingFailure: "unavailable" | "identity-mismatch" | null = null;
+  let enabled = options.pvr ?? true;
+  let freshReadCount = 0;
   const github = fakeGithub({ now: clock });
   github.install(REPO);
   const intake: IntakeConfig = {
@@ -151,6 +160,35 @@ function setup(
     advisories: github.client,
     installation: github.installation,
     analyzer: deterministicAnalyzer,
+  };
+  const reportingRead = async (target: {
+    repositoryId: string | null;
+    repositoryNodeId: string | null;
+  }): Promise<ReportingObservation> => {
+    freshReadCount += 1;
+    if (reportingFailure) return { kind: reportingFailure };
+    if ((await intake.installation.installed(REPO)) !== "yes")
+      return { kind: "app-not-installed" };
+    return {
+      kind: "verified",
+      enabled,
+      repositoryId: target.repositoryId!,
+      repositoryNodeId: target.repositoryNodeId!,
+    };
+  };
+  const refresh = async () => {
+    const row = sqlite
+      .query("SELECT manifest, revision FROM projects WHERE id = ?")
+      .get(PROJECT) as { manifest: string; revision: number };
+    return refreshReportingObservation(
+      db,
+      reportingTarget(
+        JSON.parse(row.manifest) as ProjectDefinition,
+        row.revision,
+      ),
+      reportingRead,
+      now,
+    );
   };
   let beforeBatch: (() => void) | null = null;
   const securityDb = db as unknown as SecurityD1Database;
@@ -260,13 +298,7 @@ function setup(
           (request.headers.get("cookie") ?? "").includes("__Host-slop_points")
             ? as
             : null,
-        github: {
-          fetch: async () =>
-            new Response(JSON.stringify({ enabled: options.pvr ?? true }), {
-              status: 200,
-            }),
-          apiOrigin: "https://api.github.invalid",
-        },
+        reportingRead,
         intake,
         analyzer,
         repositoryAccess,
@@ -417,6 +449,15 @@ function setup(
         .run(id, bytes, hash, START, START);
       github.install(repository);
     },
+    refresh,
+    setReporting: (value: {
+      enabled?: boolean;
+      failure?: "unavailable" | "identity-mismatch" | null;
+    }) => {
+      if (value.enabled !== undefined) enabled = value.enabled;
+      if ("failure" in value) reportingFailure = value.failure ?? null;
+    },
+    reportingReads: () => freshReadCount,
     unavailableRepositories,
     sqlite,
     db: securityDb,
@@ -455,6 +496,78 @@ function setup(
     },
   };
 }
+
+describe("private intake: cached reporting observations", () => {
+  test.each([false, true])(
+    "failed or stale public observations do not authorize or permanently block submission (no program: %s)",
+    async (noProgram) => {
+      const t = setup({ noProgram });
+      const read = () =>
+        t.call(REPORTER, "GET", `security-programs/${PROJECT}/intake`);
+      expect((await read()).body).toMatchObject({
+        state: "unavailable",
+        stale: true,
+        checkedAt: null,
+        automaticConfigured: true,
+      });
+      expect(t.reportingReads()).toBe(0);
+      await t.refresh();
+      const good = (await read()).body;
+      expect(good).toMatchObject({ state: "ready", stale: false });
+      t.advance(1);
+      t.setReporting({ failure: "unavailable" });
+      await t.refresh();
+      const reads = t.reportingReads();
+      expect((await read()).body).toMatchObject({
+        state: "ready",
+        stale: true,
+        checkedAt: good.checkedAt,
+        automatic: "unavailable",
+      });
+      expect(t.reportingReads()).toBe(reads);
+      expect((await t.create()).status).toBe(409);
+      expect(
+        t.sqlite.query("SELECT count(*) AS n FROM security_submissions").get(),
+      ).toEqual({ n: 0 });
+
+      t.advance(1);
+      t.setReporting({ failure: null, enabled: false });
+      await t.refresh();
+      expect((await read()).body).toMatchObject({
+        state: "disabled",
+        stale: false,
+      });
+      t.advance(3_600_001);
+      expect((await read()).body).toMatchObject({
+        state: "disabled",
+        stale: true,
+      });
+      t.setReporting({ enabled: true });
+      const created = await t.create();
+      expect(created.status).toBe(201);
+      const id = created.body.submission!.id;
+      await t.authorize(REPORTER, created.body.authorizeUrl as string);
+      // Sending has its own fresh check and leaves the authorized draft intact.
+      t.setReporting({ enabled: false });
+      expect((await t.send(id, 1)).body.error).toBe("intake_unavailable");
+      expect(t.row(id).state).toBe("draft");
+      expect(t.github.counts.posts).toBe(0);
+      t.setReporting({ failure: "unavailable" });
+      expect((await t.send(id, 1)).body.error).toBe("intake_unavailable");
+      expect(t.row(id).state).toBe("draft");
+      expect(t.github.counts.posts).toBe(0);
+      t.setReporting({ failure: null, enabled: true });
+      expect((await t.send(id, 1)).body.submission?.state).toBe(
+        "receipt-verified",
+      );
+      expect(t.github.counts.posts).toBe(1);
+      expect((await t.send(id, 1)).body.submission?.state).toBe(
+        "receipt-verified",
+      );
+      expect(t.github.counts.posts).toBe(1);
+    },
+  );
+});
 
 describe("private intake: creation and identity", () => {
   test("creation replays one key and refuses a second submission in flight", async () => {
@@ -1064,8 +1177,10 @@ describe("private intake: send outcomes", () => {
     const t = setup();
     const submission = await t.ready();
     t.github.faults.create = "404";
-    // The App is removed between creation and send.
-    t.github.installation.installed = async () => "no";
+    // The App is removed after the fresh check, before the actual send.
+    let installationChecks = 0;
+    t.github.installation.installed = async () =>
+      installationChecks++ === 0 ? "yes" : "no";
     const sent = await t.send(submission.id, 1);
     expect(sent.body.submission?.failureCode).toBe("app-not-installed");
   });
@@ -1794,19 +1909,25 @@ describe("private intake: analysis, access, privacy and mode", () => {
       "GET",
       `security-programs/${PROJECT}/intake`,
     );
-    expect(readiness.body).toMatchObject({ state: "ready", automatic: "off" });
-    expect(readiness.body.handoffUrl).toBe(
-      `https://github.com/${REPO}/security/advisories/new`,
-    );
+    expect(readiness.body).toMatchObject({
+      state: "unavailable",
+      stale: true,
+      automatic: "off",
+    });
+    expect(readiness.body.handoffUrl).toBeNull();
+    expect(t.reportingReads()).toBe(0);
   });
 
   test("readiness reports automatic intake only when the App is installed and PVR is on", async () => {
     const on = setup();
+    await on.refresh();
     expect(
       (await on.call(REPORTER, "GET", `security-programs/${PROJECT}/intake`))
         .body.automatic,
     ).toBe("ready");
     on.github.installation.installed = async () => "no";
+    on.advance(1);
+    await on.refresh();
     expect(
       (await on.call(REPORTER, "GET", `security-programs/${PROJECT}/intake`))
         .body.automatic,
@@ -1815,6 +1936,7 @@ describe("private intake: analysis, access, privacy and mode", () => {
     const refused = await on.create();
     expect(refused.body.error).toBe("intake_unavailable");
     const disabled = setup({ pvr: false });
+    await disabled.refresh();
     const readiness = await disabled.call(
       REPORTER,
       "GET",

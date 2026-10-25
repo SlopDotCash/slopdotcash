@@ -21,7 +21,7 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    repository IDs skip; database errors retry. Registry checks repeat for the
    same scope before inference and GitHub writes. The queue consumer
    then gets an installation token and re-reads the
-   repository, the item, `.github/slopbot.json`, and `AGENTS.md`,
+   repository, the item, any optional `.github/slopbot.json`, and `AGENTS.md`,
    `CONTRIBUTING.md` and `README.md` from the default branch at its current
    SHA.
 3. `routing.ts` applies the published precedence: installation, private
@@ -101,9 +101,17 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    `/slopbot uphold` or `/slopbot deny`, never their own. Unset, no moderator
    decision is possible. A maintainer reopen always wins.
 
-## Repository policy file
+## Project consent and repository restrictions
 
-`.github/slopbot.json` on the default branch:
+The owner enables automatic closure explicitly in project settings. The
+control starts unchecked; absent consent is false. Registration and App
+installation alone grant no closure consent. Changes use the existing current
+GitHub authority checks and append-only project revisions. No separate
+repository file is required (owner decision, 25 October 2026).
+
+An existing `.github/slopbot.json` on the default branch can still restrict
+review, categories, caps and closure. Preserve its opt-outs. It cannot override
+a project's refusal. Repository rejection rules remain authoritative.
 
 ```json
 {
@@ -116,7 +124,8 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
 }
 ```
 
-A missing or invalid file means label-only review.
+A missing file does not block explicit project consent. An invalid existing
+file remains label-only; do not discard a restriction because it cannot be read.
 
 ## Budget-block recovery
 
@@ -234,10 +243,13 @@ Do these in order. Each step names who does it and how to verify it.
 8. **Verify free review:** use a registered repository with no project credits.
    Confirm that an eligible review runs, records provider costs, and adds zero
    customer charges. Verify that unregistered repositories remain blocked.
-9. **Observe the shadow period:** review the labels and comments for at least
-   14 days and 50 items, with `SLOPBOT_CLOSURE_ENABLED` still `"false"`.
-   Enabling closure later is a separate reviewed PR that sets the variable
-   and records the agreement data.
+9. **Qualify closure:** review real cases and counterexamples with
+   `SLOPBOT_CLOSURE_ENABLED` still `"false"`. A fixed elapsed period or item
+   count does not qualify the service. Record the actual model evidence,
+   independent confirmation and refusal controls. Enabling production closure
+   later is a separate reviewed release that records the evidence and sets the
+   existing switch. Project consent, caps, appeals and reopen protection remain
+   required. Fixtures alone do not qualify model behavior.
 
 ## App permissions and events
 
@@ -1208,3 +1220,31 @@ identity. A resolved appeal remains in history with no decision requested.
 Optional activity email uses the existing consent-bound queue; dispatch
 suppresses a resolved appeal or a recipient who is no longer a moderator.
 Private security appeals keep their separate notice and acknowledgment path.
+## Historical merge sources
+
+The existing admin-only historical import route also accepts two multipart
+file parts: `envelope` with type `application/json`, and `bundle` containing
+complete Git objects. The total body limit remains 25 MiB. Use the JSON file
+part to preserve exact line endings. Existing JSON-only clients are unchanged.
+
+The bundle is allowed only for a joint assessment from one public repository.
+The publisher re-reads the live registry, App selection, full GitHub source and
+policy before calling the sandbox's fixed named merge verifier. It re-reads
+source again before publication. A server-created `git-2.56.0-v1` recipe binds
+the exact collector inputs in the existing joint journal. No client patch,
+tree, digest assertion or local assessment can bypass these checks.
+
+Points ingestion reconstructs that recipe from independently verified public
+GitHub objects with the same pinned collector. Missing Git, changed source,
+incomplete objects or a failed reconstruction stop the projection. They do not
+replace a joint decision with minimum or zero credit. Old journal records and
+JSON clients retain their existing path; frozen financial records are not
+rewritten. The September/October publication hold remains in force.
+
+Trusted ingestion jobs explicitly build checksum-pinned Git through
+`scripts/install-value-merge-git.ts`. The consumer does not download tools.
+The staging Pages binding uses the existing staging repository-access Worker,
+staging D1 and a separate named publisher. It adds no model route, bot queue,
+scanner controller or production database access. Production uses the existing
+publisher. Both environments still require normal reviewed release and actual
+provider qualification before live historical intake is claimed.

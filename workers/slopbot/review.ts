@@ -30,11 +30,9 @@ import {
   type ConfigResult,
   type Job,
   NEVER_CLOSE,
-  parseRepositoryConfig,
+  projectRepositoryConfig,
   REOPEN_BREAKER_RATIO,
   SECURITY_CATEGORIES,
-  SHADOW_DAYS,
-  SHADOW_MIN_REVIEWS,
   UNIVERSAL_CATEGORIES,
   type Verdict,
 } from "./contracts";
@@ -76,16 +74,19 @@ import {
 import {
   type ReviewScope,
   registeredRepository,
+  repositoryCapabilities,
   requireRegisteredRepository,
   requireScope,
   reviewRegistration,
   scopeAllowed,
 } from "./registry";
 import { route } from "./routing";
+import type { ValueMergeVerifier } from "./value-merge-profile";
 
 export type ReviewEnv = ModelEnv &
   QualityTrust & {
     SLOPBOT_DB: store.D1TransactionalDatabase;
+    VALUE_MERGE_VERIFIER?: ValueMergeVerifier;
     SLOPBOT_APP_ID: string;
     SLOPBOT_APP_PRIVATE_KEY: string;
     SLOPBOT_APP_USER_ID: string;
@@ -276,6 +277,16 @@ async function loadContext(
   job: Extract<Job, { kind: "review" }>,
   registration: Context["registration"],
 ): Promise<Context | null> {
+  // Re-read the current immutable revision for every pre-action refresh.
+  // Installation or a stale queued registration cannot supply consent.
+  const current = await repositoryCapabilities(env.SLOPBOT_DB, job);
+  if (
+    current.projectId !== registration.projectId ||
+    !(registration.scope === "contributor"
+      ? current.capabilities.mayOfferContributorWork
+      : current.capabilities.mayReviewForSecurity)
+  )
+    return null;
   const github = await GitHubClient.forInstallation(
     env.SLOPBOT_APP_ID,
     env.SLOPBOT_APP_PRIVATE_KEY,
@@ -305,8 +316,10 @@ async function loadContext(
     baseSha,
     16 * 1024,
   );
-  const config = parseRepositoryConfig(
-    configFile === null || configFile.truncated ? null : configFile.text,
+  const config = projectRepositoryConfig(
+    current.project?.slopbot?.automaticClosure === true,
+    // A truncated existing file is invalid, never permission to use defaults.
+    configFile === null ? null : configFile.truncated ? "" : configFile.text,
   );
   // Policy is always read from the default branch at a recorded SHA; a pull
   // request's own policy edits are content under review (BOT-04).
@@ -531,7 +544,7 @@ async function closureState(
   if (env.SLOPBOT_CLOSURE_ENABLED !== "true")
     return {
       allowed: false,
-      why: "closure is disabled for Slopbot (pending approval)",
+      why: "closure is disabled for Slopbot (pending production activation)",
     };
   if (!context.config.ok)
     return {
@@ -545,18 +558,6 @@ async function closureState(
       allowed: false,
       why: "author is not eligible for automatic closure",
     };
-  const install = await store.installation(db, job.installationId);
-  const ageDays =
-    install === null
-      ? 0
-      : (Date.now() - Date.parse(install.created_at)) / 86_400_000;
-  const reviewed = await store.count(
-    db,
-    "SELECT COUNT(*) AS n FROM slopbot_reviews WHERE installation_id = ? AND status = 'completed'",
-    job.installationId,
-  );
-  if (ageDays < SHADOW_DAYS || reviewed < SHADOW_MIN_REVIEWS)
-    return { allowed: false, why: "shadow period" };
   const closes7 = await store.count(
     db,
     "SELECT COUNT(*) AS n FROM slopbot_actions WHERE repository_id = ? AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')",
@@ -1116,7 +1117,7 @@ async function runReview(
               ? null
               : !state.allowed
                 ? state.why
-                : "objective closure awaits reviewed shadow qualification";
+                : "objective closure awaits reviewed qualification";
           } else
             blockedClose =
               "source or eligibility changed before shadow recording";
@@ -1413,25 +1414,16 @@ export async function qualityQualified(
     env.SLOPBOT_QUALITY_PROFILE_SHA256 !== proof.profile
   )
     return false;
-  const shadow = await env.SLOPBOT_DB.prepare(
-    `SELECT MIN(created_at) AS started
-    FROM slopbot_quality_shadow WHERE repository_id = ? AND profile_sha256 = ? AND verifier_key = ?`,
+  const evidence = await env.SLOPBOT_DB.prepare(
+    `SELECT review_key FROM slopbot_quality_shadow
+    WHERE repository_id = ? AND profile_sha256 = ? AND verifier_key = ? LIMIT 1`,
   )
     .bind(job.repositoryId, proof.profile, env.SLOPBOT_QUALITY_VERIFIER_KEY)
-    .first<{ started: string | null }>();
-  if (
-    !shadow?.started ||
-    now - Date.parse(shadow.started) < SHADOW_DAYS * 86_400_000
-  )
-    return false;
-  const reviewed = await store.count(
-    env.SLOPBOT_DB,
-    `SELECT COUNT(DISTINCT item_node_id) AS n
-    FROM slopbot_reviews WHERE repository_id = ? AND status = 'completed' AND created_at >= ?`,
-    job.repositoryId,
-    shadow.started,
-  );
-  return reviewed >= SHADOW_MIN_REVIEWS;
+    .first<{ review_key: string }>();
+  // Qualification is an explicit reviewed profile decision. The current
+  // repository/verifier must have evidence; counts and elapsed time do not
+  // establish that the cases and counterexamples are correct.
+  return evidence !== null;
 }
 
 async function stillMayClose(
@@ -2222,6 +2214,7 @@ export async function applyMaintainerHold(
     return supersede("item not readable");
   if (issue.state !== "open") return supersede("item is no longer open");
   const { pull, revision } = await itemRevision(github, job, issue);
+  if (pull?.draft) return supersede("item is a draft");
   if (pull?.merged || revision !== hold.revision)
     return supersede("item changed after the review");
   if (await maintainerActedSince(env, github, repo, job, hold.held_at)) {

@@ -5,6 +5,9 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 preview_urls = false
 
+[build]
+command = "bun --no-env-file scripts/prepare-vetting-sandbox.mjs"
+
 [[containers]]
 class_name = "OfflineSandbox"
 image = "./Dockerfile"

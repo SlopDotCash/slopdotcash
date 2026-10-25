@@ -28,7 +28,7 @@ alias only.
   - The escrow identity attester key (PAY-05, approved by the repository owner
     on 14 October 2026). It only attests the authenticated GitHub actor for a
     destination binding that the destination wallet also signs, and it submits
-    only that binding transaction. It cannot choose an amount or reach free
+    those binding transactions. It cannot choose an amount or reach free
     funds. A binding activates immediately and the award delay is zero (#1086,
     #1100), so a stolen attester key with a wallet it controls can redirect and
     pay any matured unpaid award before the owner can cancel. Protection rests
@@ -38,7 +38,13 @@ alias only.
     allocation root (the owner waived the independent audit, PRD section 11
     "External reviews"). The contract limits that commitment to the owner's
     monthly cap, one commitment per period, and the owner's opt-out; the
-    attester still cannot withdraw, redirect, or pay funds.
+    attester still cannot withdraw, redirect, or pay funds. Owner decision of
+    25 October 2026: it may automatically cancel its own obsolete pending EVM
+    wallet-binding transaction with a same-nonce, zero-native-value transfer
+    to itself, with empty data and the existing gas limits. Retain both signed
+    attempts and reconcile either canonical finalized winner. The old binding
+    may still win. Missing evidence is not cancellation proof. This exception
+    does not authorize cancellation of payments or monthly commitments.
   - One fee-wallet hot key per network (PRD TOK-07, MVP-07c, owner decision
     of 18 October 2026). It controls only the network fee wallet. It signs
     only the conversion of fees received in that wallet to USDC, through allowlisted routes, within the slippage limit,
@@ -254,6 +260,17 @@ and a moderator decides escalated appeals. Do not charge project vaults for bot
 reviews. The current global closure switch stays off until reviewed production
 activation. Document changes alone do not activate closure, payments, or
 security enforcement.
+
+Automatic closure also requires explicit consent in project settings. Start
+the control unchecked and treat absent consent as false; registration or App
+installation alone is not consent. A separate `.github/slopbot.json` file is
+not required, but preserve its existing opt-outs and category restrictions
+and the repository's rejection rules. Use existing immutable project revisions
+and current GitHub authority checks. Qualify closure with reviewed real cases
+and counterexamples, not a fixed 14-day and 50-item threshold. Keep independent
+confirmation, caps, appeals, reopen protection, the seven-day uncertain
+label-only rule and explicit production activation. Fixtures prove controls,
+not actual model qualification (owner decision, 25 October 2026).
 
 ## Installer and attribution
 

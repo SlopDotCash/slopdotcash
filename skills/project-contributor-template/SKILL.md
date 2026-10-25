@@ -18,6 +18,10 @@ maintainer-authored fields of the approved registry revision: `approvedScope`,
 `securityContact`, `closurePolicy` and `maintainerNotes`. They come from Slop's
 project registry, not from this repository's own files.
 
+Project settings may explicitly permit Slopbot automatic closure. Registration
+or App installation alone does not grant it. This consent does not authorize
+the contributor agent to close work; repository opt-outs and rules still apply.
+
 The project decides the work: follow these fields and the repository's own
 `AGENTS.md`, `CONTRIBUTING.md` and maintainer instructions for scope, style,
 tests and review. When a field is empty, follow the repository files. This skill adds only a small safety boundary that no project

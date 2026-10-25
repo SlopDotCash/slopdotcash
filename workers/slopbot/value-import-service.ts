@@ -6,7 +6,7 @@ import { importSubscriptionAssessment } from "./value-import";
 export class HistoricalValuePublisher extends WorkerEntrypoint<
   ReviewEnv & { SLOPBOT_PRODUCER_REVISION?: string }
 > {
-  publishSubscription(input: unknown) {
-    return importSubscriptionAssessment(this.env, input);
+  publishSubscription(input: unknown, bundle?: ReadableStream<Uint8Array>) {
+    return importSubscriptionAssessment(this.env, input, bundle);
   }
 }

@@ -113,3 +113,53 @@ bun scripts/qualify-vetting-sandbox.ts
 ```
 
 Hosted execution is refused outside the exact protected development workflow.
+
+## Canonical merge reconstruction
+
+The named `MergeVerifier` binding serves only the authenticated historical
+publisher. It is not exposed through the artifact HTTP endpoint. The publisher
+supplies fresh public GitHub identities and complete path inventories; the
+uploaded bundle supplies immutable objects, never a trusted patch or command.
+The service verifies the bundle hash, complete object closure, strict Git
+integrity, exact ordered parents and ordinary changed paths. It then runs the
+existing canonical merge collector in a fresh bare repository.
+
+This fixed operation uses checksum-pinned Git 2.56.0. The 2.52 ort rename fixes
+correct automatic trees for valid histories, and 2.56 adds corrupt-tree
+refusals. Strict fsck remains required. The ordinary artifact operation keeps
+its existing 2 MiB input, 8 MiB file and 64 KiB output limits.
+Both build paths use Git 2.56's supported `NO_RUST` option; they do not require
+an unprovisioned Cargo toolchain. The consumer build includes HTTPS support;
+the offline sandbox build omits it.
+
+The merge operation accepts at most 25 MiB of bundle bytes. Its trusted input
+and complete result each have an 8 MiB bound. It retains the unprivileged,
+no-network process, 20-second CPU, 30-second wall, 32-process, 64-descriptor
+and 128 MiB Node heap limits. Its per-file limit is 128 MiB to admit the fixed
+Git pack operation; stdout and stderr remain capped at 64 KiB. It refuses an
+object inventory larger than 256 MiB before reconstruction and monitors the
+owned work directory against 256 MiB while running. That monitor is not a hard
+filesystem quota; the existing container disk ceiling is separate. Cleanup
+must acknowledge success before the publisher can append any journal row.
+Node/libuv uses connected Unix socket pairs for Git child-process pipes. Only
+this fixed operation permits those pairs. Socket creation, other socket-pair
+families and io_uring remain blocked; ordinary artifacts retain their original
+blanket socket-pair refusal.
+
+Run `bun --no-env-file scripts/prepare-vetting-sandbox.mjs` from the repository
+root before a direct container build. Normal Wrangler and release commands do
+this preparation automatically. The image contains the bundled canonical
+collector; it does not check out or run repository source files. Local native
+Git or Workerd checks alone do not prove the deployed image, per-isolate memory
+capacity or physical VM teardown.
+
+The existing Linux sandbox job also runs `scripts/value-merge-sdk.workflow.mjs`
+through the real bounded multipart handler, a test-only metadata publisher and
+the actual named `MergeVerifier`. Pinned public Network 97/117 objects exercise
+the complete merge, a second fresh sandbox, wrong parents, omitted paths,
+corrupt bytes, the unchanged request cap and the expanded-object bound. No
+subscription verdict enters CI. Real session, journal and Points consumption
+need separate end-to-end evidence; this SDK control does not provide them.
+The same image also checks the original child-pipe refusal, fixed Git child
+execution and retained network refusals. Failed requests record only fixed
+operation stages and supervisor status, never child output or source bytes.

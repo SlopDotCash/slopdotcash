@@ -292,7 +292,12 @@ async function expectAccessible(page: Page) {
 
 async function draftApplication(
   page: Page,
-  project: { repository: string; name: string; network?: string },
+  project: {
+    repository: string;
+    name: string;
+    network?: string;
+    automaticClosure?: boolean;
+  },
 ) {
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page.getByLabel("Public GitHub repository").fill(project.repository);
@@ -302,6 +307,11 @@ async function draftApplication(
   );
   await page.getByRole("button", { name: "Next: Contribution rules" }).click();
   await page.getByLabel("Project name").fill(project.name);
+  const consent = page.getByRole("checkbox", {
+    name: "Allow automatic closure by Slopbot",
+  });
+  await expect(consent).not.toBeChecked();
+  if (project.automaticClosure) await consent.check();
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   await page.getByLabel("Pay contributors a monthly amount").check();
   await page.getByLabel("Monthly amount (USDC)").fill("1000");
@@ -395,7 +405,7 @@ test("an owner creates a paused project without admin approval @registry", async
   await signIn(page, APPLICANT_TOKEN);
   // Owner decision D11: Slop reads authority through the installation.
   await setSlopbot(`${project.repository}/installed`);
-  await draftApplication(page, project);
+  await draftApplication(page, { ...project, automaticClosure: true });
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
@@ -405,6 +415,7 @@ test("an owner creates a paused project without admin approval @registry", async
   expect(await listedProject(page, project.id)).toMatchObject({
     status: "paused",
     listingTier: "community",
+    slopbot: { automaticClosure: true },
     skill: {
       id: `contribute-to-${project.id}`,
       sourcePath: "skills/project-contributor-template",
@@ -450,6 +461,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await expectAccessible(owner);
   const listed = await listedProject(owner, project.id);
   expect(listed).toMatchObject({ status: "paused" });
+  expect(listed.slopbot).toBeUndefined();
 
   // Facts that GitHub does not confirm are refused, never listed.
   // The request API keeps the expected 422 out of the page console.
@@ -526,6 +538,11 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await returningOwner.goto(`/projects/${project.id}/manage`, {
     waitUntil: "networkidle",
   });
+  const consent = returningOwner.getByRole("checkbox", {
+    name: "Allow automatic closure by Slopbot",
+  });
+  await expect(consent).not.toBeChecked();
+  await consent.check();
   await returningOwner
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Useful accepted outcomes with a clearer project scope");
@@ -548,12 +565,42 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     (await (await admin.request.get(`/api/v1/projects/${project.id}`)).json())
       .project.headline,
   ).toBe("Useful accepted outcomes with a clearer project scope");
+  await returningOwner.reload({ waitUntil: "networkidle" });
+  await expect(consent).toBeChecked();
+  await consent.uncheck();
+  await returningOwner
+    .getByLabel("Revision note", { exact: true })
+    .fill("Withdraw automatic closure permission");
+  await returningOwner.getByRole("button", { name: "Publish changes" }).click();
+  await expect(
+    returningOwner
+      .getByRole("status")
+      .filter({ hasText: "Published revision 3" }),
+  ).toBeVisible();
+  const revoked = await (
+    await returningOwner.request.get(`/api/v1/projects/${project.id}`)
+  ).json();
+  expect(revoked.project.slopbot).toEqual({ automaticClosure: false });
+  const consentHistory = await (
+    await returningOwner.request.get(
+      `/api/v1/project-revisions/${project.id}/2`,
+    )
+  ).json();
+  expect(JSON.parse(consentHistory.manifestText).slopbot).toEqual({
+    automaticClosure: true,
+  });
+  await returningOwner.reload({ waitUntil: "networkidle" });
+  await expect(consent).not.toBeChecked();
+  await expectAccessible(returningOwner);
   await returningOwner.goto("/projects/new", { waitUntil: "networkidle" });
   await returningOwner.getByText("Your projects", { exact: true }).click();
   await expect(returningOwner.locator("main")).toContainText(project.name);
   await expectAccessible(returningOwner);
   await returningContext.close();
 
+  // Revocation appended revision 3 after the admin's last read.
+  await admin.reload({ waitUntil: "networkidle" });
+  await expect(card).toContainText("3 · updated");
   await card.getByRole("button", { name: "Delist", exact: true }).click();
   await card.getByRole("button", { name: "Delist project" }).click();
   await expect(admin.getByRole("status")).toContainText("Saved.");
@@ -1697,6 +1744,174 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   expect(errors[0]).toContain("503");
   expect(errors[1]).toContain("409");
   await context.close();
+});
+
+test("an owner initializes a legacy monthly project without shortening its accepted policy @registry", async ({
+  browser,
+}) => {
+  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const project = {
+    id: `legacy-policy-${suffix}`,
+    repository: `e2e-owner/legacy-policy-${suffix}`,
+    name: `Legacy policy ${suffix}`,
+    network: "solana",
+  };
+  const context = await browser.newContext(walkthroughOptions());
+  const page = await context.newPage();
+  const errors = observe(page);
+  try {
+    await signIn(page, OWNER_TOKEN);
+    await setSlopbot(`${project.repository}/installed`);
+    await draftApplication(page, project);
+    await page
+      .getByRole("button", { name: "Create project", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Project created" }),
+    ).toBeVisible();
+    const manifest = await listedProject(page, project.id);
+    const criteria =
+      "Accept reproduced defects with exact-source tests and preserve every existing funded obligation. "
+        .repeat(18)
+        .trim();
+    const { escrow: _escrow, rewardAsset: _asset, ...legacy } = manifest;
+    // Seed an imported historical revision in this isolated local database.
+    // The live update API correctly refuses removing an established vault
+    // policy; this fixture is an old record, not a permitted downgrade.
+    const oldManifest = {
+      ...legacy,
+      reward: { ...legacy.reward, feeBasisPoints: 100 },
+      contribution: { ...legacy.contribution, approvedScope: criteria },
+    };
+    const { assertProjectDefinition } = await import(
+      "../../src/lib/project-schema.mjs"
+    );
+    assertProjectDefinition(oldManifest);
+    const persist = process.env.SLOP_E2E_PERSIST_TO;
+    if (!persist) throw new Error("Missing local registry database");
+    const text = JSON.stringify(oldManifest);
+    const digest = createHash("sha256").update(text).digest("hex");
+    const sql = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    const { execFileSync } = await import("node:child_process");
+    execFileSync(
+      "node",
+      [
+        "node_modules/wrangler/bin/wrangler.js",
+        "d1",
+        "execute",
+        "slop-private",
+        "--local",
+        "--persist-to",
+        persist,
+        "--command",
+        `INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) SELECT id,2,${sql(text)},${sql(digest)},'Historical import fixture',NULL,NULL,updated_at FROM projects WHERE id=${sql(project.id)}; UPDATE projects SET revision=2,manifest=${sql(text)},manifest_sha256=${sql(digest)} WHERE id=${sql(project.id)};`,
+      ],
+      { stdio: "pipe" },
+    );
+    // Publish one legitimate text revision so the public registry cache is
+    // refreshed after the fixture's historical import, just as normal writes do.
+    const refreshed = await page.evaluate(
+      async ({ id, manifest }) => {
+        const response = await fetch(`/api/v1/projects/${id}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            manifest: {
+              ...manifest,
+              headline: "Historical monthly funding before vault adoption",
+            },
+            expectedRevision: 2,
+          }),
+        });
+        return response.status;
+      },
+      { id: project.id, manifest: oldManifest },
+    );
+    expect(refreshed).toBe(200);
+    expect((await listedProject(page, project.id)).escrow).toBeUndefined();
+    await page.goto(`/projects/${project.id}/manage`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByLabel("Acceptance criteria", { exact: true }),
+    ).toHaveValue(criteria);
+    await expect(page.getByLabel("Monthly amount (USDC)")).toHaveValue("1000");
+    const publish = page.getByRole("button", {
+      name: "Publish changes",
+      exact: true,
+    });
+    await page
+      .getByLabel("Short description", { exact: true })
+      .fill("Useful work under the project's complete accepted policy");
+    await publish.focus();
+    await page.keyboard.press("Enter");
+    await page.screenshot({
+      path: test.info().outputPath("legacy-policy-publish.png"),
+      fullPage: true,
+    });
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision 4" }),
+    ).toBeVisible();
+    const unchangedFunding = await listedProject(page, project.id);
+    expect(unchangedFunding.contribution.approvedScope).toBe(criteria);
+    expect(unchangedFunding.reward.feeBasisPoints).toBe(100);
+    expect(unchangedFunding.escrow).toBeUndefined();
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("legacy-policy-preserved.png"),
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Enable vault setup", exact: true })
+      .click();
+    await publish.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision 5" }),
+    ).toBeVisible();
+    const saved = await listedProject(page, project.id);
+    expect(saved.contribution.approvedScope).toBe(criteria);
+    expect(saved.reward).toMatchObject({
+      monthlyCapMinor: "1000000000",
+      paymentMode: "disabled",
+      feeBasisPoints: 200,
+    });
+    expect(saved.rewardAsset).toMatchObject({
+      network: "solana",
+      symbol: "USDC",
+    });
+    expect(saved.escrow).toMatchObject({ chain: "solana", deployments: [] });
+    await page.screenshot({
+      path: test.info().outputPath("vault-setup-enabled.png"),
+      fullPage: true,
+    });
+    await expectAccessible(page);
+    await page
+      .getByRole("region", { name: "Payouts", exact: true })
+      .getByRole("link", {
+        name: "View vault funds and automatic payment",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: /Project vault.*Solana/i }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath("published-vault-funding.png"),
+      fullPage: true,
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
 });
 
 test("an applicant publishes an application stored before self-service setup without entering it again @registry", async ({

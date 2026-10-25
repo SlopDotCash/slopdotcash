@@ -8,6 +8,7 @@ import {
 import { VALUE_RUBRIC_VERSION } from "../../src/lib/value-assessment";
 import { sha256Hex } from "./github";
 import { validValueContextSelections } from "./value-context";
+import { validMergeRecipe } from "./value-merge-profile";
 import { isValueProducer } from "./value-producer";
 import {
   prepareWorkUnitEvidence,
@@ -81,6 +82,8 @@ function assertRecord(
       !sha(source.policySha) ||
       !digest(source.sourceDigest) ||
       !time(source.occurredAt) ||
+      (source.mergeRecipe !== undefined &&
+        !validMergeRecipe(source.mergeRecipe)) ||
       (source.contextPaths !== undefined &&
         !validValueContextSelections(source.contextPaths)) ||
       ids.has(key)

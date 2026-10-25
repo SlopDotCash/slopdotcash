@@ -240,15 +240,23 @@ async function main() {
         consumers: {
           consumer_id: string;
           type: string;
-          script_name: string;
+          script?: string;
+          script_name?: string;
           settings: { max_concurrency: number; batch_size: number };
         }[];
       }
     >(`queues/${owned.queues[0].queue_id}`);
+    // Hosted queue reads use `script`; the API schema also permits
+    // `script_name`. Every supplied identity must name this exact Worker.
+    const scripts = [
+      queue.consumers[0]?.script,
+      queue.consumers[0]?.script_name,
+    ].filter((script) => script !== undefined);
     if (
       queue.consumers.length !== 1 ||
       queue.consumers[0].type !== "worker" ||
-      queue.consumers[0].script_name !== run ||
+      scripts.length === 0 ||
+      scripts.some((script) => script !== run) ||
       queue.consumers[0].settings.max_concurrency !== 1 ||
       queue.consumers[0].settings.batch_size !== 1
     )

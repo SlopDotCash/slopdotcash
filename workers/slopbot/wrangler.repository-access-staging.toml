@@ -4,5 +4,16 @@ compatibility_date = "2026-07-30"
 workers_dev = false
 preview_urls = false
 
+[[d1_databases]]
+binding = "SLOPBOT_DB"
+database_name = "slop-staging"
+database_id = "6fcddcc1-f3d7-4175-bdde-09afddd53a8a"
+migrations_dir = "../../migrations"
+
+[[services]]
+binding = "VALUE_MERGE_VERIFIER"
+service = "slop-vetting-sandbox-staging"
+entrypoint = "MergeVerifier"
+
 [observability]
 enabled = false

@@ -3843,7 +3843,16 @@ function createSnapshotWithReviewCutoff(
     if (!value)
       throw new Error("Value decision omitted a collected formal review");
     const thirds = REVIEW_VALUE_THIRDS[value.tier];
-    if (thirds === 0) return null;
+    if (thirds === 0) {
+      // An assessed tier-none review earns nothing, but the ruling must
+      // still be published: the exclusion is the only channel the points
+      // layer may use to zero a formerly credited review whose submission
+      // predates the new window. Both caller loops (merged and closed
+      // unmerged) route through this candidate, so publishing here covers
+      // each of them.
+      excludeReview(pullRequest, review, "review-credit-zero-share");
+      return null;
+    }
     if (
       !review.author ||
       isBotActor(review.author) ||
@@ -3979,14 +3988,16 @@ function createSnapshotWithReviewCutoff(
     for (const reviewId of allocation.beyondLimitReviewIds)
       exclude(reviewId, "review-credit-reviewer-limit");
     for (const [index, credited] of allocation.credited.entries()) {
-      for (const reviewId of credited.repeatedReviewIds)
-        exclude(reviewId, "already-awarded-reviewer");
       const candidate = byId.get(credited.source.reviewId);
       if (!candidate) throw new Error("Review credit lost its source review");
       if (credited.shareThirds === 0) {
         exclude(candidate.reviewId, "review-credit-zero-share");
+        for (const reviewId of credited.repeatedReviewIds)
+          exclude(reviewId, "review-credit-zero-share");
         continue;
       }
+      for (const reviewId of credited.repeatedReviewIds)
+        exclude(reviewId, "already-awarded-reviewer");
       addScore(entries, ledger, participationBans, {
         id: `${pullRequest.id}:value-review:${candidate.reviewId}`,
         actor: candidate.actor,
@@ -4008,7 +4019,9 @@ function createSnapshotWithReviewCutoff(
         reason: `Provisional ${candidate.value.tier} review value; reviewer ${index + 1} of ${allocation.credited.length} credited, ${credited.shareThirds} of ${allocation.poolThirds} review-credit thirds: ${candidate.value.finding} ${candidate.value.outcome}`,
       });
     }
-    return allocation.credited.map((credited) => credited.actor.id);
+    return allocation.credited
+      .filter((credited) => credited.shareThirds > 0)
+      .map((credited) => credited.actor.id);
   };
 
   for (const pullRequest of mergedPullRequests) {

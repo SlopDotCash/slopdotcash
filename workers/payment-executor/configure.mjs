@@ -181,7 +181,7 @@ export function paymentStack({
       main: resolve(
         root,
         signer
-          ? "index.ts"
+          ? "entrypoint.ts"
           : scope === "security-bounty"
             ? "../security-payments/index.ts"
             : "../payments/index.ts",

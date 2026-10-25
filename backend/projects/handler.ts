@@ -1398,8 +1398,9 @@ async function ownerVault(
 /**
  * Publishes an owner's revision at once (PRD section 4). Presentation
  * changes publish as they are; a change to the skill inputs pauses an active
- * project and queues a fresh scan, and a clean result reactivates it on the
- * next setup check; a financial change applies from the next UTC cycle.
+ * project and queues a fresh scan unless PRD section 8 exempts it. A clean
+ * result reactivates it on the next setup check; a financial change applies
+ * from the next UTC cycle.
  * Identity, status, listing, steward, authority and terms stay with the
  * reviewed exception paths. A stale `expectedRevision` fails with 409.
  */
@@ -1539,14 +1540,23 @@ async function publishOwnerRevision(
     changes.financial.length > 0
       ? prospectiveFinancialChange(current.manifest, submitted, deps.now())
       : submitted;
-  if (changes.executable.length > 0 && manifest.status === "active")
+  const clearance =
+    changes.executable.length > 0
+      ? await deps.vettingClearance(projectId, manifest, current.revision)
+      : null;
+  // The permanent exemption also covers future executable changes. The
+  // restriction and current-owner checks above still apply to every edit.
+  const scanRequired =
+    changes.executable.length > 0 &&
+    !(clearance?.state === "cleared" && clearance.assessment === null);
+  if (scanRequired && manifest.status === "active")
     manifest = { ...manifest, status: "paused" };
   const summary = [
     changes.presentation.length > 0
       ? `presentation (${changes.presentation.join(", ")}) published`
       : null,
     changes.executable.length > 0
-      ? `skill inputs (${changes.executable.join(", ")}) need a new scan`
+      ? `skill inputs (${changes.executable.join(", ")}) ${scanRequired ? "need a new scan" : "published under the existing-project scan exemption"}`
       : null,
     changes.financial.length > 0
       ? `financial policy (${changes.financial.join(", ")}) published; monthly amounts apply from the next UTC cycle and bounty terms apply to later reports`
@@ -1562,15 +1572,14 @@ async function publishOwnerRevision(
     applicationId: stored?.applicationId,
     ownerParticipation: true,
   });
-  const scanRequest =
-    changes.executable.length > 0
-      ? await queueScan(
-          deps,
-          updated,
-          actor,
-          `Owner changed ${changes.executable.join(", ")}`,
-        )
-      : null;
+  const scanRequest = scanRequired
+    ? await queueScan(
+        deps,
+        updated,
+        actor,
+        `Owner changed ${changes.executable.join(", ")}`,
+      )
+    : null;
   const setup = await runSetupCheck(request, deps, updated, actor, {
     authority: checked,
     scanRequest,

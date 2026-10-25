@@ -263,6 +263,15 @@ shadow period.
   more than 10% of the bot's closures in 7 days are reopened, it switches to
   label-only automatically.
 
+**Superseding owner decision (25 October 2026):** explicit project-setting
+consent replaces the separate `.github/slopbot.json` requirement; registration
+and App installation alone are not consent. Preserve existing opt-outs and
+repository rejection rules. Reviewed real cases and counterexamples replace
+the fixed 14-day and 50-item qualification threshold. Independent confirmation,
+caps, appeals, reopen protection, the seven-day uncertain label-only rule and
+explicit production activation remain. See canonical PRD section 5. This
+decision does not enable production closure.
+
 **Q16. GitHub Marketplace?**
 *Proposed:* Not for v2. Paid Marketplace listing needs a verified publisher and
 about 100 installs, and its card billing does not fit USDC credits. Publish the
