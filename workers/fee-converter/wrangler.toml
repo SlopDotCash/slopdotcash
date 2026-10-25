@@ -39,8 +39,8 @@ FEE_CONVERTER_MAX_PRICE_IMPACT_BPS = "200"
 FEE_CONVERTER_RUN_CAP_MICRO = "1000000000"
 FEE_CONVERTER_DAILY_CAP_MICRO = "5000000000"
 FEE_CONVERTER_SOLANA_FEE_MICRO = "2000"
-# Networks without a verified Circle USDC target (Robinhood Chain today) stay
-# route_pending: nothing is quoted or signed and their fees stay in the wallet.
+# Robinhood fees are not_converted: retain each received asset unchanged.
+# No conversion target, quote, signing key load, swap or bridge is needed.
 # Published network fee wallets (docs/slop-product-requirements.md TOK-06). Robinhood
 # Chain and Ethereum fee-wallet decisions are recorded in the PRD. Network
 # configuration and conversion activation still require their reviewed gates.
