@@ -128,7 +128,7 @@ name a chain in the digested bytes. Registering a wallet does not make a row
 payable: escrow payment needs a destination binding under PAY-05.
 
 The operator endpoint remains only for bounded migration of historical GitHub
-issue/profile observations and disaster recovery. No endpoint exposes a trace,
+issue/profile observations and disaster recovery. No wallet endpoint exposes a trace,
 OAuth capability, assertion, bearer token, or credential.
 
 ## Cloudflare provisioning
