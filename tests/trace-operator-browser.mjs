@@ -80,6 +80,8 @@ export async function runTraceOperatorUi({
     );
     const page = await context.newPage();
     const errors = [];
+    let downloads = 0;
+    page.on("download", () => downloads++);
     const failedRequests = [];
     const firstPartyFailures = [];
     const reads = [];
@@ -257,7 +259,14 @@ export async function runTraceOperatorUi({
       await page.route(
         `**/api/v1/operator/traces/${digests[0]}`,
         async (route) => {
-          const response = await route.fetch();
+          // APIRequestContext does not add the browser's Fetch Metadata. This
+          // controlled transfer fault reuses the already-proved origin relation.
+          const response = await route.fetch({
+            headers: {
+              ...route.request().headers(),
+              "sec-fetch-site": "same-origin",
+            },
+          });
           assert.equal(response.status(), 200);
           const body = Buffer.from(await response.body());
           body[0] ^= 1;
@@ -265,6 +274,7 @@ export async function runTraceOperatorUi({
         },
         { times: 1 },
       );
+      const downloadsBeforeCorruption = downloads;
       await reason.fill("Check synthetic transfer integrity refusal");
       await submit.click();
       await expect(page.getByRole("alert")).toContainText(
