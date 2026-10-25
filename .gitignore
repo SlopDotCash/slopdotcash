@@ -38,3 +38,6 @@ public/skill-templates/
 
 # Local smart-contract invariant runs
 /cache/
+
+# Operator-owned keeper deployment configuration; never part of Slop releases.
+workers/operator-keeper/wrangler.operator.toml

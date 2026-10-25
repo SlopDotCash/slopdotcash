@@ -50,7 +50,7 @@ import {
   type GasBudget,
   reconcileGas,
 } from "./budget";
-import type { KeeperStore } from "./store";
+import type { KeeperStore } from "./storage";
 
 export interface KeeperConfiguration {
   apiOrigin: string;
