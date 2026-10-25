@@ -11,11 +11,10 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { getContractAddress, keccak256, toBytes } from "viem";
+import { keccak256, toBytes } from "viem";
 import { privateKeyToAddress } from "viem/accounts";
 import {
   type BindingInput,
@@ -47,6 +46,13 @@ import {
   prepareEvmMonthlyReservation,
   readEvmMonthlyReserve,
 } from "../monthly-reserve";
+import {
+  expectedImplementation,
+  IMPLEMENTATION_SLOT,
+  INITIALIZABLE_SLOT,
+  sha256Hex,
+  VAULT_CREATED_TOPIC,
+} from "./upgrade";
 
 const forkUrl = process.argv[2];
 const logsUrl = process.argv[3] ?? forkUrl;
@@ -82,17 +88,6 @@ const FACTORY_DEPLOYMENT_BLOCK: Record<string, bigint> = {
   "1": 26261441n,
   "4663": 96643004n,
 };
-const CREATE2_DEPLOYER = "0x4e59b44847b379578588920cA78FbF26c0B4956C";
-const SALT = keccak256(toBytes("slop.escrow.implementation"));
-const IMPLEMENTATION_SLOT =
-  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
-/** OpenZeppelin v5 Initializable storage (ERC-7201 namespace "openzeppelin.storage.Initializable"). */
-const INITIALIZABLE_SLOT =
-  "0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00";
-const VAULT_CREATED = keccak256(
-  toBytes("VaultCreated(bytes32,address,address,address,uint8,uint8)"),
-);
-
 const anvil = spawn(
   "anvil",
   ["--fork-url", forkUrl, "--port", port, "--silent"],
@@ -150,10 +145,6 @@ const word = async (address: string, slot: string | bigint) =>
   ).toLowerCase();
 const implementationOf = async (proxy: string) =>
   `0x${(await word(proxy, IMPLEMENTATION_SLOT)).slice(-40)}`;
-const sha256Hex = (hex: string) =>
-  createHash("sha256")
-    .update(Buffer.from(hex.replace(/^0x/, ""), "hex"))
-    .digest("hex");
 const codeSha256 = async (address: string) =>
   sha256Hex(String(await rpc("eth_getCode", [address, "latest"])));
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -210,41 +201,6 @@ function eventIndex(receipt: Receipt, emitter: string, topic: string) {
   assert.equal(logs.length, 1, "exactly one matching event");
   return Number(BigInt(logs[0].logIndex));
 }
-/** The CREATE2 address and reviewed digest of an implementation: its runtime code with the UUPS
- * self-reference immutable set to its own address. */
-function expectedImplementation(contract: string) {
-  const artifact = JSON.parse(
-    readFileSync(`${root}/out/ProjectEscrow.sol/${contract}.json`, "utf8"),
-  ) as {
-    bytecode: { object: string };
-    deployedBytecode: {
-      object: string;
-      immutableReferences?: Record<string, { start: number; length: number }[]>;
-    };
-  };
-  const predicted = getContractAddress({
-    opcode: "CREATE2",
-    from: CREATE2_DEPLOYER,
-    salt: SALT,
-    bytecode: artifact.bytecode.object as `0x${string}`,
-  });
-  const code = Buffer.from(
-    artifact.deployedBytecode.object.replace(/^0x/, ""),
-    "hex",
-  );
-  const self = Buffer.from(
-    predicted.slice(2).toLowerCase().padStart(64, "0"),
-    "hex",
-  );
-  for (const references of Object.values(
-    artifact.deployedBytecode.immutableReferences ?? {},
-  ))
-    for (const { start, length } of references) {
-      assert.equal(length, 32);
-      self.copy(code, start);
-    }
-  return { predicted, digest: sha256Hex(code.toString("hex")) };
-}
 /** The fee field of the vault's UnusedWithdrawn(address,uint128,uint128,uint128) event. */
 function withdrawalFee(receipt: Receipt) {
   const topic = keccak256(
@@ -265,7 +221,7 @@ async function createdVaults(url: string, fromBlock: bigint, toBlock: bigint) {
       [
         {
           address: FACTORY,
-          topics: [VAULT_CREATED],
+          topics: [VAULT_CREATED_TOPIC],
           fromBlock: `0x${from.toString(16)}`,
           toBlock: `0x${to.toString(16)}`,
         },
@@ -547,8 +503,8 @@ try {
     ],
     { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
   );
-  const vaultExpected = expectedImplementation("ProjectEscrow");
-  const factoryExpected = expectedImplementation("EscrowFactory");
+  const vaultExpected = expectedImplementation(root, "ProjectEscrow");
+  const factoryExpected = expectedImplementation(root, "EscrowFactory");
   const NEW_REVIEW: EvmImplementationReview = {
     authority: UPGRADE_AUTHORITY,
     vaultImplementation: vaultExpected.predicted,
