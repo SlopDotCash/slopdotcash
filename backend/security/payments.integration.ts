@@ -243,7 +243,7 @@ async function call(
       now: () => new Date(),
       randomId: () => crypto.randomUUID(),
       sessionActor: async () => actor,
-      github: { fetch, apiOrigin: "https://api.github.invalid" },
+      reportingRead: async () => ({ kind: "unavailable" }),
       // The synthetic private report that GitHub received from the reporter.
       advisories: {
         privateReports: async () => ({

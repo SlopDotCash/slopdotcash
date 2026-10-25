@@ -4809,6 +4809,11 @@ small {
   }
 }
 
+/* Keep keyboard-focused reporting controls below the 88px sticky header. */
+html:has(.security-page) {
+  scroll-padding-top: calc(88px + 1rem);
+}
+
 .security-handoff {
   display: grid;
   justify-items: start;

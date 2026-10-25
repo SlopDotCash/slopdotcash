@@ -25,6 +25,10 @@ type Env = {
   // intake renewal its own 5,000/h GitHub budget instead of the 60/h anonymous
   // budget shared by every tenant behind a Cloudflare egress address.
   GITHUB_INTAKE_STATUS_TOKEN?: string;
+  /** Named App-backed observation refresher; no public or signing entrypoint. */
+  REPORTING_READINESS?: {
+    refreshReportingReadiness(): Promise<{ checked: number; failed: number }>;
+  };
 };
 
 export const MAX_GITHUB_RESPONSE_BYTES = 64 * 1024;
@@ -490,15 +494,31 @@ export default {
     return handleIdentityRequest(request, dependencies(env));
   },
   async scheduled(_controller: unknown, env: Env): Promise<void> {
-    if (
-      identityPublicOrigin(
-        env.IDENTITY_PUBLIC_ORIGIN,
-        deploymentTier(env.SLOP_ENVIRONMENT),
-      ) !== "https://identity.slop.cash"
-    ) {
-      await deleteExpiredIdentityState(env, new Date());
-      return;
+    // Public repository observations are independent of identity cleanup and
+    // the separate fixed-site trace intake health observation.
+    const reporting = async () => {
+      // A release that leaves Slopbot unchanged omits this optional binding.
+      // It must not invent fresh observations or prevent identity cleanup.
+      if (!env.REPORTING_READINESS) return;
+      const result = await env.REPORTING_READINESS.refreshReportingReadiness();
+      if (result.failed !== 0) throw new Error("reporting refresh incomplete");
+    };
+    const maintenance = async () => {
+      if (
+        identityPublicOrigin(
+          env.IDENTITY_PUBLIC_ORIGIN,
+          deploymentTier(env.SLOP_ENVIRONMENT),
+        ) !== "https://identity.slop.cash"
+      ) {
+        await deleteExpiredIdentityState(env, new Date());
+        return;
+      }
+      await runScheduledMaintenance(env, new Date());
+    };
+    const outcomes = await Promise.allSettled([maintenance(), reporting()]);
+    if (outcomes.some((outcome) => outcome.status === "rejected")) {
+      console.error("slop scheduled reporting or identity maintenance failed");
+      throw new Error("slop scheduled maintenance failed");
     }
-    await runScheduledMaintenance(env, new Date());
   },
 };

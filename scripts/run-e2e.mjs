@@ -243,6 +243,7 @@ async function runRegistryPhase() {
     packageRoot,
     `http://127.0.0.1:${githubPort}`,
     basePort + 5,
+    database.persistTo,
   );
   try {
     return await runPhase(
@@ -271,6 +272,7 @@ async function runRegistryPhase() {
         SLOP_E2E_OUTPUT: "registry",
         SLOP_E2E_NOTIFY_SERVICE: notify.name,
         SLOP_E2E_SLOPBOT_SERVICE: slopbot.name,
+        SLOP_E2E_REPORTING_REFRESH: `http://127.0.0.1:${basePort + 5}/__fixture/reporting-refresh`,
         ...(process.env.SLOP_VETTING_OVERLAY_PATH
           ? { SLOP_VETTING_OVERLAY_PATH: process.env.SLOP_VETTING_OVERLAY_PATH }
           : {}),

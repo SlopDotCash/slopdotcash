@@ -78,7 +78,7 @@ async function setup(beforeMailMigration = false) {
         now: () => current,
         randomId: () => `noticecase${++sequence}`,
         sessionActor: async () => actor,
-        github: { fetch, apiOrigin: "https://github.invalid" },
+        reportingRead: async () => ({ kind: "unavailable" }),
       },
     );
   const claim = await call(reporter, "security-cases", {
