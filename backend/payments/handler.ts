@@ -932,6 +932,7 @@ export async function handlePaymentsApi(
       const bindingQuery =
         "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,t.id idempotencyKey FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_attempts t ON t.obligation_id=o.id AND t.claim_id=w.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND t.state IN ('prepared','unknown','submitted') AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id) ORDER BY t.created_at LIMIT 1";
       let attester = deps.solanaAttester;
+      let privateBinding = false;
       let payment = await deps.db
         .prepare(bindingQuery)
         .bind(body.obligationId, member.github_id)
@@ -955,6 +956,7 @@ export async function handlePaymentsApi(
             .bind(body.obligationId, member.github_id)
             .first<Record<string, string>>();
           attester = deps.securityPayments.solanaAttester;
+          privateBinding = true;
         }
       }
       if (!payment) return json(409, { error: "binding_not_ready" });
@@ -962,7 +964,7 @@ export async function handlePaymentsApi(
         return json(503, { error: "identity_attester_unavailable" });
       const response = await attester.fetch(
         new Request(
-          `https://identity-attester.internal/v1/${complete ? "complete-bind" : "pay"}`,
+          `https://identity-attester.internal/v1/${privateBinding ? "security/" : ""}${complete ? "complete-bind" : "pay"}`,
           {
             method: "POST",
             headers: {
