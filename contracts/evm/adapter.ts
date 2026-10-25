@@ -905,7 +905,7 @@ export function buildCreateVaultCalldata(input: {
   payoutPolicy?: PayoutPolicy;
   /** Required for ordinary vaults; base units chosen by the owner. */
   monthlyCap?: string | bigint;
-  /** Required for ordinary vaults; the owner explicitly chooses on or off. */
+  /** Defaults on; false records an explicit owner opt-out. */
   automaticMonthly?: boolean;
 }) {
   if (BigInt(hash(input.projectId)) === 0n || !ADDRESS.test(input.asset))
@@ -917,9 +917,7 @@ export function buildCreateVaultCalldata(input: {
   }
   if (input.monthlyCap === undefined)
     throw new Error("The owner's monthly cap is required");
-  if (typeof input.automaticMonthly !== "boolean")
-    throw new Error("Choose the monthly payment setting explicitly");
-  return `0x${selector("createWithMonthlyCommitment(bytes32,address,uint128,bool)")}${hash(input.projectId).slice(2)}${addressWord(input.asset).slice(2)}${monthlyCommitmentWords(input.monthlyCap, input.automaticMonthly)}`;
+  return `0x${selector("createWithMonthlyCommitment(bytes32,address,uint128,bool)")}${hash(input.projectId).slice(2)}${addressWord(input.asset).slice(2)}${monthlyCommitmentWords(input.monthlyCap, input.automaticMonthly ?? true)}`;
 }
 /** Creation uses a reviewed existing vault only as the factory/code trust source. */
 export interface EvmVaultCreation {
