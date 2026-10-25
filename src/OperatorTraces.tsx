@@ -56,17 +56,12 @@ function TraceDownloadForm() {
           "The trace could not be downloaded. Retry to request a new one-use grant.",
         );
       }
-      const length = response.headers.get("content-length");
-      if (
-        length === null ||
-        !/^[1-9][0-9]*$/u.test(length) ||
-        Number(length) > MAX_TRACE_BYTES ||
-        response.headers.get("x-trace-sha256") !== selectedDigest
-      )
+      if (response.headers.get("x-trace-sha256") !== selectedDigest)
         throw new Error("The trace response did not match the requested file.");
       bytes = new Uint8Array(await response.arrayBuffer());
       if (
-        bytes.byteLength !== Number(length) ||
+        bytes.byteLength === 0 ||
+        bytes.byteLength > MAX_TRACE_BYTES ||
         (await sha256Hex(bytes)) !== selectedDigest
       )
         throw new Error("The trace bytes did not match the requested digest.");
