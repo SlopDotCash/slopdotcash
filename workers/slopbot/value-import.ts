@@ -1,6 +1,10 @@
-import { findRegisteredRepositoryById } from "../../src/lib/repositories.mjs";
+import { validRepositoryPath } from "../../src/lib/project-contracts";
+import {
+  collectTargetRepositories,
+  type TargetRepository,
+} from "../../src/lib/repositories.mjs";
 import { GitHubClient } from "./github";
-import { requireRegisteredRepository } from "./registry";
+import { registeredProject } from "./registry";
 import type { ReviewEnv } from "./review";
 import {
   collectValueContext,
@@ -82,23 +86,22 @@ export async function importSubscriptionAssessment(
       ("emptyMergeResolutions" in value &&
         value.emptyMergeResolutions !== true) ||
       typeof value.repository !== "string" ||
+      !validRepositoryPath(value.repository) ||
       !Number.isSafeInteger(value.pullRequestNumber) ||
       Number(value.pullRequestNumber) <= 0 ||
       !validValueContextSelections(value.contextPaths)
     )
       throw new Error("Invalid historical source selection");
-    const repository = findRegisteredRepositoryById(value.repository);
-    if (!repository) throw new Error("Historical source is not registered");
     return {
-      repository,
+      repository: value.repository,
       number: Number(value.pullRequestNumber),
       contextPaths: value.contextPaths,
       emptyMergeResolutions: value.emptyMergeResolutions === true,
     };
   });
   if (
-    new Set(selections.map((s) => `${s.repository.id}#${s.number}`)).size !==
-    selections.length
+    new Set(selections.map((s) => `${s.repository.toLowerCase()}#${s.number}`))
+      .size !== selections.length
   )
     throw new Error("Historical source selection is repeated");
   await assertValueInstallation(env.SLOPBOT_DB, Number(input.installationId));
@@ -108,28 +111,38 @@ export async function importSubscriptionAssessment(
     Number(input.installationId),
   );
   const sources: WorkUnitSource[] = [];
+  const repositories: TargetRepository[] = [];
   for (const selection of selections) {
     const identity = await github.get<{
       id: number;
       node_id: string;
       private: boolean;
-    }>(`/repos/${selection.repository.id}`);
+    }>(`/repos/${selection.repository}`);
     if (identity?.private !== false)
       throw new Error("Historical repository is unavailable");
-    const [registryOwner, registryRepo] = selection.repository.id.split("/");
-    await requireRegisteredRepository(env.SLOPBOT_DB, {
+    const [registryOwner, registryRepo] = selection.repository.split("/");
+    const project = await registeredProject(env.SLOPBOT_DB, {
       owner: registryOwner,
       repo: registryRepo,
       repositoryId: identity.id,
     });
+    const repository =
+      project &&
+      collectTargetRepositories([project]).find((entry) =>
+        [entry.id, ...entry.aliases].some(
+          (id) => id.toLowerCase() === selection.repository.toLowerCase(),
+        ),
+      );
+    if (!repository) throw new Error("Historical source is not registered");
+    repositories.push(repository);
     await assertValueInstallationRepositories(github, [
       { repositoryDatabaseId: identity.id, repositoryNodeId: identity.node_id },
     ]);
     const collected = await collectValueEvidence(
       github,
-      selection.repository.id,
+      repository.id,
       selection.number,
-      selection.repository,
+      repository,
     );
     const evidence = await collectValueContext(
       github,
@@ -141,7 +154,7 @@ export async function importSubscriptionAssessment(
         throw new Error("Empty merge evidence requires no two-parent merges");
       evidence.mergeResolutions = [];
     }
-    const [owner, repo] = selection.repository.id.split("/");
+    const [owner, repo] = repository.id.split("/");
     sources.push({
       evidence,
       policy: await loadValuePolicy(
@@ -170,7 +183,7 @@ export async function importSubscriptionAssessment(
       env,
       job,
       input.result as unknown as WorkUnitAssessmentResult,
-      await prepareWorkUnitEvidence(sources),
+      await prepareWorkUnitEvidence(sources, repositories),
       revision,
       input.supersedes,
       input.legacyPredecessors,
