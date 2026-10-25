@@ -990,7 +990,7 @@ describe("D1 contract", () => {
       readFileSync(new URL("0082_fee_claim_journal.sql", dir), "utf8"),
     );
     const after = sqlite
-      .query("SELECT * FROM fee_conversions ORDER BY id")
+      .prepare("SELECT * FROM fee_conversions ORDER BY id")
       .all() as Record<string, unknown>[];
     expect(
       after.map(({ kind, ...row }) => {
@@ -1007,7 +1007,7 @@ describe("D1 contract", () => {
     ])
       expect(() => sqlite.exec(sql)).toThrow(/immutable|final|permanent/);
     expect(
-      sqlite.query("SELECT * FROM fee_conversions ORDER BY id").all(),
+      sqlite.prepare("SELECT * FROM fee_conversions ORDER BY id").all(),
     ).toEqual(after);
     sqlite.close();
   });
