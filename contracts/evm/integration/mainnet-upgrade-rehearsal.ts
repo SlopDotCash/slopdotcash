@@ -104,6 +104,7 @@ assert(
     /^0x[0-9a-fA-F]{64}$/.test(finalized.hash),
   "State provider did not return a finalized block",
 );
+const finalizedBlockNumber = BigInt(finalized.number);
 assert.equal(
   BigInt(String(await rpc("eth_chainId", [], logsUrl))),
   BigInt(upstreamChainId),
@@ -125,7 +126,7 @@ const anvil = spawn(
     "--fork-url",
     forkUrl,
     "--fork-block-number",
-    BigInt(finalized.number).toString(),
+    finalizedBlockNumber.toString(),
     "--port",
     port,
     "--silent",
@@ -260,9 +261,47 @@ async function createdVaults(url: string, fromBlock: bigint, toBlock: bigint) {
   );
 }
 let vaultHistoryStart = 0n;
+/** Read public history from the verified logs provider and later fixture history from Anvil. */
+async function forkStateRpc(method: string, params: unknown[]) {
+  if (method !== "eth_getLogs") return rpc(method, params);
+  const filter = params[0] as {
+    fromBlock: string;
+    toBlock: string;
+    [key: string]: unknown;
+  };
+  const from = BigInt(filter.fromBlock);
+  const to = BigInt(filter.toBlock);
+  const boundary = finalizedBlockNumber;
+  const logs: unknown[] = [];
+  if (from <= boundary) {
+    const historical = await rpc(
+      "eth_getLogs",
+      [
+        {
+          ...filter,
+          toBlock: `0x${(to < boundary ? to : boundary).toString(16)}`,
+        },
+      ],
+      logsUrl,
+    );
+    assert(Array.isArray(historical), "History provider did not return logs");
+    logs.push(...historical);
+  }
+  if (to > boundary) {
+    const local = await rpc("eth_getLogs", [
+      {
+        ...filter,
+        fromBlock: `0x${(from > boundary ? from : boundary + 1n).toString(16)}`,
+      },
+    ]);
+    assert(Array.isArray(local), "Local fork did not return logs");
+    logs.push(...local);
+  }
+  return logs;
+}
 async function vaultState(vault: string, previous?: VaultStorage) {
   return vaultStorage(
-    rpc,
+    forkStateRpc,
     vault,
     BigInt(String(await rpc("eth_blockNumber", []))),
     vaultHistoryStart,
@@ -290,7 +329,7 @@ try {
   );
   const forkBlock = BigInt(String(await rpc("eth_blockNumber", [])));
   assert.equal(chainId, BigInt(upstreamChainId), "Fork chain identity");
-  assert.equal(forkBlock, BigInt(finalized.number), "Fork finalized block");
+  assert.equal(forkBlock, finalizedBlockNumber, "Fork finalized block");
   vaultHistoryStart = FACTORY_DEPLOYMENT_BLOCK[chainId.toString()];
   await assertFactoryDeploymentBlock(
     rpc,
