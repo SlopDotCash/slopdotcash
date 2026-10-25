@@ -19,7 +19,7 @@ import {
   type VaultConnection,
   walletVaultConfig,
 } from "./evm-vault-actions";
-import { ordinaryFee } from "./payments/contracts";
+import { acceptsPayoutFee, ordinaryFee } from "./payments/contracts";
 
 export type OwnerCommitmentPlan = MonthlyCommitmentPlan;
 export async function requestOwnerCommitment(
@@ -190,8 +190,10 @@ export async function checkEvmCommitment(
   if (
     event.githubUserId !== plan.award.githubUserId ||
     event.grossMicro !== plan.award.gross ||
-    event.feeMicro !== plan.award.fee ||
-    event.netMicro !== plan.award.net ||
+    // A vault not yet upgraded to rounded-up fees records floor(gross / 50).
+    !acceptsPayoutFee(BigInt(event.grossMicro), BigInt(event.feeMicro)) ||
+    event.netMicro !==
+      (BigInt(event.grossMicro) - BigInt(event.feeMicro)).toString() ||
     event.sourceDigest !== `0x${plan.award.sourceDigest}`
   )
     throw new Error(
