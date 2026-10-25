@@ -520,6 +520,123 @@ test("owners publish and control bounty programs with verified funding @registry
     );
     expect(unsupported.status).toBe(422);
     expect(unsupported.body.error).toBe("security_funding_unavailable");
+    // An account without repository access gets the authority refusal,
+    // never the funding answer.
+    const outsider = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS["reporter-a"],
+      {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          securityBounty: {
+            ...(stored.manifest.securityBounty as object),
+            status: "open",
+          },
+        },
+      },
+    );
+    expect(outsider.status).toBe(403);
+    expect(outsider.body.error).toBe("authority_required");
+    // Authority belongs to the stored project, not repository facts supplied
+    // in the update. An outsider's own repository must not expose funds.
+    const otherRepository = `e2e-reporter-a/${id}`;
+    const facts = fixtureRepository(otherRepository);
+    expect(
+      (
+        await fetch(
+          `${GITHUB_FIXTURE}/__fixture/slopbot/${otherRepository}/installed`,
+          { method: "PUT" },
+        )
+      ).status,
+    ).toBe(204);
+    const forged = JSON.parse(
+      JSON.stringify(stored.manifest).replaceAll(repository, otherRepository),
+    );
+    forged.steward = {
+      ...forged.steward,
+      kind: "individual",
+      github: {
+        actorId: String(facts.owner.id),
+        nodeId: facts.owner.node_id,
+        login: facts.owner.login,
+        type: facts.owner.type,
+        profileUrl: `https://github.com/${facts.owner.login}`,
+      },
+    };
+    forged.authority.repositoryId = String(facts.id);
+    forged.authority.repositoryNodeId = facts.node_id;
+    forged.securityBounty.status = "open";
+    const forgedReply = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS["reporter-a"],
+      { expectedRevision: stored.revision, manifest: forged },
+    );
+    expect.soft(forgedReply.status, JSON.stringify(forgedReply.body)).toBe(403);
+    expect.soft(forgedReply.body.error).toBe("authority_required");
+    // Owners manage their own contacts without a Slop admin queue.
+    const originalProgram = stored.manifest
+      .securityBounty as SecurityBountyTerms;
+    const contacts = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS.security,
+      {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          securityBounty: {
+            ...(stored.manifest.securityBounty as object),
+            approvers: {
+              technical: [account("reporter-a")],
+              financial: [account("reporter-a")],
+              dispute: [account("reporter-a")],
+            },
+          },
+        },
+      },
+    );
+    expect.soft(contacts.status, JSON.stringify(contacts.body)).toBe(200);
+    if (contacts.status === 200) {
+      stored = await adminProject(request, id);
+      expect(stored.manifest.securityBounty).toMatchObject({
+        approvers: { technical: [account("reporter-a")] },
+      });
+      // A repository admin can also manage contacts, without being the
+      // recorded steward or a Slop admin.
+      const permission = (level: string) =>
+        fetch(
+          `${GITHUB_FIXTURE}/__fixture/slopbot/${repository}/permission/e2e-reporter-b/${level}`,
+          { method: "PUT" },
+        );
+      expect((await permission("admin")).status).toBe(204);
+      try {
+        const restored = await api(
+          request,
+          "PUT",
+          `projects/${id}`,
+          TOKENS["reporter-b"],
+          {
+            expectedRevision: stored.revision,
+            manifest: {
+              ...stored.manifest,
+              securityBounty: {
+                ...(stored.manifest.securityBounty as object),
+                approvers: originalProgram.approvers,
+              },
+            },
+          },
+        );
+        expect(restored.status, JSON.stringify(restored.body)).toBe(200);
+      } finally {
+        expect((await permission("none")).status).toBe(204);
+      }
+    }
     const reviewed = bountyTerms(repository).settlement;
     expect(
       (
@@ -908,6 +1025,51 @@ test("private security bounty programs keep cases restricted from intake to awar
     ] as const) {
       const reply = await read(role, id);
       expect(reply.status, `${role} reading ${id}`).toBe(404);
+    }
+    // A write collaborator cannot name an outside approver, nor remove the
+    // recorded ones: approvers read every private case of the program.
+    const permission = (level: string) =>
+      fetch(
+        `${GITHUB_FIXTURE}/__fixture/slopbot/${a.repository}/permission/e2e-reporter-b/${level}`,
+        { method: "PUT" },
+      );
+    expect((await permission("write")).status).toBe(204);
+    try {
+      const current = await adminProject(request, a.id);
+      const program = current.manifest.securityBounty as SecurityBountyTerms;
+      for (const approvers of [
+        {
+          ...program.approvers,
+          technical: [...program.approvers.technical, account("reporter-b")],
+        },
+        {
+          technical: [account("reporter-b")],
+          financial: [account("reporter-b")],
+          dispute: [account("reporter-b")],
+        },
+      ]) {
+        const reply = await api(
+          request,
+          "PUT",
+          `projects/${a.id}`,
+          TOKENS["reporter-b"],
+          {
+            expectedRevision: current.revision,
+            manifest: {
+              ...current.manifest,
+              securityBounty: { ...program, approvers },
+            },
+          },
+        );
+        expect(reply.status, JSON.stringify(reply.body)).toBe(422);
+        expect(reply.body.error).toBe("security_contacts_restricted");
+      }
+      expect((await adminProject(request, a.id)).revision).toBe(
+        current.revision,
+      );
+      expect((await read("reporter-b", caseA)).status).toBe(404);
+    } finally {
+      expect((await permission("none")).status).toBe(204);
     }
     const adminList = await api(request, "GET", "security-cases", ADMIN_TOKEN);
     expect(

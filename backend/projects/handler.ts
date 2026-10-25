@@ -319,6 +319,8 @@ async function ownerSecurityProgram(
   previous: ProjectDefinition,
   next: ProjectDefinition,
   status: SecurityBountyTerms["status"] | undefined,
+  actor: GithubActor,
+  canManageContacts: boolean,
   deps: ProjectApiDependencies,
 ): Promise<ProjectDefinition> {
   const before = previous.securityBounty;
@@ -332,6 +334,33 @@ async function ownerSecurityProgram(
       );
     return next;
   }
+  // Contacts receive private-case roles. Ordinary write access cannot grant
+  // or remove them; the project steward or a repository admin manages them.
+  if (!canManageContacts && before !== undefined) {
+    if (
+      !sameValue(before.approvers, after.approvers) ||
+      !sameValue(before.sponsor, after.sponsor)
+    )
+      fail(
+        422,
+        "security_contacts_restricted",
+        "Only the project steward or a repository admin can change bounty contacts or the sponsor",
+      );
+  } else if (
+    !canManageContacts &&
+    ([
+      ...after.approvers.technical,
+      ...after.approvers.financial,
+      ...after.approvers.dispute,
+    ].some((person) => person.githubId !== actor.githubId) ||
+      (after.sponsor.githubId !== null &&
+        after.sponsor.githubId !== actor.githubId))
+  )
+    fail(
+      422,
+      "security_contacts_restricted",
+      "Only the project steward or a repository admin can name other bounty contacts or a sponsor",
+    );
   if (!sameValue(before?.settlement, after.settlement))
     fail(
       422,
@@ -886,6 +915,19 @@ function requireAuthority(checked: {
     fail(403, "authority_required", authority.message);
 }
 
+function isProjectStewardOrAdmin(
+  manifest: ProjectDefinition,
+  actor: GithubActor,
+  access: AccessCheck,
+): boolean {
+  return (
+    actor.githubId === String(manifest.steward.github.actorId) ||
+    (access.state === "read" &&
+      access.access.installation === "installed" &&
+      access.access.permission === "admin")
+  );
+}
+
 function actorOf(session: WebSession): GithubActor {
   return { githubId: session.githubId, githubLogin: session.githubLogin };
 }
@@ -1181,14 +1223,7 @@ async function ownerVault(
   // A project has one ordinary vault and no replacement, and its owner
   // controls refunds and the monthly switch. Write access is not enough:
   // only the steward or a repository admin may create or register it.
-  if (
-    actor.githubId !== String(current.manifest.steward.github.actorId) &&
-    !(
-      checked.access.state === "read" &&
-      checked.access.access.installation === "installed" &&
-      checked.access.access.permission === "admin"
-    )
-  )
+  if (!isProjectStewardOrAdmin(current.manifest, actor, checked.access))
     fail(
       403,
       "vault_authority_required",
@@ -1407,6 +1442,10 @@ async function publishOwnerRevision(
       "project_restricted",
       `The project is ${restriction.state}; request reinstatement before changing it`,
     );
+  // Authority comes from the stored project. Submitted repository facts must
+  // never authorize private funding reads or a revision of another project.
+  const checked = await currentAuthority(deps, current.manifest, actor);
+  requireAuthority(checked);
   // The server decides status and listing; the owner sends content.
   let prepared = withMonthlyAmount(
     await verifiedRewardAsset(
@@ -1465,6 +1504,8 @@ async function publishOwnerRevision(
       current.manifest,
       submitted,
       requestedProgramStatus,
+      actor,
+      isProjectStewardOrAdmin(current.manifest, actor, checked.access),
       deps,
     );
   if (submitted.id !== projectId)
@@ -1489,8 +1530,6 @@ async function publishOwnerRevision(
       : submitted;
   if (changes.executable.length > 0 && manifest.status === "active")
     manifest = { ...manifest, status: "paused" };
-  const checked = await currentAuthority(deps, manifest, actor);
-  requireAuthority(checked);
   const summary = [
     changes.presentation.length > 0
       ? `presentation (${changes.presentation.join(", ")}) published`
