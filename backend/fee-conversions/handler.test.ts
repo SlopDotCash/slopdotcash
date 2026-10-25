@@ -87,15 +87,14 @@ describe("admin fee-conversions route", () => {
     expect(body.last24Hours).toEqual([
       { network: "base", mode: "live", state: "finalized", count: 2 },
     ]);
-    // A network without a verified USDC target shows as pending, never as a
-    // conversion to another asset.
+    // Robinhood retains received fees without converting them to another asset.
     const robinhood = body.routes.find(
       (route: { network: string }) => route.network === "robinhood",
     );
     expect(robinhood).toEqual({
       network: "robinhood",
       targetToken: null,
-      status: "pending",
+      status: "not_converted",
     });
     expect(
       body.routes.find(
