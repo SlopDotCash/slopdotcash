@@ -406,9 +406,10 @@ pub mod slop_escrow {
         )
     }
     // Anyone returns one award of a recorded allocation to free balance when it can never
-    // commit: its source was consumed by hand before the allocation froze, or by another
-    // month's award, or its actor is zero. A source the owner consumes after the freeze
-    // stays reserved, so selective removal never becomes a refund. The `settled` marker,
+    // commit: its source already pays the same actor at least as much, or was consumed by
+    // hand before the allocation froze, or its actor is zero. A source the owner consumes
+    // after the freeze with a smaller award or one to another actor stays reserved, so
+    // selective removal never becomes a refund. The `settled` marker,
     // shared with commit_monthly_award, lets each source of a month settle only once.
     #[allow(clippy::too_many_arguments)]
     pub fn release_monthly_award(
@@ -438,16 +439,18 @@ pub mod slop_escrow {
                 consumed.key() == recorded.obligation,
                 EscrowError::AwardCommittable
             );
-            // Another month's award to the same actor for at least this gross already paid
-            // the source, or the owner consumed it by hand before the freeze. A smaller or
-            // different award leaves this gross reserved rather than refunding the gap.
-            let monthly = &ctx.accounts.monthly_source;
-            let by_month = monthly.owner == ctx.program_id
-                && !monthly.data_is_empty()
-                && consumed.actor_id == actor_id
-                && consumed.gross >= gross;
+            // The source already pays this actor at least this gross (an identical hand
+            // award, which EVM counts once, a larger one, or another month's award), or the
+            // owner consumed it by hand before the freeze, which it may do. A smaller award or
+            // one to another actor after the freeze leaves this gross reserved rather than
+            // refunding the gap.
+            // Gross and the principal the contributor receives, so a migrated obligation
+            // with another fee can never under-pay.
+            let pays_actor = consumed.actor_id == actor_id
+                && consumed.gross >= gross
+                && consumed.principal >= gross - fee_for(gross);
             require!(
-                by_month || consumed.committed_at < ctx.accounts.month.frozen_at,
+                pays_actor || consumed.committed_at < ctx.accounts.month.frozen_at,
                 EscrowError::AwardCommittable
             );
         }
@@ -1158,11 +1161,11 @@ pub struct ReleaseMonthlyAward<'info> {
     /// CHECK: the source's origin address; the handler requires an initialized origin unless the actor is zero.
     #[account(seeds=[b"origin",project.key().as_ref(),&source_digest],bump)]
     pub origin: UncheckedAccount<'info>,
-    /// CHECK: the monthly-source marker; initialized when another month's award consumed the source.
+    /// CHECK: the monthly-source marker address. The release rule no longer reads it (the
+    /// recorded obligation decides); it stays so the instruction's accounts are unchanged.
     #[account(seeds=[b"monthly-source",project.key().as_ref(),&source_digest],bump)]
     pub monthly_source: UncheckedAccount<'info>,
-    /// The obligation the origin records; required unless the actor is zero or another
-    /// month consumed the source.
+    /// The obligation the origin records; required unless the actor is zero.
     pub obligation: Option<Box<Account<'info, Obligation>>>,
     /// The same marker as commit_monthly_award, so a source settles once per month.
     #[account(init,payer=payer,space=8+BindingVeto::INIT_SPACE,seeds=[b"settled",month.key().as_ref(),&source_digest],bump)]
