@@ -26,6 +26,7 @@ export class MergeVerifier
     const sandbox = getSandbox(this.env.RUNNER, crypto.randomUUID(), {
       transport: "rpc",
     });
+    let stage = "bundle-write";
     try {
       let bytes = 0;
       const hash = sha256.create();
@@ -42,6 +43,7 @@ export class MergeVerifier
       const written = await sandbox.writeFile("/analysis/merge.bundle", stream);
       if (!written.success || bytes === 0)
         throw new Error("Merge write refused");
+      stage = "input-write";
       const input = await sandbox.writeFile(
         "/analysis/merge-input.json",
         JSON.stringify({
@@ -52,23 +54,39 @@ export class MergeVerifier
         }),
       );
       if (!input.success) throw new Error("Merge input refused");
+      stage = "setup";
       const setup = await sandbox.exec(
         "chmod 0444 /analysis/merge.bundle /analysis/merge-input.json",
         { timeout: 10_000 },
       );
       if (!setup.success) throw new Error("Merge setup refused");
+      stage = "supervisor-exec";
       const executed = await sandbox.exec(
         "python3 /opt/slop/supervise.py merge",
         { timeout: 40_000 },
       );
       if (!executed.success) throw new Error("Merge supervisor refused");
+      stage = "supervisor-result";
       const status = JSON.parse(executed.stdout);
+      if (
+        [
+          "exited",
+          "timeout",
+          "disk-limit",
+          "output-limit",
+          "not-executable",
+        ].includes(status.status) &&
+        Number.isInteger(status.exitCode) &&
+        Math.abs(status.exitCode) <= 255
+      )
+        stage = `supervisor-${status.status}-${status.exitCode}`;
       if (
         status.status !== "exited" ||
         status.exitCode !== 0 ||
         status.outputComplete !== true
       )
         throw new Error("Merge reconstruction refused");
+      stage = "output-read";
       const output = await sandbox.readFile(
         "/analysis/work/merge-result.json",
         { encoding: "none" },
@@ -78,11 +96,14 @@ export class MergeVerifier
         8 * 1024 * 1024,
         "fixed merge result",
       );
+      stage = "output-shape";
       if (!Array.isArray(result) || result.length !== inputs.length)
         throw new Error("Merge result unavailable");
       return result as Awaited<ReturnType<ValueMergeVerifier["reconstruct"]>>;
     } catch {
-      throw new Error("Merge reconstruction unavailable");
+      // Fixed stages/scalars only. Never include SDK errors, child output,
+      // source bytes or input identities. The public intake still returns409.
+      throw new Error(`Merge reconstruction unavailable: ${stage}`);
     } finally {
       // No journal write can occur until cleanup has acknowledged success.
       await sandbox.destroy();

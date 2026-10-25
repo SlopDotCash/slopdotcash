@@ -58,10 +58,30 @@ export default {
     const actor = request.headers.get("x-fixture-actor");
     // The real Pages/session boundary has separate native D1 evidence. This
     // control uses the real bounded multipart handler and named SDK operation.
-    return handleHistoricalValueImport(request, {
+    let failureStage: string | undefined;
+    const response = await handleHistoricalValueImport(request, {
       adminGithubIds: new Set(["fixture-admin"]),
       sessionActor: async () => (actor ? { githubId: actor } : null),
-      publisher: env.PUBLISHER,
+      publisher: {
+        async publishSubscription(input, bundle) {
+          try {
+            return await env.PUBLISHER.publishSubscription(input, bundle);
+          } catch (error) {
+            // Test-only observation of fixed internal stages. No raw SDK/Git
+            // error or input data is returned, even on a failed public control.
+            const match =
+              error instanceof Error &&
+              /^Merge reconstruction unavailable: (bundle-write|input-write|setup|supervisor-exec|supervisor-result|supervisor-(?:exited|timeout|disk-limit|output-limit|not-executable)--?\d{1,3}|output-read|output-shape)$/u.exec(
+                error.message,
+              );
+            if (match) failureStage = match[1];
+            throw error;
+          }
+        },
+      },
     });
+    if (failureStage)
+      response.headers.set("x-fixture-merge-stage", failureStage);
+    return response;
   },
 };
