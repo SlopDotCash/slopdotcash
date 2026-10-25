@@ -165,7 +165,6 @@ export function useVaultTotals(
   return vault ? { status: "ready", vault } : { status: "loading" };
 }
 
-/** Measured against the viewer's clock: the response itself can be edge-cached. */
 /**
  * Gross reserved for committed awards, the same figure on both chains: EVM vaults
  * split reserved principal and fees, Solana reports one reserved total (which
@@ -182,6 +181,7 @@ export function reservedGross(snapshot: {
       ).toString()
     : snapshot.reserved;
 }
+/** Measured against the viewer's clock: the response itself can be edge-cached. */
 export function vaultSnapshotStale(
   snapshot: VaultSnapshot,
   staleAfterMs: number,

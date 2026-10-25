@@ -19,7 +19,6 @@ import {
   type EscrowDeployment,
 } from "../../src/lib/escrow-policy.mjs";
 import {
-  acceptsPayoutFee,
   type MonthlyAwardState,
   type PaymentAsset,
   VAULT_SNAPSHOT_STALE_MS,
@@ -52,6 +51,7 @@ import {
   hasParticipationBan,
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
+import { chainAwards, holdsAward } from "./chain-awards";
 
 export class MonthlyPaymentError extends Error {
   constructor(
@@ -261,49 +261,6 @@ async function loadRun(
 }
 
 export type { MonthlyAwardState };
-
-/** A finalized chain obligation recorded for a monthly award's source. */
-interface ChainAward {
-  githubUserId: string;
-  grossBase: string;
-  feeBase: string;
-  state: "reserved" | "paid";
-}
-/** Whether the chain obligation under a source is this monthly award: the same
- * actor and gross, with a genuine 2% fee. The source digest is public, so anyone
- * reserving another award under it must never make the frozen award look
- * reserved, paid or funded. */
-function holdsAward(
-  chain: ChainAward | undefined,
-  award: { githubUserId: string; grossBase: string },
-): chain is ChainAward {
-  return (
-    chain !== undefined &&
-    chain.githubUserId === award.githubUserId &&
-    chain.grossBase === award.grossBase &&
-    /^(0|[1-9][0-9]*)$/.test(chain.feeBase) &&
-    acceptsPayoutFee(BigInt(chain.grossBase), BigInt(chain.feeBase))
-  );
-}
-async function chainAwards(
-  db: D1Database,
-  network: string,
-  vault: string,
-): Promise<Map<string, ChainAward>> {
-  const row = await db
-    .prepare(
-      "SELECT json_group_array(json_object('sourceDigest',source_digest,'githubUserId',github_user_id,'grossBase',gross_base,'feeBase',fee_base,'state',state)) items FROM payment_obligations WHERE network=? AND vault=?",
-    )
-    .bind(network, vault)
-    .first<{ items: string }>();
-  return new Map(
-    (
-      JSON.parse(row?.items ?? "[]") as (ChainAward & {
-        sourceDigest: string;
-      })[]
-    ).map(({ sourceDigest, ...award }) => [sourceDigest, award]),
-  );
-}
 
 /** Chain evidence sets reserved/paid only when it is this exact award; any other
  * obligation under the source is a conflict. The recorded ban decision sets excluded. */
@@ -548,10 +505,14 @@ export async function createMonthlyObligations(
     ESCROW_NETWORKS[run.network as keyof typeof ESCROW_NETWORKS]?.family ===
     "solana";
   let needed = 0n;
+  // A source already holding any chain obligation needs no new funds: the
+  // identical award is counted once, and a conflicting one is left out of the
+  // month's commitment. Solana still reserves an identical award's gross.
   for (const award of eligibleAwards)
-    if (solana || !held(award)) needed += BigInt(award.grossBase);
+    if (!chain.has(award.sourceDigest) || (solana && held(award)))
+      needed += BigInt(award.grossBase);
   for (const award of outstanding)
-    if (!held(award)) needed += BigInt(award.grossBase);
+    if (!chain.has(award.sourceDigest)) needed += BigInt(award.grossBase);
   let fundingSnapshot: {
     asset: string;
     free: string;

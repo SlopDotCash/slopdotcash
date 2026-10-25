@@ -52,7 +52,10 @@ export interface AccountMonthlyAward extends PaymentAsset {
   grossBase: string;
   feeBase: string;
   netBase: string;
-  state: Extract<MonthlyAwardState, "underfunded" | "awaiting-reservation">;
+  state: Extract<
+    MonthlyAwardState,
+    "underfunded" | "awaiting-reservation" | "conflict"
+  >;
 }
 export interface PaymentsAccount {
   githubUserId: string;

@@ -9,7 +9,9 @@
 > does not prove the approved logic. After an upgrade, review and append a new
 > registry revision before treating the new implementation as accepted, and keep
 > the outgoing implementation in its reviewed history so events from before the
-> upgrade still verify.
+> upgrade still verify. Copy the same `evmUpgrade` (including `history`) into the
+> executor's pinned `PAYMENT_DEPLOYMENTS`; it is compared field by field, and a
+> mismatch makes monthly signing fail closed.
 >
 > Pending upgrades (24 October 2026): the mainnet EVM vaults and the Solana
 > program were deployed from `bce5b0df`. Source on `development` rounds the 2%
