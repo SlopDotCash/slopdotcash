@@ -597,6 +597,12 @@ export function solanaPaymentAdapter(
   config: SolanaEscrowConfig,
 ): PaymentChainAdapter {
   return {
+    // Lets the ledger skip re-verifying evidence it already stored.
+    deployment: {
+      projectId: config.projectId,
+      network: config.network,
+      vault: config.vault,
+    },
     async verifyFinalized(input) {
       if (!Number.isSafeInteger(input.eventIndex) || input.eventIndex < 0)
         throw new Error("Invalid instruction index");
