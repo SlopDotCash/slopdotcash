@@ -65,7 +65,22 @@ export async function prepareSolanaVaultCreation(
     ]),
   ).value;
   if (existing !== null) {
-    await verifySolanaDeployment(config, input.projectDigest);
+    try {
+      await verifySolanaDeployment(config, input.projectDigest);
+    } catch (error) {
+      // The reviewed program and Config passed above; a failure now is the project account itself.
+      if (
+        error instanceof Error &&
+        (error.message.startsWith("RPC") ||
+          error.name === "TimeoutError" ||
+          error.name === "AbortError" ||
+          error instanceof TypeError)
+      )
+        throw error;
+      throw new SolanaWalletActionError(
+        "An account already exists at this project address and does not match this creation request.",
+      );
+    }
     return {
       projectPda: plan.projectPda,
       vault: plan.vault,
