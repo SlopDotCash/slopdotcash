@@ -303,7 +303,7 @@ describe("USDC routes", () => {
                 throw new Error(
                   "retained fees must not request a route or send",
                 );
-              }) as typeof fetch,
+              }) as unknown as typeof fetch,
             },
             trigger,
           );
