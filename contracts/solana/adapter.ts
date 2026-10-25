@@ -31,6 +31,8 @@ export interface SolanaEscrowConfig {
   rotationAuthority: string;
   codeSha256: string;
   upgradeAuthority: string | null;
+  /** Receipt slot whose executed program must still be verifiable. */
+  executedAtSlot?: number;
   /** Reviewed delay, in seconds, before a wallet binding can pay in this project. */
   bindingDelaySeconds: string;
   /** Reviewed notice period, in seconds, before a proposed identity authority takes effect. */
@@ -229,6 +231,11 @@ export async function verifySolanaDeployment(
     throw new Error("Missing reviewed program digest");
   if ((await rpc(config, "getGenesisHash", [])) !== config.genesisHash)
     throw new Error("Wrong Solana cluster");
+  if (
+    config.executedAtSlot !== undefined &&
+    (!Number.isSafeInteger(config.executedAtSlot) || config.executedAtSlot < 0)
+  )
+    throw new Error("Invalid receipt slot");
   // The owner explicitly retains upgrade control. Verify the configured authority
   // below together with the exact finalized program bytes.
   for (const delay of [config.bindingDelaySeconds, config.rotationDelaySeconds])
@@ -279,6 +286,14 @@ export async function verifySolanaDeployment(
     const authority = content[12] === 1 ? pubkey(content, 13) : null;
     if (authority !== config.upgradeAuthority)
       throw new Error("Upgrade authority mismatch");
+    if (
+      config.executedAtSlot !== undefined &&
+      new DataView(content.buffer, content.byteOffset).getBigUint64(4, true) >
+        BigInt(config.executedAtSlot)
+    )
+      throw new Error(
+        "Program changed after the receipt; execution is unverified",
+      );
     code = content.slice(45);
   } else if (
     program.owner !== "BPFLoader2111111111111111111111111111111111" ||
