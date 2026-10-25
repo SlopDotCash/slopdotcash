@@ -4916,7 +4916,13 @@ small {
   margin-bottom: 12px;
 }
 
-.vault-actions input:not([type="radio"]) {
+.vault-actions label.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vault-actions input:not([type="radio"]):not([type="checkbox"]) {
   width: 100%;
   min-width: 0;
   padding: 10px;
