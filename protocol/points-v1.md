@@ -118,7 +118,9 @@ Signout invalidates the session and never resets or reissues a historical welcom
 
 A member can close the account from Account after typing their GitHub login
 (`POST /api/v1/points/account/close`, migration 0063). One atomic change marks
-the membership closed and private, ends every session, removes X links and pending flows and any legacy Telegram links and flows, and turns off optional activity email. The
+the membership closed and private, ends every session, removes X links and
+pending flows and any legacy Telegram links and flows, and turns off optional
+activity email. The
 membership row, welcome and connection awards, X and Telegram claims, points
 history, wallets, unpaid obligations, payment and settlement records, private
 cases, inbox rows and public GitHub work stay. The database refuses a session
@@ -221,7 +223,7 @@ No Telegram credential or webhook is required.
 Every recorded PR author has a discoverable `/contributors/<login>` profile,
 including authors with only open or closed unmerged PRs. Joined members and
 historical point recipients retain profiles independently of the current score
-window. Public membership, X visibility remains opt-in.
+window. Public membership and X visibility remain opt-in.
 
 `profiles:generate` walks the complete PR connection of each active manifest
 repository, deduplicates immutable PR IDs, and reconciles the total record count
