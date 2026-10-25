@@ -298,6 +298,8 @@ sections 6 and 7). Migration `0062` adds its private records.
    each funded month's eligible allocation. The Durable Object records the
    first intent before signing and keeps the frozen economic allocation fixed.
    Funding-time exclusions are omitted; later bans preserve funded awards.
+   A later project revision does not block the frozen month unless it changes
+   the chain, effective month, fees, vault or asset that sized its proposal.
    The first authorization is immutable in `monthly_payment_authorizations`.
    EVM V2 signs the remaining sources at one finalized block. A source change
    before admission invalidates that attempt. A retry appends a signed attempt
