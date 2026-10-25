@@ -1,8 +1,9 @@
 # Slopbot worker
 
 Hosted Slopbot GitHub App service under `protocol/slopbot-v2.md` (approved
-9 October 2026; PRD BOT-08 to BOT-13). It is not deployed yet, and closing is
-disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
+9 October 2026; PRD BOT-08 to BOT-13). Protected releases deploy the service.
+Automatic closing remains disabled unless `SLOPBOT_CLOSURE_ENABLED` is set
+to `"true"` after the explicit production qualification and activation review.
 
 ## Flow
 
@@ -54,7 +55,9 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    - for guidance categories, a rule quoted verbatim from the named file;
    - confidence ≥ 0.9;
    - closure enabled globally and by the repository;
-   - the shadow period over;
+   - reviewed real cases and counterexamples recorded for production activation,
+     with the separate verifier-profile qualification in `QUALITY.md` for
+     objective `low_quality` closure;
    - no circuit breaker and no daily cap hit;
    - a confirming second verdict (Surplus, falling back to GPT-6.1 Sol);
    - an unchanged item just before acting.
