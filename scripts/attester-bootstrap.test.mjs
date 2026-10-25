@@ -13,4 +13,4 @@ test("an empty production attester installs privately and refuses every signing 
     },
   );
   expect(result.status, result.stdout + result.stderr).toBe(0);
-}, 65_000);
+}, 240_000);

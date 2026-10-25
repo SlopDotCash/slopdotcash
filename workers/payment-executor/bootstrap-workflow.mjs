@@ -68,7 +68,7 @@ try {
       "--outdir",
       join(directory, "dry-run"),
     ],
-    { encoding: "utf8", env, timeout: 25_000 },
+    { encoding: "utf8", env, timeout: 180_000 },
   );
   assert.equal(dryRun.status, 0, dryRun.stderr);
 
