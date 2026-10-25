@@ -227,6 +227,8 @@ Before release, prove self-service setup, malicious-code detection, two-flag pau
 
 These decisions apply prospectively, except for the approved extension to unpaid September and October work in section 7. Preserve the original Points and frozen terms of approved or funded awards, including scheduled and paid awards. Ongoing API assessment still starts on 1 November 2026 UTC. Configuration that implements these decisions stays fail-closed until it is set.
 
+Historical Points publication is on hold until the complete assessment journal and exact changes are reconciled. Other releases retain the prior historical scoring rules. Keep the standard importer and September candidate checks available. Release the historical projection only after coverage, duplicate-credit and funded-history checks pass. This hold does not change the approved scope in section 7 or the November API start.
+
 | Decision | Recorded value |
 | --- | --- |
 | Monthly period model | Calendar UTC month; first period 2026-11; cutoff 72 hours after the month ends (section 6) |
