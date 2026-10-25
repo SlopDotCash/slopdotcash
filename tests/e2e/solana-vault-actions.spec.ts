@@ -1125,17 +1125,31 @@ async function ownerSetupWorkflow(
       await expect(monthly).toHaveValue("on");
       if (!automatic) await monthly.selectOption("off");
     }
-    const browserReviewResponse = page.waitForResponse(
-      (response) =>
-        response.url() === `${origin}/api/v1/project-vaults/${project.id}` &&
-        response.request().method() === "POST" &&
-        response.request().postDataJSON().step === "review",
-    );
+    // Capture the reply in a route: Chrome can drop a streamed body before
+    // response.json() reads it through DevTools.
+    const reviewUrl = `${origin}/api/v1/project-vaults/${project.id}`;
+    let browserReview:
+      | { transaction: { blockhash: string; lastValidBlockHeight: number } }
+      | undefined;
+    await page.route(reviewUrl, async (route) => {
+      const request = route.request();
+      if (
+        request.method() !== "POST" ||
+        request.postDataJSON().step !== "review"
+      )
+        return route.fallback();
+      const response = await route.fetch();
+      const body = await response.json();
+      browserReview ??= body.review;
+      await route.fulfill({ response, json: body });
+    });
     await setup.getByRole("button", { name: "Review vault creation" }).click();
-    const browserReview = (await (await browserReviewResponse).json()).review;
     await expect(
       setup.getByRole("button", { name: "Create vault in wallet" }),
     ).toBeEnabled();
+    await page.unroute(reviewUrl);
+    if (!browserReview)
+      throw new Error("The browser review reply was not captured.");
     await page.screenshot({
       path: info.outputPath("solana-create-review.png"),
       fullPage: true,
