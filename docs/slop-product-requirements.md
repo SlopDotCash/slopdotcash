@@ -32,7 +32,7 @@ GitHub is the only login. Use its permanent actor ID through renames. Account ho
 
 Public GitHub work stays public. Show private case status only in the authorized user's private account area. Keep private case amounts out of ordinary balances and public rankings. X connection shows on the profile with consent and permits no posting or messaging. Support account closure.
 
-Store only ID, optional username, verification time, and visibility. Reserve that ID to the first verified GitHub identity, including after disconnect. Public display requires membership and link consent. Grant no points or authority. Joining earns no welcome points; welcome and X-connection points are removed (D2, section 11).
+Store only ID, optional username, verification time, and visibility. Reserve that ID to the first verified GitHub identity, including after disconnect. Public display requires membership and link consent. Grant no points or authority. Joining earns no welcome points (Participation points, section 11).
 
 Users can add EVM and Solana payout wallets. If users have not added wallets, they can claim payouts they should have already received.
 
@@ -68,9 +68,9 @@ Support the approved stablecoin, ERC-20, or classic SPL token. Exclude transfer-
 
 Awards: projected, under review, approved, excluded. Payments: underfunded, awaiting wallet, ready, held, submitted, paid. A failed attempt preserves the award and reserve; one recipient's failure cannot block others.
 
-Automatic monthly payment is the default for every project with funds committed in its vault. Vault creation sets the monthly commitment with the owner's monthly cap unless the owner opts out; the owner can turn it on or off later and can change allocations before execution (D1, section 11). If the owner does not distribute the funds, the automatic monthly process distributes the current allocations. Do not create unfunded obligations or pay twice. The period is the calendar UTC month, starting with 2026-11. Owners may change allocations or finalize early until 72 hours after the month ends; the automatic process then freezes the current allocations once. An underfunded month creates no obligations until the whole month is covered. Private bounty awards remain discretionary.
+Automatic monthly payment is the default for every project with funds committed in its vault. The owner sets the monthly amount during setup, can change allocations before execution, and can turn the default off. If the owner does not distribute the funds, the automatic monthly process distributes the current allocations. Do not create unfunded obligations or pay twice. The period is the calendar UTC month, starting with 2026-11. Owners may change allocations or finalize early until 72 hours after the month ends; the automatic process then freezes the current allocations once. An underfunded month creates no obligations until the whole month is covered. Private bounty awards remain discretionary.
 
-Ordinary award and free-fund withdrawal fee: floor(gross / 50) (2%). A 100 USDC award pays 98 and 2. Project-token awards pay both amounts in that token. No second fee at claim/retry. Every new project draft uses this fee (200 bps) and vault-custody wording, including drafts without a vault (D3, section 11). Preserve historical terms. Private bounties instead use section 8's 75/25 split.
+Ordinary award and free-fund withdrawal fee: floor(gross / 50) (2%). A 100 USDC award pays 98 and 2. Project-token awards pay both amounts in that token. No second fee at claim/retry. Preserve historical terms. Private bounties instead use section 8's 75/25 split.
 
 A project-operated or permissionless executor submits payments; Slop operates no payment key/relayer. Payments are stored in a vault/escrow contract to show that they have been committed. Projects are not obligated to commit funds. Wallet binding requires authenticated account evidence and the wallet signature. Neither signature proves both identities. Mark paid only after exact finalized principal, fee, asset, and destination reconciliation; prevent replay.
 
@@ -78,7 +78,7 @@ Automatically sell project-token fees into USDC when the fee wallet receives the
 
 ## 7. Points, discovery, and clear pages
 
-Use one public Points measure; do not show a separate Slop Score. Accepted-work credits already convert into the points journal and must not be added a second time. Money received remains a separate record of verified payments. Owner decision, 24 October 2026: consolidate score into Points. Only accepted-work points for the project and payment period determine reward shares. Welcome and X-connection points are removed: none are granted from 24 October 2026, and recorded ones stay in the journal but count in no displayed total or ranking (D2, section 11). Payment-recognition and other bonuses never affect payouts. Monthly and lifetime totals are views of the same points history. Preserve funded awards, historical payment calculations and source identifiers; old score fields are compatibility encodings, not another public metric.
+Use one public Points measure; do not show a separate Slop Score. Accepted-work credits already convert into the points journal and must not be added a second time. Money received remains a separate record of verified payments. Owner decision, 24 October 2026: consolidate score into Points. Only accepted-work points for the project and payment period determine reward shares. Joining and connecting X earn no points from 24 October 2026 (Participation points, section 11). Welcome and X-connection awards recorded before that date stay unchanged; earned-point standings and payouts already exclude them. Payment-recognition and other bonuses never affect payouts. Monthly and lifetime totals are views of the same points history. Preserve funded awards, historical payment calculations and source identifiers; old score fields are compatibility encodings, not another public metric.
 
 The homepage cycles the original campaign phrases with typing and deletion (owner decision, 24 October 2026). Keep a stable accessible heading and disable the animation for reduced motion.
 
@@ -97,7 +97,7 @@ Published penalty table (approved 24 October 2026, in points):
 | Slopbot category | Action | Debit |
 | --- | --- | --- |
 | Spam | Close | 30 |
-| Scam or malicious | Close; one moderator Inbox notice to review the account | 240 |
+| Scam or malicious | Close; moderator reviews the account | 240 |
 | Clear violation of a quoted project rule | Close | 10 |
 | Low quality | Close (closure-eligible authors only) | 0 |
 | Duplicate | Close | 0 |
@@ -261,9 +261,9 @@ The owner recorded these values. They apply prospectively and do not change hist
 | Slopbot spending limit | Alerts-only: no monthly hard cap on Slopbot inference spending. Email the owner at every crossed $500 milestone. Per-attempt cost reservations, duplicate refusal and queue limits still apply, and missing or malformed configuration still stops inference (owner decision, 24 October 2026, in #1141) |
 | Existing-project scan exemption | Permanently exempt the projects captured by migration `0075_vetting_grandfathered_projects.sql` from normal scan clearance, including future code changes. Later projects still require scans. Flags, pauses, confirmed-malicious bans and fresh-scan reinstatement remain effective. An exemption is not a passed scan ([owner decision](https://github.com/SlopDotCash/slopdotcash/pull/1114#issuecomment-6382081150)) |
 | Scanner and runner | Surplus Opus 5.5 first; GPT-6.1 Sol only for ambiguous or high-risk results. One disposable Cloudflare sandbox per risky artifact, with internet access off and no secrets |
-| D1 Monthly at vault creation | Vault creation sets the automatic monthly commitment with the owner's monthly cap. The owner may opt out at creation and turn it on or off later (section 6) |
-| D2 Participation points | No welcome (5) or X-connection (10) points for anyone from 24 October 2026. Recorded awards stay in the append-only journal but count in no displayed total or ranking (sections 3 and 7) |
-| D3 New project drafts | Every new draft uses the ordinary 2% fee (200 bps) and vault-custody wording, including drafts without a vault. Historical projects and revisions keep their recorded terms (section 6) |
-| D4 Scam closure notice | A Slopbot closure in the Scam or malicious category also creates one idempotent moderator Inbox notice to review the account, alongside the label (section 7) |
+| Participation points | Grant no new welcome (5) or X-connection (10) points to anyone from 24 October 2026. Keep every award recorded before that date unchanged; never delete, rewrite, or reissue one. The X connection stays as a consented profile link with no points. Payout shares stay accepted-work points only (owner decision, 24 October 2026: “for 1154 we're ending welcome points and x connection points”) |
+| Scam closure notice | Implementation note for the "Scam or malicious" row of the section 7 penalty table, not a separate decision: the closure creates one idempotent moderator Inbox notice to review the account, alongside the label (#1155) |
 | Moderators | lalalune (18633264) and drew-dot-com (202660855) |
 | Launch order | The non-money product launches first. Mainnet requires explicit activation, one network at a time: Base, Solana, Ethereum, then Robinhood Chain |
+
+Proposed, not approved by the owner (from #1154; do not implement or treat as decided): vault creation turns on the monthly commitment unless the owner opts out; every new project draft uses 200 bps and vault-custody wording, including drafts without a vault; historical welcome and X-connection awards are removed from displayed totals.
