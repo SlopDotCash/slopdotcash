@@ -131,7 +131,18 @@ function fileChange({
   deletions,
   patch,
   blob_url,
-}: FileChange): FileChange {
+  sha,
+}: FileChange & { sha?: string }): FileChange {
+  // GitHub omits patches for empty added files. This known Git object has
+  // exactly zero bytes; zero line counts alone could also describe a binary.
+  if (
+    patch === undefined &&
+    status === "added" &&
+    additions === 0 &&
+    deletions === 0 &&
+    sha === "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+  )
+    patch = "";
   return {
     filename,
     ...(previous_filename === undefined ? {} : { previous_filename }),
