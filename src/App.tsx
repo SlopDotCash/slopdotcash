@@ -1253,7 +1253,13 @@ function fundingStateLabel(project: ProjectDefinition): string {
     : "Not funded yet";
 }
 
-function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
+function ProjectFundingPage({
+  project: original,
+}: {
+  project: ProjectDefinition;
+}) {
+  const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
+  const project = registered ?? original;
   return (
     <main className="shell route-main funding-page">
       <p className="breadcrumb">
@@ -1314,17 +1320,17 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
               </p>
             </section>
           ) : (
-            <EscrowFunding project={project} />
+            <EscrowFunding project={project} onRegistered={setRegistered} />
           )
         ) : (
           <div>
             <EmptyState text="This project has no vault yet." />
             <p>
-              Deposits and payments are not possible until a vault is recorded
-              for this project. The site has no control that creates a vault:
-              the project owner creates it on chain from its own wallet, and a
-              project revision then records it. Project owner:{" "}
-              <a href={CONTACT_MAILTO}>contact Slop</a> for vault setup.
+              Choose a monthly amount in{" "}
+              <Link href={`/projects/${project.slug}/manage`}>
+                project settings
+              </Link>{" "}
+              to enable vault setup.
             </p>
           </div>
         )}
@@ -3008,7 +3014,7 @@ function AppContent({ route }: { route: Route }) {
   } else if (route.kind === "funding-project") {
     const project = findProject(route.projectId ?? "");
     content = project ? (
-      <ProjectFundingPage project={project} />
+      <ProjectFundingPage key={project.id} project={project} />
     ) : (
       <NotFound title="Project not found" />
     );

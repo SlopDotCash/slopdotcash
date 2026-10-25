@@ -29,6 +29,7 @@
     "contracts/solana/monthly-commitment.ts",
     "contracts/vault-totals.ts",
     "src/lib/base58.ts",
+    "src/lib/vault-setup.ts",
     "src/lib/byte-encoding.ts",
     "src/lib/canonical-json.ts",
     "src/lib/project-revision-changes.ts",

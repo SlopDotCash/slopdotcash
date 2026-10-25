@@ -644,7 +644,7 @@ test("makes the public project draft boundary unmistakable", async ({
 }) => {
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("link", { name: "Funding setup" }),
+    page.getByRole("link", { name: "View vault funds and automatic payment" }),
   ).toHaveAttribute("href", "/projects/eliza/funding");
   await expect(page.getByLabel("Draft total, USDC")).toHaveCount(0);
   await expect(

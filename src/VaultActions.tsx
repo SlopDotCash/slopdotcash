@@ -74,10 +74,12 @@ const message = (error: unknown) =>
 export function VaultActions({
   projectId,
   deployment,
+  connectedWallet,
   onFinalized,
 }: {
   projectId: string;
   deployment: EscrowDeployment;
+  connectedWallet?: VaultConnection;
   onFinalized: () => void;
 }) {
   const solana = ESCROW_NETWORKS[deployment.network].family === "solana";
@@ -94,7 +96,9 @@ export function VaultActions({
   const [pending, setPending] = useState<Pending | null>(saved.pending);
   const [error, setError] = useState(saved.error);
   const [storageError, setStorageError] = useState(Boolean(saved.error));
-  const [wallet, setWallet] = useState<VaultConnection | null>(null);
+  const [wallet, setWallet] = useState<VaultConnection | null>(
+    connectedWallet ?? null,
+  );
   const [operation, setOperation] = useState<VaultOperation>(
     saved.pending?.operation ?? "deposit",
   );
