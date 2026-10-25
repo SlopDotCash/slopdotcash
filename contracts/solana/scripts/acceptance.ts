@@ -61,6 +61,8 @@ import {
   completeSolanaBinding,
   createSolanaAttester,
   createSolanaExecutor,
+  preflightSolanaDeployment,
+  solanaTransactionStatus,
 } from "../../../workers/payment-executor/solana";
 import type { PaymentsWorkerEnvironment } from "../../../workers/payments/index";
 import {
@@ -997,11 +999,22 @@ export function solanaServices(
       relayer: service(async (path, body) => {
         if (path === "/v1/pay")
           return createSolanaExecutor(relayerEngine).submit(body as never);
-        if (path === "/v1/attempt-status")
-          return lookupAttempt(
+        if (path === "/v1/attempt-status") {
+          const result = await lookupAttempt(
             { PAYMENTS_DB: env.PAYMENTS_DB, JOURNAL: relayerJournal },
             body as never,
           );
+          if (!result.transactionId) return result;
+          const config = await preflightSolanaDeployment(
+            relayerEngine,
+            body as never,
+          );
+          return {
+            ...result,
+            submitted:
+              (await solanaTransactionStatus({ config }, result)) !== null,
+          };
+        }
         throw new Error("Not found");
       }),
     };

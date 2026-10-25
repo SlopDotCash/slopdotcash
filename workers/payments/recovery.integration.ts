@@ -253,7 +253,10 @@ try {
         )
         .get(`attempt-${chain}`);
       assert(record);
-      return Response.json({ transactionId: record.transaction_id });
+      return Response.json({
+        transactionId: record.transaction_id,
+        ...(chain === "solana" ? { submitted: true } : {}),
+      });
     },
   });
   const executorUrl = `http://127.0.0.1:${server.port}`;
@@ -319,6 +322,7 @@ try {
     { chain: "base", status: 503 },
     { chain: "solana", status: 200 },
     { chain: "base", status: 503 },
+    { chain: "solana", status: 200 },
   ]);
   baseUnavailable = false;
   await recoverUncertainAttempts(env);
@@ -341,8 +345,8 @@ try {
   await recoverUncertainAttempts(env);
   assert.equal(
     requests.length,
-    4,
-    "Recovered attempts must not request or submit again",
+    7,
+    "Reserved Solana attempts keep checking submission while EVM recovery stays complete",
   );
   assert.equal(
     sql

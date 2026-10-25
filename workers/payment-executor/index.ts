@@ -44,6 +44,7 @@ import {
   createSolanaAttester,
   createSolanaExecutor,
   preflightSolanaDeployment,
+  solanaTransactionStatus,
 } from "./solana";
 import { freezeSolanaMonthly, submitSolanaMonthly } from "./solana-monthly";
 
@@ -373,12 +374,19 @@ export class PaymentSignerJournal {
           pathname === "/v1/attempt-status"
             ? lookupAttempt
             : retireUnsignedAttempt;
-        return Response.json(
-          await operation(
-            { PAYMENTS_DB: database, JOURNAL: this.state.storage },
-            input,
-          ),
+        const result = await operation(
+          { PAYMENTS_DB: database, JOURNAL: this.state.storage },
+          input,
         );
+        if (this.env.CHAIN_FAMILY === "solana" && result.transactionId) {
+          const config = await preflightSolanaDeployment(this.env, input);
+          return Response.json({
+            ...result,
+            submitted:
+              (await solanaTransactionStatus({ config }, result)) !== null,
+          });
+        }
+        return Response.json(result);
       }
       if (request.headers.get("idempotency-key") !== input.idempotencyKey)
         return new Response("Idempotency key required", { status: 400 });
