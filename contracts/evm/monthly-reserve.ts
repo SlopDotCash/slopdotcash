@@ -24,7 +24,7 @@ const ABI = parseAbi([
   "function ordinarySourceSequence() view returns (uint256)",
   "function awards(bytes32) view returns (uint64,uint128,uint128,bytes32,uint64,bool)",
   "function monthlyRoots(uint32) view returns (bytes32)",
-  "function monthlyReserves(uint32) view returns (bytes32,uint128,uint128,uint32,uint64)",
+  "function monthlyReserves(uint32) view returns (bytes32,uint128,uint128,uint32,uint64,bool)",
   "function reserveMonthly(uint32,(bytes32 allocationDigest,bytes32 allocationRoot,uint128 wholeGross,uint128 remainingGross,uint32 count,uint256 sourceSequence),bytes)",
   "function commitMonthlyLeaf(uint32,(uint64 actorId,uint128 gross,bytes32 sourceDigest),uint32,(bytes32 hash,uint128 total)[])",
 ]);
@@ -262,16 +262,17 @@ export async function readEvmMonthlyReserve(
     1,
     block,
   );
-  const [allocationDigest, total, remaining, count, admittedAt] = await words(
-    config,
-    encodeFunctionData({
-      abi: ABI,
-      functionName: "monthlyReserves",
-      args: [periodNumber(period)],
-    }),
-    5,
-    block,
-  );
+  const [allocationDigest, total, remaining, count, admittedAt, expired] =
+    await words(
+      config,
+      encodeFunctionData({
+        abi: ABI,
+        functionName: "monthlyReserves",
+        args: [periodNumber(period)],
+      }),
+      6,
+      block,
+    );
   return {
     root,
     allocationDigest,
@@ -279,6 +280,8 @@ export async function readEvmMonthlyReserve(
     remaining: BigInt(remaining),
     count: Number(BigInt(count)),
     admittedAt: BigInt(admittedAt),
+    /** Expiry ends the reserve's block on other commitments; its leaves can still commit. */
+    expired: BigInt(expired) === 1n,
   };
 }
 /** Current-code verification and every source read use the same finalized block. A missing legacy
