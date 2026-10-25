@@ -248,7 +248,12 @@ funded seals with an empty tree and zero remaining reserve. The trusted attester
 rejects duplicate sources before signing; the contract cannot inspect every
 leaf during constant-size admission.
 
-While pending gross remains, new manual awards wait. If a reserve can never settle (an attester fault), they wait until a reviewed upgrade, because no release path exists on EVM. Later signed monthly
+While pending gross remains, new manual awards wait. If part of a reserve can never settle (an attester fault),
+the owner calls `releaseMonthlyReserve(period, expectedRemaining, releasedGross, attestation)` with the
+identity authority's EIP-712 `MonthlyRelease` signature from `monthlyReleaseDigest`. The signature binds the
+exact remaining gross, so a leaf that settles first makes it stale. The released gross returns to free balance
+without a fee, `monthlyReleased(period)` records it, committed awards do not change, and the period stays
+committed. Time alone never releases a reserve. See `docs/escrow-unsettleable-month-release.md`. Later signed monthly
 admissions can use free funds within their own caps. Existing funded payments, bindings, deposits,
 and free withdrawals remain available. Permissionless leaf execution completes
 the reserve after owner opt-out or window expiry. It has no refund, expiry, or
