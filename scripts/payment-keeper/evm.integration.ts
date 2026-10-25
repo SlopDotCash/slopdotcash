@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { encodeFunctionData, type Hex, parseAbi } from "viem";
+import { encodeFunctionData, type Hex, keccak256, parseAbi } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   buildBindCalldata,
@@ -75,10 +75,21 @@ const { db, sqlite } = sqliteD1(
     .filter((file) => file.endsWith(".sql"))
     .sort(),
 );
+let redirectRegistry = false;
+let redirectDestinationReads = 0;
 const api = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
-  fetch(request) {
+  fetch(request): Response | Promise<Response> {
+    if (new URL(request.url).pathname === "/redirect-target") {
+      redirectDestinationReads++;
+      return new Response("Redirect must not be followed");
+    }
+    if (redirectRegistry)
+      return new Response(null, {
+        status: 302,
+        headers: { location: `${api.url.origin}/redirect-target` },
+      });
     // A loopback transport for the unchanged public Pages routers and real migrated SQLite.
     return onRequest({
       request: new Request(`https://slop.cash${new URL(request.url).pathname}`),
@@ -394,6 +405,17 @@ try {
           { store, evmSigner: signer, now, localChain: {} },
           execute,
         );
+  if (cloudflare) {
+    redirectRegistry = true;
+    await assert.rejects(() => tick(false), /keeper_run_failed/);
+    assert.equal(
+      redirectDestinationReads,
+      0,
+      "the registry redirect destination was not requested",
+    );
+    assert.equal(signatures, 0);
+    redirectRegistry = false;
+  }
   const dry = await tick(false);
   assert(
     dry.some((item) => item.state === "published-not-executed"),
@@ -461,6 +483,45 @@ try {
     "SELECT value FROM journal WHERE key LIKE 'monthly:%'",
   );
   assert(saved);
+  if (cloudflare) {
+    const savedAttempt = JSON.parse(saved.value) as {
+      rawTransaction: Hex;
+      transactionId: string;
+    };
+    const reservedGas = await queryOne<{ transaction_id: string }>(
+      "SELECT transaction_id FROM gas",
+    );
+    assert.equal(reservedGas?.transaction_id, savedAttempt.transactionId);
+    assert.equal(
+      keccak256(savedAttempt.rawTransaction),
+      savedAttempt.transactionId,
+    );
+    assert.equal(
+      (
+        await queryOne<{ value: string }>(
+          "SELECT value FROM journal WHERE key LIKE 'nonce:%'",
+        )
+      )?.value,
+      "1",
+      "same native commit advances the nonce once",
+    );
+    await tick(true, { ...config, signer: keeper.address.toLowerCase() });
+    assert.equal(
+      signatures,
+      signedBeforeAttempt + 1,
+      "address case does not create a fresh signer journal",
+    );
+    await assert.rejects(
+      () => tick(true, { ...config, apiOrigin: "http://127.0.0.1:1" }),
+      /keeper_run_failed/,
+    );
+    assert.equal(
+      signatures,
+      signedBeforeAttempt + 1,
+      "registry change cannot reset the same wallet journal",
+    );
+    await cloudflare.configure(config, "execute", now);
+  }
   assert.equal(
     (
       await queryOne<{ n: number }>(
@@ -702,7 +763,9 @@ try {
           ? [
               "execution disabled by default; public execution route absent",
               "async signing interruption atomically rolls back gas, nonce and signed bytes",
-              "concurrent triggers coalesce in one gas-wallet object",
+              "concurrent native cron handlers coalesce in one gas-wallet object",
+              "address case and registry changes cannot reset nonce or budget",
+              "registry redirects refused without following the destination",
             ]
           : []),
         "read-only dry run",

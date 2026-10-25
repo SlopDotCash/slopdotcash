@@ -87,15 +87,38 @@ export default {
         new Request("https://keeper.internal/inspect", request),
       );
     if (path === "/concurrent") {
-      const responses = await Promise.all([
-        stub.fetch(
-          new Request("https://keeper.internal/tick", { method: "POST" }),
-        ),
-        stub.fetch(
-          new Request("https://keeper.internal/tick", { method: "POST" }),
-        ),
+      const results: unknown[] = [];
+      const observedEnvironment: OperatorEnvironment = {
+        ...env,
+        KEEPER: {
+          idFromName: (name) => env.KEEPER.idFromName(name),
+          get(id) {
+            return {
+              async fetch(request) {
+                const response = await env.KEEPER.get(id).fetch(request);
+                results.push(await response.clone().json());
+                return response;
+              },
+            };
+          },
+        },
+      };
+      // The fixture deliberately selects one missing project. Cron reports that
+      // failure after the valid project runs; neither trigger may run it twice.
+      const settled = await Promise.allSettled([
+        keeperWorker.scheduled({}, observedEnvironment),
+        keeperWorker.scheduled({}, observedEnvironment),
       ]);
-      return Response.json(await Promise.all(responses.map((r) => r.json())));
+      for (const result of settled) {
+        if (
+          result.status === "rejected" &&
+          !String(result.reason).includes("unavailable work")
+        )
+          throw result.reason;
+      }
+      if (results.length !== 2)
+        throw new Error("Both native cron handlers must call the object");
+      return Response.json(results);
     }
     return stub.fetch(
       new Request("https://keeper.internal/tick", { method: "POST" }),
