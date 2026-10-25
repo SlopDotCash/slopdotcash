@@ -20,6 +20,7 @@ export const LOCK_MS = 14 * 60 * 1000;
 
 const COLUMNS: [keyof ConversionRow, string][] = [
   ["id", "id"],
+  ["kind", "kind"],
   ["runId", "run_id"],
   ["network", "network"],
   ["mode", "mode"],
@@ -127,7 +128,12 @@ export class D1ConversionStore implements ConversionStore {
       .prepare(
         `INSERT INTO fee_conversions (${SELECT}) VALUES (${COLUMNS.map(() => "?").join(", ")})`,
       )
-      .bind(...COLUMNS.map(([key]) => row[key] as D1Value))
+      .bind(
+        ...COLUMNS.map(
+          ([key]) =>
+            (key === "kind" ? (row.kind ?? "conversion") : row[key]) as D1Value,
+        ),
+      )
       .run();
   }
 
@@ -156,7 +162,7 @@ export class D1ConversionStore implements ConversionStore {
     const row = await this.db
       .prepare(
         `SELECT COALESCE(SUM(quote_value_micro), 0) AS total FROM fee_conversions
-          WHERE network = ? AND mode = 'live'
+          WHERE network = ? AND mode = 'live' AND kind = 'conversion'
             AND state IN ('submitted', 'unknown', 'finalized')
             AND created_at >= ?`,
       )
@@ -168,7 +174,7 @@ export class D1ConversionStore implements ConversionStore {
   async latest(network: Network, token: string) {
     const row = await this.db
       .prepare(
-        `SELECT ${SELECT} FROM fee_conversions WHERE network = ? AND token = ?
+        `SELECT ${SELECT} FROM fee_conversions WHERE network = ? AND token = ? AND kind = 'conversion'
           ORDER BY created_at DESC, rowid DESC LIMIT 1`,
       )
       .bind(network, token)
