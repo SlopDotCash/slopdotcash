@@ -58,6 +58,30 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         bytes32 sourceDigest;
     }
 
+    /// @notice V2 execution metadata for the same immutable economic allocation. Only sources not
+    /// funded at sourceSequence enter this tree. A concurrent manual commit makes admission stale.
+    struct MonthlyReservation {
+        bytes32 allocationDigest;
+        bytes32 allocationRoot;
+        uint128 wholeGross;
+        uint128 remainingGross;
+        uint32 count;
+        uint256 sourceSequence;
+    }
+
+    struct AllocationNode {
+        bytes32 hash;
+        uint128 total;
+    }
+
+    struct MonthlyReserve {
+        bytes32 allocationDigest;
+        uint128 total;
+        uint128 remaining;
+        uint32 count;
+        uint64 admittedAt;
+    }
+
     /// @dev The latest authority binding for an actor. activatesAt records its immediate activation.
     struct Binding {
         address destination;
@@ -77,6 +101,9 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         "DestinationBinding(uint64 actorId,address destination,uint64 expectedVersion,bytes32 claimDigest,uint64 expiresAt)"
     );
     bytes32 private constant MONTHLY_TYPEHASH = keccak256("MonthlyAllocation(uint32 period,bytes32 allocationRoot)");
+    bytes32 private constant MONTHLY_RESERVE_TYPEHASH = keccak256(
+        "MonthlyReserveV2(uint32 period,bytes32 allocationDigest,bytes32 allocationRoot,uint128 wholeGross,uint128 remainingGross,uint32 count,uint256 sourceSequence)"
+    );
     /// @dev Upper bound on s for a canonical secp256k1 signature (EIP-2).
     bytes32 private constant MAX_S = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
@@ -115,6 +142,11 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     mapping(uint32 => bytes32) public monthlyRoots;
     bool private entered;
 
+    // Append-only upgrade storage. Existing awards, signatures and monthly roots keep their meaning.
+    uint128 public pendingMonthlyGross;
+    uint256 public ordinarySourceSequence;
+    mapping(uint32 => MonthlyReserve) public monthlyReserves;
+
     error Unauthorized();
     error InvalidInput();
     error InsufficientFreeBalance();
@@ -128,6 +160,9 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     error MonthlyAlreadyCommitted();
     error MonthlyCapExceeded();
     error InvalidAttestation();
+    error MonthlySourceChanged();
+    error MonthlyLeavesPending();
+    error InvalidAllocationProof();
     error AwardPending();
     error CancelLimit();
     error InvalidWalletSignature();
@@ -151,6 +186,15 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     event UnusedWithdrawn(address indexed destination, uint128 gross, uint128 net, uint128 fee);
     event MonthlyCommitmentSet(uint128 cap, bool enabled);
     event MonthlyCommitted(uint32 indexed period, bytes32 allocationRoot, uint128 gross, uint256 awards);
+    event MonthlyReserved(
+        uint32 indexed period,
+        bytes32 allocationDigest,
+        bytes32 allocationRoot,
+        uint128 wholeGross,
+        uint128 remainingGross,
+        uint32 count,
+        uint256 sourceSequence
+    );
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert Unauthorized();
@@ -262,6 +306,23 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         return keccak256(
             abi.encodePacked(
                 "\x19\x01", domainSeparator(), keccak256(abi.encode(MONTHLY_TYPEHASH, period, allocationRoot_))
+            )
+        );
+    }
+
+    function monthlyReserveVersion() external pure returns (uint8) {
+        return 2;
+    }
+
+    /// @notice A separate type in the existing domain; legacy monthly and binding signatures stay valid.
+    function monthlyReserveDigest(uint32 period, MonthlyReservation calldata reservation)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01", domainSeparator(), keccak256(abi.encode(MONTHLY_RESERVE_TYPEHASH, period, reservation))
             )
         );
     }
@@ -390,6 +451,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// @param sourceDigest Unique per award origin (project/cycle/actor/allocation), not a whole-cycle digest.
     function commitAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest) external onlyOwner {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
+        if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
         commit(id, actorId, gross, sourceDigest, payoutFee(gross));
     }
 
@@ -421,6 +483,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// awards only; matching existing awards retain their payment state and are never reserved twice.
     function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation) external {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
+        if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
@@ -458,19 +521,111 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         emit MonthlyCommitted(period, root, uint128(total), entries.length);
     }
 
+    /// @notice Reserve the complete unfunded remainder in one bounded call. Leaf creation never needs
+    /// a wallet, fresh authority signature, an open admission window, or the owner's later opt-in.
+    function reserveMonthly(uint32 period, MonthlyReservation calldata reservation, bytes calldata attestation)
+        external
+    {
+        if (purpose != Purpose.Ordinary) revert WrongPurpose();
+        if (!monthlyEnabled) revert MonthlyDisabled();
+        (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
+        if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
+        if (monthlyRoots[period] != bytes32(0)) revert MonthlyAlreadyCommitted();
+        if (reservation.sourceSequence != ordinarySourceSequence) revert MonthlySourceChanged();
+        if (
+            reservation.allocationDigest == bytes32(0) || reservation.allocationRoot == bytes32(0)
+                || reservation.wholeGross == 0 || reservation.remainingGross > reservation.wholeGross
+                || (reservation.count == 0) != (reservation.remainingGross == 0)
+        ) revert InvalidInput();
+        if (reservation.wholeGross > monthlyCap) revert MonthlyCapExceeded();
+        if (!signedBy(monthlyReserveDigest(period, reservation), factory.identityAuthority(), attestation)) {
+            revert InvalidAttestation();
+        }
+        if (reservation.remainingGross > freeBalance) revert InsufficientFreeBalance();
+        freeBalance -= reservation.remainingGross;
+        pendingMonthlyGross += reservation.remainingGross;
+        monthlyRoots[period] = reservation.allocationRoot;
+        monthlyReserves[period] = MonthlyReserve(
+            reservation.allocationDigest,
+            reservation.remainingGross,
+            reservation.remainingGross,
+            reservation.count,
+            uint64(block.timestamp)
+        );
+        emit MonthlyReserved(
+            period,
+            reservation.allocationDigest,
+            reservation.allocationRoot,
+            reservation.wholeGross,
+            reservation.remainingGross,
+            reservation.count,
+            reservation.sourceSequence
+        );
+    }
+
+    /// @notice Materialize one authenticated award from its existing monthly reserve. Global source
+    /// consumption makes duplicate/replayed leaves fail before any accounting change.
+    function commitMonthlyLeaf(
+        uint32 period,
+        MonthlyAward calldata entry,
+        uint32 index,
+        AllocationNode[] calldata proof
+    ) external {
+        MonthlyReserve storage month = monthlyReserves[period];
+        if (month.allocationDigest == bytes32(0) || index >= month.count) revert InvalidAllocationProof();
+        AllocationNode memory node = AllocationNode(
+            keccak256(abi.encodePacked(uint8(0), entry.actorId, entry.gross, entry.sourceDigest)), entry.gross
+        );
+        uint256 width = month.count;
+        uint256 cursor;
+        while (width > 1) {
+            if (index % 2 == 1 || index + 1 < width) {
+                if (cursor == proof.length) revert InvalidAllocationProof();
+                AllocationNode calldata sibling = proof[cursor++];
+                node = index % 2 == 1 ? sumNode(sibling, node) : sumNode(node, sibling);
+            }
+            index /= 2;
+            width = (width + 1) / 2;
+        }
+        if (
+            cursor != proof.length || node.hash != monthlyRoots[period] || node.total != month.total
+                || entry.gross > month.remaining
+        ) revert InvalidAllocationProof();
+        month.remaining -= entry.gross;
+        pendingMonthlyGross -= entry.gross;
+        // Reclassify an existing reserve. Do not charge freeBalance again.
+        recordAward(awardId(entry.sourceDigest), entry.actorId, entry.gross, entry.sourceDigest, payoutFee(entry.gross));
+    }
+
+    function sumNode(AllocationNode memory left, AllocationNode memory right)
+        private
+        pure
+        returns (AllocationNode memory)
+    {
+        return AllocationNode(
+            keccak256(abi.encodePacked(uint8(1), left.hash, left.total, right.hash, right.total)),
+            left.total + right.total
+        );
+    }
+
     function commit(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest, uint128 fee) private {
+        recordAward(id, actorId, gross, sourceDigest, fee);
+        if (gross > freeBalance) revert InsufficientFreeBalance();
+        freeBalance -= gross;
+    }
+
+    function recordAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest, uint128 fee) private {
         if (actorId == 0 || gross == 0 || sourceDigest == bytes32(0) || id != awardId(sourceDigest)) {
             revert InvalidInput();
         }
         if (awards[id].actorId != 0 || consumedSources[sourceDigest]) revert DuplicateAward();
-        if (gross > freeBalance) revert InsufficientFreeBalance();
-        freeBalance -= gross;
         reservedPrincipal += gross - fee;
         reservedFees += fee;
         uint64 committedAt = uint64(block.timestamp);
         awards[id] = Award(actorId, gross, fee, sourceDigest, committedAt, false);
         lastCommittedAt[actorId] = committedAt;
         consumedSources[sourceDigest] = true;
+        if (purpose == Purpose.Ordinary) ++ordinarySourceSequence;
         emit AwardCommitted(id, actorId, gross, fee, sourceDigest);
     }
 
