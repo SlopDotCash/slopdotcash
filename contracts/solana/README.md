@@ -254,7 +254,15 @@ period is open at a time.
    an admitted award's source by hand and strand its reserve. Anyone, including
    the owner, can clear the gate by committing the remaining awards. Time and
    owner opt-out never remove the gate or release funds. Later monthly admissions,
-   funded payments and withdrawals of free funds remain available.
+   funded payments and withdrawals of free funds remain available. If part of a
+   month can never settle (an attester fault), the owner calls
+   `release_monthly_reserve(period, expected_unsettled, released)` after an
+   Ed25519 check of the project's identity authority signature over
+   `"slop-monthly-release-v1"`, the program, project, period, root, total,
+   unsettled and released gross, and network. The signature binds the exact
+   unsettled gross (`total - committed`). The released gross returns to free
+   balance and is added to `committed` and `released`; committed awards do not
+   change. See `docs/escrow-unsettleable-month-release.md`.
 4. An award that can never commit is returned to free balance by anyone with
    `release_monthly_award(period, source_digest, actor_id, gross, index, count,
    proof)`, passing the source's `origin`, its `monthly-source` marker and the

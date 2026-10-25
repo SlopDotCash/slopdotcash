@@ -1145,6 +1145,60 @@
       ]
     },
     {
+      "name": "release_monthly_reserve",
+      "discriminator": [47, 118, 32, 195, 130, 32, 140, 104],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["month"]
+        },
+        {
+          "name": "month",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 111, 110, 116, 104]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "period",
+          "type": "u32"
+        },
+        {
+          "name": "expected_unsettled",
+          "type": "u64"
+        },
+        {
+          "name": "released",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "set_monthly_commitment",
       "discriminator": [204, 64, 188, 96, 90, 158, 14, 235],
       "accounts": [
@@ -1384,6 +1438,10 @@
       "discriminator": [21, 90, 254, 60, 119, 79, 65, 193]
     },
     {
+      "name": "MonthlyReserveReleased",
+      "discriminator": [12, 20, 98, 159, 120, 252, 137, 169]
+    },
+    {
       "name": "ProjectMigrated",
       "discriminator": [120, 121, 121, 187, 64, 18, 169, 152]
     },
@@ -1576,6 +1634,11 @@
       "code": 6035,
       "name": "InvalidFreeze",
       "msg": "The allocation freeze time must be inside the window and not in the future"
+    },
+    {
+      "code": 6036,
+      "name": "MonthlyReserveChanged",
+      "msg": "The month's unsettled gross changed after the release was signed"
     }
   ],
   "types": [
@@ -1905,7 +1968,8 @@
           {
             "name": "released",
             "docs": [
-              "The part of `committed` that release_monthly_award returned to free balance. This",
+              "The part of `committed` that release_monthly_award or release_monthly_reserve returned",
+              "to free balance. This",
               "field also makes the account larger than the 92-byte month of the 316-byte build (no",
               "settled markers or outstanding count), so such a month fails closed here."
             ],
@@ -1998,6 +2062,30 @@
           },
           {
             "name": "total",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MonthlyReserveReleased",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "type": "u32"
+          },
+          {
+            "name": "unsettled",
+            "type": "u64"
+          },
+          {
+            "name": "released",
             "type": "u64"
           }
         ]
