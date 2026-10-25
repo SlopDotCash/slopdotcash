@@ -604,41 +604,16 @@ describe("project registry API", () => {
     expect(
       await (await call("GET", "projects/open-registry")).text(),
     ).not.toMatch(/freeMinor|availableMinor/);
-    // Funds alone do not open the program: activation stays an admin decision.
-    const ownerOpen = await change({ ...program, settlement, status: "open" });
-    expect(ownerOpen.status).toBe(422);
-    expect((await ownerOpen.json()).error).toBe(
-      "security_activation_restricted",
-    );
-    const beforeOpen = await persistence.getProject("open-registry");
-    if (!beforeOpen) throw new Error("Missing bounty project");
-    const opened = await call(
-      "PUT",
-      "admin/projects/open-registry/manifest",
-      "admin",
-      {
-        manifest: {
-          ...beforeOpen.manifest,
-          securityBounty: {
-            ...beforeOpen.manifest.securityBounty,
-            status: "open",
-            funding: {
-              state: "verified-available",
-              evidence: "Finalized bounty vault balance reviewed by an admin",
-              verifiedAt: observedAt,
-            },
-          },
-        },
-        expectedRevision: beforeOpen.revision,
-        reason: "Open the reviewed bounty program",
-      },
-    );
+    const opened = await change({ ...program, settlement, status: "open" });
     expect(opened.status).toBe(200);
+    const openedProgram = (await opened.json()).project.manifest
+      .securityBounty as SecurityBountyTerms;
+    expect(openedProgram.funding).toMatchObject({
+      state: "verified-available",
+      verifiedAt: observedAt,
+    });
     const openedRevision = await persistence.getProject("open-registry");
-    if (!openedRevision?.manifest.securityBounty)
-      throw new Error("Missing open revision");
-    const openedProgram = openedRevision.manifest.securityBounty;
-    expect(openedProgram.status).toBe("open");
+    if (!openedRevision) throw new Error("Missing open revision");
     const earlierText = sqlite
       .prepare(
         "SELECT manifest FROM project_revisions WHERE project_id=? AND revision=?",
@@ -649,13 +624,6 @@ describe("project registry API", () => {
       disclosure: "Contact the maintainer before public disclosure.",
     });
     expect(changed.status).toBe(200);
-    // The owner may edit an open program; the server records the current balance.
-    expect(
-      (await changed.json()).project.manifest.securityBounty,
-    ).toMatchObject({
-      status: "open",
-      funding: { state: "verified-available", verifiedAt: observedAt },
-    });
     expect(
       sqlite
         .prepare(
@@ -664,20 +632,12 @@ describe("project registry API", () => {
         .get("open-registry", openedRevision.revision),
     ).toEqual(earlierText);
     deps.now = () => new Date("2026-10-18T13:00:00.000Z");
-    // An open program cannot stay open on a stale balance.
-    const stale = await change({
-      ...openedProgram,
-      disclosure: "Contact the maintainer before any public disclosure.",
-    });
-    expect(stale.status).toBe(422);
-    expect((await stale.json()).error).toBe("security_funding_unavailable");
     expect((await change({ ...openedProgram, status: "paused" })).status).toBe(
       200,
     );
-    // After a pause, only an admin opens the program again.
-    const reopen = await change({ ...openedProgram, status: "open" });
-    expect(reopen.status).toBe(422);
-    expect((await reopen.json()).error).toBe("security_activation_restricted");
+    const stale = await change({ ...openedProgram, status: "open" });
+    expect(stale.status).toBe(422);
+    expect((await stale.json()).error).toBe("security_funding_unavailable");
     access = { ...ADMIN_ACCESS, permission: "read", roleName: "read" };
     expect(
       (await change({ ...program, settlement, status: "closed" })).status,

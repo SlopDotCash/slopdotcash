@@ -8,15 +8,14 @@ are not.
 
 A project opts in with the optional `securityBounty` section of its D1
 manifest (`src/lib/security-bounty.mjs`). New terms start paused with pledged
-funding and no unverified vault. Owners edit terms, pause or close the
+funding and no unverified vault. Owners edit terms, open, pause or close the
 program in project settings. Each change uses the existing project revision
 route and checks current GitHub authority through Slopbot. Owners cannot
 change the approvers or the sponsor; a new program names only the owner.
-Only a Slop admin opens a program, through the reviewed manifest path
-(PRD section 9, activation per program). An open program stays open only
-with available funds from a current finalized snapshot of the separate,
-reviewed bounty vault. The server sets funding evidence on owner edits; an
-owner cannot supply it.
+An owner can open a funded program without admin approval (owner decision,
+25 Oct 2026). Opening requires available funds from a current finalized
+snapshot of the separate, reviewed bounty vault. The server sets funding
+evidence; an owner cannot supply it.
 New vault registration is a separate verification boundary. This editor does
 not deploy a vault or accept client-supplied contract trust metadata.
 A program cannot be removed. Existing cases retain their receipt terms and
@@ -26,7 +25,7 @@ The Manage page also creates and funds a separate EVM bounty vault through
 the owner's confirmed wallet. Registration verifies finalized creation
 against the reviewed factory, project, owner, USDC asset and bounty purpose.
 It never treats registration or a sent deposit as available funds. The private
-payment worker reads the finalized balance before an admin opens the
+payment worker reads the finalized balance before the owner can open the
 program. Its balance view requires current GitHub ownership, refuses banned
 accounts, and uses no public payment totals or receipt route. Owner bounty
 vault setup is EVM only; another network family is refused.
