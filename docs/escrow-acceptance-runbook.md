@@ -118,6 +118,10 @@ transaction before it broadcasts it, so a rerun never signs a second
 transaction for the same step. Exit code 1 means the run failed; the
 evidence file lists the error.
 
+Resume with the exact source commit recorded in the evidence. A different
+source must use a new evidence directory. Keep the prior directory and its
+results. This check runs before a transaction is signed or sent.
+
 Attach `evidence.json` to the issue. Do not commit it: `evidence/` is ignored.
 The directory also holds `projection.sqlite`, the signer journals, and
 `registry.sqlite`. The journals contain signed transactions but no key.
@@ -186,6 +190,15 @@ keeps the monthly scenario pending. It does not prove automatic execution.
 Previously saved evidence with that fallback is reclassified on resume. After
 an approved executor repair, use a new run to prove automatic submission; the
 previous period has already committed. Do not increase limits to obtain a pass.
+
+A scenario passes only after its recorded transactions are finalized. A run
+that waits for finality retains the completed execution and checks the same
+receipts on resume. It does not repeat the financial steps.
+
+Use a new run after repairing a failed frozen-recipient scenario. The failed
+run can already have thawed the fee account and claimed earlier payments.
+Its saved failure must not become evidence that a later payment occurred
+while the account was frozen.
 
 The evidence file has a `scenarios` object: per scenario its status
 (`passed`, `pending` or `failed`), the reason, its vaults, every

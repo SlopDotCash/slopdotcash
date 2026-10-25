@@ -811,7 +811,19 @@ export async function runSolanaExtended(
     const submissions = (entry.checks.submissions as unknown[]) ?? [];
     entry.checks.submissions = submissions;
     if (!entry.checks.automatic) {
-      const before = await state(p.project);
+      if (entry.checks.monthlyReservedBefore === undefined) {
+        if (await monthState())
+          throw new Error(
+            "This monthly allocation started without a saved reserve baseline. Preserve this evidence and use a new run to prove the complete allocation.",
+          );
+        entry.checks.monthlyReservedBefore = text(
+          (await state(p.project)).reserved,
+        );
+        await persist();
+      }
+      const reservedBefore = BigInt(
+        entry.checks.monthlyReservedBefore as string,
+      );
       await ready(async () => {
         const result = await submit();
         submissions.push(result);
@@ -854,7 +866,7 @@ export async function runSolanaExtended(
       expectEqual("month released", m.released, items[0].gross);
       expectEqual(
         "reserved by monthly",
-        after.reserved - before.reserved,
+        after.reserved - reservedBefore,
         items[1].gross + items[2].gross,
       );
       expectEqual("outstanding", after.monthlyOutstanding, 0);
@@ -864,7 +876,7 @@ export async function runSolanaExtended(
         frozenAt,
         allocationRoot: authorization.plan.allocationRoot,
         state: printable(m),
-        reservedBefore: text(before.reserved),
+        reservedBefore: text(reservedBefore),
         reservedAfter: text(after.reserved),
         transactions: submissions,
       };
@@ -1565,16 +1577,80 @@ export async function runSolanaExtended(
     }
   }
 
+  const finalize = async (entry: ScenarioEvidence) => {
+    const signatures = new Map<string, "success" | "reverted">();
+    const include = (
+      signature: string,
+      expected: "success" | "reverted" = "success",
+    ) => {
+      const previous = signatures.get(signature);
+      if (previous !== undefined && previous !== expected)
+        throw new Error(`Conflicting outcomes for ${signature}`);
+      signatures.set(signature, expected);
+    };
+    for (const step of Object.values(entry.steps)) {
+      if (!step.status)
+        throw new Waiting(`${step.transactionId} has no recorded outcome`);
+      include(step.transactionId, step.status);
+    }
+    // The production monthly executor and dispatcher record their signatures
+    // outside the direct-send steps. Their receipts need the same finality gate.
+    for (const submission of (entry.checks.submissions ?? []) as {
+      transactionId?: string | null;
+      transactionIds?: string[];
+    }[]) {
+      if (submission.transactionId) include(submission.transactionId);
+      for (const signature of submission.transactionIds ?? [])
+        include(signature);
+    }
+    const phase1 = entry.checks.phase1 as
+      | { paid: { transaction: string }[] }
+      | undefined;
+    for (const payment of phase1?.paid ?? []) include(payment.transaction);
+    const phase2 = entry.checks.phase2 as
+      | { paidTransaction: string }
+      | undefined;
+    if (phase2) include(phase2.paidTransaction);
+    const transactions = [];
+    for (const [signature, expected] of signatures) {
+      const receipt = await connection.getTransaction(signature, {
+        commitment: "finalized",
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!receipt?.meta)
+        throw new Waiting(`${signature} waits for finalized receipt metadata`);
+      if (receipt.transaction.signatures[0] !== signature)
+        throw new Error(`Finalized receipt identity differs for ${signature}`);
+      const status = receipt.meta.err === null ? "success" : "reverted";
+      if (status !== expected)
+        throw new Error(
+          `Finalized transaction ${signature} ${status}, expected ${expected}`,
+        );
+      transactions.push({
+        transactionId: signature,
+        slot: receipt.slot,
+        status,
+      });
+    }
+    entry.checks.finality = { commitment: "finalized", transactions };
+    await persist();
+  };
+
   try {
-    await runScenarios(run, persist, [
-      [["bounty"], bounty],
-      [["walletless-lifecycle"], lifecycle],
-      [["monthly"], monthly],
+    await runScenarios(
+      run,
+      persist,
       [
-        ["interrupted-send", "failed-recipient", "frozen-fee-destination"],
-        dispatch,
+        [["bounty"], bounty],
+        [["walletless-lifecycle"], lifecycle],
+        [["monthly"], monthly],
+        [
+          ["interrupted-send", "failed-recipient", "frozen-fee-destination"],
+          dispatch,
+        ],
       ],
-    ]);
+      finalize,
+    );
     run.status = "passed";
   } catch (error) {
     if (error instanceof Waiting) {

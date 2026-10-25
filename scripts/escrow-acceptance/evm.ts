@@ -128,6 +128,7 @@ export const ZERO = "0x0000000000000000000000000000000000000000";
 export interface Receipt {
   status: string;
   blockNumber: string;
+  blockHash: string;
   transactionHash: string;
   logs: { address: string; topics: Hex[]; data: Hex }[];
 }
@@ -183,6 +184,33 @@ export class EvmChain {
     return (await this.rpc("eth_getTransactionReceipt", [
       hash,
     ])) as Receipt | null;
+  }
+  /** A mined transaction is not acceptance until its canonical block is final. */
+  async finalizeSteps(steps: Record<string, StepRecord>) {
+    const finalized = await this.finalizedNumber();
+    const transactions: Record<string, string> = {};
+    for (const [key, step] of Object.entries(steps)) {
+      const receipt = await this.receipt(step.transactionId);
+      if (!receipt || BigInt(receipt.blockNumber) > finalized)
+        throw new Waiting(`${key}: ${step.transactionId} is not finalized`);
+      const block = (await this.rpc("eth_getBlockByNumber", [
+        receipt.blockNumber,
+        false,
+      ])) as { hash: string } | null;
+      if (
+        !block ||
+        block.hash !== receipt.blockHash ||
+        receipt.transactionHash.toLowerCase() !==
+          step.transactionId.toLowerCase() ||
+        BigInt(receipt.blockNumber).toString() !== step.block ||
+        (receipt.status === "0x1" ? "success" : "reverted") !== step.status
+      )
+        throw new Error(
+          `${key}: finalized receipt differs from the saved evidence`,
+        );
+      transactions[step.transactionId] = receipt.blockHash;
+    }
+    return { block: finalized.toString(), transactions };
   }
   /** Simulates a call that must revert and returns the node's reason. */
   async mustRevert(from: string, to: string, data: string): Promise<string> {

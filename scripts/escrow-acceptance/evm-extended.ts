@@ -1709,15 +1709,24 @@ export async function runEvmExtended(
     await persist();
   }
   try {
-    await runScenarios(run, persist, [
-      [["bounty"], bounty],
-      [["walletless-lifecycle"], lifecycle],
-      [["monthly"], monthly],
+    await runScenarios(
+      run,
+      persist,
       [
-        ["interrupted-send", "failed-recipient", "frozen-fee-destination"],
-        dispatch,
+        [["bounty"], bounty],
+        [["walletless-lifecycle"], lifecycle],
+        [["monthly"], monthly],
+        [
+          ["interrupted-send", "failed-recipient", "frozen-fee-destination"],
+          dispatch,
+        ],
       ],
-    ]);
+      async (entry) => {
+        entry.checks.finality = await ready(() =>
+          chain.finalizeSteps(entry.steps),
+        );
+      },
+    );
     run.status = "passed";
   } catch (error) {
     if (error instanceof Waiting) {
