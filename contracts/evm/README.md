@@ -251,15 +251,32 @@ leaf during constant-size admission.
 While pending gross remains, new manual awards, legacy monthly commitments,
 and another V2 admission wait. Existing funded payments, bindings, deposits,
 and free withdrawals remain available. Permissionless leaf execution completes
-the reserve after owner opt-out or window expiry. It has no refund, expiry, or
-human release step. The executor bounds examined leaves, including already
-committed leaves, and retains a finalized cursor for restart.
+the reserve after owner opt-out or window expiry. The executor bounds examined
+leaves, including already committed leaves, and retains a finalized cursor for
+restart.
+
+A reserve that no leaf can prove (an attester fault or a stolen attester key)
+would block those calls for ever. As Solana `expire_month` does, anyone may
+call `expireMonthlyReserve(period)` once, from 30 days after the period's
+window closes. It adds the unproven remainder to `expiredMonthlyGross` and
+emits `MonthlyReserveExpired(period, unsettled)`. Commitments wait only while
+`pendingMonthlyGross` exceeds `expiredMonthlyGross`. The remainder stays
+reserved, and its leaves can still commit later. There is no refund: time
+alone never releases a funded reserve to the project (PRD, funded-award
+expiry). A remainder that can never be proven stays reserved for good, as on
+Solana. After expiry, an owner who commits an unsettled leaf's source by hand
+leaves that leaf reserved for good; the owner pays twice and gains nothing. A
+repeat call reverts with `MonthExpired` and changes nothing. An early
+call reverts with `MonthlyWindowClosed`, so nobody, the owner included, can end
+a live reserve.
 
 `monthly-reserve.integration.ts` exercises the real migrated database, frozen
 snapshot, signer, public authorization, and local chain executor with 100 awards.
-It also accepts `SLOP_MONTHLY_LEGACY_ROOT` for an archived, compiled pre-upgrade
-contract tree; this proves stored awards, prior fees, and wallet signatures
-survive an actual reviewed implementation upgrade.
+Its `SLOP_MONTHLY_LEGACY_ROOT` option expects a pre-upgrade tree that already
+has `createWithMonthlyCommitment`. The deployed mainnet source (`bce5b0df`)
+does not, so that option fails at setup against it. The upgrade proof for the
+deployed vaults is the Base fork rehearsal in `../DEPLOY-MAINNET.md` section
+4.6.
 
 The authority's role therefore grows from wallet binding to monthly
 attestation. It still cannot withdraw, redirect or pay funds, and it cannot
@@ -271,8 +288,12 @@ month until the registrar's rotation executes; the owner limits that exposure
 with the cap and the opt-out. `test/MonthlyCommitment.t.sol` tests the cap, one
 commitment per period, the opt-out, the window, the signature binding over vault,
 period and root, replay, the wrong attester, the rotation, purpose isolation and
-permissionless creation. The invariant handler in `test/OpusInvariant.t.sol`
-commits signed monthly allocations from random callers.
+permissionless creation. `test/MonthlyReserveV2.t.sol` tests V2 trees of
+odd and even widths, index aliasing, forged sibling totals, leaf replay, a
+stale source sequence, count-zero sealing, the cap on the whole gross and
+reserve expiry. The invariant handler in `test/OpusInvariant.t.sol` commits
+signed legacy allocations, V2 reserves and leaves, and expires reserves, from
+random callers, and checks both identities below with pending gross.
 
 The first version uses individual commit and pay calls. Dispatchers isolate
 failed recipients by submitting separate transactions. No account can sweep
@@ -338,6 +359,8 @@ The adapter's `readVaultTotals` reads `totals()`, `token()` and `decimals()` at
 one pinned finalized block and checks the first identity. The old `totals()`
 ABI stays unchanged. A V2 reader also reads `pendingMonthlyGross()` at that block
 when it is nonzero and returns the combined award and pending-month reserve.
+`pendingMonthlyGross` includes expired remainders, so expiry changes neither
+identity.
 
 The vault has no service charge. Slopbot is free (PRD section 5), so no call
 moves free funds to the fee recipient except the payout and withdrawal fees
@@ -423,7 +446,7 @@ and `forge test` on every escrow change.
 The integration deploys `integration/TestDollar.sol`, a six-decimal test
 ERC-20, and `test/WideToken.sol` at 18 decimals with amounts beyond `uint64`. The test token is not Circle USDC; Circle integration, wallet signatures, OAuth, indexer finality,
 and live broadcast require separate public-chain acceptance. The adapter integration
-script starts an isolated Anvil on port 18546, executes actual deployment,
+script starts an isolated Anvil on port 18546 (`SLOP_EVM_ADAPTER_TEST_PORT`), executes actual deployment,
 permissionless vault creation, award, monthly commitment and payment
 transactions, and checks canonical finalized receipts plus rejection
 of wrong chains, vaults, obligations, event indices, and nonfinalized receipts.
