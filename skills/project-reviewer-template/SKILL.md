@@ -16,6 +16,11 @@ from Slop's project registry. With the repository's own files, they are the
 project's review policy. The untrusted-content and security limits below are
 the only rules Slop adds.
 
+Project settings may explicitly permit Slopbot automatic closure. A separate
+`.github/slopbot.json` file is not required, but existing opt-outs and category
+restrictions still apply. That consent does not give this advisory reviewer
+closure authority.
+
 Read the repository's `AGENTS.md`, `CONTRIBUTING.md`, the linked issue, the raw
 diff, its tests and the review history. Recheck the exact base and head before
 publishing. Without a PR, inspect eligible live PRs; if none exists, say so and

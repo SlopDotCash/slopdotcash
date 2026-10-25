@@ -63,7 +63,7 @@ public payment totals or receipt route.
 
 | Route | Access | Purpose |
 |---|---|---|
-| `GET /api/v1/security-programs/:id/intake` | public, edge cached 30 s | GitHub private vulnerability reporting readiness: `ready`, `disabled`, `forbidden` or `unavailable`. Only `ready` returns the GitHub handoff URL. `automatic` is `ready`, `app-not-installed`, `unavailable` or `off` |
+| `GET /api/v1/security-programs/:id/intake` | public, edge cached 30 s | Stored GitHub private reporting observation: `ready`, `disabled` or `unavailable`, with `checkedAt` and `stale`. `automatic` is `ready`, `app-not-installed`, `unavailable` or `off`; `automaticConfigured` reports configuration only. No provider request runs on this public read. |
 | `GET /api/v1/security-cases` | session | Cases the caller can see now, shaped per role |
 | `POST /api/v1/security-cases` | session | `claim`: a reporter links a GitHub advisory ID. `record`: a technical approver records a verified advisory with GitHub's receipt time. `import`: a maintainer imports direct GitHub reports |
 | `GET /api/v1/security-cases/:id` | session and role | One case; logs the read |
@@ -76,6 +76,36 @@ public payment totals or receipt route.
 A caller without a role gets the same 404 as for a missing case. Writes need
 this site's `Origin` and a JSON content type. Responses are `private,
 no-store` and `noindex`. Errors never log case data.
+
+## Cached reporting readiness
+
+PRD sections 8 and 9 require private reporting and cached public reads. The
+existing identity hourly schedule calls the private `ReportingReadinessRefresher`
+entrypoint on Slopbot (the repository-access Worker in staging). It reads current
+D1 registry repositories, including paused and unfunded projects, using the
+existing GitHub App. The release publishes that entrypoint before its caller.
+No new service, token, permission or schedule is required.
+
+`repository_reporting_status` binds each observation to its project revision,
+canonical repository name and immutable GitHub database/node IDs. Primary IDs
+must match the registry; a secondary repository's first verified IDs cannot be
+replaced within the revision. A changed revision starts unknown. A failed refresh
+keeps the last verified enabled/disabled value and time, and marks it stale.
+An observation also becomes stale after the hourly refresh interval. No case
+content, token or GitHub error body enters this table.
+
+The public page shows those observations. Unknown and stale are not disabled.
+When automatic intake is configured, the researcher can keep preparing a draft;
+creating it and sending it each recheck GitHub with the existing installation App.
+A stale cache cannot block a successful fresh check or authorize a failed one.
+Failed checks keep the authorized draft. Receipt reconciliation and send replay
+retain their existing rules. This change does not enable intake mode.
+
+`node backend/security/reporting-readiness.workflow.mjs` exercises the named
+service, actual App JWT/token adapter, native D1 and Pages routes against synthetic
+GitHub responses. The existing private-submission workflow tests verify fresh
+send refusal, recovery and replay. These local results do not prove live App
+permissions, scheduled execution or reporter delivery.
 
 ## Automatic private intake
 

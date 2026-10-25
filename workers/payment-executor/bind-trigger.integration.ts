@@ -24,6 +24,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseTransaction } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import {
@@ -196,7 +197,10 @@ const bindEntries = () =>
     .all()
     .map((row) => ({
       key: row.key,
-      ...(JSON.parse(row.value) as { transactionId: string }),
+      ...(JSON.parse(row.value) as {
+        transactionId: string;
+        rawTransaction: `0x${string}`;
+      }),
     }));
 
 async function rpc(method: string, params: unknown[]) {
@@ -645,10 +649,18 @@ try {
   // journals one signed binding before its first broadcast; each later run
   // finds that entry and broadcasts the same bytes again. It never signs a
   // second binding while the first is unreconciled.
+  // Keep this original near the existing 10 gwei ceiling. Its minimum
+  // cancellation fee would exceed that ceiling, so the later guard cases hold.
+  await rpc("anvil_setNextBlockBaseFeePerGas", ["0x10c388d00"]);
+  await mine(1);
   dropBroadcast = true;
   await bindingHeld();
   const held = bindEntries();
   assert.equal(held.length, 1);
+  assert(
+    (parseTransaction(held[0].rawTransaction).maxFeePerGas ?? 0n) * 9n >
+      80_000_000_000n,
+  );
   assert.equal(
     await rpc("eth_getTransactionByHash", [held[0].transactionId]),
     null,
@@ -666,7 +678,7 @@ try {
   const renewed = String(Number(consent.message.expiresAt) + 3600);
   storeRow(renewed, await signBinding(typedData("0", "123", renewed)));
 
-  // A signed transaction must also be held if its original consent expires.
+  // Expired consent stays held when cancellation cannot fit the existing fee cap.
   // Move the actual local chain and the attester clock together, then restore
   // the chain snapshot so the remaining independent cases use the original time.
   const expirySnapshot = await rpc("evm_snapshot", []);
@@ -685,6 +697,10 @@ try {
     assert.equal(bindingBroadcasts, beforeExpiryBroadcasts);
     assert.equal(await nonce(attester), 0);
     assert.deepEqual(bindEntries(), held);
+    assert.equal(
+      await journal.get(`binding-cancel:${held[0].transactionId}`),
+      undefined,
+    );
   } finally {
     Date.now = originalNow;
     assert.equal(await rpc("evm_revert", [expirySnapshot]), true);
@@ -747,8 +763,8 @@ try {
   // Failure: a signed binding whose contributor stops being a candidate.
   // Carol's binding is signed and its broadcast is lost; she then changes
   // wallets, so the old claim is no longer current. The old raw/hash/nonce
-  // stays held. This prevents obsolete rebroadcast but does not resolve the
-  // shared nonce gap; no replacement or cancellation is authorized here.
+  // stays held when the cancellation fee exceeds the existing cap. The
+  // delayed original must still reconcile without obsolete rebroadcast.
   const carolWallet = privateKeyToAccount(`0x${"0".repeat(63)}2`);
   const carolAward = evmAwardId(8453n, vault, `0x${"3".padStart(64, "0")}`);
   await send(
@@ -819,12 +835,18 @@ try {
     ).status,
     200,
   );
+  await rpc("anvil_setNextBlockBaseFeePerGas", ["0x10c388d00"]);
+  await mine(1);
   dropBroadcast = true;
   await bindingHeld();
   const carolHeld = bindEntries().filter(
     (entry) => entry.transactionId !== held[0].transactionId,
   );
   assert.equal(carolHeld.length, 1);
+  assert(
+    (parseTransaction(carolHeld[0].rawTransaction).maxFeePerGas ?? 0n) * 9n >
+      80_000_000_000n,
+  );
   assert.equal((await pendingStoredBindings(journal)).length, 1);
   // Carol registers another wallet and has not confirmed it yet.
   assert.equal(
@@ -851,6 +873,10 @@ try {
     /Destination binding incomplete/,
   );
   assert.equal(bindingBroadcasts, beforeObsoleteBroadcasts);
+  assert.equal(
+    await journal.get(`binding-cancel:${carolHeld[0].transactionId}`),
+    undefined,
+  );
   assert.equal(
     await rpc("eth_getTransactionByHash", [carolHeld[0].transactionId]),
     null,
@@ -1028,7 +1054,7 @@ try {
       null,
     );
   console.log(
-    `base-mainnet bind trigger: bound ${held[0].transactionId} after two lost broadcasts; paid ${recipient} 9.8 USDC; fee 0.2 USDC claimed; expired and superseded consent stayed held; the delayed original receipt reconciled without another broadcast`,
+    `base-mainnet bind trigger: bound ${held[0].transactionId} after two lost broadcasts; paid ${recipient} 9.8 USDC; fee 0.2 USDC claimed; expired and superseded consent stayed held at the existing cancellation fee cap; the delayed original receipt reconciled without another broadcast`,
   );
 } finally {
   anvil.kill();

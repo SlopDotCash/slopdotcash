@@ -162,7 +162,7 @@ export class GitHubClient {
     return response.data.data;
   }
 
-  // Raw file text at an exact commit, bounded. null when absent.
+  // Raw file text at an exact commit, bounded. null only when absent.
   async fileText(
     owner: string,
     repo: string,
@@ -170,21 +170,26 @@ export class GitHubClient {
     ref: string,
     maxBytes: number,
   ) {
-    const file = await this.get<{
+    const response = await this.request<{
       type: string;
       size: number;
       content?: string;
       encoding?: string;
     }>(
+      "GET",
       `/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replaceAll("%2F", "/")}?ref=${ref}`,
     );
+    if (response.status === 404) return null;
+    const file = response.data;
     if (
+      response.status !== 200 ||
       file === null ||
       file.type !== "file" ||
       file.content === undefined ||
       file.encoding !== "base64"
     ) {
-      return null;
+      // An existing unreadable file must not be mistaken for absent policy.
+      return { text: "", truncated: true };
     }
     const bytes = Uint8Array.from(
       atob(file.content.replace(/\s+/gu, "")),
