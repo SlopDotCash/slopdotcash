@@ -52,8 +52,10 @@ import {
   type RewardAssetNetwork,
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
+import { OwnerBountyVault } from "./OwnerBountyVault";
 import { loginHref } from "./Points";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
+import { SecurityProgramEditor } from "./SecurityProgramEditor";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = Object.fromEntries(
   Object.entries(REWARD_ASSET_NETWORKS).map(([id, network]) => [
@@ -2553,6 +2555,30 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           </p>
         </div>
       </form>
+      {base && session.status === "signed-in" && (
+        <>
+          <SecurityProgramEditor
+            key={`${current.id}:${base.revision}`}
+            project={current}
+            revision={base.revision}
+            actor={session.session}
+            onPublished={(result) => {
+              setBase({
+                project: result.project.manifest,
+                revision: result.project.revision,
+              });
+              setSubmission({ state: "published", result });
+            }}
+          />
+          {current.securityBounty ? (
+            <OwnerBountyVault
+              key={current.id}
+              project={current}
+              onRegistered={setBase}
+            />
+          ) : null}
+        </>
+      )}
       {monthly ? (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
