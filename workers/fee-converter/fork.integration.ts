@@ -37,6 +37,26 @@ const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 // A fork-only copy of the AERO contract: an ERC-20 no aggregator knows.
 const UNROUTED = "0x00000000000000000000000000000000000f0e10";
 
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const response = await nativeFetch(input, init);
+  if (String(input) === RPC && typeof init?.body === "string") {
+    const result = await response.clone().json();
+    if (result.error)
+      console.log(
+        JSON.stringify({
+          rpcMethod: JSON.parse(init.body).method,
+          rpcError: result.error.code,
+          message: String(result.error.message).replace(
+            /0x[0-9a-f]{80,}/giu,
+            "<hex>",
+          ),
+        }),
+      );
+  }
+  return response;
+}) as typeof fetch;
+
 async function rpc(method: string, params: unknown[]) {
   const response = await fetch(RPC, {
     method: "POST",
@@ -316,6 +336,7 @@ try {
     "function upgradeToAndCall(address,bytes)",
     "function proposeIdentityAuthority(address)",
     "function executeIdentityAuthorityRotation()",
+    "function claimFees()",
   ]);
   const call = async (from: string, to: string, data: Hex) => {
     const hash = await rpc("eth_sendTransaction", [
@@ -716,7 +737,13 @@ try {
     throw new Error("7 a receipt or dry run moved vault fees");
 
   // Each retry uses a fresh Worker invocation and the durable SQLite journal.
-  for (const fault of ["before", "after", "receipt"] as const) {
+  const supportedFaults = ["before", "after", "receipt", "hashes", "race"];
+  const faults =
+    process.env.SLOP_TEST_CLAIM_FAULTS?.split(",") ?? supportedFaults;
+  if (faults.some((fault) => !supportedFaults.includes(fault)))
+    throw new Error("Unknown fee-claim fault case");
+  console.log(`Claim fault cases: ${faults.join(", ")}`);
+  for (const fault of faults) {
     const snapshot = await rpc("evm_snapshot", []);
     sqlite.exec("SAVEPOINT claim_proof");
     const conversionsBefore = (
@@ -727,18 +754,57 @@ try {
         .get() as { n: number }
     ).n;
     let delivered = false;
+    let claimHash: string | null = null;
     const interrupted: typeof fetch = (async (
       input: RequestInfo | URL,
       init?: RequestInit,
     ) => {
       const body = typeof init?.body === "string" ? init.body : "";
-      if (fault !== "receipt" && body.includes('"eth_sendRawTransaction"')) {
+      if (
+        (fault === "before" || fault === "after") &&
+        body.includes('"eth_sendRawTransaction"')
+      ) {
         if (fault === "after" && !delivered) {
           delivered = true;
           await fetch(input, init);
         }
         throw new Error("local claim send interrupted");
       }
+      if (
+        fault === "race" &&
+        !delivered &&
+        body.includes('"eth_sendRawTransaction"')
+      ) {
+        delivered = true;
+        await call(
+          registrar,
+          vault,
+          encodeFunctionData({ abi: vaultAbi, functionName: "claimFees" }),
+        );
+        await call(
+          registrar,
+          vault,
+          encodeFunctionData({
+            abi: vaultAbi,
+            functionName: "withdrawUnused",
+            args: [100n * 10n ** 18n],
+          }),
+        );
+      }
+      if (
+        fault === "hashes" &&
+        claimHash &&
+        body.includes(claimHash) &&
+        /eth_getTransaction(?:Receipt|ByHash)/u.test(body)
+      )
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: JSON.parse(body).id,
+            result: null,
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
       const response = await fetch(input, init);
       if (fault !== "receipt" || !body.includes('"eth_getTransactionReceipt"'))
         return response;
@@ -758,6 +824,7 @@ try {
         "SELECT tx_id, raw_tx, state FROM fee_conversions WHERE kind = 'claim' ORDER BY rowid DESC LIMIT 1",
       )
       .get() as { tx_id: string; raw_tx: string; state: string };
+    claimHash = claim?.tx_id ?? null;
     const conversionCount = () =>
       (
         sqlite
@@ -766,14 +833,18 @@ try {
           )
           .get() as { n: number }
       ).n;
-    if (claim?.state !== "unknown" || conversionCount() !== conversionsBefore)
+    if (
+      claim?.state !==
+        (fault === "hashes" || fault === "race" ? "submitted" : "unknown") ||
+      conversionCount() !== conversionsBefore
+    )
       throw new Error(`${fault}: uncertain claim allowed a conversion`);
     await rpc("anvil_mine", ["0x80"]);
-    if (fault === "receipt") {
+    if (fault === "receipt" || fault === "hashes") {
       await runOnce(env, undefined, { fetch: interrupted }, "receipts");
       if (conversionCount() !== conversionsBefore)
         throw new Error(
-          "incomplete claim receipt allowed a later receipt-run conversion",
+          `${fault}: unavailable claim proof allowed a later receipt-run conversion`,
         );
     }
     // A lost send is rebroadcast unchanged; a lost response needs no new send.
@@ -803,11 +874,13 @@ try {
     await runOnce(env, undefined, undefined, "receipts");
     expect(state(), "finalized", `7 ${fault} claim recovery`);
     if (
-      (await view(vault, "freeBalance")) !== freeBeforeClaim ||
+      (await view(vault, "freeBalance")) !==
+        freeBeforeClaim - (fault === "race" ? 100n * 10n ** 18n : 0n) ||
       ((await view(vault, "reservedPrincipal")) as bigint) +
         ((await view(vault, "reservedFees")) as bigint) !==
         reserved ||
-      (await balanceOf(AERO, vault)) !== 300n * 10n ** 18n
+      (await balanceOf(AERO, vault)) !==
+        (fault === "race" ? 200n : 300n) * 10n ** 18n
     )
       throw new Error(
         `${fault}: claim recovery changed principal or reserved awards`,
@@ -931,4 +1004,5 @@ try {
   );
 } finally {
   anvil.kill();
+  globalThis.fetch = nativeFetch;
 }

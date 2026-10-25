@@ -98,8 +98,9 @@ For each enabled network:
      signs only when no earlier fee-wallet transaction is pending. At the
      receipt block it verifies the deployment again. Transfers of the reviewed
      token must show the same net debit from the vault and credit to this fee
-     wallet, at least equal to the fee read before the claim. This permits fees
-     that accrued while the claim was pending. Receipt status alone is not
+     wallet, equal to the vault's `FeesClaimed` event. The earlier read is a
+     quote estimate: fees can accrue or another caller can claim before this
+     transaction lands. Receipt status or nonce advancement alone is not
      proof. Before broadcast, the existing send journal stores the signed
      claim, nonce, expected fee and reviewed deployment. A missing or incomplete
      receipt keeps the claim open. The next run checks that same transaction;

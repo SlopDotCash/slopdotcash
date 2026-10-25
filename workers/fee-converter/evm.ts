@@ -48,6 +48,14 @@ const NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 /** The permissionless ProjectEscrow fee claim (contracts/evm/adapter.ts). */
 const VAULT_FEE_ABI = [
   {
+    type: "event",
+    name: "FeesClaimed",
+    inputs: [
+      { name: "feeRecipient", type: "address", indexed: true },
+      { name: "amount", type: "uint128", indexed: false },
+    ],
+  },
+  {
     type: "function",
     name: "accruedFees",
     stateMutability: "view",
@@ -386,7 +394,6 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
 
   async function claimReceipt(
     entry: FeeVault,
-    amount: bigint,
     receipt: TransactionReceipt,
   ): Promise<bigint> {
     const verified = await verifiedVault(entry, receipt.blockNumber);
@@ -399,6 +406,19 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         "Claim receipt does not match the reviewed vault or fee wallet",
       );
     const { escrow } = verified;
+    const claims = parseEventLogs({
+      abi: VAULT_FEE_ABI,
+      eventName: "FeesClaimed",
+      logs: receipt.logs.filter(
+        (log) => log.address.toLowerCase() === escrow.vault.toLowerCase(),
+      ),
+    });
+    if (
+      claims.length !== 1 ||
+      claims[0].args.feeRecipient.toLowerCase() !== wallet ||
+      claims[0].args.amount <= 0n
+    )
+      throw new Error("Claim receipt lacks the reviewed vault fee event");
     const transfers = parseEventLogs({
       abi: erc20Abi,
       eventName: "Transfer",
@@ -416,7 +436,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       if (args.to.toLowerCase() === escrow.vault.toLowerCase())
         paid -= args.value;
     }
-    if (received < amount || received !== paid)
+    if (received !== claims[0].args.amount || received !== paid)
       throw new Error(
         `claim ${receipt.transactionHash} receipt does not match the vault fee`,
       );
@@ -645,7 +665,6 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
             kind: "finalized",
             amountOut: await claimReceipt(
               JSON.parse(row.quote as string) as FeeVault,
-              BigInt(row.amountIn),
               receipt,
             ),
           };
@@ -677,7 +696,11 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         blockTag: "finalized",
       });
       if (row.evmNonce !== null && finalizedNonce > row.evmNonce)
-        return { kind: "failed", reason: "nonce used by another transaction" };
+        // A claim may itself have consumed the nonce while its hash lookups
+        // are unavailable. Only its receipt proves what entered the wallet.
+        return row.kind === "claim"
+          ? { kind: "pending" }
+          : { kind: "failed", reason: "nonce used by another transaction" };
       // Past the router deadline the swap reverts even if it is mined later.
       if (
         row.expiresAt !== null &&
@@ -752,7 +775,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         if (!receipt) throw new Error(`claim ${sent.hash} not mined in time`);
         if (receipt.status !== "success")
           throw new Error(`claim ${sent.hash} reverted`);
-        await claimReceipt(entry, amount, receipt);
+        await claimReceipt(entry, receipt);
         return { txId: sent.hash };
       },
     },
