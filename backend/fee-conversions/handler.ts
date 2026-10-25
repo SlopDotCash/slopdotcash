@@ -1,22 +1,19 @@
 /**
- * Private admin route for fee-wallet conversions (workers/fee-converter,
+ * Private admin read route for fee-wallet conversions (workers/fee-converter,
  * PRD MVP-07c). Admins only; there is no public page or route. Signed
- * transaction bytes stay in D1 and are never returned. The only write closes
- * an open vault fee claim that the Worker marked for operator review.
+ * transaction bytes stay in D1 and are never returned.
  */
 
 import {
   NETWORK_DEFINITIONS,
   NETWORKS,
 } from "../../workers/fee-converter/config";
-import { OPERATOR_REVIEW } from "../../workers/fee-converter/core";
 
 export interface FeeConversionsDependencies {
   db: {
     prepare(query: string): {
       bind(...values: (string | number)[]): {
         all<T>(): Promise<{ results: T[] }>;
-        run(): Promise<{ meta?: { changes?: number } }>;
       };
     };
   };
@@ -25,7 +22,6 @@ export interface FeeConversionsDependencies {
 }
 
 export const FEE_CONVERSIONS_PATH = "/api/v1/admin/fee-conversions";
-export const FEE_CLAIM_RESOLVE_PATH = `${FEE_CONVERSIONS_PATH}/claims/resolve`;
 const RECENT_LIMIT = 100;
 
 const headers = {
@@ -61,19 +57,6 @@ interface RecentRow {
   created_at: string;
   submitted_at: string | null;
   finalized_at: string | null;
-}
-
-interface OpenClaimRow {
-  id: string;
-  network: string;
-  token: string;
-  amount_in: string;
-  tx_id: string | null;
-  evm_nonce: number | null;
-  state: string;
-  reason: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 interface SettledRow {
@@ -159,21 +142,9 @@ export async function handleFeeConversionsApi(
   request: Request,
   deps: FeeConversionsDependencies,
 ): Promise<Response | null> {
-  const url = new URL(request.url);
-  const resolve = url.pathname === FEE_CLAIM_RESOLVE_PATH;
-  if (url.pathname !== FEE_CONVERSIONS_PATH && !resolve) return null;
-  if (request.method !== (resolve ? "POST" : "GET"))
+  if (new URL(request.url).pathname !== FEE_CONVERSIONS_PATH) return null;
+  if (request.method !== "GET")
     return json(405, { error: "method_not_allowed" });
-  // A cross-site form cannot send this site's origin with a JSON body.
-  if (
-    resolve &&
-    (request.headers.get("origin") !== url.origin ||
-      request.headers.get("content-type")?.split(";")[0] !== "application/json")
-  )
-    return json(403, {
-      error: "origin_forbidden",
-      message: "Requests must come from this site",
-    });
   try {
     const actor = await deps.sessionActor(request);
     if (actor === null)
@@ -186,8 +157,7 @@ export async function handleFeeConversionsApi(
         error: "forbidden",
         message: "Admin access is required",
       });
-    if (resolve) return await resolveClaim(request, actor.githubId, deps);
-    const [recent, settled, states, openClaims] = await Promise.all([
+    const [recent, settled, states] = await Promise.all([
       deps.db
         .prepare(
           `SELECT id, network, mode, token, target_token, amount_in, route, quote_amount_out,
@@ -214,18 +184,6 @@ export async function handleFeeConversionsApi(
         )
         .bind(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
         .all<{ network: string; mode: string; state: string; count: number }>(),
-      // Claims are not conversions, but an open claim blocks conversion of
-      // its token. Show every one, with the reason it is still open.
-      deps.db
-        .prepare(
-          `SELECT id, network, token, amount_in, tx_id, evm_nonce, state, reason,
-                  created_at, updated_at
-             FROM fee_conversions
-            WHERE kind = 'claim' AND state IN ('submitted', 'unknown')
-            ORDER BY created_at, rowid LIMIT ?`,
-        )
-        .bind(RECENT_LIMIT)
-        .all<OpenClaimRow>(),
     ]);
     return json(200, {
       schemaVersion: "1",
@@ -252,19 +210,6 @@ export async function handleFeeConversionsApi(
         submittedAt: row.submitted_at,
         finalizedAt: row.finalized_at,
       })),
-      openClaims: openClaims.results.map((row) => ({
-        id: row.id,
-        network: row.network,
-        token: row.token,
-        expectedAmount: row.amount_in,
-        txId: row.tx_id,
-        evmNonce: row.evm_nonce,
-        state: row.state,
-        reason: row.reason,
-        operatorReview: row.reason?.startsWith(OPERATOR_REVIEW) ?? false,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      })),
       routes: conversionRoutes(),
       totals: totalsPerToken(settled.results),
       last24Hours: states.results,
@@ -273,51 +218,4 @@ export async function handleFeeConversionsApi(
     console.error("fee conversions API failure");
     return json(500, { error: "internal_error", message: "Internal error" });
   }
-}
-
-/**
- * Closes one open claim that the Worker marked for operator review: no chain
- * read can settle it, and it blocks conversion of its token. The operator
- * checks the transaction in another source first. The row becomes `failed`
- * with the operator's GitHub ID and reason. Its signed bytes, amount and
- * vault record stay unchanged. Only the claim's journal state changes here;
- * nothing is signed, sent or converted.
- */
-async function resolveClaim(
-  request: Request,
-  githubId: string,
-  deps: FeeConversionsDependencies,
-): Promise<Response> {
-  const body = (await request.json().catch(() => null)) as {
-    id?: unknown;
-    reason?: unknown;
-  } | null;
-  const id = typeof body?.id === "string" ? body.id : "";
-  const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
-  if (!/^[A-Za-z0-9-]{8,80}$/u.test(id) || reason.length < 10)
-    return json(400, {
-      error: "invalid_request",
-      message: "Send the claim id and a reason of at least 10 characters",
-    });
-  const recorded = `operator ${githubId}: ${reason}`.slice(0, 500);
-  const result = await deps.db
-    .prepare(
-      `UPDATE fee_conversions SET state = 'failed', reason = ?, updated_at = ?
-        WHERE id = ? AND kind = 'claim' AND state IN ('submitted', 'unknown')
-          AND substr(reason, 1, ?) = ?`,
-    )
-    .bind(
-      recorded,
-      new Date().toISOString(),
-      id,
-      OPERATOR_REVIEW.length,
-      OPERATOR_REVIEW,
-    )
-    .run();
-  if (result.meta?.changes !== 1)
-    return json(409, {
-      error: "not_resolvable",
-      message: "Only an open claim marked for operator review can be closed",
-    });
-  return json(200, { id, state: "failed", reason: recorded });
 }

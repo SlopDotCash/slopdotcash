@@ -34,17 +34,16 @@ import {
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, NetworkConfig } from "./config";
-import {
-  type AccruedFees,
-  type ChainClient,
-  type ConversionRow,
-  type FeeVault,
-  OPERATOR_REVIEW,
-  type PreparedSend,
-  type Quote,
-  type QuoteResult,
-  type SendStatus,
-  type VaultFeeClient,
+import type {
+  AccruedFees,
+  ChainClient,
+  ConversionRow,
+  FeeVault,
+  PreparedSend,
+  Quote,
+  QuoteResult,
+  SendStatus,
+  VaultFeeClient,
 } from "./core";
 
 export const JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
@@ -416,8 +415,11 @@ export function createSolanaClient(
    * config with the finalized project bytes. Null when the vault pays another
    * fee recipient. Unknown or mismatched state throws, so no claim follows.
    */
-  async function verifiedVault(entry: FeeVault) {
-    const escrow = solanaEscrowConfig(entry, config.rpcUrl);
+  async function verifiedVault(entry: FeeVault, executedAtSlot?: number) {
+    const escrow = {
+      ...solanaEscrowConfig(entry, config.rpcUrl),
+      executedAtSlot,
+    };
     // Another wallet's fees are not this run's to claim.
     if (escrow.feeRecipient !== wallet) return null;
     if (solanaVaultAddress(escrow.programId, escrow.projectPda) !== entry.vault)
@@ -425,9 +427,6 @@ export function createSolanaClient(
     if (entry.vault !== escrow.vault)
       throw new Error("vault differs from its reviewed deployment record");
     const project = await verifyDeployment(escrow);
-    // The fee key never holds or is proposed for a project or program role,
-    // as on EVM. Identity rotation changes only finalized project state, so
-    // check the authority in force and any pending one there.
     const rotation = solanaAuthorityRotation(project);
     if (
       [
@@ -476,15 +475,7 @@ export function createSolanaClient(
     return total(meta.postTokenBalances) - total(meta.preTokenBalances);
   };
 
-  /**
-   * Binds a finalized claim receipt to its journal row. The deployment and
-   * roles were verified before the claim was signed and recorded; the row
-   * exists only after that check. A later reviewed program upgrade or role
-   * change therefore does not strand an earlier claim. The exact signature,
-   * the program's own FeesClaimed event and the matching token debit and
-   * credit prove what entered the fee wallet.
-   */
-  function claimReceipt(
+  async function claimReceipt(
     entry: FeeVault,
     txId: string,
     transaction: {
@@ -504,9 +495,9 @@ export function createSolanaClient(
       transaction.transaction?.signatures?.[0] !== txId
     )
       throw new Error("claim receipt identity or slot is missing");
-    const escrow = solanaEscrowConfig(entry, config.rpcUrl);
-    if (escrow.feeRecipient !== wallet || escrow.vault !== entry.vault)
-      throw new Error("Recorded claim pays another fee wallet");
+    const verified = await verifiedVault(entry, transaction.slot);
+    if (!verified) throw new Error("Recorded claim pays another fee wallet");
+    const { escrow } = verified;
     if (transaction.meta.err !== null)
       throw new Error("claim receipt reports a failed transaction");
     const eventTag = sha256(
@@ -699,7 +690,7 @@ export function createSolanaClient(
       ]);
       if (!transaction || transaction.meta.err !== null)
         throw new Error(`claim ${txId} receipt is not available`);
-      claimReceipt(entry, txId, transaction);
+      await claimReceipt(entry, txId, transaction);
       return { txId };
     },
   };
@@ -908,7 +899,7 @@ export function createSolanaClient(
         if (row.kind === "claim")
           return {
             kind: "finalized",
-            amountOut: claimReceipt(
+            amountOut: await claimReceipt(
               JSON.parse(row.quote as string) as FeeVault,
               row.txId as string,
               transaction,
@@ -927,10 +918,7 @@ export function createSolanaClient(
       // prove that it did not already land; retain the receipt requirement.
       if (row.expiresAt !== null && height > row.expiresAt)
         return row.kind === "claim"
-          ? {
-              kind: "pending",
-              reason: `${OPERATOR_REVIEW}blockhash expired, but no status or receipt for this claim is available`,
-            }
+          ? { kind: "pending" }
           : { kind: "failed", reason: "blockhash expired before inclusion" };
       if (
         row.kind === "claim" &&

@@ -95,15 +95,10 @@ For each enabled network:
      upgrade authority, or current or proposed identity authority. It must
      not be a proposed upgrade authority. A rotation to a separate identity
      authority remains valid. It repeats these checks before signing `claimFees()`, and
-     signs only when no earlier fee-wallet transaction is pending. That
-     check at signing time is the deployment proof of the claim: the journal
-     row exists only after it passed. The receipt is not checked against
-     deployment state at its own block, because an RPC without archive state
-     cannot answer that read for a receipt from an earlier run. The receipt
-     must be the recorded transaction, from this fee wallet to the reviewed
-     vault. Transfers of the reviewed token must show the same net debit from
-     the vault and credit to this fee wallet, equal to the vault's
-     `FeesClaimed` event. The earlier read is a
+     signs only when no earlier fee-wallet transaction is pending. At the
+     receipt block it verifies the deployment again. Transfers of the reviewed
+     token must show the same net debit from the vault and credit to this fee
+     wallet, equal to the vault's `FeesClaimed` event. The earlier read is a
      quote estimate: fees can accrue or another caller can claim before this
      transaction lands. Receipt status or nonce advancement alone is not
      proof. Before broadcast, the existing send journal stores the signed
@@ -128,15 +123,12 @@ For each enabled network:
      authority. The transaction holds exactly two instructions, signed only by
      the fee wallet: idempotent creation of its associated token account for
      the vault mint, and `claim_fees` paying into that account. It is simulated
-     first. The fee wallet must not be the project owner, the recorded or
-     current identity authority, a pending identity authority, the rotation
-     authority or the program upgrade authority. Before broadcast, the shared
-     journal records the signature, exact bytes, blockhash expiry and
-     reviewed deployment. A finalized receipt must bind that signature to the
-     reviewed program's `FeesClaimed` event. The event amount must equal the
-     vault's debit and fee wallet's credit. As on EVM, the deployment check
-     before signing is the deployment proof, so a later reviewed upgrade or
-     role change does not strand an earlier claim. Missing or partial
+     first. Before broadcast, the shared journal records the signature, exact
+     bytes, blockhash expiry and reviewed deployment. A finalized receipt must
+     bind that signature and slot to the reviewed program's `FeesClaimed`
+     event. The event amount must equal the vault's debit and fee wallet's
+     credit. The current program must still prove the code used at that slot;
+     a later deployment leaves execution unverified. Missing or partial
      receipts remain pending, even after blockhash expiry. Recovery sends
      unchanged recorded bytes only while valid, after checking the deployment
      again. That token cannot convert until the receipt is verified.
@@ -148,10 +140,7 @@ For each enabled network:
    is never sold.
 6. Read the fee-wallet balance of each candidate. Skip USDC and empty
    balances. A receipt run also skips a balance unchanged since the token's
-   latest record. A conversion sells the whole fee-wallet balance of the
-   token, not only the amounts of verified claims. The fee wallet must
-   therefore receive nothing except fees: vault claims and fees paid to it
-   directly. Contributor principal and vault funds never go to it.
+   latest record.
 7. Get a quote. If the quoted value is above the remaining per-run or per-day
    cap, scale the amount down (at most three requotes, aiming at 98% of the
    remaining cap).
@@ -230,12 +219,9 @@ verify those routes. Any of them can replace KyberSwap behind
 
 The journal's `kind` is `conversion` or `claim` (migration `0082`). Existing
 rows remain conversions. Claims use the same pending-token and immutable-send
-guards. Their bounded `quote` JSON holds the reviewed vault record, reduced to
-the fields that claim verification reads. The current EVM upgrade review is
-kept, but not its superseded history, so a long history cannot exceed the
-column limit. Claims have no router deadline. Conversion totals, budgets and
-the admin conversion list exclude claim rows; the admin route lists open
-claims separately.
+guards. Their bounded `quote` JSON holds the reviewed vault record; they have
+no router deadline. Conversion totals, budgets and the admin conversion list
+exclude claim rows.
 
 Each conversion record also keeps the fee-wallet balances in base units: the input token
 and USDC when quoted (`token_balance_before`, `target_balance_before`) and
@@ -259,24 +245,12 @@ decides each unresolved row:
   Only the node's "not found" answer counts as no receipt or transaction.
   A failed lookup logs `fee_conversion_reconcile_error` and leaves the row
   open. A valid unsent claim uses the recorded bytes after a fresh deployment
-  check. A claim whose nonce was used while no receipt is available can never
-  be settled from chain reads, so the Worker marks it `operator review:`.
+  check.
 - **Solana.** A finalized signature with a verified receipt settles the row.
   A swap with no status fails after its recorded `lastValidBlockHeight`.
   A claim with no status remains pending after expiry, because expiry does not
-  prove it was never included; the Worker marks it `operator review:`.
-  Before expiry, recovery checks the deployment and rebroadcasts the recorded
-  bytes.
-
-A claim marked `operator review:` keeps its token blocked until an admin
-closes it. The admin first checks the transaction and the fee-wallet history
-in another source, such as a block explorer or an archive RPC. Then the admin
-sends `POST /api/v1/admin/fee-conversions/claims/resolve` from this site with
-JSON `{"id": "<claim id>", "reason": "<what was checked>"}`. The claim becomes
-`failed` with reason `operator <GitHub ID>: <reason>`. Its signed bytes,
-amount and vault record stay unchanged. The route refuses every other row,
-and it never signs, sends or converts anything. The next run can then convert
-the token's fee-wallet balance.
+  prove it was never included. Before expiry, recovery checks the deployment
+  and rebroadcasts the recorded bytes.
 
 The Worker never signs a second transaction for a send that could still land.
 
@@ -416,10 +390,8 @@ sweep is a human-signed transfer outside this Worker.
 `GET /api/v1/admin/fee-conversions` (admin GitHub session) returns the 100 most
 recent records, exact per-token totals of finalized live conversions as
 decimal base-unit strings, state counts for the last 24 hours, and each
-network's USDC target with status `usdc` or `pending`. `openClaims` lists
-every `submitted` or `unknown` vault fee claim, with its reason and
-`operatorReview: true` when only an admin can close it. It never returns
-signed transaction bytes. There is no public page.
+network's USDC target with status `usdc` or `pending`. It never
+returns signed transaction bytes. There is no public page.
 
 ## Tests
 
@@ -432,13 +404,8 @@ routes, receipt and recovery runs, every skip reason, cap scaling, the daily
 cap window, unknown-send reconciliation, the network lock, D1 constraints,
 the pending migration and the admin route. Solana claim tests cover the
 reviewed-deployment checks, the claim transaction's signer, programs and
-accounts, refusal while the fee wallet holds or is proposed for a project
-role, refusal while an earlier send is unfinalized, receipt verification,
-settlement of a journaled claim after a later program change, operator review
-of an expired claim, dry-run reporting, the dust threshold and an idempotent
-rerun. EVM claim tests settle a journaled claim on an RPC that refuses reads
-at old blocks (`missing trie node`), keep the stored vault record bounded, and
-cover the admin `openClaims` list and the guarded operator close. They stand in
+accounts, refusal while an earlier send is unfinalized, receipt verification,
+dry-run reporting, the dust threshold and an idempotent rerun. They stand in
 for the RPC and for `verifySolanaDeployment`, the shared check the payment
 executor and funding paths also use; these unit tests do not exercise it.
 
