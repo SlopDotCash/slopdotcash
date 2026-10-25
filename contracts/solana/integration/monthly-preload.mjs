@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import {
+  legacyMint,
   preloadArgs,
   programId,
   projectData,
@@ -10,7 +11,7 @@ import {
 } from "./legacy-project.mjs";
 
 /**
- * Monthly states that no live validator can reach, which test-e2e.sh preloads so the e2e
+ * Escrow states that no live validator can reach, which test-e2e.sh preloads so the e2e
  * suite runs the program against real bytes. Public seeds: test use only.
  *
  * Expired: a current-layout Project with an admitted month that is already 30 days past its window,
@@ -125,7 +126,8 @@ export function allocationTree(leaves) {
  * three sources to actor 901 for 5 USDC each. Only commit_monthly_award writes the
  * ["monthly-source", project, source] marker, and no live validator holds two recordable
  * months of one project, so the earlier month and its markers are preloaded. The test
- * writes each source's origin and obligation with the same commit_with_fee path.
+ * writes each source's origin and obligation with the same commit_with_fee path. The
+ * release rule reads only that obligation; the attester's freeze refuses a marker.
  */
 export const CROSS_ACTOR = 901;
 export const CROSS_GROSS = 5_000_000;
@@ -167,6 +169,31 @@ const monthAddress = (projectKey, period) =>
     programId,
   )[0];
 
+/**
+ * Short vault: a Project whose counters owe 5 USDC (3 free, 2 reserved) while its vault
+ * token account holds one micro-unit less, which the program itself never allows.
+ */
+export const shortProject = Keypair.fromSeed(
+  sha256Seed("slop-e2e-short-vault-project"),
+).publicKey;
+function shortVaultProject() {
+  const data = Buffer.concat([projectData(), Buffer.alloc(16)]);
+  Keypair.fromSeed(sha256Seed("slop-e2e-short-vault-owner"))
+    .publicKey.toBuffer()
+    .copy(data, 8);
+  data.writeBigUInt64LE(2_000_000n, 200); // reserved
+  data.writeBigUInt64LE(5_000_000n, 208); // deposited
+  return data;
+}
+function shortVault() {
+  const data = Buffer.alloc(165);
+  legacyMint.publicKey.toBuffer().copy(data, 0);
+  shortProject.toBuffer().copy(data, 32);
+  data.writeBigUInt64LE(4_999_999n, 64); // amount
+  data[108] = 1; // initialized
+  return data;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // BindingVeto discriminator: the empty marker account.
   const marker = Buffer.from("20b51e0e0a5b1d9e", "hex");
@@ -174,6 +201,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     preloadArgs([
       ["expired-project", expiredProject, programId, project()],
       ["expired-month", month, programId, monthData()],
+      ["short-vault-project", shortProject, programId, shortVaultProject()],
+      [
+        "short-vault",
+        PublicKey.findProgramAddressSync(
+          [Buffer.from("vault"), shortProject.toBuffer()],
+          programId,
+        )[0],
+        new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+        shortVault(),
+      ],
       [
         "earlier-month",
         monthAddress(crossProject, EARLIER_PERIOD),

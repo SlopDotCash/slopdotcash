@@ -10,7 +10,8 @@ import {
 
 const PROGRAM = "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ";
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const PROJECT = solanaBase58(new Uint8Array(32).fill(7));
+const PROJECT_BYTES = new Uint8Array(32).fill(7);
+const PROJECT = solanaBase58(PROJECT_BYTES);
 const MINT_BYTES = new Uint8Array(32).fill(9);
 const MINT = solanaBase58(MINT_BYTES);
 const VAULT = solanaVaultAddress(PROGRAM, PROJECT);
@@ -65,6 +66,14 @@ function mintAccount(decimals: number, initialized = 1): Uint8Array {
   data[45] = initialized;
   return data;
 }
+/** The vault token account: mint, owner (the project PDA) and amount. */
+function vaultAccount(amount: bigint, mint = MINT_BYTES): Uint8Array {
+  const data = new Uint8Array(165);
+  data.set(mint, 0);
+  data.set(Buffer.from(PROJECT_BYTES), 32);
+  new DataView(data.buffer).setBigUint64(64, amount, true);
+  return data;
+}
 const encoded = (owner: string, data: Uint8Array) => ({
   owner,
   executable: false,
@@ -76,6 +85,7 @@ function mockRpc(accounts: {
   mint: Uint8Array;
   mintOwner?: string;
   slot?: number;
+  vaultAmount?: bigint;
 }) {
   const calls: { method: string; params: unknown[] }[] = [];
   const slot = accounts.slot ?? 123456;
@@ -89,11 +99,15 @@ function mockRpc(accounts: {
       expect(body.params[1].commitment).toBe("finalized");
       result = { context: { slot: 1 }, value: project };
     } else if (body.method === "getMultipleAccounts") {
-      expect(body.params[0]).toEqual([PROJECT, MINT]);
+      expect(body.params[0]).toEqual([PROJECT, MINT, VAULT]);
       expect(body.params[1].commitment).toBe("finalized");
       result = {
         context: { slot },
-        value: [project, encoded(accounts.mintOwner ?? TOKEN, accounts.mint)],
+        value: [
+          project,
+          encoded(accounts.mintOwner ?? TOKEN, accounts.mint),
+          encoded(TOKEN, vaultAccount(accounts.vaultAmount ?? 2n ** 64n - 1n)),
+        ],
       };
     } else if (body.method === "getBlockTime") {
       expect(body.params[0]).toBe(slot);
@@ -151,6 +165,25 @@ describe("readVaultTotals", () => {
       expect(totals.decimals).toBe(decimals);
       expect(totals.freeBalance).toBe("370");
     }
+  });
+
+  test("throws when the vault holds less than free, reserved and accrued", async () => {
+    const c = { ...base, deposited: 1_000n };
+    const owed = 1_000n - 98n - 2n - 500n - 30n + 30n + 12n;
+    mockRpc({
+      project: projectAccount(c),
+      mint: mintAccount(6),
+      vaultAmount: owed,
+    });
+    expect((await readVaultTotals(config)).freeBalance).toBe("370");
+    mockRpc({
+      project: projectAccount(c),
+      mint: mintAccount(6),
+      vaultAmount: owed - 1n,
+    });
+    await expect(readVaultTotals(config)).rejects.toThrow(
+      "Vault balance is below free, reserved and accrued fees",
+    );
   });
 
   test("throws when the counters exceed deposits", async () => {
