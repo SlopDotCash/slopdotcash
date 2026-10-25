@@ -15,6 +15,7 @@ import {
   evmVaultKey,
   readEvmMonthlyCommitment,
   verifyEvmDeployment,
+  verifyEvmFactory,
 } from "../../contracts/evm/adapter";
 import {
   captureUpgrade,
@@ -1023,31 +1024,23 @@ test("owner creates, registers and funds a vault through the real API", async ({
     contribution: CONTRIBUTION,
     escrow: { ...project.escrow, deployments: [] },
   };
-  const other = PROJECTS.find(
-    (p) => p.id !== project.id && p.reward.kind === "monthly-pool",
-  );
-  if (!other) throw new Error("A second registry fixture is required");
   if (!deployment.evmUpgrade) throw new Error("Missing upgrade review");
-  // The template has an upgrade history. A new vault must not inherit it.
-  const template = {
-    ...other,
-    reward: project.reward,
-    rewardAsset: project.rewardAsset,
-    escrow: {
-      ...project.escrow,
-      deployments: [
-        {
-          ...deployment,
-          evmUpgrade: {
-            ...deployment.evmUpgrade,
-            history: [{ ...deployment.evmUpgrade, supersededAtBlock: "1" }],
-          },
-        },
-      ],
-    },
+  // No project has a deployment: the first vault uses only the independently
+  // reviewed local factory. No synthetic project or vault record enters D1.
+  const factory = {
+    network: deployment.network,
+    sourceCommit: deployment.sourceCommit,
+    codeSha256: deployment.codeSha256,
+    factory: deployment.factory,
+    factoryCodeSha256: deployment.factoryCodeSha256,
+    registrar: deployment.registrar,
+    identityAuthority: deployment.identityAuthority,
+    feeRecipient: deployment.feeRecipient,
+    bindingDelaySeconds: deployment.bindingDelaySeconds,
+    evmUpgrade: deployment.evmUpgrade,
   };
   const fixturePath = join(temporary, "projects.json");
-  writeFileSync(fixturePath, JSON.stringify({ project: target, template }));
+  writeFileSync(fixturePath, JSON.stringify({ project: target, factory }));
   let output = "";
   const server = spawn(
     "bun",
@@ -1103,6 +1096,20 @@ test("owner creates, registers and funds a vault through the real API", async ({
       challengeId: challenge.challengeId,
       signature: await account.signMessage({ message: challenge.message }),
     });
+    const emptyRegistry = await (
+      await page.request.get(`${origin}/__fixture`)
+    ).json();
+    expect(emptyRegistry.projects).toBe(1);
+    expect(emptyRegistry.paymentPins).toEqual([]);
+    await expect(
+      verifyEvmFactory(
+        { ...deployment, rpcUrl, chainId: 1n } as Parameters<
+          typeof verifyEvmFactory
+        >[0],
+        "finalized",
+        { forCreation: true },
+      ),
+    ).rejects.toThrow("Wrong chain");
     const input = {
       step: "review",
       expectedRevision: 1,
@@ -1143,6 +1150,38 @@ test("owner creates, registers and funds a vault through the real API", async ({
         )
       ).status(),
     ).toBe(403);
+    // Current chain state must match every infrastructure trust pin before review.
+    for (const badReview of [
+      { identityAuthority: donor },
+      { registrar: donor },
+      { feeRecipient: donor },
+      { factoryCodeSha256: "0".repeat(64) },
+      { evmUpgrade: { ...factory.evmUpgrade, authority: donor } },
+      {
+        evmUpgrade: {
+          ...factory.evmUpgrade,
+          vaultImplementationCodeSha256: "0".repeat(64),
+        },
+      },
+      {
+        evmUpgrade: {
+          ...factory.evmUpgrade,
+          factoryImplementationCodeSha256: "0".repeat(64),
+        },
+      },
+    ]) {
+      await page.request.post(`${origin}/__fixture`, {
+        data: { factoryReview: badReview },
+      });
+      const refused = await page.request.post(
+        `${origin}/api/v1/project-vaults/${project.id}`,
+        { headers, data: input },
+      );
+      expect(refused.status()).toBe(503);
+      await page.request.post(`${origin}/__fixture`, {
+        data: { factoryReview: factory },
+      });
+    }
     // A real vault for another project cannot be attached to this registry entry.
     const unrelatedTransaction = await rpc("eth_sendTransaction", [
       {
@@ -1334,6 +1373,12 @@ test("owner creates, registers and funds a vault through the real API", async ({
     expect(state.revisions.n).toBe(3);
     expect(state.project.manifest.reward.monthlyCapMinor).toBe("2000000000");
     const created = state.project.manifest.escrow.deployments[0];
+    expect(state.projects).toBe(1);
+    expect(state.paymentPins).toHaveLength(1);
+    expect(state.paymentPins[0]).toMatchObject({
+      projectId: project.id,
+      ...created,
+    });
     expect(created.owner).toBe(donor);
     expect(created.deploymentTransaction).toBe(sends[0]);
     expect(created.evmUpgrade).toEqual(deployment.evmUpgrade);

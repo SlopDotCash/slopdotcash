@@ -1,11 +1,12 @@
 /** Owner vault setup. Trust and RPCs come from the server; only the owner signs. */
 import {
-  type EvmEscrowConfig,
+  type EvmFactoryConfig,
   type EvmVaultCreation,
   EvmVaultCreationFailed,
   prepareEvmVaultCreation,
   verifyEvmVaultCreation,
 } from "../../contracts/evm/adapter";
+import type { ReviewedEvmFactory } from "../../contracts/evm/factories";
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import {
   prepareSolanaVaultCreation,
@@ -64,6 +65,7 @@ export function ownerVaultSetupService(deps: {
   projects(): Promise<ProjectRecord[]>;
   networks(): string[];
   rpcUrl(network: string): string;
+  factories?: readonly ReviewedEvmFactory[];
 }): OwnerVaultSetup {
   async function templates(
     project: ProjectRecord,
@@ -101,6 +103,52 @@ export function ownerVaultSetupService(deps: {
               ? project.manifest.securityBounty?.amount.network
               : project.manifest.reward.chain),
       );
+  }
+  async function factories(
+    project: ProjectRecord,
+    payoutPolicy: PayoutPolicy = "ordinary",
+  ) {
+    const served = deps.networks();
+    const chain =
+      payoutPolicy === "security-bounty"
+        ? project.manifest.securityBounty?.amount.network
+        : project.manifest.reward.chain;
+    const reviewed = (deps.factories ?? []).filter(
+      (d) =>
+        served.includes(d.network) &&
+        ESCROW_NETWORKS[d.network]?.family === "evm" &&
+        ESCROW_NETWORKS[d.network].chain === chain,
+    );
+    // Existing D1 deployments remain a valid source of reviewed infrastructure.
+    // A new project never inherits their owner, asset, vault or upgrade history.
+    for (const { deployment } of await templates(project, payoutPolicy)) {
+      const d = currentReview(deployment);
+      if (
+        !d.factory ||
+        !d.factoryCodeSha256 ||
+        !d.registrar ||
+        !d.evmUpgrade ||
+        reviewed.some(
+          (r) =>
+            r.network === d.network &&
+            r.factory.toLowerCase() === d.factory?.toLowerCase(),
+        )
+      )
+        continue;
+      reviewed.push({
+        network: d.network,
+        sourceCommit: d.sourceCommit,
+        codeSha256: d.codeSha256,
+        bindingDelaySeconds: d.bindingDelaySeconds,
+        identityAuthority: d.identityAuthority,
+        feeRecipient: d.feeRecipient,
+        factory: d.factory,
+        factoryCodeSha256: d.factoryCodeSha256,
+        registrar: d.registrar,
+        evmUpgrade: d.evmUpgrade,
+      });
+    }
+    return reviewed;
   }
   async function resolve(
     project: ProjectRecord,
@@ -239,27 +287,12 @@ export function ownerVaultSetupService(deps: {
       monthlyEnabled: input.automatic,
       payoutPolicy: input.payoutPolicy ?? "ordinary",
     };
-    for (const { deployment: template, payoutPolicy } of await templates(
-      project,
-      input.payoutPolicy,
-    )) {
-      if (
-        template.network !== input.network ||
-        !template.factory ||
-        !template.factoryCodeSha256 ||
-        !template.registrar ||
-        !network.chainId
-      )
-        continue;
-      const config: EvmEscrowConfig = {
-        ...currentReview(template),
-        factory: template.factory,
-        factoryCodeSha256: template.factoryCodeSha256,
-        registrar: template.registrar,
+    for (const template of await factories(project, input.payoutPolicy)) {
+      if (template.network !== input.network || !network.chainId) continue;
+      const config: EvmFactoryConfig = {
+        ...template,
         chainId: BigInt(network.chainId),
         rpcUrl: deps.rpcUrl(input.network),
-        // A bounty vault can anchor the same reviewed factory, but must verify as a bounty.
-        payoutPolicy,
       };
       try {
         const prepared = await prepareEvmVaultCreation(config, creation);
@@ -277,11 +310,14 @@ export function ownerVaultSetupService(deps: {
   return {
     async networks(project, payoutPolicy) {
       return [
-        ...new Set(
-          (await templates(project, payoutPolicy)).map(
+        ...new Set([
+          ...(await templates(project, payoutPolicy)).map(
             ({ deployment }) => deployment.network,
           ),
-        ),
+          ...(await factories(project, payoutPolicy)).map(
+            (factory) => factory.network,
+          ),
+        ]),
       ];
     },
     async review(project, actor, input) {
@@ -368,7 +404,12 @@ export function ownerVaultSetupService(deps: {
       }
       if (!vault) return null;
       return {
-        ...currentReview(template),
+        ...template,
+        programId: null,
+        upgradeAuthority: null,
+        projectPda: null,
+        networkDomain: null,
+        rotationDelaySeconds: null,
         vault,
         owner: creation.owner,
         asset: creation.asset,

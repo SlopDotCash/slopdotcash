@@ -505,12 +505,39 @@ payments.
 
 1. Sections 0 to 2 are complete for this network, and the independent review
    and the testnet acceptance runs are recorded.
-2. An admin revision on `/admin` records the vault deployment in the project
-   manifest (`escrow.deployments`), with the factory, factory code digest,
-   registrar and identity authority from section 1.7 or section 2.9.
+2. The owner creates the vault through project funding. The server verifies
+   the finalized creation and records it in a permanent project revision
+   (`escrow.deployments`). No per-project admin approval is required. For the
+   first EVM vault, complete the factory review below before owner creation.
 3. The identity authority address in each factory (EVM) or Config (Solana) is
    the address of the attester key that the attester Worker will use. Read it
    back from the chain at the finalized block and record it.
+
+### First EVM vault: reviewed factory infrastructure
+
+`contracts/evm/factories.ts` holds only public network infrastructure reviews.
+It is empty until real finalized deployment or upgrade evidence is reviewed.
+An unsigned kit, a planned address or a local fork must not become a live pin.
+Reuse the network definitions in `ESCROW_NETWORKS`; do not add a project,
+owner, asset or vault as a bootstrap placeholder.
+
+After the human signs the approved upgrade, verify the finalized factory
+proxy, its implementation and selected new-vault implementation, runtime
+hashes, upgrade authority, registrar, identity authority, fee recipient and
+delays. Record those reviewed fields, the source commit and expected vault
+proxy runtime hash once in `REVIEWED_EVM_FACTORIES`, with the public chain
+proof in the PR. The normal main release makes that factory available to
+owners. No secret belongs in this file.
+
+The owner saves the project reward policy, confirms the wallet in Earnings,
+reviews creation and signs with that wallet. The server checks the actual
+transaction, project, owner, asset, purpose, code and finality, then appends
+the first real D1 deployment. It also accepts reviewed factory infrastructure
+from an existing D1 deployment. D1 remains the only project inventory.
+
+Only then derive the attester pins from the registered vault. A missing
+attester does not block wallet confirmation or vault creation. Existing
+unpaid awards and prior deployment reviews remain unchanged.
 
 ### 3.2 Configure the stack
 
@@ -608,9 +635,10 @@ commit. Then:
 Install the secrets before the first snapshot that pins a Base vault reaches
 `main`. The push of that snapshot to `main` starts a release, and that release
 stops while the Worker or a secret is missing, as does every later release of
-the site. Do these steps from a clean checkout of `development` after an admin
-revision records the project's Base vault and the registry snapshot that
-contains it is on `development`:
+the site. Do these steps from a clean checkout of `development` after the owner route records the
+verified Base vault and its registry snapshot is on `development`. Do not
+install keys to compensate for unavailable vault creation; the attester is
+not needed for owner wallet confirmation or creation:
 
 1. Generate the configuration. The secrets belong to the Worker name, so this
    configuration also serves the later `main` release:
