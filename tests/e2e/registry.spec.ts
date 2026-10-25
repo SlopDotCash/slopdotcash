@@ -292,7 +292,7 @@ async function expectAccessible(page: Page) {
 
 async function draftApplication(
   page: Page,
-  project: { repository: string; name: string },
+  project: { repository: string; name: string; network?: string },
 ) {
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page.getByLabel("Public GitHub repository").fill(project.repository);
@@ -305,6 +305,10 @@ async function draftApplication(
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   await page.getByLabel("Pay contributors a monthly amount").check();
   await page.getByLabel("Monthly amount (USDC)").fill("1000");
+  if (project.network)
+    await page
+      .getByRole("combobox", { name: "Network", exact: true })
+      .selectOption(project.network);
   await page.getByRole("button", { name: "Next: Review" }).click();
   await expect(
     page.getByRole("article", { name: "Listing preview" }),
@@ -1530,6 +1534,149 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   expect(errors).toHaveLength(2);
   expect(errors[0]).toContain("409");
   expect(errors[1]).toContain("403");
+  await context.close();
+});
+
+test("an owner publishes while public GitHub is rate limited and recovers only a stale revision @registry", async ({
+  browser,
+}) => {
+  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const project = {
+    id: `app-facts-${suffix}`,
+    repository: `e2e-owner/app-facts-${suffix}`,
+    name: `App facts ${suffix}`,
+    network: "solana",
+  };
+  const context = await browser.newContext(walkthroughOptions());
+  const page = await context.newPage();
+  const errors = observe(page);
+  await signIn(page, OWNER_TOKEN);
+  await setSlopbot(`${project.repository}/installed`);
+  await draftApplication(page, project);
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Project created" }),
+  ).toBeVisible();
+  await page.goto(`/projects/${project.id}/manage`, {
+    waitUntil: "networkidle",
+  });
+  const network = page.getByRole("combobox", { name: "Network", exact: true });
+  await network.selectOption("base");
+  await page.getByLabel("Monthly amount (USDC)").fill("1000");
+  await page
+    .getByLabel("Revision note", { exact: true })
+    .fill("Use Base USDC from next month");
+
+  // The public GitHub read is really limited. The shipped Slopbot Worker
+  // still reads the installation, immutable identity and caller permission.
+  expect(
+    (
+      await fetch(
+        `${GITHUB_FIXTURE}/__fixture/public-repository/${project.repository}/rate-limited`,
+        { method: "PUT" },
+      )
+    ).status,
+  ).toBe(204);
+  const limited = await fetch(`${GITHUB_FIXTURE}/repos/${project.repository}`);
+  expect(limited.status).toBe(403);
+  expect(limited.headers.get("x-ratelimit-remaining")).toBe("0");
+  const publish = page.getByRole("button", {
+    name: "Publish changes",
+    exact: true,
+  });
+  await publish.click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Published revision 2" }),
+  ).toBeVisible();
+  const switched = await listedProject(page, project.id);
+  expect(switched).toMatchObject({
+    rewardAsset: { network: "base", kind: "stablecoin" },
+    reward: {
+      monthlyCapMinor: "1000000000",
+      feeBasisPoints: 200,
+      cycleCaps: [
+        { cycleId: new Date().toISOString().slice(0, 7), monthlyCapMinor: "0" },
+      ],
+    },
+  });
+  await page.screenshot({
+    path: test.info().outputPath("app-facts-published.png"),
+    fullPage: true,
+  });
+
+  // A temporary App failure must preserve the draft and offer a retry, not
+  // claim the immutable revision changed. No new revision is written.
+  await setSlopbot(`${project.repository}/unavailable`);
+  const headline = page.getByRole("textbox", {
+    name: "Short description",
+    exact: true,
+  });
+  await headline.fill("Useful work with an authenticated GitHub check");
+  await publish.click();
+  const alert = page.locator("form").getByRole("alert");
+  await expect(alert).toContainText("GitHub or Slopbot did not answer");
+  const reload = page.getByRole("button", {
+    name: "Load the current revision",
+    exact: true,
+  });
+  await expect(reload).toHaveCount(0);
+  await expect(headline).toHaveValue(
+    "Useful work with an authenticated GitHub check",
+  );
+  await expect(network).toHaveValue("base");
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("app-failure-retains-draft.png"),
+    fullPage: true,
+  });
+  await setSlopbot(`${project.repository}/installed`);
+  await publish.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Published revision 3" }),
+  ).toBeVisible();
+
+  // A real concurrent owner revision must still show the load action.
+  const current = await listedProject(page, project.id);
+  const concurrent = await page.request.put(`/api/v1/projects/${project.id}`, {
+    headers: { origin: new URL(page.url()).origin },
+    data: {
+      manifest: {
+        ...current,
+        headline: "The owner published this from another tab",
+      },
+      expectedRevision: 3,
+      reason: "Update from another owner tab",
+    },
+  });
+  expect(concurrent.status()).toBe(200);
+  await headline.fill("A draft based on the previous revision");
+  await publish.click();
+  await expect(alert).toContainText("The project changed since you loaded it");
+  await expect(reload).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("real-stale-revision.png"),
+    fullPage: true,
+  });
+  await reload.click();
+  await expect(headline).toHaveValue(
+    "The owner published this from another tab",
+  );
+  await expectAccessible(page);
+  const history = await (
+    await page.request.get("/api/v1/project-revisions")
+  ).json();
+  expect(
+    history.revisions.filter(
+      (revision: { projectId: string }) => revision.projectId === project.id,
+    ),
+  ).toHaveLength(4);
+  // Browser HTTP diagnostics are only the two intentional refusals.
+  expect(errors).toHaveLength(2);
+  expect(errors[0]).toContain("503");
+  expect(errors[1]).toContain("409");
   await context.close();
 });
 
