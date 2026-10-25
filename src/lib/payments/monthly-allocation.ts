@@ -5,7 +5,9 @@
  * the only input to award reservation. No public reason or adjustment history
  * exists. Amounts are integer base units of the project asset.
  */
+
 import { sha256Hex } from "../sha256";
+import { ordinaryFee } from "./contracts";
 
 const UINT64_MAX = (1n << 64n) - 1n;
 const PERIOD = /^\d{4}-(?:0[1-9]|1[0-2])$/;
@@ -200,7 +202,7 @@ export interface MonthlyExecutionSnapshot {
   awards: MonthlyExecutionAward[];
 }
 
-/** The frozen allocation. Zero rows are left out; the 2% fee is floor(gross / 50). */
+/** The frozen allocation. Zero rows are left out; the 2% fee is ceil(gross / 50). */
 export function buildExecutionSnapshot(input: {
   base: Omit<MonthlyBase, "rows">;
   allocations: readonly MonthlyAllocation[];
@@ -222,8 +224,8 @@ export function buildExecutionSnapshot(input: {
       githubUserId: row.githubUserId,
       login: row.login,
       grossBase: gross.toString(),
-      feeBase: (gross / 50n).toString(),
-      netBase: (gross - gross / 50n).toString(),
+      feeBase: ordinaryFee(gross).toString(),
+      netBase: (gross - ordinaryFee(gross)).toString(),
       sourceDigest: row.sourceDigest,
     });
   }

@@ -19,6 +19,7 @@ import {
   type VaultConnection,
   walletVaultConfig,
 } from "./evm-vault-actions";
+import { ordinaryFee } from "./payments/contracts";
 
 export type OwnerCommitmentPlan = MonthlyCommitmentPlan;
 export async function requestOwnerCommitment(
@@ -59,8 +60,8 @@ export async function requestOwnerCommitment(
   const gross = BigInt(value.award.gross);
   if (
     gross > (1n << 64n) - 1n ||
-    value.award.fee !== (gross / 50n).toString() ||
-    value.award.net !== (gross - gross / 50n).toString()
+    value.award.fee !== ordinaryFee(gross).toString() ||
+    value.award.net !== (gross - ordinaryFee(gross)).toString()
   )
     throw new Error("The prepared award amounts are invalid.");
   return value;

@@ -37,9 +37,9 @@ enum Purpose {
 /// Anyone may deposit; deposits join one free balance that only the owner commits or refunds to itself. An
 /// ordinary vault also accepts one monthly allocation per calendar month from anyone, when the owner has
 /// turned it on, the identity authority signed it, and its total is within the owner's monthly cap.
-/// The payout fee and the unused-fund withdrawal fee are both 2% (floor(gross / 50)), so awarding
-/// free funds to oneself costs the same as withdrawing them (#907); each fee rounds down once per award or
-/// withdrawal. Tokens must have exact transfers: a fee-on-transfer deposit or payout reverts. Decimals are stored for display only; amounts are
+/// The payout fee and the unused-fund withdrawal fee are both 2% (ceil(gross / 50)), so awarding
+/// free funds to oneself costs the same as withdrawing them (#907); each fee rounds up once per award or
+/// withdrawal, so splitting an amount never lowers the fee. Tokens must have exact transfers: a fee-on-transfer deposit or payout reverts. Decimals are stored for display only; amounts are
 /// token base units. The factory upgrade authority may replace vault logic without a timelock.
 contract ProjectEscrow is Initializable, UUPSUpgradeable {
     struct Award {
@@ -306,12 +306,13 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         return keccak256(abi.encode(block.chainid, address(this), sourceDigest));
     }
 
-    /// @notice The 2% fee deducted from a gross award, rounded down once per award.
+    /// @notice The 2% fee deducted from a gross award, rounded up once per award, so splitting an award into
+    /// pieces under 50 base units never avoids it.
     function payoutFee(uint128 gross) public pure returns (uint128) {
-        return gross / 50;
+        return gross / 50 + (gross % 50 == 0 ? 0 : 1);
     }
 
-    /// @notice The fee on one unused-fund withdrawal: the same 2% as payoutFee, rounded down once per withdrawal
+    /// @notice The fee on one unused-fund withdrawal: the same 2% as payoutFee, rounded up once per withdrawal
     /// (PRD section 18, #907).
     function withdrawalFee(uint128 gross) public pure returns (uint128) {
         return payoutFee(gross);
@@ -520,8 +521,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         emit Paid(id, award.actorId, destination, version, award.gross, net, award.fee);
     }
 
-    /// @notice Refunds free funds to the owner less withdrawalFee(gross), 2% rounded down. A
-    /// withdrawal under 50 base units pays no fee; splitting saves under one base unit per transaction.
+    /// @notice Refunds free funds to the owner less withdrawalFee(gross), 2% rounded up, so splitting a
+    /// withdrawal never lowers the fee.
     function withdrawUnused(uint128 gross) external onlyOwner nonReentrant {
         if (gross == 0) revert InvalidInput();
         if (gross > freeBalance) revert InsufficientFreeBalance();
