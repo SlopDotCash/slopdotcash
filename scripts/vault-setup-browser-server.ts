@@ -15,8 +15,10 @@ import type { SolanaEscrowConfig } from "../contracts/solana/adapter";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import type { VaultSetupReview } from "../src/lib/vault-setup";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import securityPayments from "../workers/security-payments";
+import { paymentDeployments } from "./prepare-payment-deployments";
 
 if (process.env.SLOP_E2E_VAULT_ACTIONS !== "1")
   throw new Error("Local vault harness requires explicit opt-in");
@@ -30,8 +32,8 @@ if (
 )
   throw new Error("Local endpoints required");
 const origin = `http://127.0.0.1:${port}`;
-const servedNetwork = input.template.escrow.deployments[0]
-  .network as keyof typeof ESCROW_NETWORKS;
+const servedNetwork = (input.factory?.network ??
+  input.template.escrow.deployments[0].network) as keyof typeof ESCROW_NETWORKS;
 const { sqlite, db } = sqliteD1(
   readdirSync("migrations")
     .filter((n) => n.endsWith(".sql"))
@@ -39,7 +41,10 @@ const { sqlite, db } = sqliteD1(
 );
 const persistence = new CloudflareProjectPersistence(db);
 const now = () => new Date();
-for (const manifest of [input.project, input.template]) {
+for (const manifest of [
+  input.project,
+  ...(input.template ? [input.template] : []),
+]) {
   const text = JSON.stringify(manifest);
   const digest = sha256Hex(text);
   sqlite
@@ -153,6 +158,7 @@ const deps: ProjectApiDependencies = {
     return { state: "cleared", assessment: null, grandfathered: true };
   },
   vaultSetup: ownerVaultSetupService({
+    factories: input.factory ? [input.factory] : [],
     db,
     projects: () => persistence.listProjects(),
     networks: () => (templatesEnabled ? [servedNetwork] : []),
@@ -169,8 +175,25 @@ Bun.serve({
     const url = new URL(request.url);
     try {
       if (url.pathname === "/__fixture") {
+        let infrastructureReview: VaultSetupReview | undefined;
         if (request.method === "POST") {
           const body = await request.json();
+          if (input.factory && body.factoryReview)
+            Object.assign(input.factory, body.factoryReview);
+          if (body.reviewCurrentVault === true) {
+            const current = await persistence.getProject(input.project.id);
+            if (!current || !deps.vaultSetup)
+              throw new Error("Missing local fixture");
+            infrastructureReview = await deps.vaultSetup.review(
+              current,
+              actor,
+              {
+                network: servedNetwork,
+                claimId: body.claimId,
+                automatic: body.automatic,
+              },
+            );
+          }
           if (typeof body.permitted === "boolean") permitted = body.permitted;
           if (typeof body.templatesEnabled === "boolean")
             templatesEnabled = body.templatesEnabled;
@@ -193,6 +216,13 @@ Bun.serve({
         return Response.json({
           token,
           scanReads,
+          infrastructureReview,
+          projects: (await persistence.listProjects()).length,
+          paymentPins: paymentDeployments(
+            (await persistence.listProjects()).map((p) => p.manifest),
+            "testnet",
+            servedNetwork,
+          ),
           project: await persistence.getProject(input.project.id),
           revisions: sqlite
             .prepare(

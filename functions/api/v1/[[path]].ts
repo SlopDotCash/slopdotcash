@@ -87,6 +87,7 @@ import {
   vettingBranchCache,
 } from "../../../backend/vetting/live-pin";
 import { CloudflareVettingPersistence } from "../../../backend/vetting/persistence";
+import { REVIEWED_EVM_FACTORIES } from "../../../contracts/evm/factories";
 import type { SolanaEscrowConfig } from "../../../contracts/solana/adapter";
 import { deploymentTier } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
@@ -582,6 +583,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     securitySolanaFundingConfig: (projectId, network, vault) =>
       solanaFundingConfig(projectId, network, vault, "security-bounty"),
     vaultSetup: ownerVaultSetupService({
+      factories: REVIEWED_EVM_FACTORIES,
       db: context.env.SLOP_DB,
       projects: () => projectPersistence.listProjects(),
       networks: () => parsePaymentNetworks(context.env.PAYMENT_NETWORKS),
