@@ -2603,9 +2603,9 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
           <p className="payout-status">
-            <Link href={`/projects/${project.slug}/funding`}>
+            <a href={`/projects/${project.slug}/funding`}>
               View vault funds and automatic payment
-            </Link>
+            </a>
           </p>
         </section>
       ) : (

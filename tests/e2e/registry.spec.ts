@@ -1761,6 +1761,27 @@ test("an owner initializes a legacy monthly project without shortening its accep
       ],
       { stdio: "pipe" },
     );
+    // Publish one legitimate text revision so the public registry cache is
+    // refreshed after the fixture's historical import, just as normal writes do.
+    const refreshed = await page.evaluate(
+      async ({ id, manifest }) => {
+        const response = await fetch(`/api/v1/projects/${id}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            manifest: {
+              ...manifest,
+              headline: "Historical monthly funding before vault adoption",
+            },
+            expectedRevision: 2,
+          }),
+        });
+        return response.status;
+      },
+      { id: project.id, manifest: oldManifest },
+    );
+    expect(refreshed).toBe(200);
+    expect((await listedProject(page, project.id)).escrow).toBeUndefined();
     await page.goto(`/projects/${project.id}/manage`, {
       waitUntil: "networkidle",
     });
@@ -1782,7 +1803,7 @@ test("an owner initializes a legacy monthly project without shortening its accep
       fullPage: true,
     });
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision 3" }),
+      page.getByRole("status").filter({ hasText: "Published revision 4" }),
     ).toBeVisible();
     const unchangedFunding = await listedProject(page, project.id);
     expect(unchangedFunding.contribution.approvedScope).toBe(criteria);
@@ -1807,7 +1828,7 @@ test("an owner initializes a legacy monthly project without shortening its accep
     await publish.focus();
     await page.keyboard.press("Enter");
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision 4" }),
+      page.getByRole("status").filter({ hasText: "Published revision 5" }),
     ).toBeVisible();
     const saved = await listedProject(page, project.id);
     expect(saved.contribution.approvedScope).toBe(criteria);
@@ -1826,6 +1847,20 @@ test("an owner initializes a legacy monthly project without shortening its accep
       fullPage: true,
     });
     await expectAccessible(page);
+    await page
+      .getByRole("region", { name: "Payouts", exact: true })
+      .getByRole("link", {
+        name: "View vault funds and automatic payment",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: /Project vault.*Solana/i }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath("published-vault-funding.png"),
+      fullPage: true,
+    });
     expect(errors).toEqual([]);
   } finally {
     await context.close();
