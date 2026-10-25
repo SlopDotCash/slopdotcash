@@ -23,7 +23,9 @@
 > holds the identical award (#1175). The payment executor already relies on that
 > Solana release rule. Upgrade the Solana program and record its new
 > `codeSha256` before any Solana project turns on automatic monthly payment;
-> until the upgrade, reconciliation accepts either fee rounding.
+> until the upgrade, reconciliation accepts either fee rounding. The EVM
+> upgrade kit (deploy script, calldata, fork rehearsal and registry revision)
+> is in section 4; it is prepared and unsigned.
 
 # Owner-controlled escrow mainnet deployment
 
@@ -214,7 +216,8 @@ VAULT=$(cast call "$FACTORY" 'vaults(bytes32)(address)' "$KEY" --rpc-url "$RPC")
 > operator must deploy and verify new factory and vault implementations, and
 > the upgrade authority (the owner wallet) must sign the factory upgrade below.
 > Until then, the setup route refuses creation on that network. No one has
-> deployed, signed or submitted this upgrade.
+> deployed, signed or submitted this upgrade. Section 4 holds the prepared,
+> unsigned upgrade kit.
 
 For a new ordinary vault under PRD decision D1, use the reviewed factory and
 vault implementation that support atomic monthly setup. The older deployments
@@ -844,3 +847,426 @@ leaves an existing attester unchanged. Do not delete `SIGNER_PRIVATE_KEY` to
 stop it: every later release of the site then stops at the secret check. Do
 not delete the Worker: that deletes its signing journal. Slop cannot stop a payment that the project
 or a permissionless executor submits for an approved and funded obligation.
+
+## 4. EVM upgrade to `development` 2a4e80b3
+
+This upgrades the live EVM factory proxy and every vault proxy listed in
+"Current mainnet deployments" (source `main` at `bce5b0df`) on Base, Ethereum
+and Robinhood Chain to the escrow source on `development` at `2a4e80b3`. Agents
+prepared this kit. They did not sign, send or broadcast any transaction. The
+upgrade authority signs and sends every transaction in this section.
+
+### 4.1 What changes
+
+The only source change is `contracts/evm/src/ProjectEscrow.sol`
+(`git diff bce5b0df 2a4e80b3 -- contracts/evm/src`):
+
+- The 2% payout fee and the unused-fund withdrawal fee round up:
+  `ceil(gross / 50)` (#1189). Before the upgrade they round down. A
+  withdrawal or award under 50 base units now pays 1 base unit of fee.
+- `commitMonthly` accepts an existing award that holds the old rounded-down
+  fee, `floor(gross / 50)`, as the same obligation. It counts that award once
+  and does not reserve it again.
+- `EscrowFactory.createWithMonthlyCommitment` and
+  `ProjectEscrow.initializeWithMonthlyCommitment` create an ordinary vault and
+  set its monthly cap and switch in the same transaction (#1168). `create`
+  stays for compatibility and for private bounty vaults.
+
+Review results (agent review, 24 October 2026; not an independent audit):
+
+- Storage layout. `forge inspect <contract> storageLayout` is identical at
+  `bce5b0df` and `2a4e80b3` for `ProjectEscrow` (27 variables, slots 0 to 18)
+  and `EscrowFactory` (10 variables, slots 0 to 7), including the `Award` and
+  `Binding` struct layouts. No variable is added, removed, retyped or moved.
+- Initializers. `initializeWithMonthlyCommitment` uses the `initializer`
+  modifier, like `initialize`. Every existing proxy holds initialized version
+  1 and has code, so both functions revert on it for every caller. Both
+  implementation constructors call `_disableInitializers()`. The upgrade
+  passes empty data, so no reinitializer runs and none is needed.
+- Existing awards keep their stored fee. `pay` uses the fee stored at
+  commitment, so a pre-upgrade award pays its rounded-down fee. Only new
+  commitments and withdrawals use the rounded-up fee.
+- Mixed state between steps fails closed. A new factory with the old vault
+  implementation selected cannot run `createWithMonthlyCommitment`: the old
+  vault logic has no `initializeWithMonthlyCommitment` and no fallback, so the
+  creation reverts. The old factory with the new vault implementation works,
+  because the new logic still has `initialize`.
+- The vault proxy (`ERC1967Proxy`) runtime code does not change, so the
+  registry `codeSha256` of a vault and the `factoryCodeSha256` stay the same.
+- No defect was found.
+
+### 4.2 Accepted risk: one upgrade key
+
+The upgrade authority is the single key
+`0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D` on all three chains. It can
+replace factory and vault logic, including logic that holds deposited funds,
+at once and without a timelock. On 24 October 2026 the owner decided to keep
+this single key and not to move upgrade control to a multisig or a timelock.
+Record this as an accepted risk. Do not describe the escrow as non-custodial
+toward the upgrade key.
+
+### 4.3 Reviewed implementations
+
+Both implementations are created through the deterministic CREATE2 deployer
+`0x4e59b44847b379578588920cA78FbF26c0B4956C` with salt
+`keccak256("slop.escrow.implementation")` =
+`0xbde1f59275bea48e817232a3bac1795c60b7725db9ceedfaf52afbfeb137183f`. The
+address depends only on the creation code, so the address and runtime code are
+the same on every chain. The runtime code includes the implementation's own
+address (the UUPS self-reference), so the digests are known before signing.
+The digest is SHA-256 over the decoded `eth_getCode` bytes, the value that
+`contracts/evm/adapter.ts` compares.
+
+| Role                   | Address                                      | Runtime SHA-256                                                    |
+| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
+| Vault implementation   | `0xf10EF0D801895FDbF240976f5d3010E314662f0C` | `05bef32c557281484149acd361f91f603b691ad281d6dcca341b3d51b9430367` |
+| Factory implementation | `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f` | `976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd` |
+
+Reproduce them from a clean checkout with Foundry 1.7.1 and the pinned
+`foundry.toml` (solc 0.8.30, cancun, optimizer 200 runs,
+`bytecode_hash = "none"`). The same method reproduces the live `bce5b0df`
+digests in "Current mainnet deployments":
+
+```sh
+cd contracts/evm
+forge build
+DEPLOYER=0x4e59b44847b379578588920cA78FbF26c0B4956C
+SALT=$(cast keccak "slop.escrow.implementation")
+for CONTRACT in ProjectEscrow EscrowFactory; do
+  HASH=$(cast keccak "$(cast concat-hex 0xff "$DEPLOYER" "$SALT" "$(cast keccak "$(forge inspect "$CONTRACT" bytecode)")")")
+  echo "$CONTRACT 0x${HASH:26}"
+done
+# Runtime digests: a plain local Anvil (no fork) has the same CREATE2 deployer.
+anvil --chain-id 8453 --port 18700 --silent &
+forge script script/DeployUpgradeImplementations.s.sol:DeployUpgradeImplementations \
+  --rpc-url http://127.0.0.1:18700 --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --unlocked --broadcast
+for ADDRESS in 0xf10EF0D801895FDbF240976f5d3010E314662f0C 0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f; do
+  cast code "$ADDRESS" --rpc-url http://127.0.0.1:18700 | xxd -r -p | shasum -a 256
+done
+kill %1
+```
+
+The same build at `bce5b0df`, with the old implementation addresses filled in,
+gives the live digests `1c21fa90...d551` and `62a3bf4a...4275`; the agent
+checked this against Base on 24 October 2026.
+
+### 4.4 Before signing, on each chain
+
+1. Robinhood Chain only: run the opcode check in section 1.1 again.
+2. Confirm the live state. Every value must match "Current mainnet
+   deployments":
+
+   ```sh
+   FACTORY=0xe51AbF8c6Dbb3Ca6E9AD09F2dc6EF141d7364aAb
+   AUTHORITY=0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D
+   SLOT=0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc
+   cast storage "$FACTORY" "$SLOT" --rpc-url "$RPC"            # ...c831fc745a63161df6fae612bdfe77b969b329fe
+   cast call "$FACTORY" 'vaultImplementation()(address)' --rpc-url "$RPC"   # 0xe137dE4f...22Fc8
+   cast call "$FACTORY" 'upgradeAuthority()(address)' --rpc-url "$RPC"      # $AUTHORITY
+   cast call "$FACTORY" 'pendingUpgradeAuthority()(address)' --rpc-url "$RPC"  # 0x0
+   ```
+
+3. List every existing vault. Each vault proxy is upgraded separately. Read
+   the factory's `VaultCreated` logs from its deployment block:
+
+   | Chain           | Factory deployment block | Deployment transaction                                               |
+   | --------------- | ------------------------ | -------------------------------------------------------------------- |
+   | Base            | 53020390                 | `0xfb8587a46e66e67d863d1befa77455ccdb330c49a0cd70ca4eb2bf6c8ff25dfb` |
+   | Ethereum        | 26261441                 | `0xf0c8da783cede40a2e91f252575fdc6eedd2029f73c5800cfae78ab49d5551ea` |
+   | Robinhood Chain | 96643004                 | `0xdbc3036eaf5187ac79aa84ed06e2747c1c4d258e4d4af13ed96a9f8cdba9558b` |
+
+   ```sh
+   cast logs --address "$FACTORY" --from-block "$FACTORY_BLOCK" --to-block latest \
+     'VaultCreated(bytes32 indexed,address indexed,address indexed,address,uint8,uint8)' \
+     --rpc-url "$RPC"
+   ```
+
+   The vault is the third indexed topic. Split the range if the provider
+   limits `eth_getLogs`. On 24 October 2026 (Base block 53055424, Ethereum
+   block 26267105, Robinhood Chain block 97292925) no chain had a vault, so no
+   vault upgrade was needed at that time. Run the query again immediately
+   before signing, because vault creation is permissionless.
+
+4. Run the fork rehearsal (section 4.6) for the chain at a recent block.
+   Stop if it fails.
+
+### 4.5 Order and transactions
+
+Send the steps in this order on one chain, and finish that chain before the
+next. Use the approved launch order: Base, Ethereum, then Robinhood Chain.
+
+1. Deploy both implementations (no upgrade).
+2. Upgrade every vault proxy.
+3. Upgrade the factory proxy.
+4. Select the new vault implementation for future vaults.
+5. List vaults again and upgrade any vault created before step 4.
+
+Why this order:
+
+- Step 1 changes no proxy. Its result is checked against the digests in
+  section 4.3 before any upgrade.
+- Vaults go first because each vault upgrade is independent of the factory:
+  the vault's `_authorizeUpgrade` reads `factory.upgradeAuthority()`, which
+  does not change. If a vault upgrade fails, the factory is still unchanged.
+- The factory selects the new vault logic last. Until step 4, the setup route
+  stays closed: `prepareEvmVaultCreation` refuses creation unless
+  `vaultImplementation()` equals the reviewed current implementation. After
+  step 3 and before step 4, `createWithMonthlyCommitment` reverts (fail
+  closed) and `create` still makes an old-logic vault.
+- Step 5 is necessary because vault creation is permissionless. A vault created
+  before step 4 runs the old logic.
+
+Steps 3 and 4 can be one transaction instead:
+`upgradeToAndCall(NEW_FACTORY, setVaultImplementation(NEW_VAULT))` (section
+1.6). The rehearsal covers the separate steps.
+
+#### Step 1: deploy the implementations
+
+Any funded account can send step 1, because the CREATE2 address does not
+depend on the sender. The script deploys only. It skips an implementation that
+is already at its address (CREATE2 makes that code identical).
+
+```sh
+cd contracts/evm
+forge build
+# Simulate (no transaction is sent):
+forge script script/DeployUpgradeImplementations.s.sol:DeployUpgradeImplementations \
+  --rpc-url "$RPC" --account slop-mainnet-deployer --sender 0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D
+# Owner only: add --broadcast to send. For a hardware wallet use --ledger instead of --account.
+```
+
+The simulation returns `vaultImplementation` and `factoryImplementation`. Both
+must equal section 4.3. The two deployments use about 4.02 million and 1.60
+million gas (`eth_estimateGas` on each chain, 24 October 2026; Robinhood Chain
+adds about 6,000 for its parent-chain data fee). Forge prints a 30% margin
+(7.63 million). Steps 2 to 4 use about 48,000 gas per vault plus 76,000 for
+the factory. On 24 October 2026 the authority held 0.00497 ETH on Base,
+0.00372 ETH on Ethereum and 0.00189 ETH on Robinhood Chain. That covers all
+steps at that day's prices, but not step 1 on Ethereum above about 0.6 gwei.
+Any funded account can send step 1; only steps 2 to 5 need the authority.
+The script sends two transactions to the CREATE2 deployer.
+Their data is the salt followed by the creation code, which you can rebuild:
+
+```sh
+SALT=$(cast keccak "slop.escrow.implementation")
+cast concat-hex "$SALT" "$(forge inspect ProjectEscrow bytecode)"   # vault transaction data
+cast concat-hex "$SALT" "$(forge inspect EscrowFactory bytecode)"   # factory transaction data
+```
+
+After finality, check the code:
+
+```sh
+NEW_VAULT=0xf10EF0D801895FDbF240976f5d3010E314662f0C
+NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
+cast code "$NEW_VAULT" --rpc-url "$RPC" --block finalized | xxd -r -p | shasum -a 256    # 05bef32c...0367
+cast code "$NEW_FACTORY" --rpc-url "$RPC" --block finalized | xxd -r -p | shasum -a 256  # 97620815...a1dd
+cast call "$NEW_VAULT" 'proxiableUUID()(bytes32)' --rpc-url "$RPC"    # $SLOT
+cast call "$NEW_FACTORY" 'proxiableUUID()(bytes32)' --rpc-url "$RPC"  # $SLOT
+```
+
+Verify the source on each explorer as in section 1.5 (no constructor
+arguments), for both `src/ProjectEscrow.sol:ProjectEscrow` and
+`src/ProjectEscrow.sol:EscrowFactory`.
+
+#### Steps 2 to 4: unsigned calldata
+
+Every call is from the upgrade authority with value 0. The calldata is the
+same on every chain:
+
+| Step | To               | Call                                | Calldata                                                                                                                                                                                                     |
+| ---- | ---------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2    | each vault proxy | `upgradeToAndCall(NEW_VAULT, "")`   | `0x4f1ef286000000000000000000000000f10ef0d801895fdbf240976f5d3010e314662f0c00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000` |
+| 3    | factory proxy    | `upgradeToAndCall(NEW_FACTORY, "")` | `0x4f1ef2860000000000000000000000009f27aec70559d8f4ca1a62398e673a25b1ce3e2f00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000` |
+| 4    | factory proxy    | `setVaultImplementation(NEW_VAULT)` | `0x53e78b6b000000000000000000000000f10ef0d801895fdbf240976f5d3010e314662f0c`                                                                                                                                 |
+
+Rebuild and simulate each one before signing:
+
+```sh
+UPGRADE_VAULT=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_VAULT" 0x)
+UPGRADE_FACTORY=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_FACTORY" 0x)
+SELECT_VAULT=$(cast calldata 'setVaultImplementation(address)' "$NEW_VAULT")
+for VAULT in $VAULTS; do
+  cast call "$VAULT" "$UPGRADE_VAULT" --from "$AUTHORITY" --rpc-url "$RPC"
+done
+cast call "$FACTORY" "$UPGRADE_FACTORY" --from "$AUTHORITY" --rpc-url "$RPC"
+```
+
+`setVaultImplementation` can be simulated only after step 3, or on a fork.
+The owner signs and sends each transaction with his own tooling, for example
+`cast send "$TARGET" "$DATA" --rpc-url "$RPC" --account <owner keystore>`, or
+`--ledger`. Record each transaction hash and block. Wait for each
+transaction to succeed before the next step.
+
+### 4.6 Fork rehearsal
+
+`contracts/evm/integration/mainnet-upgrade-rehearsal.ts` runs the steps above
+on a local Anvil fork. It sends nothing to the forked network: it impersonates
+the upgrade authority on the fork only.
+
+```sh
+cd contracts/evm && forge build && cd ../..
+bun contracts/evm/integration/mainnet-upgrade-rehearsal.ts "$FORK_RPC" [LOGS_RPC] [PORT]
+```
+
+It checks that:
+
+- the live factory, implementations and digests match the recorded review;
+- the checked-in deploy script creates both implementations at the section
+  4.3 addresses, with the section 4.3 digests, and that neither can be
+  initialized;
+- a vault created and used on the live logic (deposit, rounded-down awards,
+  monthly policy, binding, payment, fee-free 49-unit withdrawal) keeps every
+  declared storage slot, its initializer version, its awards and its proxy
+  code after the upgrade, and that `initialize` and
+  `initializeWithMonthlyCommitment` revert on it;
+- only the authority can upgrade; every live vault is upgraded and its storage
+  is unchanged; the factory keeps every role;
+- fees round up after the upgrade (a 49-unit withdrawal pays 1);
+- `commitMonthly` counts a pre-upgrade rounded-down award once and reserves
+  only the new award, with a rounded-up fee;
+- `createWithMonthlyCommitment` creates a vault on the new logic with the
+  owner's cap and the unchanged proxy code;
+- `verifyPayment` and `verifyReserve` accept a pre-upgrade event through
+  `history` and post-upgrade events through the new current review; they
+  reject a pre-upgrade event without history, a post-upgrade event under the
+  old review, and an event between upgrades when `supersededAtBlock` is set at
+  the first upgrade instead of the last; `prepareEvmVaultCreation` opens.
+
+Results on 24 October 2026, all three chains passed every check:
+
+| Chain           | Fork block | Live vaults | Rehearsal vault upgrade | Factory upgrade (`supersededAtBlock`) | `setVaultImplementation` |
+| --------------- | ---------- | ----------- | ----------------------- | ------------------------------------- | ------------------------ |
+| Base            | 53055965   | none        | 53055993                | 53055997                              | 53055999                 |
+| Ethereum        | 26267203   | none        | 26267231                | 26267235                              | 26267237                 |
+| Robinhood Chain | 97304013   | none        | 97304041                | 97304045                              | 97304047                 |
+
+Gas used on each fork: vault upgrade 47,911, factory upgrade 37,597,
+`setVaultImplementation` 38,318. The authority was not funded on the fork; its
+live balance paid every step. The fork does not model Robinhood Chain's
+parent-chain data fee. The fork blocks are local Anvil blocks, not mainnet
+evidence.
+
+### 4.7 Choose `supersededAtBlock`
+
+`supersededAtBlock` is the block of the last proxy upgrade that leaves the old
+review on that chain: in the order above, the step 3 factory upgrade block, or
+a later step 5 vault upgrade block. `setVaultImplementation` changes no proxy
+and does not count. The adapter uses an entry only for events with
+`eventBlock < supersededAtBlock`, and it reads each proxy's implementation at
+the end of the event's block. An event in the same block as the last upgrade
+reads the new implementation and verifies against the new current review.
+A bound at the first vault upgrade would reject events from proxies that were
+still on the old logic, so do not use it.
+
+### 4.8 Registry revision and executor
+
+Record the change as an admin manifest revision on `/admin`, one revision per
+project deployment on the upgraded chain, after step 5 is final. The new
+current review:
+
+```json
+{
+  "authority": "0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D",
+  "vaultImplementation": "0xf10EF0D801895FDbF240976f5d3010E314662f0C",
+  "vaultImplementationCodeSha256": "05bef32c557281484149acd361f91f603b691ad281d6dcca341b3d51b9430367",
+  "factoryImplementation": "0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f",
+  "factoryImplementationCodeSha256": "976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd"
+}
+```
+
+If the deployment already has an `evmUpgrade` with the `bce5b0df` review,
+keep its earlier `history` entries unchanged and append the outgoing review
+once:
+
+```json
+{
+  "authority": "0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D",
+  "vaultImplementation": "0xf10EF0D801895FDbF240976f5d3010E314662f0C",
+  "vaultImplementationCodeSha256": "05bef32c557281484149acd361f91f603b691ad281d6dcca341b3d51b9430367",
+  "factoryImplementation": "0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f",
+  "factoryImplementationCodeSha256": "976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd",
+  "history": [
+    {
+      "authority": "0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D",
+      "vaultImplementation": "0xe137dE4fbAc6438007703065C905a58b03322Fc8",
+      "vaultImplementationCodeSha256": "1c21fa901dc924a7a2dd84b770b7d1cf69ef14ba97957ae5c8986232b8f9d551",
+      "factoryImplementation": "0xc831Fc745a63161Df6Fae612bDFE77B969b329fE",
+      "factoryImplementationCodeSha256": "62a3bf4a741b8084a63152835047bb71e8396b153a112225910d1dffecd64275",
+      "supersededAtBlock": "<last proxy upgrade block on this chain, decimal>"
+    }
+  ]
+}
+```
+
+Also update `sourceCommit` to `2a4e80b3` (full SHA) and
+`deploymentTransaction` to the step 3 transaction if the revision records
+them. `codeSha256` (vault proxy) and `factoryCodeSha256` (factory proxy) do
+not change. A deployment first recorded after the upgrade carries only the
+new current review and no `history`: `assertEscrowTransition` rejects history
+on a new deployment.
+
+Then refresh the executor. `PAYMENT_DEPLOYMENTS` is generated from the
+registry, so it copies `evmUpgrade` with its `history` field by field:
+
+```sh
+bun run projects:sync
+node workers/payment-executor/configure.mjs --stack production \
+  --network <base-mainnet|ethereum|robinhood-mainnet> \
+  --deployments <reviewed deployments JSON from the synced registry> --output <dir>
+```
+
+Deploy the regenerated attester configuration through the reviewed release.
+Until the revision and the executor update land, monthly signing and payment
+verification for an upgraded vault fail closed, because its new implementation
+is not yet a reviewed one. Do not edit the snapshot by hand.
+
+Keep the rounded-down branch of `acceptsPayoutFee`
+(`src/lib/payments/contracts.ts`): pre-upgrade events still hold
+`floor(gross / 50)`.
+
+### 4.9 After the upgrade: read-only verification
+
+At one finalized block:
+
+```sh
+BLOCK=$(cast block finalized --rpc-url "$RPC" --field number)
+cast storage "$FACTORY" "$SLOT" --rpc-url "$RPC" --block "$BLOCK"     # ...9f27aec70559d8f4ca1a62398e673a25b1ce3e2f
+cast call "$FACTORY" 'vaultImplementation()(address)' --rpc-url "$RPC" --block "$BLOCK"  # $NEW_VAULT
+for VAULT in $VAULTS; do
+  cast storage "$VAULT" "$SLOT" --rpc-url "$RPC" --block "$BLOCK"     # ...f10ef0d801895fdbf240976f5d3010e314662f0c
+  cast call "$VAULT" 'totals()(uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint256)' \
+    --rpc-url "$RPC" --block "$BLOCK"                                  # equal to the values read before step 2
+done
+for ADDRESS in "$NEW_VAULT" "$NEW_FACTORY" "$FACTORY"; do
+  cast code "$ADDRESS" --rpc-url "$RPC" --block "$BLOCK" | xxd -r -p | shasum -a 256
+done                                                                   # 05bef32c..., 97620815..., afb62459...
+for GETTER in 'upgradeAuthority()(address)' 'registrar()(address)' 'identityAuthority()(address)' \
+  'feeRecipient()(address)' 'bindingDelay()(uint64)' 'AUTHORITY_ROTATION_DELAY()(uint64)'; do
+  cast call "$FACTORY" "$GETTER" --rpc-url "$RPC" --block "$BLOCK"
+done                                                                   # unchanged
+cast call "$NEW_VAULT" 'payoutFee(uint128)(uint128)' 1000049 --rpc-url "$RPC"   # 20001
+```
+
+Read each vault's `totals()` before step 2 and keep the values. Then run
+`verifyEvmDeployment` from `contracts/evm/adapter.ts` with the revised
+manifest at `BLOCK`, and record the evidence (section 1.7) on the release
+issue.
+
+### 4.10 Rollback
+
+Rollback uses the same calls with the `bce5b0df` implementations, from the
+upgrade authority: each vault `upgradeToAndCall(0xe137dE4fbAc6438007703065C905a58b03322Fc8, "")`,
+the factory `upgradeToAndCall(0xc831Fc745a63161Df6Fae612bDFE77B969b329fE, "")`,
+then `setVaultImplementation(0xe137dE4fbAc6438007703065C905a58b03322Fc8)`.
+Storage is compatible in both directions. After a rollback:
+
+- fees round down again; awards committed after the upgrade keep their
+  rounded-up fee and pay it;
+- the old `commitMonthly` rejects a monthly allocation that repeats an award
+  committed with a rounded-up fee (`DuplicateAward`, fail closed);
+- vaults created with `createWithMonthlyCommitment` keep their cap and switch,
+  but new creation must use `create` and `setMonthlyCommitment`.
+
+Record the rollback as a new revision: the rolled-back review becomes current,
+and the outgoing review is appended to `history` with the rollback's last
+proxy upgrade block. Never edit or remove an existing history entry.
