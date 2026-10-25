@@ -18,6 +18,7 @@ import {
   parseAbi,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { handleFeeConversionsApi } from "../../backend/fee-conversions/handler";
 import { evmAwardId } from "../../contracts/evm/adapter";
 import { parseConfig } from "./config";
 import { chainClient, runOnce } from "./index";
@@ -801,6 +802,16 @@ try {
     await rpc("anvil_mine", ["0x80"]);
     await runOnce(env, undefined, undefined, "receipts");
     expect(state(), "finalized", `7 ${fault} claim recovery`);
+    if (
+      (await view(vault, "freeBalance")) !== freeBeforeClaim ||
+      ((await view(vault, "reservedPrincipal")) as bigint) +
+        ((await view(vault, "reservedFees")) as bigint) !==
+        reserved ||
+      (await balanceOf(AERO, vault)) !== 300n * 10n ** 18n
+    )
+      throw new Error(
+        `${fault}: claim recovery changed principal or reserved awards`,
+      );
     console.log(
       `7 ${fault}: unverified claim blocked conversion; same send recovered once`,
     );
@@ -850,6 +861,41 @@ try {
   // Nothing is left to claim, so a further run sends no claim.
   const [after] = await runOnce(env);
   if (after.claimed !== 0) throw new Error("7 a repeat run claimed again");
+  const response = await handleFeeConversionsApi(
+    new Request("http://localhost/api/v1/admin/fee-conversions"),
+    {
+      db,
+      adminGithubIds: new Set(["1"]),
+      sessionActor: async () => ({ githubId: "1" }),
+    },
+  );
+  const report = (await response?.json()) as {
+    recent: { txId: string | null }[];
+    totals: { token: string; amountOut: string }[];
+  };
+  const claimIds = (
+    sqlite
+      .query("SELECT tx_id FROM fee_conversions WHERE kind = 'claim'")
+      .all() as { tx_id: string }[]
+  ).map((row) => row.tx_id);
+  const recordedProceeds = (
+    sqlite
+      .query(
+        "SELECT amount_out FROM fee_conversions WHERE kind = 'conversion' AND state = 'finalized'",
+      )
+      .all() as { amount_out: string }[]
+  ).reduce((sum, row) => sum + BigInt(row.amount_out), 0n);
+  if (
+    response?.status !== 200 ||
+    report.recent.some(
+      (row) => row.txId !== null && claimIds.includes(row.txId),
+    ) ||
+    report.totals.find((total) => total.token === AERO)?.amountOut !==
+      recordedProceeds.toString()
+  )
+    throw new Error(
+      "admin conversion report included a claim or incorrect proceeds",
+    );
 
   console.log(
     claimOnly
