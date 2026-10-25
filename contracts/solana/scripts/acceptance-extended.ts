@@ -1840,7 +1840,8 @@ export async function runSolanaExtended(
             ],
             [["key-recovery"], keyRecovery],
           ],
-      finalize,
+      // Poll for finality within the wait budget, as the EVM leg does.
+      (entry) => ready(() => finalize(entry)),
     );
     run.status = "passed";
   } catch (error) {
