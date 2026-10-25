@@ -168,6 +168,7 @@ export function VaultActions({
               wallet,
               operation,
               amount,
+              payoutPolicy,
             )
           : await reviewVaultAction(
               deployment,
@@ -190,6 +191,7 @@ export function VaultActions({
             wallet,
             operation,
             amount,
+            payoutPolicy,
           )
         : review;
       if (
@@ -278,6 +280,7 @@ export function VaultActions({
             pending.gross,
             pending.solanaBlockhash as string,
             hash,
+            payoutPolicy,
           )
         : await checkVaultAction(
             deployment,

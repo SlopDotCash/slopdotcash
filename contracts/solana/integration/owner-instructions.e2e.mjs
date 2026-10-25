@@ -14,6 +14,10 @@ import {
   checkSolanaFunding,
   prepareSolanaFunding,
 } from "../.local/funding.mjs";
+import {
+  prepareSolanaVaultCreation,
+  verifySolanaVaultCreation,
+} from "../.local/owner-creation.mjs";
 import { buildInitializeVaultInstructions } from "../.local/owner-instructions.mjs";
 import { message } from "../.local/transactions.mjs";
 import { ownerPlan } from "../scripts/owner-plan.mjs";
@@ -188,6 +192,43 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
       network: "solana-localnet",
       mint: input.mint,
     };
+    if (!bounty) {
+      const changed = await program.methods
+        .setMonthlyCommitment(new anchor.BN(30), !input.automaticMonthly)
+        .accountsStrict({ owner: owner.publicKey, project: expectedProject })
+        .rpc();
+      await provider.connection.confirmTransaction(changed, "finalized");
+      const current = await program.account.project.fetch(
+        expectedProject,
+        "finalized",
+      );
+      assert.equal(current.monthlyCap.toString(), "30");
+      assert.equal(current.monthlyEnabled, !input.automaticMonthly);
+    }
+    const recovered = await prepareSolanaVaultCreation(config, input, true);
+    assert.equal(recovered.existingVault, plan.vault);
+    assert.equal(recovered.transaction, null);
+    assert.deepEqual(
+      await verifySolanaVaultCreation(config, input, signature),
+      {
+        projectPda: plan.projectPda,
+        vault: plan.vault,
+      },
+    );
+    if (!bounty)
+      await assert.rejects(
+        () =>
+          verifySolanaVaultCreation(
+            config,
+            {
+              ...input,
+              monthlyCap: "30",
+              automaticMonthly: !input.automaticMonthly,
+            },
+            signature,
+          ),
+        /does not match the pending wallet action/,
+      );
     const funding = await prepareSolanaFunding(config, {
       operation: "deposit",
       wallet: input.owner,

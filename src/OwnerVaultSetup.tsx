@@ -455,17 +455,20 @@ export function OwnerVaultSetup({
             {!bounty ? (
               <>
                 <label>
-                  <input
-                    type="checkbox"
-                    checked={automatic}
+                  Automatic monthly payment
+                  <select
+                    value={automatic ? "on" : "off"}
                     disabled={busy}
-                    onChange={(e) => setAutomatic(e.target.checked)}
-                  />{" "}
-                  Automatically pay the monthly allocation
+                    onChange={(e) => setAutomatic(e.target.value === "on")}
+                  >
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
                 </label>
                 <p>
-                  The cap is {project.reward.monthlyCapDisplay} per month. You
-                  can turn automatic payment off later.
+                  Automatic monthly payment is On by default. Choose Off to opt
+                  out. The cap is {project.reward.monthlyCapDisplay} per month.
+                  You can change this setting later.
                 </p>
               </>
             ) : (
@@ -474,7 +477,6 @@ export function OwnerVaultSetup({
                 You decide whether to award each report.
               </p>
             )}
-
             <button
               className="button"
               type="button"

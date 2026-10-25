@@ -199,6 +199,15 @@ export async function migratePlan(input, runtime) {
     throw new Error(
       `${stale.length} month account(s) of an earlier layout exist; this build cannot read them, so do not upgrade in place`,
     );
+  const expiredUnsettled = months.filter(
+    ({ account }) =>
+      account.data[108] !== 0 &&
+      account.data.readBigUInt64LE(76) < account.data.readBigUInt64LE(84),
+  );
+  if (expiredUnsettled.length > 0)
+    throw new Error(
+      `${expiredUnsettled.length} expired month account(s) still hold unsettled funds; preserve them and review recovery before an in-place upgrade`,
+    );
   const { projects } = await listProjects(input, runtime);
   const transactions = [];
   for (const project of projects.filter((row) => row.migrationRequired)) {

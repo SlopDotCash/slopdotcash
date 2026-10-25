@@ -342,10 +342,10 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       .locator(".funding-status-grid div")
       .filter({ has: page.locator("dt", { hasText: /^Project vault$/ }) })
       .locator("dd"),
-  ).toHaveText("Recorded · payments disabled");
-  await expect(page.getByRole("note")).toContainText(
-    "Payments are disabled for this project.",
-  );
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Payments are disabled for this project.", { exact: false }),
+  ).toHaveCount(0);
   const actions = page.getByRole("region", {
     name: "Fund or withdraw · Base Sepolia (test)",
   });
@@ -1244,11 +1244,12 @@ test("owner creates, registers and funds a vault through the real API", async ({
     });
     const setup = page.getByRole("region", { name: "Set up project vault" });
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
-    const monthlyDefault = setup.getByRole("checkbox", {
-      name: "Automatically pay the monthly allocation",
+    const monthlySetting = setup.getByRole("combobox", {
+      name: "Automatic monthly payment",
+      exact: true,
     });
-    await expect(monthlyDefault).toBeChecked();
-    if (!automatic) await monthlyDefault.uncheck();
+    await expect(monthlySetting).toHaveValue("on");
+    if (!automatic) await monthlySetting.selectOption("off");
     const reviewButton = setup.getByRole("button", {
       name: "Review vault creation",
       exact: true,
@@ -1347,8 +1348,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       verifyEvmDeployment(
         { ...created, rpcUrl, chainId: 84532n },
         "finalized",
-        undefined,
-        `0x${"f".repeat(64)}`,
+        { expectedProjectId: `0x${"f".repeat(64)}` },
       ),
     ).rejects.toThrow("different registry project");
     await api(`project-vaults/${project.id}`, {
@@ -1444,14 +1444,9 @@ test("owner creates, registers and funds a vault through the real API", async ({
         name: "View vault funds and automatic payment",
       }),
     ).toHaveCount(2);
-    // Funding and payment states stay distinct from vault registration (PRD section 7).
-    for (const state of ["Deposit needed", "Payments off"])
-      await expect(page.getByText(state, { exact: true })).toBeVisible();
     await expect(
-      page.getByText(
-        "Payouts are disabled. Funding alone does not enable them.",
-      ),
-    ).toBeVisible();
+      page.getByText(/Deposit needed|Payments off|Payouts are disabled/),
+    ).toHaveCount(0);
     expect(errors).toEqual([]);
     expect(failedRequests).toEqual([]);
     expect(
@@ -1695,7 +1690,7 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     });
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
     await expect(
-      setup.getByLabel("Automatically pay the monthly allocation"),
+      setup.getByRole("combobox", { name: /^Automatic monthly payment/ }),
     ).toHaveCount(0);
     const reviewButton = setup.getByRole("button", {
       name: "Review vault creation",

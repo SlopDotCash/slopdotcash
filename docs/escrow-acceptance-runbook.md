@@ -118,6 +118,10 @@ transaction before it broadcasts it, so a rerun never signs a second
 transaction for the same step. Exit code 1 means the run failed; the
 evidence file lists the error.
 
+Resume with the exact source commit recorded in the evidence. A different
+source must use a new evidence directory. Keep the prior directory and its
+results. This check runs before a transaction is signed or sent.
+
 Attach `evidence.json` to the issue. Do not commit it: `evidence/` is ignored.
 The directory also holds `projection.sqlite`, the signer journals, and
 `registry.sqlite`. The journals contain signed transactions but no key.
@@ -179,6 +183,27 @@ period of the production schedule (2026-11). The owner's monthly settings in
 the account and the coordinator's freeze are not part of this run; the
 executor receives an authorization that the identity test key signs over the
 same digest (EVM) or message (Solana) as the attester.
+
+If the EVM executor refuses its gas ceiling, a direct permissionless send can
+prove the contract checks only. The evidence records that path separately and
+keeps the monthly scenario pending. It does not prove automatic execution.
+Earlier evidence with that fallback does not prove automatic execution. After
+an approved executor repair, use a new run to prove automatic submission; the
+previous period has already committed. Do not increase limits to obtain a pass.
+
+The monthly test uses the legacy creation call, which starts Off, to test
+owner opt-in and opt-out. It does not prove the website's default-On atomic
+creation flow. The direct bounty tests prove contract settlement, not private
+API access or ledger isolation.
+
+A scenario passes only after its recorded transactions are finalized. A run
+that waits for finality retains the completed execution and checks the same
+receipts on resume. It does not repeat the financial steps.
+
+Use a new run after repairing a failed frozen-recipient scenario. The failed
+run can already have thawed the fee account and claimed earlier payments.
+Its saved failure must not become evidence that a later payment occurred
+while the account was frozen.
 
 The evidence file has a `scenarios` object: per scenario its status
 (`passed`, `pending` or `failed`), the reason, its vaults, every

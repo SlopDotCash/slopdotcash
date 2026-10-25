@@ -110,17 +110,6 @@ export function ownerVaultSetupService(deps: {
   ) {
     const network = ESCROW_NETWORKS[input.network];
     const reward = project.manifest.reward;
-    // Bounty and monthly funds must never share a vault. The Solana path builds
-    // an ordinary vault from the monthly cap only, so it refuses any other purpose.
-    if (
-      (input.payoutPolicy ?? "ordinary") !== "ordinary" &&
-      network?.family !== "evm"
-    )
-      fail(
-        422,
-        "vault_setup_unavailable",
-        "Owner setup for a Solana bounty vault is not available.",
-      );
     const bounty = input.payoutPolicy === "security-bounty";
     const program = project.manifest.securityBounty;
     if (
@@ -141,14 +130,6 @@ export function ownerVaultSetupService(deps: {
         bounty
           ? "Save the USDC bounty terms and network before creating a bounty vault."
           : "Choose a monthly reward amount and network before creating a vault.",
-      );
-    // Only the EVM verifier binds the requested purpose. Another network
-    // family must never record an ordinary vault as the bounty vault.
-    if (bounty && network.family !== "evm")
-      fail(
-        422,
-        "vault_setup_unavailable",
-        "Owner bounty vault setup is available only on EVM networks.",
       );
     const claim = await deps.db
       .prepare(
@@ -174,7 +155,7 @@ export function ownerVaultSetupService(deps: {
         "This network has no reviewed reward asset.",
       );
     if (network.family === "solana") {
-      if (BigInt(reward.monthlyCapMinor) > (1n << 64n) - 1n)
+      if (!bounty && BigInt(reward.monthlyCapMinor) > (1n << 64n) - 1n)
         fail(
           422,
           "vault_setup_unavailable",
@@ -182,6 +163,7 @@ export function ownerVaultSetupService(deps: {
         );
       for (const { deployment: template, payoutPolicy } of await templates(
         project,
+        input.payoutPolicy,
       )) {
         if (
           template.network !== input.network ||
@@ -216,9 +198,13 @@ export function ownerVaultSetupService(deps: {
           feeRecipient: config.feeRecipient,
           bindingDelaySeconds: config.bindingDelaySeconds,
           rotationDelaySeconds: config.rotationDelaySeconds,
-          monthlyCap: reward.monthlyCapMinor,
-          automaticMonthly: input.automatic,
-          payoutPolicy: "ordinary",
+          ...(bounty
+            ? { payoutPolicy: "security-bounty" as const }
+            : {
+                monthlyCap: reward.monthlyCapMinor,
+                automaticMonthly: input.automatic,
+                payoutPolicy: "ordinary" as const,
+              }),
         };
         try {
           const prepared = await prepareSolanaVaultCreation(
@@ -302,20 +288,27 @@ export function ownerVaultSetupService(deps: {
       const result = await resolve(project, actor, input);
       if (result.family === "solana")
         return {
+          payoutPolicy: input.payoutPolicy ?? "ordinary",
           family: "solana",
           network: input.network,
           owner: result.creation.owner,
           asset: result.creation.mint,
-          cap: project.manifest.reward.monthlyCapMinor,
-          capDisplay: project.manifest.reward.monthlyCapDisplay,
+          cap:
+            input.payoutPolicy === "security-bounty"
+              ? "0"
+              : project.manifest.reward.monthlyCapMinor,
+          capDisplay:
+            input.payoutPolicy === "security-bounty"
+              ? ""
+              : project.manifest.reward.monthlyCapDisplay,
           automatic: input.automatic,
           creation: result.creation,
           ...result.prepared,
         };
       const { config, creation, prepared } = result;
       return {
-        family: "evm",
         payoutPolicy: input.payoutPolicy ?? "ordinary",
+        family: "evm",
         network: input.network,
         owner: creation.owner,
         asset: creation.asset,
@@ -340,7 +333,7 @@ export function ownerVaultSetupService(deps: {
           );
           if (!verified) return null;
           return {
-            ...currentReview(result.template),
+            ...result.template,
             ...verified,
             owner: result.creation.owner,
             asset: result.creation.mint,

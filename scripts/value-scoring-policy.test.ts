@@ -300,6 +300,12 @@ test("banned reviews do not consume another reviewer's slot or credit", () => {
     ["U_erin", 2],
     ["U_grace", 2],
   ]);
+  expect(
+    credits.reduce((sum, event) => sum + (event.scoreThirds ?? 0), 0),
+  ).toBe(9);
+  expect(
+    snapshot(POLICY, new Map([["U_bob", "2026-10-19T01:00:00.000Z"]])),
+  ).toEqual(result);
   const exclusions = new Map(
     (result.reviewExclusions ?? []).map((item) => [item.reviewId, item.reason]),
   );

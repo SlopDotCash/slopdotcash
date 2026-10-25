@@ -152,11 +152,39 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
   });
   if (!response.ok) throw new Error(`RPC HTTP failure: ${response.status}`);
   const body = object(await response.json());
-  if (body.error || body.id !== 1 || !("result" in body)) {
+  if (body.id !== 1) throw new Error("RPC request failed");
+  if (body.error) {
+    const error = object(body.error);
+    throw new EvmRpcError(
+      error.data === "0x" &&
+        typeof error.message === "string" &&
+        /revert/i.test(error.message),
+    );
+  }
+  if (!("result" in body)) {
     throw new Error("RPC request failed");
   }
   return body.result;
 }
+
+/** Only a proved empty EVM revert means an older reviewed implementation lacks a method.
+ * Transport, provider and malformed-response errors must never select a legacy fallback. */
+export class EvmRpcError extends Error {
+  constructor(public emptyRevert: boolean) {
+    super("RPC request failed");
+  }
+}
+export {
+  buildCommitMonthlyLeafCalldata,
+  buildReserveMonthlyCalldata,
+  EvmMonthlyAlreadyAdmitted,
+  type EvmMonthlyReservation,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
+  prepareEvmMonthlyReservation,
+  readEvmMonthlyReserve,
+} from "./monthly-reserve";
+export { rpc as evmRpc };
 
 /** The reviewed factory rotates the identity authority only after this notice period. */
 export const EVM_AUTHORITY_ROTATION_DELAY = 0n;
@@ -223,10 +251,14 @@ export function evmVaultKey(input: {
 export async function verifyEvmDeployment(
   config: EvmEscrowConfig,
   blockTag: unknown = "finalized",
-  /** Only for an event at its own block number: also accept a superseded review whose bound is
-   * after that block. */
-  eventBlock?: bigint,
-  expectedProjectId?: string,
+  {
+    expectedProjectId,
+    eventBlock,
+  }: {
+    expectedProjectId?: string;
+    /** Accept historical reviews only for an event before their supersession. */
+    eventBlock?: bigint;
+  } = {},
 ) {
   if (
     ![
@@ -457,7 +489,9 @@ async function finalizedLog(
   ) {
     throw new Error("Receipt block is not canonical");
   }
-  await verifyEvmDeployment(config, receipt.blockNumber, blockNumber);
+  await verifyEvmDeployment(config, receipt.blockNumber, {
+    eventBlock: blockNumber,
+  });
   if (!Array.isArray(receipt.logs)) throw new Error("Missing receipt logs");
   const matches = receipt.logs
     .map(object)
@@ -944,7 +978,7 @@ export async function verifyVaultFundingAction(
       )
     : [0n];
   const encoded = (fee: bigint) =>
-    `0x${amountWord(gross)}${withdrawing ? `${amountWord(gross - fee)}${fee.toString(16).padStart(64, "0")}` : ""}`;
+    `0x${amountWord(gross)}${withdrawing ? `${(gross - fee).toString(16).padStart(64, "0")}${fee.toString(16).padStart(64, "0")}` : ""}`;
   const fee = fees.find(
     (candidate) =>
       typeof log.data === "string" &&
@@ -1110,13 +1144,12 @@ export async function verifyEvmVaultCreation(
     asset: input.asset,
     payoutPolicy: input.payoutPolicy,
   };
-  await verifyEvmDeployment(
-    created,
-    receipt.blockNumber,
-    undefined,
-    input.projectId,
-  );
-  await verifyEvmDeployment(created, "finalized", undefined, input.projectId);
+  await verifyEvmDeployment(created, receipt.blockNumber, {
+    expectedProjectId: input.projectId,
+  });
+  await verifyEvmDeployment(created, "finalized", {
+    expectedProjectId: input.projectId,
+  });
   if (input.payoutPolicy !== "security-bounty") {
     // Read the policy at the creation block: a later owner change must not block registration.
     const cap = BigInt(
@@ -1259,15 +1292,32 @@ export async function readVaultTotals(
   const decimals = BigInt(await getter(config, vault, "decimals()", blockTag));
   if (!/^0x0{24}[0-9a-f]{40}$/.test(token) || decimals > 255n)
     throw new Error("Malformed vault asset");
+  const accounted =
+    free +
+    reservedPrincipal +
+    reservedFees +
+    paid +
+    payoutFees +
+    withdrawnGross;
+  // Legacy totals() keeps its ABI. When the counters have an unmaterialized monthly remainder,
+  // require the V2 getter to prove that exact reserve at the same finalized block. A legacy vault
+  // with inconsistent counters, or an unavailable getter, still fails closed.
+  const pending =
+    deposited > accounted
+      ? BigInt(await getter(config, vault, "pendingMonthlyGross()", blockTag))
+      : 0n;
   if (
     deposited !==
       free +
         reservedPrincipal +
         reservedFees +
+        pending +
         paid +
         payoutFees +
         withdrawnGross ||
-    vaultBalance < free + reservedPrincipal + reservedFees + accruedFees
+    pending > U128 ||
+    vaultBalance <
+      free + reservedPrincipal + reservedFees + pending + accruedFees
   )
     throw new Error("Vault totals do not conserve");
   return {
@@ -1286,6 +1336,9 @@ export async function readVaultTotals(
     reservedPrincipal: reservedPrincipal.toString(),
     reservedFees: reservedFees.toString(),
     accruedFees: accruedFees.toString(),
-    reserved: null,
+    reserved:
+      pending > 0n
+        ? (reservedPrincipal + reservedFees + pending).toString()
+        : null,
   };
 }

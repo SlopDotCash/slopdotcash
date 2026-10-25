@@ -1642,15 +1642,24 @@ test("opens the models page directly and through keyboard navigation", async ({
   });
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
+  const homeSnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/$/);
-  // Let the home records finish loading so going back aborts no request.
+  // Points can render before the separate score download finishes. A previous
+  // SPA route's networkidle state does not prove this response body is complete.
+  expect(await (await homeSnapshot).finished()).toBeNull();
   await expect(page.locator("#leaderboard").getByRole("table")).toBeVisible({
     timeout: 60_000,
   });
-  await page.waitForLoadState("networkidle");
+  const modelsSnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/models$/u);
+  expect(await (await modelsSnapshot).finished()).toBeNull();
+  await expect(firstModel).toBeVisible();
 });
 
 test("opens the sponsors page directly and through keyboard navigation", async ({

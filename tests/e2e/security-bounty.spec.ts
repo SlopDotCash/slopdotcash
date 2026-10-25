@@ -581,7 +581,9 @@ test("owners publish and control bounty programs with verified funding @registry
     // An account without repository access gets the authority refusal,
     // never the funding answer, even when it sends its own repository.
     await expectOutsiderRefused(request, id, repository);
-    // Approvers get private-case roles, so owners cannot change them.
+    // Owners manage their own contacts without a Slop admin queue.
+    const originalProgram = stored.manifest
+      .securityBounty as SecurityBountyTerms;
     const contacts = await api(
       request,
       "PUT",
@@ -602,8 +604,42 @@ test("owners publish and control bounty programs with verified funding @registry
         },
       },
     );
-    expect(contacts.status).toBe(422);
-    expect(contacts.body.error).toBe("security_contacts_restricted");
+    expect.soft(contacts.status, JSON.stringify(contacts.body)).toBe(200);
+    if (contacts.status === 200) {
+      stored = await adminProject(request, id);
+      expect(stored.manifest.securityBounty).toMatchObject({
+        approvers: { technical: [account("reporter-a")] },
+      });
+      // A repository admin can also manage contacts, without being the
+      // recorded steward or a Slop admin.
+      const permission = (level: string) =>
+        fetch(
+          `${GITHUB_FIXTURE}/__fixture/slopbot/${repository}/permission/e2e-reporter-b/${level}`,
+          { method: "PUT" },
+        );
+      expect((await permission("admin")).status).toBe(204);
+      try {
+        const restored = await api(
+          request,
+          "PUT",
+          `projects/${id}`,
+          TOKENS["reporter-b"],
+          {
+            expectedRevision: stored.revision,
+            manifest: {
+              ...stored.manifest,
+              securityBounty: {
+                ...(stored.manifest.securityBounty as object),
+                approvers: originalProgram.approvers,
+              },
+            },
+          },
+        );
+        expect(restored.status, JSON.stringify(restored.body)).toBe(200);
+      } finally {
+        expect((await permission("none")).status).toBe(204);
+      }
+    }
     const reviewed = bountyTerms(repository).settlement;
     expect(
       (
