@@ -8,8 +8,11 @@ import {
   NOTIFY_INTERNAL_HOST,
   PROJECT_APPLICATION_NOTICE_PATH,
   type ProjectApplicationNotice,
+  SLOPBOT_FAILURE_NOTICE_PATH,
   SLOPBOT_SPEND_NOTICE_PATH,
+  type SlopbotFailureNotice,
   type SlopbotSpendNotice,
+  validFailureNotice,
   validSpendNotice,
 } from "./contracts";
 
@@ -279,8 +282,21 @@ function spendDollars(micro: number): string {
 }
 
 function noticeText(
-  notice: ProjectApplicationNotice | SlopbotSpendNotice,
+  notice: ProjectApplicationNotice | SlopbotSpendNotice | SlopbotFailureNotice,
 ): string {
+  if ("callId" in notice)
+    return [
+      notice.kind === "budget-exhausted"
+        ? "Surplus refused a Slopbot request because its provider budget was exhausted."
+        : "A Slopbot request to Surplus did not produce a valid result.",
+      `Model: ${notice.model}. Recorded at: ${notice.occurredAt}.`,
+      `Internal cost record: ${notice.callId}.`,
+      "The failed call remains recorded. A fallback may have completed the assessment; otherwise it stays pending for retry.",
+      "Check provider availability and budget settings. Unknown charges remain unknown.",
+      "This notice does not change a spending limit, publish a score or approve a payout.",
+      "Review Slopbot: https://slop.cash/admin",
+      "",
+    ].join("\n");
   if ("month" in notice)
     return [
       `Slopbot recorded API cost crossed ${spendDollars(notice.thresholdMicroUsd)} for ${notice.month} (UTC).`,
@@ -309,7 +325,7 @@ function noticeText(
 }
 
 export function buildNoticeMime(
-  notice: ProjectApplicationNotice | SlopbotSpendNotice,
+  notice: ProjectApplicationNotice | SlopbotSpendNotice | SlopbotFailureNotice,
   from: string,
   to: string,
   date: Date,
@@ -321,9 +337,11 @@ export function buildNoticeMime(
     [
       "Subject",
       encodeHeaderValue(
-        "month" in notice
-          ? `Slopbot API cost: ${notice.month} crossed ${spendDollars(notice.thresholdMicroUsd)}`
-          : `New Slop project application: ${stripControls(notice.projectName)}`,
+        "callId" in notice
+          ? "Slopbot: Surplus request failed"
+          : "month" in notice
+            ? `Slopbot API cost: ${notice.month} crossed ${spendDollars(notice.thresholdMicroUsd)}`
+            : `New Slop project application: ${stripControls(notice.projectName)}`,
       ),
     ],
     ["Date", rfc5322Date(date)],
@@ -350,9 +368,11 @@ export async function handleNotifyRequest(
   if (
     url.protocol !== "https:" ||
     url.host !== NOTIFY_INTERNAL_HOST ||
-    ![PROJECT_APPLICATION_NOTICE_PATH, SLOPBOT_SPEND_NOTICE_PATH].includes(
-      url.pathname,
-    ) ||
+    ![
+      PROJECT_APPLICATION_NOTICE_PATH,
+      SLOPBOT_SPEND_NOTICE_PATH,
+      SLOPBOT_FAILURE_NOTICE_PATH,
+    ].includes(url.pathname) ||
     url.search !== ""
   ) {
     return json(404, { error: "not_found" });
@@ -360,10 +380,17 @@ export async function handleNotifyRequest(
   if (request.method !== "POST") {
     return json(405, { error: "method_not_allowed" }, { allow: "POST" });
   }
-  let notice: ProjectApplicationNotice | SlopbotSpendNotice;
+  let notice:
+    | ProjectApplicationNotice
+    | SlopbotSpendNotice
+    | SlopbotFailureNotice;
   try {
     const body = await readBoundedJson(request);
-    if (url.pathname === SLOPBOT_SPEND_NOTICE_PATH) {
+    if (url.pathname === SLOPBOT_FAILURE_NOTICE_PATH) {
+      if (!validFailureNotice(body))
+        throw new InvalidRequest("Invalid failure notice");
+      notice = body;
+    } else if (url.pathname === SLOPBOT_SPEND_NOTICE_PATH) {
       if (!validSpendNotice(body))
         throw new InvalidRequest("Invalid cost notice");
       notice = body;

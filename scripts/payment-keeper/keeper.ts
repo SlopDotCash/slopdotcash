@@ -50,7 +50,7 @@ import {
   type GasBudget,
   reconcileGas,
 } from "./budget";
-import type { KeeperStore } from "./store";
+import type { KeeperStore } from "./storage";
 
 export interface KeeperConfiguration {
   apiOrigin: string;
@@ -68,7 +68,7 @@ type Deployment = PaymentDeploymentRecord & {
 };
 export interface KeeperDependencies {
   store: KeeperStore;
-  /** The CLI reads the operator key only when this provider is first called. */
+  /** The host reads the operator key only when this provider is first called. */
   evmSigner?: Signer;
   solanaSigner?: SolanaSigner;
   now?: Date;
@@ -86,7 +86,7 @@ async function json(url: string) {
           : new URL(url).origin,
     },
     signal: AbortSignal.timeout(20_000),
-    redirect: "error",
+    redirect: "manual",
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Public registry HTTP ${response.status}`);

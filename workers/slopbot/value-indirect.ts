@@ -54,12 +54,33 @@ export async function collectIndirectValueAcceptance(
   const closedAt = Date.parse(source.pull.closed_at);
   const texts = source.comments
     .filter((c) => /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(c.body))
-    .map((c) => c.body);
+    // Receipt IDs and skill revisions describe the agent, not an integration.
+    // Remove them only from discovery; retain the complete comment evidence.
+    .map((c) =>
+      c.body
+        .replace(
+          /<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v[12]|slop-contribution-attribution:v1)\b[\s\S]*?-->/giu,
+          "",
+        )
+        .replace(
+          /^\s*(?:[-*+]\s+)?(?:\*\*)?(?:Contribution skill revision|Skill revision)(?:\*\*)?\s*:[^\r\n]*/gimu,
+          "",
+        ),
+    );
   const hints = [
     ...new Set(
       texts.flatMap((text) =>
-        [...text.matchAll(/\b[a-f0-9]{7,40}\b/gu)]
-          .map((m) => m[0])
+        [
+          ...text.matchAll(
+            /(?:https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:commit|blob|tree)\/|([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)@)?\b([a-f0-9]{7,40})\b/gu,
+          ),
+        ]
+          .filter(
+            (m) =>
+              (m[1] ?? m[2] ?? source.repository).toLowerCase() ===
+              source.repository.toLowerCase(),
+          )
+          .map((m) => m[3])
           .filter((s) => /[a-f]/u.test(s)),
       ),
     ),

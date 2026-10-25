@@ -9,6 +9,30 @@ export const MAX_NOTICE_BODY_BYTES = 8 * 1024;
 export type { ProjectApplicationNotice } from "../../src/lib/project-contracts";
 
 export const SLOPBOT_SPEND_NOTICE_PATH = "/v1/slopbot-spend";
+export const SLOPBOT_FAILURE_NOTICE_PATH = "/v1/slopbot-failure";
+export type SlopbotFailureNotice = {
+  callId: number;
+  model: string;
+  kind: "budget-exhausted" | "request-failed";
+  occurredAt: string;
+};
+export function validFailureNotice(
+  value: unknown,
+): value is SlopbotFailureNotice {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    Object.keys(v).sort().join() === "callId,kind,model,occurredAt" &&
+    Number.isSafeInteger(v.callId) &&
+    Number(v.callId) > 0 &&
+    typeof v.model === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/u.test(v.model) &&
+    (v.kind === "budget-exhausted" || v.kind === "request-failed") &&
+    typeof v.occurredAt === "string" &&
+    Number.isFinite(Date.parse(v.occurredAt)) &&
+    new Date(v.occurredAt).toISOString() === v.occurredAt
+  );
+}
 export const SLOPBOT_SPEND_INTERVAL_MICRO_USD = 500_000_000;
 export type SlopbotSpendNotice = {
   month: string;
