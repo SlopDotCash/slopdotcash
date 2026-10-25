@@ -686,6 +686,11 @@ test("private security bounty programs keep cases restricted from intake to awar
   const afterOpen = new Date(Date.parse(opened.updatedAt) + 1).toISOString();
   await expect.poll(() => Date.now() > Date.parse(afterOpen) + 5).toBe(true);
 
+  // Opening a program now fetches and caches readiness automatically. Set the
+  // disabled fixture before any page visit so the later handoff assertion
+  // does not race a previously cached enabled response.
+  await setIntake(request, b.repository, "disabled");
+
   await test.step("public terms and amounts", async () => {
     const context = await browser.newContext({
       viewport: test.info().project.use.viewport,
