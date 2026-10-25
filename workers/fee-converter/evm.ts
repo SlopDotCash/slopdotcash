@@ -21,6 +21,7 @@ import {
   type PublicClient,
   parseEventLogs,
   TransactionNotFoundError,
+  type TransactionReceipt,
   TransactionReceiptNotFoundError,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -55,14 +56,21 @@ const VAULT_FEE_ABI = [
   },
   {
     type: "function",
-    name: "feeRecipient",
+    name: "identityAuthority",
     stateMutability: "view",
     inputs: [],
     outputs: [{ type: "address" }],
   },
   {
     type: "function",
-    name: "token",
+    name: "pendingIdentityAuthority",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+  {
+    type: "function",
+    name: "pendingUpgradeAuthority",
     stateMutability: "view",
     inputs: [],
     outputs: [{ type: "address" }],
@@ -303,7 +311,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     return { raw, hash: keccak256(raw) };
   }
 
-  async function verifiedVault(entry: FeeVault) {
+  async function verifiedVault(entry: FeeVault, atBlock?: bigint) {
     const record = entry.deployment;
     const text = (name: string): string => {
       const value = record[name];
@@ -336,9 +344,37 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     };
     // Pin every read to one current block. A recent unreviewed upgrade must not
     // remain claimable merely because the prior implementation is finalized.
-    const block = await client.getBlockNumber({ cacheTime: 0 });
+    const block = atBlock ?? (await client.getBlockNumber({ cacheTime: 0 }));
     await verifyEvmDeployment(escrow, `0x${block.toString(16)}`);
     if (escrow.feeRecipient.toLowerCase() !== wallet) return null;
+    // The attester can rotate without changing the deployment record. Check
+    // current and proposed roles on chain, not the record's old attester.
+    const role = (
+      functionName:
+        | "identityAuthority"
+        | "pendingIdentityAuthority"
+        | "pendingUpgradeAuthority",
+    ) =>
+      client.readContract({
+        address: escrow.factory as Address,
+        abi: VAULT_FEE_ABI,
+        functionName,
+        blockNumber: block,
+      });
+    const roles = await Promise.all([
+      role("identityAuthority"),
+      role("pendingIdentityAuthority"),
+      ...(escrow.evmUpgrade ? [role("pendingUpgradeAuthority")] : []),
+    ]);
+    if (
+      [
+        escrow.owner,
+        escrow.registrar,
+        escrow.evmUpgrade?.authority,
+        ...roles,
+      ].some((address) => address?.toLowerCase() === wallet)
+    )
+      throw new Error("The fee wallet holds or is proposed for a vault role");
     const amount = await client.readContract({
       address: escrow.vault as Address,
       abi: VAULT_FEE_ABI,
@@ -346,6 +382,45 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       blockNumber: block,
     });
     return { escrow, amount };
+  }
+
+  async function claimReceipt(
+    entry: FeeVault,
+    amount: bigint,
+    receipt: TransactionReceipt,
+  ): Promise<bigint> {
+    const verified = await verifiedVault(entry, receipt.blockNumber);
+    if (
+      !verified ||
+      receipt.from.toLowerCase() !== wallet ||
+      receipt.to?.toLowerCase() !== entry.vault.toLowerCase()
+    )
+      throw new Error(
+        "Claim receipt does not match the reviewed vault or fee wallet",
+      );
+    const { escrow } = verified;
+    const transfers = parseEventLogs({
+      abi: erc20Abi,
+      eventName: "Transfer",
+      logs: receipt.logs.filter(
+        (log) => log.address.toLowerCase() === escrow.asset.toLowerCase(),
+      ),
+    });
+    let received = 0n,
+      paid = 0n;
+    for (const { args } of transfers) {
+      if (args.to.toLowerCase() === wallet) received += args.value;
+      if (args.from.toLowerCase() === wallet) received -= args.value;
+      if (args.from.toLowerCase() === escrow.vault.toLowerCase())
+        paid += args.value;
+      if (args.to.toLowerCase() === escrow.vault.toLowerCase())
+        paid -= args.value;
+    }
+    if (received < amount || received !== paid)
+      throw new Error(
+        `claim ${receipt.transactionHash} receipt does not match the vault fee`,
+      );
+    return received;
   }
 
   const self: ChainClient & { address(): string | null } = {
@@ -561,7 +636,19 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         const finalized = await client.getBlock({ blockTag: "finalized" });
         if (receipt.blockNumber > finalized.number) return { kind: "pending" };
         if (receipt.status !== "success")
-          return { kind: "failed", reason: "swap transaction reverted" };
+          return {
+            kind: "failed",
+            reason: `${row.kind === "claim" ? "claim" : "swap"} transaction reverted`,
+          };
+        if (row.kind === "claim")
+          return {
+            kind: "finalized",
+            amountOut: await claimReceipt(
+              JSON.parse(row.quote as string) as FeeVault,
+              BigInt(row.amountIn),
+              receipt,
+            ),
+          };
         const logs = parseEventLogs({
           abi: erc20Abi,
           eventName: "Transfer",
@@ -600,6 +687,11 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           kind: "failed",
           reason: "router deadline passed before inclusion",
         };
+      if (
+        row.kind === "claim" &&
+        !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
+      )
+        throw new Error("Recorded claim pays another fee wallet");
       return { kind: "rebroadcast" };
     },
 
@@ -631,7 +723,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return "noRoute" in priced ? null : priced.amountOut;
       },
 
-      async claim(entry) {
+      async claim(entry, recordClaim) {
         const verified = await verifiedVault(entry);
         if (!verified) throw new Error("Vault pays another fee recipient");
         if (verified.amount === 0n) throw new Error("No accrued fees to claim");
@@ -645,36 +737,21 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         ]);
         if (pending !== latest)
           throw new Error("an earlier fee-wallet transaction is still pending");
+        if (!recordClaim)
+          throw new Error("Fee claim requires a durable send record");
         const sent = await signAndSend(vault as Address, CLAIM_FEES, latest);
+        await recordClaim({
+          txId: sent.hash,
+          rawTx: sent.raw,
+          evmNonce: latest,
+          amount,
+        });
         await sendRaw(sent.raw);
         const receipt = await waitForReceipt(sent.hash);
         if (!receipt) throw new Error(`claim ${sent.hash} not mined in time`);
         if (receipt.status !== "success")
           throw new Error(`claim ${sent.hash} reverted`);
-        await verifyEvmDeployment(
-          escrow,
-          `0x${receipt.blockNumber.toString(16)}`,
-        );
-        const transfers = parseEventLogs({
-          abi: erc20Abi,
-          eventName: "Transfer",
-          logs: receipt.logs.filter(
-            (log) => log.address.toLowerCase() === escrow.asset.toLowerCase(),
-          ),
-        });
-        let received = 0n,
-          paid = 0n;
-        for (const { args } of transfers) {
-          if (args.to.toLowerCase() === wallet) received += args.value;
-          if (args.from.toLowerCase() === wallet) received -= args.value;
-          if (args.from.toLowerCase() === vault.toLowerCase())
-            paid += args.value;
-          if (args.to.toLowerCase() === vault.toLowerCase()) paid -= args.value;
-        }
-        if (received < amount || received !== paid)
-          throw new Error(
-            `claim ${sent.hash} receipt does not match the vault fee`,
-          );
+        await claimReceipt(entry, amount, receipt);
         return { txId: sent.hash };
       },
     },

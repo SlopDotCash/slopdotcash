@@ -83,21 +83,28 @@ For each enabled network:
    network fee; a smaller fee keeps accruing in the vault. `dry_run` logs
    `fee_claim_quoted` and signs nothing. `live` signs one claim, waits for it
    and logs `fee_claim_included`. A claim is a transfer to the fee wallet
-   itself, so it does not count against the conversion caps. The step runs
-   before the balance reads, so the claimed fee converts in the same run.
+   itself, so it does not count against the conversion caps. EVM claims remain
+   pending until a later run verifies the finalized receipt. That token cannot
+   convert while its claim is unresolved, including during receipt runs.
    Receipt runs skip this step. Recovery scans verify each deployment before
    they read its fee counter or price its claim.
    - **EVM.** Uses the shared escrow verifier to check the manifest's network,
      runtime and implementation hashes, factory, roles, asset, delays and
      payout purpose at one current block. Missing or changed reviewed values
-     stop the claim. It repeats this check before signing `claimFees()`, and
+     stop the claim. The fee wallet must not be the vault owner, registrar,
+     upgrade authority, or current or proposed identity authority. It must
+     not be a proposed upgrade authority. A rotation to a separate identity
+     authority remains valid. It repeats these checks before signing `claimFees()`, and
      signs only when no earlier fee-wallet transaction is pending. At the
      receipt block it verifies the deployment again. Transfers of the reviewed
      token must show the same net debit from the vault and credit to this fee
      wallet, at least equal to the fee read before the claim. This permits fees
      that accrued while the claim was pending. Receipt status alone is not
-     proof. An included claim with incomplete receipt data is not reported as
-     verified; the next run reads the current counter before any new claim.
+     proof. Before broadcast, the existing send journal stores the signed
+     claim, nonce, expected fee and reviewed deployment. A missing or incomplete
+     receipt keeps the claim open. The next run checks that same transaction;
+     if it was not sent, it sends the stored bytes unchanged. It does not sign
+     another claim or convert that token until the claim is resolved.
    - **Solana.** Builds the escrow config from the manifest's reviewed
      deployment record (the cluster genesis comes from the escrow network
      registry) and refuses a record whose fee recipient is not this fee wallet
@@ -205,7 +212,13 @@ verify those routes. Any of them can replace KyberSwap behind
 | `finalized` | Included in a finalized block; `amount_out` is the measured USDC credit to the fee wallet. |
 | `failed` | Proven unable to complete: reverted, expired or a prepare check failed. |
 
-Each record also keeps the fee-wallet balances in base units: the input token
+The journal's `kind` is `conversion` or `claim` (migration `0082`). Existing
+rows remain conversions. Claims use the same pending-token and immutable-send
+guards. Their bounded `quote` JSON holds the reviewed vault record; they have
+no router deadline. Conversion totals, budgets and the admin conversion list
+exclude claim rows.
+
+Each conversion record also keeps the fee-wallet balances in base units: the input token
 and USDC when quoted (`token_balance_before`, `target_balance_before`) and
 USDC when finalized (`target_balance_after`), with the observed times
 (`created_at`, `submitted_at`, `finalized_at`). Reconciliation measures the
@@ -408,8 +421,10 @@ response was lost, a below-minimum skip, a refusal when the price moved
 between quote and signing, a token no aggregator can route, and a vault fee
 claim (the reviewed EscrowFactory and ProjectEscrow deployed on the fork, a
 real 2% fee accrued, refusal of incomplete or changed deployment pins, a
-reviewed implementation upgrade, no claim by a receipt or dry run, refusal of
-an incomplete transfer receipt, then a live claim, sale and finalized
+reviewed implementation upgrade, refusal when the fee wallet is a current or
+proposed attester, no claim by a receipt or dry run, and whole-run recovery
+after a lost send, lost response or incomplete transfer receipt. Each recovery
+uses the same journaled claim and verifies it before a sale and finalized
 reconcile). The fee claim leaves both free principal and a reserved award
 unchanged. `SLOP_TEST_FEE_PORT` selects another local port. To run only this
 claim flow, use `bun run test:fee-converter:fork --fee-claim-only`.
