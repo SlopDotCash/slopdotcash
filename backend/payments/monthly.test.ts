@@ -1929,6 +1929,69 @@ test("monthly dispatcher resumes an older Solana reservation after opt-out and r
   expect(count("payment_obligations")).toBe(0);
 });
 
+test("monthly dispatcher sends a new EVM V2 reservation before an older month's leaves", async () => {
+  // An older leaf mined first would advance ordinarySourceSequence and revert the newer
+  // reservation, which was signed for the earlier sequence. This tests the dispatcher transport
+  // boundary only, so the two authorizations need no frozen runs.
+  sqlite.exec("PRAGMA foreign_keys=OFF");
+  const insert = sqlite.prepare(
+    "INSERT INTO monthly_payment_authorizations VALUES(?,?,?,?,?,?)",
+  );
+  for (const [period, digest] of [
+    ["2026-11", "b"],
+    ["2026-12", "c"],
+  ])
+    insert.run(
+      project.id,
+      period,
+      "base-sepolia",
+      digest.repeat(64),
+      JSON.stringify({
+        plan: {
+          family: "evm",
+          request: { projectId: project.id, period, network: "base-sepolia" },
+          deployment,
+          evmReservation: { version: 2 },
+        },
+      }),
+      afterCutoff.toISOString(),
+    );
+  sqlite.exec("PRAGMA foreign_keys=ON");
+  const sent: string[] = [];
+  const dispatcher = {
+    PAYMENTS_DB: db,
+    REGISTRY_DB: db,
+    PAYMENT_NETWORKS: '["base-sepolia"]',
+    PAYMENT_RPC_URLS: "{}",
+    MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
+    EVM_PAYMENT_EXECUTOR: {
+      async fetch(request: Request) {
+        const { plan } = (await request.json()) as {
+          plan: { request: { period: string } };
+        };
+        const admit = new URL(request.url).searchParams.get("admit");
+        sent.push(`${plan.request.period}:${admit}`);
+        return Response.json(
+          admit === "true"
+            ? {
+                transactionId: "0xreserve",
+                alreadyCommitted: false,
+                complete: false,
+              }
+            : {
+                transactionId: "0xleaf",
+                alreadyCommitted: true,
+                complete: false,
+              },
+        );
+      },
+    },
+  };
+  // 2026-11 can no longer admit, so it only resumes leaves; 2026-12 is in its window.
+  await runMonthlyCommitments(dispatcher, new Date("2027-01-05T00:00:00Z"));
+  expect(sent).toEqual(["2026-12:true", "2026-11:false"]);
+});
+
 test("Solana v3 retries preserve the first signed freeze time after a signer outage", async () => {
   sqlite.close();
   const seed = new Uint8Array(32).fill(7); // Public synthetic test key.
