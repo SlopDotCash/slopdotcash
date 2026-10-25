@@ -33,10 +33,33 @@ jobs:
           # They do not prove a deployed Cloudflare image.
           image="$(docker build --quiet workers/vetting-sandbox)"
           export RUNNER_IMAGE_SHA256="${image#sha256:}"
+          runner_pid=""
+          merge_pid=""
+          cleanup() {
+            if [ -n "$merge_pid" ]; then kill "$merge_pid" 2>/dev/null || true; wait "$merge_pid" 2>/dev/null || true; fi
+            if [ -n "$runner_pid" ]; then kill "$runner_pid" 2>/dev/null || true; wait "$runner_pid" 2>/dev/null || true; fi
+          }
+          trap cleanup EXIT
+          # Same deployed-source operation/image, local SDK only. The input is
+          # public Git metadata and objects, never a subscription assessment.
+          ./node_modules/.bin/wrangler dev --config tests/fixtures/value-merge-sdk-pages.toml \
+            --config tests/fixtures/value-merge-sdk-publisher.toml \
+            --config workers/vetting-sandbox/wrangler.toml --ip 127.0.0.1 --port 8897 \
+            > "$RUNNER_TEMP/merge-sdk.log" 2>&1 &
+          merge_pid=$!
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:8897/health > /dev/null; then break; fi
+            if ! kill -0 "$merge_pid" 2>/dev/null; then echo 'Merge qualification Worker stopped'; exit 1; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8897/health > /dev/null
+          node scripts/value-merge-sdk.workflow.mjs http://127.0.0.1:8897 "$RUNNER_TEMP/value-merge-sdk.json"
+          kill "$merge_pid"
+          wait "$merge_pid" || true
+          merge_pid=""
           ./node_modules/.bin/wrangler dev --config workers/vetting-sandbox/wrangler.toml --ip 127.0.0.1 --port 8896 \
             --var "RUNNER_IMAGE_SHA256:$RUNNER_IMAGE_SHA256" --var "SLOP_RELEASE_SHA:$GITHUB_SHA" > "$RUNNER_TEMP/sandbox.log" 2>&1 &
           runner_pid=$!
-          trap 'kill "$runner_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 120); do
             if curl --fail --silent "$SLOP_SANDBOX_TEST_URL/health" > /dev/null; then break; fi
             if ! kill -0 "$runner_pid" 2>/dev/null; then cat "$RUNNER_TEMP/sandbox.log"; exit 1; fi
@@ -45,3 +68,11 @@ jobs:
           curl --fail --silent "$SLOP_SANDBOX_TEST_URL/health"
           bun run test:vetting:sandbox
           bun test ./scripts/vetting-scan-service.test.ts --test-name-pattern "native artifact runs only in the real disposable sandbox"
+      - name: Retain safe fixed merge SDK results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fixed-merge-sdk-${{ github.sha }}
+          path: ${{ runner.temp }}/value-merge-sdk.json
+          if-no-files-found: warn
+          retention-days: 7

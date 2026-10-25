@@ -105,9 +105,16 @@ def main():
                 # This is a fail-closed observation, not a filesystem quota.
                 # The container's disk ceiling and per-file rlimit remain hard
                 # bounds; no mount or privilege expansion is needed here.
-                used = sum(os.lstat(os.path.join(root, name)).st_size
-                           for root, _, files in os.walk("/analysis/work")
-                           for name in files)
+                used = 0
+                for root, _, files in os.walk("/analysis/work"):
+                    for name in files:
+                        try:
+                            used += os.lstat(os.path.join(root, name)).st_size
+                        except FileNotFoundError:
+                            # Git atomically replaces temporary packs/indexes
+                            # after directory enumeration. They no longer use
+                            # disk; every other filesystem error still refuses.
+                            continue
                 if used > 256 * 1024 * 1024:
                     status = "disk-limit"
                     break
