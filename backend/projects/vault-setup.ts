@@ -239,8 +239,14 @@ export function ownerVaultSetupService(deps: {
         );
       }
       if (!vault) return null;
+      // A new deployment's first revision never carries upgrade history: the
+      // history of the template's vault records upgrades of that vault only.
+      const { evmUpgrade, ...reviewed } = template;
+      const current = evmUpgrade && { ...evmUpgrade };
+      delete current?.history;
       return {
-        ...template,
+        ...reviewed,
+        ...(current ? { evmUpgrade: current } : {}),
         vault,
         owner: creation.owner,
         asset: creation.asset,
