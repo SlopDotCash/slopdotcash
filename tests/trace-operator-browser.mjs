@@ -1,10 +1,11 @@
 /** Exact built UI over the native Pages/D1/R2 fixture in trace/workflow.mjs. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect } from "@playwright/test";
+import { chromium } from "playwright";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const types = {
@@ -26,6 +27,7 @@ export async function runTraceOperatorUi({
   contents,
   browser,
   setStaticHandler,
+  proxyUrl,
 }) {
   const build = resolve(process.env.SLOP_TRACE_UI_BUILD);
   const output = resolve(
@@ -54,10 +56,12 @@ export async function runTraceOperatorUi({
     response.end(await readFile(selected));
   });
   const results = [];
-  for (const [name, viewport] of [
-    ["desktop", { width: 1440, height: 1000 }],
-    ["mobile", { width: 390, height: 844 }],
-  ]) {
+  for (const [name, viewport] of process.env.SLOP_TRACE_UI_NATIVE_ONLY === "1"
+    ? []
+    : [
+        ["desktop", { width: 1440, height: 1000 }],
+        ["mobile", { width: 390, height: 844 }],
+      ]) {
     const directory = join(output, name);
     await mkdir(directory, { recursive: true });
     const context = await browser.newContext({
@@ -78,6 +82,7 @@ export async function runTraceOperatorUi({
     const errors = [];
     const failedRequests = [];
     const firstPartyFailures = [];
+    const reads = [];
     let expectedHttpError = null;
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
@@ -89,9 +94,24 @@ export async function runTraceOperatorUi({
     });
     page.on("requestfailed", (request) => {
       if (request.url().startsWith(site))
-        failedRequests.push(new URL(request.url()).pathname);
+        failedRequests.push({
+          path: new URL(request.url()).pathname,
+          method: request.method(),
+          error: request.failure()?.errorText,
+        });
     });
     page.on("response", (response) => {
+      if (
+        response.url().startsWith(`${site}/api/v1/operator/traces/`) &&
+        response.request().method() === "GET"
+      )
+        reads.push({
+          status: response.status(),
+          length: response.headers()["content-length"] ?? null,
+          type: response.headers()["content-type"] ?? null,
+          encoding: response.headers()["content-encoding"] ?? null,
+          digest: response.headers()["x-trace-sha256"] ?? null,
+        });
       if (response.url().startsWith(site) && response.status() >= 400) {
         const path = new URL(response.url()).pathname;
         if (
@@ -232,6 +252,39 @@ export async function runTraceOperatorUi({
         "Exact bytes verified",
       );
 
+      // The API and R2 return the real object. Corrupt one transport byte to
+      // prove the browser refuses an attachment whose claimed digest is wrong.
+      await page.route(
+        `**/api/v1/operator/traces/${digests[0]}`,
+        async (route) => {
+          const response = await route.fetch();
+          assert.equal(response.status(), 200);
+          const body = Buffer.from(await response.body());
+          body[0] ^= 1;
+          await route.fulfill({ response, body });
+        },
+        { times: 1 },
+      );
+      await reason.fill("Check synthetic transfer integrity refusal");
+      await submit.click();
+      await expect(page.getByRole("alert")).toContainText(
+        "bytes did not match",
+      );
+      await expect(reason).toHaveValue(
+        "Check synthetic transfer integrity refusal",
+      );
+      await page.screenshot({
+        path: join(directory, "integrity-refused.png"),
+        fullPage: true,
+      });
+      const integrityRetry = page.waitForEvent("download");
+      await submit.click();
+      await (await integrityRetry).saveAs(file);
+      assert.equal(hash(await readFile(file)), digests[0]);
+      await expect(page.getByRole("status")).toContainText(
+        "Exact bytes verified",
+      );
+
       expectedHttpError = {
         path: `/api/v1/operator/traces/${digests[0]}`,
         status: 403,
@@ -307,10 +360,25 @@ export async function runTraceOperatorUi({
         auditEventsPerRead: 2,
         downloadRecovery: true,
         expiredRecovery: true,
+        corruptedBytesRefused: true,
+        reads,
         adminDenied: true,
         accessibilityViolations: 0,
         unexpectedErrors: 0,
       });
+    } catch (error) {
+      await page
+        .screenshot({ path: join(directory, "failure.png"), fullPage: true })
+        .catch(() => {});
+      await writeFile(
+        join(directory, "failure.json"),
+        JSON.stringify(
+          { reads, errors, failedRequests, firstPartyFailures },
+          null,
+          2,
+        ),
+      );
+      throw error;
     } finally {
       await context.close();
     }
@@ -319,7 +387,79 @@ export async function runTraceOperatorUi({
     join(output, "results.json"),
     `${JSON.stringify(results, null, 2)}\n`,
   );
-  console.log(
-    `PASS: operator trace UI ${before ? "baseline" : "workflow"}, desktop and mobile`,
-  );
+  if (process.env.SLOP_TRACE_UI_NATIVE_ONLY !== "1")
+    console.log(
+      `PASS: operator trace UI ${before ? "baseline" : "workflow"}, desktop and mobile`,
+    );
+  if (process.env.SLOP_TRACE_UI_NATIVE === "1") {
+    // Native review uses the same local Pages/D1/R2 fixture in a dedicated
+    // Chrome for Testing process. No regular browser or public host is used.
+    await browser.close();
+    const native = await chromium.launch({
+      headless: false,
+      proxy: { server: proxyUrl },
+    });
+    try {
+      const context = await native.newContext({
+        ignoreHTTPSErrors: true,
+        viewport: { width: 1440, height: 1000 },
+      });
+      const cookie = await signIn("91");
+      const split = cookie.indexOf("=");
+      await context.addCookies([
+        {
+          name: cookie.slice(0, split),
+          value: cookie.slice(split + 1),
+          url: site,
+          secure: true,
+          httpOnly: true,
+          sameSite: "Strict",
+        },
+      ]);
+      await context.route("https://avatars.githubusercontent.com/**", (route) =>
+        route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect width="36" height="36" fill="#555"/></svg>',
+        }),
+      );
+      const page = await context.newPage();
+      await page.goto(`${site}/operator/traces`, { waitUntil: "networkidle" });
+      await page
+        .getByRole("textbox", { name: "Trace SHA-256 digest" })
+        .fill(digests[0]);
+      await page
+        .getByRole("textbox", { name: "Reason for access" })
+        .fill("Native review of synthetic fixture only");
+      const stop = join(output, "stop-native");
+      await writeFile(
+        join(output, "native-ready.json"),
+        JSON.stringify(
+          {
+            url: `${site}/operator/traces`,
+            executable: chromium.executablePath(),
+            stop,
+            fixture: "Local synthetic Pages/D1/R2 only",
+          },
+          null,
+          2,
+        ),
+      );
+      console.log(
+        "Native fixture ready; stop with its local stop-native file.",
+      );
+      const deadline = Date.now() + 20 * 60_000;
+      while (Date.now() < deadline) {
+        if (
+          await access(stop).then(
+            () => true,
+            () => false,
+          )
+        )
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    } finally {
+      await native.close();
+    }
+  }
 }
