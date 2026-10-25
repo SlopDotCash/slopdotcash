@@ -25,6 +25,7 @@ import {
 } from "../../contracts/evm/integration/upgrade";
 import { onRequest } from "../../functions/api/v1/[[path]]";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
+import { cloudflareKeeperRuntime } from "../../tests/cloudflare-keeper-runtime.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
@@ -35,22 +36,31 @@ import { openKeeperStore } from "./store";
 const root = resolve(import.meta.dir, "../..");
 const port = process.env.SLOP_KEEPER_TEST_PORT ?? "28550";
 const url = `http://127.0.0.1:${port}`;
+const useCloudflare = process.env.SLOP_KEEPER_RUNTIME === "cloudflare";
 const directory = mkdtempSync(join(tmpdir(), "slop-keeper-e2e-"));
 const anvil = spawn(
   "anvil",
   ["--host", "127.0.0.1", "--port", port, "--chain-id", "11155111", "--silent"],
   { stdio: "ignore" },
 );
-const keeper = privateKeyToAccount(generatePrivateKey());
+const keeperKey = generatePrivateKey();
+const keeper = privateKeyToAccount(keeperKey);
 const attester = privateKeyToAccount(generatePrivateKey());
 const alice = privateKeyToAccount(generatePrivateKey());
 const bob = privateKeyToAccount(generatePrivateKey());
 let lose = false;
+let signatures = 0;
+let broadcasts = 0;
 const proxy = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
   async fetch(request) {
+    if (new URL(request.url).pathname === "/fixture/sign") {
+      signatures++;
+      return new Response("observed");
+    }
     const text = await request.text();
+    if (JSON.parse(text).method === "eth_sendRawTransaction") broadcasts++;
     if (lose && JSON.parse(text).method === "eth_sendRawTransaction")
       return new Response("lost before acceptance", { status: 502 });
     return fetch(url, {
@@ -77,6 +87,12 @@ const api = Bun.serve({
   },
 });
 let store = openKeeperStore(join(directory, "keeper.sqlite"));
+let cloudflare: Awaited<ReturnType<typeof cloudflareKeeperRuntime>> | undefined;
+async function queryOne<T>(sql: string): Promise<T | null> {
+  return cloudflare
+    ? ((await cloudflare.query<T>(sql))[0] ?? null)
+    : store.db.query<T, []>(sql).get();
+}
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 const abi = parseAbi([
@@ -348,7 +364,6 @@ try {
       additionalFeeReserve: "0",
     },
   };
-  let signatures = 0;
   const signer = {
     address: keeper.address,
     async signTransaction(input: Parameters<typeof keeper.signTransaction>[0]) {
@@ -356,12 +371,29 @@ try {
       return keeper.signTransaction(input);
     },
   };
-  const tick = (execute = true, policy = config) =>
-    runKeeper(
-      policy,
-      { store, evmSigner: signer, now, localChain: {} },
-      execute,
+  if (useCloudflare) {
+    cloudflare = await cloudflareKeeperRuntime(
+      directory,
+      keeperKey,
+      `${proxy.url.origin}/fixture/sign`,
     );
+    await cloudflare.configure(config, undefined, now);
+    assert.deepEqual(await cloudflare.request("/scheduled"), {});
+    assert.equal(signatures, 0, "unspecified Worker mode cannot sign");
+    assert.equal(broadcasts, 0, "unspecified Worker mode cannot broadcast");
+    assert.equal((await cloudflare.request("/public")).status, 404);
+  }
+  const tick = (
+    execute = true,
+    policy = config,
+  ): Promise<Awaited<ReturnType<typeof runKeeper>>> =>
+    cloudflare
+      ? cloudflare.tick(policy, execute, now)
+      : runKeeper(
+          policy,
+          { store, evmSigner: signer, now, localChain: {} },
+          execute,
+        );
   const dry = await tick(false);
   assert(
     dry.some((item) => item.state === "published-not-executed"),
@@ -378,58 +410,99 @@ try {
   assert.equal(signatures, 0);
   await send(owner, vault, buildSetMonthlyCommitmentCalldata("2000000", true));
   await mine();
+  if (cloudflare) {
+    const failure = await cloudflare.tick(config, true, now, {
+      failAfterSign: true,
+    });
+    assert(
+      failure.some((item: { error?: string }) =>
+        item.error?.includes("Fixture interruption"),
+      ),
+      JSON.stringify(failure),
+    );
+    assert.equal(
+      signatures,
+      1,
+      "real local signing reached the injected interruption",
+    );
+    assert.equal(broadcasts, 0, "interrupted transaction cannot broadcast");
+    assert.equal(
+      (await queryOne<{ n: number }>("SELECT count(*) n FROM gas"))?.n,
+      0,
+    );
+    assert.equal(
+      (
+        await queryOne<{ n: number }>(
+          "SELECT count(*) n FROM journal WHERE key LIKE 'monthly:%' OR key LIKE 'nonce:%'",
+        )
+      )?.n,
+      0,
+      "gas, nonce and signed bytes roll back together",
+    );
+  }
+  const signedBeforeAttempt = signatures;
   lose = true;
-  const uncertain = await tick();
+  const concurrent = cloudflare
+    ? await cloudflare.tick(config, true, now, { concurrent: true })
+    : undefined;
+  if (concurrent)
+    assert.deepEqual(
+      concurrent[0],
+      concurrent[1],
+      "overlapping triggers share the same run",
+    );
+  const uncertain = concurrent ? concurrent[0] : await tick();
   assert(
     uncertain.some((item) => item.state === "waiting"),
     JSON.stringify(uncertain),
   );
-  assert.equal(signatures, 1);
-  const saved = store.db
-    .query<{ value: string }, []>(
-      "SELECT value FROM journal WHERE key LIKE 'monthly:%'",
-    )
-    .get();
+  assert.equal(signatures, signedBeforeAttempt + 1);
+  const saved = await queryOne<{ value: string }>(
+    "SELECT value FROM journal WHERE key LIKE 'monthly:%'",
+  );
   assert(saved);
   assert.equal(
-    store.db
-      .query<{ n: number }, []>(
+    (
+      await queryOne<{ n: number }>(
         "SELECT count(*) n FROM gas WHERE actual IS NULL",
       )
-      .get()?.n,
+    )?.n,
     1,
   );
-  store.close();
-  store = openKeeperStore(join(directory, "keeper.sqlite"));
+  if (cloudflare) await cloudflare.restart();
+  else {
+    store.close();
+    store = openKeeperStore(join(directory, "keeper.sqlite"));
+  }
   now = new Date("2026-12-06T00:01:00Z");
   await chain("evm_setNextBlockTimestamp", [Math.floor(now.getTime() / 1000)]);
   lose = false;
   await tick();
   await mine();
-  assert.equal(signatures, 1);
+  assert.equal(signatures, signedBeforeAttempt + 1);
   assert.equal(
-    store.db
-      .query<{ value: string }, []>(
+    (
+      await queryOne<{ value: string }>(
         "SELECT value FROM journal WHERE key LIKE 'monthly:%'",
       )
-      .get()?.value,
+    )?.value,
     saved.value,
   );
   const walletless = await tick();
   assert.equal(
-    store.db
-      .query<{ day: string; settled_day: string }, []>(
+    (
+      await queryOne<{ day: string; settled_day: string }>(
         "SELECT day,settled_day FROM gas",
       )
-      .get()?.day,
+    )?.day,
     "2026-12-05",
   );
   assert.equal(
-    store.db
-      .query<{ day: string; settled_day: string }, []>(
+    (
+      await queryOne<{ day: string; settled_day: string }>(
         "SELECT day,settled_day FROM gas",
       )
-      .get()?.settled_day,
+    )?.settled_day,
     "2026-12-06",
   );
   assert(
@@ -474,11 +547,11 @@ try {
     }),
   );
   await mine();
-  const spent = store.db
-    .query<{ actual: string }, []>(
+  const spent = (
+    await queryOne<{ actual: string }>(
       "SELECT actual FROM gas WHERE actual IS NOT NULL",
     )
-    .get()?.actual;
+  )?.actual;
   assert(spent && BigInt(spent) > 0n);
   const preBudget = signatures;
   const midnightBudget = await tick(true, {
@@ -506,11 +579,11 @@ try {
   await mine();
   await tick();
   assert.equal(
-    store.db
-      .query<{ n: number }, []>(
+    (
+      await queryOne<{ n: number }>(
         "SELECT count(*) n FROM awards WHERE payment IS NOT NULL",
       )
-      .get()?.n,
+    )?.n,
     1,
   );
   await send(
@@ -537,11 +610,11 @@ try {
   await mine();
   await tick();
   assert.equal(
-    store.db
-      .query<{ n: number }, []>(
+    (
+      await queryOne<{ n: number }>(
         "SELECT count(*) n FROM awards WHERE payment IS NOT NULL",
       )
-      .get()?.n,
+    )?.n,
     2,
   );
   for (const wallet of [alice, bob])
@@ -565,11 +638,11 @@ try {
   await tick();
   assert.equal(signatures, beforeReplay);
   assert.equal(
-    store.db
-      .query<{ n: number }, []>(
+    (
+      await queryOne<{ n: number }>(
         "SELECT count(*) n FROM gas WHERE actual IS NULL",
       )
-      .get()?.n,
+    )?.n,
     0,
   );
   // Existing funded obligations still settle when the project is paused and automatic admission is off.
@@ -607,11 +680,11 @@ try {
   await mine();
   await tick();
   assert.equal(
-    store.db
-      .query<{ n: number }, []>(
+    (
+      await queryOne<{ n: number }>(
         "SELECT count(*) n FROM awards WHERE payment IS NOT NULL",
       )
-      .get()?.n,
+    )?.n,
     3,
   );
   console.log(
@@ -619,9 +692,19 @@ try {
       result: "PASS",
       source: deployment.sourceCommit,
       chain: "actual local Anvil, Ethereum Sepolia identity",
+      runtime: useCloudflare
+        ? "native Workerd SQLite Durable Object"
+        : "Bun SQLite",
       publicHttp:
         "unchanged Pages public registry/authorization routes over real migrated SQLite",
       cases: [
+        ...(useCloudflare
+          ? [
+              "execution disabled by default; public execution route absent",
+              "async signing interruption atomically rolls back gas, nonce and signed bytes",
+              "concurrent triggers coalesce in one gas-wallet object",
+            ]
+          : []),
         "read-only dry run",
         "on-chain opt-out",
         "durable lost-send restart and identical raw transaction",
@@ -640,6 +723,7 @@ try {
     }),
   );
 } finally {
+  await cloudflare?.close();
   store.close();
   sqlite.close();
   api.stop(true);
