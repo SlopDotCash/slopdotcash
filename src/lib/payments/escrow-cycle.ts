@@ -11,6 +11,7 @@ import {
   ensureCompleteCycle,
 } from "../reward-cycle";
 import { sha256Hex as digest } from "../sha256";
+import { ordinaryFee } from "./contracts";
 export interface EscrowIdentity {
   nodeId: string;
   githubUserId: string;
@@ -119,7 +120,7 @@ export function buildEscrowCycle(
       const gross =
         (allocations.get(leader.actor.id) ?? 0n) +
         (reviewAllocations.get(leader.actor.id) ?? 0n);
-      const fee = gross / 50n;
+      const fee = ordinaryFee(gross);
       return {
         githubUserId: identity.githubUserId,
         githubNodeId: leader.actor.id,

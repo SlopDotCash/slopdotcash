@@ -8,7 +8,7 @@ import { decodeBase58Bytes } from "./base58";
 import { readBoundedJson } from "./browser-json";
 import type { EscrowDeployment } from "./escrow-policy.mjs";
 import type { VaultConnection, VaultOperation } from "./evm-vault-actions";
-import { isAssetDecimals, type PayoutPolicy } from "./payments/contracts";
+import { isAssetDecimals, ordinaryFee, type PayoutPolicy } from "./payments/contracts";
 import { parseVaultAmount } from "./payments/vault-amount";
 import { projectApiRequest } from "./project-api";
 
@@ -123,7 +123,7 @@ export async function reviewSolanaVaultAction(
   )
     throw new Error("The funding review response is invalid.");
   const gross = parseVaultAmount(amount, plan.decimals);
-  const fee = operation === "withdraw" ? gross / 50n : 0n;
+  const fee = operation === "withdraw" ? ordinaryFee(gross) : 0n;
   if (
     plan.gross !== gross.toString() ||
     plan.fee !== fee.toString() ||

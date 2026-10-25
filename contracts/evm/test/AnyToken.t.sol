@@ -105,12 +105,12 @@ contract AnyTokenTest is OpusBase {
         uint64 version = bindIn(vault, ACTOR, ALICE_WALLET);
         vm.warp(block.timestamp + DELAY);
         vault.pay(id, version);
-        uint128 payout = gross / 50;
+        uint128 payout = (gross + 49) / 50;
         check(token.balanceOf(ALICE_WALLET) == gross - payout, "contributor gets gross minus 2%");
         uint256 ownerBefore = token.balanceOf(OWNER);
         vm.prank(OWNER);
         vault.withdrawUnused(withdrawal);
-        uint128 withdrawalFee = withdrawal / 50;
+        uint128 withdrawalFee = (withdrawal + 49) / 50;
         check(vault.withdrawalFee(withdrawal) == withdrawalFee, "withdrawalFee view");
         check(vault.withdrawalFee(withdrawal) == vault.payoutFee(withdrawal), "withdrawal fee equals payout fee");
         check(token.balanceOf(OWNER) - ownerBefore == withdrawal - withdrawalFee, "refund minus 2%");
@@ -141,9 +141,10 @@ contract AnyTokenTest is OpusBase {
         lifecycle(2, 100_000, 4_999, 2_501);
     }
 
-    function test_feeRoundsDownPerAwardAtAnyScale() public view {
-        check(escrow.payoutFee(49) == 0 && escrow.payoutFee(50) == 1, "floor(gross/50)");
-        check(escrow.payoutFee(type(uint128).max) == type(uint128).max / 50, "no overflow at uint128 max");
+    function test_feeRoundsUpPerAwardAtAnyScale() public view {
+        check(escrow.payoutFee(1) == 1 && escrow.payoutFee(49) == 1 && escrow.payoutFee(50) == 1, "ceil(gross/50)");
+        check(escrow.payoutFee(51) == 2 && escrow.payoutFee(100) == 2, "ceil(gross/50) above 50");
+        check(escrow.payoutFee(type(uint128).max) == type(uint128).max / 50 + 1, "no overflow at uint128 max");
     }
 
     function test_countersRevertOnUint128Overflow() public {
@@ -188,15 +189,15 @@ contract AnyTokenTest is OpusBase {
         uint256 before = usdc.balanceOf(OWNER);
         vm.prank(OWNER);
         escrow.withdrawUnused(850e6);
-        check(escrow.totalWithdrawalFees() == 17_000_000, "floor(850e6 / 50)");
+        check(escrow.totalWithdrawalFees() == 17_000_000, "ceil(850e6 / 50)");
         check(usdc.balanceOf(OWNER) - before == 833_000_000, "833 USDC refunded");
-        // Rounded down once per withdrawal.
+        // Rounded up once per withdrawal.
         vm.startPrank(OWNER);
         escrow.withdrawUnused(99);
         escrow.withdrawUnused(49);
         vm.stopPrank();
-        check(escrow.totalWithdrawalFees() == 17_000_000 + 1, "99 pays 1, 49 pays 0");
-        check(escrow.withdrawalFee(type(uint128).max) == type(uint128).max / 50, "no overflow at uint128 max");
+        check(escrow.totalWithdrawalFees() == 17_000_000 + 2 + 1, "99 pays 2, 49 pays 1");
+        check(escrow.withdrawalFee(type(uint128).max) == type(uint128).max / 50 + 1, "no overflow at uint128 max");
     }
 
     function test_feeOnTransferDepositReverts() public {

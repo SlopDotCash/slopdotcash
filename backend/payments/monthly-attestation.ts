@@ -176,27 +176,31 @@ export async function prepareMonthlyAttestation(
     if (excluded.has(award.githubUserId))
       reject("recipient_restricted", "An allocation recipient is excluded.");
   }
-  const canonical = buildExecutionSnapshot({
-    base: {
-      projectId: project.id,
-      period,
-      manifestSha256: run.base_manifest_sha256,
-      sourceSnapshotSha256: run.source_snapshot_sha256,
-      capBase: run.cap_base,
-    },
-    allocations: snapshot.awards.map((a) => ({
-      ...a,
-      proposedGrossBase: a.grossBase,
-    })),
-    allocationSequence: snapshot.allocationSequence,
-    trigger: snapshot.trigger,
-    manifestSha256: project.manifestSha256,
-    network: request.network,
-    vault: deployment.vault,
-    asset: deployment.asset,
-    frozenAt: run.frozen_at,
-  });
-  if (canonical.text !== run.snapshot)
+  const rebuild = (legacyFloorFee: boolean) =>
+    buildExecutionSnapshot({
+      base: {
+        projectId: project.id,
+        period,
+        manifestSha256: run.base_manifest_sha256,
+        sourceSnapshotSha256: run.source_snapshot_sha256,
+        capBase: run.cap_base,
+      },
+      allocations: snapshot.awards.map((a) => ({
+        ...a,
+        proposedGrossBase: a.grossBase,
+      })),
+      allocationSequence: snapshot.allocationSequence,
+      trigger: snapshot.trigger,
+      manifestSha256: project.manifestSha256,
+      network: request.network,
+      vault: deployment.vault,
+      asset: deployment.asset,
+      frozenAt: run.frozen_at,
+      legacyFloorFee,
+    }).text;
+  // A month frozen before fees rounded up keeps its floor(gross / 50) rows; the
+  // allocation root binds only actor, gross and source, so either is canonical.
+  if (run.snapshot !== rebuild(false) && run.snapshot !== rebuild(true))
     reject("invalid_allocation", "The frozen allocation is not canonical.");
   // Eligibility was decided atomically when obligations were funded. A later
   // account ban must not revoke that funded right. Every omitted snapshot

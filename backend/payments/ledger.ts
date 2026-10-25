@@ -1,9 +1,9 @@
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
 import {
+  acceptsPayoutFee,
   isBaseUnits,
   type PaymentChain,
   type PayoutPolicy,
-  payoutFee,
 } from "../../src/lib/payments/contracts";
 import type { D1TransactionalDatabase as D1Database, D1Statement } from "../d1";
 import {
@@ -86,8 +86,12 @@ export async function indexPaymentEvent(
     !/^[1-9]\d*$/.test(event.githubUserId) ||
     !isBaseUnits(event.grossMicro) ||
     event.grossMicro === "0" ||
-    payoutFee(BigInt(event.grossMicro), policy?.payoutPolicy).toString() !==
-      event.feeMicro ||
+    !/^(0|[1-9]\d*)$/.test(event.feeMicro) ||
+    !acceptsPayoutFee(
+      BigInt(event.grossMicro),
+      BigInt(event.feeMicro),
+      policy?.payoutPolicy,
+    ) ||
     (BigInt(event.grossMicro) - BigInt(event.feeMicro)).toString() !==
       event.netMicro ||
     !/^[a-f0-9]{64}$/.test(event.sourceDigest)

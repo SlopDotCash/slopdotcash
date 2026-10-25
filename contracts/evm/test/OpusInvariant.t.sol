@@ -142,7 +142,7 @@ contract OpusHandler {
         gross = 1 + (gross % free);
         vm.prank(owner);
         escrow.withdrawUnused(uint128(gross));
-        ghostWithdrawalFees += gross / 50;
+        ghostWithdrawalFees += (gross + 49) / 50;
     }
 
     /// @dev Anyone commits a signed two-award allocation for the next open period, within the owner's cap.
@@ -233,7 +233,7 @@ contract OpusInvariantTest is OpusBase {
 
     function invariant_withdrawalFeeIsTwoPercentPerWithdrawal() public view {
         require(escrow.totalWithdrawalFees() == handler.ghostWithdrawalFees(), "withdrawal fee");
-        require(escrow.totalWithdrawalFees() <= escrow.totalGrossWithdrawn() / 50, "never above 2%");
+        require(escrow.totalWithdrawalFees() >= (escrow.totalGrossWithdrawn() + 49) / 50, "never below 2%");
     }
 
     function invariant_totalsMatchGetters() public view {
@@ -271,7 +271,7 @@ contract OpusInvariantTest is OpusBase {
             (, uint128 gross, uint128 fee,,, bool paid) = escrow.awards(id);
             require(handler.timesPaid(id) <= 1, "paid twice");
             require(paid == (handler.timesPaid(id) == 1), "paid flag");
-            require(fee == gross / 50, "fee formula");
+            require(fee == (gross + 49) / 50, "fee formula");
             if (!paid) {
                 reservedP += gross - fee;
                 reservedF += fee;

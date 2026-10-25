@@ -24,7 +24,10 @@ import {
   type EscrowChain,
   isEscrowChain,
 } from "../../src/lib/escrow-policy.mjs";
-import { type PayoutPolicy, payoutFee } from "../../src/lib/payments/contracts";
+import {
+  acceptsPayoutFee,
+  type PayoutPolicy,
+} from "../../src/lib/payments/contracts";
 import { finalizedEvmRevert } from "../payments/reconcile";
 import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
 import type { MonthlyAuthorization } from "./monthly";
@@ -355,8 +358,11 @@ async function obligation(config: Deployment, authorization: Authorization) {
     BigInt(`0x${state[1]}`).toString() !== authorization.grossBase ||
     BigInt(`0x${state[2]}`).toString() !== authorization.feeBase ||
     state[3].toLowerCase() !== authorization.sourceDigest ||
-    BigInt(authorization.feeBase) !==
-      payoutFee(BigInt(authorization.grossBase), config.payoutPolicy)
+    !acceptsPayoutFee(
+      BigInt(authorization.grossBase),
+      BigInt(authorization.feeBase),
+      config.payoutPolicy,
+    )
   )
     throw new Error("Finalized award differs from approved ledger");
   return {
@@ -663,7 +669,8 @@ async function authorizeBindingVersion(
  * signature over this exact binding, collected by the account API and
  * verified again here. The attester submits the signature unchanged and
  * cannot bind without it. Null when no stored signature for this on-chain
- * version is valid for the submission window.
+ * version is valid for at least ten more minutes, so a binding is never sent
+ * at its expiry second (Solana rejects that second; EVM would accept it).
  */
 async function storedBindingCalldata(
   env: ExecutorEnvironment,
@@ -671,6 +678,13 @@ async function storedBindingCalldata(
   input: DispatchPayment,
   expectedVersion: string,
 ) {
+  // As the Solana program does, never bind the identity authority (or this
+  // attester's own key) as a payout destination. The EVM vault would accept it.
+  if (
+    same(input.destination, config.identityAuthority) ||
+    same(input.destination, env.SIGNER.address)
+  )
+    throw new Error("The identity authority cannot be a payout destination");
   const accepted = await env.PAYMENTS_DB.prepare(
     "SELECT expires_at expiresAt,signature FROM payment_binding_authorizations WHERE claim_id=? AND github_user_id=? AND network=? AND vault=? AND chain_id=? AND expected_version=? AND CAST(expires_at AS INTEGER)>? ORDER BY CAST(expires_at AS INTEGER) DESC LIMIT 1",
   )

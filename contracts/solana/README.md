@@ -156,14 +156,17 @@ as a withdrawal and gives no fee advantage. Maintainer review of related-party
 awards still applies under the eligibility policy.
 
 The 2% fee is deducted from each gross award: 100 pays 98 to the contributor
-and 2 to the fee recipient, reserving 100. Integer arithmetic floors gross/50 once
-per immutable award. An unused-funds withdrawal pays the same 2%:
-`floor(gross / 50)`, rounded down once per withdrawal (PRD section 18). Withdrawing
-850 USDC pays 17 USDC and returns 833 USDC. A withdrawal under 50 base units pays no fee,
-so a split saves under one base unit per transaction. The fee depends only on
-the current withdrawal, so a test project that paid an earlier 10% or 5%
-schedule is not affected.
-Amounts are token base units. Tiny awards and withdrawals can incur zero fee.
+and 2 to the fee recipient, reserving 100. Integer arithmetic rounds gross/50 up
+once per immutable award. An unused-funds withdrawal pays the same 2%:
+`ceil(gross / 50)`, rounded up once per withdrawal (PRD section 18). Withdrawing
+850 USDC pays 17 USDC and returns 833 USDC. Every award or withdrawal of at least
+one base unit pays at least one unit of fee, so splitting never lowers the fee
+(owner decision of 24 October 2026; the earlier rounding down let a split into
+pieces under 50 base units avoid it). The fee depends only on the current
+withdrawal, so a test project that paid an earlier 10% or 5% schedule is not
+affected. A program deployed before this change takes `floor(gross / 50)` until
+it is upgraded; reconciliation accepts either rounding and nothing else.
+Amounts are token base units.
 Withdrawals consume only free vault balance, return funds only to the declared
 owner, and retain fees after any earlier payout.
 
@@ -306,7 +309,7 @@ a second call fails. Every later suite creates or checks the Config first
 (`integration/deployment.mjs`) and uses its fixture identity authority and fee
 recipient. The suites also cover a permissionless deposit by a third party
 that the owner then withdraws, 18-decimal and 0-decimal mints through deposit,
-commit, pay and withdraw, the 2% withdrawal fee rounded down per withdrawal,
+commit, pay and withdraw, the 2% withdrawal fee rounded up per withdrawal,
 `initialize` rejected when the identity authority or fee recipient differs from
 the Config, a Token-2022 mint rejected at `initialize`, and `readVaultTotals`
 against the on-chain counters.
