@@ -796,11 +796,11 @@ not proof of a live App permission change.
 
 `POST /api/v1/slopbot/value-import` uses the existing site session and
 `ADMIN_GITHUB_IDS`. It accepts only same-origin JSON from a signed-in admin.
-The optional `SLOPBOT_VALUE_IMPORT` service binding must target the
-`HistoricalValuePublisher` named entrypoint of `slop-slopbot`. No public Worker
-fetch route exposes that entrypoint. Without the binding, intake returns 503.
-Configure the binding only as part of the protected release; this source change
-does not configure or activate a production binding.
+The production Pages configuration binds `SLOPBOT_VALUE_IMPORT` to the
+`HistoricalValuePublisher` named entrypoint of `slop-slopbot`. The protected
+release deploys Slopbot before Pages. Preview environments have no binding.
+No public Worker fetch route exposes that entrypoint. Without the binding,
+intake returns 503. Verify the deployed binding before a historical import.
 
 The envelope has `mode` (`single` or `work-unit`), `installationId`, `result`,
 `sources`, `supersedes`, and `revisionReason`. Grouped imports also require
