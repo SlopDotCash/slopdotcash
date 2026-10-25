@@ -11,6 +11,7 @@ import {
   validValueContextSelections,
 } from "./value-context";
 import { collectValueEvidence } from "./value-evidence";
+import { mergeInput, mergeRecipe } from "./value-merge-profile";
 import {
   isSubscriptionProvenance,
   valueResultProducerIdentity,
@@ -45,6 +46,7 @@ const digests = (value: unknown): value is string[] =>
 export async function importSubscriptionAssessment(
   env: ReviewEnv & { SLOPBOT_PRODUCER_REVISION?: string },
   input: unknown,
+  bundle?: ReadableStream<Uint8Array>,
 ) {
   const revision = env.SLOPBOT_PRODUCER_REVISION;
   if (!revision || !/^[a-f0-9]{40}$/u.test(revision))
@@ -74,6 +76,8 @@ export async function importSubscriptionAssessment(
     throw new Error("Historical intake accepts subscription assessments only");
   valueResultProducerIdentity(input.result as unknown as ValueAssessmentResult);
   const joint = input.mode === "work-unit";
+  if (bundle && (!joint || !env.VALUE_MERGE_VERIFIER))
+    throw new Error("Joint merge reconstruction is unavailable");
   if (!joint && input.sources.length !== 1)
     throw new Error("Single publication requires one source");
   const selections = input.sources.map((value: unknown) => {
@@ -164,6 +168,35 @@ export async function importSubscriptionAssessment(
         evidence.pull.base.sha,
       ),
     });
+  }
+  if (bundle) {
+    if (
+      new Set(sources.map(({ evidence }) => evidence.repositoryNodeId)).size !==
+      1
+    )
+      throw new Error("A Git bundle must bind one public repository");
+    const verifier = env.VALUE_MERGE_VERIFIER;
+    if (!verifier) throw new Error("Merge reconstruction is unavailable");
+    const reconstructed = await verifier.reconstruct(
+      sources.map(({ evidence }) => mergeInput(evidence)),
+      bundle,
+    );
+    if (reconstructed.length !== sources.length)
+      throw new Error("Incomplete merge reconstruction");
+    for (const [index, source] of sources.entries()) {
+      const recipe = await mergeRecipe(source.evidence);
+      const resolved = reconstructed[index];
+      if (
+        resolved.inputSha256 !== recipe.inputSha256 ||
+        !Array.isArray(resolved.mergeResolutions)
+      )
+        throw new Error("Merge reconstruction identity mismatch");
+      source.evidence = {
+        ...source.evidence,
+        mergeResolutions: resolved.mergeResolutions,
+      };
+      source.mergeRecipe = recipe;
+    }
   }
   const source = sources[0].evidence;
   const [owner, repo] = source.repository.split("/");
