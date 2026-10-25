@@ -4,6 +4,7 @@
 import { dispatchDueAppeals } from "./appeals";
 import { resumeBudgetBlocks } from "./budget-blocks";
 import { APPEAL_COMMANDS, type Job } from "./contracts";
+import { dispatchFailureAlert } from "./failure-alerts";
 import { verifyWebhookSignature } from "./github";
 import { dispatchMaintainerHolds } from "./maintainer-holds";
 import { activePenaltyPage } from "./penalties";
@@ -452,8 +453,10 @@ export default {
     await resumeBudgetBlocks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
     await dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
     await dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
-    if (env.SLOP_NOTIFY)
+    if (env.SLOP_NOTIFY) {
       await dispatchSpendAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY);
+      await dispatchFailureAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY);
+    }
     await consumePendingValueRequest(env);
   },
 

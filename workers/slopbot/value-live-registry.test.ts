@@ -37,6 +37,9 @@ for (const change of [
   "restricted",
   "identity",
   "deselected",
+  "september",
+  "october",
+  "early-api-override",
 ] as const) {
   test(`live registration reaches the consumer; ${change} authority`, async () => {
     const { db, sqlite } = sqliteD1(
@@ -129,8 +132,14 @@ for (const change of [
         });
       if (url.pathname === `/repos/${repository}/pulls/1`)
         return Response.json({
-          state: "open",
-          merged_at: null,
+          state:
+            change === "september" || change === "october" ? "closed" : "open",
+          merged_at:
+            change === "september"
+              ? "2026-09-30T23:59:59Z"
+              : change === "october"
+                ? "2026-10-31T23:59:59Z"
+                : null,
           closed_at: null,
         });
       throw new Error("Unexpected GitHub request");
@@ -143,17 +152,20 @@ for (const change of [
         SLOPBOT_APP_USER_ID: "2",
         SURPLUS_API_KEY: "not-used-before-inference",
         SLOPBOT_PRODUCER_REVISION: "a".repeat(40),
-        SLOPBOT_VALUE_START_AT: at,
         SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only",
-        SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: "1000000",
+        ...(change === "early-api-override"
+          ? { SLOPBOT_VALUE_START_AT: at }
+          : {}),
       };
       const outcome = await consumeValueRequest(env, job);
       expect(outcome).toBe(
         change === "none"
           ? "open"
-          : change === "deselected"
-            ? "retry"
-            : "authority",
+          : change === "early-api-override"
+            ? "budget"
+            : change === "deselected"
+              ? "retry"
+              : "authority",
       );
       expect(
         sqlite

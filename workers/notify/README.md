@@ -315,3 +315,17 @@ each milestone before sending. The existing `ADMIN_EMAILS` secret supplies
 recipients. No public route, recipient override or model content is accepted.
 The response has the same acceptance/failure contract as project notices.
 Slopbot retains ambiguous outcomes rather than retrying accepted recipients.
+
+
+## Slopbot provider failures
+
+`POST https://notify.internal/v1/slopbot-failure` accepts only `callId`, `model`,
+`kind` (`budget-exhausted` or `request-failed`) and canonical UTC `occurredAt`.
+It uses the same configured admin recipients. It accepts no provider body,
+prompt, response, key or request identifier.
+
+Migration `0085` queues new failed Surplus cost records. Slopbot claims each
+notice before calling this route and retains accepted or ambiguous results.
+An unknown delivery is not sent again automatically. Earlier cost records do
+not become a fresh notification backlog. These notices neither change provider
+budgets nor configure Surplus's own low-balance notification threshold.

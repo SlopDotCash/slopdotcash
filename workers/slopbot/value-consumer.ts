@@ -19,6 +19,7 @@ import {
 } from "./value-publication";
 import type { ValueRequest } from "./value-requests";
 import { assessValue } from "./value-review";
+import { type ValueSettingsEnv, valueSettings } from "./value-settings";
 import { claimValueSources, ownsValueSources } from "./value-source-leases";
 import { prepareWorkUnitEvidence } from "./value-work-unit";
 import {
@@ -32,16 +33,10 @@ import {
 import { publishWorkUnitAssessment } from "./value-work-unit-publication";
 import { assessWorkUnits } from "./value-work-unit-review";
 
-export type ValueConsumerEnv = ReviewEnv & {
-  SLOPBOT_PRODUCER_REVISION?: string;
-  SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD?: string;
-  SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD?: string;
-  SLOPBOT_VALUE_START_AT?: string;
-};
-const amount = (value: string | undefined) =>
-  value && /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value))
-    ? Number(value)
-    : null;
+export type ValueConsumerEnv = ReviewEnv &
+  ValueSettingsEnv & {
+    SLOPBOT_PRODUCER_REVISION?: string;
+  };
 
 /** Process one durable delivery with every current or previously grouped source.
  * Incomplete groups stay pending; a carrier never becomes an independent award.
@@ -67,24 +62,16 @@ export async function consumeValueRequest(
     if (!project) return await finish("authority");
     const repositories = collectTargetRepositories([project]);
     await assertValueInstallation(db, job.installationId);
-    const alertsOnly =
-      env.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD === "alerts-only";
-    const monthly = alertsOnly
-      ? null
-      : amount(env.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD);
-    const maximum = amount(env.SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD);
+    const settings = valueSettings(env);
     const revision = env.SLOPBOT_PRODUCER_REVISION;
-    const start = Date.parse(env.SLOPBOT_VALUE_START_AT ?? "");
     if (
-      (!alertsOnly && monthly === null) ||
-      !maximum ||
-      (monthly !== null && maximum > monthly) ||
+      !settings ||
       !revision ||
       !/^[a-f0-9]{40}$/.test(revision) ||
-      !Number.isFinite(start) ||
       !env.SURPLUS_API_KEY
     )
       return await finish("budget");
+    const { monthly, maximum, start } = settings;
     const repository = repositories.find((entry) =>
       [entry.id, ...entry.aliases].some(
         (id) => id.toLowerCase() === `${job.owner}/${job.repo}`.toLowerCase(),

@@ -12,14 +12,15 @@ import {
   retainValueInference,
 } from "./value-inference-results";
 
-/** Supplied by the trusted consumer, never repository/model input. The maximum
- * must cover every permitted route attempt. No default authorizes expenditure.
+/** Supplied by the trusted consumer, never repository/model input. Capped mode
+ * requires a maximum for the full route; alerts-only records costs without one.
+ * No default authorizes expenditure.
  */
 export type ValueInferenceBudget = {
   db: D1Database;
   installationId: number;
   attemptId: string;
-  maximumMicroUsd: number;
+  maximumMicroUsd: number | null;
   approvedMonthlyMicroUsd: number | null;
 };
 
