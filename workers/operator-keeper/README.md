@@ -44,10 +44,13 @@ receipt remains unavailable work.
 These are instructions for the operator. They have not been run against an
 account. Use a reviewed source revision and the pinned repository dependencies.
 
+Run the commands below from the repository root.
+
 1. Select a Cloudflare account controlled by the operator, a Worker name, one
    network, a dedicated gas wallet, project IDs, RPC and spending limits. Do
    not use a project owner, fee, identity or upgrade key as the gas wallet.
-2. In this directory, copy `wrangler.toml` to `wrangler.operator.toml`. Set the
+2. Copy `workers/operator-keeper/wrangler.toml` to
+   `workers/operator-keeper/wrangler.operator.toml`. Set the
    operator's `name` and `account_id`. Keep `KEEPER_MODE = "off"`, no routes and
    the `OperatorKeeper` SQLite binding. This local file is ignored by Git.
 3. On the operator's machine, deploy that off configuration with the pinned

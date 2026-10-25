@@ -68,7 +68,7 @@ type Deployment = PaymentDeploymentRecord & {
 };
 export interface KeeperDependencies {
   store: KeeperStore;
-  /** The CLI reads the operator key only when this provider is first called. */
+  /** The host reads the operator key only when this provider is first called. */
   evmSigner?: Signer;
   solanaSigner?: SolanaSigner;
   now?: Date;

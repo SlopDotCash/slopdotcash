@@ -29,7 +29,13 @@ function mode(env: OperatorEnvironment) {
 }
 function configuration(env: OperatorEnvironment): KeeperConfiguration {
   if (!env.KEEPER_CONFIG) throw new Error("Operator configuration unavailable");
-  const config = JSON.parse(env.KEEPER_CONFIG) as KeeperConfiguration;
+  let config: KeeperConfiguration;
+  try {
+    config = JSON.parse(env.KEEPER_CONFIG) as KeeperConfiguration;
+  } catch {
+    // JSON parser diagnostics can quote a private RPC URL from this secret.
+    throw new Error("Operator configuration must be valid JSON");
+  }
   const family = ESCROW_NETWORKS[config.network]?.family;
   if (!family) throw new Error("Choose a reviewed network");
   if (family === "evm") {
