@@ -42,8 +42,9 @@ import {
 } from "./integration/upgrade";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
-const rpcUrl = "http://127.0.0.1:18546";
-const anvil = spawn("anvil", ["--port", "18546", "--silent"], {
+const port = process.env.SLOP_EVM_ADAPTER_TEST_PORT ?? "18546";
+const rpcUrl = `http://127.0.0.1:${port}`;
+const anvil = spawn("anvil", ["--port", port, "--silent"], {
   stdio: "ignore",
 });
 const owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
