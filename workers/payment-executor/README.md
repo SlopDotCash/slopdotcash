@@ -97,6 +97,16 @@ Any other `SIGNER_STACK` value stops the signer.
 
 ## Private bounty bindings
 
+The protected main release also prepares absent Solana, Ethereum and Robinhood
+attester services through `prepare-inactive.mjs`. It creates only empty,
+execution-disabled services with no public endpoint or cron. Existing services
+are left unchanged. A network with reviewed vault pins or enabled execution
+requires its separate network release. This preparation reads no signing key
+and installs no secrets; the existing matching credentials can be entered after
+the exact private service deployment is verified. It does not activate payments.
+The release also allows the existing Pages payment API's `PAYMENT_RPC_URLS`
+secret. Supply only the reviewed private RPC map there, never an attester key.
+
 One production attester serves a network's ordinary and bounty vaults. The
 configuration generator derives both pin lists from the checked registry.
 `PAYMENT_DEPLOYMENTS` selects ordinary vaults; `SECURITY_PAYMENT_DEPLOYMENTS`

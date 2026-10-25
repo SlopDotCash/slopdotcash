@@ -955,11 +955,12 @@ jobs:
             .sort();
           const xKeys = actual.filter((name) => name === "X_CLIENT_ID" || name === "X_CLIENT_SECRET");
           if (xKeys.length === 1) throw new TypeError("X OAuth credentials must be configured together");
-          // Optional owner-provisioned secrets for private-report intake and
-          // private security analysis (PRD sections 8 and 11). They stay inert
+          // Optional owner-provisioned payment RPC, private-report intake and
+          // private analysis secrets (PRD sections 6, 8 and 11). They stay inert
           // until their feature is enabled; any other name still fails closed.
           const optional = [
             "ANTHROPIC_SECURITY_API_KEY",
+            "PAYMENT_RPC_URLS",
             "GITHUB_INTAKE_APP_CLIENT_ID",
             "GITHUB_INTAKE_APP_CLIENT_SECRET",
             "GITHUB_INTAKE_APP_ID",
@@ -1499,6 +1500,10 @@ jobs:
           else
             echo "::notice::Fee-converter Worker release is not enabled (SLOP_FEE_CONVERTER_RELEASE repository variable)."
           fi
+
+          # Prepare only absent, empty and execution-disabled network services.
+          # No keys, schedules, public endpoints or vault pins are installed.
+          node workers/payment-executor/prepare-inactive.mjs "$RUNNER_TEMP/slop-inactive-attesters"
 
           # Base mainnet attester release, after the shared slop-private
           # migrations and before Pages serves its bindings. A full deploy
