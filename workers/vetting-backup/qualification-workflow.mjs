@@ -10,6 +10,7 @@ import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
 
 const directory = await mkdtemp(join(tmpdir(), "slop-vetting-recovery-"));
 let runtime;
+let outboundRequests = 0;
 try {
   const file = join(directory, "worker.mjs");
   const build = spawnSync(
@@ -42,6 +43,10 @@ try {
   runtime = new Miniflare(
     convertV4MiniflareOptions({
       name: "recovery-qualification",
+      outboundService: () => {
+        outboundRequests++;
+        return new Response(null, { status: 503 });
+      },
       modules: true,
       script: await readFile(entry, "utf8"),
       compatibilityDate: "2026-07-30",
@@ -74,6 +79,8 @@ try {
   let deliveryNumber = 0;
   const send = async (action) => {
     const delivery = `${action}-${++deliveryNumber}`;
+    const started = Date.now();
+    console.log(JSON.stringify({ phase: action, event: "started" }));
     await queue.send({ qualification: identity, action, delivery });
     const deadline = Date.now() + 120_000;
     while (
@@ -93,6 +100,13 @@ try {
       assert.ok(Date.now() < deadline, `Missing actual ${delivery} receipt`);
       await new Promise((r) => setTimeout(r, 100));
     }
+    console.log(
+      JSON.stringify({
+        phase: action,
+        event: "acknowledged",
+        milliseconds: Date.now() - started,
+      }),
+    );
   };
   async function wait(name) {
     const deadline = Date.now() + 120_000;
@@ -114,8 +128,12 @@ try {
     (await runtime.dispatchFetch("https://qualification.invalid/")).status,
     404,
   );
+  await send("access");
+  const access = await wait("access");
+  assert.equal(access.actualPagesHandler, true);
+  assert.equal(access.concurrentReadStatuses.join(), "200,403");
   await send("seed");
-  await wait("seed");
+  const seeded = await wait("seed");
   const deadline = Date.now() + 120_000;
   while (
     (await db.prepare("SELECT phase FROM vetting_storage_cycles").first())
@@ -133,7 +151,7 @@ try {
   }
   await send("verify");
   const proof = await wait("verify");
-  assert.equal(proof.objects, 68);
+  assert.equal(proof.objects, 68 + access.objects);
   assert.equal(proof.replayUnchanged, true);
   assert.equal(proof.foreignKeysValid, true);
   assert.equal(proof.immutablePolicy, true);
@@ -170,10 +188,21 @@ try {
   assert.equal(
     (
       await recovered
-        .prepare("SELECT consumed_at FROM vetting_evidence_grants")
+        .prepare(
+          "SELECT consumed_at FROM vetting_evidence_grants WHERE token_hash=?",
+        )
+        .bind("0".repeat(64))
         .first()
     ).consumed_at,
-    "2026-10-25T00:00:00.000Z",
+    seeded.fixtureAt,
+  );
+  await send("retention");
+  const retention = await wait("retention");
+  assert.equal(retention.deletedCompleteObjects, 2);
+  await send("retention");
+  assert.equal(
+    JSON.stringify(await wait("retention")),
+    JSON.stringify(retention),
   );
   await send("empty");
   await wait("empty");
@@ -182,12 +211,16 @@ try {
       (await (await runtime.getR2Bucket(binding)).list()).objects.length,
       0,
     );
+  assert.equal(outboundRequests, 0, "Unexpected provider request");
   console.log(
     JSON.stringify({
       localWorkerd: true,
+      outboundRequests,
       publicRoute: 404,
+      access,
       proof,
       corruption,
+      retention,
       ownedFixtureBucketsEmpty: true,
       acknowledgedVerifyCommands: (
         await db
