@@ -9,10 +9,8 @@ on:
     branches: [develop, development, main]
   push:
     branches: [develop, development, main]
-  # scheduled-release.yml dispatches this workflow on main and development
-  # every six hours, so registry changes and new GitHub activity publish
-  # without a commit. A schedule trigger here runs only on the default branch
-  # and cannot publish production.
+  # Run this workflow by hand to publish registry changes and new GitHub
+  # activity without a commit.
   workflow_dispatch:
     inputs:
       bootstrap_staging_profiles:
@@ -161,7 +159,7 @@ jobs:
           # Selects the versioned value scoring policy for new work. Exit 75
           # means the hosted value feed is unavailable (owner decision D2):
           # retry once, then keep the last published snapshot, which shows its
-          # stale label, and let the next scheduled release retry. There is no
+          # stale label, and let the next release retry. There is no
           # legacy fallback. Every other failure stops the release.
           feed_status=0
           for attempt in 1 2; do
