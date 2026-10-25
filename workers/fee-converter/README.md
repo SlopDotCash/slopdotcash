@@ -214,7 +214,7 @@ verify those routes. Any of them can replace KyberSwap behind
 | `no_route` | The aggregator has no route for this token. |
 | `submitted` | Signed bytes recorded and broadcast; not yet final. |
 | `unknown` | Signed bytes recorded, but the broadcast result is unknown. |
-| `finalized` | Included in a finalized block; `amount_out` is the measured USDC credit to the fee wallet. |
+| `finalized` | Verified in a finalized block. `amount_out` is the received fee for a claim, or USDC proceeds for a conversion. |
 | `failed` | Proven unable to complete: reverted, expired or a prepare check failed. |
 
 The journal's `kind` is `conversion` or `claim` (migration `0082`). Existing
@@ -431,9 +431,10 @@ claim (the reviewed EscrowFactory and ProjectEscrow deployed on the fork, a
 real 2% fee accrued, refusal of incomplete or changed deployment pins, a
 reviewed implementation upgrade, refusal when the fee wallet is a current or
 proposed attester, no claim by a receipt or dry run, and whole-run recovery
-after a lost send, lost response or incomplete transfer receipt. Each recovery
-uses the same journaled claim and verifies it before a sale and finalized
-reconcile). The fee claim leaves both free principal and a reserved award
+after a lost send, lost response, incomplete transfer receipt or missing hash
+lookups. It also accepts the exact smaller fee after another caller claims
+first. Each recovery uses the same journaled claim and verifies it before a
+sale and finalized reconcile). The fee claim leaves both free principal and a reserved award
 unchanged. `SLOP_TEST_FEE_PORT` selects another local port. To run only this
 claim flow, use `bun run test:fee-converter:fork --fee-claim-only`.
 The Solana check uses a local
