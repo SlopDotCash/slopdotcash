@@ -230,7 +230,7 @@ export class EvmChain {
     try {
       await this.rpc("eth_call", [{ from, to, data }, "latest"]);
     } catch (error) {
-      if (!(error instanceof RpcError)) throw error;
+      if (!(error instanceof RpcError) || !error.reverted) throw error;
       // Name the custom error when the node returns the revert data.
       if (
         typeof error.data === "string" &&

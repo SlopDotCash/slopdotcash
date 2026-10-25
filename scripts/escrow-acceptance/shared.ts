@@ -413,6 +413,13 @@ export class RpcError extends Error {
   ) {
     super(message);
   }
+  get reverted() {
+    return (
+      /\brevert(?:ed)?\b/i.test(this.message) &&
+      typeof this.data === "string" &&
+      /^0x(?:[0-9a-fA-F]{2})*$/.test(this.data)
+    );
+  }
 }
 
 /** A durable executor journal, as the hosted Durable Object storage keeps it. */

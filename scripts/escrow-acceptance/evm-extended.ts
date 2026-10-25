@@ -563,7 +563,8 @@ export async function runEvmExtended(
         ),
       );
     } catch (error) {
-      if (error instanceof RpcError) return 1;
+      if (error instanceof RpcError && error.reverted && error.data === "0x")
+        return 1;
       throw error;
     }
   };

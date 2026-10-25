@@ -27,13 +27,16 @@ import { join, resolve } from "node:path";
 import { encodeFunctionData, type Hex, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
+  assertFactoryDeploymentBlock,
   CREATE2_DEPLOYER,
   expectedImplementation,
   IMPLEMENTATION_SALT,
   IMPLEMENTATION_SLOT,
   INITIALIZABLE_SLOT,
+  createdVaults as readCreatedVaults,
   sha256Hex,
-  VAULT_CREATED_TOPIC,
+  type VaultStorage,
+  vaultStorage,
 } from "../../contracts/evm/integration/upgrade";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { EvmChain, FACTORY, VAULT } from "./evm";
@@ -43,7 +46,6 @@ import {
   isAcceptanceNetwork,
   isLoopbackRpc,
   jsonRpc,
-  RpcError,
   requireEnv,
   rpcHost,
   type StepRecord,
@@ -61,12 +63,11 @@ const PROXY = parseAbi([
   "function initialize(bytes32,address,address,uint8,address,uint64)",
 ]);
 
-interface VaultRecord {
+interface VaultRecord extends VaultStorage {
   vault: string;
+  observedAtBlock: string;
   implementation: string;
   codeSha256: string;
-  slots: string[];
-  initialized: string;
 }
 interface PlannedTransaction {
   key: string;
@@ -85,6 +86,7 @@ interface Qualification {
   factory: string;
   plannedAt: string;
   plannedAtBlock: string;
+  factoryDeploymentBlock: string;
   notice: string;
   roles: Record<string, string>;
   before: {
@@ -172,18 +174,26 @@ const codeSha256 = async (address: string, block: string) =>
   sha256Hex(String(await rpc("eth_getCode", [address, block])));
 const address = async (fn: string, block: string) =>
   (await chain.read<string>(factory, FACTORY, fn, [], block)).toLowerCase();
-/** Every declared vault storage slot (0 to 18) and the initializer version, as the rehearsal reads them. */
-async function vaultRecord(vault: string, block: string): Promise<VaultRecord> {
-  const slots: string[] = [];
-  for (let slot = 0n; slot <= 18n; slot++)
-    slots.push(await word(vault, slot, block));
+async function vaultRecord(
+  vault: string,
+  block: string,
+  fromBlock: bigint,
+  previous?: VaultRecord,
+): Promise<VaultRecord> {
   const implementation = await implementationOf(vault, block);
   return {
     vault,
+    observedAtBlock: BigInt(block).toString(),
     implementation,
     codeSha256: await codeSha256(vault, block),
-    slots,
-    initialized: await word(vault, INITIALIZABLE_SLOT, block),
+    ...(await vaultStorage(
+      rpc,
+      vault,
+      BigInt(block),
+      fromBlock,
+      BigInt(policy.scanPageBlocks ?? "2000"),
+      previous,
+    )),
   };
 }
 async function factorySlots(block: string) {
@@ -194,21 +204,13 @@ async function factorySlots(block: string) {
 }
 /** VaultCreated logs in the network's reviewed page size. A provider error stops the command. */
 async function createdVaults(from: bigint, to: bigint) {
-  const page = BigInt(policy.scanPageBlocks ?? "2000");
-  const vaults: string[] = [];
-  for (let start = from; start <= to; start += page) {
-    const end = start + page - 1n < to ? start + page - 1n : to;
-    const logs = (await rpc("eth_getLogs", [
-      {
-        address: factory,
-        topics: [VAULT_CREATED_TOPIC],
-        fromBlock: hex(start),
-        toBlock: hex(end),
-      },
-    ])) as { topics: string[] }[];
-    for (const log of logs) vaults.push(`0x${log.topics[3].slice(-40)}`);
-  }
-  return vaults;
+  return readCreatedVaults(
+    rpc,
+    factory,
+    from,
+    to,
+    BigInt(policy.scanPageBlocks ?? "2000"),
+  );
 }
 async function finalizedBlock() {
   return hex(await chain.finalizedNumber());
@@ -225,6 +227,7 @@ async function plan(): Promise<Qualification> {
     requireEnv("ESCROW_ACCEPTANCE_FACTORY_DEPLOYMENT_BLOCK"),
   );
   const block = await finalizedBlock();
+  await assertFactoryDeploymentBlock(rpc, factory, fromBlock, BigInt(block));
   const roles = {
     upgradeAuthority: await address("upgradeAuthority", block),
     registrar: await address("registrar", block),
@@ -248,7 +251,8 @@ async function plan(): Promise<Qualification> {
     throw new Error(`The CREATE2 deployer ${CREATE2_DEPLOYER} is missing`);
   const vaults = await createdVaults(fromBlock, BigInt(block));
   const records: VaultRecord[] = [];
-  for (const target of vaults) records.push(await vaultRecord(target, block));
+  for (const target of vaults)
+    records.push(await vaultRecord(target, block, fromBlock));
   const deploy = (label: string, code: string) => ({
     key: `deploy-${label}-implementation`,
     to: CREATE2_DEPLOYER.toLowerCase(),
@@ -266,6 +270,7 @@ async function plan(): Promise<Qualification> {
     factory,
     plannedAt: new Date().toISOString(),
     plannedAtBlock: BigInt(block).toString(),
+    factoryDeploymentBlock: fromBlock.toString(),
     notice:
       "Test network upgrade qualification. It does not qualify a mainnet upgrade, mainnet gas or a mainnet key.",
     roles,
@@ -397,8 +402,18 @@ async function execute(run: Qualification) {
     BigInt(selected ?? ((await rpc("eth_blockNumber", [])) as string)),
   );
   for (const vault of late) {
-    if (run.before.vaults.some((record) => same(record.vault, vault))) continue;
+    const recorded = run.before.vaults.some((record) =>
+      same(record.vault, vault),
+    );
+    if (recorded && !run.stragglers.includes(vault)) continue;
     if (!run.stragglers.includes(vault)) run.stragglers.push(vault);
+    if (!recorded) {
+      const observed = String(await rpc("eth_blockNumber", []));
+      run.before.vaults.push(
+        await vaultRecord(vault, observed, BigInt(run.factoryDeploymentBlock)),
+      );
+      await persist();
+    }
     if (
       !run.steps[`upgrade-vault:${vault}`] &&
       same(
@@ -418,15 +433,8 @@ async function execute(run: Qualification) {
   run.status = "executed";
 }
 
-async function mustRevert(from: string, to: string, data: string) {
-  try {
-    await rpc("eth_call", [{ from, to, data }, "latest"]);
-  } catch (error) {
-    if (error instanceof RpcError) return error.message;
-    throw error;
-  }
-  throw new Error(`Call to ${to} succeeded but must revert`);
-}
+const mustRevert = (from: string, to: string, data: string) =>
+  chain.mustRevert(from, to, data);
 
 async function verify(run: Qualification) {
   const final = await chain.finalizeSteps(run.steps);
@@ -479,13 +487,30 @@ async function verify(run: Qualification) {
   ] as const)
     expect(role, await address(fn, block), run.roles[role]);
   const vaults: Record<string, unknown>[] = [];
-  for (const target of [
-    ...run.before.vaults.map((record) => record.vault),
-    ...run.stragglers,
-  ]) {
-    const after = await vaultRecord(target, block);
+  await assertFactoryDeploymentBlock(
+    rpc,
+    factory,
+    BigInt(run.factoryDeploymentBlock),
+    BigInt(block),
+  );
+  const inventory = await createdVaults(
+    BigInt(run.factoryDeploymentBlock),
+    BigInt(block),
+  );
+  for (const prior of run.before.vaults)
+    if (!inventory.includes(prior.vault))
+      mismatches.push(
+        `vault ${prior.vault} is missing from finalized creation history`,
+      );
+  for (const target of inventory) {
     const before = run.before.vaults.find((record) =>
       same(record.vault, target),
+    );
+    const after = await vaultRecord(
+      target,
+      block,
+      BigInt(run.factoryDeploymentBlock),
+      before,
     );
     expect(
       `vault ${target} implementation`,
@@ -512,11 +537,13 @@ async function verify(run: Qualification) {
       );
       for (const [index, value] of after.slots.entries())
         expect(`vault ${target} slot ${index}`, value, before.slots[index]);
+      for (const [slot, value] of Object.entries(after.mappings))
+        expect(`vault ${target} mapping ${slot}`, value, before.mappings[slot]);
     }
     vaults.push({
       vault: target,
       implementation: after.implementation,
-      straggler: !before,
+      straggler: run.stragglers.includes(target),
     });
   }
   // Only the authority can upgrade, and no initializer can run again.

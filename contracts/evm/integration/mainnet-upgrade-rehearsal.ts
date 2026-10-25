@@ -47,11 +47,14 @@ import {
   readEvmMonthlyReserve,
 } from "../monthly-reserve";
 import {
+  assertFactoryDeploymentBlock,
   expectedImplementation,
   IMPLEMENTATION_SLOT,
   INITIALIZABLE_SLOT,
+  createdVaults as readCreatedVaults,
   sha256Hex,
-  VAULT_CREATED_TOPIC,
+  type VaultStorage,
+  vaultStorage,
 } from "./upgrade";
 
 const forkUrl = process.argv[2];
@@ -212,31 +215,24 @@ function withdrawalFee(receipt: Receipt) {
 }
 /** Every vault the factory created in [fromBlock, toBlock], from its VaultCreated logs. */
 async function createdVaults(url: string, fromBlock: bigint, toBlock: bigint) {
-  const vaults: string[] = [];
-  const step = 50_000n;
-  for (let from = fromBlock; from <= toBlock; from += step) {
-    const to = from + step - 1n < toBlock ? from + step - 1n : toBlock;
-    const logs = (await rpc(
-      "eth_getLogs",
-      [
-        {
-          address: FACTORY,
-          topics: [VAULT_CREATED_TOPIC],
-          fromBlock: `0x${from.toString(16)}`,
-          toBlock: `0x${to.toString(16)}`,
-        },
-      ],
-      url,
-    )) as { topics: string[] }[];
-    for (const log of logs) vaults.push(`0x${log.topics[3].slice(-40)}`);
-  }
-  return vaults;
+  return readCreatedVaults(
+    (method, params) => rpc(method, params, url),
+    FACTORY,
+    fromBlock,
+    toBlock,
+    50_000n,
+  );
 }
-/** Every declared storage slot of a vault (0 to 18), the initializer version and the implementation. */
-async function vaultState(vault: string) {
-  const slots: string[] = [];
-  for (let slot = 0n; slot <= 18n; slot++) slots.push(await word(vault, slot));
-  return { slots, initialized: await word(vault, INITIALIZABLE_SLOT) };
+let vaultHistoryStart = 0n;
+async function vaultState(vault: string, previous?: VaultStorage) {
+  return vaultStorage(
+    rpc,
+    vault,
+    BigInt(String(await rpc("eth_blockNumber", []))),
+    vaultHistoryStart,
+    50_000n,
+    previous,
+  );
 }
 
 try {
@@ -257,6 +253,13 @@ try {
     `Unsupported chain ${chainId}`,
   );
   const forkBlock = BigInt(String(await rpc("eth_blockNumber", [])));
+  vaultHistoryStart = FACTORY_DEPLOYMENT_BLOCK[chainId.toString()];
+  await assertFactoryDeploymentBlock(
+    rpc,
+    FACTORY,
+    vaultHistoryStart,
+    forkBlock,
+  );
   const report: Record<string, unknown> = {
     sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], {
       encoding: "utf8",
@@ -476,7 +479,9 @@ try {
   const awardsBefore = [paidBefore, monthlyBefore].map((a) =>
     readAll(vault, awardGetter, a.id),
   );
-  const mainnetBefore = await Promise.all(mainnetVaults.map(vaultState));
+  const mainnetBefore = await Promise.all(
+    mainnetVaults.map((target) => vaultState(target)),
+  );
 
   // 3. Runbook step 1: deploy both implementations with the checked-in script, as the authority.
   // The authority is impersonated but not funded: its live balance must cover the upgrade.
@@ -667,7 +672,7 @@ try {
   );
   for (const [index, target] of mainnetVaults.entries())
     assert.deepEqual(
-      await vaultState(target),
+      await vaultState(target, mainnetBefore[index]),
       mainnetBefore[index],
       `live vault ${target} storage unchanged`,
     );
@@ -687,6 +692,12 @@ try {
     rehearsalVaultAfter.initialized,
     rehearsalVaultBefore.initialized,
   );
+  for (const [slot, value] of Object.entries(rehearsalVaultBefore.mappings))
+    assert.equal(
+      rehearsalVaultAfter.mappings[slot],
+      value,
+      `existing vault mapping ${slot} unchanged`,
+    );
   assert.deepEqual(
     [paidBefore, monthlyBefore].map((a) => readAll(vault, awardGetter, a.id)),
     awardsBefore,

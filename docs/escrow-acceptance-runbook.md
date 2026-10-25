@@ -272,22 +272,27 @@ bun scripts/escrow-acceptance/evm-upgrade.ts verify  base-sepolia evidence/escro
 
 - `plan` uses no key. At one finalized block it records the factory roles,
   the current factory and vault implementations and their code digests, every
-  vault from the factory's `VaultCreated` logs with its storage slots 0 to 18,
+  vault from the factory's `VaultCreated` logs with its storage slots 0 to 20
+  and the award, source, wallet-binding and month records named by its events,
   and the ordered unsigned transactions: deploy both implementations through
   the CREATE2 deployer, upgrade each vault, upgrade the factory, select the
-  new vault logic. It prints the factory's `upgradeAuthority()`.
+  new vault logic. It prints the factory's `upgradeAuthority()`. The supplied
+  deployment block must be the first block with factory code. Missing historical
+  state or an incomplete log request stops the check; it is not an empty inventory.
 - `execute` signs those transactions with
   `ESCROW_ACCEPTANCE_UPGRADE_AUTHORITY_KEY`. It refuses a key that is not the
   authority in the plan and on chain. It skips a step that is already in its
   target state, saves each signed transaction before broadcast, and upgrades
   any vault created after the plan and before the new template (a
-  straggler).
+  straggler). It saves each straggler's state before its upgrade, including on retry.
 - `verify` uses no key. After finality it checks the new implementation slot
   and template, the reviewed code digests, unchanged proxy code, unchanged
   factory slots except the template slot, unchanged roles, unchanged vault
   storage and initializer versions, `monthlyReserveVersion() == 2` on every
   vault, and that another account cannot upgrade and no initializer can run
-  again. It records `supersededAtBlock` (section 4.7).
+  again. A provider error is not proof of a contract refusal. It checks the full
+  creation inventory and its factory mapping again, and records `supersededAtBlock`
+  (section 4.7).
 
 Exit code 75 means a transaction waits for finality; run the same command
 again. Evidence is `upgrade.json` in the directory. Run no acceptance run
