@@ -20,6 +20,47 @@ const UNREGISTERED: ProjectCapabilities = evaluateProjectCapabilities({
   registered: false,
 });
 
+/** Public journal reads preserve history after pause or retirement. These
+ * lookups never authorize new reviews, assessments or publication.
+ */
+export async function registeredHistoryRepository(
+  db: D1Database,
+  repositoryId: string,
+): Promise<string | null> {
+  const key = repositoryId.toLowerCase();
+  const row = await db
+    .prepare(`SELECT manifest FROM projects p WHERE EXISTS (
+      SELECT 1 FROM json_each(p.manifest, '$.repositories') r
+      WHERE lower(json_extract(r.value, '$.id')) = ?
+         OR EXISTS (SELECT 1 FROM json_each(r.value, '$.aliases') a
+                    WHERE lower(a.value) = ?))`)
+    .bind(key, key)
+    .first<{ manifest: string }>();
+  if (row === null) return null;
+  const project = assertProjectDefinition(JSON.parse(row.manifest));
+  return (
+    project.repositories.find((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].some(
+        (id) => id.toLowerCase() === key,
+      ),
+    )?.id ?? null
+  );
+}
+
+export async function registeredHistoryProject(
+  db: D1Database,
+  projectId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT manifest FROM projects WHERE id = ?")
+    .bind(projectId)
+    .first<{ manifest: string }>();
+  return (
+    row !== null &&
+    assertProjectDefinition(JSON.parse(row.manifest)).id === projectId
+  );
+}
+
 /** Read the live registry, not the release's generated snapshot. Installation
  * access alone does not authorize reviews. Database failures must propagate.
  * Slopbot does not read funding, so payment execution is never derived here.
