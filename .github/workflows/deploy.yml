@@ -806,8 +806,9 @@ jobs:
           # Base mainnet identity attester (workers/payment-executor, PRD
           # PAY-05; owner activation of 24 October 2026). configure.mjs pins
           # the Base mainnet vaults of the checked registry artifact from
-          # this release build. With no pinned vault the attester has nothing
-          # to sign and is not released. With a pinned vault the owner-installed
+          # this release build. An absent Worker can be installed without pins
+          # or secrets, privately and without a cron. An existing Worker stays
+          # unchanged if the checked snapshot is empty. With pins, the required
           # secrets must exist before this release changes anything. Only secret
           # names are read, never values. Slop has no relayer or payment
           # dispatcher on a mainnet (PRD section 6).
@@ -826,12 +827,11 @@ jobs:
             echo "::error::The Base mainnet attester pin count is invalid."
             exit 1
           fi
-          if [ "$attester_vaults" != "0" ]; then
-            node workers/payment-executor/configure.mjs --stack production \
-              --network base-mainnet \
-              --deployments "$attester_dir/pinned.json" \
-              --output "$attester_dir"
-            node - "$attester_config" <<'NODE'
+          node workers/payment-executor/configure.mjs --stack production \
+            --network base-mainnet \
+            --deployments "$attester_dir/pinned.json" \
+            --output "$attester_dir"
+          node - "$attester_config" <<'NODE'
           const { readFileSync } = require("node:fs");
           const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const vars = config.vars ?? {};
@@ -845,12 +845,15 @@ jobs:
             vars.SIGNER_STACK !== "production" ||
             vars.SIGNER_ROLE !== "attester" ||
             vars.CHAIN_FAMILY !== "evm" ||
-            !Array.isArray(pinned) || pinned.length === 0 ||
-            !pinned.every((d) => d.network === "base-mainnet" && d.chainId === "8453")
+            !Array.isArray(pinned) ||
+            !pinned.every((d) => d.network === "base-mainnet" && d.chainId === "8453") ||
+            JSON.stringify(config.triggers?.crons) !== JSON.stringify(pinned.length ? ["*/5 * * * *"] : [])
           ) {
             throw new TypeError("the Base mainnet attester configuration boundary drifted");
           }
           NODE
+          attester_release=true
+          if [ "$attester_vaults" != "0" ]; then
             ./node_modules/.bin/wrangler secret list \
               --config "$attester_config" > "$attester_dir/secrets.json"
             node - "$attester_dir/secrets.json" <<'NODE'
@@ -865,9 +868,27 @@ jobs:
           }
           NODE
           else
-            # An attester released earlier stays unchanged; stop it first
-            # (contracts/DEPLOY-MAINNET.md section 3.6).
-            echo "::notice::The registry snapshot pins no Base mainnet vault; the attester is not released."
+            # Never replace an existing signer's pins or Durable Object journal
+            # with an empty snapshot. Only a proved absent Worker is bootstrapped.
+            if ./node_modules/.bin/wrangler deployments list \
+              --name slop-payments-base-mainnet-attester \
+              --config "$attester_config" --json \
+              > "$attester_dir/existing.json" 2> "$attester_dir/existing.stderr"; then
+              attester_release=false
+              echo "::notice::The registry pins no Base vault; the existing attester is unchanged."
+            else
+              node - "$attester_dir/existing.json" "$attester_dir/existing.stderr" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const output = process.argv.slice(2).map((path) => readFileSync(path, "utf8")).join("\n");
+          const resource = `/accounts/${account}/workers/scripts/slop-payments-base-mainnet-attester/deployments`;
+          if (!/^[a-f0-9]{32}$/.test(account ?? "") ||
+              !output.includes(`A request to the Cloudflare API (${resource}) failed.`) ||
+              !/\[code: 10007\]/.test(output)) {
+            throw new Error("Cannot prove Base attester absent; no bootstrap is permitted");
+          }
+          NODE
+            fi
           fi
 
           # Restore only absent cleanup triggers; reject nonempty provisioning drift.
@@ -1468,8 +1489,8 @@ jobs:
 
           # Base mainnet attester release, after the shared slop-private
           # migrations and before Pages serves its bindings. A full deploy
-          # applies the SQLite Durable Object journal migration and the cron.
-          if [ "$attester_vaults" != "0" ]; then
+          # preserves the SQLite Durable Object journal. Empty bootstrap has no cron.
+          if [ "$attester_release" = "true" ]; then
             ./node_modules/.bin/wrangler deploy \
               --config "$attester_config" \
               --tag="$GITHUB_SHA" \
