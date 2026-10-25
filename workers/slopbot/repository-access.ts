@@ -3,7 +3,10 @@
 // repository and what base permission one GitHub account has there. The
 // answer comes from GitHub through the App, never from installation records
 // alone, and it carries no token.
-import type { RepositoryAccess } from "../../src/lib/project-contracts";
+import {
+  parseRepositoryIdentity,
+  type RepositoryAccess,
+} from "../../src/lib/project-contracts";
 import { appJwt } from "./github";
 
 export const REPOSITORY_ACCESS_URL =
@@ -24,6 +27,7 @@ export async function readRepositoryAccess(
     repositoryId: string;
     login: string;
     githubId: string;
+    includeRepository?: boolean;
   },
   fetcher: typeof fetch = fetch,
 ): Promise<RepositoryAccess> {
@@ -71,11 +75,11 @@ export async function readRepositoryAccess(
   if (typeof token !== "string" || token.length < 16)
     throw new Error("Installation token is invalid");
   const repository = await call(`/repos/${query.owner}/${query.repo}`, token);
+  const facts = repository.ok ? await repository.json() : null;
   // A renamed or recreated repository must never inherit another's answer.
   if (
     !repository.ok ||
-    String(((await repository.json()) as { id?: unknown }).id) !==
-      query.repositoryId
+    String((facts as { id?: unknown } | null)?.id) !== query.repositoryId
   )
     throw new Error("Repository identity does not match");
   const answer = await call(
@@ -115,6 +119,9 @@ export async function readRepositoryAccess(
     installationId: installation.id,
     permission: level,
     roleName,
+    ...(query.includeRepository
+      ? { repository: parseRepositoryIdentity(facts) }
+      : {}),
   };
 }
 
@@ -143,7 +150,14 @@ export async function handleRepositoryAccess(
     return Response.json(
       await readRepositoryAccess(
         env,
-        { owner: match[1], repo: match[2], repositoryId, login, githubId },
+        {
+          owner: match[1],
+          repo: match[2],
+          repositoryId,
+          login,
+          githubId,
+          includeRepository: url.searchParams.get("includeRepository") === "1",
+        },
         fetcher,
       ),
       { headers: { "cache-control": "no-store" } },
