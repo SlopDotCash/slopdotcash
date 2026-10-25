@@ -364,7 +364,7 @@ async function main() {
       const created = await api<Database>("d1/database", "POST", { name });
       if (created.name !== name || !/^[a-f0-9-]{36}$/.test(created.uuid))
         throw new Error("Unexpected database identity");
-      owned.databases.push(created);
+      owned.databases.push({ uuid: created.uuid, name: created.name });
       uncertainCreations.delete(name);
     }
     for (const name of names.buckets) {
@@ -374,7 +374,10 @@ async function main() {
       const created = await api<Bucket>("r2/buckets", "POST", { name });
       if (created.name !== name || !created.creation_date)
         throw new Error("Unexpected bucket identity");
-      owned.buckets.push(created);
+      owned.buckets.push({
+        name: created.name,
+        creation_date: created.creation_date,
+      });
       uncertainCreations.delete(name);
     }
     for (const name of names.queues) {
@@ -391,7 +394,10 @@ async function main() {
         !/^[a-f0-9]{32}$/.test(created.queue_id)
       )
         throw new Error("Unexpected queue identity");
-      owned.queues.push(created);
+      owned.queues.push({
+        queue_id: created.queue_id,
+        queue_name: created.queue_name,
+      });
       uncertainCreations.delete(name);
     }
     const statements = [...splitSqlQuery(qualificationSchema)];
