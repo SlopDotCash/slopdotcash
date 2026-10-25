@@ -28,6 +28,7 @@ import {
   pda,
   SYSTEM,
 } from "../../contracts/solana/transactions";
+import { ordinaryFee } from "../../src/lib/payments/contracts";
 import type { MonthlyAuthorization } from "./monthly";
 import {
   broadcastSolanaTransaction,
@@ -195,7 +196,7 @@ const paysActor = (
   solanaUint(recorded, 112) === BigInt(entry.githubUserId) &&
   solanaUint(recorded, 8) >= BigInt(entry.grossMicro) &&
   solanaUint(recorded, 120) >=
-    BigInt(entry.grossMicro) - BigInt(entry.grossMicro) / 50n;
+    BigInt(entry.grossMicro) - ordinaryFee(BigInt(entry.grossMicro));
 /** Reads accounts at one finalized slot per batch of 100; returns the lowest slot seen. */
 async function readFinalized(config: SolanaEscrowConfig, addresses: string[]) {
   const values: unknown[] = [];

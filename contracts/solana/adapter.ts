@@ -2,7 +2,10 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { PaymentChainAdapter } from "../../backend/payments/ledger";
 import { decodeBase58Bytes } from "../../src/lib/base58";
-import { type PayoutPolicy, payoutFee } from "../../src/lib/payments/contracts";
+import {
+  acceptsPayoutFee,
+  type PayoutPolicy,
+} from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
 
 export interface SolanaEscrowConfig {
@@ -661,7 +664,7 @@ export function solanaPaymentAdapter(
         gross === 0n ||
         actor === 0n ||
         gross !== net + fee ||
-        fee !== payoutFee(gross, config.payoutPolicy) ||
+        !acceptsPayoutFee(gross, fee, config.payoutPolicy) ||
         solanaAwardId(config.projectPda, source) !== hex(award)
       )
         throw new Error("Invalid award accounting");

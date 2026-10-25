@@ -1,10 +1,6 @@
 // Slopbot GitHub App service (draft, docs/slopbot-v2-proposal.md).
 // fetch: verify and deduplicate webhooks, then enqueue identifiers only.
 // queue: re-read GitHub state and run the review pipeline.
-import {
-  findRegisteredRepositoryById,
-  REGISTERED_REPOSITORIES,
-} from "../../src/lib/repositories.mjs";
 import { dispatchDueAppeals } from "./appeals";
 import { resumeBudgetBlocks } from "./budget-blocks";
 import { APPEAL_COMMANDS, type Job } from "./contracts";
@@ -13,7 +9,12 @@ import { dispatchMaintainerHolds } from "./maintainer-holds";
 import { activePenaltyPage } from "./penalties";
 import * as store from "./persistence";
 import { QUALITY_MARKER } from "./quality";
-import { registeredRepository, reviewRegistration } from "./registry";
+import {
+  registeredHistoryProject,
+  registeredHistoryRepository,
+  registeredRepository,
+  reviewRegistration,
+} from "./registry";
 import {
   handleRepositoryAccess,
   REPOSITORY_ACCESS_URL,
@@ -225,17 +226,17 @@ export default {
       // published score applies each one once; a reversal removes it.
       const project = url.searchParams.get("project") ?? "";
       const after = url.searchParams.get("after") ?? "";
-      if (
-        !REGISTERED_REPOSITORIES.some(
-          (repository) => repository.projectId === project,
-        ) ||
-        !/^[A-Za-z0-9_=-]{0,100}$/u.test(after)
-      )
+      if (!/^[A-Za-z0-9_=-]{0,100}$/u.test(after))
         return Response.json(
           { error: "Invalid penalty query" },
           { status: 400 },
         );
       try {
+        if (!(await registeredHistoryProject(env.SLOPBOT_DB, project)))
+          return Response.json(
+            { error: "Invalid penalty query" },
+            { status: 400 },
+          );
         return Response.json(
           {
             schemaVersion: "slop-penalties:v1",
@@ -261,14 +262,10 @@ export default {
       request.method === "GET" &&
       (jointHistory || url.pathname === "/v1/value-assessments")
     ) {
-      const repository = findRegisteredRepositoryById(
-        url.searchParams.get("repository") ?? "",
-      );
       const number = url.searchParams.get("pull") ?? "";
       const after = url.searchParams.get("after") ?? "0";
       const through = jointHistory ? url.searchParams.get("through") : null;
       if (
-        !repository ||
         !/^[1-9][0-9]*$/u.test(number) ||
         !/^(0|[1-9][0-9]*)$/u.test(after) ||
         !Number.isSafeInteger(Number(number)) ||
@@ -284,17 +281,26 @@ export default {
           { status: 400 },
         );
       try {
+        const repository = await registeredHistoryRepository(
+          env.SLOPBOT_DB,
+          url.searchParams.get("repository") ?? "",
+        );
+        if (repository === null)
+          return Response.json(
+            { error: "Invalid value-history query" },
+            { status: 400 },
+          );
         const history = jointHistory
           ? await workUnitHistory(
               env.SLOPBOT_DB,
-              repository.id,
+              repository,
               Number(number),
               Number(after),
               through === null ? null : Number(through),
             )
           : await valueHistory(
               env.SLOPBOT_DB,
-              repository.id,
+              repository,
               Number(number),
               Number(after),
             );
@@ -303,7 +309,7 @@ export default {
             schemaVersion: jointHistory
               ? "slop-work-unit-history:v1"
               : "slop-value-history:v1",
-            repository: repository.id,
+            repository,
             pullRequestNumber: Number(number),
             ...history,
           },

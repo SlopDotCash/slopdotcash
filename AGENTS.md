@@ -46,8 +46,10 @@ alias only.
     also submit permissionless fee claims on reviewed vaults, moving only
     accrued fees to that same fee wallet. It holds no vault role and cannot
     withdraw free funds or touch contributor principal, reserved awards or payments. Per-run and
-    daily caps bound it, and owners sweep USDC proceeds to cold storage
-    (PRD section 11, 24 October 2026). The job runs in dry run until a
+    daily caps bound it. Owners manually sweep USDC proceeds to separate
+    owner-controlled software wallets, with sweep keys held in their local
+    `.env`, not by the Worker (PRD sections 6 and 11, 24 October 2026).
+    The job runs in dry run until a
     reviewed activation record enables signing.
 - Humans create, store and rotate these keys and deploy mainnet contracts.
   Agents never handle key material or deploy to mainnet. The vote-only Squads
@@ -534,7 +536,7 @@ wallet at payout. No contract converts it. A scheduled backend job converts
 fees already in the fee wallet to USDC (PRD section 6) inside that wallet
 (TOK-07, MVP-07c); a network without a verified USDC route keeps the fee token
 pending. It never blocks or touches a contributor payment.
-Unused-fund withdrawals deduct the same 2%, `floor(gross / 50)`, enforced in the
+Unused-fund withdrawals deduct the same 2%, `ceil(gross / 50)`, enforced in the
 contracts, and reach only the owner's refund destination; funded
 obligations cannot be withdrawn.
 Historical v1 records retain their original fee and authority rules. No project

@@ -31,7 +31,8 @@ const ED25519_PROGRAM: Pubkey =
 /// the cover the owner can give during a key compromise.
 const MAX_VETOES_BETWEEN_PAYMENTS: u8 = 3;
 /// Each award and each unused-funds withdrawal pays 1/50 (2%) of its gross to the fee
-/// recipient, rounded down once per award or withdrawal (PRD section 18). One rate for both
+/// recipient, rounded up once per award or withdrawal (PRD section 18), so splitting an amount
+/// never lowers the fee. One rate for both
 /// stops an owner from awarding free funds to itself to pay a lower fee than a withdrawal (#907).
 const FEE_DIVISOR: u64 = 50;
 /// Size of a Project created before accrued fees and the monthly gate were added.
@@ -968,11 +969,10 @@ fn verify_attestation(
     Ok(())
 }
 
-/// The 2% fee on one award or one withdrawal of `gross`, rounded down. It depends only on
-/// this amount, so a project that paid an earlier withdrawal schedule is not affected. An
-/// amount under 50 base units pays no fee; a split saves under one unit per transaction.
+/// The 2% fee on one award or one withdrawal of `gross`, rounded up, so a split into pieces
+/// under 50 base units never avoids it. It depends only on this amount.
 fn fee_for(gross: u64) -> u64 {
-    gross / FEE_DIVISOR
+    gross.div_ceil(FEE_DIVISOR)
 }
 fn valid_delay(binding_delay: i64) -> bool {
     (MIN_BINDING_DELAY..=MAX_BINDING_DELAY).contains(&binding_delay)
@@ -1651,9 +1651,12 @@ mod tests {
     fn fee_is_two_percent_per_award_or_withdrawal() {
         // PRD section 18: 850 USDC gives a 17 USDC fee and 833 USDC refund.
         assert_eq!(fee_for(850_000_000), 17_000_000);
-        assert_eq!(fee_for(49), 0);
+        assert_eq!(fee_for(1), 1);
+        assert_eq!(fee_for(49), 1);
         assert_eq!(fee_for(50), 1);
-        assert_eq!(fee_for(99), 1);
-        assert_eq!(fee_for(u64::MAX), u64::MAX / 50);
+        assert_eq!(fee_for(51), 2);
+        assert_eq!(fee_for(99), 2);
+        assert_eq!(fee_for(100), 2);
+        assert_eq!(fee_for(u64::MAX), u64::MAX / 50 + 1);
     }
 }

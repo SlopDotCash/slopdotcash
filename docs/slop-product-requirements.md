@@ -70,7 +70,7 @@ Awards: projected, under review, approved, excluded. Payments: underfunded, awai
 
 Automatic monthly payment is the default for every project with funds committed in its vault. The owner sets the monthly amount during setup, can change allocations before execution, and can turn the default off. If the owner does not distribute the funds, the automatic monthly process distributes the current allocations. Do not create unfunded obligations or pay twice. The period is the calendar UTC month, starting with 2026-11. Owners may change allocations or finalize early until 72 hours after the month ends; the automatic process then freezes the current allocations once. An underfunded month creates no obligations until the whole month is covered. Private bounty awards remain discretionary.
 
-Ordinary award and free-fund withdrawal fee: floor(gross / 50) (2%). A 100 USDC award pays 98 and 2. Project-token awards pay both amounts in that token. No second fee at claim/retry. Preserve historical terms. Private bounties instead use section 8's 75/25 split.
+Ordinary award and free-fund withdrawal fee: ceil(gross / 50) (2%, rounded up so that splitting an amount never lowers the fee; owner decision of 24 October 2026). A 100 USDC award pays 98 and 2. Project-token awards pay both amounts in that token. No second fee at claim/retry. Preserve historical terms. Private bounties instead use section 8's 75/25 split.
 
 A project-operated or permissionless executor submits payments; Slop operates no payment key/relayer. Payments are stored in a vault/escrow contract to show that they have been committed. Projects are not obligated to commit funds. Wallet binding requires authenticated account evidence and the wallet signature. Neither signature proves both identities. Mark paid only after exact finalized principal, fee, asset, and destination reconciliation; prevent replay.
 
@@ -125,8 +125,6 @@ Keep loading, empty, stale, invalid, denied, unavailable, and failed states dist
 
 Use the existing routes and shared controls. These are acceptance requirements, not claims that every live service is ready.
 
-
-
 | Person and goal | Shortest complete flow | Required outcome or recovery |
 | --- | --- | --- |
 | Contributor | Home → project → eligible work → skill → GitHub PR → Payouts | Clear scope, safe execution, accepted outcome, final award status, and verified payment; wallet setup uses Account |
@@ -137,8 +135,6 @@ Use the existing routes and shared controls. These are acceptance requirements, 
 | Moderator | Admin → escalated dispute, appeal, or confirmed-malicious result → evidence and Slopbot triage → decision | Current authority, saved reason, fresh scan; flag-only pauses reinstate automatically after a clean scan; preserve awards |
 | Security operator | Private vetting evidence → authorized reasoned grant → inspect → record result | Exact retained bytes, explicit coverage gaps, audited access; "scan passed" only when every defined check ran (section 8) |
 | Visitor | Projects, profiles, shared rankings, models/clients, receipts, cycles, sponsors, How it works | Consistent amounts and periods; explain score, funding, and verification once; retain old URLs and raw downloads |
-
-
 
 ## 8. Security and private bounties
 
@@ -186,8 +182,6 @@ Recheck roles and destinations before sending. Verify actual inbox receipt separ
 
 ### Recorded decisions and remaining gates
 
-
-
 | Area | Recorded decision | Remaining approval or evidence |
 | --- | --- | --- |
 | Authority | Repository PRD; D1 inventory; GitHub work; owner-set awards with default automatic monthly distribution; chain finality | Reconcile older trace, scoring, and key instructions before the affected action |
@@ -199,11 +193,7 @@ Recheck roles and destinations before sending. Verify actual inbox receipt separ
 | Private programs | Automatic private reporting; discretionary owner awards; Slopbot-triaged disputes with moderator escalation; 75/25 payment | Published program terms, safe testing, verified reserves after approval, and activation per program |
 | Moderation and evidence | Staging pilot: lalalune (18633264), drew-dot-com (202660855) | Qualify staging, the bounded malicious-code scan in section 8 with an isolated runner for risky artifacts (a universal Linux/KVM runtime is not required), external retention/recovery controls, and production release |
 
-
-
 ## 10. Private bounty acceptance
-
-
 
 | Check | Required result |
 | --- | --- |
@@ -221,8 +211,6 @@ Recheck roles and destinations before sending. Verify actual inbox receipt separ
 | Continuity | Restore backups; preserve obligations through account recovery, role loss, project transfer, ban, closure, and intake outage |
 | Release | All section 7 journeys, accessibility checks, sanitized evidence, and exact deployed revision |
 
-
-
 ## 11. Source, delivery, and acceptance
 
 The repository PRD is canonical. The Google Docs copy mirrors it after repository review. Owner decisions in this revision supersede conflicting older requirements: self-service admission; required free Slopbot on registered repositories; size-based PR scores and useful review credit; two-flag pauses; automatic private reporting with discretionary bounty payouts; no public award-adjustment history; automatic monthly payment by default for funded projects; and received-fee conversion to USDC. The 23 October 2026 revision adds: automatic reinstatement after flag-only pauses; a 7-day maintainer window before Slopbot labels uncertain findings; one published penalty table; Slopbot-first triage of appeals and disputes; two bounty authorities; one operator for redirected wallet recovery; and a lighter isolated scanner runtime, used only for risky artifacts within the bounded scan in section 8. The owner waived the independent smart-contract audit and signer/attester legal review on 24 October 2026. Explicit mainnet activation remains required.
@@ -238,12 +226,12 @@ The owner recorded these values. They apply prospectively and do not change hist
 | Decision | Recorded value |
 | --- | --- |
 | Monthly period model | Calendar UTC month; first period 2026-11; cutoff 72 hours after the month ends (section 6) |
-| Review-credit pool | Sum of the credited reviewers' highest bands, capped at the pull request's assessed size credit, minimum one third; largest remainder; effective 2026-11-01T00:00:00Z (section 7) |
+| Review-credit pool | Sum of the credited reviewers' highest bands, capped at the pull request's assessed size credit, minimum 10 points; largest remainder; effective 2026-11-01T00:00:00Z (section 7) |
 | Flag lifetime and resolution | A flag counts for 90 days. A clean-scan reinstatement resolves every flag counted toward that pause; a withdrawn flag stops counting. Only a member whose GitHub account is at least 30 days old and who has at least one accepted Slop contribution may flag; owners and maintainers cannot flag their own project. One flag stays private |
 | Fee conversion timing and dust | Convert on receipt when the value is at least 5 USDC and at least 10 times the gas cost; slippage 1%, price impact 2%, 1,000 USDC per run, 5,000 USDC per day. Capped fee-claim and conversion keys (section 6); claims move only accrued fees to the same fee wallet. Robinhood Chain stays pending until a Circle USDC route is verified. Solana live conversion waits for the separate attester role |
 | Attribution for automatic closure | An ordinary submission needs the visible Slop attribution line and the exact provider, model, and client; a signed receipt is optional. Closure and penalties need the author's own authenticated Slop run for that project and a pull-request-opened event that names the exact pull request. A copied marker is never proof |
 | Penalty table | Section 7 table |
-| Escalation criteria | A moderator decides when the appellant or maintainer rejects Slopbot's drafted resolution; the case involves a ban, a confirmed-malicious result, or a private security case; the debit is 24 thirds or more; Slopbot's confidence is below 0.9; or the case is unresolved 7 days after the appeal |
+| Escalation criteria | A moderator decides when the appellant or maintainer rejects Slopbot's drafted resolution; the case involves a ban, a confirmed-malicious result, or a private security case; the debit is 240 points or more; Slopbot's confidence is below 0.9; or the case is unresolved 7 days after the appeal |
 | Restricted projects | Security-only review on a paused, flagged, or quarantined project may comment and apply the scam label only. Retired projects get no review. Approved funded payouts continue during quarantine or a ban; no new commitments start |
 | Setup | Creating a project requires a Slopbot installation read. Economic changes apply from the next UTC calendar month. Amounts use asset base units. Admins use quarantine to hold a project |
 | Account closure | Closure is reversible through an explicit reopen. Wallets, obligations, settlement records, identity reservations, and private-case records remain |
