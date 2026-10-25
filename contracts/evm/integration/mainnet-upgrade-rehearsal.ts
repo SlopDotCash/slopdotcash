@@ -85,15 +85,51 @@ const OLD_REVIEW: EvmImplementationReview = {
   factoryImplementationCodeSha256:
     "62a3bf4a741b8084a63152835047bb71e8396b153a112225910d1dffecd64275",
 };
-/** The block of each factory proxy's deployment transaction: the first block with VaultCreated logs. */
+/** The block of each factory proxy's deployment transaction, checked as its first code block. */
 const FACTORY_DEPLOYMENT_BLOCK: Record<string, bigint> = {
   "8453": 53020390n,
   "1": 26261441n,
   "4663": 96643004n,
 };
+// Bind state and inventory providers to one finalized chain view before starting the fork.
+const upstreamChainId = String(await rpc("eth_chainId", [], forkUrl));
+const finalized = (await rpc(
+  "eth_getBlockByNumber",
+  ["finalized", false],
+  forkUrl,
+)) as { number: string; hash: string } | null;
+assert(
+  finalized &&
+    /^0x[0-9a-fA-F]+$/.test(finalized.number) &&
+    /^0x[0-9a-fA-F]{64}$/.test(finalized.hash),
+  "State provider did not return a finalized block",
+);
+assert.equal(
+  BigInt(String(await rpc("eth_chainId", [], logsUrl))),
+  BigInt(upstreamChainId),
+  "State and history providers use different chains",
+);
+const inventoryBlock = (await rpc(
+  "eth_getBlockByNumber",
+  [finalized.number, false],
+  logsUrl,
+)) as { hash: string } | null;
+assert.equal(
+  inventoryBlock?.hash?.toLowerCase(),
+  finalized.hash.toLowerCase(),
+  "State and history providers disagree on the finalized block",
+);
 const anvil = spawn(
   "anvil",
-  ["--fork-url", forkUrl, "--port", port, "--silent"],
+  [
+    "--fork-url",
+    forkUrl,
+    "--fork-block-number",
+    BigInt(finalized.number).toString(),
+    "--port",
+    port,
+    "--silent",
+  ],
   { stdio: "ignore" },
 );
 
@@ -253,6 +289,8 @@ try {
     `Unsupported chain ${chainId}`,
   );
   const forkBlock = BigInt(String(await rpc("eth_blockNumber", [])));
+  assert.equal(chainId, BigInt(upstreamChainId), "Fork chain identity");
+  assert.equal(forkBlock, BigInt(finalized.number), "Fork finalized block");
   vaultHistoryStart = FACTORY_DEPLOYMENT_BLOCK[chainId.toString()];
   await assertFactoryDeploymentBlock(
     rpc,
@@ -266,6 +304,7 @@ try {
     }).trim(),
     chainId: chainId.toString(),
     forkBlock: forkBlock.toString(),
+    forkBlockHash: finalized.hash,
   };
 
   // 1. The live deployment matches the recorded review.
