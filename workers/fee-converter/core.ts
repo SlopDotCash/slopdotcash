@@ -56,7 +56,42 @@ export interface ConversionRow {
   updatedAt: string;
   submittedAt: string | null;
   finalizedAt: string | null;
+  /**
+   * The transaction the final outcome comes from: the original send or one
+   * of its same-nonce replacements (migration 0087).
+   */
+  landedTxId?: string | null;
 }
+
+/**
+ * One same-nonce EVM fee replacement of a journaled send (migration 0087).
+ * It is stored before it is broadcast and never changes.
+ */
+export interface SendReplacement {
+  id: string;
+  conversionId: string;
+  network: Network;
+  /** 1 is the first replacement; the original send is attempt 0. */
+  attempt: number;
+  evmNonce: number;
+  txId: string;
+  rawTx: string;
+  /** Wei, as decimal strings. */
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+  createdAt: string;
+}
+
+/** A signed replacement that is not yet journaled or broadcast. */
+export type ReplacementResult =
+  | {
+      txId: string;
+      rawTx: string;
+      maxFeePerGas: bigint;
+      maxPriorityFeePerGas: bigint;
+    }
+  /** No replacement is signed now. The send waits; `wait` says why. */
+  | { wait: string };
 
 export interface Quote {
   route: "kyberswap" | "jupiter";
@@ -94,11 +129,19 @@ export interface PreparedApproval {
 }
 
 export type SendStatus =
-  | { kind: "pending" }
-  | { kind: "finalized"; amountOut: bigint }
-  | { kind: "failed"; reason: string }
-  /** Not seen on chain and still valid: send the same bytes again. */
-  | { kind: "rebroadcast" };
+  /**
+   * `mined`: the nonce is used on chain (included but not finalized, or
+   * consumed while the claim receipt is unavailable). Never replaced.
+   */
+  | { kind: "pending"; mined?: boolean }
+  /** `txId`: the attempt (original or replacement) that landed. */
+  | { kind: "finalized"; amountOut: bigint; txId?: string }
+  | { kind: "failed"; reason: string; txId?: string }
+  /**
+   * Not seen on chain and still valid: send the same bytes again. `rawTx` is
+   * the latest journaled replacement, when one exists.
+   */
+  | { kind: "rebroadcast"; rawTx?: string };
 
 export interface ChainClient {
   balance(token: string): Promise<bigint>;
@@ -108,9 +151,23 @@ export interface ChainClient {
     token: string,
     quote: Quote,
     recordApproval: (approval: PreparedApproval) => Promise<void>,
+    /** EVM: the lowest nonce the send may use (see nonceFloor). */
+    nonceFloor?: number,
   ): Promise<PreparedSend>;
   broadcast(rawTx: string): Promise<void>;
-  status(row: ConversionRow): Promise<SendStatus>;
+  /** `replacements`: the journaled same-nonce replacements of the row. */
+  status(
+    row: ConversionRow,
+    replacements?: readonly SendReplacement[],
+  ): Promise<SendStatus>;
+  /**
+   * EVM only. Signs one same-nonce replacement of an unmined send with a
+   * bounded higher fee, or says why the send must wait. It never broadcasts.
+   */
+  replace?(
+    row: ConversionRow,
+    replacements: readonly SendReplacement[],
+  ): Promise<ReplacementResult>;
   /**
    * Issue #905: a vault keeps its 2% fees until someone calls the
    * permissionless claim (EVM `claimFees()`, Solana `claim_fees`). Its
@@ -157,6 +214,8 @@ export interface VaultFeeClient {
       expiresAt: number | null;
       amount: bigint;
     }) => Promise<void>,
+    /** EVM: the lowest nonce the claim may use (see nonceFloor). */
+    nonceFloor?: number,
   ): Promise<{ txId: string }>;
 }
 
@@ -182,6 +241,9 @@ export interface ConversionStore {
   /** Quoted value of live sends created since `since`, in micro-units. */
   liveValueSince(network: Network, since: string): Promise<bigint>;
   latest(network: Network, token: string): Promise<ConversionRow | null>;
+  /** Journaled same-nonce replacements of one row, in attempt order. */
+  replacements(conversionId: string): Promise<SendReplacement[]>;
+  insertReplacement(replacement: SendReplacement): Promise<void>;
 }
 
 export type RunTrigger = "receipts" | "recovery";
@@ -216,6 +278,12 @@ export interface NetworkRunResult {
 }
 
 const QUOTE_ABANDON_MS = 60 * 60 * 1000;
+/**
+ * How long the latest attempt of an EVM send must stay unmined before a
+ * same-nonce fee replacement may be signed (owner decision of 25 October
+ * 2026). A claim already waits about one minute for its receipt.
+ */
+export const REPLACEMENT_WAIT_MS = 3 * 60 * 1000;
 const RESCALE_ATTEMPTS = 3;
 /**
  * How long a run may go without renewing its lease. A run renews at a chunk
@@ -279,10 +347,14 @@ async function reconcile(
     }
     return false;
   }
-  const status = await client.status(row);
+  const replacements = client.replace
+    ? await deps.store.replacements(row.id)
+    : [];
+  const status = await client.status(row, replacements);
   const at = deps.now().toISOString();
   switch (status.kind) {
     case "pending":
+      if (!status.mined) await replaceSend(row, replacements, client, deps);
       return false;
     case "finalized": {
       const after = await client
@@ -299,6 +371,7 @@ async function reconcile(
         finalizedAt: at,
         updatedAt: at,
         reason: below ? "finalized below the signed minimum" : null,
+        landedTxId: status.txId ?? row.txId,
       });
       deps.log({
         event:
@@ -307,7 +380,7 @@ async function reconcile(
             : "fee_conversion_finalized",
         network: row.network,
         token: row.token,
-        txId: row.txId,
+        txId: status.txId ?? row.txId,
         amountOut: status.amountOut.toString(),
       });
       return true;
@@ -317,11 +390,14 @@ async function reconcile(
         state: "failed",
         reason: status.reason,
         updatedAt: at,
+        // A reverted attempt landed; other failures have no landed send.
+        ...(status.txId ? { landedTxId: status.txId } : {}),
       });
       return true;
     case "rebroadcast":
+      if (await replaceSend(row, replacements, client, deps)) return false;
       try {
-        await client.broadcast(row.rawTx as string);
+        await client.broadcast(status.rawTx ?? (row.rawTx as string));
         await deps.store.update(row.id, {
           state: "submitted",
           reason: null,
@@ -336,6 +412,112 @@ async function reconcile(
       }
       return false;
   }
+}
+
+/**
+ * Same-nonce fee replacement (owner decision of 25 October 2026). Live mode
+ * only. When the latest attempt stayed unmined for REPLACEMENT_WAIT_MS, the
+ * chain client may sign one replacement with the same nonce, recipient,
+ * calldata and value and a bounded higher fee. The replacement is journaled
+ * before it is broadcast, so a restart rebroadcasts it instead of signing
+ * another. Returns true when a replacement was journaled.
+ */
+async function replaceSend(
+  row: ConversionRow,
+  replacements: readonly SendReplacement[],
+  client: ChainClient,
+  deps: RunDependencies,
+): Promise<boolean> {
+  if (
+    deps.mode !== "live" ||
+    !client.replace ||
+    row.mode !== "live" ||
+    row.evmNonce === null ||
+    row.rawTx === null
+  )
+    return false;
+  const last = replacements.at(-1)?.createdAt ?? row.submittedAt;
+  if (
+    last === null ||
+    deps.now().getTime() - Date.parse(last) < REPLACEMENT_WAIT_MS
+  )
+    return false;
+  const result = await client.replace(row, replacements);
+  if ("wait" in result) {
+    deps.log({
+      event: "fee_send_waiting",
+      network: row.network,
+      kind: row.kind ?? "conversion",
+      token: row.token,
+      txId: row.txId,
+      attempts: replacements.length,
+      reason: result.wait,
+    });
+    return false;
+  }
+  const at = deps.now().toISOString();
+  const replacement: SendReplacement = {
+    id: deps.randomId(),
+    conversionId: row.id,
+    network: row.network,
+    attempt: replacements.length + 1,
+    evmNonce: row.evmNonce,
+    txId: result.txId,
+    rawTx: result.rawTx,
+    maxFeePerGas: result.maxFeePerGas.toString(),
+    maxPriorityFeePerGas: result.maxPriorityFeePerGas.toString(),
+    createdAt: at,
+  };
+  // Journal before broadcast: after a restart the next run finds this
+  // attempt and rebroadcasts its bytes instead of signing another one.
+  await deps.store.insertReplacement(replacement);
+  try {
+    await client.broadcast(result.rawTx);
+    await deps.store.update(row.id, {
+      state: "submitted",
+      reason: null,
+      updatedAt: at,
+    });
+  } catch (error) {
+    await deps.store.update(row.id, {
+      state: "unknown",
+      reason: `replacement broadcast: ${message(error)}`,
+      updatedAt: at,
+    });
+  }
+  deps.log({
+    event: "fee_send_replaced",
+    network: row.network,
+    kind: row.kind ?? "conversion",
+    token: row.token,
+    txId: row.txId,
+    replacementTxId: result.txId,
+    attempt: replacement.attempt,
+    maxFeePerGas: replacement.maxFeePerGas,
+    maxPriorityFeePerGas: replacement.maxPriorityFeePerGas,
+  });
+  return true;
+}
+
+/**
+ * The lowest EVM nonce a new send may use: one above every open journaled
+ * send (`submitted` or `unknown`). A node that dropped a stuck send reports
+ * its nonce as free; a new send must not take it, or the two would outbid
+ * each other through their fee replacements.
+ */
+async function nonceFloor(
+  network: Network,
+  store: ConversionStore,
+): Promise<number> {
+  let floor = 0;
+  for (const row of await store.openRows(network))
+    if (
+      (row.state === "submitted" || row.state === "unknown") &&
+      row.evmNonce !== null &&
+      row.evmNonce >= floor
+    )
+      floor = row.evmNonce + 1;
+  return floor;
 }
 
 function emptyRecords(): Record<ConversionState, number> {
@@ -554,7 +736,10 @@ async function claimVaultFees(
         report("fee_claim_quoted", { amount, valueMicro: value.toString() });
         continue;
       }
-      const { txId } = await fees.claim(vault, async (send) => {
+      const floor = await nonceFloor(config.network, deps.store);
+      const recordClaim: Parameters<VaultFeeClient["claim"]>[1] = async (
+        send,
+      ) => {
         const at = deps.now().toISOString();
         const claimRow: ConversionRow = {
           id: deps.randomId(),
@@ -569,7 +754,8 @@ async function claimVaultFees(
           route: null,
           quoteAmountOut: null,
           minAmountOut: null,
-          quoteValueMicro: null,
+          // The claimed fee's USDC value bounds any later fee replacement.
+          quoteValueMicro: Number(value),
           quote: JSON.stringify(vault),
           priceImpactBps: null,
           approvalTxId: null,
@@ -591,7 +777,8 @@ async function claimVaultFees(
         await deps.store.insert(claimRow);
         claimId = claimRow.id;
         blocked.add(accrued.asset);
-      });
+      };
+      const { txId } = await fees.claim(vault, recordClaim, floor);
       claimed += 1;
       report("fee_claim_included", { amount, txId });
     } catch (error) {
@@ -768,13 +955,15 @@ async function convert(
   await deps.store.insert(row);
   let prepared: PreparedSend;
   try {
-    prepared = await client.prepare(token, quote, async (approval) => {
+    const recordApproval = async (approval: PreparedApproval) => {
       await deps.store.update(row.id, {
         approvalTxId: approval.txId,
         evmNonce: approval.evmNonce,
         updatedAt: at(),
       });
-    });
+    };
+    const floor = await nonceFloor(config.network, deps.store);
+    prepared = await client.prepare(token, quote, recordApproval, floor);
     // Match migration 0078: at most 128 KiB encoded as hex plus its prefix.
     // Refuse before persistence and broadcast, with a terminal failed record.
     if (prepared.rawTx.length > 262146)
