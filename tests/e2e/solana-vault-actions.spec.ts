@@ -874,6 +874,14 @@ async function ownerSetupWorkflow(
     escrow: { ...project.escrow, deployments: [] },
   };
   if (bounty) {
+    Object.assign(target.reward, {
+      monthlyCapMinor: "0",
+      monthlyCapDisplay: "0 TEST",
+      committedMinor: "0",
+      paymentMode: "disabled",
+    });
+    delete target.reward.reviewBudget;
+    delete target.reward.cycleCaps;
     const contact = { githubId: "900000071", githubLogin: "vault-owner" };
     const repository = target.repositories[0].id;
     Object.assign(target, {
@@ -935,7 +943,7 @@ async function ownerSetupWorkflow(
   if (!other) throw new Error("Second registry fixture missing");
   const template = {
     ...other,
-    reward: target.reward,
+    reward: bounty ? project.reward : target.reward,
     rewardAsset: project.rewardAsset,
     escrow: project.escrow,
   };
