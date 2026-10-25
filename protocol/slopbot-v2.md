@@ -16,6 +16,11 @@ v2 keeps every v1 rule except the ones listed under "Changes from v1".
    still never merges, approves payouts, requests changes, bans, excludes, or
    pays. The separate owner-approved SCR-06 value-scoring extension permits
    automatic provisional assessments; it does not enable closure powers.
+   Owner decision, 25 October 2026: project settings record explicit closure
+   consent through the existing authority checks and immutable revisions.
+   Absent consent is false. Registration and App installation alone are not
+   consent. A separate `.github/slopbot.json` file is not required; existing
+   opt-outs, category restrictions and repository rejection rules still apply.
 3. **Permissions.** Read: Contents, Metadata, Organization members.
    Write: Issues and Pull requests, used only to comment, label, close, and
    reopen an item that Slopbot closed when its appeal is upheld.
@@ -40,6 +45,11 @@ v2 keeps every v1 rule except the ones listed under "Changes from v1".
   Both calls use Surplus Intelligence, falling back to GPT-6.1 Sol. Surplus
   cannot prove which model served a verdict; the owner accepted this on
   9 October 2026, and every result says so.
+- Closure qualification uses reviewed real cases and counterexamples, not a
+  fixed 14-day and 50-item threshold (owner decision, 25 October 2026).
+  Preserve caps, appeals, reopen protection and explicit production activation.
+  The activation record identifies the real evidence and any qualified
+  objective verifier; fixtures qualify controls, not model behavior.
 - Policy is read from the base branch at a recorded SHA. A pull request's own
   policy edits are content under review.
 - An uncertain finding goes to the maintainer first. If no maintainer acts
@@ -163,5 +173,6 @@ published rejection rule and two grounded verdicts identifying the same
 verified defect: removal of required behavior, a reproduced patch regression,
 or a result claim contradicted by its cited artifact. Missing verification
 requires label-only handling. This amendment grants no production activation,
-penalty, score or payment authority. Existing shadow qualification, explicit
-enablement, caps, appeals and reopen controls remain required.
+penalty, score or payment authority. Reviewed real-case qualification, explicit
+project consent and production enablement, caps, appeals and reopen controls
+remain required.

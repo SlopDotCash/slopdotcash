@@ -1,5 +1,5 @@
 // Deterministic trust-boundary tests. These are NOT provider or approved-VM
-// acceptance evidence, and do not qualify a production shadow period.
+// acceptance evidence, and do not qualify production closure.
 import { expect, test } from "bun:test";
 import { parseRepositoryConfig, type Verdict } from "./contracts";
 import { sha256Hex } from "./github";
@@ -386,7 +386,7 @@ test("missing provider credentials never produce a confirmation", async () => {
   expect(result.calls.every((call) => call.outcome === "failed")).toBe(true);
 });
 
-test("shadow qualification requires real review rows, elapsed time, the same verifier and explicit approval", async () => {
+test("quality qualification binds recorded evidence, the same verifier and explicit approval without an age or count gate", async () => {
   const { Database } = await import("bun:sqlite");
   const { readFileSync } = await import("node:fs");
   const { qualityQualified } = await import("./review");
@@ -468,21 +468,8 @@ test("shadow qualification requires real review rows, elapsed time, the same ver
         proof.id,
         "2026-11-01T00:00:00.000Z",
       );
-    for (let i = 0; i < 49; i++)
-      sql
-        .prepare(`INSERT INTO slopbot_reviews
-      (review_key,installation_id,repository_id,item_kind,item_number,item_node_id,author_id,revision,content_digest,policy_digest,status,created_at)
-      VALUES (?,1,42,'pull_request',?,?,1,?,? ,?,'completed','2026-11-02T00:00:00.000Z')`)
-        .run(`r${i}`, i, `PR_${i}`, head, "digest", subject.policyDigest);
-    expect(await qualityQualified(qualified, job, proof, later)).toBe(false);
-    // Retrying the same PR under another policy cannot manufacture item 50.
-    sql.exec(
-      "INSERT INTO slopbot_reviews SELECT 'retry',installation_id,repository_id,item_kind,item_number,item_node_id,author_id,revision,content_digest,policy_digest,status,skip_reason,verdict,action,created_at,completed_at FROM slopbot_reviews WHERE review_key='r0'",
-    );
-    expect(await qualityQualified(qualified, job, proof, later)).toBe(false);
-    sql.exec(
-      "UPDATE slopbot_reviews SET item_node_id='PR_50' WHERE review_key='retry'",
-    );
+    // This is synthetic evidence for the controls, not real-case qualification.
+    // No completed-review quota or elapsed installation time creates authority.
     expect(await qualityQualified(qualified, job, proof, later)).toBe(true);
     expect(await qualityQualified(env, job, proof, later)).toBe(false);
     expect(
@@ -491,6 +478,14 @@ test("shadow qualification requires real review rows, elapsed time, the same ver
         job,
         proof,
         Date.parse("2026-11-02T00:00:00Z"),
+      ),
+    ).toBe(true);
+    expect(
+      await qualityQualified(
+        qualified,
+        job,
+        proof,
+        Date.parse("2026-10-31T23:59:59Z"),
       ),
     ).toBe(false);
     expect(

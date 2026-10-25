@@ -292,7 +292,12 @@ async function expectAccessible(page: Page) {
 
 async function draftApplication(
   page: Page,
-  project: { repository: string; name: string; network?: string },
+  project: {
+    repository: string;
+    name: string;
+    network?: string;
+    automaticClosure?: boolean;
+  },
 ) {
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page.getByLabel("Public GitHub repository").fill(project.repository);
@@ -302,6 +307,11 @@ async function draftApplication(
   );
   await page.getByRole("button", { name: "Next: Contribution rules" }).click();
   await page.getByLabel("Project name").fill(project.name);
+  const consent = page.getByRole("checkbox", {
+    name: "Allow automatic closure by Slopbot",
+  });
+  await expect(consent).not.toBeChecked();
+  if (project.automaticClosure) await consent.check();
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   await page.getByLabel("Pay contributors a monthly amount").check();
   await page.getByLabel("Monthly amount (USDC)").fill("1000");
@@ -395,7 +405,7 @@ test("an owner creates a paused project without admin approval @registry", async
   await signIn(page, APPLICANT_TOKEN);
   // Owner decision D11: Slop reads authority through the installation.
   await setSlopbot(`${project.repository}/installed`);
-  await draftApplication(page, project);
+  await draftApplication(page, { ...project, automaticClosure: true });
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
@@ -405,6 +415,7 @@ test("an owner creates a paused project without admin approval @registry", async
   expect(await listedProject(page, project.id)).toMatchObject({
     status: "paused",
     listingTier: "community",
+    slopbot: { automaticClosure: true },
     skill: {
       id: `contribute-to-${project.id}`,
       sourcePath: "skills/project-contributor-template",
@@ -450,6 +461,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await expectAccessible(owner);
   const listed = await listedProject(owner, project.id);
   expect(listed).toMatchObject({ status: "paused" });
+  expect(listed.slopbot).toBeUndefined();
 
   // Facts that GitHub does not confirm are refused, never listed.
   // The request API keeps the expected 422 out of the page console.
@@ -526,6 +538,11 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await returningOwner.goto(`/projects/${project.id}/manage`, {
     waitUntil: "networkidle",
   });
+  const consent = returningOwner.getByRole("checkbox", {
+    name: "Allow automatic closure by Slopbot",
+  });
+  await expect(consent).not.toBeChecked();
+  await consent.check();
   await returningOwner
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Useful accepted outcomes with a clearer project scope");
@@ -548,12 +565,42 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     (await (await admin.request.get(`/api/v1/projects/${project.id}`)).json())
       .project.headline,
   ).toBe("Useful accepted outcomes with a clearer project scope");
+  await returningOwner.reload({ waitUntil: "networkidle" });
+  await expect(consent).toBeChecked();
+  await consent.uncheck();
+  await returningOwner
+    .getByLabel("Revision note", { exact: true })
+    .fill("Withdraw automatic closure permission");
+  await returningOwner.getByRole("button", { name: "Publish changes" }).click();
+  await expect(
+    returningOwner
+      .getByRole("status")
+      .filter({ hasText: "Published revision 3" }),
+  ).toBeVisible();
+  const revoked = await (
+    await returningOwner.request.get(`/api/v1/projects/${project.id}`)
+  ).json();
+  expect(revoked.project.slopbot).toEqual({ automaticClosure: false });
+  const consentHistory = await (
+    await returningOwner.request.get(
+      `/api/v1/project-revisions/${project.id}/2`,
+    )
+  ).json();
+  expect(JSON.parse(consentHistory.manifestText).slopbot).toEqual({
+    automaticClosure: true,
+  });
+  await returningOwner.reload({ waitUntil: "networkidle" });
+  await expect(consent).not.toBeChecked();
+  await expectAccessible(returningOwner);
   await returningOwner.goto("/projects/new", { waitUntil: "networkidle" });
   await returningOwner.getByText("Your projects", { exact: true }).click();
   await expect(returningOwner.locator("main")).toContainText(project.name);
   await expectAccessible(returningOwner);
   await returningContext.close();
 
+  // Revocation appended revision 3 after the admin's last read.
+  await admin.reload({ waitUntil: "networkidle" });
+  await expect(card).toContainText("3 · updated");
   await card.getByRole("button", { name: "Delist", exact: true }).click();
   await card.getByRole("button", { name: "Delist project" }).click();
   await expect(admin.getByRole("status")).toContainText("Saved.");
