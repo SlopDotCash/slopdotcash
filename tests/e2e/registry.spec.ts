@@ -1746,6 +1746,139 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   await context.close();
 });
 
+test("an owner initializes a legacy monthly project without shortening its accepted policy @registry", async ({
+  browser,
+}) => {
+  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const project = {
+    id: `legacy-policy-${suffix}`,
+    repository: `e2e-owner/legacy-policy-${suffix}`,
+    name: `Legacy policy ${suffix}`,
+    network: "solana",
+  };
+  const context = await browser.newContext(walkthroughOptions());
+  const page = await context.newPage();
+  const errors = observe(page);
+  try {
+    await signIn(page, OWNER_TOKEN);
+    await setSlopbot(`${project.repository}/installed`);
+    await draftApplication(page, project);
+    await page
+      .getByRole("button", { name: "Create project", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Project created" }),
+    ).toBeVisible();
+    const manifest = await listedProject(page, project.id);
+    const criteria =
+      "Accept reproduced defects with exact-source tests and preserve every existing funded obligation. "
+        .repeat(18)
+        .trim();
+    const { escrow: _escrow, rewardAsset: _asset, ...legacy } = manifest;
+    // Seed an imported historical revision in this isolated local database.
+    // The live update API correctly refuses removing an established vault
+    // policy; this fixture is an old record, not a permitted downgrade.
+    const oldManifest = {
+      ...legacy,
+      reward: { ...legacy.reward, feeBasisPoints: 100 },
+      contribution: { ...legacy.contribution, approvedScope: criteria },
+    };
+    const { assertProjectDefinition } = await import(
+      "../../src/lib/project-schema.mjs"
+    );
+    assertProjectDefinition(oldManifest);
+    const persist = process.env.SLOP_E2E_PERSIST_TO;
+    if (!persist) throw new Error("Missing local registry database");
+    const text = JSON.stringify(oldManifest);
+    const digest = createHash("sha256").update(text).digest("hex");
+    const sql = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    const { execFileSync } = await import("node:child_process");
+    execFileSync(
+      "node",
+      [
+        "node_modules/wrangler/bin/wrangler.js",
+        "d1",
+        "execute",
+        "slop-private",
+        "--local",
+        "--persist-to",
+        persist,
+        "--command",
+        `INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) SELECT id,2,${sql(text)},${sql(digest)},'Historical import fixture',NULL,NULL,updated_at FROM projects WHERE id=${sql(project.id)}; UPDATE projects SET revision=2,manifest=${sql(text)},manifest_sha256=${sql(digest)} WHERE id=${sql(project.id)};`,
+      ],
+      { stdio: "pipe" },
+    );
+    await page.goto(`/projects/${project.id}/manage`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByLabel("Acceptance criteria", { exact: true }),
+    ).toHaveValue(criteria);
+    await expect(page.getByLabel("Monthly amount (USDC)")).toHaveValue("1000");
+    const publish = page.getByRole("button", {
+      name: "Publish changes",
+      exact: true,
+    });
+    await page
+      .getByLabel("Short description", { exact: true })
+      .fill("Useful work under the project's complete accepted policy");
+    await publish.focus();
+    await page.keyboard.press("Enter");
+    await page.screenshot({
+      path: test.info().outputPath("legacy-policy-publish.png"),
+      fullPage: true,
+    });
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision 3" }),
+    ).toBeVisible();
+    const unchangedFunding = await listedProject(page, project.id);
+    expect(unchangedFunding.contribution.approvedScope).toBe(criteria);
+    expect(unchangedFunding.reward.feeBasisPoints).toBe(100);
+    expect(unchangedFunding.escrow).toBeUndefined();
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("legacy-policy-preserved.png"),
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Enable vault setup", exact: true })
+      .click();
+    await publish.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision 4" }),
+    ).toBeVisible();
+    const saved = await listedProject(page, project.id);
+    expect(saved.contribution.approvedScope).toBe(criteria);
+    expect(saved.reward).toMatchObject({
+      monthlyCapMinor: "1000000000",
+      paymentMode: "disabled",
+      feeBasisPoints: 200,
+    });
+    expect(saved.rewardAsset).toMatchObject({
+      network: "solana",
+      symbol: "USDC",
+    });
+    expect(saved.escrow).toMatchObject({ chain: "solana", deployments: [] });
+    await page.screenshot({
+      path: test.info().outputPath("vault-setup-enabled.png"),
+      fullPage: true,
+    });
+    await expectAccessible(page);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
 test("an applicant publishes an application stored before self-service setup without entering it again @registry", async ({
   browser,
 }) => {

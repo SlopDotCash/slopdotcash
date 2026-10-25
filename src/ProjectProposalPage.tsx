@@ -328,7 +328,7 @@ function proposalErrors(p: Proposal): FieldErrors {
   if (headline) errors.headline = headline;
   const goal = lengthError(p.goal, 24, 600);
   if (goal) errors.goal = goal;
-  const criteria = lengthError(p.criteria, 6, 1_000);
+  const criteria = lengthError(p.criteria, 6, 2_000);
   if (criteria) errors.criteria = criteria;
   // The remaining skill fields are optional; empty defers to the repository.
   for (const field of SKILL_RULE_FIELDS) {
@@ -2146,7 +2146,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   const errors: Record<string, string | undefined> = {
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
-    criteria: lengthError(value.criteria, 6, 1_000),
+    criteria: lengthError(value.criteria, 6, 2_000),
     note:
       value.note.trim() === "" ? undefined : lengthError(value.note, 1, 500),
     monthlyAmount:
@@ -2188,6 +2188,15 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         error instanceof Error ? `${error.message}.` : "Check the token.";
     }
   }
+  // A legacy project needs an explicit funding choice to initialize a vault.
+  // Editing only its text must preserve its existing funding and fee terms.
+  const assetTouched =
+    (!current.escrow && draft?.fundingMode === "monthly") ||
+    (draft !== null &&
+      (["network", "assetKind", "tokenAddress", "tokenSymbol"] as const).some(
+        (field) =>
+          draft[field] !== undefined && draft[field] !== initial[field],
+      ));
   /** The submitted manifest: the current revision with the owner's edits. */
   const next = ((): ProjectDefinition => {
     const source = current;
@@ -2204,13 +2213,6 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           source.rewardAsset,
         ),
       };
-      // The asset and vault change only when the owner chose a new one.
-      const assetTouched =
-        draft !== null &&
-        (["network", "assetKind", "tokenAddress", "tokenSymbol"] as const).some(
-          (field) =>
-            draft[field] !== undefined && draft[field] !== initial[field],
-        );
       if (assetFixed || choice.mode === "none" || !assetTouched) {
         // The asset, network and vault stay; only the amount changes.
         fundingFields = { reward: { ...source.reward, ...cap } };
@@ -2462,6 +2464,24 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
               )(entry)
             }
           />
+        ) : null}
+        {monthly &&
+        choice.mode === "monthly" &&
+        !current.escrow &&
+        !assetTouched ? (
+          <div>
+            <p className="field-hint">
+              Keep this monthly amount and asset. Creating and funding the vault
+              remain separate wallet actions.
+            </p>
+            <button
+              className="button secondary-button"
+              onClick={() => set("fundingMode")("monthly")}
+              type="button"
+            >
+              Enable vault setup
+            </button>
+          </div>
         ) : null}
         <TextField
           error={shown("note")}
