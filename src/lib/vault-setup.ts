@@ -1,5 +1,6 @@
 import { buildCreateVaultCalldata } from "../../contracts/evm/adapter";
 import { ESCROW_NETWORKS, type EscrowDeployment } from "./escrow-policy.mjs";
+import type { PayoutPolicy } from "./payments/contracts";
 import type { ProjectDefinition } from "./projects.mjs";
 import { sha256Hex } from "./sha256";
 
@@ -8,11 +9,13 @@ export const registryProjectDigest = (id: string) =>
   sha256Hex(`slop-project:${id}`);
 
 export interface VaultSetupInput {
+  payoutPolicy?: PayoutPolicy;
   network: EscrowDeployment["network"];
   claimId: string;
   automatic: boolean;
 }
 export interface VaultSetupReview {
+  payoutPolicy?: PayoutPolicy;
   network: EscrowDeployment["network"];
   owner: string;
   asset: string;
@@ -33,20 +36,30 @@ export function checkedVaultSetupReview(
 ): VaultSetupReview {
   const review = value as VaultSetupReview | null;
   const network = ESCROW_NETWORKS[input.network];
-  const asset =
-    project.rewardAsset?.kind === "token"
+  const bounty = input.payoutPolicy === "security-bounty";
+  const asset = bounty
+    ? network.asset
+    : project.rewardAsset?.kind === "token"
       ? project.rewardAsset.address
       : network.asset;
+  const cap = bounty ? "0" : project.reward.monthlyCapMinor;
+  const capDisplay = bounty ? "" : project.reward.monthlyCapDisplay;
   const same = (a: unknown, b: string | null) =>
     typeof a === "string" && a.toLowerCase() === b?.toLowerCase();
   if (
     !review ||
+    (review.payoutPolicy ?? "ordinary") !==
+      (input.payoutPolicy ?? "ordinary") ||
+    (bounty &&
+      (input.automatic ||
+        project.securityBounty?.amount.currency !== "USDC" ||
+        project.securityBounty.amount.network !== network.chain)) ||
     review.network !== input.network ||
     review.chainId !== network.chainId ||
     !same(review.owner, owner) ||
     !same(review.asset, asset) ||
-    review.cap !== project.reward.monthlyCapMinor ||
-    review.capDisplay !== project.reward.monthlyCapDisplay ||
+    review.cap !== cap ||
+    review.capDisplay !== capDisplay ||
     review.automatic !== input.automatic ||
     !review.transaction ||
     !same(review.transaction.from, owner) ||
@@ -58,12 +71,13 @@ export function checkedVaultSetupReview(
       buildCreateVaultCalldata({
         projectId: `0x${registryProjectDigest(project.id)}`,
         asset: String(asset),
-        monthlyCap: project.reward.monthlyCapMinor,
-        automaticMonthly: input.automatic,
+        ...(bounty
+          ? { payoutPolicy: "security-bounty" as const }
+          : { monthlyCap: cap, automaticMonthly: input.automatic }),
       })
   )
     throw new Error(
-      "The vault request does not match the displayed project, wallet and monthly policy. Reload and review again.",
+      "The vault request does not match the displayed project, wallet and payment policy. Reload and review again.",
     );
   return review;
 }

@@ -1298,6 +1298,7 @@ test.each(["vault verification", "owner update"])(
     ).toEqual([]);
   },
 );
+
 // A moderator decision on another project also applies during this activation.
 test("a ban issued during the authority check prevents automatic activation", async () => {
   const t = registry();

@@ -32,6 +32,7 @@ above. See [the deployment record](../DEPLOY-MAINNET.md) for recorded releases;
 new source changes need their own acceptance evidence. The owner waived the
 independent contract audit, not the release checks.
 
+
 ## Networks
 
 | Network | Chain id | Reference asset (not an allowlist) | Deploy script |
@@ -344,6 +345,7 @@ ProjectEscrow
 EscrowFactory (UUPS proxy; the implementation constructor disables initializers)
   initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address vaultImplementation)
   proposeUpgradeAuthority(address) acceptUpgradeAuthority() setVaultImplementation(address)
+
   create(bytes32 projectId, address token, uint8 purpose)   (owner = msg.sender)
   createWithMonthlyCommitment(bytes32 projectId, address token, uint128 cap, bool enabled)
   vaults(bytes32 key) vaultKey(address owner, bytes32 projectId, address token, uint8 purpose)

@@ -26,6 +26,7 @@ import { vettingScanRequester } from "../backend/projects/setup";
 import type { SkillTemplateIndex } from "../backend/projects/skill-publication";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
+import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { readSecurityProgramFunds } from "../backend/security/program-funds";
 import {
   CloudflareVettingPersistence,
@@ -526,28 +527,83 @@ describe("project registry API", () => {
       ).status,
     ).toBe(422);
     expect((await change({ ...program, settlement })).status).toBe(422);
-    // The test seeds one reviewed deployment via the existing exception route.
+    // Exercise owner registration after the chain-verifier boundary. The EVM
+    // browser workflow separately proves this boundary against a real chain.
     const current = await persistence.getProject("open-registry");
-    const registered = await call(
-      "PUT",
-      "admin/projects/open-registry/manifest",
-      "admin",
-      {
-        expectedRevision: current?.revision,
-        manifest: {
-          ...current?.manifest,
-          securityBounty: { ...program, settlement },
-        },
-        reason: "Synthetic reviewed vault fixture",
+    if (!current) throw new Error("Missing bounty project");
+    let verificationReads = 0;
+    deps.vaultSetup = {
+      networks: async () => ["base-sepolia"],
+      review: async () => {
+        throw new Error("Not used in this API boundary case");
       },
+      register: async (reviewed, actor, input, transactionId) => {
+        expect(reviewed.revision).toBe(current.revision);
+        expect(actor.githubId).toBe(APPLICANT.githubId);
+        expect(input.payoutPolicy).toBe("security-bounty");
+        expect(transactionId).toBe(deployment.deploymentTransaction);
+        verificationReads++;
+        return deployment;
+      },
+    };
+    const registration = {
+      step: "register",
+      expectedRevision: current.revision,
+      payoutPolicy: "security-bounty",
+      network: "base-sepolia",
+      claimId: "verified-owner",
+      automatic: false,
+      transactionId: deployment.deploymentTransaction,
+    };
+    expect(
+      (
+        await call("POST", "project-vaults/open-registry", "applicant", {
+          ...registration,
+          automatic: true,
+        })
+      ).status,
+    ).toBe(400);
+    const registered = await call(
+      "POST",
+      "project-vaults/open-registry",
+      "applicant",
+      registration,
     );
     expect(registered.status).toBe(200);
+    expect((await registered.json()).project.securityBounty.settlement).toEqual(
+      settlement,
+    );
+    expect(
+      (
+        await call(
+          "POST",
+          "project-vaults/open-registry",
+          "applicant",
+          registration,
+        )
+      ).status,
+    ).toBe(200);
+    expect(verificationReads).toBe(1);
     const observedAt = deps.now().toISOString();
     sqlite
       .prepare(
         `INSERT INTO security_vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES('open-registry','base-sepolia','base',?,?,6,'2000000','0','0','0','0','0','2000000',NULL,NULL,NULL,'0','64',?,?)`,
       )
       .run(deployment.vault, deployment.asset, observedAt, observedAt);
+    const privatePath = "project-vaults/open-registry?purpose=security-bounty";
+    expect((await call("GET", privatePath)).status).toBe(401);
+    access = { ...ADMIN_ACCESS, permission: "read", roleName: "read" };
+    expect((await call("GET", privatePath, "applicant")).status).toBe(403);
+    access = ADMIN_ACCESS;
+    const privateFunds = await call("GET", privatePath, "applicant");
+    expect(privateFunds.headers.get("cache-control")).toBe("no-store");
+    expect((await privateFunds.json()).funds).toMatchObject({
+      availableMinor: "2000000",
+      freeMinor: "2000000",
+    });
+    expect(
+      await (await call("GET", "projects/open-registry")).text(),
+    ).not.toMatch(/freeMinor|availableMinor/);
     const opened = await change({ ...program, settlement, status: "open" });
     expect(opened.status).toBe(200);
     const openedProgram = (await opened.json()).project.manifest
@@ -591,6 +647,24 @@ describe("project registry API", () => {
       (await change({ ...program, settlement, status: "closed" })).status,
     ).toBe(200);
     expect((await change(undefined)).status).toBe(422);
+    // A later account restriction stops new registration, but does not hide
+    // the owner's existing funded state or prevent its read-only recovery.
+    deps.now = () => new Date(observedAt);
+    seedParticipationBan(sqlite, APPLICANT, ADMIN, observedAt);
+    const restrictedRead = await call("GET", privatePath, "applicant");
+    expect(restrictedRead.status).toBe(200);
+    expect(await restrictedRead.json()).toMatchObject({
+      canSetup: false,
+      funds: { availableMinor: "2000000" },
+    });
+    const restrictedWrite = await call(
+      "POST",
+      "project-vaults/open-registry",
+      "applicant",
+      registration,
+    );
+    expect(restrictedWrite.status).toBe(403);
+    expect((await restrictedWrite.json()).error).toBe("maintainer_banned");
   });
 
   test("reads token decimals from chain once, stores the amount in base units and keeps them on later revisions", async () => {

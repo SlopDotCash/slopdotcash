@@ -18,6 +18,14 @@ not deploy a vault or accept client-supplied contract trust metadata.
 A program cannot be removed. Existing cases retain their receipt terms and
 funded obligations remain available after a pause or closure.
 
+The Manage page also creates and funds a separate EVM bounty vault through
+the owner's confirmed wallet. Registration verifies finalized creation
+against the reviewed factory, project, owner, USDC asset and bounty purpose.
+It never treats registration or a sent deposit as available funds. The private
+payment worker reads the finalized balance before the owner can open the
+program. Its balance view requires current GitHub ownership and uses no
+public payment totals or receipt route.
+
 - `amount.grossMinor` is the published gross award per finding, in integer
   minor units divisible by four, so the 75/25 researcher/Slop split is exact.
   Shares are derived, never stored. Awards are discretionary: the owner may

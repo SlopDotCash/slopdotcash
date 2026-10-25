@@ -3,6 +3,7 @@ import { readBoundedJson } from "./lib/browser-json";
 import type { EscrowDeployment } from "./lib/escrow-policy.mjs";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
+import type { PayoutPolicy } from "./lib/payments/contracts";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import {
@@ -74,15 +75,19 @@ function restore(key: string): Pending | null {
 export function OwnerVaultSetup({
   project,
   onRegistered,
+  payoutPolicy = "ordinary",
 }: {
   project: ProjectDefinition;
+  payoutPolicy?: PayoutPolicy;
   onRegistered: (
     project: ProjectDefinition,
     wallet: Connection | null,
-    notice?: string,
-  ) => void;
+    notice: string | undefined,
+    revision: number,
+  ) => void | Promise<void>;
 }) {
-  const key = `slop:vault-setup:v1:${project.id}`;
+  const bounty = payoutPolicy === "security-bounty";
+  const key = `slop:vault-setup:v1:${project.id}${bounty ? ":security-bounty" : ""}`;
   const [saved] = useState(() => {
     try {
       return { pending: restore(key), error: "" };
@@ -124,7 +129,7 @@ export function OwnerVaultSetup({
         }
         setSignInRequired(false);
         return Promise.all([
-          request(`project-vaults/${project.id}`),
+          request(`project-vaults/${project.id}?purpose=${payoutPolicy}`),
           request("payments/me"),
         ]);
       })
@@ -148,7 +153,7 @@ export function OwnerVaultSetup({
     return () => {
       active = false;
     };
-  }, [project.id, reload]);
+  }, [project.id, payoutPolicy, reload]);
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -193,12 +198,13 @@ export function OwnerVaultSetup({
         throw new Error(
           "Confirm this wallet in Earnings, then reload the setup options.",
         );
-      if (automatic === null)
+      if (!bounty && automatic === null)
         throw new Error("Choose the monthly payment setting before review.");
       const input = {
         network: network as EscrowDeployment["network"],
         claimId: claim.claimId,
-        automatic,
+        automatic: bounty ? false : automatic === true,
+        payoutPolicy,
         expectedRevision: info.revision,
       };
       const result = (await request(`project-vaults/${project.id}`, {
@@ -290,6 +296,7 @@ export function OwnerVaultSetup({
         deployment?: EscrowDeployment;
         project?: ProjectDefinition;
         notice?: string;
+        revision?: number;
       };
       if (result.status === "pending") {
         setNotice("The creation is not finalized yet. Wait, then check again.");
@@ -298,24 +305,38 @@ export function OwnerVaultSetup({
       if (
         result.status !== "registered" ||
         !result.deployment ||
-        result.project?.id !== project.id
+        result.project?.id !== project.id ||
+        !Number.isSafeInteger(result.revision) ||
+        Number(result.revision) < 1
       )
         throw new Error("Registration could not be verified. Check again.");
+      await onRegistered(
+        result.project,
+        wallet,
+        result.notice,
+        Number(result.revision),
+      );
       remember(null);
       setReview(null);
-      onRegistered(result.project, wallet, result.notice);
     });
   const active = pending ?? review;
   return (
-    <section className="section" aria-label="Set up project vault">
-      <h3>Set up your vault</h3>
+    <section
+      className="section"
+      aria-label={bounty ? "Set up bounty vault" : "Set up project vault"}
+    >
+      <h3>{bounty ? "Set up your bounty vault" : "Set up your vault"}</h3>
       <p>
         Create the vault from your wallet, then deposit funds. Your wallet owns
         the vault.
       </p>
       {signInRequired ? (
         <p>
-          <a href={loginHref(`/projects/${project.slug}/funding`)}>
+          <a
+            href={loginHref(
+              `/projects/${project.slug}/${bounty ? "manage" : "funding"}`,
+            )}
+          >
             Sign in with GitHub
           </a>{" "}
           to set up the vault.
@@ -396,31 +417,44 @@ export function OwnerVaultSetup({
                 reload the setup options.
               </p>
             ) : null}
-            <label>
-              Automatic monthly payment
-              <select
-                value={automatic === null ? "" : automatic ? "on" : "off"}
-                disabled={busy}
-                onChange={(e) =>
-                  setAutomatic(
-                    e.target.value === "" ? null : e.target.value === "on",
-                  )
-                }
-              >
-                <option value="">Choose a setting</option>
-                <option value="on">On</option>
-                <option value="off">Off</option>
-              </select>
-            </label>
-            <p>
-              The cap is {project.reward.monthlyCapDisplay} per month. You can
-              change this setting later.
-            </p>
+            {!bounty ? (
+              <>
+                <label>
+                  Automatic monthly payment
+                  <select
+                    value={automatic === null ? "" : automatic ? "on" : "off"}
+                    disabled={busy}
+                    onChange={(e) =>
+                      setAutomatic(
+                        e.target.value === "" ? null : e.target.value === "on",
+                      )
+                    }
+                  >
+                    <option value="">Choose a setting</option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </label>
+                <p>
+                  The cap is {project.reward.monthlyCapDisplay} per month. You
+                  can change this setting later.
+                </p>
+              </>
+            ) : (
+              <p>
+                Each approved bounty pays 75% to the researcher and 25% to Slop.
+                You decide whether to award each report.
+              </p>
+            )}
+
             <button
               className="button"
               type="button"
               disabled={
-                busy || !claim || automatic === null || Boolean(saved.error)
+                busy ||
+                !claim ||
+                (!bounty && automatic === null) ||
+                Boolean(saved.error)
               }
               onClick={() => void reviewCreation()}
             >
@@ -438,10 +472,19 @@ export function OwnerVaultSetup({
             <dd className="break-all">{active.review.owner}</dd>
             <dt>Reward token</dt>
             <dd className="break-all">{active.review.asset}</dd>
-            <dt>Monthly cap</dt>
-            <dd>{active.review.capDisplay}</dd>
-            <dt>Automatic payment</dt>
-            <dd>{active.input.automatic ? "On" : "Off"}</dd>
+            {!bounty ? (
+              <>
+                <dt>Monthly cap</dt>
+                <dd>{active.review.capDisplay}</dd>
+                <dt>Automatic payment</dt>
+                <dd>{active.input.automatic ? "On" : "Off"}</dd>
+              </>
+            ) : (
+              <>
+                <dt>Payment policy</dt>
+                <dd>Security bounty: 75% researcher, 25% Slop</dd>
+              </>
+            )}
           </dl>
           {!pending && !active.review.existingVault ? (
             <button

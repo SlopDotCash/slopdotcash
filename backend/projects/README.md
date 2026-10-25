@@ -408,7 +408,8 @@ verifies the exact finalized transaction, project
 digest, owner, asset, purpose, code and monthly setting before appending one
 revision. Retry returns the registered vault. An unknown send stays pending
 until the owner recovers its transaction hash; it never sends again by itself.
-Default monthly payment and explicit opt-out use the atomic creation builder.
+The owner chooses On or Off before review. The atomic creation builder records
+that choice with the monthly cap.
 
 If the monthly amount changes while creation is pending, registration checks
 that transaction against its original immutable revision. The current asset
@@ -416,7 +417,14 @@ and vault policy must still match. Registration keeps the current project
 amount and shows both amounts. The owner can then apply the current amount
 through the existing automatic payment control.
 
-The creation verifier shares purpose handling with bounty vaults, but this
-route only onboards ordinary vaults. Solana website creation and private-vault
-onboarding require their own completed end-to-end acceptance. Mainnet setup
-also requires the separately approved factory upgrade and network activation.
+The same route creates a separate EVM bounty vault from saved USDC bounty
+terms. It uses the 25% bounty fee and has no monthly-payment setting. A zero
+monthly reward does not block bounty setup. The Manage page shows bounty
+funds only after a current GitHub owner check; public payment queries never
+read private snapshots. A restriction stops new setup and deposits in Slop,
+but the owner can still read funded state, check transactions and withdraw
+free funds. Chain transactions remain public.
+
+Solana website creation still requires its own end-to-end acceptance.
+Mainnet setup also requires the separately approved factory upgrade and
+network activation.
