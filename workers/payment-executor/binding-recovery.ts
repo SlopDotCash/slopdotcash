@@ -72,6 +72,8 @@ const quantity = (value: unknown): bigint => {
 export async function reconcileBindingWinner(
   env: Environment,
   input: BindingRecoveryInput,
+  /** Internal scheduled reconciliation may observe absence without claiming a winner. */
+  allowMissingReceipt = false,
 ) {
   if (!isBindingRecoveryInput(input))
     throw new Error("Invalid binding reconciliation");
@@ -199,9 +201,12 @@ export async function reconcileBindingWinner(
           : "original_reverted",
     };
   } else {
-    if (same(input.winnerTransactionId, attempt.transactionId))
+    if (same(input.winnerTransactionId, attempt.transactionId)) {
+      if (allowMissingReceipt) return { state: "pending" as const };
       throw new Error("Original binding receipt unavailable");
+    }
     const receipt = await canonicalReceipt(input.winnerTransactionId);
+    if (!receipt && allowMissingReceipt) return { state: "pending" as const };
     if (receipt?.status !== "0x1")
       throw new Error("Finalized self-transaction unavailable");
     const tx = (await rpc("eth_getTransactionByHash", [

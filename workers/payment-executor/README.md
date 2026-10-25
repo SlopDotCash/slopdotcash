@@ -202,9 +202,22 @@ signer transaction checks the tombstone before signing. The dispatcher may mark
 the old attempt failed only after confirmed retirement; a null lookup alone is
 never proof that signing cannot race the lookup.
 
-Signer keys must be dedicated to these Workers. An EVM transaction stuck due
-to fee pricing requires operator reconciliation; there is no automatic
-replacement or cancellation authority in this version.
+Signer keys must be dedicated to these Workers. The attester may automatically
+cancel only its own journaled EVM wallet binding after a D1 successor replaces
+the claim or finalized chain time passes its signed consent expiry (owner
+decision, 25 October 2026; PRD sections 6 and 11). It sends zero native value to
+its own plain account, with empty data, exactly 21,000 gas and the same nonce.
+The existing registry gas ceiling and 10 gwei maximum still apply. One bounded
+12.5% fee increment creates one immutable cancellation attempt; it never creates
+further fee replacements. An inadequate fee or unavailable proof stays held.
+
+Both original and cancellation bytes are stored before broadcast and survive
+restart. Either transaction may win. Reuse the canonical finalized winner
+verification below before retiring the pending binding. RPC absence is not
+cancellation proof. Never reset the shared nonce or alter an award, wallet
+consent, payment or reserve. Other stuck EVM transactions still require separate
+operator reconciliation. No payment or monthly-commitment cancellation is
+allowed.
 
 A designated operator may reconcile one previously authorized external recovery
 transaction through `POST /api/v1/operator/wallet-bindings/reconcile`. The request
