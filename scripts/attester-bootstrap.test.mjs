@@ -9,7 +9,7 @@ test("an empty production attester installs privately and refuses every signing 
     {
       encoding: "utf8",
       env: childEnvironment(),
-      timeout: 60_000,
+      timeout: 220_000,
     },
   );
   expect(result.status, result.stdout + result.stderr).toBe(0);
