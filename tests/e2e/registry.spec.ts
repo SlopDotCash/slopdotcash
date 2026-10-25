@@ -598,6 +598,9 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await expectAccessible(returningOwner);
   await returningContext.close();
 
+  // Revocation appended revision 3 after the admin's last read.
+  await admin.reload({ waitUntil: "networkidle" });
+  await expect(card).toContainText("3 · updated");
   await card.getByRole("button", { name: "Delist", exact: true }).click();
   await card.getByRole("button", { name: "Delist project" }).click();
   await expect(admin.getByRole("status")).toContainText("Saved.");
