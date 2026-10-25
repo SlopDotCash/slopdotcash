@@ -1,0 +1,45 @@
+name: Qualify scanner recovery on staging
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Plan only by default. Execute creates and removes disposable harmless fixtures.
+        type: choice
+        options: [plan, execute]
+        default: plan
+permissions:
+  contents: read
+jobs:
+  qualification:
+    if: github.ref == 'refs/heads/development'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: slop-staging
+    concurrency:
+      group: slop-vetting-recovery-qualification
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Show isolated plan
+        run: bun scripts/qualify-vetting-controls.ts
+      - name: Qualify harmless hosted backup and restoration
+        if: inputs.mode == 'execute'
+        env:
+          VETTING_QUALIFICATION_MODE: execute
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bun scripts/qualify-vetting-controls.ts --execute
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && inputs.mode == 'execute'
+        with:
+          name: harmless-scanner-recovery-${{ github.sha }}
+          path: ${{ runner.temp }}/vetting-recovery-report/result.json
+          if-no-files-found: warn
+          retention-days: 30

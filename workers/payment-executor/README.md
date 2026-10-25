@@ -238,8 +238,10 @@ single release operator to prevent concurrent provisioning races.
 ### Production stack definition
 
 `--stack production` generates the identity attester Worker for one registry
-mainnet. It is for `contracts/DEPLOY-MAINNET.md` section 3.2 and is run by an
-operator only:
+mainnet. The following commands require registered vaults and serve
+`contracts/DEPLOY-MAINNET.md` section 3.2. For the first Base vault, use that
+runbook's empty-capable setup in section 3.6. The owner or an authorized agent
+prepares the configuration:
 
 ```sh
 bun run projects:sync
@@ -249,6 +251,13 @@ node workers/payment-executor/configure.mjs --stack production \
   --deployments "$PINNED_DEPLOYMENTS_FILE" \
   --output workers/payment-executor/.generated
 ```
+
+The production release uses the registry snapshot from its verified build.
+The prepare job validates and uploads both generated registry files and records
+their SHA-256 digests. The deploy job checks those digests before it loads the
+snapshot. Pin derivation and this command then read the same registry and revision
+history. A new D1 vault registration does not need a source commit or a second
+registry fetch during deployment. This handoff does not enable another network.
 
 The command does not create resources, read keys or deploy. It refuses a test
 network and any `--database-id` or `--database-name`. The production stack
@@ -264,7 +273,24 @@ secret name above, and refuses the network while its `MAINNET_EXECUTION`
 value is `false`. The hosted signer refuses `SIGNER_ROLE=relayer` and the
 relayer endpoints on a production stack. The generated
 `apply-production-stack.sh` lists the dry run, the attester deploy and its
-secret prompts for the operator to review and run.
+secret prompts for review. Do not run its local deployment commands for
+production; use the protected `main` release workflow.
+
+An empty production deployment list is valid only when the checked registry
+has no deployment for that network and scope. It generates the same private
+attester with no cron. Every signing request is refused before reading an
+RPC or signing key. Test stacks still require reviewed deployments.
+
+The protected `main` release can create the absent Base attester in this
+inactive state, so the owner can install its existing key and RPC secrets
+before creating the first vault. No secret is required for that initial
+inactive release. A zero-pin release leaves any existing Worker and its
+journal unchanged; it never disables an already-served vault. Once the
+checked registry contains real vault pins, the normal release requires the
+exact `PAYMENT_RPC_URLS` and `SIGNER_PRIVATE_KEY` secret names and restores
+the existing schedule. This does not enable another network, create a
+payment dispatcher or authorize a transaction. Production deployment still
+uses the reviewed main-only release workflow.
 
 The generated `pages-bindings.json` is an integration fragment for an isolated test
 Pages environment, not permission to change an existing staging deployment. Bind its

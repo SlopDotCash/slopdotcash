@@ -125,6 +125,11 @@ activate intake or prove that GitHub or Surplus is available.
   `submitting` row older than 60 seconds becomes `uncertain` and is never
   resent. A `submitted` row Slop cannot verify within 24 hours fails as
   `unverifiable`; it is never resent and no longer blocks a new report.
+  A GitHub-verified receipt held for unavailable routing contacts does not
+  expire or become an abandoned draft. Its existing journal records that
+  distinction. When contacts return, the reporter can finish verification;
+  an expired two-hour GitHub grant requires fresh reporter authorization.
+  Recovery rechecks the receipt and current contacts without sending again.
 - Receipt: GitHub's advisory must name the program repository and the
   reporter as author (a reporter credit never counts), carry the marker
   (Slop origin) and have a past `created_at`. A direct report must also be

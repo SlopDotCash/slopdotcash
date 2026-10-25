@@ -84,9 +84,22 @@ export function paymentStack({
         "A production stack uses the registry database; do not name another database",
       );
   } else throw new Error("Select --stack test or --stack production");
-  if (!Array.isArray(deployments) || !deployments.length)
+  if (
+    !Array.isArray(deployments) ||
+    (stack !== "production" && !deployments.length)
+  )
     throw new Error("Expected reviewed deployment array");
   const projects = assertProjectRegistry(registry);
+  if (
+    !deployments.length &&
+    projects.some((project) =>
+      (scope === "security-bounty"
+        ? project.securityBounty?.settlement
+        : project.escrow
+      )?.deployments.some((deployment) => deployment.network === network),
+    )
+  )
+    throw new Error("Empty attester configuration omits reviewed deployments");
   const seen = new Set();
   for (const deployment of deployments) {
     if (
@@ -196,7 +209,11 @@ export function paymentStack({
       ...(signer
         ? {
             ...(monthlyAttester
-              ? { triggers: { crons: ["*/5 * * * *"] } }
+              ? {
+                  triggers: {
+                    crons: deployments.length ? ["*/5 * * * *"] : [],
+                  },
+                }
               : {}),
             durable_objects: {
               bindings: [
