@@ -63,9 +63,8 @@ const message = (error: unknown) =>
 
 /**
  * The owner's switch for automatic monthly payment on an ordinary vault.
- * It starts checked: a vault is created with the monthly commitment off, and
- * the owner's default is to turn it on with the project's monthly amount as
- * the cap. Unchecking before signing opts out.
+ * The default choice uses the project's monthly amount as the cap. Review
+ * compares that choice with finalized chain state. Unchecking opts out.
  */
 export function AutomaticMonthlyPayment({
   project,
@@ -262,12 +261,11 @@ export function AutomaticMonthlyPayment({
     >
       <h3>Automatic monthly payment · {deployment.network}</h3>
       <p>
-        A new vault starts with automatic monthly payment off. Turning it on
-        lets the month&apos;s signed allocation be committed from this vault
-        after each calendar month (UTC), up to the project&apos;s monthly
-        amount. Only the vault owner <code>{deployment.owner}</code> can change
-        it, and can turn it off at any time. Awards already committed stay
-        committed.
+        Automatic monthly payment lets the month&apos;s signed allocation be
+        committed from this vault after each calendar month (UTC), up to the
+        project&apos;s monthly amount. Only the vault owner{" "}
+        <code>{deployment.owner}</code> can change it, and can turn it off at
+        any time. Awards already committed stay committed.
       </p>
       {error && (
         <p role="alert" className="form-error">
