@@ -6,6 +6,8 @@ import {
   sha256Hex,
 } from "../../backend/trace/validation";
 
+export { MergeVerifier } from "./merge";
+
 export class OfflineSandbox extends Sandbox {
   override enableInternet = false;
   override sleepAfter = "1m";

@@ -141,6 +141,14 @@ jobs:
           bun run projects:check
           bun run evaluations:check
 
+      - name: Install the pinned merge collector
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
+
       - name: Generate complete cycle ledger
         env:
           GH_TOKEN: ${{ github.token }}

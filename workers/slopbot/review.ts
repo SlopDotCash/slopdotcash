@@ -82,10 +82,12 @@ import {
   scopeAllowed,
 } from "./registry";
 import { route } from "./routing";
+import type { ValueMergeVerifier } from "./value-merge-profile";
 
 export type ReviewEnv = ModelEnv &
   QualityTrust & {
     SLOPBOT_DB: store.D1TransactionalDatabase;
+    VALUE_MERGE_VERIFIER?: ValueMergeVerifier;
     SLOPBOT_APP_ID: string;
     SLOPBOT_APP_PRIVATE_KEY: string;
     SLOPBOT_APP_USER_ID: string;

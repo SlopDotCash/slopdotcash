@@ -7,7 +7,85 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ValueEvidence } from "../workers/slopbot/value-evidence";
+import {
+  MERGE_GIT_VERSION,
+  type ValueMergeInput,
+} from "../workers/slopbot/value-merge-profile";
 import type { ValueMergeResolution } from "../workers/slopbot/value-merge-resolution";
+
+/** The fixed intake/Points profile verifies full object identities and ordinary
+ * path inventories before using the same canonical merge collector below.
+ */
+export async function collectVerifiedMergeResolutions(
+  input: ValueMergeInput,
+  repository: string,
+): Promise<ValueMergeResolution[]> {
+  const env = {
+    PATH: process.env.PATH,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    LC_ALL: "C",
+  };
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", repository, ...args], {
+      env,
+      encoding: "utf8",
+      timeout: 30_000,
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  if (git("--version").trim() !== MERGE_GIT_VERSION)
+    throw new Error("Required merge reconstruction Git version unavailable");
+  if (!/^[a-f0-9]{40}$/u.test(input.pull.head.sha))
+    throw new Error("Invalid immutable source head");
+  git("cat-file", "-e", `${input.pull.head.sha}^{commit}`);
+  for (const commit of input.commits) {
+    if (
+      ![commit.sha, ...commit.parents.map(({ sha }) => sha)].every((sha) =>
+        /^[a-f0-9]{40}$/u.test(sha),
+      ) ||
+      git("show", "-s", "--format=%P", commit.sha).trim() !==
+        commit.parents.map(({ sha }) => sha).join(" ")
+    )
+      throw new Error("Git objects differ from ordered source parents");
+    if (commit.parents.length > 1) continue;
+    const attributions = input.commitAttribution.filter(
+      ({ sha }) => sha === commit.sha,
+    );
+    if (
+      attributions.length !== 1 ||
+      attributions[0].limitations.length ||
+      !Array.isArray(attributions[0].changedPaths)
+    )
+      throw new Error("Complete ordinary source paths unavailable");
+    const paths = git(
+      "diff-tree",
+      "--root",
+      "--no-commit-id",
+      "--name-only",
+      "-r",
+      "-z",
+      "--no-renames",
+      commit.sha,
+      "--",
+    )
+      .split("\0")
+      .filter(Boolean)
+      .sort();
+    if (
+      JSON.stringify(paths) !==
+      JSON.stringify([...attributions[0].changedPaths].sort())
+    )
+      throw new Error("Git paths differ from complete source inventory");
+  }
+  const resolved = await collectMergeResolutions(
+    input as ValueEvidence,
+    repository,
+  );
+  return resolved.mergeResolutions ?? [];
+}
 
 export async function collectMergeResolutions(
   evidence: ValueEvidence,

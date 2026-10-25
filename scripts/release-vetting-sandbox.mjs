@@ -25,6 +25,7 @@ if (
   throw new Error("The exact trusted Actions release checkout is required");
 
 const source = resolve(root, "workers/vetting-sandbox");
+await import("./prepare-vetting-sandbox.mjs");
 const configPath = resolve(
   source,
   target === "production" ? "wrangler.toml" : "wrangler.staging.toml",
