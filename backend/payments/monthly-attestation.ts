@@ -13,6 +13,8 @@ import {
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
+  isBaseUnits,
+  maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import {
@@ -159,8 +161,10 @@ export async function prepareMonthlyAttestation(
   const ids = new Set<string>();
   for (const award of snapshot.awards) {
     if (
-      !/^[1-9][0-9]*$/.test(award.grossBase) ||
-      BigInt(award.grossBase) > (1n << 64n) - 1n ||
+      !isBaseUnits(award.grossBase) ||
+      award.grossBase === "0" ||
+      BigInt(award.grossBase) >
+        maxBaseUnitsForChain(ESCROW_NETWORKS[deployment.network].chain) ||
       ids.has(award.githubUserId) ||
       award.sourceDigest !==
         escrowAwardOrigin(project.id, period, award.githubUserId)
