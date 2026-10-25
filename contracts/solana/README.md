@@ -196,8 +196,8 @@ separate donor-class funds.
 ## Bounded monthly commitment
 
 For ordinary project creation, `scripts/owner-plan.mjs` requires `monthlyCap`
-in asset base units and an explicit boolean `automaticMonthly` choice. Neither
-on nor off is selected for the owner. The unsigned transaction contains `initialize` followed by
+in asset base units and an explicit boolean `automaticMonthly` value. The
+website passes true by default and false only when the owner opts out. The unsigned transaction contains `initialize` followed by
 `set_monthly_commitment` with the same owner signer, so both succeed or neither
 does. This uses the current program and needs no program upgrade. Private
 bounty initialization does not accept monthly settings.

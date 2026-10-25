@@ -203,8 +203,8 @@ cast send "$FACTORY" 'createWithMonthlyCommitment(bytes32,address,uint128,bool)'
   --rpc-url "$RPC" --account slop-mainnet-owner
 ```
 
-The owner explicitly chooses `MONTHLY_CAP_BASE_UNITS` and whether the setting
-is true or false. The example selects true; it is not an application default.
+The owner supplies `MONTHLY_CAP_BASE_UNITS`. The setting is true by default,
+as on the website; pass false only when the owner opts out.
 Read `monthlyCap()` and `monthlyEnabled()` from the created vault at the same
 finalized block as its other acceptance reads. The legacy creation call is
 for compatibility and private bounty vaults; its initial monthly setting is off.

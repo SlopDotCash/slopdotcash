@@ -905,7 +905,7 @@ export function buildCreateVaultCalldata(input: {
   payoutPolicy?: PayoutPolicy;
   /** Required for ordinary vaults; base units chosen by the owner. */
   monthlyCap?: string | bigint;
-  /** Required for ordinary vaults; the owner explicitly chooses on or off. */
+  /** Required for ordinary vaults; the website passes true unless the owner opts out. */
   automaticMonthly?: boolean;
 }) {
   if (BigInt(hash(input.projectId)) === 0n || !ADDRESS.test(input.asset))

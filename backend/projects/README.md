@@ -409,8 +409,9 @@ verifies the exact finalized transaction, project
 digest, owner, asset, purpose, code and monthly setting before appending one
 revision. Retry returns the registered vault. An unknown send stays pending
 until the owner recovers its transaction hash; it never sends again by itself.
-The owner chooses On or Off for monthly payment before review. The atomic
-creation builder records that choice and the cap in one transaction.
+Monthly payment is On by default at creation, and the owner can choose Off
+before review to opt out (owner decision, 25 Oct 2026). The atomic creation
+builder records that setting and the cap in one transaction.
 
 If the monthly amount changes while creation is pending, registration checks
 that transaction against its original immutable revision. The current asset
