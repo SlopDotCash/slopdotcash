@@ -432,13 +432,11 @@ No separate manual release approval is required. Publication credentials must
 never be exposed to pull-request runs. Every production release uses the
 shared publication lock.
 
-GitHub runs schedules only on the default branch, so
-`.github/workflows/scheduled-release.yml` dispatches the full release workflow
-on `main` and `development` every 6 hours. Each dispatched run snapshots the
-current D1 registry, ingests live GitHub data, passes the full quality gate,
-and publishes through its branch's normal release job. A newly activated
-project thus gets its collected data without a commit. Every production release
-requires current main equivalence. Every deployment is bound to its actual
+Every release snapshots the current D1 registry, ingests live GitHub data,
+passes the full quality gate, and publishes through its branch's normal release
+job. To publish new data without a commit, run the release workflow by hand
+(`workflow_dispatch`). Every production release requires current main
+equivalence. Every deployment is bound to its actual
 tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
