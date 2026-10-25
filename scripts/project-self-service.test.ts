@@ -20,6 +20,7 @@ import {
 } from "../backend/projects/handler";
 import type { ScanRequest } from "../backend/projects/setup";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
+import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { signApiToken } from "../backend/trace/auth";
 import {
@@ -1396,4 +1397,65 @@ test("a ban issued during the authority check prevents automatic activation", as
     revision: 1,
     status: "paused",
   });
+});
+
+test("owner Solana setup refuses a bounty purpose before it reads any wallet or chain", async () => {
+  const touched: string[] = [];
+  const service = ownerVaultSetupService({
+    db: new Proxy({} as never, {
+      get(_target, key) {
+        touched.push(`db.${String(key)}`);
+        throw new Error("The database must not be read");
+      },
+    }),
+    projects: async () => {
+      touched.push("projects");
+      return [];
+    },
+    networks: () => {
+      touched.push("networks");
+      return ["solana-devnet"];
+    },
+    rpcUrl: () => {
+      touched.push("rpc");
+      return "http://127.0.0.1:1";
+    },
+  });
+  const project = {
+    id: "solana-target",
+    manifest: {
+      escrow: { deployments: [] },
+      reward: {
+        kind: "monthly-pool",
+        chain: "solana",
+        monthlyCapMinor: "1000000000",
+      },
+    },
+  } as never;
+  for (const call of [
+    () =>
+      service.review(project, { githubId: OWNER } as never, {
+        network: "solana-devnet",
+        claimId: "verified-owner-wallet",
+        automatic: false,
+        payoutPolicy: "security-bounty",
+      }),
+    () =>
+      service.register(
+        project,
+        { githubId: OWNER } as never,
+        {
+          network: "solana-devnet",
+          claimId: "verified-owner-wallet",
+          automatic: false,
+          payoutPolicy: "security-bounty",
+        },
+        "1".repeat(88),
+      ),
+  ])
+    await expect(call()).rejects.toMatchObject({
+      status: 422,
+      code: "vault_setup_unavailable",
+    });
+  expect(touched).toEqual([]);
 });

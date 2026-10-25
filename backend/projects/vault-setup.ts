@@ -89,6 +89,17 @@ export function ownerVaultSetupService(deps: {
   ) {
     const network = ESCROW_NETWORKS[input.network];
     const reward = project.manifest.reward;
+    // Bounty and monthly funds must never share a vault. The Solana path builds
+    // an ordinary vault from the monthly cap only, so it refuses any other purpose.
+    if (
+      (input.payoutPolicy ?? "ordinary") !== "ordinary" &&
+      network?.family !== "evm"
+    )
+      fail(
+        422,
+        "vault_setup_unavailable",
+        "Owner setup for a Solana bounty vault is not available.",
+      );
     if (
       !project.manifest.escrow ||
       !network ||

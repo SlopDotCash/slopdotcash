@@ -5,7 +5,6 @@ import {
   solanaRpc,
   verifySolanaDeployment,
 } from "./adapter";
-import { solanaMonthlyCommitmentState } from "./monthly-commitment";
 import {
   buildInitializeVaultInstructions,
   type SolanaVaultCreation,
@@ -66,7 +65,22 @@ export async function prepareSolanaVaultCreation(
     ]),
   ).value;
   if (existing !== null) {
-    await verifySolanaDeployment(config, input.projectDigest);
+    try {
+      await verifySolanaDeployment(config, input.projectDigest);
+    } catch (error) {
+      // The reviewed program and Config passed above; a failure now is the project account itself.
+      if (
+        error instanceof Error &&
+        (error.message.startsWith("RPC") ||
+          error.name === "TimeoutError" ||
+          error.name === "AbortError" ||
+          error instanceof TypeError)
+      )
+        throw error;
+      throw new SolanaWalletActionError(
+        "An account already exists at this project address and does not match this creation request.",
+      );
+    }
     return {
       projectPda: plan.projectPda,
       vault: plan.vault,
@@ -122,16 +136,8 @@ export async function verifySolanaVaultCreation(
     throw new SolanaVaultCreationFailed(
       "The exact vault creation transaction failed. Review a new request.",
     );
-  const account = await verifySolanaDeployment(config, input.projectDigest);
-  if ((input.payoutPolicy ?? "ordinary") === "ordinary") {
-    const current = solanaMonthlyCommitmentState(account);
-    if (
-      current.cap !== input.monthlyCap ||
-      current.enabled !== input.automaticMonthly
-    )
-      throw new SolanaWalletActionError(
-        "The vault monthly setting differs from the creation request.",
-      );
-  }
+  // The exact finalized message above set the reviewed monthly policy atomically.
+  // A later owner change to that setting does not block registration.
+  await verifySolanaDeployment(config, input.projectDigest);
   return { projectPda: plan.projectPda, vault: plan.vault };
 }

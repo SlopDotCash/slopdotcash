@@ -7,7 +7,7 @@ import { message } from "../../contracts/solana/transactions";
 import type { prepareSolanaWalletTransaction } from "../../contracts/solana/wallet-transactions";
 import { decodeBase58Bytes } from "./base58";
 import { ESCROW_NETWORKS, type EscrowDeployment } from "./escrow-policy.mjs";
-import { isAssetDecimals } from "./payments/contracts";
+import { isAssetDecimals, type PayoutPolicy } from "./payments/contracts";
 import type { ProjectDefinition } from "./projects.mjs";
 import { sha256Hex } from "./sha256";
 
@@ -19,6 +19,8 @@ export interface VaultSetupInput {
   network: EscrowDeployment["network"];
   claimId: string;
   automatic: boolean;
+  /** Omitted means ordinary. Owner Solana setup creates ordinary vaults only. */
+  payoutPolicy?: PayoutPolicy;
 }
 interface VaultSetupReviewBase {
   network: EscrowDeployment["network"];
