@@ -336,10 +336,10 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       .locator(".funding-status-grid div")
       .filter({ has: page.locator("dt", { hasText: /^Project vault$/ }) })
       .locator("dd"),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText("Payments are disabled for this project.", { exact: false }),
-  ).toHaveCount(0);
+  ).toHaveText("Recorded · payments disabled");
+  await expect(page.getByRole("note")).toContainText(
+    "Payments are disabled for this project.",
+  );
   const actions = page.getByRole("region", {
     name: "Fund or withdraw · Base Sepolia (test)",
   });
@@ -1422,9 +1422,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
         name: "View vault funds and automatic payment",
       }),
     ).toHaveCount(2);
+    // Funding and payment states stay distinct from vault registration (PRD section 7).
+    for (const state of ["Deposit needed", "Payments off"])
+      await expect(page.getByText(state, { exact: true })).toBeVisible();
     await expect(
-      page.getByText(/Deposit needed|Payments off|Payouts are disabled/),
-    ).toHaveCount(0);
+      page.getByText(
+        "Payouts are disabled. Funding alone does not enable them.",
+      ),
+    ).toBeVisible();
     expect(errors).toEqual([]);
     expect(failedRequests).toEqual([]);
     expect(
