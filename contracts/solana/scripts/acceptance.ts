@@ -42,6 +42,7 @@ import {
   runPaymentsCron,
   type ScenarioAmounts,
   type StepRecord,
+  type Suite,
   saveEvidence,
   scenarioAmounts,
   sha256Text,
@@ -60,6 +61,8 @@ import {
   completeSolanaBinding,
   createSolanaAttester,
   createSolanaExecutor,
+  preflightSolanaDeployment,
+  solanaTransactionStatus,
 } from "../../../workers/payment-executor/solana";
 import type { PaymentsWorkerEnvironment } from "../../../workers/payments/index";
 import {
@@ -78,6 +81,11 @@ const u64 = (value: bigint) => {
   bytes.writeBigUInt64LE(value);
   return bytes;
 };
+const u32 = (value: number) => {
+  const bytes = Buffer.alloc(4);
+  bytes.writeUInt32LE(value);
+  return bytes;
+};
 const i64 = (value: bigint) => {
   const bytes = Buffer.alloc(8);
   bytes.writeBigInt64LE(value);
@@ -90,7 +98,7 @@ const meta = (pubkey: PublicKey, isWritable = false, isSigner = false) => ({
 });
 
 /** Instructions of the reviewed slop_escrow program, in its IDL account order. */
-function escrow(programId: PublicKey) {
+export function escrow(programId: PublicKey) {
   const pda = (...seeds: Buffer[]) =>
     PublicKey.findProgramAddressSync(seeds, programId)[0];
   const ix = (
@@ -104,14 +112,16 @@ function escrow(programId: PublicKey) {
       data: Buffer.concat([discriminator(name), ...args]),
     });
   return {
-    project: (owner: PublicKey, projectId: Buffer) =>
-      // The last seed is the ordinary purpose; this run uses ordinary awards.
+    /** The last seed is the purpose: 0 ordinary awards, 1 private bounties. */
+    project: (owner: PublicKey, projectId: Buffer, purpose = 0) =>
       pda(
         Buffer.from("project"),
         owner.toBuffer(),
         projectId,
-        Buffer.from([0]),
+        Buffer.from([purpose]),
       ),
+    month: (project: PublicKey, period: number) =>
+      pda(Buffer.from("month"), project.toBuffer(), u32(period)),
     vault: (project: PublicKey) =>
       pda(Buffer.from("vault"), project.toBuffer()),
     config: () => new PublicKey(solanaConfigAddress(programId.toBase58())),
@@ -159,6 +169,7 @@ function escrow(programId: PublicKey) {
       fees: PublicKey;
       bindingDelay: bigint;
       rotationDelay: bigint;
+      purpose?: number;
     }) =>
       ix(
         "initialize",
@@ -177,7 +188,7 @@ function escrow(programId: PublicKey) {
         input.fees.toBuffer(),
         i64(input.bindingDelay),
         i64(input.rotationDelay),
-        Buffer.from([0]),
+        Buffer.from([input.purpose ?? 0]),
       ),
     deposit: (input: {
       depositor: PublicKey;
@@ -207,9 +218,10 @@ function escrow(programId: PublicKey) {
       source: Buffer;
       actor: bigint;
       gross: bigint;
+      bounty?: boolean;
     }) =>
       ix(
-        "commit",
+        input.bounty ? "commit_bounty" : "commit",
         [
           meta(input.owner, true, true),
           meta(input.project, true),
@@ -262,6 +274,158 @@ function escrow(programId: PublicKey) {
         meta(input.feeAccount, true),
         meta(TOKEN_PROGRAM_ID),
       ]),
+    setMonthlyCommitment: (
+      owner: PublicKey,
+      project: PublicKey,
+      cap: bigint,
+      enabled: boolean,
+    ) =>
+      ix(
+        "set_monthly_commitment",
+        [meta(owner, false, true), meta(project, true)],
+        u64(cap),
+        Buffer.from([enabled ? 1 : 0]),
+      ),
+    bindWallet: (input: {
+      payer: PublicKey;
+      identity: PublicKey;
+      destination: PublicKey;
+      project: PublicKey;
+      actor: bigint;
+      network: Buffer;
+      expectedVersion: bigint;
+      claimDigest: Buffer;
+      expiresAt: bigint;
+    }) =>
+      ix(
+        "bind_wallet",
+        [
+          meta(input.payer, true, true),
+          meta(input.identity, false, true),
+          meta(input.destination, false, true),
+          meta(input.project),
+          meta(
+            pda(
+              Buffer.from("wallet"),
+              input.project.toBuffer(),
+              u64(input.actor),
+            ),
+            true,
+          ),
+          meta(SystemProgram.programId),
+        ],
+        u64(input.actor),
+        input.network,
+        u64(input.expectedVersion),
+        input.claimDigest,
+        i64(input.expiresAt),
+      ),
+    /** `awardId` names the unpaid award whose commit period extends the veto window. */
+    vetoBinding: (input: {
+      owner: PublicKey;
+      project: PublicKey;
+      actor: bigint;
+      version: bigint;
+      awardId?: Buffer;
+    }) =>
+      ix(
+        "veto_binding",
+        [
+          meta(input.owner, true, true),
+          meta(input.project),
+          meta(
+            pda(
+              Buffer.from("wallet"),
+              input.project.toBuffer(),
+              u64(input.actor),
+            ),
+            true,
+          ),
+          meta(
+            pda(
+              Buffer.from("veto"),
+              input.project.toBuffer(),
+              u64(input.actor),
+              u64(input.version),
+            ),
+            true,
+          ),
+          // Anchor reads the program ID as "no account" for an optional account.
+          meta(
+            input.awardId
+              ? pda(
+                  Buffer.from("award"),
+                  input.project.toBuffer(),
+                  input.awardId,
+                )
+              : programId,
+          ),
+          meta(SystemProgram.programId),
+        ],
+        u64(input.actor),
+        u64(input.version),
+      ),
+    /**
+     * The Ed25519 program check of the identity authority's signature over
+     * `message`, then commit_monthly. `signedMessage` lets a run present a
+     * signature over other bytes than the instruction arguments.
+     */
+    commitMonthly: (input: {
+      payer: PublicKey;
+      project: PublicKey;
+      vault: PublicKey;
+      period: number;
+      root: Buffer;
+      total: bigint;
+      frozenAt: bigint;
+      authority: PublicKey;
+      signature: Uint8Array;
+      signedMessage: Uint8Array;
+    }) => {
+      const offsets = Buffer.alloc(16);
+      offsets[0] = 1;
+      [48, 65535, 16, 65535, 112, input.signedMessage.length, 65535].forEach(
+        (value, index) => {
+          offsets.writeUInt16LE(value, 2 + index * 2);
+        },
+      );
+      return [
+        new TransactionInstruction({
+          programId: new PublicKey(
+            "Ed25519SigVerify111111111111111111111111111",
+          ),
+          keys: [],
+          data: Buffer.concat([
+            offsets,
+            input.authority.toBuffer(),
+            Buffer.from(input.signature),
+            Buffer.from(input.signedMessage),
+          ]),
+        }),
+        ix(
+          "commit_monthly",
+          [
+            meta(input.payer, true, true),
+            meta(input.project, true),
+            meta(input.vault),
+            meta(
+              pda(
+                Buffer.from("month"),
+                input.project.toBuffer(),
+                u32(input.period),
+              ),
+              true,
+            ),
+            meta(new PublicKey("Sysvar1nstructions1111111111111111111111111")),
+            meta(SystemProgram.programId),
+          ],
+          u32(input.period),
+          input.root,
+          u64(input.total),
+          i64(input.frozenAt),
+        ),
+      ];
+    },
     pay: (input: {
       project: PublicKey;
       awardId: Buffer;
@@ -270,6 +434,8 @@ function escrow(programId: PublicKey) {
       mint: PublicKey;
       vault: PublicKey;
       destination: PublicKey;
+      /** The on-chain binding version, when a run presents another expected version. */
+      bindingVersion?: bigint;
     }) =>
       ix(
         "pay",
@@ -296,7 +462,7 @@ function escrow(programId: PublicKey) {
               Buffer.from("veto"),
               input.project.toBuffer(),
               u64(input.actor),
-              u64(input.version),
+              u64(input.bindingVersion ?? input.version),
             ),
           ),
         ],
@@ -306,7 +472,7 @@ function escrow(programId: PublicKey) {
 }
 
 /** Signs keyed transactions once; a rerun rebroadcasts the saved bytes until their blockhash expires. */
-class SolanaChain {
+export class SolanaChain {
   readonly connection: Connection;
   constructor(
     readonly rpcUrl: string,
@@ -324,13 +490,17 @@ class SolanaChain {
     return info ? BigInt(info.value.amount) : 0n;
   }
   /** Simulates instructions that must fail and returns the program error and logs. */
-  async mustFail(payer: Keypair, instructions: TransactionInstruction[]) {
+  async mustFail(
+    payer: Keypair,
+    instructions: TransactionInstruction[],
+    cosigners: Keypair[] = [],
+  ) {
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const tx = new Transaction({
       feePayer: payer.publicKey,
       recentBlockhash: blockhash,
     }).add(...instructions);
-    tx.sign(payer);
+    tx.sign(payer, ...cosigners);
     const result = await this.connection.simulateTransaction(tx);
     if (!result.value.err)
       throw new Error("Simulated transaction succeeded but must fail");
@@ -348,7 +518,7 @@ class SolanaChain {
     instructions: TransactionInstruction[],
     expect: "success" | "reverted" = "success",
   ): Promise<StepRecord> {
-    let record = steps[key];
+    let record: StepRecord | undefined = steps[key];
     if (record && !record.status) {
       const status = (
         await this.connection.getSignatureStatuses([record.transactionId], {
@@ -538,10 +708,16 @@ export async function prepareLocalnet(input: {
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
-export async function runSolana(
+/**
+ * The keys, cluster identity, program Config and evidence file of one Solana
+ * run. Nothing signs before the genesis hash is a test cluster and the Config
+ * identity authority is the configured identity test key.
+ */
+export async function openSolanaRun(
   network: AcceptanceNetwork,
   directory: string,
-): Promise<Evidence> {
+  suite: Suite,
+) {
   if (network !== "solana-devnet" && network !== "solana-localnet")
     throw new Error(`${network} is not a Solana test cluster`);
   const rpcUrl = requireEnv("ESCROW_ACCEPTANCE_RPC_URL");
@@ -557,9 +733,6 @@ export async function runSolana(
     throw new Error(
       "ESCROW_ACCEPTANCE_PROGRAM_CODE_SHA256 must be 64 hex characters",
     );
-  const mints = requireEnv("ESCROW_ACCEPTANCE_ASSETS")
-    .split(",")
-    .map((value) => new PublicKey(value.trim()));
   const keys = {
     owner: Keypair.fromSeed(solanaSeed("ESCROW_ACCEPTANCE_OWNER_KEY")),
     depositor: Keypair.fromSeed(solanaSeed("ESCROW_ACCEPTANCE_DEPOSITOR_KEY")),
@@ -587,7 +760,6 @@ export async function runSolana(
     throw new Error(
       "ESCROW_ACCEPTANCE_ROTATION_DELAY_SECONDS must be shorter than four binding delays",
     );
-  const divisor = unitDivisor();
 
   // Cluster identity first: nothing signs before the genesis hash is a test cluster.
   const connection = new Connection(rpcUrl, "confirmed");
@@ -606,6 +778,21 @@ export async function runSolana(
   if (!configIdentity.equals(identity.publicKey))
     throw new Error(
       "ESCROW_ACCEPTANCE_IDENTITY_KEY is not the Config identity authority",
+    );
+  // The deployed bytes must be the reviewed ones before any key signs.
+  const programInfo = await connection.getAccountInfo(programId, "finalized");
+  const programData = programInfo
+    ? await connection.getAccountInfo(
+        new PublicKey(programInfo.data.subarray(4, 36)),
+        "finalized",
+      )
+    : null;
+  const deployed = programData
+    ? createHash("sha256").update(programData.data.subarray(45)).digest("hex")
+    : null;
+  if (deployed !== codeSha256)
+    throw new Error(
+      `Deployed program bytes ${deployed} differ from ESCROW_ACCEPTANCE_PROGRAM_CODE_SHA256`,
     );
   const networkDomain = sha256Text(`slop-escrow-acceptance:${network}`);
 
@@ -628,6 +815,7 @@ export async function runSolana(
     evidence = newEvidence({
       network,
       rpcUrl,
+      suite,
       chain: {
         genesisHash,
         programCodeSha256: codeSha256,
@@ -646,21 +834,57 @@ export async function runSolana(
     await persist();
   } else if (
     evidence.network !== network ||
+    (evidence.suite ?? "section-21") !== suite ||
     evidence.chain.genesisHash !== genesisHash ||
     JSON.stringify(evidence.roles) !== JSON.stringify(roles)
   )
     throw new Error(
-      "The evidence directory belongs to another cluster, program or key set",
+      "The evidence directory belongs to another cluster, suite, program or key set",
     );
   const run = evidence;
   run.status = "running";
   run.waiting = null;
-  if (network === "solana-localnet") {
-    const note =
-      "solana-localnet runs the executor engines with the local-chain flag, as contracts/solana/integration/executor.e2e.mjs does; solana-devnet uses the hosted PaymentSignerJournal routing.";
-    if (!run.deviations.includes(note)) run.deviations.push(note);
-  }
+  return {
+    network,
+    rpcUrl,
+    programId,
+    codeSha256,
+    upgradeAuthority,
+    keys,
+    identity,
+    identitySeed,
+    relayerSeed,
+    bindingDelay,
+    rotationDelay,
+    connection,
+    genesisHash,
+    program,
+    feeRecipient,
+    rotationAuthority,
+    networkDomain,
+    chain,
+    run,
+    persist,
+  };
+}
+export type SolanaRun = Awaited<ReturnType<typeof openSolanaRun>>;
 
+/**
+ * The local backend of one run, as evmServices: projection, registry and the
+ * production identity attester and relayer, each with its own journal. On
+ * devnet they are the hosted executor worker's routing, in process.
+ */
+export function solanaServices(
+  ctx: SolanaRun,
+  directory: string,
+  projects: () => {
+    projectId: string;
+    effectiveCycle: string;
+    deployment: EscrowDeployment;
+  }[],
+  rpcUrl = ctx.rpcUrl,
+) {
+  const { network, genesisHash } = ctx;
   const projection = new Projection(directory);
   // The dispatcher finds each vault in the project registry, as in
   // production; only the signer roles keep a pinned deployment list.
@@ -673,18 +897,8 @@ export async function runSolana(
     PAYMENT_SOLANA_GENESIS: JSON.stringify({ [network]: genesisHash }),
   };
   let pinnedDeployments = "[]";
-  const refreshDeployments = () => {
-    pinnedDeployments = JSON.stringify(
-      registry.record(
-        run.assets
-          .filter((a) => a.vault)
-          .map((a) => ({
-            projectId: a.projectId,
-            effectiveCycle: run.startedAt.slice(0, 7),
-            deployment: a.deployment as unknown as EscrowDeployment,
-          })),
-      ),
-    );
+  const refresh = () => {
+    pinnedDeployments = JSON.stringify(registry.record(projects()));
   };
   const attesterJournal = projection.journal("attester");
   const relayerJournal = projection.journal("relayer");
@@ -695,41 +909,42 @@ export async function runSolana(
     },
   });
   const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
-  let attester: Fetcher;
-  let relayer: Fetcher;
-  if (network === "solana-devnet") {
-    // The hosted executor worker's routing, in process, with test seeds.
-    const hosted = (role: "attester" | "relayer", seed: Uint8Array) => {
-      let instance: PaymentSignerJournal | undefined;
-      instance = new PaymentSignerJournal(
-        { storage: role === "attester" ? attesterJournal : relayerJournal },
-        {
-          get PAYMENTS_DB() {
-            return env.PAYMENTS_DB;
-          },
-          get PAYMENT_DEPLOYMENTS() {
-            return pinnedDeployments;
-          },
-          get PAYMENT_RPC_URLS() {
-            return env.PAYMENT_RPC_URLS;
-          },
-          SIGNER_ROLE: role,
-          CHAIN_FAMILY: "solana",
-          TEST_SOLANA_SIGNER_SEED: hex(seed),
-          JOURNAL: {
-            idFromName: (name: string) => name,
-            get: () => {
-              if (!instance) throw new Error("Signer journal not ready");
-              return instance;
+  const signers = (): { attester: Fetcher; relayer: Fetcher } => {
+    if (network === "solana-devnet") {
+      // The hosted executor worker's routing, in process, with test seeds.
+      const hosted = (role: "attester" | "relayer", seed: Uint8Array) => {
+        let instance: PaymentSignerJournal | undefined;
+        instance = new PaymentSignerJournal(
+          { storage: role === "attester" ? attesterJournal : relayerJournal },
+          {
+            get PAYMENTS_DB() {
+              return env.PAYMENTS_DB;
+            },
+            get PAYMENT_DEPLOYMENTS() {
+              return pinnedDeployments;
+            },
+            get PAYMENT_RPC_URLS() {
+              return env.PAYMENT_RPC_URLS;
+            },
+            SIGNER_ROLE: role,
+            CHAIN_FAMILY: "solana",
+            TEST_SOLANA_SIGNER_SEED: hex(seed),
+            JOURNAL: {
+              idFromName: (name: string) => name,
+              get: () => {
+                if (!instance) throw new Error("Signer journal not ready");
+                return instance;
+              },
             },
           },
-        },
-      );
-      return instance;
-    };
-    attester = hosted("attester", identitySeed);
-    relayer = hosted("relayer", relayerSeed);
-  } else {
+        );
+        return instance;
+      };
+      return {
+        attester: hosted("attester", ctx.identitySeed),
+        relayer: hosted("relayer", ctx.relayerSeed),
+      };
+    }
     // A loopback validator has its own genesis, which only the local-chain
     // flag admits; the hosted wrapper never forwards that flag.
     const engine = (seed: Uint8Array, journal: typeof attesterJournal) => ({
@@ -764,35 +979,163 @@ export async function runSolana(
         }
       },
     });
-    const identityEngine = engine(identitySeed, attesterJournal);
-    const relayerEngine = engine(relayerSeed, relayerJournal);
-    attester = service(async (path, body) => {
-      const { transaction, ...binding } = body as never as Parameters<
-        ReturnType<typeof createSolanaAttester>["submit"]
-      >[0] & { transaction?: string };
-      if (path === "/v1/complete-bind")
-        return completeSolanaBinding(
-          identityEngine,
-          binding,
-          String(transaction),
-        );
-      if (path === "/v1/pay")
-        return createSolanaAttester(identityEngine).submit(binding);
-      throw new Error("Not found");
-    });
-    relayer = service(async (path, body) => {
-      if (path === "/v1/pay")
-        return createSolanaExecutor(relayerEngine).submit(body as never);
-      if (path === "/v1/attempt-status")
-        return lookupAttempt(
-          { PAYMENTS_DB: env.PAYMENTS_DB, JOURNAL: relayerJournal },
-          body as never,
-        );
-      throw new Error("Not found");
-    });
+    const identityEngine = engine(ctx.identitySeed, attesterJournal);
+    const relayerEngine = engine(ctx.relayerSeed, relayerJournal);
+    return {
+      attester: service(async (path, body) => {
+        const { transaction, ...binding } = body as never as Parameters<
+          ReturnType<typeof createSolanaAttester>["submit"]
+        >[0] & { transaction?: string };
+        if (path === "/v1/complete-bind")
+          return completeSolanaBinding(
+            identityEngine,
+            binding,
+            String(transaction),
+          );
+        if (path === "/v1/pay")
+          return createSolanaAttester(identityEngine).submit(binding);
+        throw new Error("Not found");
+      }),
+      relayer: service(async (path, body) => {
+        if (path === "/v1/pay")
+          return createSolanaExecutor(relayerEngine).submit(body as never);
+        if (path === "/v1/attempt-status") {
+          const result = await lookupAttempt(
+            { PAYMENTS_DB: env.PAYMENTS_DB, JOURNAL: relayerJournal },
+            body as never,
+          );
+          if (!result.transactionId) return result;
+          const config = await preflightSolanaDeployment(
+            relayerEngine,
+            body as never,
+          );
+          return {
+            ...result,
+            submitted:
+              (await solanaTransactionStatus({ config }, result)) !== null,
+          };
+        }
+        throw new Error("Not found");
+      }),
+    };
+  };
+  const services = {
+    projection,
+    registry,
+    env,
+    refresh,
+    attesterJournal,
+    relayerJournal,
+    pinned: () => pinnedDeployments,
+    ...signers(),
+    deps: { solanaAttester: undefined as unknown as Fetcher },
+    restart() {
+      Object.assign(services, signers());
+      services.deps.solanaAttester = services.attester;
+      env.SOLANA_PAYMENT_EXECUTOR = services.relayer;
+    },
+  };
+  services.restart();
+  return services;
+}
+
+/**
+ * Registers the actor's wallet through the account API, then co-signs the
+ * attester's prepared binding with the destination wallet, as a contributor
+ * does in the browser. Returns the binding transaction once one exists.
+ */
+export async function cosignSolanaBinding(input: {
+  projection: Projection;
+  actor: TestActor;
+  seed: Uint8Array;
+  obligationId: string;
+  deps: { solanaAttester: Fetcher };
+}) {
+  const prepared = await input.projection.api(
+    input.actor,
+    "/wallets/solana-bind/prepare",
+    { obligationId: input.obligationId },
+    input.deps,
+  );
+  let transactionId = String(prepared.transactionId);
+  if (typeof prepared.transaction === "string") {
+    const raw = Buffer.from(prepared.transaction, "base64");
+    const signature = ed25519.sign(raw.subarray(129), input.seed);
+    raw.set(signature, 65);
+    const completed = await input.projection.api(
+      input.actor,
+      "/wallets/solana-bind/complete",
+      { obligationId: input.obligationId, transaction: raw.toString("base64") },
+      input.deps,
+    );
+    transactionId = String(completed.transactionId);
   }
-  env.SOLANA_PAYMENT_EXECUTOR = relayer;
-  const deps = { solanaAttester: attester };
+  return transactionId;
+}
+
+/** The escrow deployment an admin revision records in project.json for one project. */
+export function solanaDeploymentRecord(
+  ctx: SolanaRun,
+  project: PublicKey,
+  mint: PublicKey,
+  bindingDelay: bigint,
+  deploymentTransaction: string | null = null,
+): Omit<EscrowDeployment, "deploymentTransaction"> & {
+  deploymentTransaction: string | null;
+} {
+  return {
+    network: ctx.network as EscrowDeployment["network"],
+    vault: ctx.program.vault(project).toBase58(),
+    programId: ctx.programId.toBase58(),
+    upgradeAuthority: ctx.upgradeAuthority,
+    projectPda: project.toBase58(),
+    networkDomain: ctx.networkDomain,
+    asset: mint.toBase58(),
+    owner: ctx.keys.owner.publicKey.toBase58(),
+    identityAuthority: ctx.identity.publicKey.toBase58(),
+    feeRecipient: ctx.feeRecipient.toBase58(),
+    rotationAuthority: ctx.rotationAuthority.toBase58(),
+    deploymentTransaction,
+    sourceCommit: ctx.run.sourceCommit,
+    codeSha256: ctx.codeSha256,
+    bindingDelaySeconds: bindingDelay.toString(),
+    rotationDelaySeconds: ctx.rotationDelay.toString(),
+    factory: null,
+    factoryCodeSha256: null,
+    registrar: null,
+  };
+}
+
+export async function runSolana(
+  network: AcceptanceNetwork,
+  directory: string,
+): Promise<Evidence> {
+  const ctx = await openSolanaRun(network, directory, "section-21");
+  const { rpcUrl, programId, keys, identity } = ctx;
+  const { bindingDelay, rotationDelay, connection, program, run, persist } =
+    ctx;
+  const { feeRecipient, networkDomain, chain } = ctx;
+  const mints = requireEnv("ESCROW_ACCEPTANCE_ASSETS")
+    .split(",")
+    .map((value) => new PublicKey(value.trim()));
+  const divisor = unitDivisor();
+  if (network === "solana-localnet") {
+    const note =
+      "solana-localnet runs the executor engines with the local-chain flag, as contracts/solana/integration/executor.e2e.mjs does; solana-devnet uses the hosted PaymentSignerJournal routing.";
+    if (!run.deviations.includes(note)) run.deviations.push(note);
+  }
+  const services = solanaServices(ctx, directory, () =>
+    run.assets
+      .filter((a) => a.vault)
+      .map((a) => ({
+        projectId: a.projectId,
+        effectiveCycle: run.startedAt.slice(0, 7),
+        deployment: a.deployment as unknown as EscrowDeployment,
+      })),
+  );
+  const { projection, env, relayerJournal, deps } = services;
+  const refreshDeployments = services.refresh;
+  const relayer = services.relayer;
   const policyWait = waitPolicy();
   const deadline = Date.now() + policyWait.maxWaitMs;
   const report = (reason: string) =>
@@ -832,25 +1175,7 @@ export async function runSolana(
           // The escrow deployment an admin revision records in project.json;
           // the initialize-project transaction fills deploymentTransaction.
           deployment: {
-            network,
-            vault: program.vault(project).toBase58(),
-            programId: programId.toBase58(),
-            upgradeAuthority,
-            projectPda: project.toBase58(),
-            networkDomain,
-            asset: mint.toBase58(),
-            owner: keys.owner.publicKey.toBase58(),
-            identityAuthority: identity.publicKey.toBase58(),
-            feeRecipient: feeRecipient.toBase58(),
-            rotationAuthority: rotationAuthority.toBase58(),
-            deploymentTransaction: null,
-            sourceCommit: run.sourceCommit,
-            codeSha256,
-            bindingDelaySeconds: bindingDelay.toString(),
-            rotationDelaySeconds: rotationDelay.toString(),
-            factory: null,
-            factoryCodeSha256: null,
-            registrar: null,
+            ...solanaDeploymentRecord(ctx, project, mint, bindingDelay),
           },
           steps: {},
           checks: {},
@@ -1280,25 +1605,13 @@ export async function runSolana(
         "confirmed",
       );
       if (attempt && !bindingInfo && !entry.steps[`bind-${role}`]) {
-        const prepared = await projection.api(
+        const transactionId = await cosignSolanaBinding({
+          projection,
           actor,
-          "/wallets/solana-bind/prepare",
-          { obligationId: award.id },
+          seed,
+          obligationId: award.id,
           deps,
-        );
-        let transactionId = String(prepared.transactionId);
-        if (typeof prepared.transaction === "string") {
-          const raw = Buffer.from(prepared.transaction, "base64");
-          const signature = ed25519.sign(raw.subarray(129), seed);
-          raw.set(signature, 65);
-          const completed = await projection.api(
-            actor,
-            "/wallets/solana-bind/complete",
-            { obligationId: award.id, transaction: raw.toString("base64") },
-            deps,
-          );
-          transactionId = String(completed.transactionId);
-        }
+        });
         entry.steps[`bind-${role}`] = {
           transactionId,
           from: identity.publicKey.toBase58(),

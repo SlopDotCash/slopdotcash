@@ -146,7 +146,12 @@ transaction. An operator cannot bypass this path.
 null. It checks the original database attempt and journal identity, and does
 not sign, broadcast, read a secret, or require the wallet claim still to be
 current. This lets the dispatcher reconcile a lost response even after the
-contributor has replaced the wallet. Signed transaction bytes are never returned.
+contributor has replaced the wallet. For a stored Solana signature it also
+reports whether the reviewed chain has observed that signature. A preflight
+refusal leaves the attempt retryable. Recovery also reopens an older row that
+incorrectly marked an unobserved signature submitted. The journal keeps its
+signed bytes; only the existing finalized-expiry checks permit a replacement.
+Signed transaction bytes are never returned.
 
 `POST /v1/cancel-unsubmitted` retires an old-wallet attempt only after a signed
 successor exists. Its journal transaction either finds a previously signed

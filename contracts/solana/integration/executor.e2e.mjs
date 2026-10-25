@@ -7,10 +7,12 @@ import anchor from "@coral-xyz/anchor";
 import {
   createAccount,
   createMint,
+  freezeAccount,
   getAccount,
   getAssociatedTokenAddressSync,
   mintTo,
   TOKEN_PROGRAM_ID,
+  thawAccount,
 } from "@solana/spl-token";
 import {
   Keypair,
@@ -25,14 +27,18 @@ import {
   solanaAwardId,
   solanaPaymentAdapter,
 } from "../.local/adapter.mjs";
+import { dispatchPayment } from "../.local/dispatch.mjs";
 import {
   completeSolanaBinding,
   createSolanaAttester,
   createSolanaExecutor,
   preflightSolanaDeployment,
+  solanaTransactionStatus,
 } from "../.local/executor.mjs";
+import { lookupAttempt } from "../.local/executor-core.mjs";
 import { handlePaymentsApi } from "../.local/handler.mjs";
 import { indexPaymentEvent } from "../.local/ledger.mjs";
+import { recoverUncertainAttempts } from "../.local/payments-worker.mjs";
 import { scanSolanaPayments } from "../.local/scanner.mjs";
 import { storeVaultSnapshot } from "../.local/vault-snapshots.mjs";
 import {
@@ -125,7 +131,7 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
       provider.connection,
       payer,
       payer.publicKey,
-      null,
+      payer.publicKey,
       6,
     ),
     source = await createAccount(
@@ -959,6 +965,205 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
       gross: indexedAward.gross_base,
       fee: indexedAward.fee_base,
       events: 2,
+    }),
+  );
+  // A frozen destination rejects the real preflight after the signer has
+  // saved bytes. Cron recovery must keep this eligible for the same-attempt
+  // retry, and must not confuse a stored signature with a submitted payment.
+  const frozenOrigin = hash("executor-frozen-source");
+  const frozenId = Buffer.from(
+    solanaAwardId(project.toBase58(), frozenOrigin.toString("hex")),
+    "hex",
+  );
+  const frozenApproval = await program.methods
+    .commit([...frozenId], [...frozenOrigin], bn(103), bn(10000))
+    .accountsStrict({
+      owner: payer.publicKey,
+      project,
+      vault,
+      obligation: pda(Buffer.from("award"), project.toBuffer(), frozenId),
+      origin: pda(Buffer.from("origin"), project.toBuffer(), frozenOrigin),
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+  await finalized(frozenApproval);
+  await storeVaultSnapshot(
+    db,
+    config,
+    await readVaultTotals({
+      rpcUrl: provider.connection.rpcEndpoint,
+      network: config.network,
+      projectPda: config.projectPda,
+      programId: config.programId,
+    }),
+    new Date().toISOString(),
+  );
+  const [frozenCommit] = escrowInvocations(
+    await parsedTransaction(frozenApproval),
+    config.programId,
+  );
+  await index({
+    transactionId: frozenApproval,
+    eventIndex: frozenCommit.index,
+    kind: "reserved",
+    obligationId: frozenId.toString("hex"),
+  });
+  const recipientAta = getAssociatedTokenAddressSync(mint, recipient.publicKey);
+  await finalized(
+    await freezeAccount(provider.connection, payer, recipientAta, mint, payer),
+  );
+  assert.equal(
+    (await getAccount(provider.connection, recipientAta)).isFrozen,
+    true,
+  );
+  const frozenFetch = globalThis.fetch;
+  let frozenRpcError;
+  globalThis.fetch = async (url, options) => {
+    const response = await frozenFetch(url, options);
+    if (JSON.parse(options?.body ?? "{}").method === "sendTransaction")
+      frozenRpcError = (await response.clone().json()).error;
+    return response;
+  };
+  try {
+    await assert.rejects(
+      dispatchPayment(db, restarted, frozenId.toString("hex"), new Date()),
+      /RPC failure/,
+    );
+  } finally {
+    globalThis.fetch = frozenFetch;
+  }
+  assert.match(JSON.stringify(frozenRpcError), /frozen|0x11/i);
+  const frozenAttempt = sql
+    .prepare("SELECT * FROM payment_attempts WHERE obligation_id=?")
+    .get(frozenId.toString("hex"));
+  assert.equal(frozenAttempt.state, "unknown");
+  const frozenKey = `solana:relayer:${input.network}:${frozenAttempt.id}`;
+  const frozenSigned = await journal("gas:").get(frozenKey);
+  assert.ok(frozenSigned?.raw);
+  assert.equal(
+    (
+      await provider.connection.getSignatureStatuses(
+        [frozenSigned.transactionId],
+        { searchTransactionHistory: true },
+      )
+    ).value[0],
+    null,
+  );
+  const recoveryEnvironment = {
+    PAYMENTS_DB: db,
+    SOLANA_PAYMENT_EXECUTOR: {
+      async fetch(request) {
+        assert.equal(new URL(request.url).pathname, "/v1/attempt-status");
+        const identity = await request.json();
+        const result = await lookupAttempt(
+          { PAYMENTS_DB: db, JOURNAL: journal("gas:") },
+          identity,
+        );
+        const verified = await preflightSolanaDeployment(common, identity);
+        return Response.json({
+          ...result,
+          submitted:
+            (await solanaTransactionStatus({ config: verified }, result)) !==
+            null,
+        });
+      },
+    },
+  };
+  await recoverUncertainAttempts(recoveryEnvironment);
+  const recovered = sql
+    .prepare("SELECT state FROM payment_outbox WHERE obligation_id=?")
+    .get(frozenId.toString("hex"));
+  console.log(
+    JSON.stringify({
+      step: "frozen-preflight-recovery",
+      signature: frozenSigned.transactionId,
+      observed: false,
+      outbox: recovered.state,
+    }),
+  );
+  assert.equal(
+    recovered.state,
+    "ready",
+    "a journaled but unobserved signature must remain retryable",
+  );
+  // Recover a row saved by the old scheduler, with the same actual unobserved
+  // signature. The existing signed journal record must remain intact.
+  sql
+    .prepare(
+      "UPDATE payment_attempts SET state='submitted',transaction_id=? WHERE id=?",
+    )
+    .run(frozenSigned.transactionId, frozenAttempt.id);
+  sql
+    .prepare(
+      "UPDATE payment_outbox SET state='submitted' WHERE obligation_id=?",
+    )
+    .run(frozenId.toString("hex"));
+  await recoverUncertainAttempts(recoveryEnvironment);
+  assert.equal(
+    sql
+      .prepare("SELECT state FROM payment_outbox WHERE obligation_id=?")
+      .get(frozenId.toString("hex")).state,
+    "ready",
+  );
+  assert.equal(
+    (await journal("gas:").get(frozenKey)).transactionId,
+    frozenSigned.transactionId,
+  );
+  await finalized(
+    await thawAccount(provider.connection, payer, recipientAta, mint, payer),
+  );
+  const frozenExpiryDeadline = Date.now() + 150000;
+  while (
+    (await provider.connection.getBlockHeight("finalized")) <=
+    frozenSigned.lastValidBlockHeight
+  ) {
+    assert.ok(
+      Date.now() < frozenExpiryDeadline,
+      "frozen attempt did not reach finalized expiry",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.equal(
+    await dispatchPayment(db, restarted, frozenId.toString("hex"), new Date()),
+    "submitted",
+  );
+  const retried = sql
+    .prepare("SELECT * FROM payment_attempts WHERE obligation_id=?")
+    .get(frozenId.toString("hex"));
+  assert.equal(retried.id, frozenAttempt.id);
+  assert.notEqual(retried.transaction_id, frozenSigned.transactionId);
+  await finalized(retried.transaction_id);
+  const [frozenPay] = escrowInvocations(
+    await parsedTransaction(retried.transaction_id),
+    config.programId,
+  );
+  await index({
+    transactionId: retried.transaction_id,
+    eventIndex: frozenPay.index,
+    kind: "paid",
+    obligationId: frozenId.toString("hex"),
+  });
+  assert.equal(
+    sql
+      .prepare("SELECT state FROM payment_obligations WHERE id=?")
+      .get(frozenId.toString("hex")).state,
+    "paid",
+  );
+  assert.equal(
+    (await getAccount(provider.connection, recipientAta)).amount,
+    9800n,
+  );
+  const history = await journal("gas:").get(
+    `${frozenKey}:expired:${frozenSigned.generation}`,
+  );
+  assert.equal(history.transactionId, frozenSigned.transactionId);
+  console.log(
+    JSON.stringify({
+      step: "frozen-destination-recovered",
+      oldSignature: frozenSigned.transactionId,
+      paidSignature: retried.transaction_id,
+      sameAttempt: true,
+      net: "9800",
     }),
   );
   sql.close();

@@ -56,4 +56,7 @@ bun build owner-creation.ts --target=node --outfile=.local/owner-creation.mjs
 bun build ../../workers/payment-executor/solana.ts --target=node --outfile=.local/executor.mjs
 bun build ../../workers/payment-executor/solana-monthly.ts --target=node --outfile=.local/monthly-executor.mjs
 bun build ../../workers/payments/scanner.ts ../../backend/payments/ledger.ts ../../backend/payments/handler.ts ../../backend/payments/vault-snapshots.ts --target=node --outdir=.local --entry-naming='[name].mjs'
+bun build ../../workers/payment-executor/core.ts --target=node --outfile=.local/executor-core.mjs
+bun build ../../workers/payments/index.ts --target=node --outfile=.local/payments-worker.mjs
+bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/dispatch.mjs
 node --test --test-force-exit --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs
