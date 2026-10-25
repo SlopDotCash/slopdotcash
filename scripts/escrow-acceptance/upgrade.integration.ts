@@ -8,6 +8,7 @@ import {
   encodeFunctionData,
   keccak256,
   parseAbi,
+  parseTransaction,
   toHex,
 } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
@@ -69,6 +70,10 @@ const rpc = async (method: string, params: unknown[]) => {
   return body.result;
 };
 let refusalUnavailable = false;
+let historyUnavailable = false;
+let omitKnownVaults = false;
+let holdStraggler = false;
+let straggler = "";
 let gateway: ReturnType<typeof Bun.serve> | undefined;
 const results: Record<string, unknown> = {
   mode: before ? "before" : "after",
@@ -101,6 +106,7 @@ const run = async (
   command: string,
   directory: string,
   start = deploymentBlock,
+  label = "normal",
 ) => {
   const child = Bun.spawn(
     [
@@ -129,10 +135,7 @@ const run = async (
     child.exited,
   ]);
   await Bun.write(
-    join(
-      out,
-      `${directory}-${command}-${refusalUnavailable ? "rpc-fault" : "normal"}.log`,
-    ),
+    join(out, `${directory}-${command}-${label}.log`),
     `${stdout}\n${stderr}`,
   );
   return { exit, stdout, stderr };
@@ -156,6 +159,28 @@ try {
         params: any[];
         id: unknown;
       };
+      if (historyUnavailable && query.method === "eth_getLogs")
+        return Response.json({
+          jsonrpc: "2.0",
+          id: query.id,
+          error: { code: -32000, message: "historical data unavailable" },
+        });
+      if (
+        omitKnownVaults &&
+        query.method === "eth_getLogs" &&
+        String(query.params[0]?.address).toLowerCase() === factory.toLowerCase()
+      )
+        return Response.json({ jsonrpc: "2.0", id: query.id, result: [] });
+      if (
+        holdStraggler &&
+        query.method === "eth_sendRawTransaction" &&
+        parseTransaction(query.params[0]).to?.toLowerCase() === straggler
+      )
+        return Response.json({
+          jsonrpc: "2.0",
+          id: query.id,
+          error: { code: -32000, message: "injected send unavailable" },
+        });
       if (
         refusalUnavailable &&
         query.method === "eth_call" &&
@@ -295,15 +320,97 @@ try {
   ] as const) {
     const outcome = await run("plan", name, start.toString());
     assert.equal(outcome.exit, before ? 0 : 1, `${name} ${outcome.stderr}`);
+    if (!before)
+      assert.match(
+        outcome.stderr,
+        /outside finalized history|existed before the supplied deployment block/,
+      );
     results[name] = { exit: outcome.exit };
   }
+  historyUnavailable = true;
+  const missingHistory = await run("plan", "unavailable-history");
+  assert.equal(missingHistory.exit, 1);
+  assert.match(missingHistory.stderr, /historical data unavailable/);
+  historyUnavailable = false;
+  results.historyUnavailable = { exit: missingHistory.exit };
   assert.equal((await run("plan", "upgrade")).exit, 0);
-  assert.equal((await run("execute", "upgrade")).exit, 0);
+  const laterProject = `0x${"95".repeat(32)}`;
+  await send(
+    buildCreateVaultCalldata({
+      projectId: laterProject,
+      asset: token,
+      monthlyCap: "1000",
+    }),
+    factory,
+  );
+  const laterKey = evmVaultKey({
+    owner: owner.address,
+    projectId: laterProject,
+    asset: token,
+  });
+  const laterWord = await rpc("eth_call", [
+    {
+      to: factory,
+      data: encodeFunctionData({
+        abi,
+        functionName: "vaults",
+        args: [laterKey as `0x${string}`],
+      }),
+    },
+    "latest",
+  ]);
+  straggler = `0x${laterWord.slice(-40)}`;
+  await call(token, "mint", [owner.address, 100n]);
+  await call(token, "approve", [straggler, 100n]);
+  await call(straggler, "deposit", [100n]);
+  holdStraggler = true;
+  const interrupted = await run(
+    "execute",
+    "upgrade",
+    deploymentBlock,
+    "straggler-interrupted",
+  );
+  assert.equal(interrupted.exit, 1);
+  assert.match(interrupted.stdout, /injected send unavailable/);
+  const saved = await Bun.file(join(out, "upgrade/upgrade.json")).json();
+  const signature = saved.steps[`upgrade-vault:${straggler}`].transactionId;
+  holdStraggler = false;
+  const resumed = await run(
+    "execute",
+    "upgrade",
+    deploymentBlock,
+    "straggler-resumed",
+  );
+  assert.equal(resumed.exit, 0, resumed.stdout);
+  const finished = await Bun.file(join(out, "upgrade/upgrade.json")).json();
+  assert.equal(
+    finished.steps[`upgrade-vault:${straggler}`].transactionId,
+    signature,
+  );
+  results.stragglerResume = { exit: resumed.exit, sameTransaction: true };
   refusalUnavailable = true;
-  const unavailable = await run("verify", "upgrade");
+  const unavailable = await run(
+    "verify",
+    "upgrade",
+    deploymentBlock,
+    "rpc-fault",
+  );
   assert.equal(unavailable.exit, before ? 0 : 1, unavailable.stderr);
+  if (!before) assert.match(unavailable.stdout, /method not available/);
   results.rpcFailure = { exit: unavailable.exit };
   refusalUnavailable = false;
+  omitKnownVaults = true;
+  const omitted = await run(
+    "verify",
+    "upgrade",
+    deploymentBlock,
+    "missing-known-vault",
+  );
+  assert.equal(omitted.exit, before ? 0 : 1);
+  if (!before)
+    assert.match(omitted.stdout, /missing from finalized creation history/);
+  omitKnownVaults = false;
+  results.omittedVault = { exit: omitted.exit };
   const healthy = await run("verify", "upgrade");
   assert.equal(healthy.exit, 0, healthy.stderr);
   results.validUpgrade = { exit: healthy.exit };
@@ -330,12 +437,20 @@ try {
     const old = await rpc("eth_getStorageAt", [vault, slot, "latest"]);
     await rpc("anvil_setStorageAt", [vault, slot, toHex(999n, { size: 32 })]);
     await rpc("anvil_mine", ["0x40"]);
-    const changed = await run("verify", "upgrade");
+    const changed = await run("verify", "upgrade", deploymentBlock, name);
     assert.equal(changed.exit, before ? 0 : 1, `${name} ${changed.stderr}`);
+    if (!before)
+      assert.match(
+        changed.stdout,
+        /Upgrade verification failed: vault .* (mapping|slot 19)/,
+      );
     results[name] = { exit: changed.exit };
     await rpc("anvil_setStorageAt", [vault, slot, old]);
     await rpc("anvil_mine", ["0x40"]);
   }
+  const restored = await run("verify", "upgrade", deploymentBlock, "restored");
+  assert.equal(restored.exit, 0, restored.stdout);
+  results.restored = { exit: restored.exit };
   await Bun.write(
     join(out, "result.json"),
     `${JSON.stringify(results, null, 2)}\n`,
