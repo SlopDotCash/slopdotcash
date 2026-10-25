@@ -1,6 +1,6 @@
 /**
  * Rehearses the mainnet EVM escrow upgrade (contracts/DEPLOY-MAINNET.md, "Upgrade to development
- * 2a4e80b3") on a local Anvil fork. It never sends anything to the forked network: every
+ * monthly reserve V2") on a local Anvil fork. It never sends anything to the forked network: every
  * transaction goes to the local fork, and the upgrade authority is impersonated there.
  *
  *   bun contracts/evm/integration/mainnet-upgrade-rehearsal.ts <fork-rpc-url> [logs-rpc-url] [anvil-port]
@@ -34,10 +34,19 @@ import {
   evmMonthlyDigest,
   type MonthlyAllocationEntry,
   prepareEvmVaultCreation,
+  readVaultTotals,
   verifyEvmDeployment,
   verifyPayment,
   verifyReserve,
 } from "../adapter";
+import {
+  buildCommitMonthlyLeafCalldata,
+  buildReserveMonthlyCalldata,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
+  prepareEvmMonthlyReservation,
+  readEvmMonthlyReserve,
+} from "../monthly-reserve";
 
 const forkUrl = process.argv[2];
 const logsUrl = process.argv[3] ?? forkUrl;
@@ -293,6 +302,9 @@ try {
   );
   const forkBlock = BigInt(String(await rpc("eth_blockNumber", [])));
   const report: Record<string, unknown> = {
+    sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim(),
     chainId: chainId.toString(),
     forkBlock: forkBlock.toString(),
   };
@@ -704,6 +716,9 @@ try {
       `live vault ${target} storage unchanged`,
     );
   const rehearsalVaultAfter = await vaultState(vault);
+  assert.equal(read(vault, "pendingMonthlyGross()(uint128)"), "0");
+  assert.equal(read(vault, "ordinarySourceSequence()(uint256)"), "1");
+  // Only the post-upgrade `between` award advanced the new sequence. Old source maps remain intact.
   // The award committed between upgrades changed the balances and award maps on purpose; every
   // other declared slot and the initializer version are unchanged.
   for (const slot of [0, 1, 2, 3, 4, 7, 8, 9, 10, 18])
@@ -993,6 +1008,164 @@ try {
     "post-upgrade ceil fee verifies through the new review",
   );
   await verifyEvmDeployment(upgraded, "finalized");
+  // V2 must also work on the upgraded, funded legacy vault. Preserve a pre-upgrade floor-fee
+  // obligation, then finish the newly reserved leaves after the owner opts out and the window closes.
+  const nextDate = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1),
+  );
+  const nextPeriod = `${nextDate.getUTCFullYear()}-${String(nextDate.getUTCMonth() + 1).padStart(2, "0")}`;
+  const window = readAll(
+    vault,
+    "monthlyWindow(uint32)(uint64,uint64)",
+    nextPeriod.replace("-", ""),
+  )
+    .split("\n")
+    .map((value) => BigInt(value.split(" ")[0]));
+  await rpc("evm_setNextBlockTimestamp", [Number(window[0])]);
+  await rpc("anvil_mine", ["0x41"]);
+  const leaves = [
+    award("v2-a", "101", "1000049"),
+    award("v2-b", "105", "2000049"),
+  ].map((a) => ({
+    githubUserId: a.githubUserId,
+    grossMicro: a.grossMicro,
+    sourceDigest: a.sourceDigest,
+  }));
+  const frozen = [
+    {
+      githubUserId: monthlyBefore.githubUserId,
+      grossMicro: monthlyBefore.grossMicro,
+      sourceDigest: monthlyBefore.sourceDigest,
+    },
+    ...leaves,
+  ];
+  const preparedMonth = await prepareEvmMonthlyReservation(
+    upgraded,
+    nextPeriod,
+    keccak256(toBytes(`upgrade-rehearsal-v2-${chainId}`)),
+    frozen,
+  );
+  assert(preparedMonth, "the upgraded vault exposes V2");
+  assert.equal(
+    preparedMonth.entries.length,
+    2,
+    "the old funded source is excluded",
+  );
+  const reservation = preparedMonth.reservation;
+  const tree = evmMonthlySumTree(preparedMonth.entries);
+  const totalsConfig = {
+    ...upgraded,
+    network:
+      chainId === 8453n
+        ? ("base-mainnet" as const)
+        : chainId === 1n
+          ? ("ethereum" as const)
+          : ("robinhood-mainnet" as const),
+  };
+  const reserved = (totals: Awaited<ReturnType<typeof readVaultTotals>>) => {
+    if (totals.reserved !== null) return BigInt(totals.reserved);
+    assert(totals.reservedPrincipal !== null && totals.reservedFees !== null);
+    return BigInt(totals.reservedPrincipal) + BigInt(totals.reservedFees);
+  };
+  const beforeV2 = await readVaultTotals(totalsConfig);
+  assert(beforeV2.freeBalance !== null);
+  const admitted = await sendOk(
+    relayer.address,
+    vault,
+    buildReserveMonthlyCalldata(
+      nextPeriod,
+      reservation,
+      sign(
+        evmMonthlyReserveDigest(chainId, vault, nextPeriod, reservation),
+        authority.key,
+      ),
+    ),
+    "V2 whole-month reserve",
+  );
+  assert.equal(
+    read(vault, "pendingMonthlyGross()(uint128)"),
+    reservation.remainingGross,
+  );
+  assert.equal(
+    BigInt(read(vault, "freeBalance()(uint128)")),
+    BigInt(beforeV2.freeBalance) - BigInt(reservation.remainingGross),
+  );
+  assert.equal(readAll(vault, awardGetter, monthlyBefore.id), awardsBefore[1]);
+  await sendOk(
+    owner.address,
+    vault,
+    calldata("setMonthlyCommitment(uint128,bool)", "0", "false"),
+    "owner opt-out",
+  );
+  await rpc("evm_setNextBlockTimestamp", [Number(window[1]) + 1]);
+  await rpc("anvil_mine", ["0x41"]);
+  const pendingTotals = await readVaultTotals(totalsConfig);
+  assert.equal(
+    reserved(pendingTotals),
+    reserved(beforeV2) + BigInt(reservation.remainingGross),
+  );
+  const leafReceipts = [];
+  for (const [index, entry] of preparedMonth.entries.entries()) {
+    leafReceipts.push(
+      await sendOk(
+        relayer.address,
+        vault,
+        buildCommitMonthlyLeafCalldata(
+          nextPeriod,
+          entry,
+          index,
+          tree.proofs[index],
+        ),
+        "V2 leaf",
+      ),
+    );
+  }
+  await rpc("anvil_mine", ["0x41"]);
+  assert.equal(read(vault, "pendingMonthlyGross()(uint128)"), "0");
+  assert.equal(
+    (await readEvmMonthlyReserve(upgraded, nextPeriod)).remaining,
+    0n,
+  );
+  const completedTotals = await readVaultTotals(totalsConfig);
+  assert.equal(
+    completedTotals.freeBalance,
+    pendingTotals.freeBalance,
+    "leaves do not debit free funds twice",
+  );
+  assert.equal(reserved(completedTotals), reserved(pendingTotals));
+  for (const [index, sent] of leafReceipts.entries()) {
+    await verifyReserve(
+      upgraded,
+      sent.hash,
+      reserveEvent(sent),
+      evmAwardId(chainId, vault, preparedMonth.entries[index].sourceDigest),
+    );
+  }
+  const v2Paid = await sendOk(
+    relayer.address,
+    vault,
+    buildPayCalldata(evmAwardId(chainId, vault, leaves[0].sourceDigest), "1"),
+    "V2 funded payment after opt-out",
+  );
+  await rpc("anvil_mine", ["0x41"]);
+  await verifyPayment(
+    upgraded,
+    v2Paid.hash,
+    paidEvent(v2Paid),
+    evmAwardId(chainId, vault, leaves[0].sourceDigest),
+  );
+  report.monthlyV2 = {
+    period: nextPeriod,
+    pendingGross: reservation.remainingGross,
+    existingFloorAwardPreserved: true,
+    optOutAndWindowCompletion: true,
+    reserveGas: BigInt(admitted.receipt.gasUsed).toString(),
+    leafGas: leafReceipts.map((sent) =>
+      BigInt(sent.receipt.gasUsed).toString(),
+    ),
+    payment: v2Paid.hash,
+    state: "finalized on local fork",
+  };
   const prepared = await prepareEvmVaultCreation(upgraded, {
     projectId: keccak256(toBytes(`rehearsal-third-${chainId}`)),
     asset: token,
