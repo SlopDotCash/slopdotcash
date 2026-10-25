@@ -170,6 +170,23 @@ export async function runEvmExtended(
   const delta = async (asset: string, holder: string, receipt: Receipt) =>
     (await chain.balance(asset, holder, receipt.blockNumber)) -
     (await chain.balance(asset, holder, at(receipt.blockNumber, -1n)));
+  /** eth_getLogs in windows, since public test network RPCs bound the block range. */
+  const getLogs = async (
+    filter: { address: string; topics: (string | null)[] },
+    from: bigint,
+  ) => {
+    const latest = BigInt((await chain.rpc("eth_blockNumber", [])) as string);
+    const found: { transactionHash: string; blockNumber: string }[] = [];
+    for (let start = from; start <= latest; start += 2000n) {
+      const end = start + 1999n < latest ? start + 1999n : latest;
+      found.push(
+        ...((await chain.rpc("eth_getLogs", [
+          { ...filter, fromBlock: at(start), toBlock: at(end) },
+        ])) as { transactionHash: string; blockNumber: string }[]),
+      );
+    }
+    return found;
+  };
   const blockTime = async (block: string) =>
     BigInt(
       (
@@ -238,11 +255,10 @@ export async function runEvmExtended(
     if (!entry.steps[`${name}:create`]) {
       // An interrupted run can create the vault after its evidence was last
       // saved; the factory's VaultCreated event names the creation.
-      const [created] = (await chain.rpc("eth_getLogs", [
+      const latest = BigInt((await chain.rpc("eth_blockNumber", [])) as string);
+      const [created] = await getLogs(
         {
           address: factory,
-          fromBlock: "0x0",
-          toBlock: "latest",
           topics: [
             keccak256(
               Buffer.from(
@@ -254,7 +270,8 @@ export async function runEvmExtended(
             `0x${vault.slice(2).padStart(64, "0")}`,
           ],
         },
-      ])) as { transactionHash: string; blockNumber: string }[];
+        latest > 100_000n ? latest - 100_000n : 0n,
+      );
       if (!created) throw new Error(`${name}: vault has no VaultCreated event`);
       entry.steps[`${name}:create`] = {
         transactionId: created.transactionHash,
@@ -331,13 +348,9 @@ export async function runEvmExtended(
     if (!entry.steps[key]) {
       // An interrupted run can commit after its evidence was last saved; the
       // vault's AwardCommitted event names that transaction.
-      const [created] = (await chain.rpc("eth_getLogs", [
+      const [created] = await getLogs(
         {
           address: vault,
-          fromBlock: at(
-            entry.steps[`${key.split(":")[0]}:create`]?.block ?? "0",
-          ),
-          toBlock: "latest",
           topics: [
             keccak256(
               Buffer.from(
@@ -347,11 +360,13 @@ export async function runEvmExtended(
             item.id,
           ],
         },
-      ])) as { transactionHash: string; blockNumber: string }[];
+        BigInt(entry.steps[`${key.split(":")[0]}:create`]?.block ?? "0"),
+      );
       if (created) {
         entry.steps[key] = {
           transactionId: created.transactionHash,
           from: keys.owner.address.toLowerCase(),
+          block: text(BigInt(created.blockNumber)),
           note: "Recovered from the vault's AwardCommitted event",
         };
         await persist();
@@ -1535,11 +1550,9 @@ export async function runEvmExtended(
           | undefined;
         if (!lossRecord)
           throw new Error("The payment broadcast answer was never lost");
-        const paidLogs = (await chain.rpc("eth_getLogs", [
+        const paidLogs = await getLogs(
           {
             address: lost.vault,
-            fromBlock: at(interrupted.steps["interrupted:create"].block ?? "0"),
-            toBlock: "latest",
             topics: [
               keccak256(
                 Buffer.from(
@@ -1549,7 +1562,8 @@ export async function runEvmExtended(
               item.id,
             ],
           },
-        ])) as { transactionHash: string }[];
+          BigInt(interrupted.steps["interrupted:commit-0"].block ?? "0"),
+        );
         const journaled = await services.relayerJournal.get<{
           transactionId: string;
         }>(`pay:${attempts[0]?.id}`);
