@@ -74,9 +74,13 @@ function reserve(
       if (row.expiry_evidence === null || row.settled_day === day)
         committed += BigInt(row.maximum);
     } else if (row.settled_day === day) committed += BigInt(row.actual);
-    if (row.actual !== null && BigInt(row.actual) > BigInt(row.maximum))
+    if (
+      row.actual !== null &&
+      BigInt(row.actual) > BigInt(row.maximum) &&
+      BigInt(row.actual) > BigInt(budget.perTransaction)
+    )
       throw new Error(
-        "A native charge exceeded its reserve; review the operator budget before continuing",
+        "A native charge exceeded its reserve; the current operator transaction budget must cover that exact charge",
       );
   }
   if (

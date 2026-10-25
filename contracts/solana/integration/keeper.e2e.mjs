@@ -568,6 +568,7 @@ try {
   assert.notEqual(freshRoot.transactionId, expired.transactionId);
   assert.equal(signatures, beforeRestart + 1);
   await finalized(freshRoot.transactionId);
+  console.log("Keeper expiry accounting and next-day root recovery passed");
   assert.equal(
     store.db
       .query("SELECT expiry_evidence FROM gas WHERE transaction_id=?")
@@ -582,6 +583,7 @@ try {
     last.filter((item) => item.state === "awaiting-wallet").length === 2,
     JSON.stringify(last),
   );
+  console.log("Keeper monthly leaves and finalized indexing passed");
   // Real account+wallet signatures establish each binding. No private claim DB reaches the keeper.
   for (const [index, wallet] of [alice, bob].entries()) {
     const actor = BigInt(entries[index].githubUserId);
@@ -669,7 +671,7 @@ try {
   assert.equal(signatures, count);
   const paid = await program.account.project.fetch(project, "finalized");
   assert.equal(paid.reserved.toString(), "0");
-  assert.equal(paid.totalPaid.toString(), "1960000");
+  assert.equal(paid.paid.toString(), "1960000");
   assert.equal(paid.accruedFees.toString(), "40000");
   console.log(
     JSON.stringify({

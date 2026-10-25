@@ -43,7 +43,10 @@ including the [Jovian operator-fee rule](https://specs.optimism.io/protocol/jovi
 signature fee and rent for missing writable accounts, using the largest account
 created by the reviewed builders. It sends no priority-fee instruction. Rent
 is part of this native spending budget. A final receipt that exceeds its reserve
-stops further signing until the operator investigates it.
+stops further signing unless the operator's current per-transaction budget
+covers that exact charge. The current daily budget must also cover recorded
+costs and the next reservation. An approved budget increase can resume work;
+it never deletes or changes the old reservation or receipt.
 
 Start without a key or `--execute`:
 
