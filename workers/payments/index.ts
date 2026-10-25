@@ -428,7 +428,9 @@ export async function runMonthlyCommitments(
       if (
         !(
           (result.alreadyCommitted === true && result.transactionId === null) ||
-          (result.alreadyCommitted === false &&
+          // V2 leaves for an admitted reserve: the root is on chain and this run submitted leaves.
+          ((result.alreadyCommitted === false ||
+            (plan.evmReservation && result.alreadyCommitted === true)) &&
             typeof result.transactionId === "string" &&
             result.transactionId.length > 0)
         )
