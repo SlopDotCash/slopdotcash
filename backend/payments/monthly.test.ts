@@ -1428,9 +1428,9 @@ test("monthly signing preserves its first intent through retry and refuses a cha
   expect(
     await publishMonthlyAuthorizations({
       ...publication,
-      authorize: async () => {
-        throw new Error("must reuse published authorization");
-      },
+      // A reviewed upgrade can add V2; an unchanged legacy vault reuses its
+      // stored signature when the scheduled job checks again.
+      authorize: async () => first,
     }),
   ).toEqual({ published: [], failures: [] });
   const response = await handlePaymentsApi(new Request(publicUrl), { db });
@@ -1561,15 +1561,29 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
     now: afterCutoff,
     authorize,
   };
+  // This frozen month was published before its reviewed vault gained V2.
+  // Keep the old signature, even if its all-at-once call is above the gas bound.
+  const legacy = await signMonthlyAllocation(
+    { ...deps, reserve: undefined },
+    request,
+  );
+  expect(
+    (
+      await publishMonthlyAuthorizations({
+        ...publication,
+        authorize: async () => legacy,
+      })
+    ).failures,
+  ).toEqual([]);
+  const original = sqlite
+    .prepare("SELECT authorization FROM monthly_payment_authorizations")
+    .get();
   expect((await publishMonthlyAuthorizations(publication)).failures).toEqual(
     [],
   );
   const first = await authorize();
   expect(first.plan.evmReservation?.sourceSequence).toBe("9");
-  expect(signatures).toBe(1);
-  const original = sqlite
-    .prepare("SELECT authorization FROM monthly_payment_authorizations")
-    .get();
+  expect(signatures).toBe(2);
   expect(count("monthly_payment_authorization_attempts")).toBe(1);
   expect(await publishMonthlyAuthorizations(publication)).toEqual({
     published: [],
@@ -1614,7 +1628,10 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
     return ((await response.json()) as { authorization: typeof second })
       .authorization;
   };
-  expect(await readPublic()).toEqual(second);
+  expect(await readPublic()).toEqual({
+    ...second,
+    legacyAuthorization: legacy,
+  });
   // An older signature cannot replace the new public execution inputs.
   expect(
     (
@@ -1624,7 +1641,10 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
       })
     ).failures,
   ).toHaveLength(1);
-  expect(await readPublic()).toEqual(second);
+  expect(await readPublic()).toEqual({
+    ...second,
+    legacyAuthorization: legacy,
+  });
   // A source consumed during signing leaves its intent, but publishes nothing.
   sequence = 11n;
   changeDuringSign = true;
@@ -1637,7 +1657,10 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
     [],
   );
   const current = await authorize();
-  expect(await readPublic()).toEqual(current);
+  expect(await readPublic()).toEqual({
+    ...current,
+    legacyAuthorization: legacy,
+  });
   expect(count("monthly_payment_authorization_attempts")).toBe(3);
   expect(() =>
     sqlite.exec(
@@ -1652,7 +1675,10 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
     published: [],
     failures: [],
   });
-  expect(await readPublic()).toEqual(current);
+  expect(await readPublic()).toEqual({
+    ...current,
+    legacyAuthorization: legacy,
+  });
   sqlite
     .prepare(
       "INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) VALUES(?,1,0,?,?)",
@@ -1669,7 +1695,10 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
     EVM_PAYMENT_EXECUTOR: {
       fetch: async (request: Request) => {
         expect(new URL(request.url).searchParams.get("admit")).toBe("false");
-        expect(await request.json()).toEqual(current);
+        expect(await request.json()).toEqual({
+          ...current,
+          legacyAuthorization: legacy,
+        });
         dispatches++;
         return Response.json({
           transactionId: null,

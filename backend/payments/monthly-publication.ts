@@ -20,9 +20,11 @@ export async function publishMonthlyAuthorizations(deps: {
   now: Date;
   authorize(request: MonthlyAttestationRequest): Promise<MonthlyAuthorization>;
 }) {
+  // Revisit legacy EVM publications too: a reviewed upgrade may make their
+  // all-at-once allocation executable through V2. The original row stays fixed.
   const candidates = await deps.db
     .prepare(
-      "SELECT json_group_array(json_object('projectId',r.project_id,'period',r.period,'network',r.network,'snapshotSha256',r.snapshot_sha256)) items FROM monthly_payment_runs r LEFT JOIN monthly_payment_authorizations a ON a.project_id=r.project_id AND a.period=r.period AND a.network=r.network WHERE r.obligations_created_at IS NOT NULL AND EXISTS(SELECT 1 FROM monthly_payment_obligations o WHERE o.project_id=r.project_id AND o.period=r.period) AND (a.authorization IS NULL OR json_extract(a.authorization,'$.plan.evmReservation.version')=2)",
+      "SELECT json_group_array(json_object('projectId',r.project_id,'period',r.period,'network',r.network,'snapshotSha256',r.snapshot_sha256)) items FROM monthly_payment_runs r LEFT JOIN monthly_payment_authorizations a ON a.project_id=r.project_id AND a.period=r.period AND a.network=r.network WHERE r.obligations_created_at IS NOT NULL AND EXISTS(SELECT 1 FROM monthly_payment_obligations o WHERE o.project_id=r.project_id AND o.period=r.period) AND (a.authorization IS NULL OR json_extract(a.authorization,'$.plan.family')='evm')",
     )
     .first<{ items: string }>();
   const published: string[] = [];
@@ -42,7 +44,11 @@ export async function publishMonthlyAuthorizations(deps: {
     );
     if (!cutoff || !closes || deps.now < cutoff || deps.now >= closes) continue;
     try {
-      const authorization = await deps.authorize(request);
+      const signed = await deps.authorize(request);
+      const authorization: MonthlyAuthorization = {
+        plan: signed.plan,
+        signatureHex: signed.signatureHex,
+      };
       if (
         Object.entries(request).some(
           ([key, value]) =>
@@ -52,7 +58,6 @@ export async function publishMonthlyAuthorizations(deps: {
         )
       )
         throw new Error("Attester returned another monthly allocation");
-      const text = JSON.stringify(authorization);
       const attempt = authorization.plan.evmReservation;
       if (
         attempt &&
@@ -64,6 +69,25 @@ export async function publishMonthlyAuthorizations(deps: {
         throw new Error(
           "Attester returned an invalid monthly execution attempt",
         );
+      if (attempt) {
+        const first = await deps.db
+          .prepare(
+            "SELECT authorization FROM monthly_payment_authorizations WHERE project_id=? AND period=? AND network=?",
+          )
+          .bind(request.projectId, request.period, request.network)
+          .first<{ authorization: string }>();
+        if (first) {
+          const legacy = JSON.parse(
+            first.authorization,
+          ) as MonthlyAuthorization;
+          if (!legacy.plan.evmReservation)
+            authorization.legacyAuthorization = {
+              plan: legacy.plan,
+              signatureHex: legacy.signatureHex,
+            };
+        }
+      }
+      const text = JSON.stringify(authorization);
       const previous = await readMonthlyAuthorization(
         deps.db,
         request.projectId,

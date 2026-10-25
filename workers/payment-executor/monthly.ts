@@ -19,6 +19,12 @@ export interface MonthlyAuthorization {
   plan: MonthlyAttestationPlan;
   /** Hex-encoded signature, without 0x. Public authorization; no private key. */
   signatureHex: string;
+  /** Original independently signed V1 evidence. A pending legacy transaction
+   * can still win admission after V2 publication; retain it for reconciliation. */
+  legacyAuthorization?: {
+    plan: MonthlyAttestationPlan;
+    signatureHex: string;
+  };
 }
 interface Intent {
   snapshotSha256: string;
