@@ -23,6 +23,7 @@ import {
   runNetwork,
   type SendStatus,
 } from "./core";
+import { createEvmClient } from "./evm";
 import worker, { runOnce, triggerAt } from "./index";
 import { createSolanaClient, parseTransaction } from "./solana";
 import { sqliteD1 } from "./sqlite-d1";
@@ -225,7 +226,6 @@ describe("release gates", () => {
   });
 
   test("a key that does not control the configured fee wallet is refused", async () => {
-    const { createEvmClient } = await import("./evm");
     const { generatePrivateKey } = await import("viem/accounts");
     expect(() =>
       createEvmClient({
@@ -313,7 +313,6 @@ describe("USDC routes", () => {
   });
 
   test("EVM clients refuse to quote a network without a verified USDC target", async () => {
-    const { createEvmClient } = await import("./evm");
     const parsed = parseConfig({
       FEE_CONVERTER_MODE: "dry_run",
       FEE_CONVERTER_NETWORKS: "robinhood",
@@ -341,6 +340,113 @@ describe("USDC routes", () => {
     await runNetwork(h.network, h.deps);
     expect(h.rows()[0]).toMatchObject({ target_token: USDC, state: "quoted" });
   });
+});
+
+describe("Kyber gas pricing in the conversion workflow", () => {
+  // The fields follow the live 2026-10-25 /routes response. The token and
+  // amounts are synthetic; only gas pricing varies in the refusal controls.
+  function quotedRun(network: "base" | "ethereum", costs: Record<string, unknown>) {
+    const h = harness({
+      env: {
+        FEE_CONVERTER_NETWORKS: network,
+        FEE_WALLET_ETHEREUM: WALLET,
+        FEE_CONVERTER_ALLOWLIST: JSON.stringify({ [network]: [TOKEN] }),
+      },
+    });
+    let requests = 0;
+    const client = createEvmClient({
+      config: h.network,
+      limits: h.deps.limits,
+      kyberClientId: "test",
+      fetch: (async (input, init) => {
+        const url = new URL(String(input));
+        expect(init?.method ?? "GET").toBe("GET");
+        expect(url.origin).toBe("https://aggregator-api.kyberswap.com");
+        expect(url.pathname).toBe(`/${network}/api/v1/routes`);
+        expect(url.searchParams.get("gasInclude")).toBe("true");
+        requests++;
+        return Response.json({
+          code: 0,
+          data: {
+            routerAddress: h.network.definition.router,
+            routeSummary: {
+              tokenIn: TOKEN,
+              tokenOut: h.network.definition.usdc,
+              amountIn: "20000000",
+              amountOut: "20000000",
+              amountInUsd: "20",
+              amountOutUsd: "20",
+              gas: "330498",
+              gasPrice: "6000000",
+              gasUsd: "0.004650942632151648",
+              l1FeeUsd: network === "base" ? "0.000010361403900382059" : "0",
+              ...costs,
+            },
+          },
+        });
+      }) as typeof fetch,
+    });
+    h.chain.quote = client.quote;
+    return { ...h, requests: () => requests };
+  }
+
+  for (const [network, field, value] of [
+    ["base", "gasUsd", undefined],
+    ["ethereum", "gasUsd", undefined],
+    ["base", "gasUsd", null],
+    ["ethereum", "gasUsd", "unpriced"],
+    ["base", "gasUsd", "-1"],
+    ["base", "l1FeeUsd", undefined],
+    ["base", "l1FeeUsd", null],
+    ["base", "l1FeeUsd", "unpriced"],
+    ["ethereum", "l1FeeUsd", "unpriced"],
+  ] as const) {
+    test(`${network} ${field}=${String(value)} refuses before preparation`, async () => {
+      const h = quotedRun(network, { [field]: value });
+      try {
+        await runNetwork(h.network, h.deps);
+        expect(h.requests()).toBe(1);
+        expect(h.chain.prepared).toBe(0);
+        expect(h.chain.sent).toEqual([]);
+        expect(h.rows()).toEqual([]);
+        expect(h.events).toContainEqual({
+          event: "fee_conversion_error",
+          network,
+          token: TOKEN,
+          error: "KyberSwap gas cost is unavailable",
+        });
+        expect(h.locks()).toEqual([]);
+      } finally {
+        h.sqlite.close();
+      }
+    });
+  }
+
+  for (const [network, costs, state] of [
+    ["base", {}, "submitted"],
+    ["base", { gasUsd: "0", l1FeeUsd: "0" }, "submitted"],
+    ["ethereum", { gasUsd: 0, l1FeeUsd: undefined }, "submitted"],
+    ["ethereum", { gasUsd: "2.000001", l1FeeUsd: undefined }, "pending"],
+    ["base", { gasUsd: "1", l1FeeUsd: "1.000001" }, "pending"],
+  ] as const) {
+    test(`${network} valid costs ${JSON.stringify(costs)} retain the 10x gate`, async () => {
+      const h = quotedRun(network, costs);
+      try {
+        await runNetwork(h.network, h.deps);
+        expect(h.requests()).toBe(1);
+        expect(h.rows()).toHaveLength(1);
+        expect(h.rows()[0]).toMatchObject({
+          state,
+          reason: state === "pending" ? "below the gas-cost multiple" : null,
+        });
+        expect(h.chain.prepared).toBe(state === "submitted" ? 1 : 0);
+        expect(h.chain.sent).toHaveLength(state === "submitted" ? 1 : 0);
+        expect(h.events.some((event) => event.event === "fee_conversion_error")).toBe(false);
+      } finally {
+        h.sqlite.close();
+      }
+    });
+  }
 });
 
 describe("receipt-triggered conversion", () => {
@@ -829,7 +935,6 @@ describe("EVM reconciliation", () => {
   }
 
   async function reconcileThroughEvm(failing: string[]) {
-    const { createEvmClient } = await import("./evm");
     const h = harness();
     await runNetwork(h.network, h.deps);
     expect(h.rows()[0]).toMatchObject({ state: "submitted", evm_nonce: 1 });
