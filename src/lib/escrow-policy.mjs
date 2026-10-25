@@ -248,6 +248,13 @@ export const EVM_CHAINS = Object.freeze(
 export const MIN_PRODUCTION_BINDING_DELAY = 0;
 /** New production deployments may rotate an authorized identity key immediately. */
 export const MIN_PRODUCTION_ROTATION_DELAY = 0;
+const EVM_IMPLEMENTATION_REVIEW_KEYS = [
+  "authority",
+  "vaultImplementation",
+  "vaultImplementationCodeSha256",
+  "factoryImplementation",
+  "factoryImplementationCodeSha256",
+];
 function keys(value, expected) {
   if (
     !value ||
@@ -316,29 +323,38 @@ function validateEscrowPolicy(value, feeBasisPoints) {
     if (deployment.evmUpgrade !== undefined) {
       const upgrade = deployment.evmUpgrade;
       keys(upgrade, [
-        "authority",
-        "vaultImplementation",
-        "vaultImplementationCodeSha256",
-        "factoryImplementation",
-        "factoryImplementationCodeSha256",
+        ...EVM_IMPLEMENTATION_REVIEW_KEYS,
+        ...(upgrade?.history === undefined ? [] : ["history"]),
       ]);
+      const history = upgrade.history ?? [];
       if (
         chainFamily(value.chain) !== "evm" ||
-        ![
-          upgrade.authority,
-          upgrade.vaultImplementation,
-          upgrade.factoryImplementation,
-        ].every((address) => isFundingAddress(value.chain, address)) ||
-        ![
-          upgrade.vaultImplementationCodeSha256,
-          upgrade.factoryImplementationCodeSha256,
-        ].every((hash) => /^[0-9a-f]{64}$/.test(hash)) ||
-        [deployment.identityAuthority, deployment.feeRecipient].some(
-          (address) =>
-            address.toLowerCase() === upgrade.authority.toLowerCase(),
-        )
+        (upgrade.history !== undefined &&
+          (!Array.isArray(history) || history.length === 0))
       )
         throw new TypeError("Invalid reviewed EVM upgrade");
+      for (const review of [upgrade, ...history]) {
+        if (review !== upgrade)
+          keys(review, [...EVM_IMPLEMENTATION_REVIEW_KEYS]);
+        if (
+          ![
+            review.authority,
+            review.vaultImplementation,
+            review.factoryImplementation,
+          ].every((address) => isFundingAddress(value.chain, address)) ||
+          ![
+            review.vaultImplementationCodeSha256,
+            review.factoryImplementationCodeSha256,
+          ].every((hash) => /^[0-9a-f]{64}$/.test(hash)) ||
+          [deployment.identityAuthority, deployment.feeRecipient].some(
+            (address) =>
+              address.toLowerCase() === review.authority.toLowerCase(),
+          )
+        )
+          throw new TypeError("Invalid reviewed EVM upgrade");
+      }
+      if (new Set(history.map(implementationReview)).size !== history.length)
+        throw new TypeError("Duplicate reviewed EVM implementation");
     }
     const network = ESCROW_NETWORKS[deployment.network];
     if (
@@ -457,6 +473,31 @@ function validateEscrowPolicy(value, feeBasisPoints) {
   }
   return value;
 }
+/** The reviewed authority and implementations of an EVM upgrade, without its history. */
+function implementationReview(review) {
+  return JSON.stringify(
+    EVM_IMPLEMENTATION_REVIEW_KEYS.map((key) => review[key].toLowerCase()),
+  );
+}
+/**
+ * EVM upgrade history is append-only. When the reviewed authority or an
+ * implementation changes, the outgoing review is appended unless it is
+ * already recorded, so events from before the upgrade still verify at their
+ * own block. Existing history entries never change or disappear.
+ */
+function assertEvmUpgradeHistory(previous, next) {
+  const before = (previous.history ?? []).map(implementationReview);
+  const after = (next.history ?? []).map(implementationReview);
+  const outgoing = implementationReview(previous);
+  const expected =
+    outgoing === implementationReview(next) || before.includes(outgoing)
+      ? before
+      : [...before, outgoing];
+  if (JSON.stringify(after) !== JSON.stringify(expected))
+    throw new TypeError(
+      "Reviewed EVM upgrade history must append the outgoing implementation",
+    );
+}
 export function assertEscrowTransition(
   previous,
   next,
@@ -509,5 +550,7 @@ export function assertEscrowTransition(
       })
     )
       throw new TypeError("Historical escrow deployments are immutable");
+    if (deployment.evmUpgrade)
+      assertEvmUpgradeHistory(deployment.evmUpgrade, successor.evmUpgrade);
   }
 }

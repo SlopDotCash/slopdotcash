@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   assertEscrowPolicy,
+  assertEscrowTransition,
   chainFamily,
   ESCROW_CHAINS,
   ESCROW_NETWORKS,
@@ -270,5 +271,85 @@ describe("escrow v2 network registry", () => {
         withdrawalFeeBasisPoints: 500,
       }),
     ).toThrow(/fee policy/);
+  });
+});
+
+describe("reviewed EVM upgrade history", () => {
+  const review = (n: string) => ({
+    authority: `0x${n.repeat(40)}`,
+    vaultImplementation: `0x${"a".repeat(39)}${n}`,
+    vaultImplementationCodeSha256: n.repeat(64),
+    factoryImplementation: `0x${"b".repeat(39)}${n}`,
+    factoryImplementationCodeSha256: `${"e".repeat(63)}${n}`,
+  });
+  const upgraded = (evmUpgrade: object) =>
+    assertEscrowPolicy(policy("base", { ...evmDeployment, evmUpgrade }));
+  const first = upgraded(review("7"));
+  test("accepts strict history and rejects malformed or duplicate entries", () => {
+    expect(upgraded({ ...review("8"), history: [review("7")] })).toBeTruthy();
+    for (const history of [
+      [],
+      [{ ...review("7"), vaultImplementation: "0x1234" }],
+      [{ ...review("7"), factoryImplementationCodeSha256: "AB".repeat(32) }],
+      [{ ...review("7"), extra: true }],
+      [{ ...review("7"), authority: evmDeployment.feeRecipient }],
+      [review("7"), review("7")],
+    ])
+      expect(() => upgraded({ ...review("8"), history })).toThrow(
+        /EVM upgrade|policy fields|EVM implementation/,
+      );
+  });
+  test("an upgrade must append the outgoing review", () => {
+    const second = upgraded({ ...review("8"), history: [review("7")] });
+    expect(() => assertEscrowTransition(first, second)).not.toThrow();
+    expect(() => assertEscrowTransition(first, upgraded(review("8")))).toThrow(
+      /append the outgoing/,
+    );
+    expect(() =>
+      assertEscrowTransition(
+        first,
+        upgraded({ ...review("8"), history: [review("9")] }),
+      ),
+    ).toThrow(/append the outgoing/);
+    const third = upgraded({
+      ...review("9"),
+      history: [review("7"), review("8")],
+    });
+    expect(() => assertEscrowTransition(second, third)).not.toThrow();
+    // A rollback to a recorded review appends only the outgoing review; a
+    // review already in history is not repeated.
+    const rollback = upgraded({
+      ...review("7"),
+      history: [review("7"), review("8")],
+    });
+    expect(() => assertEscrowTransition(second, rollback)).not.toThrow();
+    expect(() =>
+      assertEscrowTransition(
+        rollback,
+        upgraded({ ...review("8"), history: [review("7"), review("8")] }),
+      ),
+    ).not.toThrow();
+    expect(() => assertEscrowTransition(second, second)).not.toThrow();
+  });
+  test("history cannot be removed or edited", () => {
+    const third = upgraded({
+      ...review("9"),
+      history: [review("7"), review("8")],
+    });
+    for (const history of [
+      undefined,
+      [review("8")],
+      [review("8"), review("7")],
+      [
+        { ...review("7"), vaultImplementationCodeSha256: "f".repeat(64) },
+        review("8"),
+      ],
+    ])
+      expect(() =>
+        assertEscrowTransition(
+          third,
+          upgraded(history ? { ...review("9"), history } : review("9")),
+        ),
+      ).toThrow(/append the outgoing/);
   });
 });

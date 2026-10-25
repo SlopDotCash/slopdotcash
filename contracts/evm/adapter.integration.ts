@@ -1037,6 +1037,78 @@ try {
     /implementation/,
     "A new implementation approval cannot rewrite historical payment provenance",
   );
+  // A reviewed upgrade appends the outgoing review to history. An event
+  // verifies at its own block against the current review or a recorded one,
+  // so a scan page that spans the upgrade block still verifies.
+  const outgoing = config.evmUpgrade;
+  const historyConfig = {
+    ...upgradedConfig,
+    evmUpgrade: { ...upgradedConfig.evmUpgrade, history: [outgoing] },
+  };
+  await send(token, "mint(address,uint256)", [owner, "10000000"]);
+  await send(token, "approve(address,uint256)", [vault, "10000000"]);
+  await send(vault, "deposit(uint128)", ["10000000"]);
+  const laterSource = `0x${"3".padStart(64, "0")}`;
+  const laterId = evmAwardId(31337n, vault, laterSource);
+  const laterReserve = (await rpc("eth_sendTransaction", [
+    {
+      from: owner,
+      to: vault,
+      gas: "0x7a1200",
+      data: buildCommitAwardCalldata({
+        obligationId: laterId,
+        githubUserId: "101",
+        grossMicro: "10000000",
+        sourceDigest: laterSource,
+      }),
+    },
+  ])) as string;
+  await rpc("anvil_mine", ["0x40"]);
+  assert.equal(
+    (await verifyPayment(historyConfig, paymentTx, 0, id)).netMicro,
+    "98000000",
+    "An event before the upgrade verifies against the reviewed history",
+  );
+  assert.equal(
+    (await verifyReserve(historyConfig, laterReserve, 0, laterId)).grossMicro,
+    "10000000",
+    "An event after the upgrade verifies against the current review",
+  );
+  await assert.rejects(
+    verifyReserve(config, laterReserve, 0, laterId),
+    /implementation/,
+    "The outgoing review alone cannot verify an event after the upgrade",
+  );
+  await assert.rejects(
+    verifyPayment(
+      {
+        ...historyConfig,
+        evmUpgrade: {
+          ...historyConfig.evmUpgrade,
+          history: [{ ...outgoing, vaultImplementation: nextFactoryLogic }],
+        },
+      },
+      paymentTx,
+      0,
+      id,
+    ),
+    /implementation/,
+    "An implementation in neither the current review nor history is rejected",
+  );
+  await assert.rejects(
+    verifyEvmDeployment(
+      {
+        ...config,
+        evmUpgrade: {
+          ...config.evmUpgrade,
+          history: [upgradedConfig.evmUpgrade],
+        },
+      },
+      "latest",
+    ),
+    /implementation/,
+    "Current-state checks never accept a review from history",
+  );
   console.log(
     "EVM adapter integration passed: real factory deployment, permissionless owner-keyed vault creation, separate ordinary and bounty vaults, permissionless deposit, 18-decimal vault beyond uint64, readVaultTotals, 2% withdrawal fee, vault-bound award, wallet-accepted immediate and cancellable binding, payment, fee claim, signed capped once-per-period monthly commitment from any sender, owner opt-out, finalized gating, wrong chain/vault/award/index/delay/purpose rejection, immediate authority rotation.",
   );
