@@ -2761,6 +2761,16 @@ test("an identical hand commit after the freeze is counted once and the month co
   );
   // The attester now accepts the identical existing award too.
   await freezeSolanaMonthly(freezeConfig, authorization.plan);
+  // Only the identical award: a leaf smaller than the existing award, or for
+  // another actor, is refused, as EVM commitMonthly reverts for it.
+  for (const leaf of [
+    { ...entries[1], grossMicro: "9000000" },
+    { ...entries[1], githubUserId: "803" },
+  ])
+    await assert.rejects(
+      freezeSolanaMonthly(freezeConfig, { family: "solana", entries: [leaf] }),
+      /already consumed/,
+    );
   const admitted = await submitSolanaMonthly(environment, authorization);
   await provider.connection.confirmTransaction(
     admitted.transactionId,

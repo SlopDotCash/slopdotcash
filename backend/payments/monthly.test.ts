@@ -728,6 +728,39 @@ describe("monthly coordinator", () => {
     );
   });
 
+  test("a Solana hand reservation waits until automatic monthly payment is off", async () => {
+    await setupFixture(solanaDeployment);
+    await coordinate(afterCutoff);
+    vault("1000");
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
+    const service = monthlyOwnerService({
+      db,
+      ...projects(),
+      networks: () => [solanaDeployment.network],
+      verifyAuthority: async () => {},
+      schedule: () => schedule,
+      now: () => clock,
+    });
+    const request = {
+      network: solanaDeployment.network,
+      manifestSha256: project.manifestSha256,
+      snapshotSha256:
+        (await service.view(project.id, "2026-11", actor)).run
+          ?.snapshotSha256 ?? "",
+      githubUserId: A,
+    };
+    await rejects(
+      service.commitment(project.id, "2026-11", actor, request),
+      "monthly_automatic",
+    );
+    await service.setAutomatic(project.id, actor, false);
+    expect(
+      await service.commitment(project.id, "2026-11", actor, request),
+    ).toMatchObject({ award: { githubUserId: A, gross: "600", fee: "12" } });
+  });
+
   test("a Solana month needs its full total free, even for an award reserved earlier", async () => {
     // Solana admission reserves the whole total; the identical earlier award is
     // released afterwards, so it cannot count as already funded.
@@ -921,6 +954,114 @@ describe("monthly attestation input", () => {
       },
     );
   }
+  const chainObligation = (
+    id: string,
+    user: string,
+    gross: string,
+    fee: string,
+    source: string,
+  ) =>
+    sqlite
+      .prepare(
+        "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES(?,?,?,?,?,?,?,6,?,?,?,'reserved',?,NULL)",
+      )
+      .run(
+        `0x${id.repeat(64)}`,
+        project.id,
+        user,
+        "base-sepolia",
+        "base",
+        deployment.vault,
+        deployment.asset,
+        gross,
+        fee,
+        escrowAwardOrigin(project.id, "2026-11", source),
+        afterCutoff.toISOString(),
+      );
+  // Source digests are public: an owner can reserve another award under a frozen
+  // award's source. Only the same actor and gross with a 2% fee (ceil, or the
+  // pre-#1189 floor) is this award. Any other is a conflict: it needs no funds,
+  // cannot be reserved, and is left out of the signed month so the rest commits.
+  for (const [label, chainActor, chainGross, chainFee] of [
+    ["another actor", "999", "600", "12"],
+    ["a smaller gross", A, "1", "1"],
+    ["a wrong fee", A, "600", "0"],
+  ] as const)
+    test(`an obligation for ${label} under a frozen award's source is a conflict left out of the month`, async () => {
+      clock = beforeCutoff;
+      // 399 has a floor fee of 7 and a ceil fee of 8.
+      await owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: "399",
+        expectedSequence: 0,
+      });
+      clock = afterCutoff;
+      chainObligation("8", chainActor, chainGross, chainFee, A);
+      chainObligation("9", B, "399", "7", B);
+      // Neither source needs new funds: the month is funded with no vault reading.
+      expect((await coordinate(afterCutoff)).created).toEqual([
+        `${project.id}/2026-11`,
+      ]);
+      const view = await owner().view(project.id, "2026-11", actor);
+      expect(
+        view.run?.awards.map((award) => [award.login, award.state]),
+      ).toEqual([
+        ["first", "conflict"],
+        ["second", "reserved"],
+      ]);
+      const expected = {
+        network: "base-sepolia",
+        manifestSha256: project.manifestSha256,
+        snapshotSha256: view.run?.snapshotSha256 ?? "",
+      };
+      await rejects(
+        owner().commitment(project.id, "2026-11", actor, {
+          ...expected,
+          githubUserId: A,
+        }),
+        "award_conflict",
+      );
+      await rejects(
+        owner().commitment(project.id, "2026-11", actor, {
+          ...expected,
+          githubUserId: B,
+        }),
+        "award_reserved",
+      );
+      // The identical legacy-fee award stays in the month and is counted once.
+      const plan = await prepare();
+      expect(plan.entries.map((e) => [e.githubUserId, e.grossMicro])).toEqual([
+        [B, "399"],
+      ]);
+      expect(plan.totalGrossBase).toBe("399");
+    });
+
+  test("a contributor sees a conflicting award, and a month of only conflicts signs nothing", async () => {
+    chainObligation("7", "999", "600", "12", A);
+    chainObligation("8", "999", "400", "8", B);
+    await coordinate(afterCutoff);
+    await rejects(prepare(), "empty_allocation");
+    const token = "c".repeat(43);
+    sqlite
+      .prepare(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('node-first',?,'first',?,0)",
+      )
+      .run(A, afterCutoff.toISOString());
+    sqlite
+      .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+      .run(await sha256Hex(token), "node-first", "2027-01-01T00:00:00.000Z");
+    const account = (await (
+      await handlePaymentsApi(
+        new Request("https://slop.cash/api/v1/payments/me", {
+          headers: { cookie: `__Host-slop_points=${token}` },
+        }),
+        { db, now: () => clock },
+      )
+    ).json()) as PaymentsAccount;
+    expect(account.monthlyAwards).toMatchObject([
+      { projectId: project.id, grossBase: "600", state: "conflict" },
+    ]);
+  });
   test("uses only the frozen owner-adjusted awards, even after a later funding observation", async () => {
     clock = beforeCutoff;
     await owner().changeAllocation(project.id, "2026-11", actor, {
