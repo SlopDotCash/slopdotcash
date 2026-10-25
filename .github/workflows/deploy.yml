@@ -132,6 +132,15 @@ jobs:
           set -euo pipefail
           bun run verify:contracts
 
+      - name: Install the pinned merge collector for trusted Points ingestion
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
+
       - name: Generate live contribution data
         # Pull-request code is untrusted, so this step never explicitly injects
         # a repository-scoped token into it. Trusted main runs refresh the
@@ -484,8 +493,9 @@ jobs:
             echo "No repository payment records to import."
           fi
           ./node_modules/.bin/wrangler deploy --config workers/identity/wrangler.staging.toml
-          ./node_modules/.bin/wrangler deploy --config workers/slopbot/wrangler.repository-access-staging.toml
           bun scripts/release-vetting-sandbox.mjs staging
+          ./node_modules/.bin/wrangler deploy --config workers/slopbot/wrangler.repository-access-staging.toml \
+            --var="SLOPBOT_PRODUCER_REVISION:$GITHUB_SHA"
           node scripts/configure-staging-secrets.mjs
           if [ "$SLOP_NOTIFY_RELEASE" = "enabled" ]; then
             bun scripts/release-notify.mjs deploy staging "$RUNNER_TEMP/slop-notify-staging-release"
@@ -1539,6 +1549,17 @@ jobs:
           publish_dir="$(mktemp -d "$RUNNER_TEMP/slop-production-pages.XXXXXX")"
           git archive "$GITHUB_SHA" | tar -x -C "$publish_dir"
           bun scripts/prepare-vetting-public-key.ts assemble production "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.toml"
+          # An existing zero-pin service is intentionally not redeployed above.
+          # Do not bind Pages to an entrypoint that release has not verified.
+          if [ "$attester_release" != "true" ]; then
+            node - "$publish_dir/wrangler.jsonc" <<'NODE'
+          const { readFileSync, writeFileSync } = require("node:fs");
+          const path = process.argv[2];
+          const config = JSON.parse(readFileSync(path, "utf8"));
+          config.services = config.services.filter((service) => service.binding !== "BINDING_RECOVERY");
+          writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+          fi
           cp -R dist "$publish_dir/dist"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"

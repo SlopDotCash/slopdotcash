@@ -16,6 +16,11 @@ migrations_dir = "../../migrations"
 binding = "SLOP_NOTIFY"
 service = "slop-notify"
 
+[[services]]
+binding = "VALUE_MERGE_VERIFIER"
+service = "slop-vetting-sandbox"
+entrypoint = "MergeVerifier"
+
 [[queues.producers]]
 binding = "SLOPBOT_QUEUE"
 queue = "slopbot-jobs"

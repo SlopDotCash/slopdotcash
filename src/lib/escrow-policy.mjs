@@ -473,6 +473,8 @@ function validateEscrowPolicy(value, feeBasisPoints) {
       );
     if (
       deployment.owner === deployment.identityAuthority ||
+      deployment.owner === deployment.feeRecipient ||
+      deployment.identityAuthority === deployment.feeRecipient ||
       deployment.vault === deployment.owner ||
       deployment.vault === deployment.feeRecipient ||
       deployment.vault === deployment.identityAuthority ||

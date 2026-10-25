@@ -1,0 +1,556 @@
+{
+  "repository": "https://github.com/eliza-research/thenetwork.git",
+  "gitVersion": "git version 2.56.0",
+  "sources": [
+    {
+      "number": 97,
+      "input": {
+        "repository": "eliza-research/thenetwork",
+        "repositoryNodeId": "R_kgDOU9LzhA",
+        "repositoryDatabaseId": 1406333828,
+        "pull": {
+          "head": {
+            "sha": "aa7b066d31d1f0ebb3d964fb3e1a8ba0ccb23aa9"
+          }
+        },
+        "files": [
+          {
+            "filename": "docs/results/2026-10-17-inferred-facet-provenance.md"
+          },
+          {
+            "filename": "packages/network/service/snapshot.ts"
+          },
+          {
+            "filename": "packages/network/test/crossapp.test.ts"
+          }
+        ],
+        "commits": [
+          {
+            "sha": "aa7b066d31d1f0ebb3d964fb3e1a8ba0ccb23aa9",
+            "parents": [
+              {
+                "sha": "9da0fc9d4f43959eb8bcc0da1437d8d08a7a001c"
+              }
+            ]
+          }
+        ],
+        "commitAttribution": [
+          {
+            "sha": "aa7b066d31d1f0ebb3d964fb3e1a8ba0ccb23aa9",
+            "changedPaths": [
+              "docs/results/2026-10-17-inferred-facet-provenance.md",
+              "packages/network/service/snapshot.ts",
+              "packages/network/test/crossapp.test.ts"
+            ],
+            "limitations": []
+          }
+        ]
+      },
+      "inputSha256": "dde6d9ac2bb12c3e61e13043993fb3b7e9e91cb26ac68569902d0069072f735a",
+      "expected": []
+    },
+    {
+      "number": 117,
+      "input": {
+        "repository": "eliza-research/thenetwork",
+        "repositoryNodeId": "R_kgDOU9LzhA",
+        "repositoryDatabaseId": 1406333828,
+        "pull": {
+          "head": {
+            "sha": "ee26d32ce523a8c6cee9204d96be31157d912a6a"
+          }
+        },
+        "files": [
+          {
+            "filename": "deploy/backend/backend.test.ts"
+          },
+          {
+            "filename": "deploy/backend/backend.ts"
+          },
+          {
+            "filename": "docs/results/2026-10-17-collection-http-retention.md"
+          },
+          {
+            "filename": "docs/results/2026-10-17-collection-pending-replay.md"
+          },
+          {
+            "filename": "docs/results/2026-10-17-imessage-suggestion-review.md"
+          },
+          {
+            "filename": "docs/results/2026-10-17-learning-membership-context.md"
+          },
+          {
+            "filename": "docs/results/2026-10-17-profile-review-owner-consumer.md"
+          },
+          {
+            "filename": "docs/results/2026-10-17-profile-review-purpose-factory.md"
+          },
+          {
+            "filename": "docs/results/2026-10-17-reviewed-profile-suggestions.md"
+          },
+          {
+            "filename": "docs/results/2026-10-18-production-cloud-network-handoff.md"
+          },
+          {
+            "filename": "docs/results/2026-10-20-scoped-collection-contract.md"
+          },
+          {
+            "filename": "packages/core/src/svc/learning-collection-command.ts"
+          },
+          {
+            "filename": "packages/core/src/svc/learning-consent-context.ts"
+          },
+          {
+            "filename": "packages/core/src/svc/profile-review-disconnect.ts"
+          },
+          {
+            "filename": "packages/core/src/svc/profile-review-owner.ts"
+          },
+          {
+            "filename": "packages/core/src/svc/profile-review-source.ts"
+          },
+          {
+            "filename": "packages/core/src/svc/profile-review-withdrawal.ts"
+          },
+          {
+            "filename": "packages/network/service/README.md"
+          },
+          {
+            "filename": "packages/network/service/cloud-profile-review-owner.ts"
+          },
+          {
+            "filename": "packages/network/service/learning-consent-context-endpoint.ts"
+          },
+          {
+            "filename": "packages/network/service/profile-review-factory.ts"
+          },
+          {
+            "filename": "packages/network/service/profile-review-proof-transport.ts"
+          },
+          {
+            "filename": "packages/network/service/profile-suggestion-disconnect-endpoint.ts"
+          },
+          {
+            "filename": "packages/network/service/profile-suggestion-endpoint.ts"
+          },
+          {
+            "filename": "packages/network/service/profile-suggestion-review.ts"
+          },
+          {
+            "filename": "packages/network/service/profile-suggestion-withdrawal-endpoint.ts"
+          },
+          {
+            "filename": "packages/network/service/profile-suggestions.ts"
+          },
+          {
+            "filename": "packages/network/service/service.ts"
+          },
+          {
+            "filename": "packages/network/service/snapshot.ts"
+          },
+          {
+            "filename": "packages/network/test/crossapp.test.ts"
+          },
+          {
+            "filename": "packages/network/test/fixtures/learning-collection-command-vectors.ts"
+          },
+          {
+            "filename": "packages/network/test/profile-cleanup-reconciliation.postgres.test.ts"
+          },
+          {
+            "filename": "packages/network/test/profile-suggestion-disconnect.integration.test.ts"
+          },
+          {
+            "filename": "packages/network/test/profile-suggestion-review.test.ts"
+          },
+          {
+            "filename": "packages/network/test/profile-suggestion-withdrawal.integration.test.ts"
+          },
+          {
+            "filename": "packages/network/test/profile-suggestions.integration.test.ts"
+          },
+          {
+            "filename": "packages/observatory/db/migrations/0039_profile_suggestions.sql"
+          },
+          {
+            "filename": "packages/observatory/db/migrations/0040_profile_suggestion_connection_receipts.sql"
+          },
+          {
+            "filename": "packages/observatory/db/migrations/0041_profile_cleanup_results.sql"
+          }
+        ],
+        "commits": [
+          {
+            "sha": "aa7b066d31d1f0ebb3d964fb3e1a8ba0ccb23aa9",
+            "parents": [
+              {
+                "sha": "9da0fc9d4f43959eb8bcc0da1437d8d08a7a001c"
+              }
+            ]
+          },
+          {
+            "sha": "1168a7112d123d43f00fb347f40bdca96f92dc04",
+            "parents": [
+              {
+                "sha": "aa7b066d31d1f0ebb3d964fb3e1a8ba0ccb23aa9"
+              }
+            ]
+          },
+          {
+            "sha": "dff4f18a861f3eb09444e57d35dced03bb4fb85a",
+            "parents": [
+              {
+                "sha": "1168a7112d123d43f00fb347f40bdca96f92dc04"
+              }
+            ]
+          },
+          {
+            "sha": "2168c7746ae3c15b1096ddec4e95a7e7492ea1bb",
+            "parents": [
+              {
+                "sha": "dff4f18a861f3eb09444e57d35dced03bb4fb85a"
+              }
+            ]
+          },
+          {
+            "sha": "61d96eca810e5b2bd3ed12ed6c4091f8460b6628",
+            "parents": [
+              {
+                "sha": "2168c7746ae3c15b1096ddec4e95a7e7492ea1bb"
+              }
+            ]
+          },
+          {
+            "sha": "8bd39302e08f56baae7f0bbb5b1a541d926a6b2d",
+            "parents": [
+              {
+                "sha": "61d96eca810e5b2bd3ed12ed6c4091f8460b6628"
+              }
+            ]
+          },
+          {
+            "sha": "64cec1cd5fde367d0a4329494632f7ef7a8d1923",
+            "parents": [
+              {
+                "sha": "8bd39302e08f56baae7f0bbb5b1a541d926a6b2d"
+              }
+            ]
+          },
+          {
+            "sha": "7916c699bff0acdb10532eed2e62936269bea171",
+            "parents": [
+              {
+                "sha": "64cec1cd5fde367d0a4329494632f7ef7a8d1923"
+              }
+            ]
+          },
+          {
+            "sha": "4103018085046a64beb5f58bf3343ede622c7435",
+            "parents": [
+              {
+                "sha": "7916c699bff0acdb10532eed2e62936269bea171"
+              }
+            ]
+          },
+          {
+            "sha": "3cb0abddf3701e1ece44a7a499be423864832c2a",
+            "parents": [
+              {
+                "sha": "4103018085046a64beb5f58bf3343ede622c7435"
+              }
+            ]
+          },
+          {
+            "sha": "12955960ab08a2bf81b6cb87a12cf875cfcd98d0",
+            "parents": [
+              {
+                "sha": "3cb0abddf3701e1ece44a7a499be423864832c2a"
+              }
+            ]
+          },
+          {
+            "sha": "61417a9174624f22e4084fd2989ea585d46583cd",
+            "parents": [
+              {
+                "sha": "12955960ab08a2bf81b6cb87a12cf875cfcd98d0"
+              }
+            ]
+          },
+          {
+            "sha": "f523ced1d4ed8f7e71b9f00107fe35da7f8c3dfd",
+            "parents": [
+              {
+                "sha": "61417a9174624f22e4084fd2989ea585d46583cd"
+              }
+            ]
+          },
+          {
+            "sha": "d73b62606dd7e04d45429fd3ed2f8d6c9c5f2bb4",
+            "parents": [
+              {
+                "sha": "f523ced1d4ed8f7e71b9f00107fe35da7f8c3dfd"
+              }
+            ]
+          },
+          {
+            "sha": "7ba63a6b5883623fa025ed67b7426fe64fd337b4",
+            "parents": [
+              {
+                "sha": "4f36e8da26779fee87522aafe80f4c98d4a73cbf"
+              },
+              {
+                "sha": "d73b62606dd7e04d45429fd3ed2f8d6c9c5f2bb4"
+              }
+            ]
+          },
+          {
+            "sha": "e299ea26e1877a09c4b5e2599aa7ca65e18bc06a",
+            "parents": [
+              {
+                "sha": "7ba63a6b5883623fa025ed67b7426fe64fd337b4"
+              }
+            ]
+          },
+          {
+            "sha": "ee26d32ce523a8c6cee9204d96be31157d912a6a",
+            "parents": [
+              {
+                "sha": "e299ea26e1877a09c4b5e2599aa7ca65e18bc06a"
+              }
+            ]
+          }
+        ],
+        "commitAttribution": [
+          {
+            "sha": "aa7b066d31d1f0ebb3d964fb3e1a8ba0ccb23aa9",
+            "changedPaths": [
+              "docs/results/2026-10-17-inferred-facet-provenance.md",
+              "packages/network/service/snapshot.ts",
+              "packages/network/test/crossapp.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "1168a7112d123d43f00fb347f40bdca96f92dc04",
+            "changedPaths": [
+              "docs/results/2026-10-17-imessage-suggestion-review.md",
+              "packages/network/service/profile-suggestion-review.ts",
+              "packages/network/test/profile-suggestion-review.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "dff4f18a861f3eb09444e57d35dced03bb4fb85a",
+            "changedPaths": [
+              "docs/results/2026-10-17-imessage-suggestion-review.md",
+              "packages/network/service/profile-suggestion-review.ts",
+              "packages/network/test/profile-suggestion-review.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "2168c7746ae3c15b1096ddec4e95a7e7492ea1bb",
+            "changedPaths": [
+              "deploy/backend/backend.test.ts",
+              "deploy/backend/backend.ts",
+              "docs/results/2026-10-17-reviewed-profile-suggestions.md",
+              "packages/network/service/profile-suggestion-endpoint.ts",
+              "packages/network/service/profile-suggestions.ts",
+              "packages/network/service/service.ts",
+              "packages/network/service/snapshot.ts",
+              "packages/network/test/profile-suggestions.integration.test.ts",
+              "packages/observatory/db/migrations/0037_profile_suggestions.sql"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "61d96eca810e5b2bd3ed12ed6c4091f8460b6628",
+            "changedPaths": [
+              "docs/results/2026-10-17-profile-review-owner-consumer.md",
+              "packages/core/src/svc/profile-review-owner.ts",
+              "packages/network/service/cloud-profile-review-owner.ts",
+              "packages/network/service/profile-suggestion-endpoint.ts",
+              "packages/network/service/profile-suggestions.ts",
+              "packages/network/test/profile-suggestions.integration.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "8bd39302e08f56baae7f0bbb5b1a541d926a6b2d",
+            "changedPaths": [
+              "docs/results/2026-10-17-profile-review-purpose-factory.md",
+              "packages/core/src/svc/profile-review-source.ts",
+              "packages/network/service/README.md",
+              "packages/network/service/cloud-profile-review-owner.ts",
+              "packages/network/service/profile-review-factory.ts",
+              "packages/network/service/profile-review-proof-transport.ts",
+              "packages/network/service/profile-suggestion-endpoint.ts",
+              "packages/network/service/service.ts",
+              "packages/network/test/profile-suggestions.integration.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "64cec1cd5fde367d0a4329494632f7ef7a8d1923",
+            "changedPaths": [
+              "docs/results/2026-10-17-collection-pending-replay.md",
+              "packages/network/service/profile-suggestions.ts",
+              "packages/network/test/profile-suggestions.integration.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "7916c699bff0acdb10532eed2e62936269bea171",
+            "changedPaths": [
+              "deploy/backend/backend.test.ts",
+              "deploy/backend/backend.ts",
+              "docs/results/2026-10-17-collection-http-retention.md",
+              "packages/core/src/svc/profile-review-owner.ts",
+              "packages/core/src/svc/profile-review-source.ts",
+              "packages/network/service/cloud-profile-review-owner.ts",
+              "packages/network/service/profile-review-factory.ts",
+              "packages/network/service/profile-suggestion-endpoint.ts",
+              "packages/network/service/profile-suggestions.ts",
+              "packages/network/test/profile-suggestions.integration.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "4103018085046a64beb5f58bf3343ede622c7435",
+            "changedPaths": [
+              "deploy/backend/backend.test.ts",
+              "deploy/backend/backend.ts",
+              "docs/results/2026-10-17-learning-membership-context.md",
+              "packages/core/src/svc/learning-consent-context.ts",
+              "packages/network/service/learning-consent-context-endpoint.ts",
+              "packages/network/service/service.ts",
+              "packages/network/test/profile-suggestions.integration.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "3cb0abddf3701e1ece44a7a499be423864832c2a",
+            "changedPaths": [
+              "docs/results/2026-10-18-production-cloud-network-handoff.md",
+              "packages/core/src/svc/network-delegation.ts",
+              "packages/mcp/db/oauth.sql",
+              "packages/mcp/src/handler.ts",
+              "packages/mcp/src/hooks.ts",
+              "packages/mcp/src/pg-store.ts",
+              "packages/mcp/src/store.ts",
+              "packages/mcp/test/cloud-authority.pg.test.ts",
+              "packages/network/service/serve.ts",
+              "packages/platform/src/api.ts",
+              "packages/platform/src/cloud-delegation.ts",
+              "packages/platform/src/sessions.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "12955960ab08a2bf81b6cb87a12cf875cfcd98d0",
+            "changedPaths": [
+              "packages/mcp/db/oauth.sql",
+              "packages/mcp/test/cloud-authority.pg.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "61417a9174624f22e4084fd2989ea585d46583cd",
+            "changedPaths": [
+              "docs/results/2026-10-20-scoped-collection-contract.md",
+              "packages/core/src/svc/learning-collection-command.ts",
+              "packages/core/src/svc/learning-consent-context.ts",
+              "packages/core/src/svc/profile-review-disconnect.ts",
+              "packages/core/src/svc/profile-review-withdrawal.ts",
+              "packages/network/service/cloud-profile-review-owner.ts",
+              "packages/network/service/learning-consent-context-endpoint.ts",
+              "packages/network/service/profile-review-factory.ts",
+              "packages/network/service/profile-review-proof-transport.ts",
+              "packages/network/service/profile-suggestion-disconnect-endpoint.ts",
+              "packages/network/service/profile-suggestion-endpoint.ts",
+              "packages/network/service/profile-suggestion-withdrawal-endpoint.ts",
+              "packages/network/service/profile-suggestions.ts",
+              "packages/network/service/service.ts",
+              "packages/network/service/snapshot.ts",
+              "packages/network/test/fixtures/learning-collection-command-vectors.ts",
+              "packages/network/test/profile-suggestion-disconnect.integration.test.ts",
+              "packages/network/test/profile-suggestion-withdrawal.integration.test.ts",
+              "packages/network/test/profile-suggestions.integration.test.ts",
+              "packages/observatory/db/migrations/0039_profile_suggestion_connection_receipts.sql"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "f523ced1d4ed8f7e71b9f00107fe35da7f8c3dfd",
+            "changedPaths": [
+              "packages/network/service/profile-suggestions.ts",
+              "packages/network/test/profile-cleanup-reconciliation.postgres.test.ts",
+              "packages/network/test/profile-suggestion-disconnect.integration.test.ts",
+              "packages/network/test/profile-suggestion-withdrawal.integration.test.ts",
+              "packages/observatory/db/migrations/0040_profile_cleanup_results.sql"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "d73b62606dd7e04d45429fd3ed2f8d6c9c5f2bb4",
+            "changedPaths": [
+              "packages/network/test/profile-cleanup-reconciliation.postgres.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "e299ea26e1877a09c4b5e2599aa7ca65e18bc06a",
+            "changedPaths": [
+              "packages/network/test/profile-suggestion-disconnect.integration.test.ts"
+            ],
+            "limitations": []
+          },
+          {
+            "sha": "ee26d32ce523a8c6cee9204d96be31157d912a6a",
+            "changedPaths": [
+              "packages/network/test/crossapp.test.ts",
+              "packages/network/test/profile-suggestions.integration.test.ts"
+            ],
+            "limitations": []
+          }
+        ]
+      },
+      "inputSha256": "d5709ecdeb49f83b612e0349359e60b9a386b20f2d34a671f7192057f0507e6e",
+      "expected": [
+        {
+          "commitSha": "7ba63a6b5883623fa025ed67b7426fe64fd337b4",
+          "parents": [
+            "4f36e8da26779fee87522aafe80f4c98d4a73cbf",
+            "d73b62606dd7e04d45429fd3ed2f8d6c9c5f2bb4"
+          ],
+          "gitVersion": "git version 2.56.0",
+          "automaticTree": "81dd4eb5e5c7ade1528b19d1f29e0e7f03503e6e",
+          "resolvedTree": "7c40a6d5698b82597fc591e0a83ac25aedd8e2b0",
+          "hadConflicts": true,
+          "patchSha256": "542cd97ae8ecac1e773a9056ef4870b115bc2950ec691fabeb7ebd3a174f2d03",
+          "paths": [
+            "deploy/backend/backend.test.ts",
+            "deploy/backend/backend.ts",
+            "docs/results/2026-10-20-scoped-collection-contract.md",
+            "packages/core/src/svc/network-delegation.ts",
+            "packages/mcp/src/handler.ts",
+            "packages/mcp/src/hooks.ts",
+            "packages/mcp/test/cloud-authority.pg.test.ts",
+            "packages/network/service/serve.ts",
+            "packages/network/service/service.ts",
+            "packages/network/service/snapshot.ts",
+            "packages/observatory/db/migrations/0037_profile_suggestions.sql",
+            "packages/observatory/db/migrations/0039_profile_suggestion_connection_receipts.sql",
+            "packages/observatory/db/migrations/0039_profile_suggestions.sql",
+            "packages/observatory/db/migrations/0040_profile_cleanup_results.sql",
+            "packages/observatory/db/migrations/0040_profile_suggestion_connection_receipts.sql",
+            "packages/observatory/db/migrations/0041_profile_cleanup_results.sql",
+            "packages/platform/src/api.ts",
+            "packages/platform/src/cloud-delegation.ts"
+          ],
+          "patchBytes": 62847
+        }
+      ]
+    }
+  ]
+}

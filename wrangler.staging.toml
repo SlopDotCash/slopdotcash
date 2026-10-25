@@ -31,10 +31,16 @@ bucket_name = "slop-staging-traces"
 binding = "VETTING_EVIDENCE"
 bucket_name = "slop-staging-vetting-evidence"
 
-# Read-only installation lookup; no production bot queues or database.
+# Installation lookup and a separate authenticated historical publisher.
+# Both remain isolated from production databases, bot queues and model routes.
 [[services]]
 binding = "SLOPBOT"
 service = "slop-repository-access-staging"
+
+[[services]]
+binding = "SLOPBOT_VALUE_IMPORT"
+service = "slop-repository-access-staging"
+entrypoint = "HistoricalValuePublisher"
 
 [[services]]
 binding = "VETTING_SANDBOX"

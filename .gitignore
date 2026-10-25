@@ -8,6 +8,7 @@ node_modules/
 .env.*
 !.env.example
 *.tsbuildinfo
+workers/vetting-sandbox/.build/
 *.tmp
 *.log
 __pycache__/

@@ -18,6 +18,7 @@ import {
   captureUpgrade,
   deployUpgradeableFactory,
 } from "../../contracts/evm/integration/upgrade";
+import { onRequest as pagesRequest } from "../../functions/api/v1/[[path]]";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -52,7 +53,11 @@ import {
 } from "./payments";
 
 const productionAttester = process.argv.includes("--production-attester");
-const bindingGuard = process.argv.includes("--binding-guard");
+const bindingRecovery = process.argv.includes("--binding-recovery");
+const originalWinner = process.argv.includes("--original-winner");
+assert(!originalWinner || bindingRecovery);
+const bindingGuard =
+  bindingRecovery || process.argv.includes("--binding-guard");
 const staleOnly = process.argv.includes("--stale-only");
 assert(!staleOnly || bindingGuard);
 const sharedScopes =
@@ -655,6 +660,16 @@ try {
           get signer() {
             return signer;
           },
+          recovery: (request: Request) =>
+            new PaymentSignerJournal({ storage: journal }, {
+              ...env,
+              get SIGNER_PRIVATE_KEY(): `0x${string}` {
+                throw new Error("Recovery read a signing key");
+              },
+              get PAYMENTS_DB() {
+                throw new Error("Recovery read payment data");
+              },
+            } as never).fetch(request),
           restart: () => {
             signer = new PaymentSignerJournal(
               { storage: journal },
@@ -1090,57 +1105,285 @@ try {
       assert(heldReport.failed > 0);
       assert.deepEqual(heldReport.submitted, []);
 
-      // Model late delivery of already-signed bytes directly to local Anvil.
-      // The service itself never rebroadcasts this obsolete authorization.
-      assert.equal(
-        await rpc("eth_sendRawTransaction", [privateAttempt.rawTransaction]),
-        privateAttempt.transactionId,
-      );
-      await rpc("anvil_mine", ["0x1"]);
-      receiptFault = {
-        transactionId: privateAttempt.transactionId,
-        kind: "missing",
-      };
-      assert((await scopeReport("private")).failed > 0);
-      await unchanged();
-      receiptFault = null;
-      const realReceipt = await rpc("eth_getTransactionReceipt", [
-        privateAttempt.transactionId,
-      ]);
-      assert.equal(realReceipt.status, "0x1");
-      const earlyFinalized = await rpc("eth_getBlockByNumber", [
-        "finalized",
-        false,
-      ]);
-      assert(BigInt(realReceipt.blockNumber) > BigInt(earlyFinalized.number));
-      assert.equal((await scopeReport("private")).failed, 0);
-      await unchanged();
-      await rpc("anvil_mine", ["0x40"]);
-      receiptFault = {
-        transactionId: privateAttempt.transactionId,
-        kind: "wrong-block",
-      };
-      assert((await scopeReport("private")).failed > 0);
-      await unchanged();
-      receiptFault = {
-        transactionId: privateAttempt.transactionId,
-        kind: "wrong-transaction",
-      };
-      assert((await scopeReport("private")).failed > 0);
-      await unchanged();
-      receiptFault = null;
-      privateAttester.restart();
-      await privateAttester.scheduled();
-      await privateAttester.scheduled();
-      assert.deepEqual(await privatePending(), []);
-      assert.deepEqual(await journal.get("pending-stored-bindings"), []);
-      assert.equal(
-        JSON.stringify(await journal.get(privateAttempt.key)),
-        privateRaw,
-      );
-      assert.equal(oldBroadcasts(), staleBroadcasts);
-      assert.equal(await nonce(), 3);
-      assert.equal(attempts().length, 3);
+      if (bindingRecovery) {
+        const keeperState = await journal.get(`nonce:${chainId}:${authority}`);
+        const body = {
+          scope: "security-bounty",
+          network,
+          vault,
+          originalTransactionId: privateAttempt.transactionId,
+          winnerTransactionId: `0x${"f".repeat(64)}`,
+          reason: "Reconcile an independently finalized local owner recovery",
+        };
+        let liveOperators = reporter.githubId;
+        let serviceCalls = 0;
+        let loseResponse = false;
+        const callRecovery = async (
+          overrides: Record<string, unknown> = {},
+          headers: Record<string, string> = {},
+          requestOrigin = "https://slop.cash",
+        ) => {
+          const response = await pagesRequest({
+            request: new Request(
+              `${requestOrigin}/api/v1/operator/wallet-bindings/reconcile`,
+              {
+                method: "POST",
+                headers: {
+                  origin: requestOrigin,
+                  cookie: `__Host-slop_points=${session}`,
+                  "content-type": "application/json",
+                  ...headers,
+                },
+                body: JSON.stringify({ ...body, ...overrides }),
+              },
+            ),
+            env: {
+              SLOP_DB: database,
+              OPERATOR_GITHUB_IDS: liveOperators,
+              ADMIN_GITHUB_IDS: reporter.githubId,
+              TRACE_AUTH_SECRET: "local-recovery-fixture-auth-secret-only",
+              BINDING_RECOVERY: {
+                async fetch(request: Request) {
+                  serviceCalls++;
+                  const response = await privateAttester.recovery(request);
+                  if (loseResponse && response.ok)
+                    throw new Error("Synthetic lost recovery response");
+                  return response;
+                },
+              },
+            },
+            waitUntil: () => {},
+          } as never);
+          return { status: response.status, body: await response.json() };
+        };
+        // Real Pages session lookup and live allowlist, without an admin union.
+        assert.equal((await callRecovery({}, { cookie: "" })).status, 401);
+        assert.equal(
+          (await callRecovery({}, { origin: "https://example.invalid" }))
+            .status,
+          403,
+        );
+        assert.equal(
+          (await callRecovery({}, { authorization: "Bearer invalid" })).status,
+          404,
+        );
+        liveOperators = "999";
+        assert.equal((await callRecovery()).status, 403);
+        liveOperators = reporter.githubId;
+        assert.equal(serviceCalls, 0);
+        assert.equal((await callRecovery()).status, 409);
+        assert.equal((await callRecovery({ scope: "ordinary" })).status, 409);
+        await unchanged();
+        // Actual finalized transactions which consume a nonce but do not match
+        // the reviewed inert self-transfer remain held. Each starts from the
+        // same independent local chain snapshot; no accepted observation is undone.
+        for (const changes of originalWinner
+          ? []
+          : [
+              { to: owner },
+              { value: "0x1" },
+              { data: "0x00", gas: "0x55f0" },
+            ]) {
+          const snapshot = await rpc("evm_snapshot", []);
+          const invalid = await rpc("eth_sendTransaction", [
+            {
+              from: authority,
+              to: authority,
+              nonce: "0x1",
+              type: "0x2",
+              value: "0x0",
+              data: "0x",
+              gas: "0x5208",
+              maxFeePerGas: "0x77359400",
+              maxPriorityFeePerGas: "0x3b9aca00",
+              ...changes,
+            },
+          ]);
+          await rpc("anvil_mine", ["0x40"]);
+          assert.equal(
+            (await callRecovery({ winnerTransactionId: invalid })).status,
+            409,
+          );
+          await unchanged();
+          assert.equal(
+            await journal.get(`nonce:${chainId}:${authority}`),
+            keeperState,
+          );
+          assert.equal(await rpc("evm_revert", [snapshot]), true);
+        }
+        // Only the fixture operator signs this self-transaction. No service does.
+        const winner = originalWinner
+          ? await rpc("eth_sendRawTransaction", [privateAttempt.rawTransaction])
+          : await rpc("eth_sendTransaction", [
+              {
+                from: authority,
+                to: authority,
+                nonce: "0x1",
+                type: "0x2",
+                value: "0x0",
+                data: "0x",
+                gas: "0x5208",
+                maxFeePerGas: "0x77359400",
+                maxPriorityFeePerGas: "0x3b9aca00",
+              },
+            ]);
+        body.winnerTransactionId = originalWinner
+          ? `0x${"e".repeat(64)}`
+          : winner;
+        await rpc("anvil_mine", ["0x1"]);
+        assert.equal(
+          (await callRecovery()).status,
+          409,
+          "Nonfinal winner must remain held",
+        );
+        await unchanged();
+        await rpc("anvil_mine", ["0x40"]);
+        const winnerReceipt = await rpc("eth_getTransactionReceipt", [winner]);
+        assert.equal(winnerReceipt.status, "0x1");
+        console.log(
+          JSON.stringify({
+            observation: originalWinner
+              ? "original-winner-finalized"
+              : "external-self-winner-finalized",
+            chainNonce: await nonce(),
+            pendingPrivate: 1,
+          }),
+        );
+        if (!originalWinner) {
+          assert.equal(
+            (await callRecovery({ winnerTransactionId: `0x${"f".repeat(64)}` }))
+              .status,
+            409,
+            "Advanced chain nonce without the exact canonical winner remains held",
+          );
+          await unchanged();
+        }
+        receiptFault = { transactionId: winner, kind: "wrong-block" };
+        assert.equal((await callRecovery()).status, 409);
+        await unchanged();
+        receiptFault = { transactionId: winner, kind: "wrong-transaction" };
+        assert.equal((await callRecovery()).status, 409);
+        await unchanged();
+        receiptFault = null;
+        // A lost response does not roll back or repeat the durable observation.
+        loseResponse = true;
+        assert.equal((await callRecovery()).status, 503);
+        loseResponse = false;
+        privateAttester.restart();
+        const result = await callRecovery();
+        assert.equal(result.status, 200, JSON.stringify(result.body));
+        assert.equal(
+          result.body.state,
+          originalWinner ? "original_finalized" : "superseded",
+        );
+        assert.equal(result.body.winnerTransactionId, winner);
+        assert.equal(
+          JSON.stringify(await journal.get(privateAttempt.key)),
+          originalWinner ? privateRaw : "null",
+        );
+        assert.deepEqual(await privatePending(), []);
+        const archived = await journal.get<{ attempt: unknown }>(
+          `security:binding-observed:${privateAttempt.transactionId}`,
+        );
+        assert.equal(JSON.stringify(archived?.attempt), privateRaw);
+        assert.equal(
+          await journal.get(`nonce:${chainId}:${authority}`),
+          keeperState,
+        );
+        assert.equal(oldBroadcasts(), staleBroadcasts);
+        assert.equal(
+          (await callRecovery({ winnerTransactionId: `0x${"f".repeat(64)}` }))
+            .status,
+          409,
+        );
+        assert.equal((await callRecovery()).status, 200);
+        assert.equal(
+          sqlite
+            .query<{ n: number }, []>(
+              "SELECT count(*) n FROM signer_journal WHERE key LIKE 'security:binding-observed:%'",
+            )
+            .get()?.n,
+          1,
+        );
+        const audits = sqlite
+          .query<{ action: string }, []>(
+            "SELECT action FROM private_audit_events WHERE action LIKE 'wallet_binding.%'",
+          )
+          .all()
+          .map((r) => r.action);
+        assert(audits.includes("wallet_binding.reconciliation_requested"));
+        assert(audits.includes("wallet_binding.reconciliation_refused"));
+        assert(audits.includes("wallet_binding.reconciliation_unknown"));
+        assert(audits.includes("wallet_binding.reconciled"));
+        await privateAttester.scheduled();
+        const resumedReceipt = await rpc("eth_getTransactionReceipt", [
+          successorAttempt.transactionId,
+        ]);
+        assert.equal(resumedReceipt?.status, "0x1");
+        // Invalid-winner snapshot controls can discard the queued transaction.
+        // The existing executor reuses its stored bytes, then waits for finality.
+        await rpc("anvil_mine", ["0x40"]);
+        privateAttester.restart();
+        await privateAttester.scheduled();
+        assert.equal(await nonce(), 3);
+        assert.deepEqual(await journal.get("pending-stored-bindings"), []);
+        assert.equal(
+          JSON.stringify(await journal.get(successorAttempt.key)),
+          successorRaw,
+        );
+      } else {
+        // Model late delivery of already-signed bytes directly to local Anvil.
+        // The service itself never rebroadcasts this obsolete authorization.
+        assert.equal(
+          await rpc("eth_sendRawTransaction", [privateAttempt.rawTransaction]),
+          privateAttempt.transactionId,
+        );
+        await rpc("anvil_mine", ["0x1"]);
+        receiptFault = {
+          transactionId: privateAttempt.transactionId,
+          kind: "missing",
+        };
+        assert((await scopeReport("private")).failed > 0);
+        await unchanged();
+        receiptFault = null;
+        const realReceipt = await rpc("eth_getTransactionReceipt", [
+          privateAttempt.transactionId,
+        ]);
+        assert.equal(realReceipt.status, "0x1");
+        const earlyFinalized = await rpc("eth_getBlockByNumber", [
+          "finalized",
+          false,
+        ]);
+        assert(BigInt(realReceipt.blockNumber) > BigInt(earlyFinalized.number));
+        assert.equal((await scopeReport("private")).failed, 0);
+        await unchanged();
+        await rpc("anvil_mine", ["0x40"]);
+        receiptFault = {
+          transactionId: privateAttempt.transactionId,
+          kind: "wrong-block",
+        };
+        assert((await scopeReport("private")).failed > 0);
+        await unchanged();
+        receiptFault = {
+          transactionId: privateAttempt.transactionId,
+          kind: "wrong-transaction",
+        };
+        assert((await scopeReport("private")).failed > 0);
+        await unchanged();
+        receiptFault = null;
+        privateAttester.restart();
+        await privateAttester.scheduled();
+        await privateAttester.scheduled();
+        assert.deepEqual(await privatePending(), []);
+        assert.deepEqual(await journal.get("pending-stored-bindings"), []);
+        assert.equal(
+          JSON.stringify(await journal.get(privateAttempt.key)),
+          privateRaw,
+        );
+        assert.equal(oldBroadcasts(), staleBroadcasts);
+        assert.equal(await nonce(), 3);
+        assert.equal(attempts().length, 3);
+      }
       const totals = await readDeploymentVaultTotals(
         config as unknown as PaymentDeployment,
         rpcUrl,
@@ -1163,7 +1406,9 @@ try {
       );
       console.log(
         JSON.stringify({
-          proof: "private-binding-current-claim",
+          proof: bindingRecovery
+            ? "operator-binding-winner-recovery"
+            : "private-binding-current-claim",
           result: "passed",
           privateTransaction: privateAttempt.transactionId,
           ordinarySuccessor: successorAttempt.transactionId,
@@ -1177,7 +1422,9 @@ try {
           renewedConsentDidNotReplaceRaw: !staleOnly,
           missingWrongNonfinalReceiptHeld: true,
           finalReceiptReconciledWithoutResend: true,
-          cancellationOrReplacement: false,
+          workerCancellationOrReplacement: false,
+          externalFinalizedSelfTransaction: bindingRecovery && !originalWinner,
+          originalReceiptPriority: originalWinner,
         }),
       );
     } else {

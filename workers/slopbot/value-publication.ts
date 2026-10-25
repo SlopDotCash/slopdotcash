@@ -19,6 +19,10 @@ import {
   type ValueEvidence,
 } from "./value-evidence";
 import { appendValueRecord, prepareValueRecord } from "./value-journal";
+import {
+  reuseMergeResolution,
+  type ValueMergeRecipe,
+} from "./value-merge-profile";
 import { type ValueAssessmentResult, valueSourceDigest } from "./value-review";
 
 export type ValueClient = EvidenceClient & Pick<GitHubClient, "fileText">;
@@ -47,6 +51,7 @@ export async function verifyCurrentValueSource(
   evidence: ValueEvidence,
   result: Pick<ValueResult, "policySha" | "sourceDigest">,
   repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  mergeRecipe?: ValueMergeRecipe,
 ) {
   const repository = repositories.find((entry) =>
     [entry.id, ...entry.aliases].some(
@@ -75,11 +80,13 @@ export async function verifyCurrentValueSource(
     evidence.pull.number,
     repository,
   );
-  const current = await collectValueContext(
+  let current = await collectValueContext(
     github,
     collected,
     valueContextSelections(evidence),
   );
+  if (mergeRecipe)
+    current = await reuseMergeResolution(current, evidence, mergeRecipe);
   // The local Git collector appends an empty result when there are no
   // two-parent merges to reconstruct. Reproduce that representation without
   // accepting client-supplied resolution evidence or changing stored digests.
@@ -107,7 +114,7 @@ export async function verifyCurrentValueSource(
     throw new Error(
       "Value source changed after assessment; a new assessment is required",
     );
-  return { evidence: current, policy };
+  return { evidence: current, policy, ...(mergeRecipe ? { mergeRecipe } : {}) };
 }
 
 export async function publishValueAssessment(

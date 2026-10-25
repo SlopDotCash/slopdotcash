@@ -202,10 +202,39 @@ signer transaction checks the tombstone before signing. The dispatcher may mark
 the old attempt failed only after confirmed retirement; a null lookup alone is
 never proof that signing cannot race the lookup.
 
-Signer keys must be dedicated to these Workers. Manual external transactions
-using the same keys would invalidate the nonce ownership assumption. An EVM
-transaction stuck due to fee pricing requires operator reconciliation; there
-is no automatic gas-price replacement in this version.
+Signer keys must be dedicated to these Workers. An EVM transaction stuck due
+to fee pricing requires operator reconciliation; there is no automatic
+replacement or cancellation authority in this version.
+
+A designated operator may reconcile one previously authorized external recovery
+transaction through `POST /api/v1/operator/wallet-bindings/reconcile`. The request
+uses the current same-origin site session and live `OPERATOR_GITHUB_IDS`, with
+`scope` (`ordinary` or `security-bounty`), `network`, `vault`,
+`originalTransactionId`, `winnerTransactionId`, and an 8–500-character `reason`.
+This observes a transaction which a human or owner-authorized agent already
+submitted. It does not authorize, construct, sign, or broadcast that transaction.
+
+Pages receives only the named `BindingRecovery` entrypoint. The normal protected
+production release installs its Base binding only after it releases and verifies
+the attester at that source. An existing zero-pin attester stays unchanged and
+Pages recovery remains unavailable for that release. Staging and preview do not
+receive the production binding. No separate mode or project inventory is used.
+
+The original finalized canonical binding receipt takes priority. Otherwise,
+recovery accepts only a finalized canonical type-2 transaction from the original
+identity signer, at the original nonce, to its own plain EOA, with zero value,
+empty data/access list, and exactly 21,000 gas consumed and supplied. Its signed
+bytes are reconstructed and its signature and hash verified. Missing, changed,
+nonfinal, or unsupported winners remain held. Current reviewed deployment and
+identity pins must still match; a rotated-away identity requires separate review.
+
+The journal atomically archives the exact original attempt and observed proof,
+then retires only that pending entry. Repeating the same request is idempotent;
+a changed winner refuses. It never resets the shared nonce, changes a wallet or
+consent, marks a payment paid, or releases a reserve. A durable private request
+audit precedes the call; a lost response is recorded as unknown and must be
+retried with the same input. Future ordinary bindings still use their own current
+authorization. Keeper gas budgets and Solana recovery are not changed.
 
 EVM signing limits gas to the deployment record's `gasCeiling`, copied from the
 network registry, and max gas price to 10 gwei; a record without a ceiling is

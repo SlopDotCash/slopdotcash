@@ -7,6 +7,7 @@ import os
 import resource
 import selectors
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -16,11 +17,12 @@ COMMANDS = {
     "python": ["python3", "/analysis/artifact"],
     "node": ["node", "--max-old-space-size=128", "/analysis/artifact"],
     "binary": ["/analysis/artifact"],
+    "merge": ["node", "--max-old-space-size=128", "/opt/slop/merge.mjs"],
 }
 LIMIT = 65536
 
 
-def block_network():
+def block_network(merge=False):
     # Docker development does not enforce Cloudflare's enableInternet flag.
     # Apply the same syscall boundary in both environments; descendants inherit it.
     lib = ctypes.CDLL("libseccomp.so.2", use_errno=True)
@@ -39,26 +41,45 @@ def block_network():
     try:
         # No sockets are inherited. Block new sockets and io_uring, which can
         # otherwise create sockets without making a socket syscall.
-        for name in (b"socket", b"socketpair", b"io_uring_setup"):
+        for name in (b"socket", b"io_uring_setup") + (() if merge else (b"socketpair",)):
             number = lib.seccomp_syscall_resolve_name(name)
             if number < 0 or lib.seccomp_rule_add(context, 0x00050001, number, 0) != 0:
                 raise OSError("Cannot define network filter")
+        if merge:
+            # Node/libuv uses a connected Unix socket pair for Git's stdio.
+            # This cannot name/connect an external peer. All socket() calls
+            # and every other socketpair family remain denied. Generic artifact
+            # execution retains its original blanket socketpair refusal.
+            class Argument(ctypes.Structure):
+                _fields_ = [("arg", ctypes.c_uint), ("op", ctypes.c_int),
+                            ("datum_a", ctypes.c_uint64), ("datum_b", ctypes.c_uint64)]
+            lib.seccomp_rule_add_array.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+                                                  ctypes.c_int, ctypes.c_uint,
+                                                  ctypes.POINTER(Argument)]
+            lib.seccomp_rule_add_array.restype = ctypes.c_int
+            number = lib.seccomp_syscall_resolve_name(b"socketpair")
+            # SCMP_CMP_NE: deny families other than AF_UNIX.
+            argument = Argument(0, 1, socket.AF_UNIX, 0)
+            if number < 0 or lib.seccomp_rule_add_array(
+                context, 0x00050001, number, 1, ctypes.byref(argument)
+            ) != 0:
+                raise OSError("Cannot define child-pipe filter")
         if lib.seccomp_load(context) != 0:
             raise OSError("Cannot install network filter")
     finally:
         lib.seccomp_release(context)
 
 
-def restrict():
+def restrict(merge=False):
     # PR_SET_NO_NEW_PRIVS prevents setuid programs from restoring authority.
     if ctypes.CDLL(None, use_errno=True).prctl(38, 1, 0, 0, 0) != 0:
         raise OSError("Cannot remove privilege escalation")
-    block_network()
+    block_network(merge)
     os.setgroups([])
     os.setgid(65534)
     os.setuid(65534)
     resource.setrlimit(resource.RLIMIT_CPU, (20, 20))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (8 * 1024 * 1024,) * 2)
+    resource.setrlimit(resource.RLIMIT_FSIZE, ((128 if merge else 8) * 1024 * 1024,) * 2)
     resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -72,12 +93,12 @@ def main():
         child = subprocess.Popen(
             COMMANDS[interpreter],
             cwd="/analysis/work",
-            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/analysis/work", "TMPDIR": "/analysis/work"},
+            env={"PATH": ("/opt/slop-merge-git/bin:" if interpreter == "merge" else "") + "/usr/local/bin:/usr/bin:/bin", "HOME": "/analysis/work", "TMPDIR": "/analysis/work"},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
-            preexec_fn=restrict,
+            preexec_fn=lambda: restrict(interpreter == "merge"),
         )
     except OSError as error:
         # An unsupported executable or missing loader is an artifact result.
@@ -100,6 +121,23 @@ def main():
     deadline = time.monotonic() + 30
     try:
         while selector.get_map():
+            if interpreter == "merge":
+                # This is a fail-closed observation, not a filesystem quota.
+                # The container's disk ceiling and per-file rlimit remain hard
+                # bounds; no mount or privilege expansion is needed here.
+                used = 0
+                for root, _, files in os.walk("/analysis/work"):
+                    for name in files:
+                        try:
+                            used += os.lstat(os.path.join(root, name)).st_size
+                        except FileNotFoundError:
+                            # Git atomically replaces temporary packs/indexes
+                            # after directory enumeration. They no longer use
+                            # disk; every other filesystem error still refuses.
+                            continue
+                if used > 256 * 1024 * 1024:
+                    status = "disk-limit"
+                    break
             if time.monotonic() >= deadline:
                 status = "timeout"
                 break

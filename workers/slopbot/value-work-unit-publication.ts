@@ -57,6 +57,7 @@ export async function verifyCurrentWorkUnitSource(
           sourceDigest: original.sourceDigests[i].digest,
         },
         repositories,
+        source.mergeRecipe,
       ),
     );
   }
