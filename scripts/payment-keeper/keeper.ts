@@ -86,7 +86,7 @@ async function json(url: string) {
           : new URL(url).origin,
     },
     signal: AbortSignal.timeout(20_000),
-    redirect: "error",
+    redirect: "manual",
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Public registry HTTP ${response.status}`);
