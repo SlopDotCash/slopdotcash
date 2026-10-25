@@ -749,9 +749,9 @@ try {
     const conversionsBefore = (
       sqlite
         .query(
-          "SELECT COUNT(*) AS n FROM fee_conversions WHERE kind = 'conversion'",
+          "SELECT COUNT(*) AS n FROM fee_conversions WHERE kind = 'conversion' AND token = ?",
         )
-        .get() as { n: number }
+        .get(AERO) as { n: number }
     ).n;
     let delivered = false;
     let claimHash: string | null = null;
@@ -829,16 +829,18 @@ try {
       (
         sqlite
           .query(
-            "SELECT COUNT(*) AS n FROM fee_conversions WHERE kind = 'conversion'",
+            "SELECT COUNT(*) AS n FROM fee_conversions WHERE kind = 'conversion' AND token = ?",
           )
-          .get() as { n: number }
+          .get(AERO) as { n: number }
       ).n;
     if (
       claim?.state !==
         (fault === "hashes" || fault === "race" ? "submitted" : "unknown") ||
       conversionCount() !== conversionsBefore
     )
-      throw new Error(`${fault}: uncertain claim allowed a conversion`);
+      throw new Error(
+        `${fault}: claim state ${claim?.state}; conversions ${conversionCount()}, expected ${conversionsBefore}`,
+      );
     await rpc("anvil_mine", ["0x80"]);
     if (fault === "receipt" || fault === "hashes") {
       await runOnce(env, undefined, { fetch: interrupted }, "receipts");
