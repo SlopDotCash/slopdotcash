@@ -44,6 +44,7 @@ try {
       "NO_GETTEXT=YesPlease",
       "NO_TCLTK=YesPlease",
       "NO_PERL=YesPlease",
+      "NO_RUST=YesPlease",
       "install",
     ],
     { env, stdio: "inherit", timeout: 600_000 },
@@ -56,7 +57,7 @@ try {
     throw new Error("Built Git version differs from merge profile");
   await writeFile(
     join(destination, "source.json"),
-    `${JSON.stringify({ source, sha256: expected, version })}\n`,
+    `${JSON.stringify({ source, sha256: expected, version, optionalRust: false })}\n`,
     { flag: "wx" },
   );
 } finally {

@@ -128,6 +128,9 @@ This fixed operation uses checksum-pinned Git 2.56.0. The 2.52 ort rename fixes
 correct automatic trees for valid histories, and 2.56 adds corrupt-tree
 refusals. Strict fsck remains required. The ordinary artifact operation keeps
 its existing 2 MiB input, 8 MiB file and 64 KiB output limits.
+Both build paths use Git 2.56's supported `NO_RUST` option; they do not require
+an unprovisioned Cargo toolchain. The consumer build includes HTTPS support;
+the offline sandbox build omits it.
 
 The merge operation accepts at most 25 MiB of bundle bytes. Its trusted input
 and complete result each have an 8 MiB bound. It retains the unprivileged,
