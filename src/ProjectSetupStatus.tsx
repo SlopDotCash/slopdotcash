@@ -274,6 +274,9 @@ export function ProjectSetupStatusPanel({
                         }
                       />
                     </span>
+                    <Link href={`/projects/${setup.slug}/funding`}>
+                      View vault funds and automatic payment
+                    </Link>
                   </>
                 )}
               </dd>

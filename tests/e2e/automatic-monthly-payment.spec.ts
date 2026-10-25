@@ -97,9 +97,6 @@ test("automatic monthly payment starts checked and only the vault owner can sign
   const monthly = page.getByRole("region", {
     name: "Automatic monthly payment · base-sepolia",
   });
-  await expect(monthly).toContainText(
-    "starts with automatic monthly payment off",
-  );
   const connect = monthly.getByRole("button", {
     name: "Connect MetaMask",
     exact: true,

@@ -146,6 +146,19 @@ export async function ownerPlan(input, runtime) {
       ).equals(project)
     )
       throw new Error("Wrong project PDA");
+    if (
+      bounty &&
+      (input.monthlyCap !== undefined || input.automaticMonthly !== undefined)
+    )
+      throw new Error("Private bounty awards have no automatic monthly policy");
+    const enabled = input.automaticMonthly ?? true;
+    if (typeof enabled !== "boolean")
+      throw new Error("Invalid automatic monthly choice");
+    const cap = bounty
+      ? null
+      : !enabled && input.monthlyCap === "0"
+        ? new BN(0)
+        : amount(input.monthlyCap);
     instructions.push(
       await program.methods
         .initialize(
@@ -168,6 +181,14 @@ export async function ownerPlan(input, runtime) {
         })
         .instruction(),
     );
+    // Both instructions execute atomically and require the same owner signature.
+    if (!bounty)
+      instructions.push(
+        await program.methods
+          .setMonthlyCommitment(cap, enabled)
+          .accountsStrict({ owner, project })
+          .instruction(),
+      );
   } else {
     const state = await program.account.project.fetch(project, "finalized");
     // The identity authority is not compared: after activation it changes

@@ -237,10 +237,87 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
     /pinned escrow Config/,
   );
   deployment.feeRecipient = pinned;
-  await execute("initialize", { projectDigest });
+  await assert.rejects(
+    execute("initialize", { projectDigest }),
+    /positive u64/,
+  );
+  assert.equal(
+    await provider.connection.getAccountInfo(project),
+    null,
+    "a missing cap creates no project",
+  );
+  await execute("initialize", { projectDigest, monthlyCap: "60000000" });
+  const created = await new anchor.Program(
+    JSON.parse(readFileSync("idl/slop_escrow.json")),
+    provider,
+  ).account.project.fetch(project, "finalized");
+  assert.equal(
+    created.monthlyEnabled,
+    true,
+    "creation enables monthly commitments",
+  );
+  assert.equal(created.monthlyCap.toString(), "60000000");
+  const optOutDigest = hash("owner-plan-opt-out");
+  const optOutProject = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("project"),
+      owner.publicKey.toBuffer(),
+      Buffer.from(optOutDigest, "hex"),
+      Buffer.from([0]),
+    ],
+    programId,
+  )[0];
+  const optOutVault = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), optOutProject.toBuffer()],
+    programId,
+  )[0];
+  const optOutPlan = await ownerPlan(
+    {
+      deployment: {
+        ...deployment,
+        projectPda: optOutProject.toBase58(),
+        vault: optOutVault.toBase58(),
+      },
+      operation: "initialize",
+      projectDigest: optOutDigest,
+      monthlyCap: "60000000",
+      automaticMonthly: false,
+    },
+    {
+      rpcUrl: provider.connection.rpcEndpoint,
+      expectedGenesis,
+      recentBlockhash: (
+        await provider.connection.getLatestBlockhash("finalized")
+      ).blockhash,
+    },
+  );
+  const optOutTransaction = Transaction.from(
+    Buffer.from(optOutPlan.transactionBase64, "base64"),
+  );
+  assert.equal(
+    optOutTransaction.instructions.length,
+    2,
+    "initialize and monthly policy are atomic",
+  );
+  const optOutSignature = await sendAndConfirmTransaction(
+    provider.connection,
+    optOutTransaction,
+    [owner],
+  );
+  await provider.connection.confirmTransaction(optOutSignature, "finalized");
+  const optedOut = await new anchor.Program(
+    JSON.parse(readFileSync("idl/slop_escrow.json")),
+    provider,
+  ).account.project.fetch(optOutProject, "finalized");
+  assert.equal(
+    optedOut.monthlyEnabled,
+    false,
+    "creation preserves the owner's opt-out",
+  );
+  assert.equal(optedOut.monthlyCap.toString(), "60000000");
   // Exercise the browser's monthly-setting API against the actual SPL program.
   const monthlyEndpoint = "solana-monthly-commitment";
-  for (const enabled of [true, false]) {
+  for (const enabled of [false, true]) {
     const target = { cap: "60000000", enabled };
     const intent = { ...target, wallet: owner.publicKey.toBase58() };
     const { plan } = await fundingApi(
