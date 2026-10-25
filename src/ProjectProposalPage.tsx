@@ -1968,7 +1968,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   const [reload, setReload] = useState(0);
   const [submission, setSubmission] = useState<
     | { state: "idle" | "publishing" }
-    | { state: "error"; message: string }
+    | { state: "error"; message: string; staleRevision: boolean }
     | { state: "published"; result: RevisionResult }
   >({ state: "idle" });
   useEffect(() => {
@@ -2281,6 +2281,8 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     } catch (error) {
       setSubmission({
         state: "error",
+        staleRevision:
+          error instanceof ProjectApiError && error.code === "stale_revision",
         message:
           error instanceof Error
             ? error.message
@@ -2531,13 +2533,15 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           {submission.state === "error" ? (
             <p className="form-error" role="alert">
               {submission.message}{" "}
-              <button
-                className="text-button"
-                onClick={() => setReload((count) => count + 1)}
-                type="button"
-              >
-                Load the current revision
-              </button>
+              {submission.staleRevision && (
+                <button
+                  className="text-button"
+                  onClick={() => setReload((count) => count + 1)}
+                  type="button"
+                >
+                  Load the current revision
+                </button>
+              )}
             </p>
           ) : submission.state === "published" ? (
             <p role="status">

@@ -216,7 +216,63 @@ export type RepositoryAccess =
       installationId: number;
       permission: "admin" | "write" | "read" | "none";
       roleName: string | null;
+      /** Requested by newer Pages clients; never a caller-supplied authority claim. */
+      repository?: RepositoryIdentity;
     };
+
+/** Public identity fields returned by the authenticated GitHub repository read. */
+export type RepositoryIdentity = {
+  id: number;
+  node_id: string;
+  full_name: string;
+  private: boolean;
+  owner: {
+    id: number;
+    node_id: string;
+    login: string;
+    type: "User" | "Organization";
+  };
+};
+
+export function parseRepositoryIdentity(value: unknown): RepositoryIdentity {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError("Repository identity is unavailable");
+  const repo = value as Record<string, unknown>;
+  const owner = repo.owner as Record<string, unknown> | null | undefined;
+  if (
+    typeof repo.id !== "number" ||
+    !Number.isSafeInteger(repo.id) ||
+    repo.id < 1 ||
+    typeof repo.node_id !== "string" ||
+    !repo.node_id ||
+    typeof repo.full_name !== "string" ||
+    !validRepositoryPath(repo.full_name) ||
+    typeof repo.private !== "boolean" ||
+    !owner ||
+    typeof owner !== "object" ||
+    typeof owner.id !== "number" ||
+    !Number.isSafeInteger(owner.id) ||
+    owner.id < 1 ||
+    typeof owner.node_id !== "string" ||
+    !owner.node_id ||
+    typeof owner.login !== "string" ||
+    !owner.login ||
+    (owner.type !== "User" && owner.type !== "Organization")
+  )
+    throw new TypeError("Repository identity is incomplete");
+  return {
+    id: repo.id,
+    node_id: repo.node_id,
+    full_name: repo.full_name,
+    private: repo.private,
+    owner: {
+      id: owner.id,
+      node_id: owner.node_id,
+      login: owner.login,
+      type: owner.type,
+    },
+  };
+}
 
 /** Current GitHub authority of the signed-in account over a repository. */
 export type SetupAuthority =
