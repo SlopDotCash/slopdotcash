@@ -90,6 +90,8 @@ export async function hydrateValueMergeSource(
           "-c",
           "http.followRedirects=false",
           "-c",
+          "fetch.fsckObjects=true",
+          "-c",
           "protocol.allow=never",
           "-c",
           "protocol.https.allow=always",
@@ -100,6 +102,7 @@ export async function hydrateValueMergeSource(
         {
           env: { ...env, HOME: directory, XDG_CONFIG_HOME: directory },
           maxBuffer: 1024 * 1024,
+          timeout: 120_000,
         },
       );
     await git("init", "--bare", "--template=");
@@ -113,6 +116,7 @@ export async function hydrateValueMergeSource(
       `https://github.com/${name}.git`,
       ...objects,
     );
+    await git("fsck", "--full", "--strict", "--no-reflogs");
     const mergeResolutions = await collectVerifiedMergeResolutions(
       input,
       directory,
