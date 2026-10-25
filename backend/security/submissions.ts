@@ -694,6 +694,13 @@ async function verifyReceipt(
     // GitHub already received it. Keep the journal and grant for reconciliation.
     return stay("contacts-unavailable");
   }
+  // A verified case needs someone to triage it. When no candidate passes
+  // the reporting-authority check, the approver list is empty and the case
+  // would be created with a null owner, a reporter-only notice, and no due
+  // date. Keep the submission for reconciliation instead of creating that
+  // ownerless case, using the same stay the authority-outage path uses.
+  if (context.approvers.technical.length === 0)
+    return stay("contacts-unavailable");
   return writeVerifiedCase(deps, intake, row, context, facts);
 }
 
