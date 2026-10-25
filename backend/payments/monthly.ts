@@ -17,6 +17,7 @@ import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
+  maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
 import {
   type MonthlyAwardState,
@@ -959,12 +960,11 @@ export function monthlyOwnerService(deps: {
           // The proposal's own manifest revision fixes the month's exclusions.
           payoutExcludedGithubUserIds(base.manifest, period),
         );
-        if (
-          base.manifest.reward.chain === "solana" &&
-          BigInt(change.grossBase) > (1n << 64n) - 1n
-        )
+        // Attestation applies the same range to the vault network's chain.
+        const chain = base.manifest.escrow?.chain;
+        if (!chain || BigInt(change.grossBase) > maxBaseUnitsForChain(chain))
           throw new MonthlyAllocationError(
-            "The amount exceeds the Solana token range.",
+            "The amount exceeds the token range of the vault network.",
           );
       } catch (error) {
         if (error instanceof MonthlyAllocationError)
