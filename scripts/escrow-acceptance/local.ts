@@ -153,6 +153,11 @@ async function evmFork(network: string, port: number) {
       String(port),
       "--silent",
       "--auto-impersonate",
+      // Keep every historical state in memory. Anvil's disk-persisted states
+      // lose locally deployed bytecode, so a finalized-block read of a test
+      // vault fails with "missing bytecode" after many mined blocks.
+      "--prune-history",
+      "1000000",
     ],
     { stdio: "ignore" },
   );

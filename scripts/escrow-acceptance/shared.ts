@@ -35,6 +35,7 @@ import {
   CONTRIBUTION_FIELDS,
   PROJECT_SKILL_TEMPLATES,
 } from "../../src/lib/project-schema.mjs";
+import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
@@ -625,6 +626,18 @@ function acceptanceManifest(
       feeMode: "deduct-from-gross",
       deployments: [deployment],
     },
+    // An active test project cannot reuse the fixture's repository: contributor
+    // history keeps that repository under its own project id. It names a test
+    // repository with unverified authority, pending receipts and disabled
+    // payments, as the schema requires for such a project.
+    ...(status === "active"
+      ? (({ authority, terms, repositories, steward }) => ({
+          authority,
+          terms,
+          repositories,
+          steward,
+        }))(applicationManifest(projectId, `slop-acceptance/${projectId}`))
+      : {}),
   });
 }
 
