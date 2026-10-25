@@ -117,25 +117,34 @@ export function checkedVaultSetupReview(
   if (review?.family === "solana") {
     const creation = review.creation;
     if (
-      bounty ||
-      (review.payoutPolicy ?? "ordinary") !== "ordinary" ||
+      (review.payoutPolicy ?? "ordinary") !==
+        (input.payoutPolicy ?? "ordinary") ||
+      (bounty &&
+        (input.automatic ||
+          project.securityBounty?.amount.currency !== "USDC" ||
+          project.securityBounty.amount.network !== network.chain)) ||
       network.family !== "solana" ||
       review.network !== input.network ||
       !same(review.owner, owner) ||
       !same(review.asset, asset) ||
-      review.cap !== project.reward.monthlyCapMinor ||
-      review.capDisplay !== project.reward.monthlyCapDisplay ||
+      review.cap !== cap ||
+      review.capDisplay !== capDisplay ||
       review.automatic !== input.automatic ||
       !creation ||
       creation.owner !== owner ||
       creation.mint !== asset ||
       creation.projectDigest !== registryProjectDigest(project.id) ||
-      creation.monthlyCap !== review.cap ||
-      creation.automaticMonthly !== input.automatic ||
-      creation.payoutPolicy !== "ordinary" ||
+      (bounty
+        ? creation.monthlyCap !== undefined ||
+          creation.automaticMonthly !== undefined
+        : creation.monthlyCap !== review.cap ||
+          creation.automaticMonthly !== input.automatic) ||
+      creation.payoutPolicy !== (input.payoutPolicy ?? "ordinary") ||
       !isAssetDecimals(review.decimals) ||
       review.decimals !==
-        (project.rewardAsset?.decimals ?? network.assetDecimals)
+        (bounty
+          ? network.assetDecimals
+          : (project.rewardAsset?.decimals ?? network.assetDecimals))
     )
       throw invalid();
     const plan = buildInitializeVaultInstructions(creation);

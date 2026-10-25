@@ -1,3 +1,4 @@
+import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { assertPayoutExclusionTransition } from "../../src/lib/payout-exclusions.mjs";
 import type {
   EnforcementPreview,
@@ -31,6 +32,7 @@ import {
 } from "../../src/lib/vault-setup";
 import { type ApiError, fail } from "../api-error";
 import { pathParts } from "../api-path";
+import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readJsonObject, sha256Hex } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
@@ -96,6 +98,12 @@ import {
 export type ProjectApiDependencies = {
   persistence: ProjectPersistence;
   vaultSetup?: OwnerVaultSetup;
+  /** Private registry scope; never resolves ordinary vaults or request RPCs. */
+  securitySolanaFundingConfig?: (
+    projectId: string,
+    network: string,
+    vault: string,
+  ) => Promise<SolanaEscrowConfig>;
   adminGithubIds: ReadonlySet<string>;
   /** GitHub actor IDs with the project moderation role (PRD ADM-05, ADM-06). */
   moderatorGithubIds: ReadonlySet<string>;
@@ -1073,6 +1081,43 @@ async function createProject(
       authority: checked,
       scanRequest,
     }),
+  });
+}
+
+/** Private balance review requires current repository authority on every request. */
+async function ownerBountySolanaFunding(
+  request: Request,
+  deps: ProjectApiDependencies,
+  projectId: string,
+): Promise<Response> {
+  const actor = actorOf(await requireSession(request, deps));
+  const current = await deps.persistence.getProject(projectId);
+  if (!current) fail(404, "not_found", "Project not found");
+  requireAuthority(await currentAuthority(deps, current.manifest, actor));
+  const resolve = deps.securitySolanaFundingConfig;
+  if (!resolve)
+    fail(503, "funding_unavailable", "Bounty funding is unavailable.");
+  return handleSolanaFunding(request, async (network, vault, action) => {
+    const latest = await deps.persistence.getProject(projectId);
+    if (!latest) fail(404, "not_found", "Project not found");
+    if (
+      !latest.manifest.securityBounty?.settlement?.deployments.some(
+        (deployment) =>
+          deployment.network === network && deployment.vault === vault,
+      )
+    )
+      fail(404, "not_found", "Bounty vault not found");
+    if (action.step === "review" && action.operation === "deposit") {
+      const enforcements = await deps.persistence.listEnforcements();
+      assertMaintainerNotBanned(latest.manifest, actor, enforcements);
+      if (publicRestrictionOf(latest, enforcements).state !== "clear")
+        fail(
+          409,
+          "project_restricted",
+          "New deposits are unavailable while the project is restricted.",
+        );
+    }
+    return resolve(projectId, network, vault);
   });
 }
 
@@ -2603,6 +2648,8 @@ export async function handleProjectApi(
         return await createProject(request, deps);
       case "PUT projects/:id":
         return await publishOwnerRevision(request, deps, parts[1]);
+      case "POST project-vaults/:id/solana-funding":
+        return await ownerBountySolanaFunding(request, deps, parts[1]);
       case "GET project-vaults/:id":
       case "POST project-vaults/:id":
         return await ownerVault(request, deps, parts[1]);

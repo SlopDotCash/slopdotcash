@@ -76,8 +76,34 @@ let permitted = true;
 let templatesEnabled = true;
 let privateReadUnavailable = false;
 let scanReads = 0;
+const solanaFundingConfig = async (
+  projectId: string,
+  network: string,
+  vault: string,
+  bounty = false,
+): Promise<SolanaEscrowConfig> => {
+  const project = await persistence.getProject(projectId);
+  const deployments = bounty
+    ? project?.manifest.securityBounty?.settlement?.deployments
+    : project?.manifest.escrow?.deployments;
+  const deployment = deployments?.find(
+    (d) => d.network === network && d.vault === vault,
+  );
+  if (!deployment || ESCROW_NETWORKS[deployment.network].family !== "solana")
+    throw new Error("Unknown Solana vault");
+  return {
+    ...deployment,
+    projectId,
+    payoutPolicy: bounty ? "security-bounty" : "ordinary",
+    mint: deployment.asset,
+    rpcUrl,
+    genesisHash: ESCROW_NETWORKS[deployment.network].genesisHash,
+  } as SolanaEscrowConfig;
+};
 const deps: ProjectApiDependencies = {
   persistence,
+  securitySolanaFundingConfig: (projectId, network, vault) =>
+    solanaFundingConfig(projectId, network, vault, true),
   adminGithubIds: new Set(),
   moderatorGithubIds: new Set(),
   now,
@@ -186,24 +212,7 @@ Bun.serve({
         return handlePaymentsApi(request, {
           db,
           allowedOrigins: [origin],
-          solanaFundingConfig: async (projectId, network, vault) => {
-            const project = await persistence.getProject(projectId);
-            const deployment = project?.manifest.escrow?.deployments.find(
-              (d) => d.network === network && d.vault === vault,
-            );
-            if (
-              !deployment ||
-              ESCROW_NETWORKS[deployment.network].family !== "solana"
-            )
-              throw new Error("Unknown Solana vault");
-            return {
-              ...deployment,
-              projectId,
-              mint: deployment.asset,
-              rpcUrl,
-              genesisHash: ESCROW_NETWORKS[deployment.network].genesisHash,
-            } as SolanaEscrowConfig;
-          },
+          solanaFundingConfig,
         });
       if (url.pathname.startsWith("/api/v1/points"))
         return handlePointsApi(request, {

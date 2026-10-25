@@ -88,9 +88,7 @@ export function ownerVaultSetupService(deps: {
           ESCROW_NETWORKS[d.network].chain ===
             (payoutPolicy === "security-bounty"
               ? project.manifest.securityBounty?.amount.network
-              : project.manifest.reward.chain) &&
-          (payoutPolicy !== "security-bounty" ||
-            ESCROW_NETWORKS[d.network].family === "evm"),
+              : project.manifest.reward.chain),
       );
   }
   async function resolve(
@@ -106,8 +104,7 @@ export function ownerVaultSetupService(deps: {
     if (
       !network ||
       (bounty
-        ? network.family !== "evm" ||
-          program?.amount.currency !== "USDC" ||
+        ? program?.amount.currency !== "USDC" ||
           network.chain !== program.amount.network ||
           input.automatic
         : !project.manifest.escrow ||
@@ -147,7 +144,7 @@ export function ownerVaultSetupService(deps: {
         "This network has no reviewed reward asset.",
       );
     if (network.family === "solana") {
-      if (BigInt(reward.monthlyCapMinor) > (1n << 64n) - 1n)
+      if (!bounty && BigInt(reward.monthlyCapMinor) > (1n << 64n) - 1n)
         fail(
           422,
           "vault_setup_unavailable",
@@ -155,6 +152,7 @@ export function ownerVaultSetupService(deps: {
         );
       for (const { deployment: template, payoutPolicy } of await templates(
         project,
+        input.payoutPolicy,
       )) {
         if (
           template.network !== input.network ||
@@ -189,9 +187,13 @@ export function ownerVaultSetupService(deps: {
           feeRecipient: config.feeRecipient,
           bindingDelaySeconds: config.bindingDelaySeconds,
           rotationDelaySeconds: config.rotationDelaySeconds,
-          monthlyCap: reward.monthlyCapMinor,
-          automaticMonthly: input.automatic,
-          payoutPolicy: "ordinary",
+          ...(bounty
+            ? { payoutPolicy: "security-bounty" as const }
+            : {
+                monthlyCap: reward.monthlyCapMinor,
+                automaticMonthly: input.automatic,
+                payoutPolicy: "ordinary" as const,
+              }),
         };
         try {
           const prepared = await prepareSolanaVaultCreation(
@@ -275,12 +277,19 @@ export function ownerVaultSetupService(deps: {
       const result = await resolve(project, actor, input);
       if (result.family === "solana")
         return {
+          payoutPolicy: input.payoutPolicy ?? "ordinary",
           family: "solana",
           network: input.network,
           owner: result.creation.owner,
           asset: result.creation.mint,
-          cap: project.manifest.reward.monthlyCapMinor,
-          capDisplay: project.manifest.reward.monthlyCapDisplay,
+          cap:
+            input.payoutPolicy === "security-bounty"
+              ? "0"
+              : project.manifest.reward.monthlyCapMinor,
+          capDisplay:
+            input.payoutPolicy === "security-bounty"
+              ? ""
+              : project.manifest.reward.monthlyCapDisplay,
           automatic: input.automatic,
           creation: result.creation,
           ...result.prepared,

@@ -419,7 +419,7 @@ and vault policy must still match. Registration keeps the current project
 amount and shows both amounts. The owner can then apply the current amount
 through the existing automatic payment control.
 
-The same route creates a separate EVM bounty vault from saved USDC bounty
+The same route creates a separate EVM or Solana bounty vault from saved USDC bounty
 terms. It uses the 25% bounty fee and has no monthly-payment setting. A zero
 monthly reward does not block bounty setup. The Manage page shows bounty
 funds only after a current GitHub owner check; public payment queries never
@@ -427,6 +427,11 @@ read private snapshots. A restriction stops new setup and deposits in Slop,
 but the owner can still read funded state, check transactions and withdraw
 free funds. Chain transactions remain public.
 
-Solana setup supports ordinary vaults only. Private Solana vault setup needs
-separate implementation and end-to-end acceptance. Mainnet setup also requires
-the separately approved factory upgrade and network activation.
+For Solana bounty funding, `POST /api/v1/project-vaults/:id/solana-funding`
+requires a signed-in account and current GitHub owner authority. It resolves
+only that project's registered bounty vault. New deposit reviews require a
+clear project and participating owner; transaction checks and withdrawals
+remain available during restrictions. The public payment route resolves
+ordinary vaults only. Both routes use the same unsigned planner and finalized
+transaction verifier. Mainnet use still requires the separately approved
+program or factory upgrade, reviewed registry record and network activation.
