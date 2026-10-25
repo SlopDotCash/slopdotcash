@@ -15,6 +15,7 @@
     "tests/fixture-checkout.ts",
     "tests/project-application-manifest.ts",
     "tests/sqlite-d1.ts",
+    "tests/monthly-allocation-fixture.ts",
     "tests/penalty-score-fixture.ts",
     "tests/vetting-fixtures.ts",
     "tests/vetting-evidence-fixture.ts",
