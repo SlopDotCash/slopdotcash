@@ -63,6 +63,23 @@ case the runner must refuse execution. The native Linux CI job must pass.
 The existing release quality gate requires this job before staging or production
 can deploy.
 
+The same Linux job checks whether the canonical Git merge reconstruction helper
+can reproduce public Network pull requests 97 and 117 in this image. A compact
+fixture retains only the fields that helper reads and immutable expected trees,
+paths and patch hashes. The host fetches the pinned public Git objects without
+credentials; the unprivileged container has no network, secrets or writable host
+input. It checks the complete bundle and ordered parents, reconstructs the merge,
+and refuses wrong parents and missing objects. Only safe hashes, sizes, runtime
+versions, resource measurements and cleanup results are retained.
+
+This is a feasibility check for PRD sections 5, 7 and 11. Its complete Git witness
+uses a 256 MiB temporary filesystem, a 128 MiB file limit, 512 MiB memory and a
+30-second wall limit. It does not use or widen the deployed artifact endpoint's
+2 MiB input, 8 MiB file or 64 KiB output limits. It does not qualify standard value
+intake, full claim attribution, copied-work credit, model output or assessment
+publication. A different Git version remains visible even when trees and patch
+bytes match. Failed reconstruction or cleanup fails the existing CI job.
+
 The same CI job then runs the complete scan pass for a harmless native Linux
 program and an unsupported Windows executable. The controller sends the native
 program through this runner, reviews its bounded output, retains the exact

@@ -32,6 +32,9 @@ jobs:
           # They do not prove a deployed Cloudflare image.
           image="$(docker build --quiet workers/vetting-sandbox)"
           export RUNNER_IMAGE_SHA256="${image#sha256:}"
+          # Reconstruct pinned public merge objects in this same image. Fetch
+          # occurs before the unprivileged, offline container is created.
+          bun --no-env-file scripts/value-merge-resolution.integration.ts "$image" "$RUNNER_TEMP/value-merge-proof.json"
           ./node_modules/.bin/wrangler dev --config workers/vetting-sandbox/wrangler.toml --ip 127.0.0.1 --port 8896 \
             --var "RUNNER_IMAGE_SHA256:$RUNNER_IMAGE_SHA256" --var "SLOP_RELEASE_SHA:$GITHUB_SHA" > "$RUNNER_TEMP/sandbox.log" 2>&1 &
           runner_pid=$!
@@ -44,3 +47,11 @@ jobs:
           curl --fail --silent "$SLOP_SANDBOX_TEST_URL/health"
           bun run test:vetting:sandbox
           bun test ./scripts/vetting-scan-service.test.ts --test-name-pattern "native artifact runs only in the real disposable sandbox"
+      - name: Retain bounded native merge proof metadata
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-merge-proof-${{ github.sha }}
+          path: ${{ runner.temp }}/value-merge-proof.json
+          if-no-files-found: warn
+          retention-days: 7
