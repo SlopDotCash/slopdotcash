@@ -250,16 +250,19 @@ unclaimed awards. Missing destinations cause a revert and leave reserves intact.
 
 All values are integer token base units, stored as checked `uint128`. The vault
 stores `decimals()` once, for display only, and never scales an amount. Each
-award reserves its gross allocation. The payout fee is `floor(gross / 50)` (2%)
+award reserves its gross allocation. The payout fee is `ceil(gross / 50)` (2%)
 and the recipient receives `gross - fee`. A 100-USDC award costs the project
 100 USDC and sends 98 USDC to the contributor plus 2 USDC of fees. The 2% is
 paid in the vault token. Each unused-fund withdrawal pays the same 2%:
-`withdrawalFee(gross) = payoutFee(gross) = floor(gross / 50)`, rounded down once
+`withdrawalFee(gross) = payoutFee(gross) = ceil(gross / 50)`, rounded up once
 per withdrawal (PRD section 18). Withdrawing 850 USDC of free funds pays 17 USDC
-and sends 833 USDC to the owner. A withdrawal under 50 base units
-pays no fee, so a split saves under one base unit per transaction, far less than its
-gas. A one-unit award requires one unit of funding and has a zero fee; tiny
-award rounding is intentional.
+and sends 833 USDC to the owner. Every award or withdrawal of at least one base
+unit pays at least one unit of fee, so splitting never lowers the fee (owner
+decision of 24 October 2026; rounding down let a split into pieces under 50
+base units avoid the fee on low-decimal tokens). A one-unit award has a one-unit
+fee and pays the contributor nothing. Vault logic deployed before this change
+takes `floor(gross / 50)` until it is upgraded; the adapter accepts either
+rounding and nothing else.
 
 Payout and withdrawal fees accrue in the vault as `accruedFees`. Anyone can
 call `claimFees()` to move them to the configured fee recipient. A blocked fee

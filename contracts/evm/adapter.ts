@@ -1,6 +1,11 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { type PayoutPolicy, payoutFee } from "../../src/lib/payments/contracts";
+import {
+  acceptsPayoutFee,
+  ordinaryFee,
+  type PayoutPolicy,
+  payoutFee,
+} from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
 /** Finalized escrow events from a reviewed deployment. The configured RPC and vault are trust roots. */
 export type EvmRpc =
@@ -461,7 +466,7 @@ async function verify(
   if (
     actor === 0n ||
     gross === 0n ||
-    fee !== payoutFee(gross, config.payoutPolicy) ||
+    !acceptsPayoutFee(gross, fee, config.payoutPolicy) ||
     net !== gross - fee
   ) {
     throw new Error("Invalid award accounting");
@@ -779,7 +784,7 @@ export function buildCancelBindingCalldata(
 export function buildClaimFeesCalldata() {
   return "0xd294f093";
 }
-/** Owner-only: refunds free funds to the refund destination less the 2% fee, floor(gross / 50). */
+/** Owner-only: refunds free funds to the refund destination less the 2% fee, ceil(gross / 50). */
 export function buildWithdrawCalldata(grossMicro: string | bigint) {
   return `0x${selector("withdrawUnused(uint128)")}${amountWord(grossMicro)}`;
 }
@@ -879,15 +884,25 @@ export async function verifyVaultFundingAction(
     throw new Error("Invalid funding action");
   const topic =
     EVM_ESCROW_EVENT_TOPICS[withdrawing ? "UnusedWithdrawn" : "Deposited"];
-  const fee = withdrawing ? gross / 50n : 0n;
-  const data = `0x${amountWord(gross)}${withdrawing ? `${amountWord(gross - fee)}${fee.toString(16).padStart(64, "0")}` : ""}`;
+  // A vault not yet upgraded to rounded-up fees still takes floor(gross / 50).
+  const fees = withdrawing
+    ? [ordinaryFee(gross), gross / 50n].filter((fee) =>
+        acceptsPayoutFee(gross, fee),
+      )
+    : [0n];
+  const encoded = (fee: bigint) =>
+    `0x${amountWord(gross)}${withdrawing ? `${amountWord(gross - fee)}${fee.toString(16).padStart(64, "0")}` : ""}`;
+  const fee = fees.find(
+    (candidate) =>
+      typeof log.data === "string" &&
+      log.data.toLowerCase() === encoded(candidate),
+  );
   if (
     !Array.isArray(log.topics) ||
     log.topics.length !== 2 ||
     hash(log.topics[0]) !== topic ||
     hash(log.topics[1]) !== addressWord(expected.address) ||
-    typeof log.data !== "string" ||
-    log.data.toLowerCase() !== data
+    fee === undefined
   )
     throw new Error("The finalized vault event does not match this action");
   return {

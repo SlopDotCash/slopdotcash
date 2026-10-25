@@ -26,7 +26,7 @@ For each asset in `ESCROW_ACCEPTANCE_ASSETS`, in a new vault:
    same attempt, the same signed payment bytes again, and one new mined
    payment transaction. No replay moves tokens.
 6. The owner withdraws the 850 free units. The fee must be
-   `floor(gross / 50)` (2%), and only the rest reaches the owner. A simulated
+   `ceil(gross / 50)` (2%), and only the rest reaches the owner. A simulated
    withdrawal of 1 more unit must fail. On EVM, anyone then claims the fees.
 7. After finality, the cron writes `vault_snapshots`. The runner compares that
    row with a fresh finalized `readVaultTotals` read, with the scenario

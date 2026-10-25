@@ -9,10 +9,8 @@ on:
     branches: [develop, development, main]
   push:
     branches: [develop, development, main]
-  # scheduled-release.yml dispatches this workflow on main and development
-  # every six hours, so registry changes and new GitHub activity publish
-  # without a commit. A schedule trigger here runs only on the default branch
-  # and cannot publish production.
+  # Run this workflow by hand to publish registry changes and new GitHub
+  # activity without a commit.
   workflow_dispatch:
     inputs:
       bootstrap_staging_profiles:
@@ -161,7 +159,7 @@ jobs:
           # Selects the versioned value scoring policy for new work. Exit 75
           # means the hosted value feed is unavailable (owner decision D2):
           # retry once, then keep the last published snapshot, which shows its
-          # stale label, and let the next scheduled release retry. There is no
+          # stale label, and let the next release retry. There is no
           # legacy fallback. Every other failure stops the release.
           feed_status=0
           for attempt in 1 2; do
@@ -671,6 +669,35 @@ jobs:
           if (value?.success !== true || value?.result?.name !== "deck.slop.cash") {
             throw new TypeError("Cloudflare did not confirm the exact deck.slop.cash Pages domain");
           }
+          NODE
+
+      - name: Validate optional Slopbot value scoring settings
+        env:
+          SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: ${{ vars.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD }}
+          SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: ${{ vars.SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD }}
+          SLOPBOT_VALUE_START_AT: ${{ vars.SLOPBOT_VALUE_START_AT }}
+        run: |
+          node - "$RUNNER_TEMP/slopbot-value-args" <<'NODE'
+          const { writeFileSync } = require("node:fs");
+          const names = [
+            "SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD",
+            "SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD",
+            "SLOPBOT_VALUE_START_AT",
+          ];
+          const values = names.map((name) => process.env[name] ?? "");
+          if (values.every((value) => value === "")) {
+            writeFileSync(process.argv[2], "");
+            process.exit(0);
+          }
+          const [monthly, reserve, start] = values;
+          const positiveAmount = (value) => /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
+          if ((monthly !== "alerts-only" && !positiveAmount(monthly)) ||
+              !positiveAmount(reserve) ||
+              (monthly !== "alerts-only" && Number(reserve) > Number(monthly)) ||
+              !Number.isFinite(Date.parse(start)) || new Date(start).toISOString() !== start) {
+            throw new Error("Set all three Slopbot value settings: alerts-only or a positive monthly allowance, a positive route reserve, and a canonical UTC start timestamp.");
+          }
+          writeFileSync(process.argv[2], names.map((name, i) => `--var=${name}:${values[i]}`).join("\n") + "\n");
           NODE
 
       - name: Deploy private identity and Cloudflare Pages
@@ -1230,9 +1257,11 @@ jobs:
           NODE
 
           slopbot_upload="$RUNNER_TEMP/slopbot-upload.log"
+          mapfile -t slopbot_value_args < "$RUNNER_TEMP/slopbot-value-args"
           ./node_modules/.bin/wrangler versions upload \
             --config workers/slopbot/wrangler.toml \
             --var="SLOPBOT_PRODUCER_REVISION:$GITHUB_SHA" \
+            "${slopbot_value_args[@]}" \
             --minify \
             --tag="$GITHUB_SHA" \
             --message="slop.cash release $GITHUB_SHA" 2>&1 | tee "$slopbot_upload"

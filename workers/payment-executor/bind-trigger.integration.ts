@@ -789,6 +789,111 @@ try {
   // Carol's reserved 1 USDC and the 0.78 USDC withdrawal fee remain.
   assert.equal(await balance(asset, vault), 1_780_000n);
 
+  // Failure: the identity authority as a payout destination. Dave (GitHub
+  // 321) confirms the attester's own address as his wallet and signs a
+  // binding to it. The EVM vault would accept that binding; the attester
+  // refuses it before it signs anything, as the Solana program does.
+  const daveSession = "d".repeat(43);
+  const daveWallet = privateKeyToAccount(attesterKey);
+  sql
+    .prepare(
+      "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('dave','321','dave',?,0)",
+    )
+    .run(at);
+  sql
+    .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+    .run(
+      await sha256Hex(daveSession),
+      "dave",
+      new Date(Date.now() + 3600000).toISOString(),
+    );
+  const dave = (path: string, body: Record<string, string>) =>
+    onRequest({
+      request: new Request(`https://slop.cash/api/v1/payments${path}`, {
+        method: "POST",
+        headers: {
+          cookie: `__Host-slop_points=${daveSession}`,
+          origin: "https://slop.cash",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+      env: { SLOP_DB: db, PAYMENT_NETWORKS: '["base-mainnet"]' },
+    } as never);
+  const daveSource = `0x${"4".padStart(64, "0")}`;
+  await send(asset, "mint(address,uint256)", [owner, "1000000"]);
+  await send(asset, "approve(address,uint256)", [vault, "1000000"], owner);
+  await send(vault, "deposit(uint128)", ["1000000"], owner);
+  await send(
+    vault,
+    "commitAward(bytes32,uint64,uint128,bytes32)",
+    [evmAwardId(8453n, vault, daveSource), "321", "1000000", daveSource],
+    owner,
+  );
+  await mine(64);
+  const daveClaim = (await (
+    await dave("/wallets/register", { chain: "base", address: attester })
+  ).json()) as { claimId: string };
+  const daveChallenge = (await (
+    await dave("/wallets/challenge", { claimId: daveClaim.claimId })
+  ).json()) as { message: string; challengeId: string };
+  assert.equal(
+    (
+      await dave("/wallets/authorize", {
+        claimId: daveClaim.claimId,
+        challengeId: daveChallenge.challengeId,
+        signature: await daveWallet.signMessage({
+          message: daveChallenge.message,
+        }),
+      })
+    ).status,
+    200,
+  );
+  const daveConsent = {
+    claimId: daveClaim.claimId,
+    network: "base-mainnet",
+    vault,
+    expectedVersion: "0",
+  };
+  const daveTyped = (
+    (await (await dave("/wallets/bind-challenge", daveConsent)).json()) as {
+      typedData: ReturnType<typeof evmBindingTypedData>;
+    }
+  ).typedData;
+  assert.equal(daveTyped.message.destination, attester);
+  const { EIP712Domain: _daveDomain, ...daveTypes } = daveTyped.types;
+  assert.equal(
+    (
+      await dave("/wallets/bind-authorize", {
+        ...daveConsent,
+        expiresAt: daveTyped.message.expiresAt,
+        signature: await daveWallet.signTypedData({
+          domain: {
+            ...daveTyped.domain,
+            chainId: Number(daveTyped.domain.chainId),
+            verifyingContract: daveTyped.domain
+              .verifyingContract as `0x${string}`,
+          },
+          types: daveTypes,
+          primaryType: daveTyped.primaryType,
+          message: {
+            actorId: BigInt(daveTyped.message.actorId),
+            destination: daveTyped.message.destination as `0x${string}`,
+            expectedVersion: BigInt(daveTyped.message.expectedVersion),
+            claimDigest: daveTyped.message.claimDigest as `0x${string}`,
+            expiresAt: BigInt(daveTyped.message.expiresAt),
+          },
+        } as never),
+      })
+    ).status,
+    200,
+  );
+  await bindingHeld();
+  assert.equal(await nonce(attester), 2, "No binding to the authority");
+  assert.deepEqual(await pendingStoredBindings(journal), []);
+  const [daveTo] = words(await read(vault, "payableBinding(uint64)", ["321"]));
+  assert.equal(daveTo, 0n, "Dave has no payable destination");
+
   // The binding run exists only on a production EVM attester.
   for (const other of [
     { SIGNER_STACK: "test" },

@@ -34,7 +34,7 @@ import {
   TOKEN,
 } from "../../contracts/solana/transactions";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
-import { payoutFee } from "../../src/lib/payments/contracts";
+import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
 import {
   authorizeRegistry,
   authorizeWalletRotation,
@@ -202,8 +202,11 @@ async function authorized(
     solanaUint(obligation, 8).toString() !== authorization.grossBase ||
     solanaUint(obligation, 128).toString() !== authorization.feeBase ||
     hex(obligation.slice(16, 48)) !== authorization.sourceDigest ||
-    solanaUint(obligation, 128) !==
-      payoutFee(solanaUint(obligation, 8), config.payoutPolicy) ||
+    !acceptsPayoutFee(
+      solanaUint(obligation, 8),
+      solanaUint(obligation, 128),
+      config.payoutPolicy,
+    ) ||
     solanaUint(obligation, 120) + solanaUint(obligation, 128) !==
       solanaUint(obligation, 8)
   )

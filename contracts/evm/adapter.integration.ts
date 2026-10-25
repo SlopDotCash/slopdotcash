@@ -34,6 +34,7 @@ import {
   verifyEvmDeployment,
   verifyPayment,
   verifyReserve,
+  verifyVaultFundingAction,
 } from "./adapter";
 import {
   captureUpgrade,
@@ -513,7 +514,7 @@ try {
     ["call", token, "balanceOf(address)(uint256)", owner, "--rpc-url", rpcUrl],
     { encoding: "utf8" },
   ).trim();
-  // 2% unused-fund withdrawal fee, floor(gross / 50): 10 gross returns 9.8.
+  // 2% unused-fund withdrawal fee, ceil(gross / 50): 10 gross returns 9.8.
   assert.equal(refunded.split(" ")[0], "9800000");
   const payment = await verifyPayment(config, paymentTx, 0, id);
   assert.equal(payment.destination, recipient.toLowerCase());
@@ -584,6 +585,43 @@ try {
     readVaultTotals({ rpcUrl, network: "anvil", vault, chainId: 8453n }),
     /Wrong chain/,
   );
+  // A withdrawal that is not a multiple of 50 base units pays the fee rounded
+  // up: ceil(1,000,049 / 50) = 20,001, so the owner receives 980,048.
+  const oddWithdrawal = (await rpc("eth_sendTransaction", [
+    {
+      from: owner,
+      to: vault,
+      gas: "0x7a1200",
+      data: buildWithdrawCalldata("1000049"),
+    },
+  ])) as string;
+  await rpc("anvil_mine", ["0x40"]);
+  const oddReceipt = (await rpc("eth_getTransactionReceipt", [
+    oddWithdrawal,
+  ])) as {
+    blockHash: string;
+    logs: { logIndex: string; topics: string[] }[];
+  };
+  const oddEvent = oddReceipt.logs.find(
+    (log) => log.topics[0] === EVM_ESCROW_EVENT_TOPICS.UnusedWithdrawn,
+  );
+  assert.ok(oddEvent, "the withdrawal emits UnusedWithdrawn");
+  assert.deepEqual(
+    await verifyVaultFundingAction(
+      config,
+      oddWithdrawal,
+      Number(BigInt(oddEvent.logIndex)),
+      { operation: "withdraw", address: owner, gross: "1000049" },
+    ),
+    {
+      transactionId: oddWithdrawal,
+      blockId: oddReceipt.blockHash,
+      gross: "1000049",
+      fee: "20001",
+      net: "980048",
+    },
+    "the withdrawal fee is ceil(gross / 50)",
+  );
   // The same factory creates a second vault for the project in an 18-decimal
   // token, with amounts beyond uint64.
   const wide = deploy("test/WideToken.sol:WideToken", ["18"]);
@@ -634,7 +672,7 @@ try {
     wideId,
   );
   assert.equal(wideReservation.grossMicro, wideGross.toString());
-  assert.equal(wideReservation.feeMicro, (wideGross / 50n).toString());
+  assert.equal(wideReservation.feeMicro, ((wideGross + 49n) / 50n).toString());
   await assert.rejects(
     verifyEvmDeployment({ ...wideConfig, asset: token }, "latest"),
     /asset, factory or registrar|implementation/,
@@ -650,10 +688,10 @@ try {
   assert.equal(wideTotals.decimals, 18);
   assert.equal(wideTotals.totalDeposited, (wideGross * 2n).toString());
   assert.equal(wideTotals.freeBalance, wideGross.toString());
-  assert.equal(wideTotals.reservedFees, (wideGross / 50n).toString());
+  assert.equal(wideTotals.reservedFees, ((wideGross + 49n) / 50n).toString());
   assert.equal(
     wideTotals.reservedPrincipal,
-    (wideGross - wideGross / 50n).toString(),
+    (wideGross - (wideGross + 49n) / 50n).toString(),
   );
   await assert.rejects(
     verifyReserve(config, paymentTx, 0, id),
@@ -968,7 +1006,7 @@ try {
     assert.equal(reserved.grossMicro, entry.grossMicro);
     assert.equal(
       reserved.feeMicro,
-      (BigInt(entry.grossMicro) / 50n).toString(),
+      ((BigInt(entry.grossMicro) + 49n) / 50n).toString(),
     );
   }
   await assert.rejects(

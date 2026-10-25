@@ -105,15 +105,41 @@ contract OpusFindingsTest is OpusBase {
 
     /// Info: the 2% withdrawal fee rounds down once per withdrawal, so a withdrawal under 50 base units pays
     /// no fee and a split saves under one base unit per transaction.
-    function test_withdrawFeeRoundsDownPerWithdrawal() public {
+    function test_withdrawFeeRoundsUpPerWithdrawal() public {
         vm.startPrank(OWNER);
         uint256 before = usdc.balanceOf(OWNER);
         escrow.withdrawUnused(49);
-        check(usdc.balanceOf(OWNER) - before == 49 && escrow.totalWithdrawalFees() == 0, "49 pays no fee");
+        check(usdc.balanceOf(OWNER) - before == 48 && escrow.totalWithdrawalFees() == 1, "49 pays a fee of 1");
         escrow.withdrawUnused(50);
         vm.stopPrank();
-        check(usdc.balanceOf(OWNER) - before == 49 + 49, "50 refunds 49");
-        check(escrow.totalWithdrawalFees() == 1, "fee 1 on gross 50");
+        check(usdc.balanceOf(OWNER) - before == 48 + 49, "50 refunds 49");
+        check(escrow.totalWithdrawalFees() == 2, "fee 1 on gross 50");
+    }
+
+    /// Red-team fix: splitting a withdrawal into pieces under 50 base units no longer avoids the fee.
+    function test_splitWithdrawalsUnderFiftyStillPayTheFee() public {
+        uint256 before = usdc.balanceOf(OWNER);
+        vm.startPrank(OWNER);
+        for (uint256 i = 0; i < 100; i++) {
+            escrow.withdrawUnused(49);
+        }
+        vm.stopPrank();
+        check(escrow.totalGrossWithdrawn() == 4_900, "all pieces withdrawn");
+        check(escrow.totalWithdrawalFees() == 100 && escrow.accruedFees() == 100, "each piece pays 1");
+        check(usdc.balanceOf(OWNER) - before == 100 * 48, "owner refund is net of every fee");
+    }
+
+    /// Red-team fix: an award under 50 base units, including a self-award, pays a fee of 1.
+    function test_awardUnderFiftyPaysTheFee() public {
+        bytes32 id = commit(keccak256("small"), ALICE, 49);
+        (, uint128 gross, uint128 fee,,,) = escrow.awards(id);
+        check(gross == 49 && fee == 1, "award fee is ceil(49 / 50)");
+        check(escrow.reservedFees() == 1 && escrow.reservedPrincipal() == 48, "reserved net and fee");
+        uint64 v = bindAs(ALICE, ALICE_WALLET);
+        vm.warp(block.timestamp + DELAY);
+        escrow.pay(id, v);
+        check(usdc.balanceOf(ALICE_WALLET) == 48, "contributor gets 48");
+        check(escrow.totalPayoutFees() == 1 && escrow.accruedFees() == 1, "payout fee 1");
     }
 
     /// Sound: a cancelled binding never pays, even far in the future, and a verified replacement pays immediately.
