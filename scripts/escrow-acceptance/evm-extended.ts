@@ -2180,7 +2180,8 @@ export async function runEvmExtended(
         if (!receipt) throw new Error("Lost payment has no receipt");
         expectEqual(
           "wallet received once",
-          await chain.balance(lost.asset, lost.wallets[0].address),
+          // The movement of this payment only: the wallet comes from the reused actor key.
+          await delta(lost.asset, lost.wallets[0].address, receipt),
           item.net,
         );
         interrupted.steps["interrupted:pay"] = {
@@ -2246,9 +2247,17 @@ export async function runEvmExtended(
         const item = blocked.items[1];
         const attempts = projection.attempts(item.id);
         expectEqual("retried attempts", attempts.length, 1);
+        const paidTransaction = projection.obligation(
+          item.id,
+        )?.paid_transaction;
+        const paidReceipt = paidTransaction
+          ? await chain.receipt(paidTransaction)
+          : null;
+        if (!paidReceipt)
+          throw new Error("Second recipient payment has no receipt");
         expectEqual(
           "second recipient received",
-          await chain.balance(blockable, blocked.wallets[1].address),
+          await delta(blockable, blocked.wallets[1].address, paidReceipt),
           item.net,
         );
         failed.checks.phase2 = {
