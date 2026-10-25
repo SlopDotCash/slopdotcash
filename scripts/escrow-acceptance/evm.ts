@@ -115,6 +115,7 @@ export const VAULT = parseAbi([
   "event FeesClaimed(address indexed feeRecipient, uint128 amount)",
   "event MonthlyCommitmentSet(uint128 cap, bool enabled)",
   "event MonthlyCommitted(uint32 indexed period, bytes32 allocationRoot, uint128 gross, uint256 awards)",
+  "event MonthlyReserved(uint32 indexed period, bytes32 allocationDigest, bytes32 allocationRoot, uint128 wholeGross, uint128 remainingGross, uint32 count, uint256 sourceSequence)",
   "error Unauthorized()",
   "error InvalidInput()",
   "error InsufficientFreeBalance()",
