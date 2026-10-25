@@ -95,6 +95,52 @@ preservation, exclusion of non-scanner objects, and refusal of corrupted
 source or backup bytes. It does not prove hosted scheduling, lifecycle
 deletion, D1 recovery or production access controls.
 
+### Protected hosted recovery qualification
+
+PRD sections 8 and 11 require restoration evidence before scanner activation.
+`vetting-recovery-qualification.yml` is a manual `development` workflow in
+the existing `slop-staging` environment. Its default `plan` mode makes no
+remote request. After source review, choose `execute` to test harmless data
+in new, run-specific resources. It reuses the existing Cloudflare credentials;
+it needs no scanner, provider, wallet or temporary bearer key.
+
+The queue-only qualification Worker imports this backup core. It uses two
+temporary D1 databases, three private R2 buckets and a work/failure queue pair.
+It does not bind the application databases or evidence buckets. There is no
+HTTP read or control route, cron, model call, scan publication or policy
+attestation. The driver verifies private bindings and one queue consumer
+before sending fixed fixture commands.
+
+The test copies 68 harmless parts across multiple pages. It restores exact
+bytes and a chunked file, rejects changed bytes and a missing page, preserves
+the source, and repeats delivery without changing its completion. A synthetic
+case snapshot restores the same inventory, policy, consumed grant, closure
+and audit rows into the separate D1 database with their actual immutable-table
+guards. This tests case identity recovery. It does not implement production
+D1 backups or prove point-in-time recovery of the shared application database.
+
+The driver deletes only resources it created in that run, after checking
+their exact IDs or creation identity. It first empties only its verified
+fixture buckets. A nonempty bucket or changed identity stops deletion; the
+safe report records incomplete cleanup. A failed or interrupted workflow
+needs read-only inspection of that run's resource names before cleanup.
+Never delete resources based only on a prefix or age.
+
+Local preparation:
+
+```sh
+bun scripts/qualify-vetting-controls.ts
+node workers/vetting-backup/qualification-workflow.mjs
+```
+
+The first command prints an offline plan. The second proves the same
+qualification entry with local Workerd, D1, R2 and queues. `--execute` is
+refused outside the exact protected workflow checkout. Hosted execution and
+cleanup must be reviewed before dispatch. A passing harmless recovery test
+does not enable retention deletion, the scanner controller or its schedule.
+Daily hosted scheduling, full case recovery, isolation, reader controls and
+the responsible owner's factual attestation remain separate acceptance work.
+
 Incomplete uploads can leave inventory without bytes. Cleanup audits parts absent
 from both source and backup as `retention-missing`; it does not record a complete
 deletion receipt for that object. It deletes an existing part only after verifying
