@@ -692,7 +692,7 @@ jobs:
           }
           const settings = valueSettings(process.env);
           if (!settings) {
-            throw new Error("Select alerts-only (November API cutoff), or supply a positive monthly allowance, a positive route reserve and a canonical UTC start. September and October cannot enter alerts-only API assessment.");
+            throw new Error("Select alerts-only (November API cutoff), or supply a positive monthly allowance, a positive route reserve and a canonical UTC start. September and October cannot enter API assessment.");
           }
           const bindings = [
             [names[0], settings.monthly === null ? "alerts-only" : String(settings.monthly)],
