@@ -43,7 +43,7 @@ import {
   type ScannerProfile,
   validateProfile,
 } from "./scanners";
-import { signedServiceHeaders } from "./service";
+import { signedServiceHeaders, vettingServiceSigner } from "./service";
 
 /**
  * Source-inventory gaps of the historical secure-VM contract that the
@@ -459,21 +459,7 @@ export async function serviceConfigFrom(
     throw new Error(
       "SURPLUS_API_KEY and SLOP_VETTING_SIGNING_JWK are required",
     );
-  const key = JSON.parse(jwk) as JsonWebKey;
-  const privateKey = await crypto.subtle.importKey(
-    "jwk",
-    key,
-    { name: "Ed25519" },
-    false,
-    ["sign"],
-  );
-  const publicKey = await crypto.subtle.importKey(
-    "jwk",
-    { kty: key.kty, crv: key.crv, x: key.x },
-    { name: "Ed25519" },
-    true,
-    ["verify"],
-  );
+  const { privateKey, publicKey } = await vettingServiceSigner(jwk);
   const primary = { ...file.primary, apiKey };
   const specialist = { ...file.specialist, apiKey };
   assertPinnedProfiles(primary, specialist);
