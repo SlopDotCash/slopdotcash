@@ -64,8 +64,14 @@ The existing release quality gate requires this job before staging or production
 can deploy.
 
 The same Linux job checks whether the canonical Git merge reconstruction helper
-can reproduce public Network pull requests 97 and 117 in this image. A compact
-fixture retains only the fields that helper reads and immutable expected trees,
+can reproduce public Network pull requests 97 and 117 in a test-only derivative.
+The unchanged sandbox image contains Git 2.34.1, which cannot run the helper's
+`merge-tree --write-tree` operation (added in Git 2.38). The derivative builds
+Git 2.50.1 from its checksum-pinned kernel.org source. It copies only that Git
+installation into the same sandbox image. The existing sandbox and controller
+tests still use the original image. Both image IDs and the Git dependency are
+recorded; this does not qualify the currently deployed image for reconstruction.
+A compact fixture retains only the fields that helper reads and immutable expected trees,
 paths and patch hashes. The host fetches the pinned public Git objects without
 credentials; the unprivileged container has no network, secrets or writable host
 input. It checks the complete bundle and ordered parents, reconstructs the merge,

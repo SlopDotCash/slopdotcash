@@ -81,6 +81,7 @@ async function inContainer() {
   git("-C", repository, "fsck", "--full", "--strict", "--no-reflogs");
   const results: Record<string, unknown>[] = [];
   containerProgress.gitVersion = git("--version");
+  assert.equal(containerProgress.gitVersion, "git version 2.50.1");
   containerProgress.nodeVersion = process.version;
   containerProgress.platform = process.platform;
   containerProgress.arch = process.arch;
@@ -172,12 +173,13 @@ async function inContainer() {
   );
 }
 
-async function onHost(image: string, output: string) {
+async function onHost(image: string, output: string, sandboxImage: string) {
   assert.match(
     image,
     /^sha256:[0-9a-f]{64}$/,
-    "Use the existing locally built image ID",
+    "Use the locally built test derivative image ID",
   );
+  assert.match(sandboxImage, /^sha256:[0-9a-f]{64}$/);
   const directory = mkdtempSync(join(tmpdir(), "slop-merge-proof-"));
   let container: string | undefined;
   let phase = "prepare";
@@ -266,7 +268,7 @@ async function onHost(image: string, output: string) {
         "/usr/bin/env",
         image,
         "-i",
-        "PATH=/usr/local/bin:/usr/bin:/bin",
+        "PATH=/opt/slop-merge-git/bin:/usr/local/bin:/usr/bin:/bin",
         "HOME=/tmp",
         "TMPDIR=/tmp",
         "timeout",
@@ -294,6 +296,9 @@ async function onHost(image: string, output: string) {
     result = {
       ...JSON.parse(execution.stdout ?? "{}"),
       image,
+      sandboxImage,
+      gitSourceSha256:
+        "7e3e6c36decbd8f1eedd14d42db6674be03671c2204864befa2a41756c5c8fc4",
       sourceRevision: command("git", ["rev-parse", "HEAD"], directory),
     };
     assert.equal(execution.status, 0, "Native container failed");
@@ -336,14 +341,26 @@ async function onHost(image: string, output: string) {
 if (process.argv[2] === "container") {
   try {
     await inContainer();
-  } catch {
-    console.log(JSON.stringify({ ...containerProgress, status: "failed" }));
+  } catch (error) {
+    const known = new Set([
+      "Automatic merge reconstruction failed",
+      "Automatic merge tree missing",
+      "Complete local Git evidence unavailable",
+      "Local merge parents differ from GitHub evidence",
+    ]);
+    const reason =
+      error instanceof Error && known.has(error.message)
+        ? error.message
+        : "Native proof assertion or runtime failed";
+    console.log(
+      JSON.stringify({ ...containerProgress, status: "failed", reason }),
+    );
     process.exitCode = 1;
   }
 } else {
   assert(
-    process.argv[2] && process.argv[3],
-    "Pass image ID and safe result path",
+    process.argv[2] && process.argv[3] && process.argv[4],
+    "Pass test image ID, safe result path and unchanged sandbox image ID",
   );
-  await onHost(process.argv[2], process.argv[3]);
+  await onHost(process.argv[2], process.argv[3], process.argv[4]);
 }
