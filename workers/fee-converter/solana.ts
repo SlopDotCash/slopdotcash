@@ -459,6 +459,29 @@ export function createSolanaClient(
     return total(meta.postTokenBalances) - total(meta.preTokenBalances);
   };
 
+  async function claimReceipt(
+    entry: FeeVault,
+    amount: bigint,
+    transaction: {
+      meta: {
+        err: unknown;
+        preTokenBalances: TokenBalance[];
+        postTokenBalances: TokenBalance[];
+      };
+    },
+  ) {
+    const verified = await verifiedVault(entry);
+    if (!verified) throw new Error("Recorded claim pays another fee wallet");
+    if (transaction.meta.err !== null)
+      throw new Error("claim receipt reports a failed transaction");
+    const { escrow } = verified;
+    const received = delta(transaction.meta, wallet, escrow.mint);
+    const paid = -delta(transaction.meta, escrow.projectPda, escrow.mint);
+    if (received < amount || received !== paid)
+      throw new Error("claim receipt does not match the vault fee");
+    return received;
+  }
+
   const vaultFees: VaultFeeClient = {
     async accrued(entry): Promise<AccruedFees | null> {
       const verified = await verifiedVault(entry);
@@ -474,7 +497,7 @@ export function createSolanaClient(
       return limits.solanaFeeMicro;
     },
 
-    async claim(entry) {
+    async claim(entry, recordClaim) {
       if (!seed)
         throw new Error("Signing is disabled without a fee-wallet key");
       const verified = await verifiedVault(entry);
@@ -552,9 +575,19 @@ export function createSolanaClient(
       )
         throw new Error("claim simulation credited less than the accrued fee");
 
+      if (!recordClaim)
+        throw new Error("Fee claim requires a durable send record");
       const signature = ed25519.sign(body, seed);
       const txId = solanaBase58(signature);
-      await broadcast(toBase64(concat(Uint8Array.of(1), signature, body)));
+      const rawTx = toBase64(concat(Uint8Array.of(1), signature, body));
+      await recordClaim({
+        txId,
+        rawTx,
+        evmNonce: null,
+        expiresAt: latest.value.lastValidBlockHeight,
+        amount,
+      });
+      await broadcast(rawTx);
       for (let poll = 0; ; poll++) {
         const statuses = await rpc<{
           value: ({ err: unknown; confirmationStatus: string | null } | null)[];
@@ -599,10 +632,7 @@ export function createSolanaClient(
       ]);
       if (!transaction || transaction.meta.err !== null)
         throw new Error(`claim ${txId} receipt is not available`);
-      const received = delta(transaction.meta, wallet, escrow.mint);
-      const paid = -delta(transaction.meta, escrow.projectPda, escrow.mint);
-      if (received < amount || received !== paid)
-        throw new Error(`claim ${txId} receipt does not match the vault fee`);
+      await claimReceipt(entry, amount, transaction);
       return { txId };
     },
   };
@@ -786,9 +816,13 @@ export function createSolanaClient(
         if (status.confirmationStatus !== "finalized")
           return { kind: "pending" };
         if (status.err !== null)
-          return { kind: "failed", reason: "swap transaction failed on chain" };
+          return {
+            kind: "failed",
+            reason: `${row.kind === "claim" ? "claim" : "swap"} transaction failed on chain`,
+          };
         const transaction = await rpc<{
           meta: {
+            err: unknown;
             preTokenBalances: TokenBalance[];
             postTokenBalances: TokenBalance[];
           };
@@ -801,6 +835,15 @@ export function createSolanaClient(
           },
         ]);
         if (!transaction) return { kind: "pending" };
+        if (row.kind === "claim")
+          return {
+            kind: "finalized",
+            amountOut: await claimReceipt(
+              JSON.parse(row.quote as string) as FeeVault,
+              BigInt(row.amountIn),
+              transaction,
+            ),
+          };
         // The row's own target, so a send reconciles against the asset it
         // was signed for.
         const credit = delta(transaction.meta, wallet, row.targetToken);
@@ -813,6 +856,11 @@ export function createSolanaClient(
       // never land, so a new attempt cannot double-spend this one.
       if (row.expiresAt !== null && height > row.expiresAt)
         return { kind: "failed", reason: "blockhash expired before inclusion" };
+      if (
+        row.kind === "claim" &&
+        !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
+      )
+        throw new Error("Recorded claim pays another fee wallet");
       return { kind: "rebroadcast" };
     },
   };
