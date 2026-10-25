@@ -48,6 +48,7 @@ import { indexPaymentEvent } from "../.local/ledger.mjs";
 import { recoverUncertainAttempts } from "../.local/payments-worker.mjs";
 import { scanSolanaPayments } from "../.local/scanner.mjs";
 import { storeVaultSnapshot } from "../.local/vault-snapshots.mjs";
+import { receiptProvider } from "./confirmation.mjs";
 import {
   configAddress,
   configFees,
@@ -56,8 +57,8 @@ import {
   expectedDeployment,
 } from "./deployment.mjs";
 
-const { AnchorProvider, Program, BN } = anchor;
-const provider = AnchorProvider.env(),
+const { Program, BN } = anchor;
+const provider = receiptProvider(),
   payer = provider.wallet.payer;
 const program = new Program(
   JSON.parse(readFileSync("target/idl/slop_escrow.json")),
