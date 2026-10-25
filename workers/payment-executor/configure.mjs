@@ -84,9 +84,22 @@ export function paymentStack({
         "A production stack uses the registry database; do not name another database",
       );
   } else throw new Error("Select --stack test or --stack production");
-  if (!Array.isArray(deployments) || !deployments.length)
+  if (
+    !Array.isArray(deployments) ||
+    (stack !== "production" && !deployments.length)
+  )
     throw new Error("Expected reviewed deployment array");
   const projects = assertProjectRegistry(registry);
+  if (
+    !deployments.length &&
+    projects.some((project) =>
+      (scope === "security-bounty"
+        ? project.securityBounty?.settlement
+        : project.escrow
+      )?.deployments.some((deployment) => deployment.network === network),
+    )
+  )
+    throw new Error("Empty attester configuration omits reviewed deployments");
   const seen = new Set();
   for (const deployment of deployments) {
     if (
@@ -117,7 +130,25 @@ export function paymentStack({
   }
   const production = stack === "production";
   const roles = production ? PRODUCTION_ROLES : ROLES;
-  const prefix = `${production ? `slop-payments-${network}` : databaseName}${scope === "security-bounty" ? "-bounty" : ""}`;
+  // A factory uses one identity key for ordinary and bounty vaults. Keep
+  // its nonce and signed-binding journal in one production Durable Object.
+  const scopedDeployments = (kind) =>
+    projects.flatMap((project) =>
+      (
+        (kind === "security-bounty"
+          ? project.securityBounty?.settlement
+          : project.escrow
+        )?.deployments ?? []
+      )
+        .filter((deployment) => deployment.network === network)
+        .map((deployment) => ({
+          ...paymentDeploymentRecord(project.id, deployment),
+          ...(kind === "security-bounty" ? { payoutPolicy: kind } : {}),
+        })),
+    );
+  const ordinaryPins = production ? scopedDeployments("ordinary") : deployments;
+  const privatePins = production ? scopedDeployments("security-bounty") : [];
+  const prefix = `${production ? `slop-payments-${network}` : databaseName}${!production && scope === "security-bounty" ? "-bounty" : ""}`;
   const names = Object.fromEntries(
     roles.map((role) => [role, `${prefix}-${role}`]),
   );
@@ -142,9 +173,8 @@ export function paymentStack({
   const configs = {};
   for (const role of roles) {
     const signer = role !== "dispatcher";
-    const monthlyAttester = role === "attester" && scope === "ordinary";
     const scheduledAttester =
-      monthlyAttester || (production && role === "attester");
+      role === "attester" && (production || scope === "ordinary");
     configs[role] = {
       ...common,
       name: names[role],
@@ -178,12 +208,17 @@ export function paymentStack({
           }),
       vars: signer
         ? {
-            PAYMENT_DEPLOYMENTS: JSON.stringify(deployments),
-            ...(scope === "security-bounty" ? { PAYMENT_SCOPE: scope } : {}),
+            PAYMENT_DEPLOYMENTS: JSON.stringify(ordinaryPins),
+            ...(privatePins.length
+              ? { SECURITY_PAYMENT_DEPLOYMENTS: JSON.stringify(privatePins) }
+              : {}),
+            ...(!production && scope === "security-bounty"
+              ? { PAYMENT_SCOPE: scope }
+              : {}),
             SIGNER_ROLE: role,
             SIGNER_STACK: stack,
             CHAIN_FAMILY: family,
-            ...(monthlyAttester && monthlySchedule !== undefined
+            ...(scheduledAttester && monthlySchedule !== undefined
               ? { MONTHLY_PAYMENT_SCHEDULE: monthlySchedule }
               : {}),
           }
@@ -198,7 +233,15 @@ export function paymentStack({
       ...(signer
         ? {
             ...(scheduledAttester
-              ? { triggers: { crons: ["*/5 * * * *"] } }
+              ? {
+                  triggers: {
+                    crons:
+                      production &&
+                      ordinaryPins.length + privatePins.length === 0
+                        ? []
+                        : ["*/5 * * * *"],
+                  },
+                }
               : {}),
             durable_objects: {
               bindings: [

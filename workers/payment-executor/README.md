@@ -95,18 +95,25 @@ Any other `SIGNER_STACK` value stops the signer.
 
 ## Private bounty bindings
 
-A production stack generated with `--scope security-bounty` has its own
-attester, pinned bounty vaults and private payment ledger. Its five-minute
-schedule indexes finalized private vault events. On EVM it then submits only
-destination bindings with current account and wallet consent, using the same
-journal and reconciliation rules as ordinary awards. On Solana, the wallet
-co-signs interactively through `SECURITY_SOLANA_IDENTITY_ATTESTER`.
+One production attester serves a network's ordinary and bounty vaults. The
+configuration generator derives both pin lists from the checked registry.
+`PAYMENT_DEPLOYMENTS` selects ordinary vaults; `SECURITY_PAYMENT_DEPLOYMENTS`
+selects private vaults. Both scopes share the same Durable Object, identity
+key and nonce journal, because the factory supplies one identity authority.
+Do not run separate signing services with that same key on the same network.
 
-The private attester never signs a monthly allocation or submits an award
+Its five-minute schedule indexes finalized events into each scope's separate
+ledger. On EVM it submits only bindings with current account and wallet
+consent, using the existing reconciliation rules. Private internal requests
+use `/v1/security/`. Solana wallet co-signing remains interactive through the
+private account route; its `SECURITY_SOLANA_IDENTITY_ATTESTER` binding points
+to the same network attester, with that private path.
+
+The private scope never signs a monthly allocation or submits an award
 payment. The owner still decides each bounty and the project or a permissionless
-executor submits its payment. No private amount or case record enters ordinary
-balances or notifications. A generated configuration is not a deployed service;
-release it through the reviewed main workflow before human key entry.
+executor submits its payment. Private amounts and case records stay out of
+ordinary balances and notices. Generated configuration is not a deployed
+service; use the reviewed main release before human key entry.
 
 ## Monthly allocation execution
 

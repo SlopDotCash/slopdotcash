@@ -64,6 +64,7 @@ interface Namespace {
 }
 interface Environment {
   PAYMENT_SCOPE?: "security-bounty";
+  SECURITY_PAYMENT_DEPLOYMENTS?: string;
   PAYMENTS_DB: D1Database;
   REGISTRY_DB?: ProjectD1Database;
   MONTHLY_PAYMENT_SCHEDULE?: string;
@@ -92,6 +93,20 @@ export class PaymentSignerJournal {
     private readonly env: Environment,
   ) {}
   async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/v1/security/")) {
+      url.pathname = url.pathname.replace("/v1/security/", "/v1/");
+      if (this.env.PAYMENT_SCOPE === "security-bounty")
+        return this.fetch(new Request(url, request));
+      if (!this.env.SECURITY_PAYMENT_DEPLOYMENTS)
+        return new Response("Not found", { status: 404 });
+      // Both scopes use this same state.storage, including the nonce record.
+      // Only the separately pinned private vaults and ledger are selected.
+      return new PaymentSignerJournal(
+        { storage: privateScopeJournal(this.state.storage) },
+        privateAttesterEnvironment(this.env),
+      ).fetch(new Request(url, request));
+    }
     const database =
       this.env.PAYMENT_SCOPE === "security-bounty"
         ? securityPaymentDatabase(this.env.PAYMENTS_DB)
@@ -629,9 +644,12 @@ export async function runDestinationBindings(env: Environment) {
   const response = await env.JOURNAL.get(
     env.JOURNAL.idFromName(SIGNER_STACKS.production.journal),
   ).fetch(
-    new Request("https://attester.internal/v1/bind-destinations", {
-      method: "POST",
-    }),
+    new Request(
+      `https://attester.internal/v1/${env.PAYMENT_SCOPE === "security-bounty" && env.SIGNER_STACK === "production" ? "security/" : ""}bind-destinations`,
+      {
+        method: "POST",
+      },
+    ),
   );
   if (!response.ok) throw new Error("Destination binding run rejected");
   const report = (await readBoundedJson(
@@ -643,17 +661,49 @@ export async function runDestinationBindings(env: Environment) {
   return report;
 }
 
+/** Separate pending attempts and receipts, but atomically share the EVM nonce. */
+function privateScopeJournal(storage: JournalStore): JournalStore {
+  const scoped = (key: string) =>
+    key.startsWith("nonce:") ? key : `security:${key}`;
+  return {
+    get: <T>(key: string) => storage.get<T>(scoped(key)),
+    put: <T>(key: string, value: T) => storage.put(scoped(key), value),
+    transaction: <T>(callback: (store: JournalStore) => Promise<T>) =>
+      storage.transaction((transaction) =>
+        callback(privateScopeJournal(transaction)),
+      ),
+  };
+}
+
+function privateAttesterEnvironment(env: Environment): Environment {
+  return {
+    ...env,
+    PAYMENT_SCOPE: "security-bounty",
+    PAYMENT_DEPLOYMENTS: env.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]",
+    SECURITY_PAYMENT_DEPLOYMENTS: undefined,
+  };
+}
+
 /** Service bindings only. workers_dev and preview URLs must remain disabled in both deployments. */
 export default {
   async scheduled(_event: unknown, env: Environment) {
     // The binding run follows the indexing of new awards and runs even when
     // a monthly step fails; either failure fails the scheduled run.
     const failures: unknown[] = [];
-    for (const step of [runMonthlyAttester, runDestinationBindings]) {
-      try {
-        await step(env);
-      } catch (error) {
-        failures.push(error);
+    const privateScope = env.SECURITY_PAYMENT_DEPLOYMENTS
+      ? privateAttesterEnvironment(env)
+      : null;
+    const scopes =
+      privateScope && JSON.parse(env.PAYMENT_DEPLOYMENTS).length === 0
+        ? [privateScope]
+        : [env, ...(privateScope ? [privateScope] : [])];
+    for (const scope of scopes) {
+      for (const step of [runMonthlyAttester, runDestinationBindings]) {
+        try {
+          await step(scope);
+        } catch (error) {
+          failures.push(error);
+        }
       }
     }
     if (failures.length)

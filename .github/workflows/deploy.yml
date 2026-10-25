@@ -764,7 +764,8 @@ jobs:
           import { paymentDeployments } from "./scripts/prepare-payment-deployments.ts";
           const pinned = paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet");
           writeFileSync(process.env.ATTESTER_PINS, JSON.stringify(pinned));
-          process.stdout.write(String(pinned.length));
+          const privatePinned = paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet", "security-bounty");
+          process.stdout.write(String(pinned.length + privatePinned.length));
           ')"
           if ! [[ "$attester_vaults" =~ ^[0-9]+$ ]]; then
             echo "::error::The Base mainnet attester pin count is invalid."
@@ -779,7 +780,9 @@ jobs:
           const { readFileSync } = require("node:fs");
           const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const vars = config.vars ?? {};
-          const pinned = JSON.parse(vars.PAYMENT_DEPLOYMENTS ?? "[]");
+          const ordinaryPinned = JSON.parse(vars.PAYMENT_DEPLOYMENTS ?? "[]");
+          const privatePinned = JSON.parse(vars.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]");
+          const pinned = [...ordinaryPinned, ...privatePinned];
           if (
             config.name !== "slop-payments-base-mainnet-attester" ||
             config.workers_dev !== false ||

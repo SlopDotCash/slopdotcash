@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   buildBindCalldata,
+  evmAwardId,
   evmBindingTypedData,
   evmVaultKey,
 } from "../../contracts/evm/adapter";
@@ -35,6 +36,7 @@ import {
   type PaymentDeployment,
   readDeploymentVaultTotals,
 } from "../../workers/payments";
+import { readMonthlySchedule } from "../../workers/payments/registry-database.mjs";
 import { type DispatchPayment, dispatchPayment } from "../payments/dispatch";
 import { evmPaymentAdapter } from "../payments/evm-adapter";
 import { handlePaymentsApi } from "../payments/handler";
@@ -49,6 +51,8 @@ import {
 } from "./payments";
 
 const productionAttester = process.argv.includes("--production-attester");
+const sharedScopes =
+  productionAttester && !process.argv.includes("--private-only");
 const network = productionAttester ? "base-mainnet" : "base-sepolia";
 const chainId = productionAttester ? "8453" : "84532";
 const bindingDelay = productionAttester ? "0" : "3600";
@@ -59,6 +63,28 @@ const chain = spawn(
   ["--port", String(port), "--chain-id", chainId, "--silent"],
   { stdio: "ignore" },
 );
+let dropAttesterBroadcast = false;
+let droppedBindings = 0;
+const attesterProxy = productionAttester
+  ? Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const body = await request.text();
+        if (
+          dropAttesterBroadcast &&
+          JSON.parse(body).method === "eth_sendRawTransaction"
+        ) {
+          droppedBindings += 1;
+          return new Response("Lost binding broadcast", { status: 502 });
+        }
+        return fetch(rpcUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        });
+      },
+    })
+  : null;
 const owner = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 const registrar = productionAttester
   ? "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
@@ -266,6 +292,38 @@ try {
     sourceCommit: "a".repeat(40),
     deploymentTransaction: creation,
   } satisfies EscrowDeployment;
+  const ordinarySource = `0x${"6".repeat(64)}`;
+  let ordinaryDeployment: EscrowDeployment | null = null;
+  let ordinaryAwardId: string | null = null;
+  if (sharedScopes) {
+    const creation = await send(factory, "create(bytes32,address,uint8)", [
+      projectKey,
+      token,
+      "0",
+    ]);
+    const vault = execFileSync(
+      "cast",
+      [
+        "call",
+        factory,
+        "vaults(bytes32)(address)",
+        evmVaultKey({ owner, projectId: projectKey, asset: token }),
+        "--rpc-url",
+        rpcUrl,
+      ],
+      { encoding: "utf8" },
+    )
+      .trim()
+      .toLowerCase();
+    ordinaryDeployment = {
+      ...deployment,
+      vault,
+      deploymentTransaction: creation,
+      evmUpgrade: await captureUpgrade(rpc, factory, vault),
+      codeSha256: await codeDigest(vault),
+    };
+    ordinaryAwardId = evmAwardId(BigInt(chainId), vault, ordinarySource);
+  }
   const program = {
     status: "open",
     intake: { repository: "synthetic/private" },
@@ -347,7 +405,28 @@ try {
       }
     : program;
   const manifestObject = productionAttester
-    ? assertProjectDefinition({ ...fixture, securityBounty: terms })
+    ? assertProjectDefinition({
+        ...fixture,
+        reward: {
+          ...fixture.reward,
+          chain: "base",
+          ...(ordinaryDeployment ? { feeBasisPoints: 200 } : {}),
+        },
+        ...(ordinaryDeployment
+          ? {
+              escrow: {
+                schemaVersion: "1",
+                effectiveCycle: "2026-11",
+                chain: "base",
+                feeBasisPoints: 200,
+                withdrawalFeeBasisPoints: 200,
+                feeMode: "deduct-from-gross",
+                deployments: [ordinaryDeployment],
+              },
+            }
+          : {}),
+        securityBounty: terms,
+      })
     : { id: projectId, status: "active", securityBounty: terms };
   const manifest = JSON.stringify(manifestObject);
   sqlite
@@ -448,6 +527,20 @@ try {
     { ...plan.ownerRequest, network: undefined, gas: "0x7a1200" },
   ]);
   await rpc("anvil_mine", ["0x40"]);
+  if (ordinaryDeployment) {
+    await send(token, "mint(address,uint256)", [owner, "1000000"]);
+    await send(token, "approve(address,uint256)", [
+      ordinaryDeployment.vault,
+      "1000000",
+    ]);
+    await send(ordinaryDeployment.vault, "deposit(uint128)", ["1000000"]);
+    await send(
+      ordinaryDeployment.vault,
+      "commitAward(bytes32,uint64,uint128,bytes32)",
+      [ordinaryAwardId as string, reporter.githubId, "1000000", ordinarySource],
+    );
+    await rpc("anvil_mine", ["0x40"]);
+  }
   sqlite.exec(
     "CREATE TABLE signer_journal(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
   );
@@ -480,18 +573,21 @@ try {
     },
   };
   const privateAttester = productionAttester
-    ? (() => {
+    ? await (async () => {
         const stack = paymentStack({
           stack: "production",
-          scope: "security-bounty",
+          scope: sharedScopes ? "security-bounty" : "ordinary",
           network,
-          deployments: [
-            {
-              ...paymentDeploymentRecord(projectId, deployment),
-              payoutPolicy: "security-bounty",
-            },
-          ],
+          deployments: sharedScopes
+            ? [
+                {
+                  ...paymentDeploymentRecord(projectId, deployment),
+                  payoutPolicy: "security-bounty",
+                },
+              ]
+            : [],
           registry: [manifestObject],
+          monthlySchedule: await readMonthlySchedule(),
           registryDatabase: {
             database_name: "slop-private",
             database_id: "1b453124-2709-45af-8389-151a8105c461",
@@ -501,7 +597,11 @@ try {
           ...stack.configs.attester.vars,
           PAYMENTS_DB: database,
           REGISTRY_DB: database,
-          PAYMENT_RPC_URLS: JSON.stringify({ [network]: rpcUrl }),
+          PAYMENT_RPC_URLS: JSON.stringify({
+            [network]: attesterProxy
+              ? `http://127.0.0.1:${attesterProxy.port}`
+              : rpcUrl,
+          }),
           SIGNER_PRIVATE_KEY:
             "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
           JOURNAL: { idFromName: (name: string) => name, get: () => signer },
@@ -551,7 +651,7 @@ try {
     sqlite
       .query<{ n: number }, []>("SELECT count(*) n FROM payment_obligations")
       .get()?.n,
-    0,
+    ordinaryDeployment ? 1 : 0,
   );
   // Register and prove the destination through the canonical account API,
   // then bind that same destination on chain with its EIP-712 signature.
@@ -583,7 +683,15 @@ try {
         },
         ...(data ? { body: JSON.stringify(data) } : {}),
       }),
-      { db: database, paymentDeployments: [config] },
+      {
+        db: database,
+        paymentDeployments: [
+          config,
+          ...(ordinaryDeployment
+            ? [paymentDeploymentRecord(projectId, ordinaryDeployment)]
+            : []),
+        ],
+      },
     );
     return { status: r.status, body: await r.json() };
   };
@@ -643,13 +751,59 @@ try {
       signature: await wallet.signTypedData(consent),
     });
     assert.equal(authorized.status, 200, JSON.stringify(authorized.body));
+    if (ordinaryDeployment) {
+      const ordinaryChallenge = await accountCall("wallets/bind-challenge", {
+        claimId,
+        network,
+        vault: ordinaryDeployment.vault,
+        expectedVersion: "0",
+      });
+      // The account API receives both canonical scopes, as Pages supplies them.
+      assert.equal(
+        ordinaryChallenge.status,
+        200,
+        JSON.stringify(ordinaryChallenge.body),
+      );
+      const ordinaryConsent = ordinaryChallenge.body.typedData;
+      const ordinaryAuthorization = await accountCall(
+        "wallets/bind-authorize",
+        {
+          claimId,
+          network,
+          vault: ordinaryDeployment.vault,
+          expectedVersion: "0",
+          expiresAt: ordinaryConsent.message.expiresAt,
+          signature: await wallet.signTypedData(ordinaryConsent),
+        },
+      );
+      assert.equal(
+        ordinaryAuthorization.status,
+        200,
+        JSON.stringify(ordinaryAuthorization.body),
+      );
+    }
+    // Neither raw binding reaches the chain. The shared journal must still
+    // allocate two different nonces to this factory's one identity key.
+    dropAttesterBroadcast = true;
+    await assert.rejects(privateAttester.scheduled(), AggregateError);
+    const bindingCount = ordinaryDeployment ? 2 : 1;
+    assert(droppedBindings >= bindingCount);
+    assert.equal(
+      await rpc("eth_getTransactionCount", [authority, "latest"]),
+      "0x0",
+    );
+    assert.equal(
+      await journal.get(`nonce:${chainId}:${authority}`),
+      bindingCount,
+    );
+    dropAttesterBroadcast = false;
     await privateAttester.scheduled();
     await rpc("anvil_mine", ["0x40"]);
     await privateAttester.scheduled();
     assert.equal(
       await rpc("eth_getTransactionCount", [authority, "latest"]),
-      "0x1",
-      "One binding after replay",
+      `0x${bindingCount.toString(16)}`,
+      "One binding per scope after uncertain sends and replay",
     );
     // The attester never submits either an award payment or a monthly allocation.
     for (const path of [
@@ -658,7 +812,7 @@ try {
       "/v1/monthly-authorization",
     ]) {
       const refused = await privateAttester.signer.fetch(
-        new Request(`https://attester.internal${path}`, {
+        new Request(`https://attester.internal/v1/security/${path.slice(4)}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -674,7 +828,7 @@ try {
       sqlite
         .query<{ n: number }, []>("SELECT count(*) n FROM payment_obligations")
         .get()?.n,
-      0,
+      ordinaryDeployment ? 1 : 0,
     );
     assert.equal(
       sqlite
@@ -782,20 +936,33 @@ try {
       .get()?.n,
     1,
   );
-  assert.equal((await accountCall("me")).body.payments.length, 0);
-  assert.equal((await accountCall(`projects/${projectId}/totals`)).status, 503);
+  const publicPayments = (await accountCall("me")).body.payments;
+  assert.deepEqual(
+    publicPayments.map((payment: { id: string }) => payment.id),
+    ordinaryDeployment ? [ordinaryAwardId] : [],
+  );
+  const publicTotals = await accountCall(`projects/${projectId}/totals`);
+  assert.equal(publicTotals.status, ordinaryDeployment ? 200 : 503);
+  const ordinaryOutput = JSON.stringify({
+    publicPayments,
+    publicTotals: publicTotals.body,
+  });
+  assert(!ordinaryOutput.includes(vault));
+  assert(!ordinaryOutput.includes(caseId));
   assert.equal(
     (await call(dispute, "GET", `security-cases/${caseId}`)).status,
     404,
   );
-  assert.equal(
-    sqlite
-      .query<{ n: number }, []>(
-        "SELECT count(*) n FROM notifications WHERE kind IN ('award_reserved','payment_paid','payout_held','payout_exception')",
-      )
-      .get()?.n,
-    0,
-  );
+  const ordinaryNotices = sqlite
+    .query<{ event_key: string }, []>(
+      "SELECT event_key FROM notifications WHERE kind IN ('award_reserved','payment_paid','payout_held','payout_exception')",
+    )
+    .all();
+  assert.equal(ordinaryNotices.length, ordinaryDeployment ? 1 : 0);
+  for (const notice of ordinaryNotices) {
+    assert(notice.event_key.includes(ordinaryAwardId as string));
+    assert(!notice.event_key.includes(plan.obligationId));
+  }
   const balance = execFileSync(
     "cast",
     [
@@ -845,7 +1012,7 @@ try {
       restored.sqlite
         .query<{ n: number }, []>("SELECT count(*) n FROM payment_obligations")
         .get()?.n,
-      0,
+      ordinaryDeployment ? 1 : 0,
     );
     assert.equal(
       restored.sqlite
@@ -868,9 +1035,10 @@ try {
   }
 
   console.log(
-    `${productionAttester ? "Production attester on local Base: " : "Private bounty: "}real API approval and visibility consent, finalized vault funding, unsigned owner commitment, late wallet possession, 75/25 payment, lost-response recovery, replay rejection, private notices, backup restore, and public-output isolation passed.`,
+    `${productionAttester ? "Production attester on local Base: " : "Private bounty: "}real API approval and visibility consent, ${productionAttester ? `${sharedScopes ? "two scoped bindings with shared nonces" : "private-only release pins"} after lost broadcasts, ` : ""}finalized vault funding, unsigned owner commitment, late wallet possession, 75/25 payment, lost-response recovery, replay rejection, private notices, backup restore, and public-output isolation passed.`,
   );
 } finally {
+  attesterProxy?.stop(true);
   chain.kill("SIGTERM");
   sqlite.close();
 }
