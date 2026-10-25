@@ -763,10 +763,8 @@ export function solanaPaymentAdapter(
           accounts[4] !== config.vault
         )
           throw new Error("Payment differs from award");
-        // The fee accrues in the vault; only the net moves to the destination. A
-        // 1-unit award has a 1-unit fee and a net of 0, and the program then makes
-        // no transfer at all.
-        const expected = net > 0n ? [{ to: accounts[5], amount: net }] : [];
+        // The fee accrues in the vault; a zero-net award makes no token transfer.
+        const expected = net === 0n ? [] : [{ to: accounts[5], amount: net }];
         if (children.length !== expected.length)
           throw new Error("Unexpected payout instructions");
         // Any classic SPL mint is accepted, so the transfer decimals must equal the mint's.

@@ -16,11 +16,10 @@ export const registryProjectDigest = (id: string) =>
   sha256Hex(`slop-project:${id}`);
 
 export interface VaultSetupInput {
+  payoutPolicy?: PayoutPolicy;
   network: EscrowDeployment["network"];
   claimId: string;
   automatic: boolean;
-  /** Omitted means ordinary. Owner Solana setup creates ordinary vaults only. */
-  payoutPolicy?: PayoutPolicy;
 }
 interface VaultSetupReviewBase {
   payoutPolicy?: PayoutPolicy;
@@ -113,28 +112,39 @@ export function checkedVaultSetupReview(
       : a.toLowerCase() === b?.toLowerCase());
   const invalid = () =>
     new Error(
-      "The vault request does not match the displayed project, wallet and monthly policy. Reload and review again.",
+      "The vault request does not match the displayed project, wallet and payment policy. Reload and review again.",
     );
   if (review?.family === "solana") {
     const creation = review.creation;
     if (
+      (review.payoutPolicy ?? "ordinary") !==
+        (input.payoutPolicy ?? "ordinary") ||
+      (bounty &&
+        (input.automatic ||
+          project.securityBounty?.amount.currency !== "USDC" ||
+          project.securityBounty.amount.network !== network.chain)) ||
       network.family !== "solana" ||
       review.network !== input.network ||
       !same(review.owner, owner) ||
       !same(review.asset, asset) ||
-      review.cap !== project.reward.monthlyCapMinor ||
-      review.capDisplay !== project.reward.monthlyCapDisplay ||
+      review.cap !== cap ||
+      review.capDisplay !== capDisplay ||
       review.automatic !== input.automatic ||
       !creation ||
       creation.owner !== owner ||
       creation.mint !== asset ||
       creation.projectDigest !== registryProjectDigest(project.id) ||
-      creation.monthlyCap !== review.cap ||
-      creation.automaticMonthly !== input.automatic ||
-      creation.payoutPolicy !== "ordinary" ||
+      (bounty
+        ? creation.monthlyCap !== undefined ||
+          creation.automaticMonthly !== undefined
+        : creation.monthlyCap !== review.cap ||
+          creation.automaticMonthly !== input.automatic) ||
+      creation.payoutPolicy !== (input.payoutPolicy ?? "ordinary") ||
       !isAssetDecimals(review.decimals) ||
       review.decimals !==
-        (project.rewardAsset?.decimals ?? network.assetDecimals)
+        (bounty
+          ? network.assetDecimals
+          : (project.rewardAsset?.decimals ?? network.assetDecimals))
     )
       throw invalid();
     const plan = buildInitializeVaultInstructions(creation);
@@ -179,8 +189,6 @@ export function checkedVaultSetupReview(
           : { monthlyCap: cap, automaticMonthly: input.automatic }),
       })
   )
-    throw new Error(
-      "The vault request does not match the displayed project, wallet and payment policy. Reload and review again.",
-    );
+    throw invalid();
   return review;
 }

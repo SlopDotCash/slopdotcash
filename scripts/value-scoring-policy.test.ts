@@ -35,8 +35,8 @@ const REPO_URL = `https://github.com/${REPO}`;
 const AT = "2026-10-23T12:00:00.000Z";
 const FROM = "2026-09-18T12:00:00.000Z";
 const HEAD = "a".repeat(40);
-// A test-only effective instant before the recorded one, so October fixtures
-// exercise the value policy.
+// A later test-only policy boundary keeps both legacy and value paths in the
+// same October fixture.
 const POLICY: ValueScoringPolicy = {
   id: "slop-value-v1",
   rubricVersion: VALUE_RUBRIC_VERSION,
@@ -300,6 +300,12 @@ test("banned reviews do not consume another reviewer's slot or credit", () => {
     ["U_erin", 2],
     ["U_grace", 2],
   ]);
+  expect(
+    credits.reduce((sum, event) => sum + (event.scoreThirds ?? 0), 0),
+  ).toBe(9);
+  expect(
+    snapshot(POLICY, new Map([["U_bob", "2026-10-19T01:00:00.000Z"]])),
+  ).toEqual(result);
   const exclusions = new Map(
     (result.reviewExclusions ?? []).map((item) => [item.reviewId, item.reason]),
   );
@@ -319,7 +325,7 @@ test("the normal command takes no opt-in flag and uses the recorded policy", () 
   );
   expect(valueScoringPolicy()).toEqual({
     ...POLICY,
-    effectiveAt: "2026-11-01T00:00:00.000Z",
+    effectiveAt: "2026-09-01T00:00:00.000Z",
   });
   expect(() =>
     assertValueScoringPolicy({ ...POLICY, effectiveAt: "2026-10-15" }),
@@ -478,7 +484,7 @@ test("value decisions require a policy that cannot reach earlier policy periods"
     "Value decisions require their versioned scoring policy",
   );
   expect(() =>
-    snapshot({ ...POLICY, effectiveAt: "2026-10-01T00:00:00.000Z" }),
+    snapshot({ ...POLICY, effectiveAt: "2026-08-31T00:00:00.000Z" }),
   ).toThrow("The value policy cannot reinterpret earlier policy periods");
 });
 

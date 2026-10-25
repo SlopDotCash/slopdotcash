@@ -1,3 +1,4 @@
+import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { assertPayoutExclusionTransition } from "../../src/lib/payout-exclusions.mjs";
 import type {
   EnforcementPreview,
@@ -34,6 +35,7 @@ import {
 } from "../../src/lib/vault-setup";
 import { type ApiError, fail } from "../api-error";
 import { pathParts } from "../api-path";
+import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readJsonObject, sha256Hex } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
@@ -99,6 +101,12 @@ import {
 export type ProjectApiDependencies = {
   persistence: ProjectPersistence;
   vaultSetup?: OwnerVaultSetup;
+  /** Private registry scope; never resolves ordinary vaults or request RPCs. */
+  securitySolanaFundingConfig?: (
+    projectId: string,
+    network: string,
+    vault: string,
+  ) => Promise<SolanaEscrowConfig>;
   adminGithubIds: ReadonlySet<string>;
   /** GitHub actor IDs with the project moderation role (PRD ADM-05, ADM-06). */
   moderatorGithubIds: ReadonlySet<string>;
@@ -312,6 +320,7 @@ async function ownerSecurityProgram(
   next: ProjectDefinition,
   status: SecurityBountyTerms["status"] | undefined,
   actor: GithubActor,
+  canManageContacts: boolean,
   deps: ProjectApiDependencies,
 ): Promise<ProjectDefinition> {
   const before = previous.securityBounty;
@@ -325,10 +334,9 @@ async function ownerSecurityProgram(
       );
     return next;
   }
-  // Approvers receive private-case roles from the manifest alone. Write
-  // access must not let an owner name other accounts or remove the recorded
-  // contacts; admins change them through the reviewed manifest path.
-  if (before !== undefined) {
+  // Contacts receive private-case roles. Ordinary write access cannot grant
+  // or remove them; the project steward or a repository admin manages them.
+  if (!canManageContacts && before !== undefined) {
     if (
       !sameValue(before.approvers, after.approvers) ||
       !sameValue(before.sponsor, after.sponsor)
@@ -336,21 +344,22 @@ async function ownerSecurityProgram(
       fail(
         422,
         "security_contacts_restricted",
-        "Bounty contacts and the sponsor change only through a Slop admin review",
+        "Only the project steward or a repository admin can change bounty contacts or the sponsor",
       );
   } else if (
-    [
+    !canManageContacts &&
+    ([
       ...after.approvers.technical,
       ...after.approvers.financial,
       ...after.approvers.dispute,
     ].some((person) => person.githubId !== actor.githubId) ||
-    (after.sponsor.githubId !== null &&
-      after.sponsor.githubId !== actor.githubId)
+      (after.sponsor.githubId !== null &&
+        after.sponsor.githubId !== actor.githubId))
   )
     fail(
       422,
       "security_contacts_restricted",
-      "A new bounty program names only you as its contact; a Slop admin adds other contacts after review",
+      "Only the project steward or a repository admin can name other bounty contacts or a sponsor",
     );
   if (!sameValue(before?.settlement, after.settlement))
     fail(
@@ -906,6 +915,19 @@ function requireAuthority(checked: {
     fail(403, "authority_required", authority.message);
 }
 
+function isProjectStewardOrAdmin(
+  manifest: ProjectDefinition,
+  actor: GithubActor,
+  access: AccessCheck,
+): boolean {
+  return (
+    actor.githubId === String(manifest.steward.github.actorId) ||
+    (access.state === "read" &&
+      access.access.installation === "installed" &&
+      access.access.permission === "admin")
+  );
+}
+
 function actorOf(session: WebSession): GithubActor {
   return { githubId: session.githubId, githubLogin: session.githubLogin };
 }
@@ -1112,6 +1134,43 @@ async function createProject(
   });
 }
 
+/** Private balance review requires current repository authority on every request. */
+async function ownerBountySolanaFunding(
+  request: Request,
+  deps: ProjectApiDependencies,
+  projectId: string,
+): Promise<Response> {
+  const actor = actorOf(await requireSession(request, deps));
+  const current = await deps.persistence.getProject(projectId);
+  if (!current) fail(404, "not_found", "Project not found");
+  requireAuthority(await currentAuthority(deps, current.manifest, actor));
+  const resolve = deps.securitySolanaFundingConfig;
+  if (!resolve)
+    fail(503, "funding_unavailable", "Bounty funding is unavailable.");
+  return handleSolanaFunding(request, async (network, vault, action) => {
+    const latest = await deps.persistence.getProject(projectId);
+    if (!latest) fail(404, "not_found", "Project not found");
+    if (
+      !latest.manifest.securityBounty?.settlement?.deployments.some(
+        (deployment) =>
+          deployment.network === network && deployment.vault === vault,
+      )
+    )
+      fail(404, "not_found", "Bounty vault not found");
+    if (action.step === "review" && action.operation === "deposit") {
+      const enforcements = await deps.persistence.listEnforcements();
+      assertMaintainerNotBanned(latest.manifest, actor, enforcements);
+      if (publicRestrictionOf(latest, enforcements).state !== "clear")
+        fail(
+          409,
+          "project_restricted",
+          "New deposits are unavailable while the project is restricted.",
+        );
+    }
+    return resolve(projectId, network, vault);
+  });
+}
+
 /** Only verified server-derived deployments can bypass the ordinary manifest editor. */
 async function ownerVault(
   request: Request,
@@ -1130,13 +1189,14 @@ async function ownerVault(
   )
     fail(400, "invalid_request", "Invalid vault purpose");
   if (request.method === "GET" && purpose === "security-bounty") {
-    // A banned account cannot read restricted bounty totals. During a project
-    // restriction, current owners can still read funded obligations and check
-    // existing transactions; new creation and deposits stay disabled.
-    assertMaintainerNotBanned(current.manifest, actor, enforcements);
+    // Reading funded obligations and owner exits remains available during a
+    // restriction. New creation and deposits still require participation.
     requireAuthority(await currentAuthority(deps, current.manifest, actor));
+    const banned = bannedMaintainerIds(enforcements);
     const canSetup =
-      publicRestrictionOf(current, enforcements).state === "clear";
+      publicRestrictionOf(current, enforcements).state === "clear" &&
+      !banned.has(actor.githubId) &&
+      !banned.has(String(current.manifest.steward.github.actorId));
     const program = current.manifest.securityBounty;
     return json(200, {
       revision: current.revision,
@@ -1163,14 +1223,7 @@ async function ownerVault(
   // A project has one ordinary vault and no replacement, and its owner
   // controls refunds and the monthly switch. Write access is not enough:
   // only the steward or a repository admin may create or register it.
-  if (
-    actor.githubId !== String(current.manifest.steward.github.actorId) &&
-    !(
-      checked.access.state === "read" &&
-      checked.access.access.installation === "installed" &&
-      checked.access.access.permission === "admin"
-    )
-  )
+  if (!isProjectStewardOrAdmin(current.manifest, actor, checked.access))
     fail(
       403,
       "vault_authority_required",
@@ -1389,6 +1442,10 @@ async function publishOwnerRevision(
       "project_restricted",
       `The project is ${restriction.state}; request reinstatement before changing it`,
     );
+  // Authority comes from the stored project. Submitted repository facts must
+  // never authorize private funding reads or a revision of another project.
+  const checked = await currentAuthority(deps, current.manifest, actor);
+  requireAuthority(checked);
   // The server decides status and listing; the owner sends content.
   let prepared = withMonthlyAmount(
     await verifiedRewardAsset(
@@ -1442,12 +1499,7 @@ async function publishOwnerRevision(
       },
     };
   let { manifest: submitted } = canonicalManifest(prepared);
-  // Check authority and every refusal before any funding read: a refusal
-  // must not tell an account without access whether the bounty vault has
-  // funds. Authority comes from the stored repository, never from the
-  // repository the caller sends.
-  const checked = await currentAuthority(deps, current.manifest, actor);
-  requireAuthority(checked);
+  // Reject forbidden manifest changes before reading private funds.
   if (submitted.id !== projectId)
     fail(422, "invalid_manifest", "Project id cannot change");
   const restricted = classifyRevisionChanges(
@@ -1466,6 +1518,7 @@ async function publishOwnerRevision(
       submitted,
       requestedProgramStatus,
       actor,
+      isProjectStewardOrAdmin(current.manifest, actor, checked.access),
       deps,
     );
   const changes = classifyRevisionChanges(current.manifest, submitted);
@@ -2664,6 +2717,8 @@ export async function handleProjectApi(
         return await createProject(request, deps);
       case "PUT projects/:id":
         return await publishOwnerRevision(request, deps, parts[1]);
+      case "POST project-vaults/:id/solana-funding":
+        return await ownerBountySolanaFunding(request, deps, parts[1]);
       case "GET project-vaults/:id":
       case "POST project-vaults/:id":
         return await ownerVault(request, deps, parts[1]);

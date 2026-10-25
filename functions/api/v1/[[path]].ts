@@ -566,8 +566,47 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       manifest,
       (await loadTemplate()).index.templateSha256,
     );
+  const solanaFundingConfig = async (
+    projectId: string,
+    network: string,
+    vault: string,
+    payoutPolicy: "ordinary" | "security-bounty",
+  ): Promise<SolanaEscrowConfig> => {
+    const networks = parsePaymentNetworks(context.env.PAYMENT_NETWORKS);
+    const selected = networks.find((name) => name === network);
+    if (!selected || ESCROW_NETWORKS[selected].family !== "solana")
+      throw new Error("Funding network unavailable");
+    const registry = await loadRegistryPaymentDeployments(
+      context.env.SLOP_DB,
+      [selected],
+      payoutPolicy,
+    );
+    const matches = registry.deployments.filter(
+      (row) =>
+        row.projectId === projectId &&
+        row.network === network &&
+        row.vault === vault,
+    );
+    if (matches.length !== 1) throw new Error("Funding vault unavailable");
+    const rpcUrl = (
+      JSON.parse(context.env.PAYMENT_RPC_URLS ?? "{}") as Record<
+        string,
+        unknown
+      >
+    )[network];
+    if (typeof rpcUrl !== "string" || new URL(rpcUrl).protocol !== "https:")
+      throw new Error("Funding RPC unavailable");
+    return {
+      ...matches[0],
+      mint: matches[0].asset,
+      rpcUrl,
+      genesisHash: ESCROW_NETWORKS[selected].genesisHash,
+    } as SolanaEscrowConfig;
+  };
   const projectDependencies: ProjectApiDependencies = {
     persistence: projectPersistence,
+    securitySolanaFundingConfig: (projectId, network, vault) =>
+      solanaFundingConfig(projectId, network, vault, "security-bounty"),
     vaultSetup: ownerVaultSetupService({
       db: context.env.SLOP_DB,
       projects: () => projectPersistence.listProjects(),
@@ -850,37 +889,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         },
         now: () => new Date(),
       }),
-      solanaFundingConfig: async (projectId, network, vault) => {
-        const networks = parsePaymentNetworks(context.env.PAYMENT_NETWORKS);
-        const selected = networks.find((name) => name === network);
-        if (!selected || ESCROW_NETWORKS[selected].family !== "solana")
-          throw new Error("Funding network unavailable");
-        const registry = await loadRegistryPaymentDeployments(
-          context.env.SLOP_DB,
-          [selected],
-        );
-        const matches = registry.deployments.filter(
-          (row) =>
-            row.projectId === projectId &&
-            row.network === network &&
-            row.vault === vault,
-        );
-        if (matches.length !== 1) throw new Error("Funding vault unavailable");
-        const rpcUrl = (
-          JSON.parse(context.env.PAYMENT_RPC_URLS ?? "{}") as Record<
-            string,
-            unknown
-          >
-        )[network];
-        if (typeof rpcUrl !== "string" || new URL(rpcUrl).protocol !== "https:")
-          throw new Error("Funding RPC unavailable");
-        return {
-          ...matches[0],
-          mint: matches[0].asset,
-          rpcUrl,
-          genesisHash: ESCROW_NETWORKS[selected].genesisHash,
-        } as SolanaEscrowConfig;
-      },
+      solanaFundingConfig: (projectId, network, vault) =>
+        solanaFundingConfig(projectId, network, vault, "ordinary"),
       // Cloudflare's per-colo edge cache; absent outside the Workers runtime.
       edgeCache: (
         globalThis as {

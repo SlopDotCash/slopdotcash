@@ -14,7 +14,7 @@ interface Proxiable {
 /// @notice Deploys replacement ProjectEscrow and EscrowFactory implementations for the existing mainnet
 /// factory proxies on Base (8453), Ethereum (1) and Robinhood Chain (4663). It only deploys logic contracts.
 /// It never upgrades a proxy and never selects an implementation: the upgrade authority signs those calls
-/// separately (contracts/DEPLOY-MAINNET.md, "Upgrade to development 2a4e80b3").
+/// separately (contracts/DEPLOY-MAINNET.md, "EVM monthly reserve V2 upgrade").
 /// @dev Each implementation is created through the deterministic CREATE2 deployer with a fixed salt, so its
 /// address and runtime code (which embeds that address as the UUPS self-reference) are the same on every
 /// chain and known before signing. A CREATE2 address commits to the exact creation code, so code already

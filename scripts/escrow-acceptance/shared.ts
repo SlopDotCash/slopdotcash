@@ -254,8 +254,16 @@ export interface Evidence {
   errors: string[];
 }
 export function sourceCommit(): string {
+  const cwd = resolve(import.meta.dir, "..", "..");
+  const unchanged = Bun.spawnSync(["git", "diff", "--quiet", "HEAD", "--"], {
+    cwd,
+  });
+  if (unchanged.exitCode !== 0)
+    throw new Error(
+      "Acceptance evidence requires a clean tracked tree. Commit or restore tracked changes before signing; untracked evidence and journals may remain.",
+    );
   const result = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
-    cwd: resolve(import.meta.dir, "..", ".."),
+    cwd,
   });
   const commit = result.stdout.toString().trim();
   if (result.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(commit))
@@ -273,6 +281,10 @@ export async function loadEvidence(
   const evidence = (await Bun.file(path).json()) as Evidence;
   if (evidence.schema !== EVIDENCE_SCHEMA)
     throw new Error(`${path} is not ${EVIDENCE_SCHEMA} evidence`);
+  if (evidence.sourceCommit !== sourceCommit())
+    throw new Error(
+      `This evidence belongs to source ${evidence.sourceCommit}. Resume with that source, or preserve this directory and use a new directory for the current source.`,
+    );
   return evidence;
 }
 /** Atomic replace, so an interrupted write never leaves half a state file. */
@@ -1018,16 +1030,19 @@ export class FaultRpc {
 }
 
 /**
- * Runs each extended scenario that has not passed. A group shares one run
+ * Runs each extended scenario that has not completed execution. A group shares one run
  * (for example one payments Worker cron) and marks an entry complete with
  * `checks.complete` when its own part has finished. A failure is recorded
  * on its scenario and never stops the others; a wait is recorded
  * and the run exits with WAITING_EXIT_CODE after the remaining scenarios.
+ * Finality is checked before marking any entry passed, including resumed
+ * evidence. A completed execution is not repeated while finality is pending.
  */
 export async function runScenarios(
   run: Evidence,
   persist: () => Promise<void>,
   scenarios: [string[], (...entries: ScenarioEvidence[]) => Promise<void>][],
+  finalize: (entry: ScenarioEvidence) => Promise<void>,
 ) {
   run.scenarios ??= {};
   const scenariosByName = run.scenarios;
@@ -1043,28 +1058,48 @@ export async function runScenarios(
       };
       return scenariosByName[name];
     });
-    if (entries.every((entry) => entry.status === "passed")) continue;
     let outcome: unknown = null;
-    try {
-      await scenario(...entries);
-    } catch (error) {
-      outcome = error;
+    if (
+      !entries.every(
+        (entry) => entry.status === "passed" || entry.checks.complete === true,
+      )
+    ) {
+      try {
+        await scenario(...entries);
+      } catch (error) {
+        outcome = error;
+      }
     }
     for (const [index, entry] of entries.entries()) {
+      let entryOutcome = outcome;
       if (
         outcome === null ||
-        (names.length > 1 && entry.checks.complete === true)
+        entry.status === "passed" ||
+        entry.checks.complete === true
       ) {
+        // Save execution separately from finality. A later run must verify the
+        // same receipts, not repeat an already completed financial scenario.
+        entry.checks.complete = true;
+        try {
+          await finalize(entry);
+          entryOutcome = null;
+        } catch (error) {
+          entryOutcome = error;
+        }
+      }
+      if (entryOutcome === null) {
         entry.status = "passed";
         delete entry.reason;
-      } else if (outcome instanceof Waiting) {
-        waiting ??= outcome;
+      } else if (entryOutcome instanceof Waiting) {
+        waiting ??= entryOutcome;
         entry.status = "pending";
-        entry.reason = outcome.message;
+        entry.reason = entryOutcome.message;
       } else {
         entry.status = "failed";
         entry.reason =
-          outcome instanceof Error ? outcome.message : String(outcome);
+          entryOutcome instanceof Error
+            ? entryOutcome.message
+            : String(entryOutcome);
         console.error(`[${run.network}] ${names[index]}: ${entry.reason}`);
       }
     }
@@ -1083,7 +1118,7 @@ export async function runScenarios(
 /**
  * The extended scenario figures in base units, scaled like scenarioAmounts.
  * A private bounty of 100 pays 75 and 25 (PRD section 8); ordinary awards pay
- * floor(gross / 50) as the fee.
+ * ceil(gross / 50) as the fee. The selected figures are exact multiples.
  */
 export function extendedAmounts(decimals: number, divisor: bigint) {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36)

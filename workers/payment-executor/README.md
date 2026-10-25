@@ -101,8 +101,17 @@ monthly snapshot. Its scheduled job prepares and signs the allocation through
 endpoint is documented in `backend/payments/README.md`.
 
 `POST /v1/commit-monthly` accepts that authorization on a test relayer. It verifies
-the pinned deployment, allocation root and attestation before admission. EVM
-reserves all entries atomically. Solana submits `commit_monthly` with the signed
+the pinned deployment, allocation root and attestation before admission. Legacy
+EVM commits the full entry list. EVM V2 reserves the whole remaining gross first,
+then examines at most 16 proven leaves per call under the existing gas limit.
+A finalized cursor bounds repeated work when another keeper committed a prefix.
+The economic snapshot stays fixed; source changes before admission append a new
+immutable execution authorization. The original V1 authorization remains
+available when an older transaction is pending. The executor reconciles that
+exact transaction before any V2 replacement and accepts its finalized root if
+it wins. It never drops an uncertain send to choose a newer authorization.
+
+Solana submits `commit_monthly` with the signed
 `frozenAt` and then up to 16 Merkle-proven leaves per call, so all leaves settle
 soon after admission. Finalized on-chain counters determine completion. A leaf
 releases only as `release_monthly_award` allows: zero actor, a source that another
@@ -110,10 +119,15 @@ month paid to the same actor for at least the same gross, or a source committed 
 hand before `frozenAt`. A source consumed by hand after `frozenAt` stays reserved
 and reports a reconciliation error. It does not mark the month complete. Valid leaves
 remain funded without an expiry, including after opt-out or authority rotation.
-`?admit=false` resumes admitted Solana allocations without creating a new month;
+`?admit=false` resumes admitted EVM V2 and Solana allocations without creating a new month;
 an absent month returns `notAdmitted: true`. The scheduler uses this for older
 months and opted-out projects. No response marks an award paid: the finalized
 scanner remains authoritative.
+
+The separately operated [payment keeper](../../scripts/payment-keeper/README.md)
+uses these same commitment builders and signed journals. It reads public
+authorizations and finalized contract wallet bindings, without private D1
+account access. The hosted production role remains attester-only.
 
 ## Durability and retries
 
@@ -146,7 +160,16 @@ transaction. An operator cannot bypass this path.
 null. It checks the original database attempt and journal identity, and does
 not sign, broadcast, read a secret, or require the wallet claim still to be
 current. This lets the dispatcher reconcile a lost response even after the
-contributor has replaced the wallet. Signed transaction bytes are never returned.
+contributor has replaced the wallet. For a stored Solana signature it also
+reports whether the reviewed chain has observed that signature. A preflight
+refusal leaves the attempt retryable. Recovery also reopens an older row that
+incorrectly marked an unobserved signature submitted. The journal keeps its
+signed bytes; only the existing finalized-expiry checks permit a replacement.
+Signed transaction bytes are never returned.
+
+Deploy the executor before, or together with, the payments Worker when adding
+this observation field. The updated payments Worker refuses an older executor
+response that lacks it; it does not guess submission or start another send.
 
 `POST /v1/cancel-unsubmitted` retires an old-wallet attempt only after a signed
 successor exists. Its journal transaction either finds a previously signed

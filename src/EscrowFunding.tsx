@@ -177,11 +177,14 @@ export function reservedGross(snapshot: {
   reservedFees: string | null;
   reserved: string | null;
 }): string | null {
-  return snapshot.reservedPrincipal !== null && snapshot.reservedFees !== null
-    ? (
-        BigInt(snapshot.reservedPrincipal) + BigInt(snapshot.reservedFees)
-      ).toString()
-    : snapshot.reserved;
+  return (
+    snapshot.reserved ??
+    (snapshot.reservedPrincipal !== null && snapshot.reservedFees !== null
+      ? (
+          BigInt(snapshot.reservedPrincipal) + BigInt(snapshot.reservedFees)
+        ).toString()
+      : null)
+  );
 }
 /** Measured against the viewer's clock: the response itself can be edge-cached. */
 export function vaultSnapshotStale(
@@ -232,12 +235,6 @@ export function EscrowFunding({
             Use the deposit action below to fund this project. Direct token
             transfers are not credited.
           </p>
-          {project.reward.paymentMode !== "enabled" ? (
-            <p role="note">
-              Payments are disabled for this project. No award is paid from the
-              vault until payments are enabled.
-            </p>
-          ) : null}
           {totals.status === "error" ? (
             <p role="alert">{totals.message}</p>
           ) : totals.status !== "ready" ? (

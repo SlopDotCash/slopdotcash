@@ -14,10 +14,6 @@ const MAX_ROTATION_DELAY: i64 = 90 * 86400;
 /// A monthly allocation for calendar UTC month M can be recorded from this delay after M ends
 /// until this delay after the next month ends (owner decision D1: 00:00 UTC on the 4th).
 const MONTHLY_CUTOFF_DELAY: i64 = 72 * 3600;
-/// From this long after its window closes, anyone can expire a month: its unsettled gross
-/// stops blocking the owner's direct commits but stays reserved. Every award of a correct
-/// allocation is committed well before then.
-const MONTHLY_GATE_GRACE: i64 = 30 * 86400;
 /// The identity authority signs this prefix, the program ID, the project, the period (u32 LE,
 /// YYYYMM), the allocation root, total, freeze time (i64 LE) and stored network domain.
 pub const MONTHLY_MESSAGE_PREFIX: &[u8] = b"slop-monthly-allocation-v3";
@@ -237,8 +233,8 @@ pub mod slop_escrow {
             EscrowError::WrongPurpose
         );
         // While an admitted month has uncommitted awards, the owner cannot consume one of
-        // their sources by hand and strand that award; anyone can commit the rest first, and
-        // expire_month ends a month that can never settle.
+        // their sources by hand and strand that award; anyone can commit the rest first.
+        // Time and owner opt-out never remove this funded-source protection.
         require!(
             ctx.accounts.project.monthly_outstanding == 0,
             EscrowError::MonthlyOutstanding
@@ -476,35 +472,6 @@ pub mod slop_escrow {
         });
         Ok(())
     }
-    // Anyone expires a month MONTHLY_GATE_GRACE after its window closes. Its unsettled gross
-    // leaves monthly_outstanding, so a month that can never settle stops blocking the owner's
-    // direct commits; that gross stays reserved and its awards can still commit later.
-    pub fn expire_month(ctx: Context<ExpireMonth>, period: u32) -> Result<()> {
-        let (_, closes_at) = monthly_window(period)?;
-        require!(
-            Clock::get()?.unix_timestamp >= add_i64(closes_at, MONTHLY_GATE_GRACE)?,
-            EscrowError::MonthlyWindowClosed
-        );
-        let m = &mut ctx.accounts.month;
-        require!(!m.expired, EscrowError::MonthExpired);
-        let unsettled = m
-            .total
-            .checked_sub(m.committed)
-            .ok_or(error!(EscrowError::Arithmetic))?;
-        let p = &mut ctx.accounts.project;
-        p.monthly_outstanding = p
-            .monthly_outstanding
-            .checked_sub(unsettled)
-            .ok_or(error!(EscrowError::Arithmetic))?;
-        m.expired = true;
-        emit!(MonthExpired {
-            project: p.key(),
-            period,
-            unsettled
-        });
-        Ok(())
-    }
-
     // The attester and the destination keypair both sign this exact transaction, including
     // deployment, project and predecessor. The destination is a co-signer, so the authority
     // alone cannot bind a wallet it does not hold. `expires_at` limits submission, not claim
@@ -821,7 +788,8 @@ fn settle_leaf(
     month.committed = committed;
     let less = |n: u64| n.checked_sub(gross).ok_or(error!(EscrowError::Arithmetic));
     p.reserved = less(p.reserved)?;
-    // An expired month's unsettled gross already left the outstanding count.
+    // Compatibility with previously expired accounts: their gross already left
+    // the outstanding count. New funded months never expire.
     if !month.expired {
         p.monthly_outstanding = less(p.monthly_outstanding)?;
     }
@@ -1141,14 +1109,6 @@ pub struct CommitMonthlyAward<'info> {
     pub system_program: Program<'info, System>,
 }
 #[derive(Accounts)]
-#[instruction(period:u32)]
-pub struct ExpireMonth<'info> {
-    #[account(mut)]
-    pub project: Box<Account<'info, Project>>,
-    #[account(mut,has_one=project,seeds=[b"month",project.key().as_ref(),&period.to_le_bytes()],bump)]
-    pub month: Box<Account<'info, MonthlyAllocation>>,
-}
-#[derive(Accounts)]
 #[instruction(period:u32, source_digest:[u8;32])]
 pub struct ReleaseMonthlyAward<'info> {
     /// Anyone; pays the settlement marker's rent.
@@ -1337,7 +1297,7 @@ pub struct MonthlyAllocation {
     /// When the attester froze the allocation. Only a source consumed by hand before it can
     /// be released.
     pub frozen_at: i64,
-    /// Set by expire_month: the unsettled gross no longer counts as outstanding.
+    /// Legacy layout field. New funded months never expire.
     pub expired: bool,
 }
 /// The separate identity, fee and rotation authorities, written once by
@@ -1460,12 +1420,6 @@ pub struct MonthlyAwardReleased {
     pub source_digest: [u8; 32],
     pub actor_id: u64,
     pub gross: u64,
-}
-#[event]
-pub struct MonthExpired {
-    pub project: Pubkey,
-    pub period: u32,
-    pub unsettled: u64,
 }
 #[event]
 pub struct ProjectMigrated {
