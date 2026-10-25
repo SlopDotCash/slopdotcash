@@ -297,6 +297,7 @@ async function ownerSecurityProgram(
   previous: ProjectDefinition,
   next: ProjectDefinition,
   status: SecurityBountyTerms["status"] | undefined,
+  actor: GithubActor,
   deps: ProjectApiDependencies,
 ): Promise<ProjectDefinition> {
   const before = previous.securityBounty;
@@ -310,6 +311,33 @@ async function ownerSecurityProgram(
       );
     return next;
   }
+  // Approvers receive private-case roles from the manifest alone. Write
+  // access must not let an owner name other accounts or remove the recorded
+  // contacts; admins change them through the reviewed manifest path.
+  if (before !== undefined) {
+    if (
+      !sameValue(before.approvers, after.approvers) ||
+      !sameValue(before.sponsor, after.sponsor)
+    )
+      fail(
+        422,
+        "security_contacts_restricted",
+        "Bounty contacts and the sponsor change only through a Slop admin review",
+      );
+  } else if (
+    [
+      ...after.approvers.technical,
+      ...after.approvers.financial,
+      ...after.approvers.dispute,
+    ].some((person) => person.githubId !== actor.githubId) ||
+    (after.sponsor.githubId !== null &&
+      after.sponsor.githubId !== actor.githubId)
+  )
+    fail(
+      422,
+      "security_contacts_restricted",
+      "A new bounty program names only you as its contact; a Slop admin adds other contacts after review",
+    );
   if (!sameValue(before?.settlement, after.settlement))
     fail(
       422,
@@ -1172,11 +1200,16 @@ async function publishOwnerRevision(
       },
     };
   let { manifest: submitted } = canonicalManifest(prepared);
+  // Check authority before any funding read: a refusal must not tell an
+  // account without access whether the bounty vault has funds.
+  const checked = await currentAuthority(deps, submitted, actor);
+  requireAuthority(checked);
   if (programChanged)
     submitted = await ownerSecurityProgram(
       current.manifest,
       submitted,
       requestedProgramStatus,
+      actor,
       deps,
     );
   if (submitted.id !== projectId)
@@ -1201,8 +1234,6 @@ async function publishOwnerRevision(
       : submitted;
   if (changes.executable.length > 0 && manifest.status === "active")
     manifest = { ...manifest, status: "paused" };
-  const checked = await currentAuthority(deps, manifest, actor);
-  requireAuthority(checked);
   const summary = [
     changes.presentation.length > 0
       ? `presentation (${changes.presentation.join(", ")}) published`

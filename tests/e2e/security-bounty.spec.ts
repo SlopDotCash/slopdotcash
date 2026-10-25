@@ -520,6 +520,49 @@ test("owners publish and control bounty programs with verified funding @registry
     );
     expect(unsupported.status).toBe(422);
     expect(unsupported.body.error).toBe("security_funding_unavailable");
+    // An account without repository access gets the authority refusal,
+    // never the funding answer.
+    const outsider = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS["reporter-a"],
+      {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          securityBounty: {
+            ...(stored.manifest.securityBounty as object),
+            status: "open",
+          },
+        },
+      },
+    );
+    expect(outsider.status).toBe(403);
+    expect(outsider.body.error).toBe("authority_required");
+    // Approvers get private-case roles, so owners cannot change them.
+    const contacts = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS.security,
+      {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          securityBounty: {
+            ...(stored.manifest.securityBounty as object),
+            approvers: {
+              technical: [account("reporter-a")],
+              financial: [account("reporter-a")],
+              dispute: [account("reporter-a")],
+            },
+          },
+        },
+      },
+    );
+    expect(contacts.status).toBe(422);
+    expect(contacts.body.error).toBe("security_contacts_restricted");
     const reviewed = bountyTerms(repository).settlement;
     expect(
       (
