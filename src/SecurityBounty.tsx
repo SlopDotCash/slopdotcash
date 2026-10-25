@@ -47,7 +47,6 @@ import {
   ExternalLinkAnchor,
   errorMessage,
   formatNullableUtc as formatUtc,
-  NotFound,
 } from "./Presentation";
 
 function FormError({ message }: { message: string | null }) {
@@ -579,7 +578,21 @@ export function SecurityProgramPage({
 }) {
   const terms = project.securityBounty;
   if (terms === undefined)
-    return <NotFound title="This project has no security bounty program" />;
+    return (
+      <main className="shell route-main admin-page security-page">
+        <div className="admin-intro">
+          <p>
+            <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+          </p>
+          <h1>Report a security issue</h1>
+          <p>
+            This project has no published bounty terms. You can report
+            privately. No award is promised.
+          </p>
+        </div>
+        <IntakeHandoff project={project} />
+      </main>
+    );
   const money = amounts(terms);
   const { scope } = terms;
   return (
@@ -845,6 +858,7 @@ type CaseList = {
   viewer: { githubId: string; githubLogin: string };
   programs: { projectId: string; roles: string[] }[];
   cases: SecurityCase[];
+  authorityUnavailable?: boolean;
 };
 
 type Loaded<T> =
@@ -2791,7 +2805,7 @@ export function SecurityCasesPage() {
     reload();
   };
   const programProjects = useMemo(
-    () => PROJECTS.filter((project) => project.securityBounty !== undefined),
+    () => PROJECTS.filter((project) => project.listingTier !== "retired"),
     [],
   );
   let body: ReactNode;
@@ -2837,8 +2851,21 @@ export function SecurityCasesPage() {
         {note ? <p role="status">{note}</p> : null}
         <section aria-labelledby="security-cases" className="admin-section">
           <h2 id="security-cases">Your cases</h2>
+          {list.value.authorityUnavailable ? (
+            <p className="form-error" role="status">
+              Some maintainer access could not be checked. Your available cases
+              are shown.{" "}
+              <button className="text-button" onClick={reload} type="button">
+                Retry access check
+              </button>
+            </p>
+          ) : null}
           {list.value.cases.length === 0 ? (
-            <p className="admin-status">You have no private security cases.</p>
+            <p className="admin-status">
+              {list.value.authorityUnavailable
+                ? "No cases are available in this result. Retry the access check."
+                : "You have no private security cases."}
+            </p>
           ) : (
             <ul className="security-case-list">
               {list.value.cases.map((record) => (

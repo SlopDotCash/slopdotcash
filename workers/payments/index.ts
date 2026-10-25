@@ -116,7 +116,7 @@ export async function recoverUncertainAttempts(
   env: PaymentsWorkerEnvironment,
 ): Promise<void> {
   const row = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('unknown','prepared') AND a.transaction_id IS NULL AND o.state='reserved'",
+    "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.state='reserved' AND ((a.state IN ('unknown','prepared') AND a.transaction_id IS NULL) OR (o.chain='solana' AND a.state='submitted'))",
   ).first<{ items: string }>();
   const failures: unknown[] = [];
   for (const attempt of JSON.parse(row?.items ?? "[]") as {
@@ -141,7 +141,10 @@ export async function recoverUncertainAttempts(
         }),
       );
       if (!response.ok) throw new Error("Attempt status reconciliation failed");
-      const status = (await response.json()) as { transactionId: unknown };
+      const status = (await response.json()) as {
+        transactionId: unknown;
+        submitted?: unknown;
+      };
       if (status.transactionId === null) {
         const successor = await env.PAYMENTS_DB.prepare(
           "SELECT w.id FROM payment_attempts a JOIN wallet_claims old ON old.id=a.claim_id JOIN wallet_claims w ON w.github_user_id=old.github_user_id AND w.chain=old.chain JOIN payment_wallet_authorizations consent ON consent.claim_id=w.id WHERE a.id=? AND w.id!=old.id AND NOT EXISTS(SELECT 1 FROM wallet_claims next WHERE next.supersedes_claim_id=w.id)",
@@ -164,6 +167,7 @@ export async function recoverUncertainAttempts(
         const outcome = (await cancellation.json()) as {
           retired: boolean;
           transactionId: unknown;
+          submitted?: unknown;
         };
         if (outcome.retired === true && outcome.transactionId === null) {
           await env.PAYMENTS_DB.batch([
@@ -189,9 +193,38 @@ export async function recoverUncertainAttempts(
         if (outcome.retired !== false)
           throw new Error("Invalid retirement result");
         status.transactionId = outcome.transactionId;
+        status.submitted = outcome.submitted;
       }
       if (typeof status.transactionId !== "string" || !status.transactionId)
         throw new Error("Invalid attempt transaction identity");
+      if (chainFamily(attempt.chain) === "solana") {
+        if (typeof status.submitted !== "boolean")
+          throw new Error("Missing Solana submission observation");
+        if (!status.submitted) {
+          // A saved signature can have failed preflight. Reopen an older
+          // falsely submitted row too, without retiring its signed bytes.
+          // The executor reuses those bytes until it proves finalized expiry
+          // and rechecks the unpaid award before signing a replacement.
+          await env.PAYMENTS_DB.batch([
+            env.PAYMENTS_DB.prepare(
+              "UPDATE payment_attempts SET transaction_id=NULL,state='unknown' WHERE id=? AND state='submitted' AND transaction_id=? AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved')",
+            ).bind(
+              attempt.idempotencyKey,
+              status.transactionId,
+              attempt.obligationId,
+            ),
+            env.PAYMENTS_DB.prepare(
+              "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state='submitted' AND EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='unknown' AND transaction_id IS NULL) AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved')",
+            ).bind(
+              new Date().toISOString(),
+              attempt.obligationId,
+              attempt.idempotencyKey,
+              attempt.obligationId,
+            ),
+          ]);
+          continue;
+        }
+      }
       await env.PAYMENTS_DB.batch([
         env.PAYMENTS_DB.prepare(
           "UPDATE payment_attempts SET transaction_id=?,state='submitted' WHERE id=? AND transaction_id IS NULL AND state IN ('unknown','prepared')",
@@ -323,11 +356,24 @@ export async function runMonthlyCommitments(
   const deployments = registry.deployments;
   const failures: unknown[] = [...registry.failures];
   const rows = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(authorization) items FROM (SELECT a.authorization FROM monthly_payment_authorizations a LEFT JOIN monthly_payment_execution x ON x.project_id=a.project_id AND x.period=a.period AND x.network=a.network WHERE coalesce(x.complete,0)=0 AND (a.period=? OR json_extract(a.authorization,'$.plan.family')='solana') AND a.network IN (SELECT value FROM json_each(?)) ORDER BY coalesce(x.last_attempt,''),a.period,a.project_id LIMIT 50)",
+    "SELECT json_group_array(authorization) items FROM (SELECT a.authorization FROM monthly_payment_current_authorizations a LEFT JOIN monthly_payment_execution x ON x.project_id=a.project_id AND x.period=a.period AND x.network=a.network WHERE coalesce(x.complete,0)=0 AND (a.period=? OR json_extract(a.authorization,'$.plan.family')='solana' OR json_extract(a.authorization,'$.plan.evmReservation.version')=2) AND a.network IN (SELECT value FROM json_each(?)) ORDER BY coalesce(x.last_attempt,''),a.period,a.project_id LIMIT 50)",
   )
     .bind(activePeriod, env.PAYMENT_NETWORKS)
     .first<{ items: string }>();
-  for (const encoded of JSON.parse(rows?.items ?? "[]") as string[]) {
+  // Newest period first: only the newest month can be admitting, so its reservation is sent before
+  // any older month's leaf in this pass. A leaf mined first would advance ordinarySourceSequence
+  // and revert the signed reservation with MonthlySourceChanged.
+  const period = (encoded: string) => {
+    try {
+      return String(JSON.parse(encoded).plan.request.period);
+    } catch {
+      return "";
+    }
+  };
+  const items = (JSON.parse(rows?.items ?? "[]") as string[]).sort((a, b) =>
+    period(b).localeCompare(period(a)),
+  );
+  for (const encoded of items) {
     try {
       const authorization = JSON.parse(encoded) as MonthlyAuthorization;
       const { plan } = authorization;
@@ -352,7 +398,8 @@ export async function runMonthlyCommitments(
       );
       const admit =
         automatic && !!cutoff && !!closes && now >= cutoff && now < closes;
-      if (!admit && plan.family !== "solana") continue;
+      const resumable = plan.family === "solana" || !!plan.evmReservation;
+      if (!admit && !resumable) continue;
       const matches = deployments.filter(
         (d) =>
           d.projectId === plan.request.projectId &&
@@ -381,10 +428,11 @@ export async function runMonthlyCommitments(
         transactionId?: unknown;
         alreadyCommitted?: unknown;
         notAdmitted?: unknown;
+        complete?: unknown;
       };
       if (
         !admit &&
-        plan.family === "solana" &&
+        resumable &&
         result.notAdmitted === true &&
         result.transactionId === null &&
         result.alreadyCommitted === false
@@ -393,13 +441,19 @@ export async function runMonthlyCommitments(
       if (
         !(
           (result.alreadyCommitted === true && result.transactionId === null) ||
-          (result.alreadyCommitted === false &&
+          // V2 leaves for an admitted reserve: the root is on chain and this run submitted leaves.
+          ((result.alreadyCommitted === false ||
+            (plan.evmReservation && result.alreadyCommitted === true)) &&
             typeof result.transactionId === "string" &&
             result.transactionId.length > 0)
         )
       )
         throw new Error("Monthly executor returned no submission evidence");
-      if (result.alreadyCommitted === true) {
+      if (plan.evmReservation && typeof result.complete !== "boolean")
+        throw new Error("Monthly executor returned no completion evidence");
+      if (
+        plan.evmReservation ? result.complete : result.alreadyCommitted === true
+      ) {
         await env.PAYMENTS_DB.prepare(
           "UPDATE monthly_payment_execution SET complete=1 WHERE project_id=? AND period=? AND network=?",
         )

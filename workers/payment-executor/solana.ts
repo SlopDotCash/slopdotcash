@@ -12,6 +12,7 @@ import {
   PROJECT_SIZE,
   type SolanaEscrowConfig,
   solanaAccount,
+  solanaAwardId,
   solanaBase58,
   solanaDigest,
   solanaPubkey,
@@ -57,6 +58,11 @@ export interface SolanaExecutorEnvironment {
   ALLOW_LOCAL_TEST_CHAIN?: boolean;
   LOCAL_SOLANA_GENESIS?: string;
 }
+export type PublicSolanaExecutorEnvironment = Omit<
+  SolanaExecutorEnvironment,
+  "PAYMENTS_DB"
+>;
+
 type Input = DispatchPayment & { idempotencyKey: string };
 type Preflight = Pick<
   SolanaExecutorEnvironment,
@@ -161,10 +167,22 @@ async function authorized(
   )
     throw new Error("Invalid Solana request");
   bytes(input.destination);
-  const config = await preflightSolanaDeployment(env, input),
-    authorization = await authorizeRegistry(env, input, "solana");
-  if (config.projectId !== authorization.projectId)
-    throw new Error("Wrong project authorization");
+  const authorization = await authorizeRegistry(env, input, "solana");
+  const ctx = await readAward(env, input);
+  if (
+    ctx.config.projectId !== authorization.projectId ||
+    solanaUint(ctx.obligation, 8).toString() !== authorization.grossBase ||
+    solanaUint(ctx.obligation, 128).toString() !== authorization.feeBase ||
+    hex(ctx.obligation.slice(16, 48)) !== authorization.sourceDigest
+  )
+    throw new Error("Finalized award differs from authorized ledger");
+  return ctx;
+}
+async function readAward(
+  env: Preflight,
+  input: Pick<Input, "network" | "vault" | "obligationId" | "githubUserId">,
+): Promise<Context> {
+  const config = await preflightSolanaDeployment(env, input);
   const project = await readSolanaAccount(
     config,
     config.projectPda,
@@ -197,11 +215,11 @@ async function authorized(
   );
   if (
     !obligation ||
+    solanaUint(obligation, 8) === 0n ||
+    solanaAwardId(config.projectPda, hex(obligation.slice(16, 48))) !==
+      input.obligationId.replace(/^0x/, "").toLowerCase() ||
     solanaPubkey(obligation, 48) !== config.projectPda ||
     solanaUint(obligation, 112).toString() !== input.githubUserId ||
-    solanaUint(obligation, 8).toString() !== authorization.grossBase ||
-    solanaUint(obligation, 128).toString() !== authorization.feeBase ||
-    hex(obligation.slice(16, 48)) !== authorization.sourceDigest ||
     !acceptsPayoutFee(
       solanaUint(obligation, 8),
       solanaUint(obligation, 128),
@@ -244,11 +262,12 @@ export interface PreparedBinding {
   transaction?: string;
 }
 async function send(
-  env: SolanaExecutorEnvironment,
+  env: PublicSolanaExecutorEnvironment,
   ctx: Context,
   input: Input,
   role: string,
   instructions: Instruction[],
+  refresh: () => Promise<Context>,
   cosigner?: string,
 ): Promise<PreparedBinding> {
   const key = `solana:${role}:${input.network}:${input.idempotencyKey}`,
@@ -262,9 +281,9 @@ async function send(
             input.network,
             input.vault,
             input.githubUserId,
-            input.claimId,
-            input.claimDigest,
-            input.destination,
+            ...(role === "keeper"
+              ? []
+              : [input.claimId, input.claimDigest, input.destination]),
             input.idempotencyKey,
           ]),
         ),
@@ -275,18 +294,27 @@ async function send(
   if (attempt && attempt.fingerprint !== fingerprint)
     throw new Error("Idempotency collision");
   if (attempt) {
-    if (await observedTransaction(ctx, attempt))
+    const status = await solanaTransactionStatus(ctx, attempt);
+    if (status && !status.failed)
       return { transactionId: attempt.transactionId };
+    if (status?.failed && (role !== "keeper" || !status.finalized))
+      throw new Error("Existing transaction failed; reconcile before retry");
     const height = await solanaRpc(ctx.config, "getBlockHeight", [
       { commitment: "finalized" },
     ]);
     if (typeof height !== "number" || !Number.isSafeInteger(height))
       throw new Error("Invalid finalized block height");
-    if (height > attempt.lastValidBlockHeight) {
+    if (
+      height > attempt.lastValidBlockHeight ||
+      (role === "keeper" && status?.failed && status.finalized)
+    ) {
       // Re-read finalized obligation/binding only after finalized expiry. No resubmission
       // can race an old valid blockhash. Preserve prior signed attempt in the journal.
-      const current = await authorized(env, input);
-      if (role === "relayer" && current.obligation[136] !== 0)
+      const current = await refresh();
+      if (
+        (role === "relayer" || role === "keeper") &&
+        current.obligation[136] !== 0
+      )
         throw new Error(
           "Paid outside known attempt; finalized receipt reconciliation required",
         );
@@ -527,7 +555,15 @@ export function createSolanaAttester(env: SolanaExecutorEnvironment): {
           le(expiresAt),
         ),
       };
-      return send(env, ctx, input, "attester", [ix], input.destination);
+      return send(
+        env,
+        ctx,
+        input,
+        "attester",
+        [ix],
+        () => authorized(env, input),
+        input.destination,
+      );
     },
   };
 }
@@ -552,67 +588,141 @@ export function createSolanaExecutor(
   return {
     async submit(input) {
       const ctx = await authorized(env, input);
-      // A binding needs the destination wallet's own signature, so the relayer
-      // cannot request one; the contributor completes it through the attester.
-      if (
-        !ctx.binding ||
-        solanaPubkey(ctx.binding, 112) !== input.destination ||
-        hex(ctx.binding.slice(8, 40)) !== input.claimDigest
-      )
-        throw new Error(
-          "Destination binding awaits the contributor's co-signature; retry after it is finalized",
-        );
-      // The program pays only the latest binding, which is the claimed destination.
-      // Delays are compared with the chain clock, not the host clock: the program uses
-      // the chain clock, and an early transaction would fail and block retries.
-      const version = solanaUint(ctx.binding, 144);
-      const delay = int64(ctx.project, 249);
-      const now = await confirmedChainTime(ctx.config);
-      const payableAt = int64(ctx.obligation, 137) + delay;
-      if (now < payableAt)
-        throw new Error(
-          `Award is inside its commit delay until ${new Date(Number(payableAt) * 1000).toISOString()}; retry after it ends`,
-        );
-      const veto = pda(ctx.config.programId, [
-        encoder.encode("veto"),
-        bytes(ctx.config.projectPda),
-        le(BigInt(input.githubUserId)),
-        le(version),
-      ]);
-      const vetoed = (await solanaRpc(ctx.config, "getAccountInfo", [
-        veto,
-        { commitment: "finalized", encoding: "base64" },
-      ])) as { value: { owner: string } | null };
-      if (vetoed.value && vetoed.value.owner !== SYSTEM)
-        throw new Error(
-          "Project owner vetoed this destination binding; identity review required",
-        );
-      if (env.SOLANA_SIGNER.address === solanaPubkey(ctx.project, 8))
-        throw new Error("Gas payer must be separate from project owner");
-      if (env.SOLANA_SIGNER.address === solanaPubkey(ctx.project, 104))
-        throw new Error("Gas payer must be separate from identity authority");
-      const ix: Instruction = {
-        program: ctx.config.programId,
-        accounts: [
-          { key: ctx.config.projectPda, write: true },
-          { key: ctx.awardAddress, write: true },
-          { key: ctx.bindingAddress, write: true },
-          { key: ctx.config.mint, write: false },
-          { key: ctx.config.vault, write: true },
-          { key: ata(ctx.config.mint, input.destination), write: true },
-          { key: TOKEN, write: false },
-          { key: veto, write: false },
-        ],
-        data: instructionData("pay", le(version)),
-      };
-      return send(env, ctx, input, "relayer", [
-        createAta(
-          env.SOLANA_SIGNER.address,
-          ctx.config.mint,
-          input.destination,
-        ),
-        ix,
-      ]);
+      return payBoundAward(env, ctx, input, () => authorized(env, input));
     },
+  };
+}
+
+async function payBoundAward(
+  env: PublicSolanaExecutorEnvironment,
+  ctx: Context,
+  input: Input,
+  refresh: () => Promise<Context>,
+  role = "relayer",
+) {
+  // A binding needs the destination wallet's own signature, so the relayer
+  // cannot request one; the contributor completes it through the attester.
+  if (
+    !ctx.binding ||
+    solanaPubkey(ctx.binding, 112) !== input.destination ||
+    hex(ctx.binding.slice(8, 40)) !== input.claimDigest
+  )
+    throw new Error(
+      "Destination binding awaits the contributor's co-signature; retry after it is finalized",
+    );
+  // The program pays only the latest binding, which is the claimed destination.
+  // Delays are compared with the chain clock, not the host clock: the program uses
+  // the chain clock, and an early transaction would fail and block retries.
+  const version = solanaUint(ctx.binding, 144);
+  const delay = int64(ctx.project, 249);
+  const now = await confirmedChainTime(ctx.config);
+  const payableAt = int64(ctx.obligation, 137) + delay;
+  if (now < payableAt)
+    throw new Error(
+      `Award is inside its commit delay until ${new Date(Number(payableAt) * 1000).toISOString()}; retry after it ends`,
+    );
+  const veto = pda(ctx.config.programId, [
+    encoder.encode("veto"),
+    bytes(ctx.config.projectPda),
+    le(BigInt(input.githubUserId)),
+    le(version),
+  ]);
+  const vetoed = (await solanaRpc(ctx.config, "getAccountInfo", [
+    veto,
+    { commitment: "finalized", encoding: "base64" },
+  ])) as { value: { owner: string } | null };
+  if (vetoed.value && vetoed.value.owner !== SYSTEM)
+    throw new Error(
+      "Project owner vetoed this destination binding; identity review required",
+    );
+  if (env.SOLANA_SIGNER.address === solanaPubkey(ctx.project, 8))
+    throw new Error("Gas payer must be separate from project owner");
+  if (env.SOLANA_SIGNER.address === solanaPubkey(ctx.project, 104))
+    throw new Error("Gas payer must be separate from identity authority");
+  const ix: Instruction = {
+    program: ctx.config.programId,
+    accounts: [
+      { key: ctx.config.projectPda, write: true },
+      { key: ctx.awardAddress, write: true },
+      { key: ctx.bindingAddress, write: true },
+      { key: ctx.config.mint, write: false },
+      { key: ctx.config.vault, write: true },
+      { key: ata(ctx.config.mint, input.destination), write: true },
+      { key: TOKEN, write: false },
+      { key: veto, write: false },
+    ],
+    data: instructionData("pay", le(version)),
+  };
+  return send(
+    env,
+    ctx,
+    input,
+    role,
+    [
+      createAta(env.SOLANA_SIGNER.address, ctx.config.mint, input.destination),
+      ix,
+    ],
+    refresh,
+  );
+}
+
+/** The public contract binding, not a copied private wallet claim, supplies the destination. */
+export async function preparePermissionlessSolanaPayment(
+  env: Preflight,
+  input: {
+    network: string;
+    vault: string;
+    obligationId: string;
+    githubUserId: string;
+  },
+) {
+  const ctx = await readAward(env, input);
+  if (ctx.obligation[136] !== 0) return { ctx, state: "paid" as const };
+  if (!ctx.binding) return { ctx, state: "awaiting-wallet" as const };
+  const bound: Input = {
+    ...input,
+    destination: solanaPubkey(ctx.binding, 112),
+    claimDigest: hex(ctx.binding.slice(8, 40)),
+    claimId: ctx.bindingAddress,
+    idempotencyKey: hex(
+      sha256(
+        encoder.encode(
+          JSON.stringify([input.network, input.vault, input.obligationId]),
+        ),
+      ),
+    ),
+  };
+  return { ctx, input: bound, state: "ready" as const };
+}
+
+export async function submitPermissionlessSolanaPayment(
+  env: PublicSolanaExecutorEnvironment,
+  input: {
+    network: string;
+    vault: string;
+    obligationId: string;
+    githubUserId: string;
+  },
+) {
+  const plan = await preparePermissionlessSolanaPayment(env, input);
+  if (plan.state !== "ready") return { state: plan.state };
+  const config = plan.ctx.config;
+  if (
+    [
+      config.feeRecipient,
+      config.rotationAuthority,
+      config.upgradeAuthority,
+    ].includes(env.SOLANA_SIGNER.address)
+  )
+    throw new Error("Keeper key must have no vault role");
+  return {
+    state: "submitted" as const,
+    ...(await payBoundAward(
+      env,
+      plan.ctx,
+      plan.input,
+      () => readAward(env, input),
+      "keeper",
+    )),
   };
 }

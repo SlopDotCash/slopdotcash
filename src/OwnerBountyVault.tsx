@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { ProjectApiError, projectApiRequest } from "./lib/project-api";
 import { formatAssetAmount } from "./lib/project-schema.mjs";
@@ -139,24 +138,17 @@ export function OwnerBountyVault({
                 }}
               />
             ) : null}
-            {deployments.map((deployment) =>
-              ESCROW_NETWORKS[deployment.network].family === "evm" ? (
-                <VaultActions
-                  key={`${deployment.network}:${deployment.vault}`}
-                  projectId={project.id}
-                  deployment={deployment}
-                  payoutPolicy="security-bounty"
-                  canDeposit={state.canSetup}
-                  connectedWallet={wallet ?? undefined}
-                  onFinalized={() => setReload((value) => value + 1)}
-                />
-              ) : (
-                <p key={deployment.vault}>
-                  This bounty vault uses Solana. The owner wallet can manage its
-                  funds.
-                </p>
-              ),
-            )}
+            {deployments.map((deployment) => (
+              <VaultActions
+                key={`${deployment.network}:${deployment.vault}`}
+                projectId={project.id}
+                deployment={deployment}
+                payoutPolicy="security-bounty"
+                canDeposit={state.canSetup}
+                connectedWallet={wallet ?? undefined}
+                onFinalized={() => setReload((value) => value + 1)}
+              />
+            ))}
           </>
         ) : null}
         <button

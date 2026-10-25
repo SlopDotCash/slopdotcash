@@ -69,9 +69,47 @@ program through this runner, reviews its bounded output, retains the exact
 response as private evidence and publishes an incomplete result. Both
 artifacts stay quarantined and project activation is refused.
 
-This implementation is not deployed. Real Cloudflare execution qualification
-remains required before it is operational.
+The service is deployed separately in staging and production. A deployment
+does not prove the Cloudflare execution boundary; hosted qualification remains
+required before scanner activation.
 No new credential is needed: the bridge reuses `VETTING_RESULT_PUBLIC_KEYS`.
 Keep scanned output private. Never use the local developer server to execute
 untrusted artifacts; its Docker privileges differ from Cloudflare's isolated
 VM boundary.
+
+
+## Protected hosted qualification
+
+`vetting-sandbox-qualification.yml` is a manual, staging-only workflow. Its
+plan mode is offline. After the reviewed source is deployed, execute mode runs
+the same harmless probes through the actual Pages signature check and private
+sandbox binding. It checks the current Pages revision, Worker revision,
+Container image and signed health before and after the probes. A changed or
+unavailable deployment refuses qualification.
+
+The normal protected release derives only the public part of that environment's
+existing `SLOP_VETTING_SIGNING_JWK`. The private key stays in the dedicated CI
+step; it is never written to Pages or an artifact. The public list is a plaintext
+Pages variable, read back after deployment. A different existing list stops the
+release rather than silently rotating keys. Existing unrelated variables and
+preview isolation are preserved. Production uses its own credential and follows
+the normal reviewed main promotion; the qualification workflow is staging only.
+
+The shared probes verify unprivileged identity, minimal environment, Python and
+Node, fresh filesystem, denied egress, output and time bounds, plus a fresh run
+after timeout. Each successful response waits for the existing `destroy()` call
+in the Worker's `finally` block. This proves successful destruction calls and
+fresh subsequent state; it does not independently prove provider instance
+inventory deletion. Unknown transport or cleanup failure cannot pass.
+
+Only safe source/image/key digests and assertion results leave the CI process.
+No request signature, run ID, output bytes, model call, scan result or stored
+case evidence is published. This test does not install an evidence policy,
+attest external controls, enable the controller or enable retention deletion.
+No new key entry is required. To inspect its plan locally, run:
+
+```sh
+bun scripts/qualify-vetting-sandbox.ts
+```
+
+Hosted execution is refused outside the exact protected development workflow.

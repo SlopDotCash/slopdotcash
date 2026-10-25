@@ -14,6 +14,12 @@ import type {
   PullRequestReview,
 } from "../src/lib/leaderboard";
 import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import {
+  applyPointsSnapshot,
+  emptyPointsJournal,
+  latestPoints,
+  pointMembers,
+} from "../src/lib/points";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import {
   allocatePullRequestReviewCredit,
@@ -35,8 +41,8 @@ const REPO_URL = `https://github.com/${REPO}`;
 const AT = "2026-10-23T12:00:00.000Z";
 const FROM = "2026-09-18T12:00:00.000Z";
 const HEAD = "a".repeat(40);
-// A test-only effective instant before the recorded one, so October fixtures
-// exercise the value policy.
+// A later test-only policy boundary keeps both legacy and value paths in the
+// same October fixture.
 const POLICY: ValueScoringPolicy = {
   id: "slop-value-v1",
   rubricVersion: VALUE_RUBRIC_VERSION,
@@ -300,6 +306,12 @@ test("banned reviews do not consume another reviewer's slot or credit", () => {
     ["U_erin", 2],
     ["U_grace", 2],
   ]);
+  expect(
+    credits.reduce((sum, event) => sum + (event.scoreThirds ?? 0), 0),
+  ).toBe(9);
+  expect(
+    snapshot(POLICY, new Map([["U_bob", "2026-10-19T01:00:00.000Z"]])),
+  ).toEqual(result);
   const exclusions = new Map(
     (result.reviewExclusions ?? []).map((item) => [item.reviewId, item.reason]),
   );
@@ -312,7 +324,7 @@ test("banned reviews do not consume another reviewer's slot or credit", () => {
   ).toEqual(snapshot().ledger);
 });
 
-test("the normal command takes no opt-in flag and uses the recorded policy", () => {
+test("normal publication holds historical changes without a runtime flag", () => {
   expect(parseGenerationArguments([])).toEqual({});
   expect(() => parseGenerationArguments(["--value-assessments"])).toThrow(
     "Usage: generate-leaderboard.ts [--cutoff YYYY-MM-DDTHH:mm:ss.sssZ]",
@@ -478,7 +490,7 @@ test("value decisions require a policy that cannot reach earlier policy periods"
     "Value decisions require their versioned scoring policy",
   );
   expect(() =>
-    snapshot({ ...POLICY, effectiveAt: "2026-10-01T00:00:00.000Z" }),
+    snapshot({ ...POLICY, effectiveAt: "2026-08-31T00:00:00.000Z" }),
   ).toThrow("The value policy cannot reinterpret earlier policy periods");
 });
 
@@ -677,6 +689,157 @@ test("a maintainer ratification of a carrier keeps joint review credit", () => {
   expect(ratified.get("PR_12:value-review:PRR_12_1")?.scoreThirds).toBe(3);
   expect(ratified.get("PR_12:value-review:PRR_12_2")?.scoreThirds).toBe(3);
   expect(ratified.get("PR_12:ratifier:IC_ratify")?.scoreThirds).toBe(1);
+});
+
+test("a joint award gives way to the minimum when its decision is no longer assessed", () => {
+  const merged = outcome(14, "2026-10-20T10:00:00.000Z");
+  const workUnitId = `wu_${"1".repeat(64)}`;
+  const history = [{ recorded_at: "2026-10-22T00:00:00.000Z" }];
+  const assessedJoint = {
+    status: "assessed",
+    latestDigest: "c".repeat(64),
+    history,
+    record: {
+      sources: [{ pullRequestNodeId: merged.id, headSha: HEAD }],
+      units: [
+        {
+          workUnitId,
+          claimIds: ["claim-0"],
+          assessment: {
+            tier: "medium",
+            rationale: "Repairs the reported workflow.",
+            reviews: [],
+          },
+        },
+      ],
+    },
+    evidence: {
+      claims: [
+        {
+          id: "claim-0",
+          carrierPullRequestIds: [merged.id],
+          creditPullRequestId: merged.id,
+          implementationActorNodeIds: [(alice as GitHubActor).id],
+        },
+      ],
+      sources: [
+        {
+          evidence: {
+            repository: REPO,
+            pull: {
+              node_id: merged.id,
+              head: { sha: HEAD },
+              updated_at: merged.updatedAt,
+              merged_at: merged.mergedAt,
+              user: { node_id: (alice as GitHubActor).id },
+              html_url: merged.url,
+              number: merged.number,
+              title: merged.title,
+            },
+            comments: [],
+            reviews: [],
+          },
+        },
+      ],
+    },
+  };
+  const notAssessed = (status: string) => ({
+    status,
+    latestDigest: "c".repeat(64),
+    history,
+    throughSequence: 1,
+  });
+  const jointSnapshot = (decision: unknown, census = [merged]) =>
+    createLeaderboardSnapshot(
+      input({
+        mergedPullRequestOutcomes: census,
+        reviewedMergedPullRequests: census.map((pull) => reviewed(pull, [])),
+        valuePolicy: POLICY,
+        valueDecisions: new Map(),
+        valueActors: new Map([
+          [(alice as GitHubActor).id, alice as GitHubActor],
+        ]),
+        jointValueDecisions: new Map([
+          [merged.id, decision],
+        ]) as unknown as LeaderboardInput["jointValueDecisions"],
+      }),
+    );
+  const assessedJournal = applyPointsSnapshot(
+    emptyPointsJournal(AT),
+    jointSnapshot(assessedJoint),
+    "1".repeat(64),
+    AT,
+  );
+  expect(pointMembers(assessedJournal)[0]?.total).toBe(90);
+
+  for (const status of ["stale", "incomplete"]) {
+    // A changed source or rubric makes the unit stale and missing evidence
+    // makes it incomplete; the producer then scores the merge by its own
+    // record at the one-third minimum.
+    const current = jointSnapshot(notAssessed(status));
+    expect(
+      current.ledger.map((event) => [event.id, event.scoreThirds]),
+    ).toEqual([["PR_14:merged", 1]]);
+    const journal = applyPointsSnapshot(
+      assessedJournal,
+      current,
+      "2".repeat(64),
+      AT,
+    );
+    // PRD section 7: one accepted merge is credited once, as a single-source
+    // decision that turns stale is corrected to the minimum in place.
+    expect(pointMembers(journal)[0]?.total).toBe(10);
+    expect(
+      [...latestPoints(journal).values()]
+        .filter((revision) => revision.award.amount > 0)
+        .map((revision) => revision.award.workUnitId),
+    ).toEqual(["wu_slopdotcash_slopdotcash_pr_14"]);
+
+    // The exact completion source can invalidate a unit without generating
+    // a new award, for example when no eligible author remains.
+    const noCredit = jointSnapshot(notAssessed(status), [
+      { ...merged, author: null, commits: [] },
+    ]);
+    expect(noCredit.ledger).toEqual([]);
+    const removed = applyPointsSnapshot(
+      assessedJournal,
+      noCredit,
+      "4".repeat(64),
+      AT,
+    );
+    expect(pointMembers(removed)[0]?.total ?? 0).toBe(0);
+
+    // A different record does not invalidate the earlier unit by inference.
+    const unrelated = {
+      ...noCredit,
+      valueAssessmentCoverage: noCredit.valueAssessmentCoverage?.map((row) => ({
+        ...row,
+        recordDigest: "d".repeat(64),
+      })),
+    };
+    const retained = applyPointsSnapshot(
+      assessedJournal,
+      unrelated,
+      "5".repeat(64),
+      AT,
+    );
+    expect(pointMembers(retained)[0]?.total).toBe(90);
+  }
+
+  // A snapshot that does not score the merge is not evidence that the unit
+  // award was wrong, so the award stays.
+  const elsewhere = outcome(15, "2026-10-21T10:00:00.000Z");
+  const omitted = applyPointsSnapshot(
+    assessedJournal,
+    jointSnapshot(notAssessed("stale"), [elsewhere]),
+    "3".repeat(64),
+    AT,
+  );
+  expect(
+    [...latestPoints(omitted).values()].find(
+      (revision) => revision.award.workUnitId === workUnitId,
+    )?.award.amount,
+  ).toBe(90);
 });
 
 test("a merge assessed at zero keeps the minimum and a one-third review pool", () => {

@@ -1,18 +1,10 @@
 import { evmBindingTypedData } from "../../contracts/evm/adapter";
-import {
-  type SolanaEscrowConfig,
-  solanaMintDecimals,
-} from "../../contracts/solana/adapter";
+import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import {
   checkSolanaCommitment,
   prepareSolanaCommitment,
 } from "../../contracts/solana/commitment";
-import {
-  checkSolanaFunding,
-  prepareSolanaFunding,
-  SolanaFundingError,
-  type SolanaFundingIntent,
-} from "../../contracts/solana/funding";
+import { SolanaFundingError } from "../../contracts/solana/funding";
 import {
   checkSolanaMonthlyCommitment,
   prepareSolanaMonthlyCommitment,
@@ -33,7 +25,6 @@ import {
   type PaymentsAccount,
   VAULT_SNAPSHOT_STALE_MS,
 } from "../../src/lib/payments/contracts";
-import { parseVaultAmount } from "../../src/lib/payments/vault-amount";
 import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
@@ -49,6 +40,7 @@ import {
   verifyEvmBindingSignature,
   verifyPaymentWalletSignature,
 } from "./possession";
+import { handleSolanaFunding } from "./solana-funding";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
 
@@ -162,77 +154,13 @@ export async function handlePaymentsApi(
     const fundingRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-funding$/.exec(path);
     if (fundingRoute && request.method === "POST") {
-      if (!deps.solanaFundingConfig)
-        return json(503, { error: "funding_unavailable" });
-      const body = (await readBoundedJson(
-        request,
-        4096,
-        "vault funding action",
-      )) as Record<string, unknown>;
-      if (
-        !body ||
-        (body.step !== "review" && body.step !== "check") ||
-        (body.operation !== "deposit" && body.operation !== "withdraw") ||
-        typeof body.network !== "string" ||
-        typeof body.vault !== "string" ||
-        typeof body.wallet !== "string" ||
-        !isWalletAddress("solana", body.wallet) ||
-        (body.step === "review" &&
-          (typeof body.amount !== "string" || body.amount.length > 80)) ||
-        (body.step === "check" &&
-          (typeof body.gross !== "string" ||
-            !/^[1-9][0-9]{0,19}$/.test(body.gross))) ||
-        (body.step === "check" &&
-          (typeof body.blockhash !== "string" ||
-            !isWalletAddress("solana", body.blockhash) ||
-            typeof body.transactionId !== "string" ||
-            body.transactionId.length > 100))
-      )
-        return json(400, { error: "invalid_funding_action" });
-      const config = await deps.solanaFundingConfig(
-        fundingRoute[1],
-        body.network,
-        body.vault,
+      const resolve = deps.solanaFundingConfig;
+      if (!resolve) return json(503, { error: "funding_unavailable" });
+      return await handleSolanaFunding(request, (network, vault) =>
+        resolve(fundingRoute[1], network, vault),
       );
-      let gross = body.gross as string;
-      if (body.step === "review") {
-        const decimals = await solanaMintDecimals(config, config.mint);
-        try {
-          gross = parseVaultAmount(body.amount as string, decimals).toString();
-        } catch {
-          return json(422, {
-            error: "invalid_funding_amount",
-            message:
-              "Enter a positive amount within this token's decimal precision and vault limit.",
-          });
-        }
-      }
-      const intent: Omit<SolanaFundingIntent, "blockhash"> = {
-        operation: body.operation,
-        wallet: body.wallet,
-        gross,
-      };
-      try {
-        if (body.step === "review")
-          return json(200, {
-            plan: await prepareSolanaFunding(config, intent),
-          });
-        return json(200, {
-          status: await checkSolanaFunding(
-            config,
-            { ...intent, blockhash: body.blockhash as string },
-            body.transactionId as string,
-          ),
-        });
-      } catch (error) {
-        if (error instanceof SolanaFundingError)
-          return json(422, {
-            error: "funding_action_rejected",
-            message: error.message,
-          });
-        throw error;
-      }
     }
+
     const monthlySettingRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-monthly-commitment$/.exec(
         path,
@@ -1004,6 +932,7 @@ export async function handlePaymentsApi(
       const bindingQuery =
         "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,t.id idempotencyKey FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_attempts t ON t.obligation_id=o.id AND t.claim_id=w.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND t.state IN ('prepared','unknown','submitted') AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id) ORDER BY t.created_at LIMIT 1";
       let attester = deps.solanaAttester;
+      let privateBinding = false;
       let payment = await deps.db
         .prepare(bindingQuery)
         .bind(body.obligationId, member.github_id)
@@ -1027,6 +956,7 @@ export async function handlePaymentsApi(
             .bind(body.obligationId, member.github_id)
             .first<Record<string, string>>();
           attester = deps.securityPayments.solanaAttester;
+          privateBinding = true;
         }
       }
       if (!payment) return json(409, { error: "binding_not_ready" });
@@ -1034,7 +964,7 @@ export async function handlePaymentsApi(
         return json(503, { error: "identity_attester_unavailable" });
       const response = await attester.fetch(
         new Request(
-          `https://identity-attester.internal/v1/${complete ? "complete-bind" : "pay"}`,
+          `https://identity-attester.internal/v1/${privateBinding ? "security/" : ""}${complete ? "complete-bind" : "pay"}`,
           {
             method: "POST",
             headers: {

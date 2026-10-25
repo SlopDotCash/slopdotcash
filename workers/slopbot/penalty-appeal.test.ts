@@ -746,7 +746,7 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       };
     };
 
-    // October earns 3 thirds; November earns the 1-third merge minimum.
+    // The historical hold preserves October; November uses the value policy.
     expect(standing(await publish())).toEqual({
       scoreThirds: 4,
       penaltyThirds: 0,

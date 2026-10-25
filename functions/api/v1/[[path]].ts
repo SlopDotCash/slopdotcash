@@ -23,7 +23,6 @@ import {
   handlePointsApi,
   sessionGithubActor,
 } from "../../../backend/points/handler";
-import { telegramConfiguration } from "../../../backend/points/telegram";
 import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
@@ -37,9 +36,9 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
+import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
-  parseRepositoryAccess,
   readRepositoryAccess,
   vettingScanRequester,
 } from "../../../backend/projects/setup";
@@ -88,6 +87,7 @@ import {
   vettingBranchCache,
 } from "../../../backend/vetting/live-pin";
 import { CloudflareVettingPersistence } from "../../../backend/vetting/persistence";
+import { REVIEWED_EVM_FACTORIES } from "../../../contracts/evm/factories";
 import type { SolanaEscrowConfig } from "../../../contracts/solana/adapter";
 import { deploymentTier } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
@@ -124,10 +124,6 @@ type Env = {
   TRACE_AUTH_SECRET: string;
   X_CLIENT_ID?: string;
   X_CLIENT_SECRET?: string;
-  /** Telegram connection bot (PRD SOC-02); all three or none. */
-  TELEGRAM_BOT_TOKEN?: string;
-  TELEGRAM_BOT_USERNAME?: string;
-  TELEGRAM_WEBHOOK_SECRET?: string;
   OPERATOR_GITHUB_IDS?: string;
   /** GitHub numeric actor IDs allowed to review project applications. */
   ADMIN_GITHUB_IDS?: string;
@@ -361,27 +357,6 @@ function githubIdSet(value: string | undefined): Set<string> {
   );
 }
 
-/** Reads one repository's Slopbot installation and account permission. */
-async function slopbotRepositoryAccess(
-  slopbot: Env["SLOPBOT"],
-  repository: { path: string; githubId: string },
-  actor: { githubId: string; githubLogin: string },
-) {
-  if (slopbot === undefined) throw new Error("Slopbot is not connected");
-  const url = new URL("https://slopbot.internal/v1/repository-access");
-  url.searchParams.set("repository", repository.path);
-  url.searchParams.set("repositoryId", repository.githubId);
-  url.searchParams.set("login", actor.githubLogin);
-  url.searchParams.set("githubId", actor.githubId);
-  // Older Pages clients keep their original response until they request facts.
-  url.searchParams.set("includeRepository", "1");
-  const response = await slopbot.fetch(
-    new Request(url, { headers: { accept: "application/json" } }),
-  );
-  if (!response.ok) throw new Error(`Slopbot returned ${response.status}`);
-  return parseRepositoryAccess(await readBoundedJson(response, 4 * 1024));
-}
-
 function githubHeaders(token: string | undefined): Record<string, string> {
   return {
     accept: "application/vnd.github+json",
@@ -566,9 +541,49 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       manifest,
       (await loadTemplate()).index.templateSha256,
     );
+  const solanaFundingConfig = async (
+    projectId: string,
+    network: string,
+    vault: string,
+    payoutPolicy: "ordinary" | "security-bounty",
+  ): Promise<SolanaEscrowConfig> => {
+    const networks = parsePaymentNetworks(context.env.PAYMENT_NETWORKS);
+    const selected = networks.find((name) => name === network);
+    if (!selected || ESCROW_NETWORKS[selected].family !== "solana")
+      throw new Error("Funding network unavailable");
+    const registry = await loadRegistryPaymentDeployments(
+      context.env.SLOP_DB,
+      [selected],
+      payoutPolicy,
+    );
+    const matches = registry.deployments.filter(
+      (row) =>
+        row.projectId === projectId &&
+        row.network === network &&
+        row.vault === vault,
+    );
+    if (matches.length !== 1) throw new Error("Funding vault unavailable");
+    const rpcUrl = (
+      JSON.parse(context.env.PAYMENT_RPC_URLS ?? "{}") as Record<
+        string,
+        unknown
+      >
+    )[network];
+    if (typeof rpcUrl !== "string" || new URL(rpcUrl).protocol !== "https:")
+      throw new Error("Funding RPC unavailable");
+    return {
+      ...matches[0],
+      mint: matches[0].asset,
+      rpcUrl,
+      genesisHash: ESCROW_NETWORKS[selected].genesisHash,
+    } as SolanaEscrowConfig;
+  };
   const projectDependencies: ProjectApiDependencies = {
     persistence: projectPersistence,
+    securitySolanaFundingConfig: (projectId, network, vault) =>
+      solanaFundingConfig(projectId, network, vault, "security-bounty"),
     vaultSetup: ownerVaultSetupService({
+      factories: REVIEWED_EVM_FACTORIES,
       db: context.env.SLOP_DB,
       projects: () => projectPersistence.listProjects(),
       networks: () => parsePaymentNetworks(context.env.PAYMENT_NETWORKS),
@@ -599,6 +614,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         forReinstatement,
       ),
     adminGithubIds: githubIdSet(context.env.ADMIN_GITHUB_IDS),
+    traceOperatorGithubIds: githubIdSet(context.env.OPERATOR_GITHUB_IDS),
     moderatorGithubIds: githubIdSet(context.env.PROJECT_MODERATOR_GITHUB_IDS),
     now: () => new Date(),
     randomId: () => crypto.randomUUID(),
@@ -674,6 +690,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     cache: edgeCache(),
     waitUntil: context.waitUntil?.bind(context),
     intake: privateIntake(context.env),
+    repositoryAccess: (repository, actor) =>
+      slopbotRepositoryAccess(context.env.SLOPBOT, repository, actor),
   });
   if (securityResponse !== null) return securityResponse;
   const evidenceResponse = await evidence.handle(context.request);
@@ -850,37 +868,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         },
         now: () => new Date(),
       }),
-      solanaFundingConfig: async (projectId, network, vault) => {
-        const networks = parsePaymentNetworks(context.env.PAYMENT_NETWORKS);
-        const selected = networks.find((name) => name === network);
-        if (!selected || ESCROW_NETWORKS[selected].family !== "solana")
-          throw new Error("Funding network unavailable");
-        const registry = await loadRegistryPaymentDeployments(
-          context.env.SLOP_DB,
-          [selected],
-        );
-        const matches = registry.deployments.filter(
-          (row) =>
-            row.projectId === projectId &&
-            row.network === network &&
-            row.vault === vault,
-        );
-        if (matches.length !== 1) throw new Error("Funding vault unavailable");
-        const rpcUrl = (
-          JSON.parse(context.env.PAYMENT_RPC_URLS ?? "{}") as Record<
-            string,
-            unknown
-          >
-        )[network];
-        if (typeof rpcUrl !== "string" || new URL(rpcUrl).protocol !== "https:")
-          throw new Error("Funding RPC unavailable");
-        return {
-          ...matches[0],
-          mint: matches[0].asset,
-          rpcUrl,
-          genesisHash: ESCROW_NETWORKS[selected].genesisHash,
-        } as SolanaEscrowConfig;
-      },
+      solanaFundingConfig: (projectId, network, vault) =>
+        solanaFundingConfig(projectId, network, vault, "ordinary"),
       // Cloudflare's per-colo edge cache; absent outside the Workers runtime.
       edgeCache: (
         globalThis as {
@@ -933,7 +922,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
               clientSecret: context.env.X_CLIENT_SECRET,
             }
           : undefined,
-      telegram: telegramConfiguration(context.env),
     });
   if (new URL(context.request.url).pathname === "/api/v1/slopbot/value-import")
     return handleHistoricalValueImport(context.request, {
@@ -955,12 +943,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       context.env.PRIVATE_TRACES,
     ),
     authSecret: context.env.TRACE_AUTH_SECRET,
-    operatorGithubIds: new Set(
-      (context.env.OPERATOR_GITHUB_IDS ?? "")
-        .split(",")
-        .map((value) => value.trim())
-        .filter((value) => /^\d+$/u.test(value)),
-    ),
+    operatorGithubIds: githubIdSet(context.env.OPERATOR_GITHUB_IDS),
+    operatorSession: (request) =>
+      sessionGithubActor(
+        request,
+        context.env.SLOP_DB,
+        new Date().toISOString(),
+      ),
     now: () => new Date(),
     randomId: () => crypto.randomUUID(),
     verifyIdentityAssertion: (assertion) =>

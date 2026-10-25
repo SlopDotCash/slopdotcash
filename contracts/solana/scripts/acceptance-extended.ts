@@ -84,8 +84,17 @@ export async function runSolanaExtended(
 ): Promise<Evidence> {
   const ctx = await openSolanaRun(network, directory, "extended");
   const { keys, identity, chain, connection, program, run, persist } = ctx;
-  if (network !== "solana-devnet")
-    throw new Error("The extended suite runs on solana-devnet only");
+  // The payments Worker cannot dispatch a solana-localnet vault (see the
+  // runbook's known blockers). A local validator therefore runs only the
+  // key-recovery scenario, which needs no registry or dispatch.
+  const localOnly = network === "solana-localnet";
+  if (network !== "solana-devnet" && !localOnly)
+    throw new Error("The extended suite runs on solana-devnet");
+  if (localOnly) {
+    const note =
+      "solana-localnet runs only the key-recovery scenario; the other scenarios need payments Worker dispatch, which a local validator cannot reach.";
+    if (!run.deviations.includes(note)) run.deviations.push(note);
+  }
   const bountyMints = requireEnv("ESCROW_ACCEPTANCE_ASSETS")
     .split(",")
     .map((value) => new PublicKey(value.trim()));
@@ -449,6 +458,181 @@ export async function runSolanaExtended(
     return record;
   };
 
+  // ---- 5. identity key recovery --------------------------------------------
+  /**
+   * The owner proposes a replacement identity authority for one project, the
+   * Config rotation authority confirms it and anyone executes it after the
+   * project's rotation delay. The old key can no longer bind, a binding made
+   * before the rotation still pays, and the new key binds a destination that
+   * pays. The rotation is per project, so no other project changes.
+   */
+  async function keyRecovery(entry: ScenarioEvidence) {
+    if (!process.env.ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY)
+      throw new Error(
+        "ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY is required for the key-recovery scenario",
+      );
+    const rotation = Keypair.fromSeed(
+      solanaSeed("ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY"),
+    );
+    if (!rotation.publicKey.equals(ctx.rotationAuthority))
+      throw new Error(
+        "ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY is not the Config rotation authority",
+      );
+    // The replacement key signs bindings only; the relayer pays their rent.
+    const recovery = wallet("recovery-identity");
+    const p = await projectFor(entry, "recovery", scenarioMint);
+    const amounts = await amountsFor(scenarioMint);
+    await deposit(entry, "recovery", p, 150n * amounts.unit);
+    const actors = [0, 1].map((n) => scenarioActor(6, n));
+    const items = [
+      award(p, "recovery-existing", actors[0], amounts.award(100n)),
+      award(p, "recovery-new", actors[1], amounts.award(50n)),
+    ];
+    const wallets = actors.map((_, n) => wallet(`recovery:${n}`));
+    for (const [n, item] of items.entries())
+      await commit(entry, `recovery:commit-${n}`, p, item);
+    // The binding that exists before the key is lost.
+    await bind(entry, "recovery:bind-existing", p, actors[0], wallets[0], 0n);
+    const authorities = async () => {
+      const info = await connection.getAccountInfo(p.project, "confirmed");
+      if (!info) throw new Error("Recovery project missing");
+      return {
+        identity: new PublicKey(info.data.subarray(104, 136)).toBase58(),
+        pending: new PublicKey(info.data.subarray(257, 289)).toBase58(),
+        effectiveAt: info.data.readBigInt64LE(289),
+        confirmed: info.data[297] === 1,
+      };
+    };
+    await send(
+      entry,
+      "recovery:propose",
+      [keys.owner],
+      [
+        program.proposeAuthorityRotation({
+          owner: keys.owner.publicKey,
+          project: p.project,
+          next: recovery.publicKey,
+        }),
+      ],
+    );
+    await send(
+      entry,
+      "recovery:confirm",
+      [keys.relayer, rotation],
+      [
+        program.confirmAuthorityRotation({
+          rotationAuthority: rotation.publicKey,
+          project: p.project,
+        }),
+      ],
+    );
+    if (!entry.steps["recovery:execute"]) {
+      const pending = await authorities();
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      if (pending.effectiveAt > now)
+        throw new Waiting(
+          "recovery: the identity rotation waits for the project rotation delay",
+          new Date(Number(pending.effectiveAt) * 1000),
+        );
+    }
+    await send(
+      entry,
+      "recovery:execute",
+      [keys.relayer],
+      [program.executeAuthorityRotation(p.project)],
+    );
+    if (!entry.checks.rotation) {
+      const after = await authorities();
+      expectEqual(
+        "rotated identity authority",
+        after.identity,
+        recovery.publicKey.toBase58(),
+      );
+      expectEqual(
+        "pending identity authority",
+        after.pending,
+        PublicKey.default.toBase58(),
+      );
+      entry.checks.rotation = {
+        previous: identity.publicKey.toBase58(),
+        current: after.identity,
+        rotationAuthority: rotation.publicKey.toBase58(),
+        rotationDelaySeconds: text(ctx.rotationDelay),
+      };
+      await persist();
+    }
+    // The old key can no longer bind.
+    await expectFailure(
+      entry,
+      "recovery:old-key-refused",
+      "ConstraintHasOne",
+      identity,
+      [bindIx(p, actors[1], wallets[1], 0n)],
+      [wallets[1]],
+    );
+    // The binding made by the old key still pays after the rotation.
+    const existing = await pay(
+      entry,
+      "recovery:pay-existing",
+      p,
+      items[0],
+      1n,
+      wallets[0].publicKey,
+    );
+    // The new key binds; the relayer pays the binding account rent.
+    await send(
+      entry,
+      "recovery:bind-new",
+      [keys.relayer, recovery, wallets[1]],
+      [
+        program.bindWallet({
+          payer: keys.relayer.publicKey,
+          identity: recovery.publicKey,
+          destination: wallets[1].publicKey,
+          project: p.project,
+          actor: BigInt(actors[1].githubUserId),
+          network: network32,
+          expectedVersion: 0n,
+          claimDigest: sha256(
+            `${p.project.toBase58()}:${actors[1].githubUserId}:${wallets[1].publicKey.toBase58()}`,
+          ),
+          expiresAt: BigInt(Math.floor(Date.now() / 1000) + 3600),
+        }),
+      ],
+    );
+    const fresh = await pay(
+      entry,
+      "recovery:pay-new",
+      p,
+      items[1],
+      1n,
+      wallets[1].publicKey,
+    );
+    const totals = await state(p.project);
+    expectEqual(
+      "recovery paid",
+      totals.paid,
+      items.reduce((sum, item) => sum + item.net, 0n),
+    );
+    expectEqual("recovery reserved", totals.reserved, 0n);
+    entry.checks.payments = {
+      existingBinding: {
+        githubUserId: actors[0].githubUserId,
+        boundBy: identity.publicKey.toBase58(),
+        paidAfterRotation: existing.transactionId,
+        net: text(items[0].net),
+      },
+      newBinding: {
+        githubUserId: actors[1].githubUserId,
+        boundBy: recovery.publicKey.toBase58(),
+        paid: fresh.transactionId,
+        net: text(items[1].net),
+      },
+    };
+    entry.checks.totals = printable(totals);
+    await persist();
+  }
+
   // ---- 1. private bounty ---------------------------------------------------
   async function bounty(entry: ScenarioEvidence) {
     for (const [index, mint] of bountyMints.entries()) {
@@ -811,7 +995,19 @@ export async function runSolanaExtended(
     const submissions = (entry.checks.submissions as unknown[]) ?? [];
     entry.checks.submissions = submissions;
     if (!entry.checks.automatic) {
-      const before = await state(p.project);
+      if (entry.checks.monthlyReservedBefore === undefined) {
+        if (await monthState())
+          throw new Error(
+            "This monthly allocation started without a saved reserve baseline. Preserve this evidence and use a new run to prove the complete allocation.",
+          );
+        entry.checks.monthlyReservedBefore = text(
+          (await state(p.project)).reserved,
+        );
+        await persist();
+      }
+      const reservedBefore = BigInt(
+        entry.checks.monthlyReservedBefore as string,
+      );
       await ready(async () => {
         const result = await submit();
         submissions.push(result);
@@ -854,7 +1050,7 @@ export async function runSolanaExtended(
       expectEqual("month released", m.released, items[0].gross);
       expectEqual(
         "reserved by monthly",
-        after.reserved - before.reserved,
+        after.reserved - reservedBefore,
         items[1].gross + items[2].gross,
       );
       expectEqual("outstanding", after.monthlyOutstanding, 0);
@@ -864,7 +1060,7 @@ export async function runSolanaExtended(
         frozenAt,
         allocationRoot: authorization.plan.allocationRoot,
         state: printable(m),
-        reservedBefore: text(before.reserved),
+        reservedBefore: text(reservedBefore),
         reservedAfter: text(after.reserved),
         transactions: submissions,
       };
@@ -1388,8 +1584,9 @@ export async function runSolanaExtended(
         );
         expectEqual(
           "wallet received once",
-          await chain.tokenBalance(
-            ata(scenarioMint, lost.wallets[0].publicKey),
+          // The movement of this payment only: the wallet comes from the reused actor key.
+          (await chain.tokenDeltas(lossRecord.transactionId)).get(
+            ata(scenarioMint, lost.wallets[0].publicKey).toBase58(),
           ),
           item.net,
         );
@@ -1496,9 +1693,16 @@ export async function runSolanaExtended(
       if (!failed.checks.phase2 && !failed.checks.stuck) {
         const item = blocked.items[1];
         expectEqual("retried attempts", projection.attempts(item.id).length, 1);
+        const paidTransaction = projection.obligation(
+          item.id,
+        )?.paid_transaction;
+        if (!paidTransaction)
+          throw new Error("Second recipient payment has no transaction");
         expectEqual(
           "second recipient received",
-          await chain.tokenBalance(tokenAccount(1)),
+          (await chain.tokenDeltas(paidTransaction)).get(
+            tokenAccount(1).toBase58(),
+          ),
           item.net,
         );
         failed.checks.phase2 = {
@@ -1565,16 +1769,88 @@ export async function runSolanaExtended(
     }
   }
 
+  const finalize = async (entry: ScenarioEvidence) => {
+    const signatures = new Map<string, "success" | "reverted">();
+    const include = (
+      signature: string,
+      expected: "success" | "reverted" = "success",
+    ) => {
+      const previous = signatures.get(signature);
+      if (previous !== undefined && previous !== expected)
+        throw new Error(`Conflicting outcomes for ${signature}`);
+      signatures.set(signature, expected);
+    };
+    for (const step of Object.values(entry.steps)) {
+      if (!step.status)
+        throw new Waiting(`${step.transactionId} has no recorded outcome`);
+      include(step.transactionId, step.status);
+    }
+    // The production monthly executor and dispatcher record their signatures
+    // outside the direct-send steps. Their receipts need the same finality gate.
+    for (const submission of (entry.checks.submissions ?? []) as {
+      transactionId?: string | null;
+      transactionIds?: string[];
+    }[]) {
+      if (submission.transactionId) include(submission.transactionId);
+      for (const signature of submission.transactionIds ?? [])
+        include(signature);
+    }
+    const phase1 = entry.checks.phase1 as
+      | { paid: { transaction: string }[] }
+      | undefined;
+    for (const payment of phase1?.paid ?? []) include(payment.transaction);
+    const phase2 = entry.checks.phase2 as
+      | { paidTransaction: string }
+      | undefined;
+    if (phase2) include(phase2.paidTransaction);
+    const transactions = [];
+    for (const [signature, expected] of signatures) {
+      const receipt = await connection.getTransaction(signature, {
+        commitment: "finalized",
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!receipt?.meta)
+        throw new Waiting(`${signature} waits for finalized receipt metadata`);
+      if (receipt.transaction.signatures[0] !== signature)
+        throw new Error(`Finalized receipt identity differs for ${signature}`);
+      const status = receipt.meta.err === null ? "success" : "reverted";
+      if (status !== expected)
+        throw new Error(
+          `Finalized transaction ${signature} ${status}, expected ${expected}`,
+        );
+      transactions.push({
+        transactionId: signature,
+        slot: receipt.slot,
+        status,
+      });
+    }
+    entry.checks.finality = { commitment: "finalized", transactions };
+    await persist();
+  };
+
   try {
-    await runScenarios(run, persist, [
-      [["bounty"], bounty],
-      [["walletless-lifecycle"], lifecycle],
-      [["monthly"], monthly],
-      [
-        ["interrupted-send", "failed-recipient", "frozen-fee-destination"],
-        dispatch,
-      ],
-    ]);
+    await runScenarios(
+      run,
+      persist,
+      localOnly
+        ? [[["key-recovery"], keyRecovery]]
+        : [
+            [["bounty"], bounty],
+            [["walletless-lifecycle"], lifecycle],
+            [["monthly"], monthly],
+            [
+              [
+                "interrupted-send",
+                "failed-recipient",
+                "frozen-fee-destination",
+              ],
+              dispatch,
+            ],
+            [["key-recovery"], keyRecovery],
+          ],
+      // Poll for finality within the wait budget, as the EVM leg does.
+      (entry) => ready(() => finalize(entry)),
+    );
     run.status = "passed";
   } catch (error) {
     if (error instanceof Waiting) {

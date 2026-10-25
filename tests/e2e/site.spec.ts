@@ -1362,12 +1362,14 @@ test("shows an explicit error for invalid data and retries", async ({
   failSnapshot = false;
   await page.getByRole("button", { name: /Retry/u }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  expect(attempts).toBe(failedAttempts + 1);
   // The frozen fixture is older than eight hours: a retained snapshot shows
   // its stale label instead of passing as current (owner decision D2).
   await expect(
     page.getByRole("status").filter({ hasText: "Points may be outdated" }),
   ).toBeVisible();
+  // Clearing the error starts loading; wait for the loaded snapshot before
+  // checking that the retry made exactly one additional request.
+  expect(attempts).toBe(failedAttempts + 1);
 });
 
 // 320 CSS px covers reflow; 200% text enlargement is a deterministic
@@ -1642,15 +1644,24 @@ test("opens the models page directly and through keyboard navigation", async ({
   });
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
+  const homeSnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/$/);
-  // Let the home records finish loading so going back aborts no request.
+  // Points can render before the separate score download finishes. A previous
+  // SPA route's networkidle state does not prove this response body is complete.
+  expect(await (await homeSnapshot).finished()).toBeNull();
   await expect(page.locator("#leaderboard").getByRole("table")).toBeVisible({
     timeout: 60_000,
   });
-  await page.waitForLoadState("networkidle");
+  const modelsSnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/models$/u);
+  expect(await (await modelsSnapshot).finished()).toBeNull();
+  await expect(firstModel).toBeVisible();
 });
 
 test("opens the sponsors page directly and through keyboard navigation", async ({

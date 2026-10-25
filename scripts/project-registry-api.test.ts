@@ -647,12 +647,16 @@ describe("project registry API", () => {
       (await change({ ...program, settlement, status: "closed" })).status,
     ).toBe(200);
     expect((await change(undefined)).status).toBe(422);
-    // A banned account cannot read restricted bounty totals or register.
+    // A later account restriction stops new registration, but does not hide
+    // the owner's existing funded state or prevent its read-only recovery.
     deps.now = () => new Date(observedAt);
     seedParticipationBan(sqlite, APPLICANT, ADMIN, observedAt);
     const restrictedRead = await call("GET", privatePath, "applicant");
-    expect(restrictedRead.status).toBe(403);
-    expect((await restrictedRead.json()).error).toBe("maintainer_banned");
+    expect(restrictedRead.status).toBe(200);
+    expect(await restrictedRead.json()).toMatchObject({
+      canSetup: false,
+      funds: { availableMinor: "2000000" },
+    });
     const restrictedWrite = await call(
       "POST",
       "project-vaults/open-registry",

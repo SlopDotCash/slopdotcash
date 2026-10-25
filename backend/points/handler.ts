@@ -7,11 +7,6 @@ import { POINTS_RULE } from "../../src/lib/points";
 import { randomToken, sha256Hex } from "../../workers/identity/crypto";
 import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
-import {
-  handleTelegram,
-  handleTelegramWebhook,
-  type TelegramConfiguration,
-} from "./telegram";
 import { handleX, type XConfiguration } from "./x";
 
 export interface PointsDependencies {
@@ -24,8 +19,6 @@ export interface PointsDependencies {
   allowedOrigins?: readonly string[];
   x?: XConfiguration;
   xFetch?: (input: string, init: RequestInit) => Promise<Response>;
-  telegram?: TelegramConfiguration;
-  telegramFetch?: (input: string, init: RequestInit) => Promise<Response>;
 }
 const cookieName = "__Host-slop_points";
 const headers = {
@@ -81,18 +74,21 @@ type Member = {
   social_points?: number;
 };
 /**
- * Welcome points ended on 24 October 2026 (PRD section 11). The legacy
- * `welcome` column keeps its fixed value; only a membership that joined before
- * this instant reports its historical award. `joined_at` is immutable.
+ * Welcome and X-connection points ended on 24 October 2026 (PRD section 11).
+ * The legacy `welcome` column keeps its fixed value; only a membership that
+ * joined before this instant reports its historical award. Likewise only an X
+ * award recorded before this instant counts; production still recorded some
+ * on that day. `joined_at` and `awarded_at` are immutable.
  */
-const WELCOME_POINTS_END = "2026-10-24T00:00:00.000Z";
-const WELCOME_SQL = `CASE WHEN m.joined_at < '${WELCOME_POINTS_END}' THEN m.welcome ELSE 0 END`;
+const PARTICIPATION_POINTS_END = "2026-10-24T00:00:00.000Z";
+const WELCOME_SQL = `CASE WHEN m.joined_at < '${PARTICIPATION_POINTS_END}' THEN m.welcome ELSE 0 END`;
+const X_AWARD_SQL = `a.actor_id=m.actor_id AND a.awarded_at < '${PARTICIPATION_POINTS_END}'`;
 function publicMember(m: Member) {
   return {
     actor: { id: m.actor_id, login: m.login },
     joinedAt: m.joined_at,
     public: m.public === 1,
-    welcome: m.joined_at < WELCOME_POINTS_END ? m.welcome : 0,
+    welcome: m.joined_at < PARTICIPATION_POINTS_END ? m.welcome : 0,
     socialPoints: m.social_points ?? 0,
   };
 }
@@ -111,10 +107,6 @@ export async function handlePointsApi(
     ]).has(url.origin)
   )
     return json(403, { error: "origin_forbidden" });
-  // Telegram's servers post updates here with no browser origin; the webhook
-  // authenticates by its own secret header and is not a browser-limited route.
-  if (route === "/telegram/webhook")
-    return handleTelegramWebhook(request, deps, now);
   if (
     request.method !== "GET" &&
     (request.method !== "POST" ||
@@ -145,15 +137,13 @@ export async function handlePointsApi(
       }
     }
     if (route.startsWith("/x/")) return await handleX(request, deps, now);
-    if (route.startsWith("/telegram/"))
-      return await handleTelegram(request, deps, now);
     if (route === "/people" && request.method === "GET") {
       const after = url.searchParams.get("after") ?? "";
       if (after && !/^[A-Za-z0-9_=-]{4,256}$/.test(after))
         return json(400, { error: "invalid_cursor" });
       const result = await deps.db
         .prepare(
-          `SELECT json_group_array(json(item)) items FROM (SELECT json_object('actor',json_object('id',m.actor_id,'login',m.login),'welcome',${WELCOME_SQL},'socialPoints',COALESCE(a.points,0),'x',CASE WHEN l.public=1 THEN json_object('id',l.x_id,'username',l.username,'verifiedAt',l.verified_at) ELSE NULL END,'telegram',CASE WHEN t.public=1 THEN json_object('username',t.username,'verifiedAt',t.verified_at) ELSE NULL END) item FROM points_members m LEFT JOIN points_x_awards a ON a.actor_id=m.actor_id LEFT JOIN points_x_links l ON l.actor_id=m.actor_id LEFT JOIN points_telegram_links t ON t.actor_id=m.actor_id WHERE m.public=1 AND m.actor_id>? ORDER BY m.actor_id LIMIT 26)`,
+          `SELECT json_group_array(json(item)) items FROM (SELECT json_object('actor',json_object('id',m.actor_id,'login',m.login),'welcome',${WELCOME_SQL},'socialPoints',COALESCE(a.points,0),'x',CASE WHEN l.public=1 THEN json_object('id',l.x_id,'username',l.username,'verifiedAt',l.verified_at) ELSE NULL END) item FROM points_members m LEFT JOIN points_x_awards a ON ${X_AWARD_SQL} LEFT JOIN points_x_links l ON l.actor_id=m.actor_id WHERE m.public=1 AND m.actor_id>? ORDER BY m.actor_id LIMIT 26)`,
         )
         .bind(after)
         .first<{ items: string }>();
@@ -258,7 +248,7 @@ export async function handlePointsApi(
         throw new Error("Points transaction failed");
       const member = await deps.db
         .prepare(
-          "SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id=m.actor_id),0) social_points FROM points_members m WHERE actor_id=?",
+          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points FROM points_members m WHERE actor_id=?`,
         )
         .bind(node)
         .first<Member>();
@@ -281,7 +271,7 @@ export async function handlePointsApi(
       const hash = await sha256Hex(token);
       const member = await deps.db
         .prepare(
-          "SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id=m.actor_id),0) social_points FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?",
+          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?`,
         )
         .bind(hash, now)
         .first<Member>();
@@ -335,7 +325,7 @@ export async function handlePointsApi(
           return json(400, { error: "confirmation_mismatch" });
         // One atomic batch: deactivate and hide the membership, remove the
         // optional connections and activity email, then end every session.
-        // Claims keep each X and Telegram ID reserved to this GitHub identity.
+        // Claims keep X and historical Telegram IDs reserved to this GitHub identity.
         // Wallets, unpaid obligations, payment and settlement records, private
         // cases, points history and public GitHub work are not touched.
         const results = await deps.db.batch([
@@ -419,7 +409,7 @@ export async function handlePointsApi(
       // Login collisions fail closed; numeric actor identity remains canonical.
       const row = await deps.db
         .prepare(
-          `SELECT CASE WHEN COUNT(*)=1 AND m.public=1 THEN json_object('actor',json_object('id',m.actor_id,'login',m.login),'joinedAt',m.joined_at,'public',json('true'),'welcome',${WELCOME_SQL},'socialPoints',COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id=m.actor_id),0)) ELSE NULL END AS member FROM points_members m WHERE lower(m.login)=lower(?)`,
+          `SELECT CASE WHEN COUNT(*)=1 AND m.public=1 THEN json_object('actor',json_object('id',m.actor_id,'login',m.login),'joinedAt',m.joined_at,'public',json('true'),'welcome',${WELCOME_SQL},'socialPoints',COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0)) ELSE NULL END AS member FROM points_members m WHERE lower(m.login)=lower(?)`,
         )
         .bind(login)
         .first<{ member: string | null }>();

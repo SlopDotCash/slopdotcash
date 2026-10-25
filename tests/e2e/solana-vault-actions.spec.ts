@@ -16,9 +16,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import {
+  readVaultTotals,
   type SolanaEscrowConfig,
   solanaBase58,
   verifySolanaDeployment,
@@ -27,7 +28,10 @@ import { verifySolanaVaultCreation } from "../../contracts/solana/owner-creation
 import { buildInitializeVaultInstructions } from "../../contracts/solana/owner-instructions";
 import { message } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
-import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
+import {
+  ESCROW_NETWORKS,
+  type EscrowDeployment,
+} from "../../src/lib/escrow-policy.mjs";
 import { formatAssetAmount } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
@@ -84,6 +88,37 @@ test.beforeAll(async () => {
   const programId = new web3.PublicKey(idl.address);
   const binary = `${root}/contracts/solana/target/deploy/slop_escrow.so`;
   ledger = mkdtempSync(join(tmpdir(), "slop-browser-validator-"));
+  // A real local mint at the canonical devnet address preserves the production
+  // USDC policy without using public funds or weakening asset verification.
+  const mint = new web3.PublicKey(ESCROW_NETWORKS["solana-devnet"].asset);
+  const mintData = Buffer.alloc(spl.MINT_SIZE);
+  spl.MintLayout.encode(
+    {
+      mintAuthorityOption: 1,
+      mintAuthority: owner.publicKey,
+      supply: 0n,
+      decimals: 6,
+      isInitialized: true,
+      freezeAuthorityOption: 0,
+      freezeAuthority: web3.PublicKey.default,
+    },
+    mintData,
+  );
+  const mintFile = `${ledger}-usdc.json`;
+  writeFileSync(
+    mintFile,
+    JSON.stringify({
+      pubkey: mint.toBase58(),
+      account: {
+        lamports: 1_461_600,
+        data: [mintData.toString("base64"), "base64"],
+        owner: spl.TOKEN_PROGRAM_ID.toBase58(),
+        executable: false,
+        rentEpoch: 0,
+        space: spl.MINT_SIZE,
+      },
+    }),
+  );
   validator = spawn(
     "solana-test-validator",
     [
@@ -97,6 +132,9 @@ test.beforeAll(async () => {
       String(rpcPort + 51),
       "--dynamic-port-range",
       `${rpcPort + 12}-${rpcPort + 41}`,
+      "--account",
+      mint.toBase58(),
+      mintFile,
       "--upgradeable-program",
       idl.address,
       binary,
@@ -159,13 +197,6 @@ test.beforeAll(async () => {
       systemProgram: web3.SystemProgram.programId,
     })
     .rpc();
-  const mint = await spl.createMint(
-    connection,
-    owner,
-    owner.publicKey,
-    null,
-    6,
-  );
   const digest = hash("slop-browser-local-project");
   const domain = hash("slop-browser-local-domain");
   const projectPda = pda(
@@ -291,7 +322,10 @@ test.afterAll(async () => {
     validator.kill("SIGTERM");
     await stopped;
   }
-  if (ledger) rmSync(ledger, { recursive: true, force: true });
+  if (ledger) {
+    rmSync(ledger, { recursive: true, force: true });
+    rmSync(`${ledger}-usdc.json`, { force: true });
+  }
 });
 
 function installLocalSolanaWallet() {
@@ -811,11 +845,13 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   ).toBeLessThanOrEqual(1);
 });
 
-test("owner creates, recovers, registers and funds a Solana vault through the API", async ({
-  page,
-}, info) => {
+async function ownerSetupWorkflow(
+  { page }: { page: Page },
+  info: TestInfo,
+  bounty: boolean,
+) {
   test.setTimeout(480_000);
-  const automatic = !info.project.name.includes("mobile");
+  const automatic = !bounty && !info.project.name.includes("mobile");
   const temporary = mkdtempSync(join(tmpdir(), "slop-solana-setup-"));
   const apiPort = rpcPort + 60;
   const origin = `http://127.0.0.1:${apiPort}`;
@@ -838,13 +874,77 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
     },
     escrow: { ...project.escrow, deployments: [] },
   };
+  if (bounty) {
+    Object.assign(target.reward, {
+      monthlyCapMinor: "0",
+      monthlyCapDisplay: "0 TEST",
+      committedMinor: "0",
+      paymentMode: "disabled",
+    });
+    delete target.reward.reviewBudget;
+    delete target.reward.cycleCaps;
+    const contact = { githubId: "900000071", githubLogin: "vault-owner" };
+    const repository = target.repositories[0].id;
+    Object.assign(target, {
+      securityBounty: {
+        version: "1",
+        status: "paused",
+        rewardMode: "bounty-only",
+        eligibility: "critical-loss-of-funds",
+        amount: {
+          currency: "USDC",
+          decimals: 6,
+          network: "solana",
+          grossMinor: "10000000",
+        },
+        split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+        sponsor: { name: "Local project", githubId: contact.githubId },
+        funding: { state: "pledged" },
+        capacity: {
+          awards: 1,
+          closesAt: null,
+          exhaustionRule: "New awards wait for available funds.",
+        },
+        scope: {
+          sourceRevisions: [{ repository, commit: "a".repeat(40) }],
+          deployments: [],
+          includedAssets: ["Vault deposits"],
+          excludedDependencies: [],
+          testingPermission: "Test on local forks only.",
+          severityRubric: "Assess impact on covered funds.",
+          lossDefinition: "Unauthorized loss of covered funds.",
+        },
+        intake: {
+          kind: "github-private-vulnerability-reporting",
+          repository,
+        },
+        responseTargets: {
+          acknowledgeHours: 24,
+          triageBusinessDays: 3,
+          updateIntervalDays: 7,
+        },
+        approvers: {
+          technical: [contact],
+          financial: [contact],
+          dispute: [contact],
+        },
+        dispute: {
+          authority: "advisory",
+          process: "Ask Slop for a private review.",
+        },
+        disclosure: "Contact the maintainer before disclosure.",
+        safeHarbor: "Good-faith testing within these rules is authorized.",
+      },
+    });
+  }
+
   const other = PROJECTS.find(
     (p) => p.id !== project.id && p.reward.kind === "monthly-pool",
   );
   if (!other) throw new Error("Second registry fixture missing");
   const template = {
     ...other,
-    reward: target.reward,
+    reward: bounty ? project.reward : target.reward,
     rewardAsset: project.rewardAsset,
     escrow: project.escrow,
   };
@@ -939,6 +1039,7 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
       network: "solana-devnet",
       claimId: claim.claimId,
       automatic,
+      payoutPolicy: bounty ? "security-bounty" : "ordinary",
     });
     expect(
       await verifySolanaVaultCreation(
@@ -976,8 +1077,18 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
     const errors: string[] = [];
     const failedRequests: string[] = [];
     let wrongSignature = false;
+    let privateUnavailable = false;
+    let privateErrors = 0;
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (event) => {
+      if (
+        event.type() === "error" &&
+        privateUnavailable &&
+        event.text().includes("503")
+      ) {
+        privateErrors++;
+        return;
+      }
       if (
         event.type() === "error" &&
         !(wrongSignature && event.text().includes("422"))
@@ -988,35 +1099,38 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
       if (
         response.url().startsWith(origin) &&
         response.status() >= 400 &&
-        !(wrongSignature && response.status() === 422)
+        !(wrongSignature && response.status() === 422) &&
+        !(privateUnavailable && response.status() === 503)
       )
         failedRequests.push(`${response.status()} ${response.url()}`);
     });
-    await page.goto(`${origin}/projects/${project.slug}/funding`, {
-      waitUntil: "networkidle",
+    await page.goto(
+      `${origin}/projects/${project.slug}/${bounty ? "manage" : "funding"}`,
+      {
+        waitUntil: "networkidle",
+      },
+    );
+    const setup = page.getByRole("region", {
+      name: bounty ? "Set up bounty vault" : "Set up project vault",
     });
-    const setup = page.getByRole("region", { name: "Set up project vault" });
     await setup
       .getByRole("button", { name: "Connect Local Solana wallet" })
       .click();
-    const monthly = setup.getByRole("checkbox", {
-      name: "Automatically pay the monthly allocation",
+    const monthly = setup.getByRole("combobox", {
+      name: "Automatic monthly payment",
+      exact: true,
     });
-    await expect(monthly).toBeChecked();
-    if (!automatic) await monthly.uncheck();
-    // Read the browser's own review in the test process. Chromium may drop a
-    // finished response body before CDP reads it, so do not depend on that buffer.
+    if (bounty) await expect(monthly).toHaveCount(0);
+    else {
+      await expect(monthly).toHaveValue("on");
+      if (!automatic) await monthly.selectOption("off");
+    }
+    // Capture the reply in a route: Chrome can drop a streamed body before
+    // response.json() reads it through DevTools.
     const reviewUrl = `${origin}/api/v1/project-vaults/${project.id}`;
-    let captureReview!: (body: {
-      review: {
-        transaction: { blockhash: string; lastValidBlockHeight: number };
-      };
-    }) => void;
-    const browserReviewBody = new Promise<Parameters<typeof captureReview>[0]>(
-      (resolve) => {
-        captureReview = resolve;
-      },
-    );
+    let browserReview:
+      | { transaction: { blockhash: string; lastValidBlockHeight: number } }
+      | undefined;
     await page.route(reviewUrl, async (route) => {
       const request = route.request();
       if (
@@ -1025,15 +1139,17 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
       )
         return route.fallback();
       const response = await route.fetch();
-      captureReview(await response.json());
-      await route.fulfill({ response });
-      await page.unroute(reviewUrl);
+      const body = await response.json();
+      browserReview ??= body.review;
+      await route.fulfill({ response, json: body });
     });
     await setup.getByRole("button", { name: "Review vault creation" }).click();
-    const browserReview = (await browserReviewBody).review;
     await expect(
       setup.getByRole("button", { name: "Create vault in wallet" }),
     ).toBeEnabled();
+    await page.unroute(reviewUrl);
+    if (!browserReview)
+      throw new Error("The browser review reply was not captured.");
     await page.screenshot({
       path: info.outputPath("solana-create-review.png"),
       fullPage: true,
@@ -1067,14 +1183,16 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
     );
     expect(sends).toHaveLength(1);
     await page.reload({ waitUntil: "networkidle" });
-    const edited = structuredClone(target);
-    edited.reward.monthlyCapMinor = "2000000000";
-    edited.reward.monthlyCapDisplay = "2,000 TEST";
-    const changed = await page.request.put(
-      `${origin}/api/v1/projects/${project.id}`,
-      { headers, data: { manifest: edited, expectedRevision: 1 } },
-    );
-    expect(changed.ok(), JSON.stringify(await changed.json())).toBe(true);
+    if (!bounty) {
+      const edited = structuredClone(target);
+      edited.reward.monthlyCapMinor = "2000000000";
+      edited.reward.monthlyCapDisplay = "2,000 TEST";
+      const changed = await page.request.put(
+        `${origin}/api/v1/projects/${project.id}`,
+        { headers, data: { manifest: edited, expectedRevision: 1 } },
+      );
+      expect(changed.ok(), JSON.stringify(await changed.json())).toBe(true);
+    }
     wrongSignature = true;
     await setup
       .getByLabel("Creation transaction signature")
@@ -1090,20 +1208,24 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
       .getByRole("button", { name: "Check vault registration" })
       .click();
     await expect(setup).toHaveCount(0);
-    await expect(
-      page
-        .locator(".funding-status-grid")
-        .getByText("2,000 TEST", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      page
-        .getByRole("status")
-        .filter({ hasText: "Creation used a monthly cap" }),
-    ).toContainText("1,000 TEST. The project now uses 2,000 TEST");
+    if (!bounty) {
+      await expect(
+        page
+          .locator(".funding-status-grid")
+          .getByText("2,000 TEST", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page
+          .getByRole("status")
+          .filter({ hasText: "Creation used a monthly cap" }),
+      ).toContainText("1,000 TEST. The project now uses 2,000 TEST");
+    }
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
-    expect(state.project.revision).toBe(3);
-    expect(state.revisions.n).toBe(3);
-    const created = state.project.manifest.escrow.deployments[0];
+    expect(state.project.revision).toBe(bounty ? 2 : 3);
+    expect(state.revisions.n).toBe(bounty ? 2 : 3);
+    const created = bounty
+      ? state.project.manifest.securityBounty.settlement.deployments[0]
+      : state.project.manifest.escrow.deployments[0];
     expect(created.owner).toBe(donor.publicKey.toBase58());
     expect(created.deploymentTransaction).toBe(sends[0]);
     const program = new anchor.Program(
@@ -1119,8 +1241,15 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
       "finalized",
     );
     expect(account.monthlyEnabled).toBe(automatic);
-    expect(account.monthlyCap.toString()).toBe("1000000000");
-    const createdConfig = { ...config, ...created, mint: created.asset };
+    expect(account.monthlyCap.toString()).toBe(bounty ? "0" : "1000000000");
+    const createdConfig = {
+      ...config,
+      ...created,
+      mint: created.asset,
+      payoutPolicy: bounty
+        ? ("security-bounty" as const)
+        : ("ordinary" as const),
+    };
     const digest = registryProjectDigest(project.id);
     await expect(
       verifySolanaDeployment(createdConfig, "f".repeat(64)),
@@ -1179,12 +1308,13 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
       network: "solana-devnet",
       claimId: claim.claimId,
       automatic,
+      payoutPolicy: bounty ? "security-bounty" : "ordinary",
       transactionId: sends[0],
     });
     expect(
       (await (await page.request.get(`${origin}/__fixture`)).json()).revisions
         .n,
-    ).toBe(3);
+    ).toBe(bounty ? 2 : 3);
     interrupted = false;
     const funding = page.getByRole("region", { name: /Fund or withdraw/ });
     await funding
@@ -1210,6 +1340,156 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
         )
       ).amount,
     ).toBe(10_000_000n);
+    if (bounty) {
+      const fundingBody = {
+        step: "review",
+        operation: "deposit",
+        network: "solana-devnet",
+        vault: created.vault,
+        wallet: donor.publicKey.toBase58(),
+        amount: "1",
+      };
+      const privatePath = `${origin}/api/v1/project-vaults/${project.id}/solana-funding`;
+      const anonymous = await page.request.post(privatePath, {
+        headers: { origin, "content-type": "application/json" },
+        data: fundingBody,
+      });
+      expect(anonymous.status()).toBe(401);
+      await page.request.post(`${origin}/__fixture`, {
+        data: { permitted: false },
+      });
+      expect(
+        (
+          await page.request.post(privatePath, {
+            headers,
+            data: fundingBody,
+          })
+        ).status(),
+      ).toBe(403);
+      await page.request.post(`${origin}/__fixture`, {
+        data: { permitted: true },
+      });
+      // Private balances never resolve through the public funding route. Async
+      // config and parse errors must retain its established JSON response.
+      for (const data of [fundingBody, Buffer.from("{")]) {
+        const rejected = await page.request.post(
+          `${origin}/api/v1/payments/projects/${project.id}/solana-funding`,
+          {
+            headers,
+            data,
+          },
+        );
+        expect(rejected.status()).toBe(503);
+        expect(await rejected.json()).toEqual({
+          error: "payments_unavailable",
+        });
+      }
+      const scan = await page.request.post(`${origin}/__fixture`, {
+        data: { scanSecurity: true },
+      });
+      expect(scan.ok(), await scan.text()).toBe(true);
+      const scanState = await scan.json();
+      expect(scanState.publicSnapshots.n).toBe(0);
+      expect(scanState.privateSnapshots.n).toBe(1);
+      await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+      const funds = page.getByRole("region", {
+        name: "Bounty funds",
+        exact: true,
+      });
+      await expect(funds).toContainText("Available for new awards: 10 USDC");
+      privateUnavailable = true;
+      await page.request.post(`${origin}/__fixture`, {
+        data: { privateReadUnavailable: true },
+      });
+      await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+      await expect(funds.getByRole("alert")).toContainText(
+        "Last verified balance is stale",
+      );
+      await expect(funding).toContainText("finalized");
+      await expect(funding.getByLabel("Deposit tokens")).toHaveCount(0);
+      await funding.getByLabel("Withdraw free funds").check();
+      await expect(
+        funding.getByRole("button", {
+          name: "Review withdrawal",
+          exact: true,
+        }),
+      ).toBeEnabled();
+      await page.request.post(`${origin}/__fixture`, {
+        data: { privateReadUnavailable: false },
+      });
+      await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+      await expect(funds.getByRole("alert")).toHaveCount(0);
+      privateUnavailable = false;
+      expect(privateErrors).toBe(1);
+      await page.getByRole("button", { name: "Edit bounty settings" }).click();
+      await page.getByLabel("Status", { exact: true }).selectOption("open");
+      await page.getByRole("button", { name: "Publish bounty terms" }).click();
+      await expect(
+        page.getByRole("status").filter({ hasText: "Published revision" }),
+      ).toBeVisible();
+      const opened = await (
+        await page.request.get(`${origin}/__fixture`)
+      ).json();
+      expect(opened.project.manifest.securityBounty.status).toBe("open");
+      expect(opened.project.revision).toBe(3);
+      // The same private route must preserve the owner's existing withdrawal.
+      const donorAccount = spl.getAssociatedTokenAddressSync(
+        new web3.PublicKey(created.asset),
+        donor.publicKey,
+      );
+      const beforeWithdrawal = (
+        await spl.getAccount(connection, donorAccount, "finalized")
+      ).amount;
+      await funding.getByLabel("Withdraw free funds").check();
+      await funding.getByLabel("Token amount").fill("0.500001");
+      await funding
+        .getByRole("button", { name: "Review withdrawal", exact: true })
+        .click();
+      await expect(
+        funding.getByRole("region", { name: "Review vault action" }),
+      ).toContainText("0.49");
+      await funding
+        .getByRole("button", {
+          name: "Confirm withdrawal in wallet",
+          exact: true,
+        })
+        .click();
+      await expect.poll(() => sends.length).toBe(3);
+      await connection.confirmTransaction(sends[2], "finalized");
+      await funding
+        .getByRole("button", { name: "Check transaction", exact: true })
+        .click();
+      await expect(funding.getByRole("status")).toContainText(
+        "Withdrawal verified",
+      );
+      expect(
+        (await spl.getAccount(connection, donorAccount, "finalized")).amount -
+          beforeWithdrawal,
+      ).toBe(490_000n);
+      expect(
+        (
+          await spl.getAccount(
+            connection,
+            new web3.PublicKey(created.vault),
+            "finalized",
+          )
+        ).amount,
+      ).toBe(9_510_000n);
+      const withdrawn = await readVaultTotals(createdConfig);
+      expect(withdrawn.totalGrossWithdrawn).toBe("500001");
+      expect(withdrawn.totalWithdrawalFees).toBe("10001");
+      expect(withdrawn.accruedFees).toBe("10001");
+      expect(withdrawn.freeBalance).toBe("9499999");
+      expect(withdrawn.reserved).toBe("0");
+      await info.attach("private-withdrawal-totals.json", {
+        body: JSON.stringify(withdrawn, null, 2),
+        contentType: "application/json",
+      });
+      const publicProject = await (
+        await page.request.get(`${origin}/api/v1/projects/${project.id}`)
+      ).text();
+      expect(publicProject).not.toMatch(/availableMinor|freeMinor|snapshotAt/);
+    }
     expect(
       (
         await new AxeBuilder({ page })
@@ -1225,7 +1505,9 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
     expect(errors).toEqual([]);
     expect(failedRequests).toEqual([]);
     await page.screenshot({
-      path: info.outputPath("solana-created-funded.png"),
+      path: info.outputPath(
+        bounty ? "solana-bounty-funded-open.png" : "solana-created-funded.png",
+      ),
       fullPage: true,
     });
   } finally {
@@ -1240,4 +1522,12 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
     }
     rmSync(temporary, { recursive: true, force: true });
   }
-});
+}
+
+for (const bounty of [false, true])
+  test(
+    bounty
+      ? "owner creates, recovers and funds a private Solana bounty vault through the API"
+      : "owner creates, recovers, registers and funds a Solana vault through the API",
+    ({ page }, info) => ownerSetupWorkflow({ page }, info, bounty),
+  );

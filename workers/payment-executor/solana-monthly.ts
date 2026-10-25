@@ -35,9 +35,9 @@ import {
 import type { MonthlyAuthorization } from "./monthly";
 import {
   broadcastSolanaTransaction,
+  type PublicSolanaExecutorEnvironment,
   preflightSolanaDeployment,
   readSolanaAccount,
-  type SolanaExecutorEnvironment,
   solanaTransactionStatus,
 } from "./solana";
 
@@ -60,7 +60,7 @@ interface Attempt {
 
 /** Stores signed bytes before broadcast; replaces only proven failed or expired attempts. */
 async function submit(
-  env: SolanaExecutorEnvironment,
+  env: PublicSolanaExecutorEnvironment,
   config: SolanaEscrowConfig,
   key: string,
   instructions: Instruction[],
@@ -283,7 +283,7 @@ export async function freezeSolanaMonthly(
  * transactions. Never pays an award. After admission it settles every
  * remaining leaf, so the owner's direct commits stay blocked only briefly. */
 export async function submitSolanaMonthly(
-  env: SolanaExecutorEnvironment,
+  env: PublicSolanaExecutorEnvironment,
   authorization: MonthlyAuthorization,
   allowAdmission = true,
   limit = 1,

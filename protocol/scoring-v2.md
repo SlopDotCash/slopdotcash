@@ -182,10 +182,10 @@ review into the September or October activity ledger.
 
 ## Current producer: slop-value-v1
 
-PRD section 7 makes Slopbot's size and value assessment the normal score for
-new work (SCR-06; MVP-09, MVP-05a). `src/lib/scoring-policy.ts` holds the one
-versioned policy for new work. `bun run leaderboard:generate` and the release
-workflow select it without an opt-in flag. The merge time of a pull request, or
+PRD section 7 makes Slopbot's size and value assessment the normal Points
+source for accepted work (SCR-06; MVP-09, MVP-05a).
+`src/lib/scoring-policy.ts` holds the versioned policy. The normal generation
+command and release workflow select it without an opt-in flag. The merge time of a pull request, or
 the closure time of closed unmerged work, selects its policy. Work accepted
 before the effective instant keeps the Score v2 and SCR-05 rules above, its
 coverage row reads `legacy-policy`, and its awards are not reinterpreted.
@@ -229,10 +229,25 @@ that reviewer's highest in-window band. Their other in-window reviews publish
 effective instant is not applied, so legacy work is never scored twice; its
 new member keeps the one-third minimum.
 
-Owner decision D2 (24 October 2026) sets the effective instant to
-`2026-11-01T00:00:00.000Z` (`VALUE_SCORING_POLICY_EFFECTIVE_AT`) and selects
-the capped pool above. When the hosted value feed does not answer (a transport
-failure, a timeout, HTTP 408, 429 or 5xx), generation writes nothing and exits
+The owner selected the capped pool on 24 October 2026. The 25 October decision
+extends the new size and review bands to unpaid work from 1 September through
+31 October 2026. `VALUE_SCORING_APPROVED_HISTORY_FROM` records that approved
+scope at `2026-09-01T00:00:00.000Z`. Preserve original Points and frozen terms for approved
+or funded awards, including scheduled and paid awards. Keep source IDs, source
+dates and all separate eligibility and penalty dates. Historical assessment uses
+the ChatGPT subscription only; paid API assessment still starts on 1 November.
+
+Historical publication is on hold until the complete subscription assessment
+journal and exact Points changes are reconciled. Normal generation keeps
+`VALUE_SCORING_POLICY_EFFECTIVE_AT` at `2026-11-01T00:00:00.000Z`, so an absent
+or partial historical feed cannot reduce existing Points during another
+release. The standard importer and explicit September candidate verification
+remain available. Remove the hold through a reviewed source change after
+coverage, duplicate credit and funded-history checks pass. This hold does not
+change the approved historical scope or the November API start.
+
+When the hosted value feed does not answer (a transport failure, a timeout,
+HTTP 408, 429 or 5xx), generation writes nothing and exits
 with status 75. The release retries once, then keeps the last published
 snapshot, and the site labels a snapshot older than eight hours as possibly
 outdated (PRD section 9). The next release retries. There is no

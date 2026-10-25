@@ -118,8 +118,8 @@ export function ordinaryFee(gross: bigint): bigint {
 }
 /** The fee a vault records for `gross`. Vaults deployed before fees rounded up still record
  * floor(gross / 50) until their upgrade, so reconciliation accepts either 2% rounding and
- * nothing else. Remove the floor branch once every deployed vault and program runs the
- * rounded-up code and its manifest digest is updated. */
+ * nothing else. Historical events and funded awards retain their original fee after
+ * an upgrade; upgrading every deployment does not remove this compatibility need. */
 export function acceptsPayoutFee(
   gross: bigint,
   fee: bigint,
@@ -200,6 +200,25 @@ export interface VaultSnapshot extends PaymentAsset {
   blockNumber: string;
   blockTime: string;
   observedAt: string;
+}
+/**
+ * Gross reserved for committed awards, the same figure on both chains: EVM vaults
+ * split reserved principal and fees, Solana reports one reserved total (which
+ * also holds an admitted monthly allocation until its awards settle).
+ */
+export function reservedGross(snapshot: {
+  reservedPrincipal: string | null;
+  reservedFees: string | null;
+  reserved: string | null;
+}): string | null {
+  return (
+    snapshot.reserved ??
+    (snapshot.reservedPrincipal !== null && snapshot.reservedFees !== null
+      ? (
+          BigInt(snapshot.reservedPrincipal) + BigInt(snapshot.reservedFees)
+        ).toString()
+      : null)
+  );
 }
 /** A snapshot older than this is shown with a stale warning. Cron runs every 5 minutes. */
 export const VAULT_SNAPSHOT_STALE_MS = 30 * 60 * 1000;

@@ -2583,9 +2583,6 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
           <p className="payout-status">
-            {reward.paymentMode === "enabled"
-              ? "Payouts are enabled. Review allocations in Manage payouts."
-              : "Payouts are disabled. Funding alone does not enable them."}{" "}
             <Link href={`/projects/${project.slug}/funding`}>
               View vault funds and automatic payment
             </Link>

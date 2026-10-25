@@ -29,11 +29,13 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { fundingAssetForNetwork } from "../../src/lib/funding-address.mjs";
+import { reservedGross } from "../../src/lib/payments/contracts";
 import {
   assertProjectDefinition,
   CONTRIBUTION_FIELDS,
   PROJECT_SKILL_TEMPLATES,
 } from "../../src/lib/project-schema.mjs";
+import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
@@ -254,8 +256,16 @@ export interface Evidence {
   errors: string[];
 }
 export function sourceCommit(): string {
+  const cwd = resolve(import.meta.dir, "..", "..");
+  const unchanged = Bun.spawnSync(["git", "diff", "--quiet", "HEAD", "--"], {
+    cwd,
+  });
+  if (unchanged.exitCode !== 0)
+    throw new Error(
+      "Acceptance evidence requires a clean tracked tree. Commit or restore tracked changes before signing; untracked evidence and journals may remain.",
+    );
   const result = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
-    cwd: resolve(import.meta.dir, "..", ".."),
+    cwd,
   });
   const commit = result.stdout.toString().trim();
   if (result.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(commit))
@@ -273,6 +283,10 @@ export async function loadEvidence(
   const evidence = (await Bun.file(path).json()) as Evidence;
   if (evidence.schema !== EVIDENCE_SCHEMA)
     throw new Error(`${path} is not ${EVIDENCE_SCHEMA} evidence`);
+  if (evidence.sourceCommit !== sourceCommit())
+    throw new Error(
+      `This evidence belongs to source ${evidence.sourceCommit}. Resume with that source, or preserve this directory and use a new directory for the current source.`,
+    );
   return evidence;
 }
 /** Atomic replace, so an interrupted write never leaves half a state file. */
@@ -399,6 +413,13 @@ export class RpcError extends Error {
   ) {
     super(message);
   }
+  get reverted() {
+    return (
+      /\brevert(?:ed)?\b/i.test(this.message) &&
+      typeof this.data === "string" &&
+      /^0x(?:[0-9a-fA-F]{2})*$/.test(this.data)
+    );
+  }
 }
 
 /** A durable executor journal, as the hosted Durable Object storage keeps it. */
@@ -491,13 +512,16 @@ export class AcceptanceRegistry {
       projectId: string;
       effectiveCycle: string;
       deployment: EscrowDeployment;
+      /** Paused unless a scenario needs a project-operated keeper to admit a month. */
+      status?: "paused" | "active";
     }[],
   ): PaymentDeployment[] {
-    return projects.map(({ projectId, effectiveCycle, deployment }) => {
+    return projects.map(({ projectId, effectiveCycle, deployment, status }) => {
       const manifest = acceptanceManifest(
         projectId,
         effectiveCycle,
         deployment,
+        status,
       );
       const text = JSON.stringify(manifest);
       const digest = sha256Text(text);
@@ -551,6 +575,7 @@ function acceptanceManifest(
   projectId: string,
   effectiveCycle: string,
   deployment: EscrowDeployment,
+  status: "paused" | "active" = "paused",
 ) {
   const fixture = JSON.parse(
     readFileSync(
@@ -572,7 +597,7 @@ function acceptanceManifest(
     id: projectId,
     slug: projectId,
     name: `Escrow acceptance ${projectId}`,
-    status: "paused",
+    status,
     skill: {
       id: `contribute-to-${projectId}`,
       publishAtRoot: false,
@@ -608,6 +633,18 @@ function acceptanceManifest(
       feeMode: "deduct-from-gross",
       deployments: [deployment],
     },
+    // An active test project cannot reuse the fixture's repository: contributor
+    // history keeps that repository under its own project id. It names a test
+    // repository with unverified authority, pending receipts and disabled
+    // payments, as the schema requires for such a project.
+    ...(status === "active"
+      ? (({ authority, terms, repositories, steward }) => ({
+          authority,
+          terms,
+          repositories,
+          steward,
+        }))(applicationManifest(projectId, `slop-acceptance/${projectId}`))
+      : {}),
   });
 }
 
@@ -861,6 +898,8 @@ export async function reconcile(
   projectId: string,
   chain: VaultTotals,
   expected: Partial<Record<(typeof COUNTERS)[number], string | null>>,
+  /** The registered vault address the API serves. On Solana it is the vault token account, not chain.vault (the project PDA). */
+  servedVault = chain.vault,
 ) {
   const snapshots = await projectVaultSnapshots(projection.db, projectId);
   if (snapshots.length !== 1)
@@ -909,16 +948,162 @@ export async function reconcile(
     events.filter((e) => e.kind === "paid").length !== 2
   )
     mismatches.push(`ledger holds ${events.length} events, not 2 + 2`);
+  const publicApi = await reconcilePublicApi(
+    projection,
+    projectId,
+    chain,
+    servedVault,
+  );
+  mismatches.push(...publicApi.mismatches);
   return {
     snapshot,
     chain,
     expected,
+    publicApi,
     ledger: {
       obligations: ledger.length,
       paid: paid.length,
       netPaid: ledgerNet.toString(),
       payoutFees: ledgerFees.toString(),
       events,
+    },
+    mismatches,
+  };
+}
+
+/** One public GET through the production payments handler, as the site requests it. */
+async function publicGet(projection: Projection, path: string) {
+  const response = await handlePaymentsApi(
+    new Request(`https://slop.cash/api/v1/payments${path}`),
+    { db: projection.db },
+  );
+  return {
+    status: response.status,
+    body: (await response.json()) as Record<string, unknown>,
+  };
+}
+/**
+ * Compares the public API responses that the site reads with the finalized
+ * chain counters: `/vault` (the vault totals panel) and `/totals` (indexed
+ * award totals). A counter the chain does not report must stay null in the
+ * API and in the panel's reserved figure; it must never become "0". A project
+ * with no indexed data must be unavailable (HTTP 503, or no snapshot), never a
+ * row of zero totals.
+ */
+export async function reconcilePublicApi(
+  projection: Projection,
+  projectId: string,
+  chain: VaultTotals,
+  servedVault = chain.vault,
+) {
+  const mismatches: string[] = [];
+  const vault = await publicGet(projection, `/projects/${projectId}/vault`);
+  const snapshots = (vault.body.snapshots ?? []) as Record<string, unknown>[];
+  if (vault.status !== 200 || snapshots.length !== 1)
+    mismatches.push(
+      `public /vault returned ${vault.status} with ${snapshots.length} snapshots, not one`,
+    );
+  const served = snapshots[0] ?? {};
+  for (const key of COUNTERS)
+    if (served[key] !== chain[key])
+      mismatches.push(
+        `${key}: public /vault ${JSON.stringify(served[key])} != chain ${JSON.stringify(chain[key])}`,
+      );
+  if (
+    String(served.assetAddress).toLowerCase() !== chain.asset.toLowerCase() ||
+    served.assetDecimals !== chain.decimals ||
+    String(served.vault).toLowerCase() !== servedVault.toLowerCase()
+  )
+    mismatches.push("public /vault asset or vault identity differs from chain");
+  // The "Reserved for committed awards" figure of the vault totals panel.
+  const panelReserved = reservedGross(
+    served as Parameters<typeof reservedGross>[0],
+  );
+  const chainReserved = reservedGross(chain);
+  if (panelReserved !== chainReserved)
+    mismatches.push(
+      `panel reserved ${panelReserved} != chain reserved ${chainReserved}`,
+    );
+
+  const totals = await publicGet(projection, `/projects/${projectId}/totals`);
+  const assets = (totals.body.assets ?? []) as Record<string, unknown>[];
+  const row = assets.find(
+    (asset) =>
+      String(asset.assetAddress).toLowerCase() === chain.asset.toLowerCase(),
+  );
+  if (totals.status !== 200 || assets.length !== 1 || !row)
+    mismatches.push(
+      `public /totals returned ${totals.status} with ${assets.length} asset rows, not the vault asset`,
+    );
+  else {
+    if (row.totalNetPaidBase !== chain.totalPaid)
+      mismatches.push(
+        `public /totals net paid ${row.totalNetPaidBase} != chain ${chain.totalPaid}`,
+      );
+    if (row.payoutFeesPaidBase !== chain.totalPayoutFees)
+      mismatches.push(
+        `public /totals payout fees ${row.payoutFeesPaidBase} != chain ${chain.totalPayoutFees}`,
+      );
+    const reserved =
+      BigInt(String(row.reservedNetBase)) + BigInt(String(row.reservedFeeBase));
+    if (chainReserved === null || reserved.toString() !== chainReserved)
+      mismatches.push(
+        `public /totals reserved ${reserved} != chain reserved ${chainReserved}`,
+      );
+    if (row.assetDecimals !== chain.decimals)
+      mismatches.push("public /totals asset decimals differ from chain");
+  }
+  const coverage = totals.body.coverage as
+    | { completeThrough?: unknown }
+    | undefined;
+  if (typeof coverage?.completeThrough !== "string")
+    mismatches.push("public /totals reports no finalized coverage position");
+
+  // Missing data: a project the cron never indexed.
+  const missingId = `${projectId}-not-indexed`;
+  const missingTotals = await publicGet(
+    projection,
+    `/projects/${missingId}/totals`,
+  );
+  const missingVault = await publicGet(
+    projection,
+    `/projects/${missingId}/vault`,
+  );
+  const missingSnapshots = (missingVault.body.snapshots ?? null) as
+    | unknown[]
+    | null;
+  if (
+    missingTotals.status !== 503 ||
+    missingTotals.body.error !== "project_payments_not_indexed" ||
+    "assets" in missingTotals.body
+  )
+    mismatches.push(
+      `missing /totals returned ${missingTotals.status} ${JSON.stringify(missingTotals.body)}, not unavailable`,
+    );
+  if (
+    missingVault.status !== 200 ||
+    !Array.isArray(missingSnapshots) ||
+    missingSnapshots.length !== 0
+  )
+    mismatches.push(
+      `missing /vault returned ${missingVault.status} with snapshots ${JSON.stringify(missingSnapshots)}, not an empty list`,
+    );
+  // A counter that this vault type does not report is null on chain; check that null stays null.
+  const unreported = COUNTERS.filter((key) => chain[key] === null);
+  return {
+    vault: { status: vault.status, snapshot: served },
+    totals: { status: totals.status, row: row ?? null, coverage },
+    panelReserved,
+    unreportedCounters: Object.fromEntries(
+      unreported.map((key) => [
+        key,
+        served[key] === undefined ? "absent" : served[key],
+      ]),
+    ),
+    missing: {
+      projectId: missingId,
+      totals: { status: missingTotals.status, body: missingTotals.body },
+      vault: { status: missingVault.status, snapshots: missingSnapshots },
     },
     mismatches,
   };
@@ -1018,16 +1203,19 @@ export class FaultRpc {
 }
 
 /**
- * Runs each extended scenario that has not passed. A group shares one run
+ * Runs each extended scenario that has not completed execution. A group shares one run
  * (for example one payments Worker cron) and marks an entry complete with
  * `checks.complete` when its own part has finished. A failure is recorded
  * on its scenario and never stops the others; a wait is recorded
  * and the run exits with WAITING_EXIT_CODE after the remaining scenarios.
+ * Finality is checked before marking any entry passed, including resumed
+ * evidence. A completed execution is not repeated while finality is pending.
  */
 export async function runScenarios(
   run: Evidence,
   persist: () => Promise<void>,
   scenarios: [string[], (...entries: ScenarioEvidence[]) => Promise<void>][],
+  finalize: (entry: ScenarioEvidence) => Promise<void>,
 ) {
   run.scenarios ??= {};
   const scenariosByName = run.scenarios;
@@ -1043,28 +1231,48 @@ export async function runScenarios(
       };
       return scenariosByName[name];
     });
-    if (entries.every((entry) => entry.status === "passed")) continue;
     let outcome: unknown = null;
-    try {
-      await scenario(...entries);
-    } catch (error) {
-      outcome = error;
+    if (
+      !entries.every(
+        (entry) => entry.status === "passed" || entry.checks.complete === true,
+      )
+    ) {
+      try {
+        await scenario(...entries);
+      } catch (error) {
+        outcome = error;
+      }
     }
     for (const [index, entry] of entries.entries()) {
+      let entryOutcome = outcome;
       if (
         outcome === null ||
-        (names.length > 1 && entry.checks.complete === true)
+        entry.status === "passed" ||
+        entry.checks.complete === true
       ) {
+        // Save execution separately from finality. A later run must verify the
+        // same receipts, not repeat an already completed financial scenario.
+        entry.checks.complete = true;
+        try {
+          await finalize(entry);
+          entryOutcome = null;
+        } catch (error) {
+          entryOutcome = error;
+        }
+      }
+      if (entryOutcome === null) {
         entry.status = "passed";
         delete entry.reason;
-      } else if (outcome instanceof Waiting) {
-        waiting ??= outcome;
+      } else if (entryOutcome instanceof Waiting) {
+        waiting ??= entryOutcome;
         entry.status = "pending";
-        entry.reason = outcome.message;
+        entry.reason = entryOutcome.message;
       } else {
         entry.status = "failed";
         entry.reason =
-          outcome instanceof Error ? outcome.message : String(outcome);
+          entryOutcome instanceof Error
+            ? entryOutcome.message
+            : String(entryOutcome);
         console.error(`[${run.network}] ${names[index]}: ${entry.reason}`);
       }
     }
@@ -1083,7 +1291,7 @@ export async function runScenarios(
 /**
  * The extended scenario figures in base units, scaled like scenarioAmounts.
  * A private bounty of 100 pays 75 and 25 (PRD section 8); ordinary awards pay
- * floor(gross / 50) as the fee.
+ * ceil(gross / 50) as the fee. The selected figures are exact multiples.
  */
 export function extendedAmounts(decimals: number, divisor: bigint) {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36)

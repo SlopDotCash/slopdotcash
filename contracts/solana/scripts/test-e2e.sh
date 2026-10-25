@@ -39,11 +39,11 @@ stop_validator() {
 # Prove the production build accepts zero delay and rejects invalid bounds.
 bash scripts/build-local.sh
 start_validator
-node --test --test-force-exit --test-isolation=none integration/production-delay.e2e.mjs
+bash scripts/run-test-stage.sh production-delay node --test --test-force-exit --test-isolation=none integration/production-delay.e2e.mjs
 stop_validator
 # Reuse the same production build for the funded lifecycle suite. The validator also
 # preloads a Project of the earlier 316-byte layout for the migrate_project check, and
-# states no live validator reaches: a month past its expiry grace, an earlier month
+# states no live validator reaches: a funded month past its admission window, an earlier month
 # that already committed sources, and a vault holding less than its counters owe.
 read -ra legacy_accounts <<<"$(node integration/legacy-project.mjs)"
 read -ra monthly_accounts <<<"$(node integration/monthly-preload.mjs)"
@@ -52,7 +52,11 @@ bun build adapter.ts --target=node --outfile=.local/adapter.mjs
 bun build funding.ts --target=node --outfile=.local/funding.mjs
 bun build commitment.ts --target=node --outfile=.local/commitment.mjs
 bun build owner-instructions.ts transactions.ts --target=node --outdir=.local --entry-naming='[name].mjs'
+bun build owner-creation.ts --target=node --outfile=.local/owner-creation.mjs
 bun build ../../workers/payment-executor/solana.ts --target=node --outfile=.local/executor.mjs
 bun build ../../workers/payment-executor/solana-monthly.ts --target=node --outfile=.local/monthly-executor.mjs
 bun build ../../workers/payments/scanner.ts ../../backend/payments/ledger.ts ../../backend/payments/handler.ts ../../backend/payments/vault-snapshots.ts --target=node --outdir=.local --entry-naming='[name].mjs'
-node --test --test-force-exit --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs
+bun build ../../workers/payment-executor/core.ts --target=node --outfile=.local/executor-core.mjs
+bun build ../../workers/payments/index.ts --target=node --outfile=.local/payments-worker.mjs
+bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/dispatch.mjs
+bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs

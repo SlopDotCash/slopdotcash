@@ -4,6 +4,7 @@
 import { dispatchDueAppeals } from "./appeals";
 import { resumeBudgetBlocks } from "./budget-blocks";
 import { APPEAL_COMMANDS, type Job } from "./contracts";
+import { dispatchFailureAlert } from "./failure-alerts";
 import { verifyWebhookSignature } from "./github";
 import { dispatchMaintainerHolds } from "./maintainer-holds";
 import { activePenaltyPage } from "./penalties";
@@ -265,7 +266,11 @@ export default {
       const number = url.searchParams.get("pull") ?? "";
       const after = url.searchParams.get("after") ?? "0";
       const through = jointHistory ? url.searchParams.get("through") : null;
+      const repositoryNodeId = url.searchParams.get("repositoryNodeId");
       if (
+        (repositoryNodeId !== null &&
+          (url.searchParams.has("repository") ||
+            !/^[A-Za-z0-9_=-]{1,100}$/u.test(repositoryNodeId))) ||
         !/^[1-9][0-9]*$/u.test(number) ||
         !/^(0|[1-9][0-9]*)$/u.test(after) ||
         !Number.isSafeInteger(Number(number)) ||
@@ -284,6 +289,7 @@ export default {
         const repository = await registeredHistoryRepository(
           env.SLOPBOT_DB,
           url.searchParams.get("repository") ?? "",
+          repositoryNodeId,
         );
         if (repository === null)
           return Response.json(
@@ -293,23 +299,26 @@ export default {
         const history = jointHistory
           ? await workUnitHistory(
               env.SLOPBOT_DB,
-              repository,
+              repository.id,
               Number(number),
               Number(after),
               through === null ? null : Number(through),
+              repository.nodeId ?? undefined,
             )
           : await valueHistory(
               env.SLOPBOT_DB,
-              repository,
+              repository.id,
               Number(number),
               Number(after),
+              repository.nodeId ?? undefined,
             );
         return Response.json(
           {
             schemaVersion: jointHistory
               ? "slop-work-unit-history:v1"
               : "slop-value-history:v1",
-            repository,
+            repository: repository.id,
+            repositoryNodeId: repository.nodeId,
             pullRequestNumber: Number(number),
             ...history,
           },
@@ -452,9 +461,19 @@ export default {
     await resumeBudgetBlocks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
     await dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
     await dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
-    if (env.SLOP_NOTIFY)
-      await dispatchSpendAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY);
-    await consumePendingValueRequest(env);
+    // An email outage must not stop assessment. Notice claims and ambiguous
+    // receipts remain durable, while the scheduled invocation reports failure.
+    const outcomes = await Promise.allSettled([
+      consumePendingValueRequest(env),
+      ...(env.SLOP_NOTIFY
+        ? [
+            dispatchSpendAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY),
+            dispatchFailureAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY),
+          ]
+        : []),
+    ]);
+    if (outcomes.some((result) => result.status === "rejected"))
+      throw new Error("Slopbot scheduled work or notification needs attention");
   },
 
   async queue(

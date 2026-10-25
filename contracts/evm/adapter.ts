@@ -58,6 +58,13 @@ export type EvmEscrowConfig = EvmRpc & {
   registrar: string;
 };
 
+/** Reviewed factory infrastructure; no project or existing vault is required. */
+export type EvmFactoryConfig = EvmRpc &
+  Omit<
+    EvmEscrowConfig,
+    "rpcUrl" | "request" | "vault" | "asset" | "owner" | "payoutPolicy"
+  >;
+
 /** Amount fields keep their historical `*Micro` names; they carry token base units of any decimals as
  * decimal strings up to uint128. */
 export interface FinalizedEscrowEvent {
@@ -152,16 +159,44 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
   });
   if (!response.ok) throw new Error(`RPC HTTP failure: ${response.status}`);
   const body = object(await response.json());
-  if (body.error || body.id !== 1 || !("result" in body)) {
+  if (body.id !== 1) throw new Error("RPC request failed");
+  if (body.error) {
+    const error = object(body.error);
+    throw new EvmRpcError(
+      error.data === "0x" &&
+        typeof error.message === "string" &&
+        /revert/i.test(error.message),
+    );
+  }
+  if (!("result" in body)) {
     throw new Error("RPC request failed");
   }
   return body.result;
 }
 
+/** Only a proved empty EVM revert means an older reviewed implementation lacks a method.
+ * Transport, provider and malformed-response errors must never select a legacy fallback. */
+export class EvmRpcError extends Error {
+  constructor(public emptyRevert: boolean) {
+    super("RPC request failed");
+  }
+}
+export {
+  buildCommitMonthlyLeafCalldata,
+  buildReserveMonthlyCalldata,
+  EvmMonthlyAlreadyAdmitted,
+  type EvmMonthlyReservation,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
+  prepareEvmMonthlyReservation,
+  readEvmMonthlyReserve,
+} from "./monthly-reserve";
+export { rpc as evmRpc };
+
 /** The reviewed factory rotates the identity authority only after this notice period. */
 export const EVM_AUTHORITY_ROTATION_DELAY = 0n;
 async function runtimeSha256(
-  config: EvmEscrowConfig,
+  config: EvmRpc,
   address: string,
   blockTag: unknown,
 ) {
@@ -213,26 +248,24 @@ export function evmVaultKey(input: {
   );
 }
 
-/**
- * codeSha256 and factoryCodeSha256 hash decoded runtime code bytes, not hex text or
- * creation code. The vault must be the one its pinned factory created for its owner, project,
- * asset and purpose, and the factory must have the reviewed registrar, fee recipient, delays and
- * code, so a vault from a factory with other rotation rules fails. The purpose follows the payout
- * policy: a private bounty deployment must be a bounty vault.
+/** Verify reviewed network infrastructure without requiring a project vault.
+ * Code digests hash decoded runtime bytes. Creation also verifies the current
+ * identity authority and the implementation selected for new vaults.
  */
-export async function verifyEvmDeployment(
-  config: EvmEscrowConfig,
+export async function verifyEvmFactory(
+  config: EvmFactoryConfig,
   blockTag: unknown = "finalized",
-  /** Only for an event at its own block number: also accept a superseded review whose bound is
-   * after that block. */
-  eventBlock?: bigint,
-  expectedProjectId?: string,
+  {
+    forCreation = false,
+    eventBlock,
+  }: {
+    forCreation?: boolean;
+    /** Accept historical reviews only for an event before their supersession. */
+    eventBlock?: bigint;
+  } = {},
 ) {
   if (
     ![
-      config.vault,
-      config.asset,
-      config.owner,
       config.identityAuthority,
       config.feeRecipient,
       config.factory,
@@ -247,16 +280,12 @@ export async function verifyEvmDeployment(
   if (quantity(await rpc(config, "eth_chainId", [])) !== config.chainId)
     throw new Error("Wrong chain");
   if (
-    (await runtimeSha256(config, config.vault, blockTag)) !== config.codeSha256
-  )
-    throw new Error("Escrow runtime code does not match reviewed deployment");
-  if (
     (await runtimeSha256(config, config.factory, blockTag)) !==
     config.factoryCodeSha256
   )
     throw new Error("Escrow factory code does not match reviewed deployment");
-  // Proxy bytecode alone does not identify the logic that holds funds. Pin both
-  // implementation slots and their code at the same block as the payment proof.
+  // Proxy bytecode alone does not identify the logic. Check its reviewed implementation.
+  // Historical reviews apply only to the exact earlier payment event.
   const implementationSlot =
     "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
   const upgrade = config.evmUpgrade;
@@ -290,40 +319,23 @@ export async function verifyEvmDeployment(
     )
   )
     throw new Error("Escrow upgrade review is invalid");
-  const slots: string[] = [];
-  for (const target of [config.vault, config.factory]) {
-    const slot = await rpc(config, "eth_getStorageAt", [
-      target,
-      implementationSlot,
-      blockTag,
-    ]);
-    if (typeof slot !== "string" || !HASH.test(slot))
-      throw new Error("Invalid implementation slot");
-    if (!upgrade && BigInt(slot) !== 0n)
-      throw new Error("Proxy deployment has no reviewed implementation");
-    slots.push(slot.toLowerCase());
-  }
+  const slot = await rpc(config, "eth_getStorageAt", [
+    config.factory,
+    implementationSlot,
+    blockTag,
+  ]);
+  if (typeof slot !== "string" || !HASH.test(slot))
+    throw new Error("Invalid implementation slot");
+  if (!upgrade && BigInt(slot) !== 0n)
+    throw new Error("Proxy deployment has no reviewed implementation");
   if (upgrade) {
-    // Each proxy's implementation and the upgrade authority must each match a
-    // review valid at this block. They may come from different reviews,
-    // because proxies upgrade in separate transactions.
-    const [vaultSlot, factorySlot] = slots;
-    const vaultDigest = await runtimeSha256(
-      config,
-      `0x${vaultSlot.slice(-40)}`,
-      blockTag,
-    );
+    const factorySlot = slot.toLowerCase();
     const factoryDigest = await runtimeSha256(
       config,
       `0x${factorySlot.slice(-40)}`,
       blockTag,
     );
     if (
-      !reviews.some(
-        (review) =>
-          vaultSlot === addressWord(review.vaultImplementation) &&
-          vaultDigest === review.vaultImplementationCodeSha256,
-      ) ||
       !reviews.some(
         (review) =>
           factorySlot === addressWord(review.factoryImplementation) &&
@@ -345,10 +357,6 @@ export async function verifyEvmDeployment(
       );
   }
   for (const [target, signature, expected] of [
-    [config.vault, "token()", config.asset],
-    [config.vault, "owner()", config.owner],
-    [config.vault, "feeRecipient()", config.feeRecipient],
-    [config.vault, "factory()", config.factory],
     [config.factory, "registrar()", config.registrar],
     [config.factory, "feeRecipient()", config.feeRecipient],
   ]) {
@@ -361,7 +369,6 @@ export async function verifyEvmDeployment(
       );
   }
   for (const [target, signature, expected] of [
-    [config.vault, "bindingDelay()", BigInt(config.bindingDelaySeconds)],
     [config.factory, "bindingDelay()", BigInt(config.bindingDelaySeconds)],
     [
       config.factory,
@@ -372,6 +379,101 @@ export async function verifyEvmDeployment(
     if (BigInt(await getter(config, target, signature, blockTag)) !== expected)
       throw new Error("Escrow delays do not match reviewed deployment");
   }
+  if (forCreation) {
+    if (
+      !upgrade ||
+      (await getter(
+        config,
+        config.factory,
+        "vaultImplementation()",
+        blockTag,
+      )) !== addressWord(upgrade.vaultImplementation) ||
+      (await runtimeSha256(config, upgrade.vaultImplementation, blockTag)) !==
+        upgrade.vaultImplementationCodeSha256
+    )
+      throw new Error(
+        "The factory's new-vault implementation is not reviewed.",
+      );
+    if (
+      (await getter(
+        config,
+        config.factory,
+        "identityAuthority()",
+        blockTag,
+      )) !== addressWord(config.identityAuthority)
+    )
+      throw new Error(
+        "The factory identity authority differs from the creation review.",
+      );
+  }
+  return reviews;
+}
+
+/** Verify the factory plus the exact vault's code, owner, asset, purpose and mapping. */
+export async function verifyEvmDeployment(
+  config: EvmEscrowConfig,
+  blockTag: unknown = "finalized",
+  {
+    expectedProjectId,
+    eventBlock,
+  }: { expectedProjectId?: string; eventBlock?: bigint } = {},
+) {
+  const reviews = await verifyEvmFactory(config, blockTag, { eventBlock });
+  if (
+    ![config.vault, config.asset, config.owner].every((value) =>
+      ADDRESS.test(value),
+    )
+  )
+    throw new Error("Reviewed deployment identity is incomplete");
+  if (
+    (await runtimeSha256(config, config.vault, blockTag)) !== config.codeSha256
+  )
+    throw new Error("Escrow runtime code does not match reviewed deployment");
+  const slot = await rpc(config, "eth_getStorageAt", [
+    config.vault,
+    "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+    blockTag,
+  ]);
+  if (typeof slot !== "string" || !HASH.test(slot))
+    throw new Error("Invalid implementation slot");
+  if (!config.evmUpgrade && BigInt(slot) !== 0n)
+    throw new Error("Proxy deployment has no reviewed implementation");
+  if (config.evmUpgrade) {
+    const digest = await runtimeSha256(
+      config,
+      `0x${slot.slice(-40)}`,
+      blockTag,
+    );
+    if (
+      !reviews.some(
+        (review) =>
+          slot.toLowerCase() === addressWord(review.vaultImplementation) &&
+          digest === review.vaultImplementationCodeSha256,
+      )
+    )
+      throw new Error(
+        "Escrow implementation does not match reviewed deployment",
+      );
+  }
+  for (const [signature, expected] of [
+    ["token()", config.asset],
+    ["owner()", config.owner],
+    ["feeRecipient()", config.feeRecipient],
+    ["factory()", config.factory],
+  ]) {
+    if (
+      (await getter(config, config.vault, signature, blockTag)) !==
+      addressWord(expected)
+    )
+      throw new Error(
+        "Escrow asset, factory or registrar does not match reviewed deployment",
+      );
+  }
+  if (
+    BigInt(await getter(config, config.vault, "bindingDelay()", blockTag)) !==
+    BigInt(config.bindingDelaySeconds)
+  )
+    throw new Error("Escrow delays do not match reviewed deployment");
   if (
     BigInt(await getter(config, config.vault, "purpose()", blockTag)) !==
     evmVaultPurpose(config.payoutPolicy)
@@ -457,7 +559,9 @@ async function finalizedLog(
   ) {
     throw new Error("Receipt block is not canonical");
   }
-  await verifyEvmDeployment(config, receipt.blockNumber, blockNumber);
+  await verifyEvmDeployment(config, receipt.blockNumber, {
+    eventBlock: blockNumber,
+  });
   if (!Array.isArray(receipt.logs)) throw new Error("Missing receipt logs");
   const matches = receipt.logs
     .map(object)
@@ -944,7 +1048,7 @@ export async function verifyVaultFundingAction(
       )
     : [0n];
   const encoded = (fee: bigint) =>
-    `0x${amountWord(gross)}${withdrawing ? `${amountWord(gross - fee)}${fee.toString(16).padStart(64, "0")}` : ""}`;
+    `0x${amountWord(gross)}${withdrawing ? `${(gross - fee).toString(16).padStart(64, "0")}${fee.toString(16).padStart(64, "0")}` : ""}`;
   const fee = fees.find(
     (candidate) =>
       typeof log.data === "string" &&
@@ -1010,7 +1114,7 @@ function creationData(input: EvmVaultCreation) {
   });
 }
 async function creationVault(
-  config: EvmEscrowConfig,
+  config: EvmFactoryConfig,
   input: EvmVaultCreation,
   block: string,
 ) {
@@ -1026,22 +1130,10 @@ async function creationVault(
 }
 /** Refuses unreviewed logic and factories that cannot atomically set monthly policy. */
 export async function prepareEvmVaultCreation(
-  config: EvmEscrowConfig,
+  config: EvmFactoryConfig,
   input: EvmVaultCreation,
 ) {
-  await verifyEvmDeployment(config);
-  if (
-    !config.evmUpgrade ||
-    (await getter(
-      config,
-      config.factory,
-      "vaultImplementation()",
-      "finalized",
-    )) !== addressWord(config.evmUpgrade.vaultImplementation)
-  )
-    throw new Error(
-      "Vault creation is unavailable until the factory's new-vault implementation is reviewed.",
-    );
+  await verifyEvmFactory(config, "finalized", { forCreation: true });
   const existingVault = await creationVault(config, input, "latest");
   const transaction = {
     from: input.owner,
@@ -1061,7 +1153,7 @@ export class EvmVaultCreationFailed extends Error {}
 
 /** Exact finalized creation, not a user-supplied deployment assertion. */
 export async function verifyEvmVaultCreation(
-  config: EvmEscrowConfig,
+  config: EvmFactoryConfig,
   input: EvmVaultCreation,
   transactionId: string,
 ) {
@@ -1110,13 +1202,12 @@ export async function verifyEvmVaultCreation(
     asset: input.asset,
     payoutPolicy: input.payoutPolicy,
   };
-  await verifyEvmDeployment(
-    created,
-    receipt.blockNumber,
-    undefined,
-    input.projectId,
-  );
-  await verifyEvmDeployment(created, "finalized", undefined, input.projectId);
+  await verifyEvmDeployment(created, receipt.blockNumber, {
+    expectedProjectId: input.projectId,
+  });
+  await verifyEvmDeployment(created, "finalized", {
+    expectedProjectId: input.projectId,
+  });
   if (input.payoutPolicy !== "security-bounty") {
     // Read the policy at the creation block: a later owner change must not block registration.
     const cap = BigInt(
@@ -1259,15 +1350,32 @@ export async function readVaultTotals(
   const decimals = BigInt(await getter(config, vault, "decimals()", blockTag));
   if (!/^0x0{24}[0-9a-f]{40}$/.test(token) || decimals > 255n)
     throw new Error("Malformed vault asset");
+  const accounted =
+    free +
+    reservedPrincipal +
+    reservedFees +
+    paid +
+    payoutFees +
+    withdrawnGross;
+  // Legacy totals() keeps its ABI. When the counters have an unmaterialized monthly remainder,
+  // require the V2 getter to prove that exact reserve at the same finalized block. A legacy vault
+  // with inconsistent counters, or an unavailable getter, still fails closed.
+  const pending =
+    deposited > accounted
+      ? BigInt(await getter(config, vault, "pendingMonthlyGross()", blockTag))
+      : 0n;
   if (
     deposited !==
       free +
         reservedPrincipal +
         reservedFees +
+        pending +
         paid +
         payoutFees +
         withdrawnGross ||
-    vaultBalance < free + reservedPrincipal + reservedFees + accruedFees
+    pending > U128 ||
+    vaultBalance <
+      free + reservedPrincipal + reservedFees + pending + accruedFees
   )
     throw new Error("Vault totals do not conserve");
   return {
@@ -1286,6 +1394,9 @@ export async function readVaultTotals(
     reservedPrincipal: reservedPrincipal.toString(),
     reservedFees: reservedFees.toString(),
     accruedFees: accruedFees.toString(),
-    reserved: null,
+    reserved:
+      pending > 0n
+        ? (reservedPrincipal + reservedFees + pending).toString()
+        : null,
   };
 }

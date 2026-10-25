@@ -1,4 +1,5 @@
 /** Local-only browser harness: real API handlers, migrations and D1-compatible SQLite. */
+import { deepStrictEqual } from "node:assert";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { handlePaymentsApi } from "../backend/payments/handler";
@@ -12,9 +13,12 @@ import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import { readSecurityProgramFunds } from "../backend/security/program-funds";
 import type { SolanaEscrowConfig } from "../contracts/solana/adapter";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
+import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import type { VaultSetupReview } from "../src/lib/vault-setup";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import securityPayments from "../workers/security-payments";
+import { paymentDeployments } from "./prepare-payment-deployments";
 
 if (process.env.SLOP_E2E_VAULT_ACTIONS !== "1")
   throw new Error("Local vault harness requires explicit opt-in");
@@ -28,8 +32,8 @@ if (
 )
   throw new Error("Local endpoints required");
 const origin = `http://127.0.0.1:${port}`;
-const servedNetwork = input.template.escrow.deployments[0]
-  .network as keyof typeof ESCROW_NETWORKS;
+const servedNetwork = (input.factory?.network ??
+  input.template.escrow.deployments[0].network) as keyof typeof ESCROW_NETWORKS;
 const { sqlite, db } = sqliteD1(
   readdirSync("migrations")
     .filter((n) => n.endsWith(".sql"))
@@ -37,7 +41,10 @@ const { sqlite, db } = sqliteD1(
 );
 const persistence = new CloudflareProjectPersistence(db);
 const now = () => new Date();
-for (const manifest of [input.project, input.template]) {
+for (const manifest of [
+  input.project,
+  ...(input.template ? [input.template] : []),
+]) {
   const text = JSON.stringify(manifest);
   const digest = sha256Hex(text);
   sqlite
@@ -76,20 +83,68 @@ let permitted = true;
 let templatesEnabled = true;
 let privateReadUnavailable = false;
 let scanReads = 0;
+const solanaFundingConfig = async (
+  projectId: string,
+  network: string,
+  vault: string,
+  bounty = false,
+): Promise<SolanaEscrowConfig> => {
+  const project = await persistence.getProject(projectId);
+  const deployments = bounty
+    ? project?.manifest.securityBounty?.settlement?.deployments
+    : project?.manifest.escrow?.deployments;
+  const deployment = deployments?.find(
+    (d) => d.network === network && d.vault === vault,
+  );
+  if (!deployment || ESCROW_NETWORKS[deployment.network].family !== "solana")
+    throw new Error("Unknown Solana vault");
+  return {
+    ...deployment,
+    projectId,
+    payoutPolicy: bounty ? "security-bounty" : "ordinary",
+    mint: deployment.asset,
+    rpcUrl,
+    genesisHash: ESCROW_NETWORKS[deployment.network].genesisHash,
+  } as SolanaEscrowConfig;
+};
+const repositoryFacts = (manifest: ProjectDefinition) => ({
+  id: Number(manifest.authority.repositoryId),
+  node_id: manifest.authority.repositoryNodeId,
+  full_name: manifest.repositories[0].id,
+  private: false,
+  owner: {
+    id: Number(manifest.steward.github.actorId),
+    node_id: manifest.steward.github.nodeId,
+    login: manifest.steward.github.login,
+    type: manifest.steward.github.type,
+  },
+});
 const deps: ProjectApiDependencies = {
   persistence,
+  securitySolanaFundingConfig: (projectId, network, vault) =>
+    solanaFundingConfig(projectId, network, vault, true),
   adminGithubIds: new Set(),
   moderatorGithubIds: new Set(),
   now,
   randomId: () => crypto.randomUUID(),
   sessionActor: (r) => sessionGithubActor(r, db, now().toISOString()),
-  repositoryControl: async () => ({ state: "matched" }),
-  repositoryAccess: async () => ({
-    installation: "installed",
-    installationId: 1,
-    permission: permitted ? "admin" : "read",
-    roleName: null,
-  }),
+  repositoryControl: async (manifest, facts) => {
+    deepStrictEqual(facts, repositoryFacts(manifest));
+    return { state: "matched" };
+  },
+  repositoryAccess: async ({ path }) => {
+    const project = (await persistence.listProjects()).find(
+      (project) => project.manifest.repositories[0].id === path,
+    );
+    if (!project) throw new Error("Unknown fixture repository");
+    return {
+      installation: "installed",
+      installationId: 1,
+      permission: permitted ? "admin" : "read",
+      roleName: null,
+      repository: repositoryFacts(project.manifest),
+    };
+  },
   readTokenMetadata: async () => {
     throw new Error("No asset edit in this workflow");
   },
@@ -103,6 +158,7 @@ const deps: ProjectApiDependencies = {
     return { state: "cleared", assessment: null, grandfathered: true };
   },
   vaultSetup: ownerVaultSetupService({
+    factories: input.factory ? [input.factory] : [],
     db,
     projects: () => persistence.listProjects(),
     networks: () => (templatesEnabled ? [servedNetwork] : []),
@@ -119,8 +175,25 @@ Bun.serve({
     const url = new URL(request.url);
     try {
       if (url.pathname === "/__fixture") {
+        let infrastructureReview: VaultSetupReview | undefined;
         if (request.method === "POST") {
           const body = await request.json();
+          if (input.factory && body.factoryReview)
+            Object.assign(input.factory, body.factoryReview);
+          if (body.reviewCurrentVault === true) {
+            const current = await persistence.getProject(input.project.id);
+            if (!current || !deps.vaultSetup)
+              throw new Error("Missing local fixture");
+            infrastructureReview = await deps.vaultSetup.review(
+              current,
+              actor,
+              {
+                network: servedNetwork,
+                claimId: body.claimId,
+                automatic: body.automatic,
+              },
+            );
+          }
           if (typeof body.permitted === "boolean") permitted = body.permitted;
           if (typeof body.templatesEnabled === "boolean")
             templatesEnabled = body.templatesEnabled;
@@ -130,8 +203,8 @@ Bun.serve({
             await securityPayments.scheduled(null, {
               PAYMENTS_DB: db,
               REGISTRY_DB: db,
-              PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]),
-              PAYMENT_RPC_URLS: JSON.stringify({ "base-sepolia": rpcUrl }),
+              PAYMENT_NETWORKS: JSON.stringify([servedNetwork]),
+              PAYMENT_RPC_URLS: JSON.stringify({ [servedNetwork]: rpcUrl }),
               // This zero-award fixture exercises the real scanner, not payouts.
               EVM_PAYMENT_EXECUTOR: {
                 fetch: async () => {
@@ -143,6 +216,13 @@ Bun.serve({
         return Response.json({
           token,
           scanReads,
+          infrastructureReview,
+          projects: (await persistence.listProjects()).length,
+          paymentPins: paymentDeployments(
+            (await persistence.listProjects()).map((p) => p.manifest),
+            "testnet",
+            servedNetwork,
+          ),
           project: await persistence.getProject(input.project.id),
           revisions: sqlite
             .prepare(
@@ -186,24 +266,7 @@ Bun.serve({
         return handlePaymentsApi(request, {
           db,
           allowedOrigins: [origin],
-          solanaFundingConfig: async (projectId, network, vault) => {
-            const project = await persistence.getProject(projectId);
-            const deployment = project?.manifest.escrow?.deployments.find(
-              (d) => d.network === network && d.vault === vault,
-            );
-            if (
-              !deployment ||
-              ESCROW_NETWORKS[deployment.network].family !== "solana"
-            )
-              throw new Error("Unknown Solana vault");
-            return {
-              ...deployment,
-              projectId,
-              mint: deployment.asset,
-              rpcUrl,
-              genesisHash: ESCROW_NETWORKS[deployment.network].genesisHash,
-            } as SolanaEscrowConfig;
-          },
+          solanaFundingConfig,
         });
       if (url.pathname.startsWith("/api/v1/points"))
         return handlePointsApi(request, {

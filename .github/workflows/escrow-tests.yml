@@ -30,6 +30,7 @@ on:
       - 'src/lib/project-schema.*'
       - 'scripts/check-payout-test-funding.mjs'
       - 'scripts/*escrow*'
+      - 'scripts/payment-keeper/**'
       - 'scripts/prepare-payment-deployments.ts'
       - 'scripts/check-payout-readiness.ts'
       - 'scripts/test-payout-browser.mjs'
@@ -163,6 +164,14 @@ jobs:
 
       - run: bash contracts/solana/scripts/bootstrap-linux.sh
       - run: bun run test:contracts:solana
+      - name: Retain safe validator failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: solana-transaction-failures-${{ github.event.pull_request.head.sha || github.sha }}
+          path: contracts/solana/.local/failure-evidence/*.json
+          if-no-files-found: ignore
+          retention-days: 30
       - run: bunx playwright install --with-deps chromium
       - name: Load deployed public ledger for browser checks
         run: |

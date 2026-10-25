@@ -254,17 +254,22 @@ export async function valueHistory(
   repository: string,
   pullRequestNumber: number,
   afterSequence: number,
+  repositoryNodeId?: string,
 ) {
+  const identity =
+    repositoryNodeId === undefined
+      ? "json_extract(record_json, '$.repository')"
+      : "repository_node_id";
   const row = await db
     .prepare(`SELECT json_group_array(json_object(
     'sequence', sequence, 'record_digest', record_digest,
     'record_json', record_json, 'recorded_at', recorded_at)) AS records_json
     FROM (SELECT sequence, record_digest, record_json, recorded_at
       FROM slopbot_value_journal
-      WHERE json_extract(record_json, '$.repository') = ?
+      WHERE ${identity} = ?
         AND json_extract(record_json, '$.pullRequestNumber') = ?
         AND sequence > ? ORDER BY sequence LIMIT 101)`)
-    .bind(repository, pullRequestNumber, afterSequence)
+    .bind(repositoryNodeId ?? repository, pullRequestNumber, afterSequence)
     .first<{ records_json: string }>();
   if (!row) throw new Error("Value history read failed");
   const records = JSON.parse(row.records_json) as Omit<

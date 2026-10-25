@@ -82,12 +82,21 @@ export const FACTORY = parseAbi([
   "function bindingDelay() view returns (uint64)",
   "function vaults(bytes32) view returns (address)",
   "function create(bytes32,address,uint8) returns (address)",
+  "function pendingIdentityAuthority() view returns (address)",
+  "function upgradeAuthority() view returns (address)",
+  "function vaultImplementation() view returns (address)",
+  "function proposeIdentityAuthority(address)",
+  "function executeIdentityAuthorityRotation()",
+  "event IdentityAuthorityRotationProposed(address indexed current, address indexed proposed, uint64 effectiveAt)",
+  "event IdentityAuthorityRotated(address indexed previous, address indexed current)",
 ]);
 export const VAULT = parseAbi([
   "function awards(bytes32) view returns (uint64 actorId,uint128 gross,uint128 fee,bytes32 sourceDigest,uint64 committedAt,bool paid)",
   "function bindings(uint64) view returns (address destination,uint64 version,bytes32 claimDigest,uint64 activatesAt,bool cancelled)",
   "function payableBinding(uint64) view returns (address destination,uint64 version)",
   "function purpose() view returns (uint8)",
+  "function identityAuthority() view returns (address)",
+  "function monthlyReserveVersion() view returns (uint8)",
   "function bindingDelay() view returns (uint64)",
   "function freeBalance() view returns (uint128)",
   "function accruedFees() view returns (uint128)",
@@ -106,6 +115,7 @@ export const VAULT = parseAbi([
   "event FeesClaimed(address indexed feeRecipient, uint128 amount)",
   "event MonthlyCommitmentSet(uint128 cap, bool enabled)",
   "event MonthlyCommitted(uint32 indexed period, bytes32 allocationRoot, uint128 gross, uint256 awards)",
+  "event MonthlyReserved(uint32 indexed period, bytes32 allocationDigest, bytes32 allocationRoot, uint128 wholeGross, uint128 remainingGross, uint32 count, uint256 sourceSequence)",
   "error Unauthorized()",
   "error InvalidInput()",
   "error InsufficientFreeBalance()",
@@ -122,12 +132,16 @@ export const VAULT = parseAbi([
   "error AwardPending()",
   "error CancelLimit()",
   "error InvalidWalletSignature()",
+  "error MonthlySourceChanged()",
+  "error InvalidAllocationProof()",
+  "error MonthExpired()",
 ]);
 export const ZERO = "0x0000000000000000000000000000000000000000";
 
 export interface Receipt {
   status: string;
   blockNumber: string;
+  blockHash: string;
   transactionHash: string;
   logs: { address: string; topics: Hex[]; data: Hex }[];
 }
@@ -184,12 +198,44 @@ export class EvmChain {
       hash,
     ])) as Receipt | null;
   }
+  /** A mined transaction is not acceptance until its canonical block is final. */
+  async finalizeSteps(steps: Record<string, StepRecord>) {
+    const finalized = await this.finalizedNumber();
+    const transactions: Record<string, string> = {};
+    for (const [key, step] of Object.entries(steps)) {
+      const receipt = await this.receipt(step.transactionId);
+      if (!receipt || BigInt(receipt.blockNumber) > finalized)
+        throw new Waiting(`${key}: ${step.transactionId} is not finalized`);
+      const block = (await this.rpc("eth_getBlockByNumber", [
+        receipt.blockNumber,
+        false,
+      ])) as { hash: string } | null;
+      if (
+        !block ||
+        block.hash !== receipt.blockHash ||
+        receipt.transactionHash.toLowerCase() !==
+          step.transactionId.toLowerCase() ||
+        BigInt(receipt.blockNumber).toString() !== step.block ||
+        (receipt.status === "0x1" ? "success" : "reverted") !== step.status
+      )
+        throw new Error(
+          `${key}: finalized receipt differs from the saved evidence`,
+        );
+      transactions[step.transactionId] = receipt.blockHash;
+    }
+    return { block: finalized.toString(), transactions };
+  }
   /** Simulates a call that must revert and returns the node's reason. */
-  async mustRevert(from: string, to: string, data: string): Promise<string> {
+  async mustRevert(
+    from: string,
+    to: string,
+    data: string,
+    block = "latest",
+  ): Promise<string> {
     try {
-      await this.rpc("eth_call", [{ from, to, data }, "latest"]);
+      await this.rpc("eth_call", [{ from, to, data }, block]);
     } catch (error) {
-      if (!(error instanceof RpcError)) throw error;
+      if (!(error instanceof RpcError) || !error.reverted) throw error;
       // Name the custom error when the node returns the revert data.
       if (
         typeof error.data === "string" &&
@@ -383,7 +429,22 @@ export async function openEvmRun(
     throw new Error(
       "ESCROW_ACCEPTANCE_REGISTRAR_KEY is not the factory registrar",
     );
-  if (identityAuthority.toLowerCase() !== identity.address.toLowerCase())
+  // Extended suite only: the key-recovery scenario rotates the factory
+  // identity authority to this key and back. A run interrupted between the
+  // two rotations resumes with the recovery key in force.
+  const recovery =
+    suite === "extended" && process.env.ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY
+      ? privateKeyToAccount(evmKey("ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY"))
+      : null;
+  if (recovery && addresses.includes(recovery.address.toLowerCase()))
+    throw new Error("Every test role needs its own key");
+  const identityRotated =
+    recovery !== null &&
+    identityAuthority.toLowerCase() === recovery.address.toLowerCase();
+  if (
+    identityAuthority.toLowerCase() !== identity.address.toLowerCase() &&
+    !identityRotated
+  )
     throw new Error(
       "ESCROW_ACCEPTANCE_IDENTITY_KEY is not the factory identity authority",
     );
@@ -408,6 +469,9 @@ export async function openEvmRun(
       suite,
       chain: {
         chainId,
+        startedAtBlock: BigInt(
+          (await chain.rpc("eth_blockNumber", [])) as string,
+        ).toString(),
         factoryCodeSha256,
         factoryCodeDigestSource: reviewedFactoryCode
           ? "reviewed (ESCROW_ACCEPTANCE_FACTORY_CODE_SHA256)"
@@ -443,6 +507,8 @@ export async function openEvmRun(
     identity,
     identityKey,
     relayerKey,
+    recovery,
+    identityRotated,
     chainId,
     chain,
     feeRecipient: feeRecipient.toLowerCase(),

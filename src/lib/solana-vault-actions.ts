@@ -8,8 +8,13 @@ import { decodeBase58Bytes } from "./base58";
 import { readBoundedJson } from "./browser-json";
 import type { EscrowDeployment } from "./escrow-policy.mjs";
 import type { VaultConnection, VaultOperation } from "./evm-vault-actions";
-import { isAssetDecimals, ordinaryFee } from "./payments/contracts";
+import {
+  isAssetDecimals,
+  ordinaryFee,
+  type PayoutPolicy,
+} from "./payments/contracts";
 import { parseVaultAmount } from "./payments/vault-amount";
+import { projectApiRequest } from "./project-api";
 
 export type SolanaFundingPlan = Awaited<
   ReturnType<typeof prepareSolanaFunding>
@@ -44,7 +49,14 @@ async function request(
   projectId: string,
   deployment: EscrowDeployment,
   body: Record<string, unknown>,
+  payoutPolicy: PayoutPolicy,
 ) {
+  if (payoutPolicy === "security-bounty")
+    return projectApiRequest<Record<string, unknown>>(
+      "POST",
+      `project-vaults/${encodeURIComponent(projectId)}/solana-funding`,
+      { network: deployment.network, vault: deployment.vault, ...body },
+    );
   const response = await fetch(
     `/api/v1/payments/projects/${encodeURIComponent(projectId)}/solana-funding`,
     {
@@ -80,15 +92,21 @@ export async function reviewSolanaVaultAction(
   wallet: VaultConnection,
   operation: VaultOperation,
   amount: string,
+  payoutPolicy: PayoutPolicy = "ordinary",
 ) {
   if (!wallet.solanaSend)
     throw new Error("Choose a wallet with Solana transaction support.");
-  const value = await request(projectId, deployment, {
-    step: "review",
-    operation,
-    wallet: wallet.address,
-    amount,
-  });
+  const value = await request(
+    projectId,
+    deployment,
+    {
+      step: "review",
+      operation,
+      wallet: wallet.address,
+      amount,
+    },
+    payoutPolicy,
+  );
   const plan = value.plan as SolanaFundingPlan;
   if (
     !plan ||
@@ -183,15 +201,21 @@ export async function checkSolanaVaultAction(
   gross: string,
   blockhash: string,
   transactionId: string,
+  payoutPolicy: PayoutPolicy = "ordinary",
 ) {
-  const value = await request(projectId, deployment, {
-    step: "check",
-    wallet: wallet.address,
-    operation,
-    gross,
-    blockhash,
-    transactionId,
-  });
+  const value = await request(
+    projectId,
+    deployment,
+    {
+      step: "check",
+      wallet: wallet.address,
+      operation,
+      gross,
+      blockhash,
+      transactionId,
+    },
+    payoutPolicy,
+  );
   if (
     value.status !== "pending" &&
     value.status !== "failed" &&

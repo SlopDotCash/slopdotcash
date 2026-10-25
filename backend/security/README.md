@@ -4,31 +4,38 @@ PRD section 8 ("Report and decide privately", "Pay a private award"), section
 10, SEC-01 to SEC-18 and MVP-13 (issue #910). Program terms are public; cases
 are not.
 
+Registered projects accept private reports without paid bounty terms or funds.
+Without terms, intake uses the primary registered repository. Receipts freeze
+`terms: null` and `award_state: not-applicable`; later terms do not grant an
+award to an earlier report. Current repository authority grants technical
+case access only. Registry authors and the steward are notification candidates;
+Slop checks their current GitHub repository permission before use and delivery.
+No public page read requires a maintainer permission check.
+
 ## Program terms
 
 A project opts in with the optional `securityBounty` section of its D1
 manifest (`src/lib/security-bounty.mjs`). New terms start paused with pledged
 funding and no unverified vault. Owners edit terms, open, pause or close the
 program in project settings. Each change uses the existing project revision
-route and checks current GitHub authority through Slopbot. Owners cannot
-change the approvers or the sponsor; a new program names only the owner.
-An owner can open a funded program without admin approval (owner decision,
-25 Oct 2026). Opening requires available funds from a current finalized
-snapshot of the separate, reviewed bounty vault. The server sets funding
-evidence; an owner cannot supply it.
+route and checks current GitHub authority through Slopbot. Opening requires
+available funds from a current finalized snapshot of the separate, reviewed
+bounty vault. The server sets funding evidence; an owner cannot supply it.
+The project steward or a repository admin manages contacts and the sponsor.
+Ordinary write access cannot grant or remove private-case roles. Authority
+checks use the stored project's repository before reading private funds.
 New vault registration is a separate verification boundary. This editor does
 not deploy a vault or accept client-supplied contract trust metadata.
 A program cannot be removed. Existing cases retain their receipt terms and
 funded obligations remain available after a pause or closure.
 
-The Manage page also creates and funds a separate EVM bounty vault through
+The Manage page also creates and funds a separate EVM or Solana bounty vault through
 the owner's confirmed wallet. Registration verifies finalized creation
-against the reviewed factory, project, owner, USDC asset and bounty purpose.
+against the reviewed factory or program, project, owner, USDC asset and bounty purpose.
 It never treats registration or a sent deposit as available funds. The private
 payment worker reads the finalized balance before the owner can open the
-program. Its balance view requires current GitHub ownership, refuses banned
-accounts, and uses no public payment totals or receipt route. Owner bounty
-vault setup is EVM only; another network family is refused.
+program. Its balance view requires current GitHub ownership and uses no
+public payment totals or receipt route.
 
 - `amount.grossMinor` is the published gross award per finding, in integer
   minor units divisible by four, so the 75/25 researcher/Slop split is exact.
@@ -118,6 +125,11 @@ activate intake or prove that GitHub or Surplus is available.
   `submitting` row older than 60 seconds becomes `uncertain` and is never
   resent. A `submitted` row Slop cannot verify within 24 hours fails as
   `unverifiable`; it is never resent and no longer blocks a new report.
+  A GitHub-verified receipt held for unavailable routing contacts does not
+  expire or become an abandoned draft. Its existing journal records that
+  distinction. When contacts return, the reporter can finish verification;
+  an expired two-hour GitHub grant requires fresh reporter authorization.
+  Recovery rechecks the receipt and current contacts without sending again.
 - Receipt: GitHub's advisory must name the program repository and the
   reporter as author (a reporter credit never counts), carry the marker
   (Slop origin) and have a past `created_at`. A direct report must also be

@@ -1,5 +1,6 @@
 export interface PaymentStackInput {
   stack?: "test" | "production";
+  scope?: "ordinary" | "security-bounty";
   network: string;
   databaseId?: string;
   databaseName?: string;

@@ -1,4 +1,8 @@
 import { EmailMessage } from "cloudflare:email";
+import {
+  type SlopbotBinding,
+  slopbotRepositoryAccess,
+} from "../../backend/projects/repository-access";
 import type { SecurityD1Database } from "../../backend/security/handler";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { deploymentTier } from "../../src/lib/deployment";
@@ -25,6 +29,7 @@ type Env = {
   ADMIN_EMAIL: SendEmailBinding;
   ADMIN_EMAILS?: string;
   SLOP_DB?: SecurityD1Database;
+  SLOPBOT?: SlopbotBinding;
   SECURITY_MAIL_PILOT?: string;
   ACTIVITY_MAIL_PILOT?: string;
   NOTIFY_FROM_ADDRESS: string;
@@ -39,6 +44,8 @@ function securityDependencies(env: Env): SecurityMailDependencies | null {
     return null;
   return {
     db: env.SLOP_DB,
+    repositoryAccess: (repository, actor) =>
+      slopbotRepositoryAccess(env.SLOPBOT, repository, actor),
     config,
     moderatorGithubIds: new Set(
       (env.PROJECT_MODERATOR_GITHUB_IDS ?? "")

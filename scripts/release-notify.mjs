@@ -54,6 +54,19 @@ if (
   base.routes?.length
 )
   throw new TypeError("Unexpected notification or Pages release boundary");
+const slopbot =
+  pages.services?.filter((item) => item.binding === "SLOPBOT") ?? [];
+if (
+  pilots.includes("security") &&
+  (slopbot.length !== 1 ||
+    slopbot[0].service !==
+      (target === "production"
+        ? "slop-slopbot"
+        : "slop-repository-access-staging"))
+)
+  throw new TypeError(
+    "Security mail needs the selected environment Slopbot binding",
+  );
 const name = target === "production" ? base.name : `${base.name}-staging`;
 const directory = resolve(output);
 mkdirSync(directory, { recursive: true });
@@ -71,6 +84,7 @@ const config = {
   d1_databases: pilots.length
     ? [{ ...database[0], migrations_dir: resolve(root, "migrations") }]
     : [],
+  services: pilots.includes("security") ? slopbot : [],
   triggers: { crons: pilots.length ? ["*/5 * * * *"] : [] },
 };
 if (target === "staging") {
@@ -248,6 +262,17 @@ const deployedSecrets = bindings
   .filter((entry) => entry.type === "secret_text")
   .map((entry) => entry.name)
   .sort();
+const deployedSlopbot = bindings.filter((entry) => entry.type === "service");
+if (
+  pilots.includes("security")
+    ? deployedSlopbot.length !== 1 ||
+      deployedSlopbot[0].name !== "SLOPBOT" ||
+      deployedSlopbot[0].service !== slopbot[0].service
+    : deployedSlopbot.length !== 0
+)
+  throw new TypeError(
+    "Uploaded Slopbot binding does not match the selected profile",
+  );
 const deployedDatabase = bindings.filter((entry) => entry.type === "d1");
 if (
   JSON.stringify(deployedSecrets) !== JSON.stringify(expectedSecrets) ||

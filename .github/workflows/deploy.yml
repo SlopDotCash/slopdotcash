@@ -50,6 +50,9 @@ jobs:
   prepare:
     name: Prepare checked browser bundle
     needs: source
+    outputs:
+      registry_sha256: ${{ steps.registry.outputs.registry_sha256 }}
+      revisions_sha256: ${{ steps.registry.outputs.revisions_sha256 }}
     env:
       RELEASE_SHA: ${{ needs.source.outputs.sha }}
       VITE_SLOP_ENVIRONMENT: ${{ (github.ref == 'refs/heads/development' || github.base_ref == 'development') && 'staging' || 'production' }}
@@ -229,6 +232,33 @@ jobs:
           SLOP_POINTS_ONLINE: ${{ github.event_name != 'pull_request' && '1' || '0' }}
           SLOP_POINTS_BOOTSTRAP: "1"
         run: bun run build
+
+      - name: Bind the checked registry snapshot
+        id: registry
+        run: |
+          set -euo pipefail
+          bun run projects:check
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { appendFileSync, readFileSync } from "node:fs";
+          for (const [name, file] of [
+            ["registry_sha256", "src/lib/project-registry.generated.mjs"],
+            ["revisions_sha256", "src/lib/project-revisions.generated.json"],
+          ]) {
+            const digest = createHash("sha256").update(readFileSync(file)).digest("hex");
+            appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${digest}\n`);
+          }
+          NODE
+
+      - name: Upload checked registry snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-registry-${{ needs.source.outputs.sha }}
+          path: |
+            src/lib/project-registry.generated.mjs
+            src/lib/project-revisions.generated.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Run installer lifecycle end-to-end checks
         run: bun run test:installer:e2e
@@ -418,6 +448,10 @@ jobs:
           test "$HAS_CLIENT" = true
           test "$HAS_KEYS" = true
           test "$HAS_APP" = true
+      - name: Derive staging scanner public key
+        env:
+          SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
+        run: bun scripts/prepare-vetting-public-key.ts derive staging "$RUNNER_TEMP/scanner-public-key.json"
       - name: Publish and verify isolated staging
         env:
           SLOP_VETTING_BACKUP_RELEASE: ${{ vars.SLOP_VETTING_BACKUP_STAGING_RELEASE }}
@@ -470,11 +504,12 @@ jobs:
           if [ "$SLOP_NOTIFY_RELEASE" = "enabled" ]; then
             cp "$RUNNER_TEMP/slop-notify-staging-release/pages.toml" "$publish_dir/wrangler.toml"
           fi
+          bun scripts/prepare-vetting-public-key.ts assemble staging "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.toml"
           cp -R dist "$publish_dir/dist"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           (
             cd "$publish_dir"
-            ./node_modules/.bin/wrangler pages deploy \
+            WRANGLER_LOG=error WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler pages deploy \
               --project-name=slop-staging \
               --branch=development \
               --commit-hash="$GITHUB_SHA" \
@@ -482,6 +517,7 @@ jobs:
           )
           node scripts/verify-staging-deployment.mjs "$GITHUB_SHA" "$started_at"
           node scripts/verify-staging-backend.mjs
+          bun scripts/prepare-vetting-public-key.ts verify staging "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.jsonc"
 
       - name: Retain notification release evidence
         if: always()
@@ -500,7 +536,7 @@ jobs:
       needs.quality.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
-    needs: [source, quality]
+    needs: [source, prepare, quality]
     env:
       RELEASE_SHA: ${{ needs.source.outputs.sha }}
     permissions:
@@ -571,6 +607,32 @@ jobs:
 
       - name: Verify downloaded Pages bundle
         run: node scripts/dist-manifest.mjs verify-local dist
+
+      - name: Download checked registry snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: slop-registry-${{ needs.source.outputs.sha }}
+          path: src/lib
+
+      - name: Verify downloaded registry snapshot
+        env:
+          REGISTRY_SHA256: ${{ needs.prepare.outputs.registry_sha256 }}
+          REVISIONS_SHA256: ${{ needs.prepare.outputs.revisions_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          for (const [expected, file] of [
+            [process.env.REGISTRY_SHA256, "src/lib/project-registry.generated.mjs"],
+            [process.env.REVISIONS_SHA256, "src/lib/project-revisions.generated.json"],
+          ]) {
+            const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+            if (!/^[a-f0-9]{64}$/.test(expected ?? "") || actual !== expected)
+              throw new Error(`The checked registry snapshot changed: ${file}`);
+          }
+          NODE
+          bun run projects:check
 
       - name: Require live release-input equivalence
         env:
@@ -679,6 +741,7 @@ jobs:
         run: |
           node - "$RUNNER_TEMP/slopbot-value-args" <<'NODE'
           const { writeFileSync } = require("node:fs");
+          const { valueSettings } = require("./workers/slopbot/value-settings.ts");
           const names = [
             "SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD",
             "SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD",
@@ -689,17 +752,22 @@ jobs:
             writeFileSync(process.argv[2], "");
             process.exit(0);
           }
-          const [monthly, reserve, start] = values;
-          const positiveAmount = (value) => /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
-          if ((monthly !== "alerts-only" && !positiveAmount(monthly)) ||
-              !positiveAmount(reserve) ||
-              (monthly !== "alerts-only" && Number(reserve) > Number(monthly)) ||
-              !Number.isFinite(Date.parse(start)) || new Date(start).toISOString() !== start) {
-            throw new Error("Set all three Slopbot value settings: alerts-only or a positive monthly allowance, a positive route reserve, and a canonical UTC start timestamp.");
+          const settings = valueSettings(process.env);
+          if (!settings) {
+            throw new Error("Select alerts-only (November API cutoff), or supply a positive monthly allowance, a positive route reserve and a canonical UTC start. September and October cannot enter API assessment.");
           }
-          writeFileSync(process.argv[2], names.map((name, i) => `--var=${name}:${values[i]}`).join("\n") + "\n");
+          const bindings = [
+            [names[0], settings.monthly === null ? "alerts-only" : String(settings.monthly)],
+            [names[2], new Date(settings.start).toISOString()],
+          ];
+          if (settings.maximum !== null) bindings.push([names[1], String(settings.maximum)]);
+          writeFileSync(process.argv[2], bindings.map(([name, value]) => `--var=${name}:${value}`).join("\n") + "\n");
           NODE
 
+      - name: Derive production scanner public key
+        env:
+          SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
+        run: bun scripts/prepare-vetting-public-key.ts derive production "$RUNNER_TEMP/scanner-public-key.json"
       - name: Deploy private identity and Cloudflare Pages
         id: pages-deploy
         env:
@@ -709,9 +777,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_BOT_USERNAME: ${{ secrets.TELEGRAM_BOT_USERNAME }}
-          TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
           SLOPBOT_RELEASE: ${{ vars.SLOPBOT_RELEASE }}
           SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_RELEASE }}
           SLOP_NOTIFY_MAIL_PILOTS: ${{ vars.SLOP_NOTIFY_MAIL_PILOTS }}
@@ -740,10 +805,11 @@ jobs:
 
           # Base mainnet identity attester (workers/payment-executor, PRD
           # PAY-05; owner activation of 24 October 2026). configure.mjs pins
-          # the Base mainnet vaults of the reviewed registry snapshot at this
-          # commit. With no pinned vault the attester has nothing to sign and
-          # is not released. With a pinned vault the owner-installed secrets
-          # must exist before this release changes anything. Only secret
+          # the Base mainnet vaults of the checked registry artifact from
+          # this release build. An absent Worker can be installed without pins
+          # or secrets, privately and without a cron. An existing Worker stays
+          # unchanged if the checked snapshot is empty. With pins, the required
+          # secrets must exist before this release changes anything. Only secret
           # names are read, never values. Slop has no relayer or payment
           # dispatcher on a mainnet (PRD section 6).
           attester_dir="$RUNNER_TEMP/slop-payment-attester"
@@ -755,22 +821,24 @@ jobs:
           import { paymentDeployments } from "./scripts/prepare-payment-deployments.ts";
           const pinned = paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet");
           writeFileSync(process.env.ATTESTER_PINS, JSON.stringify(pinned));
-          process.stdout.write(String(pinned.length));
+          const privatePinned = paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet", "security-bounty");
+          process.stdout.write(String(pinned.length + privatePinned.length));
           ')"
           if ! [[ "$attester_vaults" =~ ^[0-9]+$ ]]; then
             echo "::error::The Base mainnet attester pin count is invalid."
             exit 1
           fi
-          if [ "$attester_vaults" != "0" ]; then
-            node workers/payment-executor/configure.mjs --stack production \
-              --network base-mainnet \
-              --deployments "$attester_dir/pinned.json" \
-              --output "$attester_dir"
-            node - "$attester_config" <<'NODE'
+          node workers/payment-executor/configure.mjs --stack production \
+            --network base-mainnet \
+            --deployments "$attester_dir/pinned.json" \
+            --output "$attester_dir"
+          node - "$attester_config" <<'NODE'
           const { readFileSync } = require("node:fs");
           const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const vars = config.vars ?? {};
-          const pinned = JSON.parse(vars.PAYMENT_DEPLOYMENTS ?? "[]");
+          const ordinaryPinned = JSON.parse(vars.PAYMENT_DEPLOYMENTS ?? "[]");
+          const privatePinned = JSON.parse(vars.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]");
+          const pinned = [...ordinaryPinned, ...privatePinned];
           if (
             config.name !== "slop-payments-base-mainnet-attester" ||
             config.workers_dev !== false ||
@@ -780,12 +848,15 @@ jobs:
             vars.SIGNER_STACK !== "production" ||
             vars.SIGNER_ROLE !== "attester" ||
             vars.CHAIN_FAMILY !== "evm" ||
-            !Array.isArray(pinned) || pinned.length === 0 ||
-            !pinned.every((d) => d.network === "base-mainnet" && d.chainId === "8453")
+            !Array.isArray(pinned) ||
+            !pinned.every((d) => d.network === "base-mainnet" && d.chainId === "8453") ||
+            JSON.stringify(config.triggers?.crons) !== JSON.stringify(pinned.length ? ["*/5 * * * *"] : [])
           ) {
             throw new TypeError("the Base mainnet attester configuration boundary drifted");
           }
           NODE
+          attester_release=true
+          if [ "$attester_vaults" != "0" ]; then
             ./node_modules/.bin/wrangler secret list \
               --config "$attester_config" > "$attester_dir/secrets.json"
             node - "$attester_dir/secrets.json" <<'NODE'
@@ -800,9 +871,27 @@ jobs:
           }
           NODE
           else
-            # An attester released earlier stays unchanged; stop it first
-            # (contracts/DEPLOY-MAINNET.md section 3.6).
-            echo "::notice::The registry snapshot pins no Base mainnet vault; the attester is not released."
+            # Never replace an existing signer's pins or Durable Object journal
+            # with an empty snapshot. Only a proved absent Worker is bootstrapped.
+            if ./node_modules/.bin/wrangler deployments list \
+              --name slop-payments-base-mainnet-attester \
+              --config "$attester_config" --json \
+              > "$attester_dir/existing.json" 2> "$attester_dir/existing.stderr"; then
+              attester_release=false
+              echo "::notice::The registry pins no Base vault; the existing attester is unchanged."
+            else
+              node - "$attester_dir/existing.json" "$attester_dir/existing.stderr" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const output = process.argv.slice(2).map((path) => readFileSync(path, "utf8")).join("\n");
+          const resource = `/accounts/${account}/workers/scripts/slop-payments-base-mainnet-attester/deployments`;
+          if (!/^[a-f0-9]{32}$/.test(account ?? "") ||
+              !output.includes(`A request to the Cloudflare API (${resource}) failed.`) ||
+              !/\[code: 10007\]/.test(output)) {
+            throw new Error("Cannot prove Base attester absent; no bootstrap is permitted");
+          }
+          NODE
+            fi
           fi
 
           # Restore only absent cleanup triggers; reject nonempty provisioning drift.
@@ -841,19 +930,6 @@ jobs:
             rm -f "$x_secrets"
           fi
 
-          # Optional Telegram connection bot (PRD SOC-02): all three values or none.
-          if [ -n "$TELEGRAM_BOT_TOKEN" ] || [ -n "$TELEGRAM_BOT_USERNAME" ] || [ -n "$TELEGRAM_WEBHOOK_SECRET" ]; then
-            telegram_secrets="$RUNNER_TEMP/slop-telegram-secrets.json"
-            node - "$telegram_secrets" <<'NODE'
-          const { writeFileSync } = require("node:fs");
-          const { TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET } = process.env;
-          if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_BOT_USERNAME || !TELEGRAM_WEBHOOK_SECRET) throw new Error("Telegram bot settings must be configured together");
-          writeFileSync(process.argv[2], JSON.stringify({ TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET }), { mode: 0o600 });
-          NODE
-            ./node_modules/.bin/wrangler pages secret bulk "$telegram_secrets" --project-name eliza-computer
-            rm -f "$telegram_secrets"
-          fi
-
           pages_secrets="$RUNNER_TEMP/slop-pages-secrets.txt"
           ./node_modules/.bin/wrangler pages secret list \
             --project-name eliza-computer > "$pages_secrets"
@@ -869,8 +945,6 @@ jobs:
             .sort();
           const xKeys = actual.filter((name) => name === "X_CLIENT_ID" || name === "X_CLIENT_SECRET");
           if (xKeys.length === 1) throw new TypeError("X OAuth credentials must be configured together");
-          const telegramKeys = actual.filter((name) => ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_USERNAME", "TELEGRAM_WEBHOOK_SECRET"].includes(name));
-          if (telegramKeys.length !== 0 && telegramKeys.length !== 3) throw new TypeError("Telegram bot settings must be configured together");
           // Optional owner-provisioned secrets for private-report intake and
           // private security analysis (PRD sections 8 and 11). They stay inert
           // until their feature is enabled; any other name still fails closed.
@@ -884,7 +958,7 @@ jobs:
             "SURPLUS_API_KEY",
           ];
           const required = actual.filter(
-            (name) => !xKeys.includes(name) && !telegramKeys.includes(name) && !optional.includes(name),
+            (name) => !xKeys.includes(name) && !optional.includes(name),
           );
           if (JSON.stringify(required) !== JSON.stringify(expected)) {
             throw new TypeError("Pages secret inventory is incomplete or contains unexpected entries");
@@ -1418,8 +1492,8 @@ jobs:
 
           # Base mainnet attester release, after the shared slop-private
           # migrations and before Pages serves its bindings. A full deploy
-          # applies the SQLite Durable Object journal migration and the cron.
-          if [ "$attester_vaults" != "0" ]; then
+          # preserves the SQLite Durable Object journal. Empty bootstrap has no cron.
+          if [ "$attester_release" = "true" ]; then
             ./node_modules/.bin/wrangler deploy \
               --config "$attester_config" \
               --tag="$GITHUB_SHA" \
@@ -1460,13 +1534,21 @@ jobs:
             exit 1
           fi
 
+          # Use the same immutable-source publication directory as staging.
+          # Only public configuration is added; the signing key is not in this step.
+          publish_dir="$(mktemp -d "$RUNNER_TEMP/slop-production-pages.XXXXXX")"
+          git archive "$GITHUB_SHA" | tar -x -C "$publish_dir"
+          bun scripts/prepare-vetting-public-key.ts assemble production "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.toml"
+          cp -R dist "$publish_dir/dist"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"
           for attempt in 1 2 3; do
-            if ./node_modules/.bin/wrangler pages deploy \
+            if WRANGLER_LOG=error WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler pages deploy --cwd "$publish_dir" \
               --project-name=eliza-computer \
               --branch=main \
               --commit-hash="$RELEASE_SHA" \
               --commit-dirty=false; then
+              bun scripts/prepare-vetting-public-key.ts verify production "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.jsonc"
               exit 0
             fi
             if [ "$attempt" = "3" ]; then

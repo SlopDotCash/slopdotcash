@@ -193,10 +193,10 @@ claim the same ID first, so ledger IDs stay unique across projects.
 `commitAward` stays owner-only. To let the monthly coordinator commit a month
 without the owner's wallet, an ordinary vault has one more path:
 
-- Normal creation sets the owner's cap and enables monthly commitments unless
-  the owner opts out. The owner can later call `setMonthlyCommitment(cap, enabled)`.
-  "On" needs a positive cap. While it is off, no monthly allocation can commit.
-  Awards already committed stay reserved. Compatibility callers of the old
+- Normal creation sets the owner's cap and turns the setting on unless the
+  owner opts out. The owner can later call `setMonthlyCommitment(cap, enabled)`.
+  "On" needs a positive cap. While it is off, no new monthly allocation can enter.
+  An admitted month and awards already committed stay reserved. Compatibility callers of the old
   three-argument `create` retain their earlier off/zero initial state.
 - The new creation path requires both reviewed factory and vault implementations.
   Existing deployments and vault state do not change when this source merges;
@@ -228,6 +228,41 @@ without the owner's wallet, an ordinary vault has one more path:
   sum tree that also binds each subtree's gross total (see
   `contracts/solana/README.md`).
 
+For larger allocations, reviewed V2 vaults expose `monthlyReserveVersion() == 2`.
+The old entry points, v5 domain, and funded awards remain valid. V2 adds the
+`MonthlyReserveV2` signed type; it does not reinterpret an old signature.
+
+The attester uses the frozen economic allocation and reads all source awards
+at one finalized block. It excludes consumed sources from a separate execution
+tree, without changing the frozen allocation or total. A V2 signature binds the
+period, frozen allocation digest, remaining Merkle-sum root, whole gross,
+remaining gross, leaf count, and `ordinarySourceSequence`. Each new ordinary
+source increments that sequence. `reserveMonthly` rejects a changed sequence
+before moving funds, then reserves the entire remaining gross in one operation.
+The whole frozen gross must still fit the owner's current cap.
+
+`commitMonthlyLeaf` verifies the ordered sum proof and moves that leaf's gross
+from `pendingMonthlyGross` into award principal and fees. It does not charge
+free funds again. Leaf replay fails atomically. A month whose sources are all
+funded seals with an empty tree and zero remaining reserve. The trusted attester
+rejects duplicate sources before signing; the contract cannot inspect every
+leaf during constant-size admission.
+
+While pending gross remains, new manual awards wait. If a reserve can never settle (an attester fault), they wait until a reviewed upgrade, because no release path exists on EVM. Later signed monthly
+admissions can use free funds within their own caps. Existing funded payments, bindings, deposits,
+and free withdrawals remain available. Permissionless leaf execution completes
+the reserve after owner opt-out or window expiry. It has no refund, expiry, or
+human release step. The executor bounds examined leaves, including already
+committed leaves, and retains a finalized cursor for restart.
+
+`monthly-reserve.integration.ts` exercises the real migrated database, frozen
+snapshot, signer, public authorization, and local chain executor with 100 awards.
+Its `SLOP_MONTHLY_LEGACY_ROOT` option expects a pre-upgrade tree that already
+has `createWithMonthlyCommitment`. The deployed mainnet source (`bce5b0df`)
+does not, so that option fails at setup against it. The upgrade proof for the
+deployed vaults is the Base fork rehearsal in `../DEPLOY-MAINNET.md` section
+4.6.
+
 The authority's role therefore grows from wallet binding to monthly
 attestation. It still cannot withdraw, redirect or pay funds, and it cannot
 commit more than one owner cap in each calendar month. A monthly award, like
@@ -238,8 +273,15 @@ month until the registrar's rotation executes; the owner limits that exposure
 with the cap and the opt-out. `test/MonthlyCommitment.t.sol` tests the cap, one
 commitment per period, the opt-out, the window, the signature binding over vault,
 period and root, replay, the wrong attester, the rotation, purpose isolation and
-permissionless creation. The invariant handler in `test/OpusInvariant.t.sol`
-commits signed monthly allocations from random callers.
+permissionless creation. `test/MonthlyReserveV2.t.sol` tests V2 trees of
+odd and even widths, index aliasing, forged sibling totals, leaf replay, a
+stale source sequence, count-zero sealing, the cap on the whole gross and
+preservation of funded leaves after the admission window, and later monthly admission while earlier leaves remain. The invariant handler in `test/OpusInvariant.t.sol` commits
+signed legacy allocations, V2 reserves and leaves from
+random callers, and checks both identities below with pending gross.
+
+The monthly dispatcher sends a new reservation before older months’ leaves.
+A leaf can change the source sequence and invalidate a reservation signature.
 
 The first version uses individual commit and pay calls. Dispatchers isolate
 failed recipients by submitting separate transactions. No account can sweep
@@ -291,9 +333,10 @@ and the award stays reserved; a frozen fee recipient blocks only `claimFees`.
 The conservation identities are unchanged by the binding lifecycle:
 
 ```
-totalDeposited = freeBalance + reservedPrincipal + reservedFees
+totalDeposited = freeBalance + reservedPrincipal + reservedFees + pendingMonthlyGross
                + totalPaid + totalPayoutFees + totalGrossWithdrawn
-vault balance  = freeBalance + reservedPrincipal + reservedFees + accruedFees
+vault balance  = freeBalance + reservedPrincipal + reservedFees + pendingMonthlyGross
+               + accruedFees
                + unsolicited direct transfers
 accruedFees + claimed fees = totalPayoutFees + totalWithdrawalFees
 ```
@@ -301,7 +344,9 @@ accruedFees + claimed fees = totalPayoutFees + totalWithdrawalFees
 `totals()` returns every counter and the vault token balance in one call, so a
 reader gets one consistent block. Each counter also has its own public getter.
 The adapter's `readVaultTotals` reads `totals()`, `token()` and `decimals()` at
-one pinned finalized block and checks the first identity.
+one pinned finalized block and checks the first identity. The old `totals()`
+ABI stays unchanged. A V2 reader also reads `pendingMonthlyGross()` at that block
+when it is nonzero and returns the combined award and pending-month reserve.
 
 The vault has no service charge. Slopbot is free (PRD section 5), so no call
 moves free funds to the fee recipient except the payout and withdrawal fees
@@ -387,7 +432,7 @@ and `forge test` on every escrow change.
 The integration deploys `integration/TestDollar.sol`, a six-decimal test
 ERC-20, and `test/WideToken.sol` at 18 decimals with amounts beyond `uint64`. The test token is not Circle USDC; Circle integration, wallet signatures, OAuth, indexer finality,
 and live broadcast require separate public-chain acceptance. The adapter integration
-script starts an isolated Anvil on port 18546, executes actual deployment,
+script starts an isolated Anvil on port 18546 (`SLOP_EVM_ADAPTER_TEST_PORT`), executes actual deployment,
 permissionless vault creation, award, monthly commitment and payment
 transactions, and checks canonical finalized receipts plus rejection
 of wrong chains, vaults, obligations, event indices, and nonfinalized receipts.
@@ -421,7 +466,8 @@ for Robinhood Chain Testnet. After the test deployment authority reviews the
 simulation, the same invocation with `--broadcast` submits testnet
 transactions. No public deployment was run as part of the local
 implementation. Mainnet steps are in [`../DEPLOY-MAINNET.md`](../DEPLOY-MAINNET.md);
-only humans run them. Keep transaction artifacts in ignored `broadcast/`, and
+a human or owner-authorized agent may run them under PRD section 11.
+Keep transaction artifacts in ignored `broadcast/`, and
 publish only reviewed safe deployment evidence.
 
 Record the source SHA, compiler settings, factory address, deployment

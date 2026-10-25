@@ -1,5 +1,5 @@
 /**
- * Versioned selection of the Slop Score producer for new work (PRD section 7;
+ * Versioned selection of the accepted-work Points producer (PRD section 7;
  * SCR-04, SCR-05, SCR-06; MVP-09, MVP-05a).
  *
  * Work accepted before the selected policy's effective instant keeps the
@@ -16,13 +16,22 @@ export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
 export const MAX_CREDITED_REVIEWERS = 5 as const;
 
 /**
- * Owner decision D2 (24 Oct 2026).
+ * Owner decisions of 24 and 25 October 2026.
  *
- * - `effectiveAt`: work accepted from this exact UTC instant uses the value
- *   policy. Earlier work keeps its historical policy.
+ * - Approved scope includes unpaid September and October historical work.
+ *   Approved or funded awards retain their frozen sources and amounts.
+ *   Historical publication waits for complete import and reconciliation.
+ *   This scope does not authorize paid API assessment of historical work.
  * - Review pool: one pool per pull request. It is the sum of the credited
  *   reviewers' highest assessed bands, capped at the pull request's own
  *   assessed size in thirds, and never less than one third.
+ */
+export const VALUE_SCORING_APPROVED_HISTORY_FROM =
+  "2026-09-01T00:00:00.000Z" as const;
+/** Normal publication stays on the prior boundary until historical coverage
+ * and exact Points changes are reconciled. Explicit offline candidates may
+ * use the approved September scope above. Remove this hold in a reviewed
+ * source change after that evidence is complete; no runtime flag enables it.
  */
 export const VALUE_SCORING_POLICY_EFFECTIVE_AT =
   "2026-11-01T00:00:00.000Z" as const;

@@ -18,8 +18,9 @@ Never delete, rewrite, or reissue them. They count where they counted before
 (profile and community total points) and stay out of earned-point standings
 and payouts. The legacy `points_members.welcome` column keeps its fixed value;
 the points API reports a welcome award only for a membership whose immutable
-`joined_at` is before 2026-10-24T00:00:00.000Z, and 0 otherwise. Descriptions
-of those awards below are historical.
+`joined_at` is before 2026-10-24T00:00:00.000Z, and 0 otherwise. It reports an
+X connection award only when its immutable `awarded_at` is before the same
+instant, and 0 otherwise. Descriptions of those awards below are historical.
 
 ## Earning and history
 
@@ -117,8 +118,9 @@ Signout invalidates the session and never resets or reissues a historical welcom
 
 A member can close the account from Account after typing their GitHub login
 (`POST /api/v1/points/account/close`, migration 0063). One atomic change marks
-the membership closed and private, ends every session, removes the X and
-Telegram links and pending flows, and turns off optional activity email. The
+the membership closed and private, ends every session, removes X links and
+pending flows and any legacy Telegram links and flows, and turns off optional
+activity email. The
 membership row, welcome and connection awards, X and Telegram claims, points
 history, wallets, unpaid obligations, payment and settlement records, private
 cases, inbox rows and public GitHub work stay. The database refuses a session
@@ -208,69 +210,20 @@ Primary references checked during implementation:
 [X token exchange and revocation](https://docs.x.com/fundamentals/authentication/oauth-2-0/user-access-token),
 [X endpoint scope mapping](https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping).
 
-### Telegram connections
+### Retired Telegram integration
 
-A member may connect one Telegram account from a signed-in GitHub web session.
-**A Telegram connection earns no points.** Like X, the numeric Telegram account
-ID is reserved to the first GitHub identity that verifies it and never moves
-to another account; reconnecting replaces the member's own link, and
-disconnecting removes the visible link while keeping the reservation.
-
-The browser never talks to Telegram and the site loads no Telegram script or
-frame. `POST /api/v1/points/telegram/start` records a single-use code bound to
-the web session, valid for ten minutes, and returns the deep link
-`https://t.me/<bot>?start=<code>`. The member opens it and presses Start.
-Telegram delivers that `/start <code>` message to
-`POST /api/v1/points/telegram/webhook`, authenticated by the
-`X-Telegram-Bot-Api-Secret-Token` header set at `setWebhook`; that delivery is
-the proof of the account ID. The webhook accepts only a `/start` message from a
-non-bot user in a private chat, replies only in that chat (connected, link no
-longer valid, account already connected elsewhere, or how to start), and
-answers 200 after authentication so a consumed code is never retried. Any
-other update is ignored without a reply. The bot never joins groups, posts, or
-reads anything beyond that message.
-
-Stored: account ID, the optional username snapshot, verification time and
-visibility. Not stored: phone number, display name, photo, chat history. The
-numeric ID is never shown to others; public display uses the username
-snapshot only, and `Telegram · connected` when the account has none. Public
-display needs both the public membership and the public link opt-in, as with X.
-Telegram control confers no GitHub project, organization, wallet or payment
-authority, and Telegram failure never blocks GitHub work or payments.
-
-### Enabling Telegram
-
-Create a bot with BotFather and keep its token private. Register the webhook
-once against the production origin, with a fresh random secret of at least 32
-characters from `A-Za-z0-9_-`:
-
-```text
-POST https://api.telegram.org/bot<token>/setWebhook
-{ "url": "https://slop.cash/api/v1/points/telegram/webhook",
-  "secret_token": "<secret>", "allowed_updates": ["message"],
-  "drop_pending_updates": true }
-```
-
-Place `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` (the bot's username
-without `@`) and `TELEGRAM_WEBHOOK_SECRET` together in the protected GitHub
-production environment. The protected main release installs the three as
-encrypted Pages secrets and applies migration `0056_points_telegram.sql`.
-With none configured, the app reports that Telegram connections are not
-enabled and the webhook answers 404; a partial or malformed set is rejected at
-release and disables the routes. A real bot and a live webhook delivery must
-be verified at activation; tests with doubles are not live evidence.
-
-Primary references checked during implementation:
-[Bot deep links](https://core.telegram.org/api/links#bot-links),
-[setWebhook and the secret token](https://core.telegram.org/bots/api#setwebhook),
-[Update and Message objects](https://core.telegram.org/bots/api#update).
+The owner removed Telegram on 25 October 2026. Slop has no Telegram bot,
+connection, public profile link, or support route. Existing database migrations
+and identity claims remain historical records. Account closure still clears
+legacy links and pending flows without changing their reserved identity claims.
+No Telegram credential or webhook is required.
 
 ### Individual profiles
 
 Every recorded PR author has a discoverable `/contributors/<login>` profile,
 including authors with only open or closed unmerged PRs. Joined members and
 historical point recipients retain profiles independently of the current score
-window. Public membership, X visibility and Telegram visibility remain opt-in.
+window. Public membership and X visibility remain opt-in.
 
 `profiles:generate` walks the complete PR connection of each active manifest
 repository, deduplicates immutable PR IDs, and reconciles the total record count

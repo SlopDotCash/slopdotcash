@@ -205,6 +205,14 @@ owner opt-out. The unsigned transaction contains `initialize` followed by
 does. This uses the current program and needs no program upgrade. Private
 bounty initialization does not accept monthly settings.
 
+`buildInitializeVaultInstructions` in `owner-instructions.ts` builds the same
+instructions for edge and browser callers. It returns the project, vault and
+Config addresses and unsigned instructions. The caller must first verify the
+reviewed program, Config, network, mint and owner's authority. The builder does
+not prove those facts or send a transaction. The local validator workflow
+compares its output with the owner CLI, creates both monthly choices and a
+separate bounty vault, then verifies deposits into each vault.
+
 The owner can later call `set_monthly_commitment(cap, enabled)` on an ordinary
 project. "On" needs a positive cap; turning it off preserves existing awards.
 Legacy callers that send `initialize` alone retain their earlier off/zero
@@ -244,12 +252,9 @@ period is open at a time.
    award subtracts its gross. While `monthly_outstanding` is positive the owner's
    ordinary `commit` fails with `MonthlyOutstanding`, so the owner cannot consume
    an admitted award's source by hand and strand its reserve. Anyone, including
-   the owner, can clear the gate by committing the remaining awards. From 30 days
-   after a month's window closes, anyone can call `expire_month(period)` once.
-   It removes that month's unsettled gross from `monthly_outstanding`, so an
-   allocation that can never settle cannot block the owner's direct awards for
-   ever. That gross stays reserved, and its awards can still commit or release;
-   a remainder that can never settle stays reserved for good.
+   the owner, can clear the gate by committing the remaining awards. Time and
+   owner opt-out never remove the gate or release funds. Later monthly admissions,
+   funded payments and withdrawals of free funds remain available.
 4. An award that can never commit is returned to free balance by anyone with
    `release_monthly_award(period, source_digest, actor_id, gross, index, count,
    proof)`, passing the source's `origin`, its `monthly-source` marker and the
@@ -318,6 +323,12 @@ destination, unauthorized binding, a third-party payment mixed with unrelated
 token transfers, and a foreign project that mentions this project's account.
 Fixture keys and tokens have no mainnet value. CI runs these end-to-end
 workflows; a successful build alone is not payment evidence.
+If a test stage fails, the runner reads the known failed signatures while its
+local validator is still alive. `.local/failure-evidence/` retains bounded
+status and receipt metadata, health, slots and heights; CI uploads only those
+JSON reports. It excludes keys, transaction bytes, account data and raw logs.
+The original test exit status remains unchanged. An absent receipt or a later
+successful run does not establish the cause of an earlier failure.
 `cargo check --locked` verifies the host program build but does not prove SBF or
 validator execution. Use Anchor 0.32.1 and the platform tools pinned in the scripts.
 The end-to-end suite waits the award commitment delay out in seconds, so `test-e2e.sh`
@@ -467,10 +478,15 @@ build before it cannot be read until anyone calls the permissionless
 payer and starts the new fields at zero (that build sent fees out at once).
 The same revision appended `released`, `frozen_at` and `expired` to
 `MonthlyAllocation` (now 109 bytes).
+The `expired` field remains for layout compatibility; this build removes
+`expire_month`. New funded months never expire. Before an in-place upgrade,
+`config-plan.mjs migrate` also refuses a previously expired month with unsettled
+funds. Such a month has an understated outstanding counter and needs separate
+recovery review; the planner neither rewrites it nor releases its reserve.
 A month of an earlier layout (92 bytes from the 316-byte build, or 100 bytes
 from the interim build with `released` only) cannot be read by this build:
 its awards fail closed, and any outstanding gross it added to
-`monthly_outstanding` could never settle or expire, so the owner's direct
+`monthly_outstanding` could never settle, so the owner's direct
 commits would stay refused for good. An in-place upgrade therefore requires
 that `getProgramAccounts` shows no MonthlyAllocation account of any size other
 than 109 bytes; `config-plan.mjs migrate` refuses to plan otherwise. Devnet

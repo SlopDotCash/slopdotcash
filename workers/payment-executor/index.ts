@@ -10,6 +10,10 @@ import {
 } from "../../backend/projects/cloudflare-persistence";
 import { publicRestrictionOf } from "../../backend/projects/enforcement";
 import { securityPaymentDatabase } from "../../backend/security/payment-database";
+import {
+  EvmMonthlyAlreadyAdmitted,
+  prepareEvmMonthlyReservation,
+} from "../../contracts/evm/adapter";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
@@ -45,6 +49,7 @@ import {
   createSolanaAttester,
   createSolanaExecutor,
   preflightSolanaDeployment,
+  solanaTransactionStatus,
 } from "./solana";
 import { freezeSolanaMonthly, submitSolanaMonthly } from "./solana-monthly";
 
@@ -59,6 +64,7 @@ interface Namespace {
 }
 interface Environment {
   PAYMENT_SCOPE?: "security-bounty";
+  SECURITY_PAYMENT_DEPLOYMENTS?: string;
   PAYMENTS_DB: D1Database;
   REGISTRY_DB?: ProjectD1Database;
   MONTHLY_PAYMENT_SCHEDULE?: string;
@@ -87,6 +93,20 @@ export class PaymentSignerJournal {
     private readonly env: Environment,
   ) {}
   async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/v1/security/")) {
+      url.pathname = url.pathname.replace("/v1/security/", "/v1/");
+      if (this.env.PAYMENT_SCOPE === "security-bounty")
+        return this.fetch(new Request(url, request));
+      if (!this.env.SECURITY_PAYMENT_DEPLOYMENTS)
+        return new Response("Not found", { status: 404 });
+      // Both scopes use this same state.storage, including the nonce record.
+      // Only the separately pinned private vaults and ledger are selected.
+      return new PaymentSignerJournal(
+        { storage: privateScopeJournal(this.state.storage) },
+        privateAttesterEnvironment(this.env),
+      ).fetch(new Request(url, request));
+    }
     const database =
       this.env.PAYMENT_SCOPE === "security-bounty"
         ? securityPaymentDatabase(this.env.PAYMENTS_DB)
@@ -115,8 +135,7 @@ export class PaymentSignerJournal {
         if (
           stack !== "production" ||
           this.env.SIGNER_ROLE !== "attester" ||
-          this.env.CHAIN_FAMILY !== "evm" ||
-          this.env.PAYMENT_SCOPE === "security-bounty"
+          this.env.CHAIN_FAMILY !== "evm"
         )
           return new Response("Not found", { status: 404 });
         // The stack, network and preflight checks of every pinned vault pass
@@ -202,7 +221,6 @@ export class PaymentSignerJournal {
           return Response.json(
             await submitSolanaMonthly(
               {
-                PAYMENTS_DB: database,
                 PAYMENT_DEPLOYMENTS: this.env.PAYMENT_DEPLOYMENTS,
                 PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
                 JOURNAL: this.state.storage,
@@ -227,13 +245,14 @@ export class PaymentSignerJournal {
         return Response.json(
           await submitEvmMonthly(
             {
-              PAYMENTS_DB: database,
               PAYMENT_DEPLOYMENTS: this.env.PAYMENT_DEPLOYMENTS,
               PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
               JOURNAL: this.state.storage,
               SIGNER: privateKeyToAccount(key),
             },
             authorization,
+            new URL(request.url).searchParams.get("admit") !== "false",
+            16,
           ),
         );
       }
@@ -307,12 +326,26 @@ export class PaymentSignerJournal {
                 network: input.network,
                 vault: plan.deployment.vault,
               };
-              if (plan.family === "evm")
-                await assertEvmMonthlySources(
-                  await preflightEvmDeployment(this.env, target),
-                  plan.entries,
+              if (plan.family === "evm") {
+                const deployment = await preflightEvmDeployment(
+                  this.env,
+                  target,
                 );
-              else await preflightSolanaDeployment(this.env, target);
+                if (!plan.evmReservation)
+                  await assertEvmMonthlySources(deployment, plan.entries);
+              } else await preflightSolanaDeployment(this.env, target);
+            },
+            reserve: async (plan) => {
+              const deployment = await preflightEvmDeployment(this.env, {
+                network: input.network,
+                vault: plan.deployment.vault,
+              });
+              return prepareEvmMonthlyReservation(
+                { ...deployment, chainId: BigInt(deployment.chainId) },
+                input.period,
+                `0x${input.snapshotSha256}`,
+                plan.entries,
+              );
             },
             freeze: async (plan) =>
               freezeSolanaMonthly(
@@ -377,12 +410,19 @@ export class PaymentSignerJournal {
           pathname === "/v1/attempt-status"
             ? lookupAttempt
             : retireUnsignedAttempt;
-        return Response.json(
-          await operation(
-            { PAYMENTS_DB: database, JOURNAL: this.state.storage },
-            input,
-          ),
+        const result = await operation(
+          { PAYMENTS_DB: database, JOURNAL: this.state.storage },
+          input,
         );
+        if (this.env.CHAIN_FAMILY === "solana" && result.transactionId) {
+          const config = await preflightSolanaDeployment(this.env, input);
+          return Response.json({
+            ...result,
+            submitted:
+              (await solanaTransactionStatus({ config }, result)) !== null,
+          });
+        }
+        return Response.json(result);
       }
       if (request.headers.get("idempotency-key") !== input.idempotencyKey)
         return new Response("Idempotency key required", { status: 400 });
@@ -487,7 +527,12 @@ export class PaymentSignerJournal {
       } else throw new Error("Unsupported signer family");
       const result = await engine.submit(input);
       return Response.json(result);
-    } catch {
+    } catch (error) {
+      if (error instanceof EvmMonthlyAlreadyAdmitted)
+        return Response.json(
+          { error: "monthly_already_admitted" },
+          { status: 409 },
+        );
       // No keys, signed transaction bytes, wallet consent signatures, or RPC credentials in responses/logs.
       return Response.json(
         { error: "execution_pending_or_rejected" },
@@ -497,13 +542,15 @@ export class PaymentSignerJournal {
   }
 }
 
-/** Background indexing and monthly signatures only; never dispatches a payment. */
+/** Scoped background indexing; ordinary monthly signatures only, never payment dispatch. */
 export async function runMonthlyAttester(env: Environment) {
-  if (env.SIGNER_ROLE !== "attester" || env.PAYMENT_SCOPE === "security-bounty")
-    return;
+  if (env.SIGNER_ROLE !== "attester") return;
   if (!env.REGISTRY_DB) throw new Error("Monthly registry binding missing");
-  const schedule = parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE);
-  if (!schedule) throw new Error("Monthly schedule missing");
+  const privateScope = env.PAYMENT_SCOPE === "security-bounty";
+  const schedule = privateScope
+    ? null
+    : parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE);
+  if (!privateScope && !schedule) throw new Error("Monthly schedule missing");
   const stack = signerStack(env.SIGNER_STACK);
   const deployments = JSON.parse(env.PAYMENT_DEPLOYMENTS) as {
     network: string;
@@ -515,8 +562,11 @@ export async function runMonthlyAttester(env: Environment) {
   )
     throw new Error("Monthly signer stack mismatch");
   const worker = {
-    PAYMENTS_DB: env.PAYMENTS_DB,
+    PAYMENTS_DB: privateScope
+      ? securityPaymentDatabase(env.PAYMENTS_DB)
+      : env.PAYMENTS_DB,
     REGISTRY_DB: env.REGISTRY_DB,
+    PAYMENT_SCOPE: env.PAYMENT_SCOPE,
     PAYMENT_NETWORKS: JSON.stringify(networks),
     PAYMENT_RPC_URLS: env.PAYMENT_RPC_URLS,
     PAYMENT_SOLANA_GENESIS: JSON.stringify(
@@ -530,6 +580,14 @@ export async function runMonthlyAttester(env: Environment) {
     MONTHLY_PAYMENT_SCHEDULE: env.MONTHLY_PAYMENT_SCHEDULE,
   };
   const sync = await syncRegistryVaults(worker);
+  // Private awards are owner decisions. Index only their separate ledger;
+  // never create a monthly bounty allocation or dispatch a payment.
+  if (privateScope) {
+    if (sync.failures.length)
+      throw new Error("Private award indexing incomplete");
+    return sync;
+  }
+  if (!schedule) throw new Error("Monthly schedule missing");
   await runMonthlyCoordinator(worker);
   const report = await publishMonthlyAuthorizations({
     db: env.PAYMENTS_DB,
@@ -546,6 +604,15 @@ export async function runMonthlyAttester(env: Environment) {
           body: JSON.stringify(request),
         }),
       );
+      if (response.status === 409) {
+        const rejected = (await readBoundedJson(
+          response,
+          4096,
+          "monthly authorization status",
+        )) as { error?: unknown };
+        if (rejected.error === "monthly_already_admitted")
+          throw new EvmMonthlyAlreadyAdmitted();
+      }
       if (!response.ok)
         throw new Error("Monthly attester rejected authorization");
       return (await readBoundedJson(
@@ -571,16 +638,18 @@ export async function runDestinationBindings(env: Environment) {
   if (
     signerStack(env.SIGNER_STACK) !== "production" ||
     env.SIGNER_ROLE !== "attester" ||
-    env.CHAIN_FAMILY !== "evm" ||
-    env.PAYMENT_SCOPE === "security-bounty"
+    env.CHAIN_FAMILY !== "evm"
   )
     return null;
   const response = await env.JOURNAL.get(
     env.JOURNAL.idFromName(SIGNER_STACKS.production.journal),
   ).fetch(
-    new Request("https://attester.internal/v1/bind-destinations", {
-      method: "POST",
-    }),
+    new Request(
+      `https://attester.internal/v1/${env.PAYMENT_SCOPE === "security-bounty" && env.SIGNER_STACK === "production" ? "security/" : ""}bind-destinations`,
+      {
+        method: "POST",
+      },
+    ),
   );
   if (!response.ok) throw new Error("Destination binding run rejected");
   const report = (await readBoundedJson(
@@ -592,17 +661,49 @@ export async function runDestinationBindings(env: Environment) {
   return report;
 }
 
+/** Separate pending attempts and receipts, but atomically share the EVM nonce. */
+function privateScopeJournal(storage: JournalStore): JournalStore {
+  const scoped = (key: string) =>
+    key.startsWith("nonce:") ? key : `security:${key}`;
+  return {
+    get: <T>(key: string) => storage.get<T>(scoped(key)),
+    put: <T>(key: string, value: T) => storage.put(scoped(key), value),
+    transaction: <T>(callback: (store: JournalStore) => Promise<T>) =>
+      storage.transaction((transaction) =>
+        callback(privateScopeJournal(transaction)),
+      ),
+  };
+}
+
+function privateAttesterEnvironment(env: Environment): Environment {
+  return {
+    ...env,
+    PAYMENT_SCOPE: "security-bounty",
+    PAYMENT_DEPLOYMENTS: env.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]",
+    SECURITY_PAYMENT_DEPLOYMENTS: undefined,
+  };
+}
+
 /** Service bindings only. workers_dev and preview URLs must remain disabled in both deployments. */
 export default {
   async scheduled(_event: unknown, env: Environment) {
     // The binding run follows the indexing of new awards and runs even when
     // a monthly step fails; either failure fails the scheduled run.
     const failures: unknown[] = [];
-    for (const step of [runMonthlyAttester, runDestinationBindings]) {
-      try {
-        await step(env);
-      } catch (error) {
-        failures.push(error);
+    const privateScope = env.SECURITY_PAYMENT_DEPLOYMENTS
+      ? privateAttesterEnvironment(env)
+      : null;
+    const scopes =
+      privateScope && JSON.parse(env.PAYMENT_DEPLOYMENTS).length === 0
+        ? [privateScope]
+        : [env, ...(privateScope ? [privateScope] : [])];
+    for (const scope of scopes) {
+      for (const step of [runMonthlyAttester, runDestinationBindings]) {
+        try {
+          await step(scope);
+        } catch (error) {
+          failures.push(error);
+        }
       }
     }
     if (failures.length)

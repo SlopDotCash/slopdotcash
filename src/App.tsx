@@ -105,6 +105,7 @@ const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 const AdminPage = lazy(() => import("./Admin"));
 const InboxPage = lazy(() => import("./Inbox"));
 const VettingEvidencePage = lazy(() => import("./VettingEvidence"));
+const OperatorTracesPage = lazy(() => import("./OperatorTraces"));
 const SecurityCasesPage = lazy(() => import("./SecurityBounty"));
 const SecurityProgramPage = lazy(() =>
   import("./SecurityBounty").then((module) => ({
@@ -119,7 +120,6 @@ const ProjectUpdatePage = lazy(() =>
 
 const SOCIAL_X = "https://x.com/SlopCash";
 const SOCIAL_LINKEDIN = "https://www.linkedin.com/company/slop-cash";
-const SOCIAL_TELEGRAM = "https://t.me/slopcashofficial";
 // Original campaign rotation restored by owner request (24 October 2026).
 const HERO_ACTIONS = [
   "SHIPPING OPEN SOURCE.",
@@ -164,6 +164,7 @@ interface Route {
     | "earnings"
     | "inbox"
     | "vetting-evidence"
+    | "operator-traces"
     | "security-cases"
     | "security-program";
   projectId?: string;
@@ -187,6 +188,12 @@ function internalRoute(pathname: string): Route {
     return { kind: "inbox" };
   if (segments.length === 1 && segments[0] === "vetting-evidence")
     return { kind: "vetting-evidence" };
+  if (
+    segments.length === 2 &&
+    segments[0] === "operator" &&
+    segments[1] === "traces"
+  )
+    return { kind: "operator-traces" };
   if (segments.length === 1 && segments[0] === "security")
     return { kind: "security-cases" };
   if (
@@ -302,6 +309,7 @@ const PRIVATE_PAGE_TITLES = new Map<Route["kind"], string>([
   ["inbox", "Inbox"],
   ["security-cases", "Security cases"],
   ["vetting-evidence", "Private vetting evidence"],
+  ["operator-traces", "Private traces"],
 ]);
 
 /** The title and canonical path of a route; a missing page has no canonical. */
@@ -316,7 +324,9 @@ function routeHead(route: Route): { title: string; path: string | null } {
           ? null
           : route.kind === "security-cases"
             ? "/security"
-            : `/${route.kind}`,
+            : route.kind === "operator-traces"
+              ? "/operator/traces"
+              : `/${route.kind}`,
     };
   }
   if (route.kind === "profile") {
@@ -439,9 +449,6 @@ function Footer() {
           <ExternalLinkAnchor href={SOCIAL_X}>X</ExternalLinkAnchor>
           <ExternalLinkAnchor href={SOCIAL_LINKEDIN}>
             LinkedIn
-          </ExternalLinkAnchor>
-          <ExternalLinkAnchor href={SOCIAL_TELEGRAM}>
-            Telegram
           </ExternalLinkAnchor>
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
         </nav>
@@ -1284,22 +1291,26 @@ function ProjectFundingPage({
                       ?.advertisedAmountDisplay ?? "External")}
             </dd>
           </div>
-          <div>
-            <dt>Funding</dt>
-            <dd>{fundingStateLabel(project)}</dd>
-          </div>
-          <div>
-            <dt>Committed</dt>
-            <dd>{formatMicroUsdc(project.reward.committedMinor)}</dd>
-          </div>
-          <div>
-            <dt>Payments</dt>
-            <dd>{paymentStateLabel(project)}</dd>
-          </div>
-          <div>
-            <dt>Project vault</dt>
-            <dd>{vaultStateLabel(project)}</dd>
-          </div>
+          {!project.escrow ? (
+            <>
+              <div>
+                <dt>Funding</dt>
+                <dd>{fundingStateLabel(project)}</dd>
+              </div>
+              <div>
+                <dt>Committed</dt>
+                <dd>{formatMicroUsdc(project.reward.committedMinor)}</dd>
+              </div>
+              <div>
+                <dt>Payments</dt>
+                <dd>{paymentStateLabel(project)}</dd>
+              </div>
+              <div>
+                <dt>Project vault</dt>
+                <dd>{vaultStateLabel(project)}</dd>
+              </div>
+            </>
+          ) : null}
         </dl>
         {project.reward.kind === "external-prize-share" ? (
           <p>
@@ -1417,13 +1428,13 @@ function ProjectPage({
                   }
                 />
               ) : null}
-              {project.securityBounty ? (
-                <p className="project-terms-line">
-                  <Link href={`/projects/${project.slug}/security`}>
-                    Security bounty
-                  </Link>
-                </p>
-              ) : null}
+              <p className="project-terms-line">
+                <Link href={`/projects/${project.slug}/security`}>
+                  {project.securityBounty
+                    ? "Security bounty"
+                    : "Report a security issue"}
+                </Link>
+              </p>
               {project.rewardAsset ? (
                 <p className="project-terms-line">
                   Reward asset: {project.rewardAsset.symbol} on{" "}
@@ -2277,11 +2288,6 @@ function SponsorsPage({
             <a href={CONTACT_MAILTO}>Email {CONTACT_EMAIL}</a>
           </li>
           <li>
-            <ExternalLinkAnchor href={SOCIAL_TELEGRAM}>
-              Ask on Telegram
-            </ExternalLinkAnchor>
-          </li>
-          <li>
             <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
               View the repository on GitHub
             </ExternalLinkAnchor>
@@ -2868,6 +2874,7 @@ const REGISTRY_INDEPENDENT_ROUTES: Route["kind"][] = [
   "earnings",
   "security-cases",
   "vetting-evidence",
+  "operator-traces",
   "new-project",
   "how-it-works",
 ];
@@ -2915,6 +2922,7 @@ function AppContent({ route }: { route: Route }) {
     "owner-awards",
     "security-cases",
     "vetting-evidence",
+    "operator-traces",
     "security-program",
     "unknown",
     "cycle-archive",
@@ -2969,6 +2977,7 @@ function AppContent({ route }: { route: Route }) {
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
   else if (route.kind === "vetting-evidence") content = <VettingEvidencePage />;
+  else if (route.kind === "operator-traces") content = <OperatorTracesPage />;
   else if (route.kind === "security-cases") content = <SecurityCasesPage />;
   else if (route.kind === "security-program") {
     const project = findProject(route.projectId ?? "");

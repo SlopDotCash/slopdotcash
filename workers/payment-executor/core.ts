@@ -1,5 +1,11 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { recoverAddress } from "viem";
+import {
+  decodeFunctionData,
+  parseAbi,
+  parseTransaction,
+  recoverAddress,
+  recoverTransactionAddress,
+} from "viem";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import type {
   DispatchPayment,
@@ -13,10 +19,16 @@ import {
 import {
   buildBindCalldata,
   buildCommitMonthlyCalldata,
+  buildCommitMonthlyLeafCalldata,
   buildPayCalldata,
+  buildReserveMonthlyCalldata,
+  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmAwardId,
   evmMonthlyDigest,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
+  readEvmMonthlyReserve,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import {
@@ -63,6 +75,11 @@ export interface ExecutorEnvironment {
   /** Only the local integration harness may enable chain 31337. Never set in hosted deployments. */
   ALLOW_LOCAL_TEST_CHAIN?: boolean;
 }
+export type PublicEvmExecutorEnvironment = Omit<
+  ExecutorEnvironment,
+  "PAYMENTS_DB" | "ATTESTER"
+>;
+
 type Input = DispatchPayment & { idempotencyKey: string };
 /**
  * A binding request. The hosted `/v1/pay` names the dispatcher's payout
@@ -449,7 +466,7 @@ async function assertPayable(
 }
 /** A finalized reverted attempt changed nothing, so a fresh attempt may replace it. */
 async function retireRevertedAttempt(
-  env: ExecutorEnvironment,
+  env: PublicEvmExecutorEnvironment,
   config: Deployment,
   key: string,
   attempt: Attempt,
@@ -475,7 +492,7 @@ async function retireRevertedAttempt(
 }
 
 async function signAndSubmit(
-  env: ExecutorEnvironment,
+  env: PublicEvmExecutorEnvironment,
   config: Deployment,
   key: string,
   fingerprint: string,
@@ -486,6 +503,8 @@ async function signAndSubmit(
   },
   /** Journal list that records the key in the same transaction as the signed bytes. */
   pendingList?: string,
+  /** Authorization must still hold immediately before any stored binding broadcast. */
+  beforeBroadcast?: (attempt: Attempt) => Promise<void>,
 ) {
   let attempt = await env.JOURNAL.get<Attempt>(key);
   if (attempt && attempt.fingerprint !== fingerprint)
@@ -576,6 +595,7 @@ async function signAndSubmit(
       );
     return { transactionId: attempt.transactionId };
   }
+  await beforeBroadcast?.(attempt);
   try {
     const sent = await rpc(config, "eth_sendRawTransaction", [
       attempt.rawTransaction,
@@ -596,9 +616,17 @@ async function signAndSubmit(
  * A submitted transaction is not proof of finalized reservation or payment.
  */
 export async function submitEvmMonthly(
-  env: ExecutorEnvironment,
+  env: PublicEvmExecutorEnvironment,
   authorization: MonthlyAuthorization,
-) {
+  admit = true,
+  maxLeaves = 16,
+): Promise<{
+  transactionId: string | null;
+  alreadyCommitted: boolean;
+  complete?: boolean;
+  notAdmitted?: boolean;
+  committedSources?: string[];
+}> {
   const { plan, signatureHex } = authorization;
   if (
     plan.family !== "evm" ||
@@ -616,6 +644,17 @@ export async function submitEvmMonthly(
     same(env.SIGNER.address, deployment.identityAuthority)
   )
     throw new Error("Monthly executor or deployment mismatch");
+  const reservation = plan.evmReservation;
+  if (reservation)
+    return submitEvmMonthlyReserve(
+      env,
+      authorization,
+      deployment,
+      reservation,
+      admit,
+      maxLeaves,
+    );
+  if (!admit) return { transactionId: null, alreadyCommitted: false };
   const root = evmAllocationRoot(plan.entries);
   const expected = evmMonthlyDigest(
     BigInt(deployment.chainId),
@@ -679,6 +718,350 @@ export async function submitEvmMonthly(
   return { ...result, alreadyCommitted: false };
 }
 
+/** The reserve and each leaf share the existing exact-byte transaction journal. A replacement root
+ * cannot skip an uncertain admission: first reconcile/rebroadcast that stored transaction. */
+async function submitEvmMonthlyReserve(
+  env: PublicEvmExecutorEnvironment,
+  authorization: MonthlyAuthorization,
+  deployment: Deployment,
+  reservation: EvmMonthlyReservation,
+  admit: boolean,
+  maxLeaves: number,
+) {
+  const { plan, signatureHex } = authorization;
+  if (!Number.isSafeInteger(maxLeaves) || maxLeaves < 1)
+    throw new Error("Invalid monthly leaf bound");
+  const config = { ...deployment, chainId: BigInt(deployment.chainId) };
+  const tree = evmMonthlySumTree(plan.entries);
+  const expected = evmMonthlyReserveDigest(
+    config.chainId,
+    deployment.vault,
+    plan.request.period,
+    reservation,
+  );
+  if (
+    reservation.allocationDigest !== `0x${plan.request.snapshotSha256}` ||
+    reservation.allocationRoot !== tree.hash ||
+    plan.allocationRoot !== tree.hash ||
+    reservation.count !== plan.entries.length ||
+    reservation.remainingGross !== tree.total.toString() ||
+    reservation.wholeGross !== plan.totalGrossBase ||
+    expected.slice(2) !== plan.messageHex ||
+    !/^[a-f0-9]{130}$/.test(signatureHex)
+  )
+    throw new Error("Monthly reserve differs from its frozen authorization");
+  const state = await readEvmMonthlyReserve(config, plan.request.period);
+  const target = { network: plan.request.network, vault: deployment.vault };
+  const legacy = authorization.legacyAuthorization;
+  if (legacy) {
+    if (
+      legacy.plan.evmReservation ||
+      legacy.plan.family !== "evm" ||
+      legacy.plan.request.projectId !== plan.request.projectId ||
+      legacy.plan.request.period !== plan.request.period ||
+      legacy.plan.request.network !== plan.request.network ||
+      legacy.plan.request.snapshotSha256 !== plan.request.snapshotSha256 ||
+      !same(legacy.plan.deployment.vault, deployment.vault) ||
+      !same(legacy.plan.deployment.asset, deployment.asset) ||
+      plan.entries.some(
+        (entry) =>
+          !legacy.plan.entries.some(
+            (old) =>
+              same(old.sourceDigest, entry.sourceDigest) &&
+              old.githubUserId === entry.githubUserId &&
+              old.grossMicro === entry.grossMicro,
+          ),
+      )
+    ) {
+      throw new Error(
+        "Legacy authorization differs from the frozen monthly allocation",
+      );
+    }
+  }
+  if (BigInt(state.root) !== 0n && BigInt(state.allocationDigest) === 0n) {
+    if (!legacy)
+      throw new Error("The original legacy monthly authorization is required");
+    // An independently signed V1 transaction may win after V2 publication. Its finalized root
+    // proves the full old commitment; do not submit V2 or overwrite either authorization.
+    const legacyRoot = evmAllocationRoot(legacy.plan.entries);
+    const legacyDigest = evmMonthlyDigest(
+      config.chainId,
+      deployment.vault,
+      plan.request.period,
+      legacyRoot,
+    );
+    if (
+      state.root !== legacyRoot ||
+      legacy.plan.allocationRoot !== legacyRoot ||
+      legacy.plan.messageHex !== legacyDigest.slice(2) ||
+      !/^[a-f0-9]{130}$/.test(legacy.signatureHex) ||
+      !same(
+        await recoverAddress({
+          hash: legacyDigest as Hex,
+          signature: `0x${legacy.signatureHex}`,
+        }),
+        legacy.plan.deployment.identityAuthority,
+      )
+    ) {
+      throw new Error(
+        "Legacy monthly root differs from its original authorization",
+      );
+    }
+    return { transactionId: null, alreadyCommitted: true, complete: true };
+  }
+  const key = `monthly:v2:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
+  const fingerprint = digest(
+    JSON.stringify([deployment.chainId, target.vault.toLowerCase(), expected]),
+  );
+  if (BigInt(state.root) === 0n) {
+    if (!admit)
+      return {
+        notAdmitted: true,
+        transactionId: null,
+        alreadyCommitted: false,
+        complete: false,
+      };
+    const authority = (
+      await call(deployment, `${digest("identityAuthority()").slice(0, 10)}`, 1)
+    )[0];
+    if (
+      !same(
+        await recoverAddress({
+          hash: expected,
+          signature: `0x${signatureHex}`,
+        }),
+        `0x${authority.slice(24)}`,
+      )
+    ) {
+      throw new Error("Invalid monthly authority signature");
+    }
+    const legacyKey = `monthly:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
+    const legacyAttempt = await env.JOURNAL.get<Attempt>(legacyKey);
+    if (
+      legacyAttempt &&
+      !(await retireRevertedAttempt(env, deployment, legacyKey, legacyAttempt))
+    ) {
+      const result = await signAndSubmit(
+        env,
+        deployment,
+        legacyKey,
+        legacyAttempt.fingerprint,
+        "",
+        {
+          ...target,
+          idempotencyKey: digest(legacyKey).slice(2),
+          monthlyPeriod: plan.request.period,
+        },
+      );
+      return { ...result, alreadyCommitted: false, complete: false };
+    }
+    const previous = await env.JOURNAL.get<Attempt>(key);
+    if (
+      previous &&
+      !(await retireRevertedAttempt(env, deployment, key, previous))
+    ) {
+      const result = await signAndSubmit(
+        env,
+        deployment,
+        key,
+        previous.fingerprint,
+        "",
+        {
+          ...target,
+          idempotencyKey: digest(key).slice(2),
+          monthlyPeriod: plan.request.period,
+        },
+      );
+      return { ...result, alreadyCommitted: false, complete: false };
+    }
+    const result = await signAndSubmit(
+      env,
+      deployment,
+      key,
+      fingerprint,
+      buildReserveMonthlyCalldata(
+        plan.request.period,
+        reservation,
+        `0x${signatureHex}`,
+      ),
+      {
+        ...target,
+        idempotencyKey: digest(key).slice(2),
+        monthlyPeriod: plan.request.period,
+      },
+    );
+    return { ...result, alreadyCommitted: false, complete: false };
+  }
+  if (
+    state.root !== tree.hash ||
+    state.allocationDigest !== reservation.allocationDigest ||
+    state.total !== tree.total ||
+    state.count !== plan.entries.length
+  ) {
+    throw new Error("Another monthly reserve is already admitted");
+  }
+  // The chain already authenticated this root. A later authority rotation, owner opt-out or expired
+  // admission window cannot invalidate the funded reserve or require another authority signature.
+  if (state.remaining === 0n)
+    return { transactionId: null, alreadyCommitted: true, complete: true };
+  let transactionId: string | null = null;
+  const committedSources: string[] = [];
+  const cursorKey = `${key}:${tree.hash}:finalized-cursor`;
+  let cursor = (await env.JOURNAL.get<number>(cursorKey)) ?? 0;
+  if (
+    !Number.isSafeInteger(cursor) ||
+    cursor < 0 ||
+    cursor > plan.entries.length
+  )
+    throw new Error("Invalid monthly execution cursor");
+  for (
+    let index = cursor, examined = 0;
+    index < plan.entries.length && examined < maxLeaves;
+    ++index, ++examined
+  ) {
+    const entry = plan.entries[index];
+    const id = evmAwardId(config.chainId, deployment.vault, entry.sourceDigest);
+    const award = await call(deployment, `0xe76af61d${id.slice(2)}`, 6);
+    if (BigInt(`0x${award[0]}`) !== 0n) {
+      if (
+        BigInt(`0x${award[0]}`).toString() !== entry.githubUserId ||
+        BigInt(`0x${award[1]}`).toString() !== String(entry.grossMicro) ||
+        !acceptsPayoutFee(BigInt(`0x${award[1]}`), BigInt(`0x${award[2]}`))
+      )
+        throw new Error(
+          "Admitted monthly source conflicts with a funded award",
+        );
+      if (cursor === index) {
+        cursor = index + 1;
+        await env.JOURNAL.put(cursorKey, cursor);
+      }
+      continue;
+    }
+    const leafKey = `${key}:${tree.hash}:leaf:${index}`;
+    const data = buildCommitMonthlyLeafCalldata(
+      plan.request.period,
+      entry,
+      index,
+      tree.proofs[index],
+    );
+    const previous = await env.JOURNAL.get<Attempt>(leafKey);
+    if (previous)
+      await retireRevertedAttempt(env, deployment, leafKey, previous);
+    const result = await signAndSubmit(
+      env,
+      deployment,
+      leafKey,
+      digest(data),
+      data,
+      {
+        ...target,
+        idempotencyKey: digest(leafKey).slice(2),
+        monthlyPeriod: plan.request.period,
+      },
+    );
+    transactionId = result.transactionId;
+    committedSources.push(entry.sourceDigest);
+  }
+  return {
+    transactionId,
+    alreadyCommitted: true,
+    complete: false,
+    committedSources,
+  };
+}
+
+/** Read a funded award and its wallet-authorized binding without private Slop data. */
+export async function preparePermissionlessEvmPayment(
+  env: Pick<
+    PublicEvmExecutorEnvironment,
+    "PAYMENT_DEPLOYMENTS" | "PAYMENT_RPC_URLS" | "ALLOW_LOCAL_TEST_CHAIN"
+  >,
+  input: { network: string; vault: string; obligationId: string },
+) {
+  if (!BYTES32.test(input.obligationId)) throw new Error("Invalid award ID");
+  const deployment = await preflightEvmDeployment(env, input);
+  const state = await call(
+    deployment,
+    `0xe76af61d${input.obligationId.slice(2)}`,
+    6,
+  );
+  const actor = BigInt(`0x${state[0]}`).toString();
+  const gross = BigInt(`0x${state[1]}`),
+    fee = BigInt(`0x${state[2]}`);
+  if (
+    actor === "0" ||
+    gross === 0n ||
+    !acceptsPayoutFee(gross, fee, deployment.payoutPolicy) ||
+    !same(
+      evmAwardId(BigInt(deployment.chainId), deployment.vault, `0x${state[3]}`),
+      input.obligationId,
+    )
+  )
+    throw new Error("Finalized funded award is invalid");
+  if (BigInt(`0x${state[5]}`) !== 0n)
+    return { deployment, state: "paid" as const };
+  const current = await binding(deployment, actor);
+  if (current.version === "0")
+    return { deployment, state: "awaiting-wallet" as const };
+  await assertPayable(deployment, current, BigInt(`0x${state[4]}`));
+  return {
+    deployment,
+    state: "ready" as const,
+    data: buildPayCalldata(input.obligationId, current.version),
+    destination: current.destination,
+    version: current.version,
+  };
+}
+
+/** This gas key has no vault authority. The contract selects the co-signed destination. */
+export async function submitPermissionlessEvmPayment(
+  env: PublicEvmExecutorEnvironment,
+  input: { network: string; vault: string; obligationId: string },
+) {
+  const plan = await preparePermissionlessEvmPayment(env, input);
+  const { deployment } = plan;
+  const roles = await Promise.all(
+    ["0x13fa3c08", "0x8da5cb5b"].map((data) => call(deployment, data, 1)),
+  );
+  if (
+    [
+      deployment.feeRecipient,
+      deployment.registrar,
+      ...roles.map((value) => `0x${value[0].slice(24)}`),
+    ].some((role) => same(role, env.SIGNER.address))
+  )
+    throw new Error("Keeper key must have no vault role");
+  const fingerprint = digest(
+    JSON.stringify([
+      deployment.chainId,
+      input.vault.toLowerCase(),
+      input.obligationId.toLowerCase(),
+    ]),
+  );
+  const key = `keeper:pay:${fingerprint}`;
+  const previous = await env.JOURNAL.get<Attempt>(key);
+  if (
+    previous &&
+    !(await retireRevertedAttempt(env, deployment, key, previous))
+  ) {
+    return {
+      state: "submitted" as const,
+      ...(await signAndSubmit(env, deployment, key, fingerprint, "", {
+        ...input,
+        idempotencyKey: fingerprint.slice(2),
+      })),
+    };
+  }
+  if (plan.state !== "ready") return { state: plan.state };
+  return {
+    state: "submitted" as const,
+    ...(await signAndSubmit(env, deployment, key, fingerprint, plan.data, {
+      ...input,
+      idempotencyKey: fingerprint.slice(2),
+    })),
+  };
+}
+
 /** The vault's identity authority, read at the finalized block, must be this signer. */
 async function assertIdentitySigner(
   env: ExecutorEnvironment,
@@ -714,6 +1097,7 @@ async function storedBindingCalldata(
   config: Deployment,
   input: DispatchPayment,
   expectedVersion: string,
+  exactConsent?: { expiresAt: string; signature: string },
 ) {
   // As the Solana program does, never bind the identity authority (or this
   // attester's own key) as a payout destination. The EVM vault would accept it.
@@ -723,7 +1107,7 @@ async function storedBindingCalldata(
   )
     throw new Error("The identity authority cannot be a payout destination");
   const accepted = await env.PAYMENTS_DB.prepare(
-    "SELECT expires_at expiresAt,signature FROM payment_binding_authorizations WHERE claim_id=? AND github_user_id=? AND network=? AND vault=? AND chain_id=? AND expected_version=? AND CAST(expires_at AS INTEGER)>? ORDER BY CAST(expires_at AS INTEGER) DESC LIMIT 1",
+    `SELECT expires_at expiresAt,signature FROM payment_binding_authorizations WHERE claim_id=? AND github_user_id=? AND network=? AND vault=? AND chain_id=? AND expected_version=? AND CAST(expires_at AS INTEGER)>?${exactConsent ? " AND expires_at=? AND lower(signature)=?" : ""} ORDER BY CAST(expires_at AS INTEGER) DESC LIMIT 1`,
   )
     .bind(
       input.claimId,
@@ -733,6 +1117,7 @@ async function storedBindingCalldata(
       config.chainId,
       expectedVersion,
       Math.floor(Date.now() / 1000) + 600,
+      ...(exactConsent ? [exactConsent.expiresAt, exactConsent.signature] : []),
     )
     .first<{ expiresAt: string; signature: string }>();
   if (!accepted) return null;
@@ -852,8 +1237,9 @@ export async function bindingCandidates(
  *
  * There is one journal entry for each vault, actor, claim and finalized
  * binding version. A binding signed for that version is reconciled first:
- * its receipt is read and the same signed bytes are broadcast again. It is
- * never replaced until a finalized revert proof exists. The vault's
+ * its receipt is read independently of current authorization. Missing receipts
+ * permit the same bytes to be sent only while the exact claim and wallet consent
+ * remain authorized. Held bytes are never replaced without a finalized revert. The vault's
  * expectedVersion check refuses a replayed or reordered binding.
  */
 export async function bindStoredDestination(
@@ -891,7 +1277,17 @@ export async function bindStoredDestination(
   )
     return {
       state: "submitted",
-      ...(await signAndSubmit(env, deployment, key, operation, "", journaled)),
+      ...(await signAndSubmit(
+        env,
+        deployment,
+        key,
+        operation,
+        "",
+        journaled,
+        undefined,
+        (attempt) =>
+          authorizeStoredBindingBroadcast(env, deployment, key, attempt),
+      )),
     };
   if ((await obligation(deployment, authorization)).paid)
     throw new Error("Award already paid");
@@ -916,6 +1312,8 @@ export async function bindStoredDestination(
       data,
       journaled,
       PENDING_BINDINGS,
+      (attempt) =>
+        authorizeStoredBindingBroadcast(env, deployment, key, attempt),
     )),
   };
 }
@@ -924,12 +1322,106 @@ const STORED_BINDING = "bind:stored:";
 /** Journal keys of stored bindings signed but not yet finalized. */
 const PENDING_BINDINGS = "pending-stored-bindings";
 
+const storedBindingAbi = parseAbi([
+  "function bindDestination(uint64 actorId,address destination,uint64 expectedVersion,bytes32 claimDigest,uint64 expiresAt,bytes walletSignature)",
+]);
+
+/** Rebuild the journaled intent from current D1 authority before its bytes leave the signer. */
+async function authorizeStoredBindingBroadcast(
+  env: ExecutorEnvironment,
+  deployment: Deployment,
+  key: string,
+  attempt: Attempt,
+) {
+  const transaction = parseTransaction(attempt.rawTransaction);
+  if (
+    !attempt.rawTransaction.startsWith("0x02") ||
+    transactionHash(attempt.rawTransaction) !== attempt.transactionId ||
+    transaction.chainId !== Number(deployment.chainId) ||
+    !same(transaction.to ?? "", deployment.vault) ||
+    (transaction.value ?? 0n) !== 0n ||
+    !transaction.data ||
+    !isEscrowChain(deployment.chain) ||
+    !same(
+      await recoverTransactionAddress({
+        serializedTransaction: attempt.rawTransaction as `0x02${string}`,
+      }),
+      env.SIGNER.address,
+    )
+  )
+    throw new Error(
+      "Stored binding transaction differs from its reviewed signer or deployment",
+    );
+  const { args } = decodeFunctionData({
+    abi: storedBindingAbi,
+    data: transaction.data,
+  });
+  const [actor, destination, version, claimDigest, expiresAt, signature] = args;
+  const candidate = await env.PAYMENTS_DB.prepare(
+    "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain WHERE o.id=? AND w.github_user_id=? AND w.record_sha256=? AND lower(w.wallet_address)=?",
+  )
+    .bind(
+      attempt.obligationId,
+      actor.toString(),
+      claimDigest.slice(2),
+      destination.toLowerCase(),
+    )
+    .first<BindingCandidate>();
+  if (!candidate)
+    throw new Error("Stored binding claim unavailable; signed attempt held");
+  const input: BindingRequest = { ...candidate, idempotencyKey: null };
+  const fingerprint = digest(
+    JSON.stringify([
+      deployment.chainId,
+      input.vault.toLowerCase(),
+      input.githubUserId,
+      input.claimId,
+      input.claimDigest,
+      input.destination.toLowerCase(),
+      version.toString(),
+    ]),
+  );
+  if (
+    fingerprint !== attempt.fingerprint ||
+    key !== `${STORED_BINDING}${fingerprint.slice(2)}` ||
+    input.network !== attempt.network ||
+    !same(input.vault, attempt.vault)
+  )
+    throw new Error("Stored binding differs from its recorded authorization");
+  const authorization = await authorizeRegistry(
+    env,
+    input,
+    deployment.chain,
+    "none",
+  );
+  await assertIdentitySigner(env, deployment);
+  if ((await obligation(deployment, authorization)).paid)
+    throw new Error("Award already paid; signed binding held");
+  const current = await binding(deployment, input.githubUserId);
+  if (current.version !== version.toString())
+    throw new Error(
+      "Stored binding version is no longer current; signed attempt held",
+    );
+  await authorizeBindingVersion(env, input, current, "none");
+  const data = await storedBindingCalldata(
+    env,
+    deployment,
+    input,
+    current.version,
+    { expiresAt: expiresAt.toString(), signature },
+  );
+  if (!data || !same(data, transaction.data))
+    throw new Error(
+      "Stored binding consent unavailable or expired; signed attempt held",
+    );
+  // Chain reads can take time. Recheck the current claim after them, directly before send.
+  await authorizeRegistry(env, input, deployment.chain, "none");
+}
+
 /**
- * Reconciles one signed stored binding, whether or not its contributor is
- * still a candidate. A later attester transaction cannot be mined while an
- * earlier nonce is unsent, so every signed binding is broadcast again with
- * its same bytes until it is finalized or a finalized revert proof retires
- * it. Returns true when nothing more is needed.
+ * Reconcile receipts even after the claim changes. A missing receipt is not
+ * permission to resend obsolete consent. Keep held bytes, hash and nonce intact;
+ * this alone does not resolve the shared nonce gap for later contributors.
  */
 async function reconcileStoredBinding(
   env: ExecutorEnvironment,
@@ -940,8 +1432,18 @@ async function reconcileStoredBinding(
   const deployment = await preflightEvmDeployment(env, attempt);
   const receipt = (await rpc(deployment, "eth_getTransactionReceipt", [
     attempt.transactionId,
-  ])) as { status: string; blockNumber: string } | null;
+  ])) as {
+    status: string;
+    transactionHash: string;
+    blockHash: string;
+    blockNumber: string;
+  } | null;
   if (receipt) {
+    if (
+      receipt.transactionHash.toLowerCase() !==
+      attempt.transactionId.toLowerCase()
+    )
+      throw new Error("Recorded binding receipt identity mismatch");
     if (receipt.status !== "0x1") {
       if (await retireRevertedAttempt(env, deployment, key, attempt))
         return { settled: true };
@@ -953,18 +1455,32 @@ async function reconcileStoredBinding(
       "finalized",
       false,
     ])) as { number: string };
-    return {
-      settled: BigInt(receipt.blockNumber) <= BigInt(finalized.number),
-    };
+    const block = (await rpc(deployment, "eth_getBlockByNumber", [
+      receipt.blockNumber,
+      false,
+    ])) as { hash: string } | null;
+    if (!block || block.hash !== receipt.blockHash)
+      throw new Error("Recorded binding receipt is not canonical");
+    return { settled: BigInt(receipt.blockNumber) <= BigInt(finalized.number) };
   }
   return {
     settled: false,
-    ...(await signAndSubmit(env, deployment, key, attempt.fingerprint, "", {
-      network: attempt.network,
-      vault: attempt.vault,
-      obligationId: attempt.obligationId,
-      idempotencyKey: key.slice(STORED_BINDING.length),
-    })),
+    ...(await signAndSubmit(
+      env,
+      deployment,
+      key,
+      attempt.fingerprint,
+      "",
+      {
+        network: attempt.network,
+        vault: attempt.vault,
+        obligationId: attempt.obligationId,
+        idempotencyKey: key.slice(STORED_BINDING.length),
+      },
+      undefined,
+      (current) =>
+        authorizeStoredBindingBroadcast(env, deployment, key, current),
+    )),
   };
 }
 

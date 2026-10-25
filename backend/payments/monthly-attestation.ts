@@ -3,6 +3,7 @@
  * This prepares authorization bytes only. It does not reserve or pay funds.
  */
 import {
+  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmMonthlyDigest,
 } from "../../contracts/evm/adapter";
@@ -48,6 +49,8 @@ export interface MonthlyAttestationPlan {
   messageHex: string;
   family: "evm" | "solana";
   totalGrossBase: string;
+  /** EVM V2: one remaining-source execution attempt for the frozen allocation. */
+  evmReservation?: EvmMonthlyReservation;
   /** Solana only: Unix seconds of the finalized slot at which the attester saw
    * no `origin` or `monthly-source` account for any included source. */
   frozenAt?: string;
@@ -74,6 +77,7 @@ export async function prepareMonthlyAttestation(
   },
   request: MonthlyAttestationRequest,
   frozenAt?: string,
+  retainEvmSources = false,
 ): Promise<MonthlyAttestationPlan> {
   const period = assertPeriod(request.period);
   const cutoff = monthlyCutoff(deps.schedule, period);
@@ -157,6 +161,17 @@ export async function prepareMonthlyAttestation(
     reject(
       "snapshot_changed",
       "The frozen allocation does not match the current project and proposal.",
+    );
+  const revision = await deps.db
+    .prepare(
+      "SELECT manifest FROM project_revisions WHERE project_id=? AND manifest_sha256=?",
+    )
+    .bind(project.id, snapshot.manifestSha256)
+    .first<{ manifest: string }>();
+  if (!revision || sha256Hex(revision.manifest) !== snapshot.manifestSha256)
+    reject(
+      "snapshot_changed",
+      "The frozen allocation's project revision is unavailable.",
     );
   // As at the freeze, a later revision keeps the month only with the financial
   // terms that sized its proposal; the snapshot keeps its freeze-time revision.
@@ -319,7 +334,13 @@ export async function prepareMonthlyAttestation(
   // the Solana leaf could never settle. Leave it out so the rest of the month
   // commits; the owner view reports it as a conflict. An identical award stays
   // in and is counted once.
-  const chain = await chainAwards(deps.db, request.network, deployment.vault);
+  const network = ESCROW_NETWORKS[request.network];
+  // V2 derives remaining entries from one finalized chain block. Feed it the
+  // whole funded allocation: indexing progress must not change its identity.
+  const chain =
+    retainEvmSources && network.family === "evm"
+      ? new Map()
+      : await chainAwards(deps.db, request.network, deployment.vault);
   const committable = eligible.filter((a) => {
     const held = chain.get(a.sourceDigest);
     return !held || holdsAward(held, a);
@@ -329,7 +350,6 @@ export async function prepareMonthlyAttestation(
   const totalGrossBase = committable
     .reduce((total, a) => total + BigInt(a.grossBase), 0n)
     .toString();
-  const network = ESCROW_NETWORKS[request.network];
   const entries = committable.map((a) => ({
     githubUserId: a.githubUserId,
     grossMicro: a.grossBase,

@@ -1,6 +1,6 @@
 /**
  * Rehearses the mainnet EVM escrow upgrade (contracts/DEPLOY-MAINNET.md, "Upgrade to development
- * 2a4e80b3") on a local Anvil fork. It never sends anything to the forked network: every
+ * monthly reserve V2") on a local Anvil fork. It never sends anything to the forked network: every
  * transaction goes to the local fork, and the upgrade authority is impersonated there.
  *
  *   bun contracts/evm/integration/mainnet-upgrade-rehearsal.ts <fork-rpc-url> [logs-rpc-url] [anvil-port]
@@ -11,11 +11,10 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { getContractAddress, keccak256, toBytes } from "viem";
+import { keccak256, toBytes } from "viem";
 import { privateKeyToAddress } from "viem/accounts";
 import {
   type BindingInput,
@@ -34,10 +33,29 @@ import {
   evmMonthlyDigest,
   type MonthlyAllocationEntry,
   prepareEvmVaultCreation,
+  readVaultTotals,
   verifyEvmDeployment,
   verifyPayment,
   verifyReserve,
 } from "../adapter";
+import {
+  buildCommitMonthlyLeafCalldata,
+  buildReserveMonthlyCalldata,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
+  prepareEvmMonthlyReservation,
+  readEvmMonthlyReserve,
+} from "../monthly-reserve";
+import {
+  assertFactoryDeploymentBlock,
+  expectedImplementation,
+  IMPLEMENTATION_SLOT,
+  INITIALIZABLE_SLOT,
+  createdVaults as readCreatedVaults,
+  sha256Hex,
+  type VaultStorage,
+  vaultStorage,
+} from "./upgrade";
 
 const forkUrl = process.argv[2];
 const logsUrl = process.argv[3] ?? forkUrl;
@@ -67,26 +85,52 @@ const OLD_REVIEW: EvmImplementationReview = {
   factoryImplementationCodeSha256:
     "62a3bf4a741b8084a63152835047bb71e8396b153a112225910d1dffecd64275",
 };
-/** The block of each factory proxy's deployment transaction: the first block with VaultCreated logs. */
+/** The block of each factory proxy's deployment transaction, checked as its first code block. */
 const FACTORY_DEPLOYMENT_BLOCK: Record<string, bigint> = {
   "8453": 53020390n,
   "1": 26261441n,
   "4663": 96643004n,
 };
-const CREATE2_DEPLOYER = "0x4e59b44847b379578588920cA78FbF26c0B4956C";
-const SALT = keccak256(toBytes("slop.escrow.implementation"));
-const IMPLEMENTATION_SLOT =
-  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
-/** OpenZeppelin v5 Initializable storage (ERC-7201 namespace "openzeppelin.storage.Initializable"). */
-const INITIALIZABLE_SLOT =
-  "0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00";
-const VAULT_CREATED = keccak256(
-  toBytes("VaultCreated(bytes32,address,address,address,uint8,uint8)"),
+// Bind state and inventory providers to one finalized chain view before starting the fork.
+const upstreamChainId = String(await rpc("eth_chainId", [], forkUrl));
+const finalized = (await rpc(
+  "eth_getBlockByNumber",
+  ["finalized", false],
+  forkUrl,
+)) as { number: string; hash: string } | null;
+assert(
+  finalized &&
+    /^0x[0-9a-fA-F]+$/.test(finalized.number) &&
+    /^0x[0-9a-fA-F]{64}$/.test(finalized.hash),
+  "State provider did not return a finalized block",
 );
-
+const finalizedBlockNumber = BigInt(finalized.number);
+assert.equal(
+  BigInt(String(await rpc("eth_chainId", [], logsUrl))),
+  BigInt(upstreamChainId),
+  "State and history providers use different chains",
+);
+const inventoryBlock = (await rpc(
+  "eth_getBlockByNumber",
+  [finalized.number, false],
+  logsUrl,
+)) as { hash: string } | null;
+assert.equal(
+  inventoryBlock?.hash?.toLowerCase(),
+  finalized.hash.toLowerCase(),
+  "State and history providers disagree on the finalized block",
+);
 const anvil = spawn(
   "anvil",
-  ["--fork-url", forkUrl, "--port", port, "--silent"],
+  [
+    "--fork-url",
+    forkUrl,
+    "--fork-block-number",
+    finalizedBlockNumber.toString(),
+    "--port",
+    port,
+    "--silent",
+  ],
   { stdio: "ignore" },
 );
 
@@ -141,10 +185,6 @@ const word = async (address: string, slot: string | bigint) =>
   ).toLowerCase();
 const implementationOf = async (proxy: string) =>
   `0x${(await word(proxy, IMPLEMENTATION_SLOT)).slice(-40)}`;
-const sha256Hex = (hex: string) =>
-  createHash("sha256")
-    .update(Buffer.from(hex.replace(/^0x/, ""), "hex"))
-    .digest("hex");
 const codeSha256 = async (address: string) =>
   sha256Hex(String(await rpc("eth_getCode", [address, "latest"])));
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -201,41 +241,6 @@ function eventIndex(receipt: Receipt, emitter: string, topic: string) {
   assert.equal(logs.length, 1, "exactly one matching event");
   return Number(BigInt(logs[0].logIndex));
 }
-/** The CREATE2 address and reviewed digest of an implementation: its runtime code with the UUPS
- * self-reference immutable set to its own address. */
-function expectedImplementation(contract: string) {
-  const artifact = JSON.parse(
-    readFileSync(`${root}/out/ProjectEscrow.sol/${contract}.json`, "utf8"),
-  ) as {
-    bytecode: { object: string };
-    deployedBytecode: {
-      object: string;
-      immutableReferences?: Record<string, { start: number; length: number }[]>;
-    };
-  };
-  const predicted = getContractAddress({
-    opcode: "CREATE2",
-    from: CREATE2_DEPLOYER,
-    salt: SALT,
-    bytecode: artifact.bytecode.object as `0x${string}`,
-  });
-  const code = Buffer.from(
-    artifact.deployedBytecode.object.replace(/^0x/, ""),
-    "hex",
-  );
-  const self = Buffer.from(
-    predicted.slice(2).toLowerCase().padStart(64, "0"),
-    "hex",
-  );
-  for (const references of Object.values(
-    artifact.deployedBytecode.immutableReferences ?? {},
-  ))
-    for (const { start, length } of references) {
-      assert.equal(length, 32);
-      self.copy(code, start);
-    }
-  return { predicted, digest: sha256Hex(code.toString("hex")) };
-}
 /** The fee field of the vault's UnusedWithdrawn(address,uint128,uint128,uint128) event. */
 function withdrawalFee(receipt: Receipt) {
   const topic = keccak256(
@@ -247,31 +252,62 @@ function withdrawalFee(receipt: Receipt) {
 }
 /** Every vault the factory created in [fromBlock, toBlock], from its VaultCreated logs. */
 async function createdVaults(url: string, fromBlock: bigint, toBlock: bigint) {
-  const vaults: string[] = [];
-  const step = 50_000n;
-  for (let from = fromBlock; from <= toBlock; from += step) {
-    const to = from + step - 1n < toBlock ? from + step - 1n : toBlock;
-    const logs = (await rpc(
+  return readCreatedVaults(
+    (method, params) => rpc(method, params, url),
+    FACTORY,
+    fromBlock,
+    toBlock,
+    50_000n,
+  );
+}
+let vaultHistoryStart = 0n;
+/** Read public history from the verified logs provider and later fixture history from Anvil. */
+async function forkStateRpc(method: string, params: unknown[]) {
+  if (method !== "eth_getLogs") return rpc(method, params);
+  const filter = params[0] as {
+    fromBlock: string;
+    toBlock: string;
+    [key: string]: unknown;
+  };
+  const from = BigInt(filter.fromBlock);
+  const to = BigInt(filter.toBlock);
+  const boundary = finalizedBlockNumber;
+  const logs: unknown[] = [];
+  if (from <= boundary) {
+    const historical = await rpc(
       "eth_getLogs",
       [
         {
-          address: FACTORY,
-          topics: [VAULT_CREATED],
-          fromBlock: `0x${from.toString(16)}`,
-          toBlock: `0x${to.toString(16)}`,
+          ...filter,
+          toBlock: `0x${(to < boundary ? to : boundary).toString(16)}`,
         },
       ],
-      url,
-    )) as { topics: string[] }[];
-    for (const log of logs) vaults.push(`0x${log.topics[3].slice(-40)}`);
+      logsUrl,
+    );
+    assert(Array.isArray(historical), "History provider did not return logs");
+    logs.push(...historical);
   }
-  return vaults;
+  if (to > boundary) {
+    const local = await rpc("eth_getLogs", [
+      {
+        ...filter,
+        fromBlock: `0x${(from > boundary ? from : boundary + 1n).toString(16)}`,
+      },
+    ]);
+    assert(Array.isArray(local), "Local fork did not return logs");
+    logs.push(...local);
+  }
+  return logs;
 }
-/** Every declared storage slot of a vault (0 to 18), the initializer version and the implementation. */
-async function vaultState(vault: string) {
-  const slots: string[] = [];
-  for (let slot = 0n; slot <= 18n; slot++) slots.push(await word(vault, slot));
-  return { slots, initialized: await word(vault, INITIALIZABLE_SLOT) };
+async function vaultState(vault: string, previous?: VaultStorage) {
+  return vaultStorage(
+    forkStateRpc,
+    vault,
+    BigInt(String(await rpc("eth_blockNumber", []))),
+    vaultHistoryStart,
+    50_000n,
+    previous,
+  );
 }
 
 try {
@@ -292,9 +328,22 @@ try {
     `Unsupported chain ${chainId}`,
   );
   const forkBlock = BigInt(String(await rpc("eth_blockNumber", [])));
+  assert.equal(chainId, BigInt(upstreamChainId), "Fork chain identity");
+  assert.equal(forkBlock, finalizedBlockNumber, "Fork finalized block");
+  vaultHistoryStart = FACTORY_DEPLOYMENT_BLOCK[chainId.toString()];
+  await assertFactoryDeploymentBlock(
+    rpc,
+    FACTORY,
+    vaultHistoryStart,
+    forkBlock,
+  );
   const report: Record<string, unknown> = {
+    sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim(),
     chainId: chainId.toString(),
     forkBlock: forkBlock.toString(),
+    forkBlockHash: finalized.hash,
   };
 
   // 1. The live deployment matches the recorded review.
@@ -508,7 +557,9 @@ try {
   const awardsBefore = [paidBefore, monthlyBefore].map((a) =>
     readAll(vault, awardGetter, a.id),
   );
-  const mainnetBefore = await Promise.all(mainnetVaults.map(vaultState));
+  const mainnetBefore = await Promise.all(
+    mainnetVaults.map((target) => vaultState(target)),
+  );
 
   // 3. Runbook step 1: deploy both implementations with the checked-in script, as the authority.
   // The authority is impersonated but not funded: its live balance must cover the upgrade.
@@ -535,8 +586,8 @@ try {
     ],
     { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
   );
-  const vaultExpected = expectedImplementation("ProjectEscrow");
-  const factoryExpected = expectedImplementation("EscrowFactory");
+  const vaultExpected = expectedImplementation(root, "ProjectEscrow");
+  const factoryExpected = expectedImplementation(root, "EscrowFactory");
   const NEW_REVIEW: EvmImplementationReview = {
     authority: UPGRADE_AUTHORITY,
     vaultImplementation: vaultExpected.predicted,
@@ -699,11 +750,14 @@ try {
   );
   for (const [index, target] of mainnetVaults.entries())
     assert.deepEqual(
-      await vaultState(target),
+      await vaultState(target, mainnetBefore[index]),
       mainnetBefore[index],
       `live vault ${target} storage unchanged`,
     );
   const rehearsalVaultAfter = await vaultState(vault);
+  assert.equal(read(vault, "pendingMonthlyGross()(uint128)"), "0");
+  assert.equal(read(vault, "ordinarySourceSequence()(uint256)"), "1");
+  // Only the post-upgrade `between` award advanced the new sequence. Old source maps remain intact.
   // The award committed between upgrades changed the balances and award maps on purpose; every
   // other declared slot and the initializer version are unchanged.
   for (const slot of [0, 1, 2, 3, 4, 7, 8, 9, 10, 18])
@@ -716,6 +770,12 @@ try {
     rehearsalVaultAfter.initialized,
     rehearsalVaultBefore.initialized,
   );
+  for (const [slot, value] of Object.entries(rehearsalVaultBefore.mappings))
+    assert.equal(
+      rehearsalVaultAfter.mappings[slot],
+      value,
+      `existing vault mapping ${slot} unchanged`,
+    );
   assert.deepEqual(
     [paidBefore, monthlyBefore].map((a) => readAll(vault, awardGetter, a.id)),
     awardsBefore,
@@ -993,6 +1053,164 @@ try {
     "post-upgrade ceil fee verifies through the new review",
   );
   await verifyEvmDeployment(upgraded, "finalized");
+  // V2 must also work on the upgraded, funded legacy vault. Preserve a pre-upgrade floor-fee
+  // obligation, then finish the newly reserved leaves after the owner opts out and the window closes.
+  const nextDate = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1),
+  );
+  const nextPeriod = `${nextDate.getUTCFullYear()}-${String(nextDate.getUTCMonth() + 1).padStart(2, "0")}`;
+  const window = readAll(
+    vault,
+    "monthlyWindow(uint32)(uint64,uint64)",
+    nextPeriod.replace("-", ""),
+  )
+    .split("\n")
+    .map((value) => BigInt(value.split(" ")[0]));
+  await rpc("evm_setNextBlockTimestamp", [Number(window[0])]);
+  await rpc("anvil_mine", ["0x41"]);
+  const leaves = [
+    award("v2-a", "101", "1000049"),
+    award("v2-b", "105", "2000049"),
+  ].map((a) => ({
+    githubUserId: a.githubUserId,
+    grossMicro: a.grossMicro,
+    sourceDigest: a.sourceDigest,
+  }));
+  const frozen = [
+    {
+      githubUserId: monthlyBefore.githubUserId,
+      grossMicro: monthlyBefore.grossMicro,
+      sourceDigest: monthlyBefore.sourceDigest,
+    },
+    ...leaves,
+  ];
+  const preparedMonth = await prepareEvmMonthlyReservation(
+    upgraded,
+    nextPeriod,
+    keccak256(toBytes(`upgrade-rehearsal-v2-${chainId}`)),
+    frozen,
+  );
+  assert(preparedMonth, "the upgraded vault exposes V2");
+  assert.equal(
+    preparedMonth.entries.length,
+    2,
+    "the old funded source is excluded",
+  );
+  const reservation = preparedMonth.reservation;
+  const tree = evmMonthlySumTree(preparedMonth.entries);
+  const totalsConfig = {
+    ...upgraded,
+    network:
+      chainId === 8453n
+        ? ("base-mainnet" as const)
+        : chainId === 1n
+          ? ("ethereum" as const)
+          : ("robinhood-mainnet" as const),
+  };
+  const reserved = (totals: Awaited<ReturnType<typeof readVaultTotals>>) => {
+    if (totals.reserved !== null) return BigInt(totals.reserved);
+    assert(totals.reservedPrincipal !== null && totals.reservedFees !== null);
+    return BigInt(totals.reservedPrincipal) + BigInt(totals.reservedFees);
+  };
+  const beforeV2 = await readVaultTotals(totalsConfig);
+  assert(beforeV2.freeBalance !== null);
+  const admitted = await sendOk(
+    relayer.address,
+    vault,
+    buildReserveMonthlyCalldata(
+      nextPeriod,
+      reservation,
+      sign(
+        evmMonthlyReserveDigest(chainId, vault, nextPeriod, reservation),
+        authority.key,
+      ),
+    ),
+    "V2 whole-month reserve",
+  );
+  assert.equal(
+    read(vault, "pendingMonthlyGross()(uint128)"),
+    reservation.remainingGross,
+  );
+  assert.equal(
+    BigInt(read(vault, "freeBalance()(uint128)")),
+    BigInt(beforeV2.freeBalance) - BigInt(reservation.remainingGross),
+  );
+  assert.equal(readAll(vault, awardGetter, monthlyBefore.id), awardsBefore[1]);
+  await sendOk(
+    owner.address,
+    vault,
+    calldata("setMonthlyCommitment(uint128,bool)", "0", "false"),
+    "owner opt-out",
+  );
+  await rpc("evm_setNextBlockTimestamp", [Number(window[1]) + 1]);
+  await rpc("anvil_mine", ["0x41"]);
+  const pendingTotals = await readVaultTotals(totalsConfig);
+  assert.equal(
+    reserved(pendingTotals),
+    reserved(beforeV2) + BigInt(reservation.remainingGross),
+  );
+  const leafReceipts = [];
+  for (const [index, entry] of preparedMonth.entries.entries()) {
+    leafReceipts.push(
+      await sendOk(
+        relayer.address,
+        vault,
+        buildCommitMonthlyLeafCalldata(
+          nextPeriod,
+          entry,
+          index,
+          tree.proofs[index],
+        ),
+        "V2 leaf",
+      ),
+    );
+  }
+  await rpc("anvil_mine", ["0x41"]);
+  assert.equal(read(vault, "pendingMonthlyGross()(uint128)"), "0");
+  assert.equal(
+    (await readEvmMonthlyReserve(upgraded, nextPeriod)).remaining,
+    0n,
+  );
+  const completedTotals = await readVaultTotals(totalsConfig);
+  assert.equal(
+    completedTotals.freeBalance,
+    pendingTotals.freeBalance,
+    "leaves do not debit free funds twice",
+  );
+  assert.equal(reserved(completedTotals), reserved(pendingTotals));
+  for (const [index, sent] of leafReceipts.entries()) {
+    await verifyReserve(
+      upgraded,
+      sent.hash,
+      reserveEvent(sent),
+      evmAwardId(chainId, vault, preparedMonth.entries[index].sourceDigest),
+    );
+  }
+  const v2Paid = await sendOk(
+    relayer.address,
+    vault,
+    buildPayCalldata(evmAwardId(chainId, vault, leaves[0].sourceDigest), "1"),
+    "V2 funded payment after opt-out",
+  );
+  await rpc("anvil_mine", ["0x41"]);
+  await verifyPayment(
+    upgraded,
+    v2Paid.hash,
+    paidEvent(v2Paid),
+    evmAwardId(chainId, vault, leaves[0].sourceDigest),
+  );
+  report.monthlyV2 = {
+    period: nextPeriod,
+    pendingGross: reservation.remainingGross,
+    existingFloorAwardPreserved: true,
+    optOutAndWindowCompletion: true,
+    reserveGas: BigInt(admitted.receipt.gasUsed).toString(),
+    leafGas: leafReceipts.map((sent) =>
+      BigInt(sent.receipt.gasUsed).toString(),
+    ),
+    payment: v2Paid.hash,
+    state: "finalized on local fork",
+  };
   const prepared = await prepareEvmVaultCreation(upgraded, {
     projectId: keccak256(toBytes(`rehearsal-third-${chainId}`)),
     asset: token,

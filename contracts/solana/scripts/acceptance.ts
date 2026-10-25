@@ -20,6 +20,7 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  SolanaJSONRPCError,
   SystemProgram,
   sendAndConfirmTransaction,
   Transaction,
@@ -61,6 +62,8 @@ import {
   completeSolanaBinding,
   createSolanaAttester,
   createSolanaExecutor,
+  preflightSolanaDeployment,
+  solanaTransactionStatus,
 } from "../../../workers/payment-executor/solana";
 import type { PaymentsWorkerEnvironment } from "../../../workers/payments/index";
 import {
@@ -259,6 +262,34 @@ export function escrow(programId: PublicKey) {
         ],
         u64(input.gross),
       ),
+    /** The owner proposes a replacement identity authority for one project. */
+    proposeAuthorityRotation: (input: {
+      owner: PublicKey;
+      project: PublicKey;
+      next: PublicKey;
+    }) =>
+      ix(
+        "propose_authority_rotation",
+        [
+          meta(input.owner, false, true),
+          meta(input.project, true),
+          meta(new PublicKey(solanaConfigAddress(programId.toBase58()))),
+        ],
+        input.next.toBuffer(),
+      ),
+    /** The Config rotation authority confirms the pending proposal. */
+    confirmAuthorityRotation: (input: {
+      rotationAuthority: PublicKey;
+      project: PublicKey;
+    }) =>
+      ix("confirm_authority_rotation", [
+        meta(input.rotationAuthority, false, true),
+        meta(new PublicKey(solanaConfigAddress(programId.toBase58()))),
+        meta(input.project, true),
+      ]),
+    /** Anyone executes a confirmed proposal after its rotation delay. */
+    executeAuthorityRotation: (project: PublicKey) =>
+      ix("execute_authority_rotation", [meta(project, true)]),
     claimFees: (input: {
       project: PublicKey;
       mint: PublicKey;
@@ -469,7 +500,7 @@ export function escrow(programId: PublicKey) {
   };
 }
 
-/** Signs keyed transactions once; a rerun rebroadcasts the saved bytes until their blockhash expires. */
+/** Reuses each signed step. An expired signature with unknown outcome stays pending. */
 export class SolanaChain {
   readonly connection: Connection;
   constructor(
@@ -484,7 +515,15 @@ export class SolanaChain {
   ) {
     const info = await this.connection
       .getTokenAccountBalance(account, commitment)
-      .catch(() => null);
+      .catch(async (error) => {
+        if (
+          error instanceof SolanaJSONRPCError &&
+          error.code === -32602 &&
+          (await this.connection.getAccountInfo(account, commitment)) === null
+        )
+          return null;
+        throw error;
+      });
     return info ? BigInt(info.value.amount) : 0n;
   }
   /** Simulates instructions that must fail and returns the program error and logs. */
@@ -526,9 +565,11 @@ export class SolanaChain {
       if (!status) {
         const height = await this.connection.getBlockHeight("finalized");
         if (height > (record.lastValidBlockHeight ?? 0)) {
-          // An expired blockhash can never land, so a fresh signature is safe.
-          delete steps[key];
-          record = undefined;
+          // Expiry prevents a later send; it does not prove an earlier send
+          // never landed. Deposits are not idempotent, so retain the evidence.
+          throw new Waiting(
+            `${key}: ${record.transactionId} expired with an unknown outcome; reconcile its finalized receipt before continuing`,
+          );
         }
       }
     }
@@ -997,11 +1038,22 @@ export function solanaServices(
       relayer: service(async (path, body) => {
         if (path === "/v1/pay")
           return createSolanaExecutor(relayerEngine).submit(body as never);
-        if (path === "/v1/attempt-status")
-          return lookupAttempt(
+        if (path === "/v1/attempt-status") {
+          const result = await lookupAttempt(
             { PAYMENTS_DB: env.PAYMENTS_DB, JOURNAL: relayerJournal },
             body as never,
           );
+          if (!result.transactionId) return result;
+          const config = await preflightSolanaDeployment(
+            relayerEngine,
+            body as never,
+          );
+          return {
+            ...result,
+            submitted:
+              (await solanaTransactionStatus({ config }, result)) !== null,
+          };
+        }
         throw new Error("Not found");
       }),
     };
@@ -1530,18 +1582,24 @@ export async function runSolana(
       programId: programId.toBase58(),
     });
     const vaultBalance = await chain.tokenBalance(vault, "finalized");
-    const result = await reconcile(projection, entry.projectId, totals, {
-      totalDeposited: amounts.totalDeposit.toString(),
-      totalPaid: (amounts.netA + amounts.netB).toString(),
-      totalPayoutFees: (amounts.feeA + amounts.feeB).toString(),
-      totalGrossWithdrawn: amounts.withdrawGross.toString(),
-      totalWithdrawalFees: amounts.withdrawFee.toString(),
-      freeBalance: "0",
-      reservedPrincipal: null,
-      reservedFees: null,
-      accruedFees: "0",
-      reserved: "0",
-    });
+    const result = await reconcile(
+      projection,
+      entry.projectId,
+      totals,
+      {
+        totalDeposited: amounts.totalDeposit.toString(),
+        totalPaid: (amounts.netA + amounts.netB).toString(),
+        totalPayoutFees: (amounts.feeA + amounts.feeB).toString(),
+        totalGrossWithdrawn: amounts.withdrawGross.toString(),
+        totalWithdrawalFees: amounts.withdrawFee.toString(),
+        freeBalance: "0",
+        reservedPrincipal: null,
+        reservedFees: null,
+        accruedFees: "0",
+        reserved: "0",
+      },
+      vault.toBase58(),
+    );
     entry.checks.reconciliation = {
       ...result,
       vaultTokenBalance: vaultBalance.toString(),
