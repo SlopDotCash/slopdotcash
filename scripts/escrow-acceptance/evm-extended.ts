@@ -25,6 +25,7 @@ import {
   parseAbi,
 } from "viem";
 import { type PrivateKeyAccount, privateKeyToAccount } from "viem/accounts";
+import { handlePaymentsApi } from "../../backend/payments/handler";
 import {
   buildBindCalldata,
   buildCancelBindingCalldata,
@@ -41,7 +42,29 @@ import {
   evmVaultKey,
   type MonthlyAllocationEntry,
 } from "../../contracts/evm/adapter";
+import {
+  buildCommitMonthlyLeafCalldata,
+  buildReserveMonthlyCalldata,
+  type EvmMonthlyReservation,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
+  prepareEvmMonthlyReservation,
+  readEvmMonthlyReserve,
+} from "../../contracts/evm/monthly-reserve";
+import { onRequest } from "../../functions/api/v1/[[path]]";
 import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
+import {
+  monthlyCutoff,
+  PRD_MONTHLY_SCHEDULE,
+} from "../../src/lib/payments/monthly-allocation";
+import { preflightEvmDeployment } from "../../workers/payment-executor/core";
+import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
+import {
+  type KeeperConfiguration,
+  type KeeperResult,
+  runKeeper,
+} from "../payment-keeper/keeper";
+import { openKeeperStore } from "../payment-keeper/store";
 import {
   ERC20,
   evmDeploymentRecord,
@@ -60,7 +83,9 @@ import {
   evmKey,
   extendedAmounts,
   FaultRpc,
+  isLoopbackRpc,
   openMonthlyPeriod,
+  RpcError,
   requireEnv,
   runPaymentsCron,
   runScenarios,
@@ -430,11 +455,12 @@ export async function runEvmExtended(
     actor: TestActor,
     destination: PrivateKeyAccount,
     expectedVersion: bigint,
+    authority: PrivateKeyAccount = identity,
   ) => {
     const receipt = await send(
       entry,
       key,
-      identity,
+      authority,
       vault,
       entry.steps[key]
         ? "0x"
@@ -519,6 +545,132 @@ export async function runEvmExtended(
       expected,
     );
     return receipt;
+  };
+
+  /** The monthly reserve version of the vault logic the factory creates now; 1 without V2. */
+  const reserveVersion = async () => {
+    const implementation = await chain.read<string>(
+      ctx.factory,
+      FACTORY,
+      "vaultImplementation",
+    );
+    try {
+      return Number(
+        await chain.read<number>(
+          implementation,
+          VAULT,
+          "monthlyReserveVersion",
+        ),
+      );
+    } catch (error) {
+      if (error instanceof RpcError) return 1;
+      throw error;
+    }
+  };
+  /**
+   * One bounded run of the project-operated keeper (scripts/payment-keeper)
+   * with the relayer key as its dedicated gas signer. The keeper reads the
+   * unchanged public registry and payment routes through an in-process
+   * transport to this run's registry and payments databases; every other
+   * request, including each RPC call, goes to the network unchanged.
+   */
+  const keeperRunner = (
+    services: ReturnType<typeof evmServices>,
+    projectId: string,
+    file: string,
+  ) => {
+    const origin = "https://keeper.acceptance.invalid";
+    const gasCeiling = BigInt(
+      (ctx.policy as { gasCeiling?: string }).gasCeiling ?? "0",
+    );
+    const additionalFeeReserve =
+      process.env.ESCROW_ACCEPTANCE_KEEPER_ADDITIONAL_FEE_RESERVE ??
+      (ctx.policy.chain === "base" && !isLoopbackRpc(ctx.rpcUrl) ? "" : "0");
+    if (!/^(0|[1-9][0-9]*)$/.test(additionalFeeReserve))
+      throw new Error(
+        "ESCROW_ACCEPTANCE_KEEPER_ADDITIONAL_FEE_RESERVE (wei) is required on Base Sepolia for the keeper's L1 and operator fee reserve",
+      );
+    // The executor's reviewed gas ceiling at its 10-gwei fee ceiling.
+    const perTransaction =
+      gasCeiling * 10_000_000_000n + BigInt(additionalFeeReserve);
+    const configuration: KeeperConfiguration = {
+      apiOrigin: origin,
+      network: network as KeeperConfiguration["network"],
+      projectIds: [projectId],
+      signer: keys.relayer.address,
+      rpcUrl: ctx.rpcUrl,
+      perRun: 16,
+      gas: {
+        perTransaction: text(perTransaction),
+        perDay: text(perTransaction * 40n),
+        additionalFeeReserve,
+      },
+    };
+    let signatures = 0;
+    const signer = {
+      address: keys.relayer.address,
+      async signTransaction(
+        input: Parameters<typeof keys.relayer.signTransaction>[0],
+      ) {
+        signatures += 1;
+        return keys.relayer.signTransaction(input);
+      },
+    };
+    const route = (real: typeof fetch) =>
+      (async (input: Request | string | URL, init?: RequestInit) => {
+        const url = new URL(
+          input instanceof Request ? input.url : String(input),
+        );
+        if (url.origin !== origin) return real(input, init);
+        const request = new Request(
+          `https://slop.cash${url.pathname}${url.search}`,
+        );
+        return url.pathname.startsWith("/api/v1/payments/")
+          ? handlePaymentsApi(request, { db: services.projection.db })
+          : onRequest({
+              request,
+              env: {
+                SLOP_DB: services.registry.db,
+                PAYMENT_NETWORKS: JSON.stringify([network]),
+              },
+            } as never);
+      }) as typeof fetch;
+    const open = <T>(
+      use: (store: ReturnType<typeof openKeeperStore>) => Promise<T>,
+    ) =>
+      (async () => {
+        const store = openKeeperStore(file);
+        try {
+          return await use(store);
+        } finally {
+          store.close();
+        }
+      })();
+    return {
+      signatures: () => signatures,
+      journal: <T>(key: string) => open((store) => store.journal.get<T>(key)),
+      tick: () =>
+        open(async (store) => {
+          const real = globalThis.fetch;
+          globalThis.fetch = route(real);
+          try {
+            return await runKeeper(
+              configuration,
+              {
+                store,
+                evmSigner: signer,
+                // Chain time: on a public test network it equals the wall clock;
+                // a local fork moves it forward to the commitment window.
+                now: new Date(Number(await chain.latestTime()) * 1000),
+                ...(isLoopbackRpc(ctx.rpcUrl) ? { localChain: {} } : {}),
+              },
+              true,
+            );
+          } finally {
+            globalThis.fetch = real;
+          }
+        }),
+    };
   };
 
   // ---- 1. private bounty ---------------------------------------------------
@@ -627,15 +779,36 @@ export async function runEvmExtended(
 
   // ---- 2. monthly commitment -----------------------------------------------
   async function monthly(entry: ScenarioEvidence) {
+    // A factory whose vault logic has the V2 monthly reserve runs the month
+    // through the project-operated keeper (reserveMonthly, then
+    // commitMonthlyLeaf). An earlier factory keeps the legacy executor path.
+    entry.checks.monthlyPath ??=
+      (await reserveVersion()) === 2 ? "keeper-v2" : "executor-v1";
+    const keeperPath = entry.checks.monthlyPath === "keeper-v2";
+    if (keeperPath && !entry.checks.periods) {
+      // The keeper serves the PRD schedule only, from its first period.
+      const first = PRD_MONTHLY_SCHEDULE.firstPeriod;
+      if (openMonthlyPeriod(await chain.latestTime()).open < first) {
+        const opens = monthlyCutoff(PRD_MONTHLY_SCHEDULE, first);
+        throw new Waiting(
+          `The project-operated keeper admits PRD periods from ${first}. That commitment window opens at ${opens?.toISOString()} chain time. No monthly transaction was sent.`,
+          opens,
+        );
+      }
+    }
     const asset = scenarioAsset;
     const amounts = await amountsFor(asset);
     const vault = await vaultFor(entry, "monthly", asset);
+    const monthlyProjectId = `acceptance-${run.runId.slice(0, 8)}-monthly`;
+    const monthlyProject = () => ({
+      projectId: monthlyProjectId,
+      effectiveCycle: run.startedAt.slice(0, 7),
+      deployment: entry.checks.deployment as EscrowDeployment,
+      // The keeper admits a month only for an active registry project.
+      status: keeperPath ? ("active" as const) : ("paused" as const),
+    });
     const services = evmServices(ctx, join(directory, "monthly"), () => [
-      {
-        projectId: `acceptance-${run.runId.slice(0, 8)}-monthly`,
-        effectiveCycle: run.startedAt.slice(0, 7),
-        deployment: entry.checks.deployment as EscrowDeployment,
-      },
+      monthlyProject(),
     ]);
     if (!entry.checks.deployment) {
       entry.checks.deployment = await evmDeploymentRecord(
@@ -836,162 +1009,253 @@ export async function runEvmExtended(
         ]),
       ),
     );
-    // Automatic path: the production executor submits the signed allocation.
-    const signature = (await attest(periods.open, full)).slice(2);
-    const authorization = {
-      plan: {
-        request: {
-          projectId: `acceptance-${run.runId.slice(0, 8)}-monthly`,
-          period: periods.open,
-          network,
-          snapshotSha256: sha256Text(
+    /**
+     * The V2 path. The identity test key signs the reservation that
+     * prepareEvmMonthlyReservation returns (the attester's own `reserve`
+     * step), the payment API publishes it, and the project-operated keeper
+     * (runKeeper) reads it through the public routes, sends reserveMonthly,
+     * commits each leaf and pays each bound award. The relayer key is the
+     * keeper's dedicated gas signer; it has no vault role.
+     */
+    async function keeperCommitment() {
+      const period = periods.open;
+      const pinned = services.registry.record([monthlyProject()]);
+      const environment = {
+        PAYMENT_DEPLOYMENTS: JSON.stringify(pinned),
+        PAYMENT_RPC_URLS: JSON.stringify({ [network]: ctx.rpcUrl }),
+      };
+      const target = { network, vault };
+      const config = async () => {
+        const deployment = await preflightEvmDeployment(environment, target);
+        return { ...deployment, chainId: BigInt(deployment.chainId) };
+      };
+      const latestBlock = Object.values(entry.steps).reduce(
+        (max, step) =>
+          BigInt(step.block ?? "0") > max ? BigInt(step.block ?? "0") : max,
+        0n,
+      );
+      // The reservation reads the source sequence and funded awards at the
+      // finalized block, so every earlier monthly step must be final first.
+      await ready(async () => {
+        const finalized = await chain.finalizedNumber();
+        if (finalized < latestBlock)
+          throw new Waiting(
+            `the monthly reservation waits for finality (block ${latestBlock}, finalized ${finalized})`,
+          );
+      });
+      if (!entry.checks.keeperAuthorization) {
+        const snapshotSha256 = sha256Text(
+          JSON.stringify(full, (_, v) =>
+            typeof v === "bigint" ? v.toString() : v,
+          ),
+        );
+        const prepared = await prepareEvmMonthlyReservation(
+          await config(),
+          period,
+          `0x${snapshotSha256}`,
+          full,
+        );
+        if (!prepared) throw new Error("The vault has no V2 monthly reserve");
+        // The manually committed award is funded and stays out of the reserve.
+        expectEqual(
+          "V2 reserve sources",
+          prepared.entries.map((e) => e.sourceDigest).join(","),
+          [items[1].source, items[2].source].join(","),
+        );
+        const messageHex = evmMonthlyReserveDigest(
+          BigInt(chainId),
+          vault,
+          period,
+          prepared.reservation,
+        ).slice(2);
+        const authorization: MonthlyAuthorization = {
+          plan: {
+            request: {
+              projectId: monthlyProjectId,
+              period,
+              network: network as EscrowDeployment["network"],
+              snapshotSha256,
+            },
+            deployment: entry.checks.deployment as EscrowDeployment,
+            allocationRoot: prepared.reservation.allocationRoot,
+            messageHex,
+            family: "evm",
+            totalGrossBase: prepared.reservation.wholeGross,
+            entries: prepared.entries.map((e) => ({
+              githubUserId: e.githubUserId,
+              grossMicro: String(e.grossMicro),
+              sourceDigest: e.sourceDigest,
+            })),
+            evmReservation: prepared.reservation,
+          },
+          signatureHex: (
+            await identity.sign({ hash: `0x${messageHex}` })
+          ).slice(2),
+        };
+        // Publish the frozen month as the payments coordinator stores it.
+        const manifest = services.registry.sqlite
+          .query<{ manifest: string; manifest_sha256: string }, [string]>(
+            "SELECT manifest,manifest_sha256 FROM projects WHERE id=?",
+          )
+          .get(monthlyProjectId);
+        if (!manifest) throw new Error("Monthly registry project missing");
+        const now = new Date().toISOString();
+        const db = services.projection.sqlite;
+        db.transaction(() => {
+          db.prepare(
+            "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES(?,?,?,?,?,?,?,?)",
+          ).run(
+            monthlyProjectId,
+            period,
+            manifest.manifest,
+            manifest.manifest_sha256,
+            snapshotSha256,
+            text(cap),
+            full.length,
+            now,
+          );
+          db.prepare(
+            "INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) VALUES(?,?,'automatic',NULL,0,?,?,?,?,?,?,?)",
+          ).run(
+            monthlyProjectId,
+            period,
             JSON.stringify(full, (_, v) =>
               typeof v === "bigint" ? v.toString() : v,
             ),
+            snapshotSha256,
+            network,
+            vault,
+            prepared.reservation.wholeGross,
+            now,
+            now,
+          );
+          db.prepare(
+            "INSERT INTO monthly_payment_authorizations(project_id,period,network,snapshot_sha256,authorization,published_at) VALUES(?,?,?,?,?,?)",
+          ).run(
+            monthlyProjectId,
+            period,
+            network,
+            snapshotSha256,
+            JSON.stringify(authorization),
+            now,
+          );
+        })();
+        entry.checks.keeperAuthorization = authorization;
+        await persist();
+      }
+      const authorization = entry.checks
+        .keeperAuthorization as MonthlyAuthorization;
+      const reservation = authorization.plan
+        .evmReservation as EvmMonthlyReservation;
+      const tree = evmMonthlySumTree(authorization.plan.entries);
+      const keeper = keeperRunner(
+        services,
+        monthlyProjectId,
+        join(directory, "monthly", "keeper.sqlite"),
+      );
+      const outcome = (results: KeeperResult[]) =>
+        [
+          ...new Set(
+            results.map(
+              (r) =>
+                `${r.operation} ${r.state}${r.error ? ` (${r.error})` : ""}`,
+            ),
           ),
-        },
-        deployment: entry.checks.deployment,
-        allocationRoot: evmAllocationRoot(full),
-        messageHex: digest(periods.open, full).slice(2),
-        family: "evm",
-        totalGrossBase: text(items.reduce((sum, item) => sum + item.gross, 0n)),
-        entries: full.map((e) => ({
-          ...e,
-          grossMicro: text(BigInt(e.grossMicro)),
-        })),
-      },
-      signatureHex: signature,
-    };
-    const submit = async () => {
-      const response = await services.relayer.fetch(
-        new Request("https://payments-executor.internal/v1/commit-monthly", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(authorization),
-        }),
-      );
-      return {
-        ok: response.ok,
-        body: (await response.json()) as Record<string, unknown>,
-      };
-    };
-    const relayerNonce = async () =>
-      BigInt(
-        (await chain.rpc("eth_getTransactionCount", [
-          keys.relayer.address,
-          "pending",
-        ])) as string,
-      );
-    const waitFinalized = (block: string, what: string) =>
-      ready(async () => {
-        const finalized = await chain.finalizedNumber();
-        if (finalized < BigInt(block))
-          throw new Waiting(
-            `${what} waits for finality (block ${BigInt(block)}, finalized ${finalized})`,
-          );
-      });
-    if (!entry.checks.commitment) {
-      // The executor verifies the reviewed vault at the finalized block.
-      await waitFinalized(
-        entry.steps["monthly:create"].block ?? "0",
-        "the monthly vault",
-      );
-      const freeBefore = await chain.read<bigint>(vault, VAULT, "freeBalance");
-      let transactionId =
-        entry.steps["monthly:permissionless-commit"]?.transactionId;
-      let path = "permissionless";
-      if (!transactionId) {
-        const submitted = await submit();
-        if (submitted.ok) {
-          transactionId = String(submitted.body.transactionId);
-          path = "executor";
-        } else {
-          // The executor refuses a commitment above its reviewed gas ceiling.
-          // The contract accepts the same signed allocation from anyone.
-          const data = (await commitData(periods.open, full)) as Hex;
-          const estimate = BigInt(
-            (await chain.rpc("eth_estimateGas", [
-              { from: keys.relayer.address, to: vault, data },
-            ])) as string,
-          );
-          const ceiling = BigInt(
-            (ctx.policy as { gasCeiling?: string }).gasCeiling ?? "0",
-          );
-          entry.checks.executorRefusal = {
-            response: submitted.body,
-            gasEstimate: text(estimate),
-            executorGasLimit: text((estimate * 12n) / 10n),
-            gasCeiling: text(ceiling),
-          };
-          await persist();
-          if ((estimate * 12n) / 10n <= ceiling)
-            throw new Waiting(
-              `monthly executor refused: ${JSON.stringify(submitted.body)}`,
-            );
-          transactionId = (
-            await send(
-              entry,
-              "monthly:permissionless-commit",
-              keys.relayer,
-              vault,
-              data,
-            )
-          ).transactionHash;
-        }
-      } else path = "permissionless";
-      let receipt: Receipt | null = null;
+        ]
+          .slice(0, 4)
+          .join(" | ");
+      // Admission, then the leaves, each after the previous step is final.
       await ready(async () => {
-        receipt = await chain.receipt(String(transactionId));
-        if (!receipt)
-          throw new Waiting(`monthly commitment ${transactionId} not mined`);
+        const results = await keeper.tick();
+        const state = await readEvmMonthlyReserve(await config(), period);
+        if (state.root === tree.hash && state.remaining === 0n) return;
+        throw new Waiting(
+          `keeper monthly ${BigInt(state.root) === 0n ? "reservation" : "leaves"} wait for finality (${outcome(results)})`,
+        );
       });
-      const mined = receipt as unknown as Receipt;
-      expectEqual("monthly commitment status", mined.status, "0x1");
-      const event = log(mined, vault, "MonthlyCommitted");
-      const freeAfter = await chain.read<bigint>(
+      const reserveKey = `monthly:v2:${network}:${vault}:${period}`;
+      const sent: [string, string][] = [
+        ["monthly:reserve", reserveKey],
+        ...authorization.plan.entries.map(
+          (_, index) =>
+            [
+              `monthly:leaf-${index}`,
+              `${reserveKey}:${tree.hash}:leaf:${index}`,
+            ] as [string, string],
+        ),
+      ];
+      const receipts: Record<string, Receipt> = {};
+      for (const [label, key] of sent) {
+        const attempt = await keeper.journal<{ transactionId: string }>(key);
+        const receipt = attempt && (await chain.receipt(attempt.transactionId));
+        if (receipt?.status !== "0x1")
+          throw new Error(`${label}: no successful keeper transaction`);
+        receipts[label] = receipt;
+        entry.steps[label] = {
+          transactionId: receipt.transactionHash,
+          from: keys.relayer.address.toLowerCase(),
+          status: "success",
+          block: text(BigInt(receipt.blockNumber)),
+          note: "Submitted by the project-operated keeper (scripts/payment-keeper, submitEvmMonthly V2)",
+        };
+      }
+      const reserved = log(
+        receipts["monthly:reserve"],
         vault,
-        VAULT,
-        "freeBalance",
-        [],
-        mined.blockNumber,
-      );
-      const freeAtParent = await chain.read<bigint>(
-        vault,
-        VAULT,
-        "freeBalance",
-        [],
-        at(mined.blockNumber, -1n),
+        "MonthlyReserved",
       );
       expectEqual(
-        "monthly gross",
-        event.gross,
-        authorization.plan.totalGrossBase,
+        "V2 whole gross",
+        reserved.wholeGross,
+        reservation.wholeGross,
       );
-      expectEqual("monthly awards", event.awards, 3);
+      expectEqual(
+        "V2 remaining gross",
+        reserved.remainingGross,
+        items[1].gross + items[2].gross,
+      );
+      expectEqual("V2 count", reserved.count, 2);
+      const reserveBlock = receipts["monthly:reserve"].blockNumber;
+      const freeReserved =
+        (await chain.read<bigint>(
+          vault,
+          VAULT,
+          "freeBalance",
+          [],
+          at(reserveBlock, -1n),
+        )) -
+        (await chain.read<bigint>(
+          vault,
+          VAULT,
+          "freeBalance",
+          [],
+          reserveBlock,
+        ));
       // Only the two new awards reserve funds; the manual award counts once.
       expectEqual(
         "free balance reserved by monthly",
-        freeAtParent - freeAfter,
+        freeReserved,
         items[1].gross + items[2].gross,
       );
-      entry.steps["monthly:commitment"] = {
-        transactionId: String(transactionId),
-        from: keys.relayer.address.toLowerCase(),
-        status: "success",
-        block: text(BigInt(mined.blockNumber)),
-        note:
-          path === "executor"
-            ? "Submitted by the production executor (/v1/commit-monthly, submitEvmMonthly) with the identity authority's attestation"
-            : "The production executor refused the commitment (gas above its reviewed ceiling, see executorRefusal); the relayer key submitted the same attested allocation permissionlessly",
-      };
+      for (const [index, entryItem] of authorization.plan.entries.entries()) {
+        const item = items.find((i) => i.source === entryItem.sourceDigest);
+        const committed = log(
+          receipts[`monthly:leaf-${index}`],
+          vault,
+          "AwardCommitted",
+        );
+        expectEqual(`V2 leaf ${index} gross`, committed.gross, item?.gross);
+        expectEqual(`V2 leaf ${index} fee`, committed.fee, item?.fee);
+      }
       entry.checks.commitment = {
-        path,
-        period: periods.open,
-        allocationRoot: authorization.plan.allocationRoot,
-        gross: text(event.gross as bigint),
-        awards: text(event.awards as bigint),
-        freeBefore: text(freeBefore),
-        freeReserved: text(freeAtParent - freeAfter),
+        path: "keeper-v2",
+        period,
+        allocationDigest: reservation.allocationDigest,
+        allocationRoot: reservation.allocationRoot,
+        wholeGross: reservation.wholeGross,
+        remainingGross: reservation.remainingGross,
+        sourceSequence: reservation.sourceSequence,
+        freeReserved: text(freeReserved),
         manualAwardStillPaid: (
           await chain.read<readonly unknown[]>(vault, VAULT, "awards", [
             items[0].id,
@@ -999,52 +1263,369 @@ export async function runEvmExtended(
         )[5],
       };
       await persist();
-    }
-    if (!entry.checks.replay) {
-      await waitFinalized(
-        entry.steps["monthly:commitment"].block ?? "0",
-        "the monthly commitment",
-      );
-      const nonceBefore = await relayerNonce();
-      const again = await submit();
-      const nonceAfter = await relayerNonce();
-      if (
-        (again.ok &&
-          again.body.alreadyCommitted !== true &&
-          again.body.transactionId !==
-            entry.steps["monthly:commitment"].transactionId) ||
-        nonceAfter !== nonceBefore
-      )
-        throw new Error(
-          "Executor replay submitted another monthly transaction",
-        );
-      entry.checks.replay = {
-        executor: again,
-        relayerNonceUnchanged: true,
-        revert: await refuse(
-          anyone,
+      for (const n of [1, 2])
+        await bind(
+          entry,
+          `monthly:bind-${n}`,
           vault,
-          await commitData(periods.open, full),
-        ),
-      };
-      expectEqual(
-        "monthly replay",
-        (entry.checks.replay as { revert: string }).revert,
-        "MonthlyAlreadyCommitted",
-      );
+          actors[n],
+          wallets[n],
+          0n,
+        );
+      // The keeper pays each bound award through the contract's binding.
+      await ready(async () => {
+        const results = await keeper.tick();
+        const paid = await Promise.all(
+          [1, 2].map(
+            async (n) =>
+              (
+                await chain.read<readonly unknown[]>(vault, VAULT, "awards", [
+                  items[n].id,
+                ])
+              )[5] === true,
+          ),
+        );
+        if (paid.every(Boolean)) return;
+        throw new Waiting(`keeper payments wait (${outcome(results)})`);
+      });
+      const fromBlock = BigInt(entry.steps["monthly:leaf-0"].block ?? "0");
+      for (const n of [1, 2]) {
+        const [found] = await getLogs(
+          {
+            address: vault,
+            topics: [
+              keccak256(
+                Buffer.from(
+                  "Paid(bytes32,uint64,address,uint64,uint128,uint128,uint128)",
+                ),
+              ),
+              items[n].id,
+            ],
+          },
+          fromBlock,
+        );
+        const receipt = found && (await chain.receipt(found.transactionHash));
+        if (!receipt) throw new Error(`monthly award ${n}: no Paid event`);
+        const sender = (await chain.rpc("eth_getTransactionByHash", [
+          receipt.transactionHash,
+        ])) as { from: string };
+        expectEqual(
+          `monthly award ${n} payer`,
+          sender.from.toLowerCase(),
+          keys.relayer.address.toLowerCase(),
+        );
+        const event = log(receipt, vault, "Paid");
+        expectEqual(`monthly award ${n} net`, event.net, items[n].net);
+        expectEqual(`monthly award ${n} fee`, event.fee, items[n].fee);
+        expectEqual(
+          `monthly award ${n} destination`,
+          String(event.destination).toLowerCase(),
+          wallets[n].address.toLowerCase(),
+        );
+        expectEqual(
+          `monthly award ${n} destination delta`,
+          await delta(asset, wallets[n].address, receipt),
+          items[n].net,
+        );
+        entry.steps[`monthly:pay-${n}`] = {
+          transactionId: receipt.transactionHash,
+          from: keys.relayer.address.toLowerCase(),
+          status: "success",
+          block: text(BigInt(receipt.blockNumber)),
+          note: "Paid by the project-operated keeper (submitPermissionlessEvmPayment)",
+        };
+      }
       await persist();
+      if (!entry.checks.replay) {
+        const last = BigInt(entry.steps["monthly:pay-2"].block ?? "0");
+        await ready(async () => {
+          const finalized = await chain.finalizedNumber();
+          if (finalized < last)
+            throw new Waiting(
+              `the keeper replay waits for finality (block ${last}, finalized ${finalized})`,
+            );
+        });
+        const before = keeper.signatures();
+        const results = await keeper.tick();
+        if (keeper.signatures() !== before)
+          throw new Error("Keeper replay signed another transaction");
+        entry.checks.replay = {
+          keeper: results.map((r) => ({
+            operation: r.operation,
+            state: r.state,
+          })),
+          signaturesUnchanged: true,
+          reserveRevert: await refuse(
+            anyone,
+            vault,
+            buildReserveMonthlyCalldata(
+              period,
+              reservation,
+              `0x${authorization.signatureHex}`,
+            ),
+          ),
+          legacyRevert: await refuse(
+            anyone,
+            vault,
+            await commitData(periods.open, full),
+          ),
+          leafRevert: await refuse(
+            anyone,
+            vault,
+            buildCommitMonthlyLeafCalldata(
+              period,
+              authorization.plan.entries[0],
+              0,
+              tree.proofs[0],
+            ),
+          ),
+        };
+        const replay = entry.checks.replay as Record<string, string>;
+        expectEqual(
+          "V2 reserve replay",
+          replay.reserveRevert,
+          "MonthlyAlreadyCommitted",
+        );
+        expectEqual(
+          "V2 legacy replay",
+          replay.legacyRevert,
+          "MonthlyAlreadyCommitted",
+        );
+        expectEqual(
+          "V2 leaf replay",
+          replay.leafRevert,
+          "InvalidAllocationProof",
+        );
+        await persist();
+      }
     }
-    for (const n of [1, 2]) {
-      await bind(entry, `monthly:bind-${n}`, vault, actors[n], wallets[n], 0n);
-      await pay(
-        entry,
-        `monthly:pay-${n}`,
-        vault,
-        asset,
-        items[n],
-        1n,
-        wallets[n].address,
-      );
+    if (keeperPath) await keeperCommitment();
+    else await executorCommitment();
+    // The legacy path: the production executor submits the signed allocation.
+    async function executorCommitment() {
+      // Automatic path: the production executor submits the signed allocation.
+      const signature = (await attest(periods.open, full)).slice(2);
+      const authorization = {
+        plan: {
+          request: {
+            projectId: `acceptance-${run.runId.slice(0, 8)}-monthly`,
+            period: periods.open,
+            network,
+            snapshotSha256: sha256Text(
+              JSON.stringify(full, (_, v) =>
+                typeof v === "bigint" ? v.toString() : v,
+              ),
+            ),
+          },
+          deployment: entry.checks.deployment,
+          allocationRoot: evmAllocationRoot(full),
+          messageHex: digest(periods.open, full).slice(2),
+          family: "evm",
+          totalGrossBase: text(
+            items.reduce((sum, item) => sum + item.gross, 0n),
+          ),
+          entries: full.map((e) => ({
+            ...e,
+            grossMicro: text(BigInt(e.grossMicro)),
+          })),
+        },
+        signatureHex: signature,
+      };
+      const submit = async () => {
+        const response = await services.relayer.fetch(
+          new Request("https://payments-executor.internal/v1/commit-monthly", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(authorization),
+          }),
+        );
+        return {
+          ok: response.ok,
+          body: (await response.json()) as Record<string, unknown>,
+        };
+      };
+      const relayerNonce = async () =>
+        BigInt(
+          (await chain.rpc("eth_getTransactionCount", [
+            keys.relayer.address,
+            "pending",
+          ])) as string,
+        );
+      const waitFinalized = (block: string, what: string) =>
+        ready(async () => {
+          const finalized = await chain.finalizedNumber();
+          if (finalized < BigInt(block))
+            throw new Waiting(
+              `${what} waits for finality (block ${BigInt(block)}, finalized ${finalized})`,
+            );
+        });
+      if (!entry.checks.commitment) {
+        // The executor verifies the reviewed vault at the finalized block.
+        await waitFinalized(
+          entry.steps["monthly:create"].block ?? "0",
+          "the monthly vault",
+        );
+        const freeBefore = await chain.read<bigint>(
+          vault,
+          VAULT,
+          "freeBalance",
+        );
+        let transactionId =
+          entry.steps["monthly:permissionless-commit"]?.transactionId;
+        let path = "permissionless";
+        if (!transactionId) {
+          const submitted = await submit();
+          if (submitted.ok) {
+            transactionId = String(submitted.body.transactionId);
+            path = "executor";
+          } else {
+            // The executor refuses a commitment above its reviewed gas ceiling.
+            // The contract accepts the same signed allocation from anyone.
+            const data = (await commitData(periods.open, full)) as Hex;
+            const estimate = BigInt(
+              (await chain.rpc("eth_estimateGas", [
+                { from: keys.relayer.address, to: vault, data },
+              ])) as string,
+            );
+            const ceiling = BigInt(
+              (ctx.policy as { gasCeiling?: string }).gasCeiling ?? "0",
+            );
+            entry.checks.executorRefusal = {
+              response: submitted.body,
+              gasEstimate: text(estimate),
+              executorGasLimit: text((estimate * 12n) / 10n),
+              gasCeiling: text(ceiling),
+            };
+            await persist();
+            if ((estimate * 12n) / 10n <= ceiling)
+              throw new Waiting(
+                `monthly executor refused: ${JSON.stringify(submitted.body)}`,
+              );
+            transactionId = (
+              await send(
+                entry,
+                "monthly:permissionless-commit",
+                keys.relayer,
+                vault,
+                data,
+              )
+            ).transactionHash;
+          }
+        } else path = "permissionless";
+        let receipt: Receipt | null = null;
+        await ready(async () => {
+          receipt = await chain.receipt(String(transactionId));
+          if (!receipt)
+            throw new Waiting(`monthly commitment ${transactionId} not mined`);
+        });
+        const mined = receipt as unknown as Receipt;
+        expectEqual("monthly commitment status", mined.status, "0x1");
+        const event = log(mined, vault, "MonthlyCommitted");
+        const freeAfter = await chain.read<bigint>(
+          vault,
+          VAULT,
+          "freeBalance",
+          [],
+          mined.blockNumber,
+        );
+        const freeAtParent = await chain.read<bigint>(
+          vault,
+          VAULT,
+          "freeBalance",
+          [],
+          at(mined.blockNumber, -1n),
+        );
+        expectEqual(
+          "monthly gross",
+          event.gross,
+          authorization.plan.totalGrossBase,
+        );
+        expectEqual("monthly awards", event.awards, 3);
+        // Only the two new awards reserve funds; the manual award counts once.
+        expectEqual(
+          "free balance reserved by monthly",
+          freeAtParent - freeAfter,
+          items[1].gross + items[2].gross,
+        );
+        entry.steps["monthly:commitment"] = {
+          transactionId: String(transactionId),
+          from: keys.relayer.address.toLowerCase(),
+          status: "success",
+          block: text(BigInt(mined.blockNumber)),
+          note:
+            path === "executor"
+              ? "Submitted by the production executor (/v1/commit-monthly, submitEvmMonthly) with the identity authority's attestation"
+              : "The production executor refused the commitment (gas above its reviewed ceiling, see executorRefusal); the relayer key submitted the same attested allocation permissionlessly",
+        };
+        entry.checks.commitment = {
+          path,
+          period: periods.open,
+          allocationRoot: authorization.plan.allocationRoot,
+          gross: text(event.gross as bigint),
+          awards: text(event.awards as bigint),
+          freeBefore: text(freeBefore),
+          freeReserved: text(freeAtParent - freeAfter),
+          manualAwardStillPaid: (
+            await chain.read<readonly unknown[]>(vault, VAULT, "awards", [
+              items[0].id,
+            ])
+          )[5],
+        };
+        await persist();
+      }
+      if (!entry.checks.replay) {
+        await waitFinalized(
+          entry.steps["monthly:commitment"].block ?? "0",
+          "the monthly commitment",
+        );
+        const nonceBefore = await relayerNonce();
+        const again = await submit();
+        const nonceAfter = await relayerNonce();
+        if (
+          (again.ok &&
+            again.body.alreadyCommitted !== true &&
+            again.body.transactionId !==
+              entry.steps["monthly:commitment"].transactionId) ||
+          nonceAfter !== nonceBefore
+        )
+          throw new Error(
+            "Executor replay submitted another monthly transaction",
+          );
+        entry.checks.replay = {
+          executor: again,
+          relayerNonceUnchanged: true,
+          revert: await refuse(
+            anyone,
+            vault,
+            await commitData(periods.open, full),
+          ),
+        };
+        expectEqual(
+          "monthly replay",
+          (entry.checks.replay as { revert: string }).revert,
+          "MonthlyAlreadyCommitted",
+        );
+        await persist();
+      }
+      for (const n of [1, 2]) {
+        await bind(
+          entry,
+          `monthly:bind-${n}`,
+          vault,
+          actors[n],
+          wallets[n],
+          0n,
+        );
+        await pay(
+          entry,
+          `monthly:pay-${n}`,
+          vault,
+          asset,
+          items[n],
+          1n,
+          wallets[n].address,
+        );
+      }
     }
     for (const n of [0, 1, 2])
       await expectRefusal(
@@ -1077,12 +1658,17 @@ export async function runEvmExtended(
       path:
         n === 0
           ? "manual commit and payment before the monthly commitment"
-          : "monthly commitment",
+          : keeperPath
+            ? "V2 monthly reserve and leaf, paid by the project-operated keeper"
+            : "monthly commitment",
     }));
-    entry.checks.automatic = {
-      passed: (entry.checks.commitment as { path: string }).path === "executor",
-      route: "/v1/commit-monthly",
-    };
+    const path = (entry.checks.commitment as { path: string }).path;
+    entry.checks.automatic = keeperPath
+      ? {
+          passed: path === "keeper-v2",
+          route: "scripts/payment-keeper (runKeeper, submitEvmMonthly V2)",
+        }
+      : { passed: path === "executor", route: "/v1/commit-monthly" };
     await persist();
     if (!(entry.checks.automatic as { passed: boolean }).passed)
       throw new Waiting(
@@ -1722,6 +2308,217 @@ export async function runEvmExtended(
     }
   }
 
+  // ---- 5. identity key recovery --------------------------------------------
+  /**
+   * The registrar rotates the factory identity authority to a recovery key,
+   * as the key recovery runbook (contracts/evm/README.md) prescribes for a
+   * lost or compromised attester key. The old key can no longer bind, a
+   * binding made before the rotation still pays, and the recovery key binds a
+   * new destination that pays. The registrar then rotates the authority back,
+   * so the factory leaves the run with its configured identity authority.
+   */
+  async function keyRecovery(entry: ScenarioEvidence) {
+    const recovery = ctx.recovery;
+    if (!recovery)
+      throw new Error(
+        "ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY is required for the key-recovery scenario",
+      );
+    const factory = ctx.factory;
+    const authorityAt = async (block: string) =>
+      (
+        await chain.read<string>(
+          factory,
+          FACTORY,
+          "identityAuthority",
+          [],
+          block,
+        )
+      ).toLowerCase();
+    const asset = scenarioAsset;
+    const amounts = await amountsFor(asset);
+    const vault = await vaultFor(entry, "recovery", asset);
+    const actors = [0, 1].map((n) => scenarioActor(5, n));
+    const items = [
+      award(vault, "recovery-existing", actors[0], amounts.award(100n)),
+      award(vault, "recovery-new", actors[1], amounts.award(50n)),
+    ];
+    const wallets = actors.map((_, n) => wallet(`recovery:${n}`));
+    const rotate = async (
+      label: string,
+      from: PrivateKeyAccount,
+      to: PrivateKeyAccount,
+    ) => {
+      // Already rotated on an earlier run: the stored steps are reused.
+      if (
+        !entry.steps[`recovery:${label}-propose`] &&
+        (await authorityAt("latest")) === to.address.toLowerCase()
+      )
+        throw new Error(
+          `recovery:${label}: the factory authority is already ${to.address} without a recorded rotation`,
+        );
+      const proposed = await send(
+        entry,
+        `recovery:${label}-propose`,
+        keys.registrar,
+        factory,
+        encodeFunctionData({
+          abi: FACTORY,
+          functionName: "proposeIdentityAuthority",
+          args: [to.address],
+        }),
+      );
+      const executed = await send(
+        entry,
+        `recovery:${label}-execute`,
+        keys.depositor,
+        factory,
+        encodeFunctionData({
+          abi: FACTORY,
+          functionName: "executeIdentityAuthorityRotation",
+        }),
+      );
+      const event = (() => {
+        for (const item of executed.logs) {
+          if (item.address.toLowerCase() !== factory) continue;
+          try {
+            const decoded = decodeEventLog({
+              abi: FACTORY,
+              topics: item.topics as [Hex, ...Hex[]],
+              data: item.data,
+            });
+            if (decoded.eventName === "IdentityAuthorityRotated")
+              return decoded.args as { previous: string; current: string };
+          } catch {}
+        }
+        throw new Error(`recovery:${label}: no IdentityAuthorityRotated event`);
+      })();
+      expectEqual(
+        `recovery:${label} previous`,
+        event.previous.toLowerCase(),
+        from.address.toLowerCase(),
+      );
+      expectEqual(
+        `recovery:${label} current`,
+        event.current.toLowerCase(),
+        to.address.toLowerCase(),
+      );
+      // Read at the execution block, so a resumed run checks the same state.
+      expectEqual(
+        `recovery:${label} factory authority`,
+        await authorityAt(executed.blockNumber),
+        to.address.toLowerCase(),
+      );
+      expectEqual(
+        `recovery:${label} vault authority`,
+        (
+          await chain.read<string>(
+            vault,
+            VAULT,
+            "identityAuthority",
+            [],
+            executed.blockNumber,
+          )
+        ).toLowerCase(),
+        to.address.toLowerCase(),
+      );
+      return {
+        proposal: proposed.transactionHash,
+        execution: executed.transactionHash,
+        block: text(BigInt(executed.blockNumber)),
+        previous: event.previous.toLowerCase(),
+        current: event.current.toLowerCase(),
+      };
+    };
+
+    await fund(entry, "recovery", vault, asset, 150n * amounts.unit);
+    for (const [n, item] of items.entries())
+      await commit(entry, `recovery:commit-${n}`, vault, item);
+    // The binding that exists before the key is lost.
+    await bind(
+      entry,
+      "recovery:bind-existing",
+      vault,
+      actors[0],
+      wallets[0],
+      0n,
+    );
+
+    if (!entry.checks.rotation)
+      entry.checks.rotation = await rotate("rotate", identity, recovery);
+    await persist();
+    // The old key can no longer bind; the new authority can.
+    if (!entry.checks.oldKeyRefused) {
+      const data = await bindingCall(vault, actors[1], wallets[1], 0n);
+      const revert = await refuse(identity.address, vault, data);
+      expectEqual("old identity key bind", revert, "Unauthorized");
+      entry.checks.oldKeyRefused = {
+        from: identity.address.toLowerCase(),
+        revert,
+      };
+      await persist();
+    }
+    // The binding made by the old key still pays after the rotation.
+    const existing = await pay(
+      entry,
+      "recovery:pay-existing",
+      vault,
+      asset,
+      items[0],
+      1n,
+      wallets[0].address,
+    );
+    await bind(
+      entry,
+      "recovery:bind-new",
+      vault,
+      actors[1],
+      wallets[1],
+      0n,
+      recovery,
+    );
+    const fresh = await pay(
+      entry,
+      "recovery:pay-new",
+      vault,
+      asset,
+      items[1],
+      1n,
+      wallets[1].address,
+    );
+    entry.checks.payments = {
+      existingBinding: {
+        githubUserId: actors[0].githubUserId,
+        boundBy: identity.address.toLowerCase(),
+        paidAfterRotation: existing.transactionHash,
+        net: text(items[0].net),
+      },
+      newBinding: {
+        githubUserId: actors[1].githubUserId,
+        boundBy: recovery.address.toLowerCase(),
+        paid: fresh.transactionHash,
+        net: text(items[1].net),
+      },
+    };
+    await persist();
+    // Restore the configured identity authority for later runs.
+    if (!entry.checks.restoration)
+      entry.checks.restoration = await rotate("restore", recovery, identity);
+    expectEqual(
+      "restored identity authority",
+      await authorityAt("latest"),
+      identity.address.toLowerCase(),
+    );
+    const after = await totals(vault);
+    expectEqual(
+      "recovery paid",
+      after.paid,
+      items.reduce((sum, item) => sum + item.net, 0n),
+    );
+    expectEqual("recovery reserved", after.principalReserved, 0);
+    entry.checks.totals = after;
+    await persist();
+  }
+
   const priorMonthly = run.scenarios?.monthly;
   const priorAutomatic = priorMonthly?.checks.automatic as
     | { path?: string }
@@ -1738,10 +2535,17 @@ export async function runEvmExtended(
     await persist();
   }
   try {
+    const recovery: [string[], (entry: ScenarioEvidence) => Promise<void>] = [
+      ["key-recovery"],
+      keyRecovery,
+    ];
     await runScenarios(
       run,
       persist,
       [
+        // A run interrupted while the recovery key is in force restores the
+        // configured authority before any other scenario binds.
+        ...(ctx.identityRotated ? [recovery] : []),
         [["bounty"], bounty],
         [["walletless-lifecycle"], lifecycle],
         [["monthly"], monthly],
@@ -1749,6 +2553,7 @@ export async function runEvmExtended(
           ["interrupted-send", "failed-recipient", "frozen-fee-destination"],
           dispatch,
         ],
+        ...(ctx.identityRotated ? [] : [recovery]),
       ],
       async (entry) => {
         entry.checks.finality = await ready(() =>

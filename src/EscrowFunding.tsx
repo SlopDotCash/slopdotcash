@@ -8,6 +8,7 @@ import {
   formatAssetAmount,
   isAssetDecimals,
   isBaseUnits,
+  reservedGross,
   type VaultSnapshot,
 } from "./lib/payments/contracts";
 import type { ProjectDefinition } from "./lib/projects.mjs";
@@ -167,25 +168,7 @@ export function useVaultTotals(
   return vault ? { status: "ready", vault } : { status: "loading" };
 }
 
-/**
- * Gross reserved for committed awards, the same figure on both chains: EVM vaults
- * split reserved principal and fees, Solana reports one reserved total (which
- * also holds an admitted monthly allocation until its awards settle).
- */
-export function reservedGross(snapshot: {
-  reservedPrincipal: string | null;
-  reservedFees: string | null;
-  reserved: string | null;
-}): string | null {
-  return (
-    snapshot.reserved ??
-    (snapshot.reservedPrincipal !== null && snapshot.reservedFees !== null
-      ? (
-          BigInt(snapshot.reservedPrincipal) + BigInt(snapshot.reservedFees)
-        ).toString()
-      : null)
-  );
-}
+export { reservedGross };
 /** Measured against the viewer's clock: the response itself can be edge-cached. */
 export function vaultSnapshotStale(
   snapshot: VaultSnapshot,

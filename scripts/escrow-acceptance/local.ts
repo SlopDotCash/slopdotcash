@@ -5,7 +5,12 @@
  * the production build of the escrow program. Nothing is broadcast to a public
  * network; the forks only read public state.
  *
- *   bun scripts/escrow-acceptance/local.ts [network ...]
+ *   bun scripts/escrow-acceptance/local.ts [network ...] [--suite extended]
+ *
+ * `--suite extended` runs the #902 extended suite on the EVM forks. The fork
+ * clock moves to the first PRD monthly commitment window (2026-11), so a
+ * factory with V2 monthly reserve logic runs the month through the
+ * project-operated keeper.
  *
  * Solana needs `bun run build:contracts:solana` first. The production build
  * accepts the short delays configured by this local workflow.
@@ -45,10 +50,23 @@ const EVM_PORT = Number(process.env.ESCROW_ACCEPTANCE_LOCAL_EVM_PORT ?? 18731);
 const SOLANA_PORT = Number(
   process.env.ESCROW_ACCEPTANCE_LOCAL_SOLANA_PORT ?? 18999,
 );
-const requested = process.argv.slice(2);
+const args = process.argv.slice(2);
+const suiteFlag = args.indexOf("--suite");
+const suite = suiteFlag === -1 ? "section-21" : args[suiteFlag + 1];
+if (suite !== "section-21" && suite !== "extended")
+  throw new Error("--suite must be section-21 or extended");
+const requested = args.filter(
+  (_, index) =>
+    suiteFlag === -1 || (index !== suiteFlag && index !== suiteFlag + 1),
+);
+/** Chain time inside the 2026-11 commitment window (2026-12-04 to 2027-01-04 UTC). */
+const MONTHLY_WINDOW_TIME = Date.UTC(2026, 11, 5) / 1000;
 const networks = requested.length
   ? requested
-  : [...Object.keys(FORKS), "solana-localnet"];
+  : [
+      ...Object.keys(FORKS),
+      ...(suite === "extended" ? [] : ["solana-localnet"]),
+    ];
 const out = resolve(
   process.env.ESCROW_ACCEPTANCE_LOCAL_OUT ??
     join(root, "evidence", "escrow-acceptance-local"),
@@ -80,6 +98,7 @@ async function runUntilDone(
         join(root, "scripts", "escrow-acceptance.ts"),
         network,
         directory,
+        ...(suite === "extended" ? ["--suite", "extended"] : []),
       ],
       {
         cwd: root,
@@ -104,6 +123,16 @@ async function runUntilDone(
   const evidence = await loadEvidence(directory);
   if (evidence?.status !== "passed")
     throw new Error(`${network}: evidence status ${evidence?.status}`);
+  if (suite === "extended") {
+    const scenarios = Object.entries(evidence.scenarios ?? {});
+    if (
+      evidence.mode !== "local" ||
+      scenarios.length === 0 ||
+      !scenarios.every(([, entry]) => entry.status === "passed")
+    )
+      throw new Error(`${network}: extended scenarios did not all pass`);
+    return evidence;
+  }
   if (
     evidence.mode !== "local" ||
     evidence.assets.length < 2 ||
@@ -144,6 +173,7 @@ async function evmFork(network: string, port: number) {
       ESCROW_ACCEPTANCE_RELAYER_KEY: key(),
       ESCROW_ACCEPTANCE_ACTOR_A_KEY: key(),
       ESCROW_ACCEPTANCE_ACTOR_B_KEY: key(),
+      ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY: key(),
     };
     const address = (name: keyof typeof keys) =>
       privateKeyToAccount(keys[name]).address;
@@ -154,6 +184,7 @@ async function evmFork(network: string, port: number) {
       "ESCROW_ACCEPTANCE_DEPOSITOR_KEY",
       "ESCROW_ACCEPTANCE_IDENTITY_KEY",
       "ESCROW_ACCEPTANCE_RELAYER_KEY",
+      "ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY",
     ] as const)
       await rpc("anvil_setBalance", [address(name), "0x8ac7230489e80000"]);
     const create = (contract: string, args: string[] = []) =>
@@ -177,14 +208,28 @@ async function evmFork(network: string, port: number) {
           { stderr: "inherit" },
         ).stdout.toString(),
       ).deployedTo as string;
-    const factory = deployUpgradeableFactory(create, [
-      address("ESCROW_ACCEPTANCE_REGISTRAR_KEY"),
-      feeRecipient,
-      address("ESCROW_ACCEPTANCE_IDENTITY_KEY"),
-      String(BINDING_DELAY),
-    ]);
+    // The extended suite expects the deployed zero binding delay; its
+    // review-window factory has the 120-second delay of the cancel scenario.
+    const factoryWith = (delay: number) =>
+      deployUpgradeableFactory(create, [
+        address("ESCROW_ACCEPTANCE_REGISTRAR_KEY"),
+        feeRecipient,
+        address("ESCROW_ACCEPTANCE_IDENTITY_KEY"),
+        String(delay),
+      ]);
+    const factory = factoryWith(suite === "extended" ? 0 : BINDING_DELAY);
     const wide = create("test/WideToken.sol:WideToken", ["18"]);
     const stable = policy.asset as string;
+    // The extended scenarios use several vaults of the scenario asset.
+    const units = suite === "extended" ? 5000n : 1000n;
+    const mint = (to: string, token: string, amount: bigint) =>
+      rpc("eth_sendTransaction", [
+        {
+          from: to,
+          to: token,
+          data: `0x40c10f19${to.slice(2).toLowerCase().padStart(64, "0")}${amount.toString(16).padStart(64, "0")}`,
+        },
+      ]);
     for (const holder of [
       "ESCROW_ACCEPTANCE_OWNER_KEY",
       "ESCROW_ACCEPTANCE_DEPOSITOR_KEY",
@@ -192,15 +237,25 @@ async function evmFork(network: string, port: number) {
       await rpc("anvil_dealERC20", [
         address(holder),
         stable,
-        `0x${(1000n * 10n ** BigInt(policy.assetDecimals ?? 6)).toString(16)}`,
+        `0x${(units * 10n ** BigInt(policy.assetDecimals ?? 6)).toString(16)}`,
       ]);
-      await rpc("eth_sendTransaction", [
-        {
-          from: address(holder),
-          to: wide,
-          data: `0x40c10f19${address(holder).slice(2).toLowerCase().padStart(64, "0")}${(1000n * 10n ** 18n).toString(16).padStart(64, "0")}`,
-        },
-      ]);
+      await mint(address(holder), wide, units * 10n ** 18n);
+    }
+    const extended: Record<string, string> = {};
+    if (suite === "extended") {
+      const blockable = create("integration/TestDollar.sol:TestDollar");
+      await mint(
+        address("ESCROW_ACCEPTANCE_OWNER_KEY"),
+        blockable,
+        1000n * 10n ** 6n,
+      );
+      Object.assign(extended, {
+        ESCROW_ACCEPTANCE_SCENARIO_ASSET: stable,
+        ESCROW_ACCEPTANCE_BLOCKABLE_ASSET: blockable,
+        ESCROW_ACCEPTANCE_REVIEW_FACTORY: factoryWith(120),
+      });
+      await rpc("evm_setNextBlockTimestamp", [MONTHLY_WINDOW_TIME]);
+      await rpc("anvil_mine", ["0x1"]);
     }
     // Anvil finalizes 64 blocks behind the head; keep blocks coming.
     void (async () => {
@@ -209,7 +264,7 @@ async function evmFork(network: string, port: number) {
         await Bun.sleep(1000);
       }
     })();
-    const directory = join(out, network);
+    const directory = join(out, suite, network);
     rmSync(directory, { recursive: true, force: true });
     return await runUntilDone(
       network,
@@ -219,9 +274,13 @@ async function evmFork(network: string, port: number) {
         ESCROW_ACCEPTANCE_RPC_URL: rpcUrl,
         ESCROW_ACCEPTANCE_FACTORY: factory,
         ESCROW_ACCEPTANCE_ASSETS: `${stable},${wide}`,
+        ...extended,
       },
       async () => {
-        await rpc("evm_increaseTime", [BINDING_DELAY]);
+        // The extended suite waits for finality only; section 21 also waits
+        // for the binding delay.
+        if (suite !== "extended")
+          await rpc("evm_increaseTime", [BINDING_DELAY]);
         await rpc("anvil_mine", ["0x1"]);
       },
     );
@@ -311,7 +370,7 @@ async function solanaLocalnet() {
         keys.ESCROW_ACCEPTANCE_DEPOSITOR_KEY,
       ],
     });
-    const directory = join(out, "solana-localnet");
+    const directory = join(out, suite, "solana-localnet");
     rmSync(directory, { recursive: true, force: true });
     return await runUntilDone(
       "solana-localnet",
@@ -357,12 +416,20 @@ for (const network of networks) {
         status: asset.status,
         vault: asset.vault,
       })),
+      scenarios: Object.fromEntries(
+        Object.entries(evidence.scenarios ?? {}).map(([name, entry]) => [
+          name,
+          entry.status,
+        ]),
+      ),
       deviations: evidence.deviations,
     };
   } catch (error) {
     // One network's failure is reported; the other networks still run.
     failed = true;
-    const evidence = await loadEvidence(join(out, network)).catch(() => null);
+    const evidence = await loadEvidence(join(out, suite, network)).catch(
+      () => null,
+    );
     summary[network] = {
       status: "failed",
       error: error instanceof Error ? error.message : String(error),

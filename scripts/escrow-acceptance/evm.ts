@@ -82,12 +82,21 @@ export const FACTORY = parseAbi([
   "function bindingDelay() view returns (uint64)",
   "function vaults(bytes32) view returns (address)",
   "function create(bytes32,address,uint8) returns (address)",
+  "function pendingIdentityAuthority() view returns (address)",
+  "function upgradeAuthority() view returns (address)",
+  "function vaultImplementation() view returns (address)",
+  "function proposeIdentityAuthority(address)",
+  "function executeIdentityAuthorityRotation()",
+  "event IdentityAuthorityRotationProposed(address indexed current, address indexed proposed, uint64 effectiveAt)",
+  "event IdentityAuthorityRotated(address indexed previous, address indexed current)",
 ]);
 export const VAULT = parseAbi([
   "function awards(bytes32) view returns (uint64 actorId,uint128 gross,uint128 fee,bytes32 sourceDigest,uint64 committedAt,bool paid)",
   "function bindings(uint64) view returns (address destination,uint64 version,bytes32 claimDigest,uint64 activatesAt,bool cancelled)",
   "function payableBinding(uint64) view returns (address destination,uint64 version)",
   "function purpose() view returns (uint8)",
+  "function identityAuthority() view returns (address)",
+  "function monthlyReserveVersion() view returns (uint8)",
   "function bindingDelay() view returns (uint64)",
   "function freeBalance() view returns (uint128)",
   "function accruedFees() view returns (uint128)",
@@ -122,6 +131,9 @@ export const VAULT = parseAbi([
   "error AwardPending()",
   "error CancelLimit()",
   "error InvalidWalletSignature()",
+  "error MonthlySourceChanged()",
+  "error InvalidAllocationProof()",
+  "error MonthExpired()",
 ]);
 export const ZERO = "0x0000000000000000000000000000000000000000";
 
@@ -411,7 +423,22 @@ export async function openEvmRun(
     throw new Error(
       "ESCROW_ACCEPTANCE_REGISTRAR_KEY is not the factory registrar",
     );
-  if (identityAuthority.toLowerCase() !== identity.address.toLowerCase())
+  // Extended suite only: the key-recovery scenario rotates the factory
+  // identity authority to this key and back. A run interrupted between the
+  // two rotations resumes with the recovery key in force.
+  const recovery =
+    suite === "extended" && process.env.ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY
+      ? privateKeyToAccount(evmKey("ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY"))
+      : null;
+  if (recovery && addresses.includes(recovery.address.toLowerCase()))
+    throw new Error("Every test role needs its own key");
+  const identityRotated =
+    recovery !== null &&
+    identityAuthority.toLowerCase() === recovery.address.toLowerCase();
+  if (
+    identityAuthority.toLowerCase() !== identity.address.toLowerCase() &&
+    !identityRotated
+  )
     throw new Error(
       "ESCROW_ACCEPTANCE_IDENTITY_KEY is not the factory identity authority",
     );
@@ -474,6 +501,8 @@ export async function openEvmRun(
     identity,
     identityKey,
     relayerKey,
+    recovery,
+    identityRotated,
     chainId,
     chain,
     feeRecipient: feeRecipient.toLowerCase(),

@@ -23,13 +23,13 @@ import {
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import { projectVaultSnapshots } from "../../backend/payments/vault-snapshots";
 import type { VaultTotals } from "../../contracts/vault-totals";
-import { reservedGross } from "../../src/EscrowFunding";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { fundingAssetForNetwork } from "../../src/lib/funding-address.mjs";
+import { reservedGross } from "../../src/lib/payments/contracts";
 import {
   assertProjectDefinition,
   CONTRIBUTION_FIELDS,
@@ -504,13 +504,16 @@ export class AcceptanceRegistry {
       projectId: string;
       effectiveCycle: string;
       deployment: EscrowDeployment;
+      /** Paused unless a scenario needs a project-operated keeper to admit a month. */
+      status?: "paused" | "active";
     }[],
   ): PaymentDeployment[] {
-    return projects.map(({ projectId, effectiveCycle, deployment }) => {
+    return projects.map(({ projectId, effectiveCycle, deployment, status }) => {
       const manifest = acceptanceManifest(
         projectId,
         effectiveCycle,
         deployment,
+        status,
       );
       const text = JSON.stringify(manifest);
       const digest = sha256Text(text);
@@ -564,6 +567,7 @@ function acceptanceManifest(
   projectId: string,
   effectiveCycle: string,
   deployment: EscrowDeployment,
+  status: "paused" | "active" = "paused",
 ) {
   const fixture = JSON.parse(
     readFileSync(
@@ -585,7 +589,7 @@ function acceptanceManifest(
     id: projectId,
     slug: projectId,
     name: `Escrow acceptance ${projectId}`,
-    status: "paused",
+    status,
     skill: {
       id: `contribute-to-${projectId}`,
       publishAtRoot: false,
@@ -1063,7 +1067,10 @@ export async function reconcilePublicApi(
     totals: { status: totals.status, row: row ?? null, coverage },
     panelReserved,
     unreportedCounters: Object.fromEntries(
-      unreported.map((key) => [key, served[key] ?? "absent"]),
+      unreported.map((key) => [
+        key,
+        served[key] === undefined ? "absent" : served[key],
+      ]),
     ),
     missing: {
       projectId: missingId,

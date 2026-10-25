@@ -201,6 +201,25 @@ export interface VaultSnapshot extends PaymentAsset {
   blockTime: string;
   observedAt: string;
 }
+/**
+ * Gross reserved for committed awards, the same figure on both chains: EVM vaults
+ * split reserved principal and fees, Solana reports one reserved total (which
+ * also holds an admitted monthly allocation until its awards settle).
+ */
+export function reservedGross(snapshot: {
+  reservedPrincipal: string | null;
+  reservedFees: string | null;
+  reserved: string | null;
+}): string | null {
+  return (
+    snapshot.reserved ??
+    (snapshot.reservedPrincipal !== null && snapshot.reservedFees !== null
+      ? (
+          BigInt(snapshot.reservedPrincipal) + BigInt(snapshot.reservedFees)
+        ).toString()
+      : null)
+  );
+}
 /** A snapshot older than this is shown with a stale warning. Cron runs every 5 minutes. */
 export const VAULT_SNAPSHOT_STALE_MS = 30 * 60 * 1000;
 
