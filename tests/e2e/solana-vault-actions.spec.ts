@@ -1005,14 +1005,33 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
     });
     await expect(monthly).toHaveValue("on");
     if (!automatic) await monthly.selectOption("off");
-    const browserReviewResponse = page.waitForResponse(
-      (response) =>
-        response.url() === `${origin}/api/v1/project-vaults/${project.id}` &&
-        response.request().method() === "POST" &&
-        response.request().postDataJSON().step === "review",
+    // Read the browser's own review in the test process. Chromium may drop a
+    // finished response body before CDP reads it, so do not depend on that buffer.
+    const reviewUrl = `${origin}/api/v1/project-vaults/${project.id}`;
+    let captureReview!: (body: {
+      review: {
+        transaction: { blockhash: string; lastValidBlockHeight: number };
+      };
+    }) => void;
+    const browserReviewBody = new Promise<Parameters<typeof captureReview>[0]>(
+      (resolve) => {
+        captureReview = resolve;
+      },
     );
+    await page.route(reviewUrl, async (route) => {
+      const request = route.request();
+      if (
+        request.method() !== "POST" ||
+        request.postDataJSON().step !== "review"
+      )
+        return route.fallback();
+      const response = await route.fetch();
+      captureReview(await response.json());
+      await route.fulfill({ response });
+      await page.unroute(reviewUrl);
+    });
     await setup.getByRole("button", { name: "Review vault creation" }).click();
-    const browserReview = (await (await browserReviewResponse).json()).review;
+    const browserReview = (await browserReviewBody).review;
     await expect(
       setup.getByRole("button", { name: "Create vault in wallet" }),
     ).toBeEnabled();
