@@ -380,6 +380,15 @@ page exists. Invalid queries return 400. A storage failure returns 503, never a
 successful empty history. This route shows recorded history; it does not assert
 that a record still matches GitHub or overrides a human decision.
 
+Both this route and `/v1/work-unit-assessments` also accept
+`repositoryNodeId=GITHUB_NODE_ID` instead of `repository`. D1 binds that ID to
+the project's primary repository. The response includes the same ID, and
+history selection uses immutable IDs without changing stored record bytes.
+Ingestion uses this form after it checks GitHub's ID against its registry pin.
+This permits staging and production to retain different registered names after
+a repository transfer. Unknown IDs and mixed name/ID queries are refused.
+Secondary repositories without a D1 identity pin retain the name query.
+
 A local Cloudflare Worker with local D1 passed HTTP readback using the checked-in
 migrations and seeded real Eliza assessments. All returned record digests matched
 the exact bytes; cursor reads, valid empty history and invalid-query responses

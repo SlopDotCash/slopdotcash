@@ -61,13 +61,12 @@ function assertRecord(
     throw new Error("Joint history record has invalid revision bindings");
   const ids = new Set<string>();
   for (const source of value.sources) {
-    const repository = repositories.find(
-      (entry) => entry.id === source.repository,
+    const repository = repositories.find((entry) =>
+      [entry.id, ...entry.aliases].includes(source.repository),
     );
     const key = sourceKey(source);
     if (
       !repository ||
-      repository.id !== source.repository ||
       repository.projectId !== value.projectId ||
       (repository.expectedNodeId !== null &&
         repository.expectedNodeId !== source.repositoryNodeId) ||

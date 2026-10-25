@@ -266,7 +266,11 @@ export default {
       const number = url.searchParams.get("pull") ?? "";
       const after = url.searchParams.get("after") ?? "0";
       const through = jointHistory ? url.searchParams.get("through") : null;
+      const repositoryNodeId = url.searchParams.get("repositoryNodeId");
       if (
+        (repositoryNodeId !== null &&
+          (url.searchParams.has("repository") ||
+            !/^[A-Za-z0-9_=-]{1,100}$/u.test(repositoryNodeId))) ||
         !/^[1-9][0-9]*$/u.test(number) ||
         !/^(0|[1-9][0-9]*)$/u.test(after) ||
         !Number.isSafeInteger(Number(number)) ||
@@ -285,6 +289,7 @@ export default {
         const repository = await registeredHistoryRepository(
           env.SLOPBOT_DB,
           url.searchParams.get("repository") ?? "",
+          repositoryNodeId,
         );
         if (repository === null)
           return Response.json(
@@ -294,23 +299,26 @@ export default {
         const history = jointHistory
           ? await workUnitHistory(
               env.SLOPBOT_DB,
-              repository,
+              repository.id,
               Number(number),
               Number(after),
               through === null ? null : Number(through),
+              repository.nodeId ?? undefined,
             )
           : await valueHistory(
               env.SLOPBOT_DB,
-              repository,
+              repository.id,
               Number(number),
               Number(after),
+              repository.nodeId ?? undefined,
             );
         return Response.json(
           {
             schemaVersion: jointHistory
               ? "slop-work-unit-history:v1"
               : "slop-value-history:v1",
-            repository,
+            repository: repository.id,
+            repositoryNodeId: repository.nodeId,
             pullRequestNumber: Number(number),
             ...history,
           },

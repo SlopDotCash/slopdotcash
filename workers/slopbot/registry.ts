@@ -27,25 +27,36 @@ const UNREGISTERED: ProjectCapabilities = evaluateProjectCapabilities({
 export async function registeredHistoryRepository(
   db: D1Database,
   repositoryId: string,
-): Promise<string | null> {
+  repositoryNodeId: string | null = null,
+): Promise<{ id: string; nodeId: string | null } | null> {
   const key = repositoryId.toLowerCase();
   const row = await db
-    .prepare(`SELECT manifest FROM projects p WHERE EXISTS (
+    .prepare(
+      repositoryNodeId === null
+        ? `SELECT manifest FROM projects p WHERE EXISTS (
       SELECT 1 FROM json_each(p.manifest, '$.repositories') r
       WHERE lower(json_extract(r.value, '$.id')) = ?
          OR EXISTS (SELECT 1 FROM json_each(r.value, '$.aliases') a
-                    WHERE lower(a.value) = ?))`)
-    .bind(key, key)
+                    WHERE lower(a.value) = ?))`
+        : `SELECT manifest FROM projects WHERE json_extract(manifest, '$.authority.repositoryNodeId') = ?`,
+    )
+    .bind(...(repositoryNodeId === null ? [key, key] : [repositoryNodeId]))
     .first<{ manifest: string }>();
   if (row === null) return null;
   const project = assertProjectDefinition(JSON.parse(row.manifest));
-  return (
-    project.repositories.find((repository) =>
-      [repository.id, ...(repository.aliases ?? [])].some(
-        (id) => id.toLowerCase() === key,
-      ),
-    )?.id ?? null
-  );
+  const index =
+    repositoryNodeId === null
+      ? project.repositories.findIndex((repository) =>
+          [repository.id, ...(repository.aliases ?? [])].some(
+            (id) => id.toLowerCase() === key,
+          ),
+        )
+      : 0;
+  if (index < 0) return null;
+  return {
+    id: project.repositories[index].id,
+    nodeId: index === 0 ? project.authority.repositoryNodeId : null,
+  };
 }
 
 export async function registeredHistoryProject(

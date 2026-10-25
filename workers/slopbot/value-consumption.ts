@@ -94,7 +94,7 @@ export async function readValueDecisionFromHistory(
       if (
         record?.schemaVersion !== "slop-value-record:v1" ||
         record.projectId !== repository.projectId ||
-        record.repository !== repository.id ||
+        ![repository.id, ...repository.aliases].includes(record.repository) ||
         record.repositoryNodeId !== evidence.repositoryNodeId ||
         record.repositoryDatabaseId !== evidence.repositoryDatabaseId ||
         record.pullRequestNodeId !== evidence.pull.node_id ||
